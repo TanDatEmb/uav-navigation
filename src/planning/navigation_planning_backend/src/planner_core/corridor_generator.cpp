@@ -178,11 +178,19 @@ namespace navigation_planning_backend {
             for (int j = first_id + 1; j < corridor_path.size(); j++) {
                 if (route_boundary_index.has_value() &&
                     static_cast<std::size_t>(j) == *route_boundary_index) {
-                    // Stop the line corridor exactly at the mission boundary.
-                    // The point corridor inserted below prevents one convex
-                    // CIRI result from bridging the corner.
-                    second_id = j;
-                    reached_route_boundary = true;
+                    // Stop the line corridor exactly at the mission boundary,
+                    // but do not make the final line seed exceed the bounded
+                    // CIRI length. If the boundary is still too far away,
+                    // commit the last bounded prefix and revisit the boundary
+                    // in the next outer iteration.
+                    const double boundary_seed_length =
+                        (corridor_path[j] - corridor_path[first_id]).norm();
+                    if (boundary_seed_length <= seed_line_max_length_ + 1.0e-6) {
+                        second_id = j;
+                        reached_route_boundary = true;
+                    } else {
+                        second_id = j - 1;
+                    }
                     break;
                 }
                 bool reach_segment = false;

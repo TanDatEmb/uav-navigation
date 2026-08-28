@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <atomic>
 #include <chrono>
@@ -15,6 +16,7 @@
 #include "planner_core/absolute_deadline.hpp"
 #include "planner_core/command_time.hpp"
 #include "planner_core/ciri.h"
+#include "planner_core/corridor_generator.h"
 #include "planner_core/guide_endpoint.hpp"
 #include "planner_core/replan_contract.hpp"
 #include "planner_core/planning_stage.hpp"
@@ -47,6 +49,8 @@ class SweepWorld : public navigation_world_model::WorldModelView {
   navigation_world_model::WorldGeometry geometry() const noexcept override {
     navigation_world_model::WorldGeometry value;
     value.inflated_resolution_m = 0.2;
+    value.effective_virtual_ground_m = -10.0;
+    value.effective_virtual_ceiling_m = 10.0;
     return value;
   }
   navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
@@ -1237,6 +1241,30 @@ TEST(PlannerTrajectory, SparseGuideSubdivisionRejectsInvalidInputs) {
           navigation_math::Vec3f{
               std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.0F}},
       3.0, subdivided));
+}
+
+TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
+  auto world = std::make_shared<SweepWorld>();
+  navigation_planner_context::PlannerRuntimeContext::Ptr context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>();
+  navigation_planning_backend::CorridorGenerator generator(
+      context, world, 10.0, 3.0, 0.1, -10.0, 10.0, 0.35, 1,
+      navigation_world_model::UnknownPolicy::kAllowUnknown);
+
+  const navigation_math::vec_Vec3f path{
+      navigation_math::Vec3f{0.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{6.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{6.0F, -5.0F, 3.0F}};
+  navigation_planning_backend::CorridorGenerator::RouteBoundaryGate gate{
+      navigation_math::Vec3f{6.0F, 0.0F, 3.0F}, 0.9};
+  geometry_utils::PolytopeVec sfcs;
+  navigation_math::Vec3f shifted_start;
+  ASSERT_TRUE(generator.SearchPolytopeOnPath(path, sfcs, shifted_start, false,
+                                             nullptr, gate));
+  ASSERT_FALSE(sfcs.empty());
+  EXPECT_TRUE(std::any_of(sfcs.begin(), sfcs.end(), [](const auto &polytope) {
+    return polytope.IsRouteBoundaryGate();
+  }));
 }
 
 TEST(PlannerTrajectory, GuideTimeAllocationPreservesNonZeroInitialSpeedOnShortPath) {
