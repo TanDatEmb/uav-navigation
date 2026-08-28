@@ -70,15 +70,16 @@ inline HotReplanSpliceCompatibility assessHotReplanSpliceCompatibility(
 
 enum class HotReplanTrackingRecovery {
   kContinueHotStitch,
-  kRestartFromMeasuredState,
+  kRebaseCurrentSolveOnMeasuredState,
   kFailClosed,
 };
 
 // Once the measured vehicle has left the command-tracking budget, a connector
 // from the command state ahead of the vehicle back to the historical measured
 // state is not a recovery trajectory: it explicitly encodes route regression.
-// End hot stitching and let the runtime start a new solve from a fresh measured
-// state. A non-traversable measured pose remains fail-closed.
+// Rebase this same solve on fresh measured PVAJ while the old immutable command
+// remains exposed until a replacement candidate passes every normal commit
+// gate. A non-traversable measured pose remains fail-closed.
 inline HotReplanTrackingRecovery classifyHotReplanTrackingRecovery(
     const bool tracking_budget_exceeded,
     const bool measured_start_traversable) noexcept {
@@ -86,7 +87,7 @@ inline HotReplanTrackingRecovery classifyHotReplanTrackingRecovery(
     return HotReplanTrackingRecovery::kContinueHotStitch;
   }
   return measured_start_traversable
-      ? HotReplanTrackingRecovery::kRestartFromMeasuredState
+      ? HotReplanTrackingRecovery::kRebaseCurrentSolveOnMeasuredState
       : HotReplanTrackingRecovery::kFailClosed;
 }
 

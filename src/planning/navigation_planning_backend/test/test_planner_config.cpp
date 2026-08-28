@@ -161,7 +161,7 @@ TEST(HotReplanTrackingRecovery, NeverBuildsAReverseConnectorToMeasuredHistory) {
   EXPECT_EQ(classifyHotReplanTrackingRecovery(false, true),
             HotReplanTrackingRecovery::kContinueHotStitch);
   EXPECT_EQ(classifyHotReplanTrackingRecovery(true, true),
-            HotReplanTrackingRecovery::kRestartFromMeasuredState);
+            HotReplanTrackingRecovery::kRebaseCurrentSolveOnMeasuredState);
   EXPECT_EQ(classifyHotReplanTrackingRecovery(true, false),
             HotReplanTrackingRecovery::kFailClosed);
 }

@@ -19,8 +19,12 @@ At each planning timer tick:
 3. ROG-Map and the planner validate the committed path against the current
    inflated map. A hot-replan failure may retain a valid backup suffix.
 4. If the committed suffix cannot be anchored to fresh propagated odometry,
-   the runtime may commit an emergency brake using measured position and
-   velocity. Otherwise it removes the command and fails closed.
+   a hot solve first drops its historical stitch and builds the replacement
+   from fresh measured PVAJ in the same solve. The previous immutable command
+   remains exposed until that replacement is atomically certified. If no
+   replacement is available, the runtime may retain a certified suffix or
+   commit an emergency brake using measured position and velocity; otherwise
+   it removes the command and fails closed.
 5. The active mission waypoint remains the mission-identity target. A
    `PASS_THROUGH` goal carries `next_target` as route metadata; when the
    certified map horizon permits, the planner extends the executable guide

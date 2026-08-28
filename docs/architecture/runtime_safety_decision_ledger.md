@@ -10616,3 +10616,51 @@ release profiles must not use the former allowance.
   count, p50/p95/p99 latency, committed generations, speed continuity,
   waypoint acceptance, clearance and terminal state against artifact
   `external-mode-check-20260828T183859-1439560`.
+
+### 2026-08-29 - Rebase incompatible hot replans in the same atomic solve
+
+- **Owner/status:** Planner hot-replan state boundary and runtime command
+  commit protocol, behavior change, `PROVISIONAL`.
+- **Scope:** When the existing acceleration-derived hot-splice compatibility
+  check rejects committed-future PVAJ but the fresh measured position remains
+  traversable, `ReplanOnce` now clears only its local historical EXP snapshot
+  and continues the same solve from measured PVAJ. It no longer returns
+  `NEW_TRAJ` solely for this tracking mismatch. Command-end handling and a
+  non-traversable measured start retain their previous restart/fail-closed
+  behavior.
+- **Safety impact:** No tracking, world, dynamics, yaw, backup, deadline or
+  atomic commit gate is weakened. The currently exposed immutable command is
+  not mutated while the measured-state candidate is built. If EXP, BACKUP,
+  latest-world authorization, or runtime candidate admission fails, the old
+  command remains the only executable source and follows the existing retained
+  suffix/emergency/fail-closed policy.
+- **Behavioral reason:** Artifact
+  `external-mode-check-20260828T185557-1458329` completed all nine waypoints
+  without collision after horizon-driven scheduling, but 35 of 124 solves
+  returned the two-step `ReplanOnce -> NEW_TRAJ -> PlanFromRest` transition.
+  Most transitions were caused by velocity-vector mismatch above the existing
+  `max_acc * replan_forward_dt` reachability envelope even when current
+  position error was small. The extra empty cycle did not add a safety proof;
+  the following `PlanFromRest` already used measured PVAJ and atomically staged
+  a candidate.
+- **False-accept/false-reject consequences:** The rejected historical splice
+  is never reused. A measured-state solve can still be rejected by every
+  existing hard gate, so this introduces no false acceptance. It may avoid a
+  false lifecycle restart and preserve command availability, but does not
+  guarantee that a feasible measured-state corridor exists.
+- **Runtime cost and evidence required:** At most one measured-state EXP plus
+  BACKUP solve runs under the existing `solve_deadline_s`; the former second
+  timer-cycle solve is removed. Focused recovery tests and Release build must
+  pass. Repeated SITL must show fewer tracking-induced `NEW_TRAJ` transitions
+  without increased collision, command-anchor rejection, emergency-brake
+  replacement, latency-tail, waypoint, yaw or altitude regression.
+- **Removal/review condition:** Keep same-solve recovery while the planner has
+  an atomic staged-candidate boundary. Replace only with a certified connector
+  that proves joint measured/committed reachability; never restore a reverse
+  connector to historical command state or expose an uncertified candidate.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_planner_config -j2 &&
+  ./build/navigation_planning_backend/test_planner_config --gtest_color=no`;
+  then `make build && make test`; then repeat the exact 5 m/s
+  `long_three_pillars_multiwaypoint` scenario and compare against
+  `external-mode-check-20260828T185557-1458329`.

@@ -1149,10 +1149,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // committed command so PVAJ remains continuous.  That prefix is not
         // authoritative when the vehicle has fallen behind it: stitching it
         // again would keep reproducing the same command-ahead error until the
-        // PX4 boundary rejects the bundle.  Rebase the next plan on the fresh
+        // PX4 boundary rejects the bundle. Rebase this same solve on the fresh
         // measured propagated state once the existing tracking-error budget is
-        // exceeded.  This is a planner-side recovery, not a relaxation of the
-        // command-anchor safety gate.
+        // exceeded. The previous immutable command remains exposed until the
+        // replacement passes the normal atomic commit boundary. This is a
+        // planner-side recovery, not a relaxation of the command-anchor safety
+        // gate.
         if (!last_exp_traj_info.empty()) {
             cmd_traj_info_.lock();
             const double committed_start_WT = cmd_traj_info_.getStartWallTime();
@@ -1228,7 +1230,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     return FAILED;
                 }
                 planner_context_->warn(
-                        " -- [planner] ending hot stitch and restarting from fresh measured state: "
+                        " -- [planner] rebasing hot solve on fresh measured PVAJ: "
                         "position_error={} future_position_error={} "
                         "future_velocity_error={} yaw_error={} position_budget={} "
                         "future_position_allowance={} future_velocity_allowance={} "
@@ -1239,7 +1241,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                         splice_compatibility.future_position_allowance_m,
                         splice_compatibility.future_velocity_allowance_mps,
                         cfg_.yaw_tracking_error_budget_rad);
-                return NEW_TRAJ;
+                last_exp_traj_info.setEmpty();
+                local_start_p_ = solve_state_.p;
             }
         }
 
