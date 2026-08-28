@@ -8572,3 +8572,33 @@ release profiles must not use the former allowance.
   `navigation_planning_backend` CTest set, then regenerate the authoritative
   manifest and repeat `long_three_pillars_multiwaypoint` at 3 m/s. M2 remains
   open until repeated representative yaw and mission evidence passes.
+
+### 2026-08-28 - Keep sharp waypoint turns inside a live acceptance fillet
+
+- **Owner:** Planner pass-through route geometry and terminal boundary state.
+- **Scope:** When a sharp corner cannot use the long outgoing route lookahead,
+  replace the exact-waypoint endpoint with the existing traversability-checked
+  three-point fillet inside the mission acceptance ball. Cap its outgoing
+  terminal speed from the actual fillet radius and unchanged acceleration
+  limit.
+- **Safety impact:** No waypoint radius, map policy, corridor tolerance, or
+  V/A/J gate is relaxed. The prior behavior ended at the exact corner with a
+  non-zero incoming velocity, leaving the next `PlanFromRest` solve an
+  instantaneous direction change. The fillet keeps the old command executable
+  across measured acceptance and gives MINCO certified geometry in which to
+  rotate velocity. If any fillet point or segment is not traversable, the
+  planner retains the exact-boundary fail-closed behavior.
+- **Evidence:** Authoritative 3 m/s SITL at `c2a9cc0` cleared waypoint 2 at
+  2.73 m/s, then repeated an eastbound terminal command at `(50,5)` while the
+  next leg required southbound motion; three corridor/dynamic failures caused
+  `PAUSED_SAFETY_STOP`. Unit evidence fixes the 90-degree fillet at 0.675 m
+  inside a 0.9 m acceptance ball and derives a 1.162 m/s terminal cap from the
+  unchanged 2.0 m/s2 acceleration limit.
+- **Removal/review condition:** Replace only with a longer mission-route
+  trajectory that spans the same corner under equal or stronger map and
+  dynamic certificates. Never recover availability by enlarging waypoint
+  acceptance or corridor violation limits.
+- **Verification:** Release-build and run the complete backend CTest set, then
+  regenerate the exact-HEAD manifest and repeat the 3 m/s three-pillar mission.
+  Inspect waypoint transition velocity, fillet trace, yaw maxima, clearance,
+  and mission coverage; one improved run is not final acceptance.

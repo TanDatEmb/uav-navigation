@@ -240,6 +240,12 @@ TEST(PlannerPassThrough, RouteWindowMovesEndpointAlongOutgoingCornerTangent) {
   EXPECT_NEAR(window->outgoing_blend.x(), 50.0, 1.0e-12);
   EXPECT_NEAR(window->outgoing_blend.y(), 4.6625, 1.0e-12);
   EXPECT_NEAR(window->endpoint.y(), 4.325, 1.0e-12);
+  const double fillet_radius =
+      (window->endpoint - Eigen::Vector3d{50.0, 5.0, 3.0}).norm();
+  EXPECT_NEAR(
+      navigation_planning_backend::passThroughCornerSpeedCap(
+          fillet_radius, 2.0, 2.94),
+      std::sqrt(1.35), 1.0e-12);
 }
 
 TEST(PlannerPassThrough, RouteWindowDoesNotChangeShallowBendOrTinyAcceptanceBall) {

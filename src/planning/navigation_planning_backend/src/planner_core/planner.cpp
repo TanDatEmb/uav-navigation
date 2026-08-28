@@ -1477,7 +1477,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // MissionController advance the checkpoint while the same command is live.
         bool route_lookahead_active = false;
         bool route_lookahead_is_corner = false;
-        bool route_transition_is_corner = false;
         double route_terminal_speed_cap_mps =
             cfg_.exp_traj_cfg.max_vel * cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
         std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
@@ -1514,7 +1513,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
             const bool genuine_corner = passThroughGenuineCorner(
                 current_endpoint, next_target, incoming_tangent);
-            route_transition_is_corner = genuine_corner;
             const double required_lookahead_envelope =
                 passThroughRequiredLookaheadDistance(
                     planning_speed, cfg_.exp_traj_cfg.max_vel,
@@ -1529,14 +1527,11 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // the shorter desired_lookahead is applied only when selecting the
             // certified prefix from that returned route.
             const double search_distance = remaining_horizon;
-            // A sharp turn is a measured route-boundary handoff. Do not ask a
-            // single MINCO solve to carry the incoming state through an exact
-            // boundary cell and also own the outgoing heading change. That
-            // overconstrained problem repeatedly falls into a certified
-            // backup suffix before the active waypoint is accepted. The
-            // current solve therefore owns only the incoming leg; the next
-            // measured handoff owns the outgoing leg. Straight and shallow
-            // pass-through legs retain the long look-ahead continuity path.
+            // A sharp turn uses the acceptance-ball fillet below instead of a
+            // long outgoing extension. This keeps the route-boundary geometry
+            // local while still giving the live command room to rotate before
+            // the measured waypoint handoff. Straight and shallow pass-through
+            // legs retain the longer look-ahead continuity path.
             if (!genuine_corner &&
                 std::isfinite(desired_lookahead) && desired_lookahead > 1.0e-6 &&
                 std::isfinite(outgoing_distance) &&
@@ -1658,12 +1653,13 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             }
         }
 
-        // If no route lookahead is certified on a straight or shallow leg, a
-        // bounded acceptance-ball endpoint remains available. Genuine corners
-        // deliberately keep the exact active waypoint as the endpoint so the
-        // next measured handoff owns the outgoing turn.
+        // If no long route lookahead is certified, retain a bounded
+        // acceptance-ball fillet for a genuine corner. Ending the incoming
+        // command at the exact waypoint with non-zero incoming velocity leaves
+        // the next measured handoff an instantaneous direction change and can
+        // exhaust its short planning window before the old command ends.
         bool route_window_endpoint = false;
-        if (!route_lookahead_active && !route_transition_is_corner &&
+        if (!route_lookahead_active &&
             pass_through_next_target_.has_value() &&
             guide_path.size() >= 2U &&
             guide_stamp.size() == guide_path.size() &&
@@ -1818,9 +1814,25 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // to reach the exact speed boundary while rotating toward the
             // next leg, which otherwise amplifies hard-gate churn at a
             // pass-through waypoint.
-            const double terminal_velocity_cap =
+            double terminal_velocity_cap =
                     cfg_.exp_traj_cfg.max_vel *
                     cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
+            if (route_window_endpoint) {
+                const double fillet_radius_m =
+                    (pos_fina_state.col(0).cast<double>() -
+                     requested_goal_p_.cast<double>()).norm();
+                const double corner_speed_cap = passThroughCornerSpeedCap(
+                    fillet_radius_m, cfg_.exp_traj_cfg.max_acc,
+                    terminal_velocity_cap);
+                if (corner_speed_cap > 0.0) {
+                    terminal_velocity_cap = std::min(
+                        terminal_velocity_cap, corner_speed_cap);
+                    planner_context_->info(
+                        " -- [planner] acceptance-fillet terminal speed cap={:.3f} "
+                        "radius={:.3f}",
+                        terminal_velocity_cap, fillet_radius_m);
+                }
+            }
             const auto terminal_velocity = passThroughTerminalVelocity(
                     pos_fina_state.col(0).cast<double>(),
                     *pass_through_next_target_,
