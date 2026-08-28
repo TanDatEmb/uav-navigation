@@ -155,6 +155,15 @@ if(BUILD_TESTING)
   target_link_libraries(test_route_backbone ${PROJECT_NAME})
   configure_backend_test(test_route_backbone)
 
+  ament_add_gtest(test_corridor_bezier_seed
+    test/test_corridor_bezier_seed.cpp)
+  target_compile_definitions(test_corridor_bezier_seed PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER
+    PLANNER_CORRIDOR_BEZIER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
+  target_link_libraries(test_corridor_bezier_seed ${PROJECT_NAME})
+  configure_backend_test(test_corridor_bezier_seed)
+
   ament_add_gtest(test_exp_optimizer_seed
     test/test_exp_optimizer_seed.cpp)
   target_compile_definitions(test_exp_optimizer_seed PRIVATE

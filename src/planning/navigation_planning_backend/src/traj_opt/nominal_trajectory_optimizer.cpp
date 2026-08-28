@@ -11,6 +11,7 @@
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/deterministic_nominal_seed.hpp>
+#include <planner_core/corridor_bezier_seed.hpp>
 #include <planner_core/boundary_velocity_recovery.hpp>
 #include <utils/optimization/lbfgs.h>
 #include <planner_runtime_context/planner_runtime_context.hpp>
@@ -939,19 +940,60 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     Trajectory immutable_nominal_seed;
     opt_vars.minco.setParameters(opt_vars.points, opt_vars.times);
     opt_vars.minco.getTrajectory(immutable_nominal_seed);
-    const auto immutable_seed_certificate =
-            navigation_planning_backend::certifyDeterministicNominalSeed(
-                immutable_nominal_seed,
-                opt_vars.hPolytopes,
-                opt_vars.hPolyIdx,
-                opt_vars.route_boundary_gates,
-                opt_vars.route_boundary_points,
-                opt_vars.route_boundary_radii,
-                opt_vars.headPVAJ,
-                opt_vars.tailPVAJ,
-                cfg_);
+    const auto corridor_seed_result =
+            navigation_planning_backend::buildCorridorContainedBezierSeed(
+                opt_vars.headPVAJ, opt_vars.tailPVAJ, opt_vars.points,
+                opt_vars.times, opt_vars.hPolytopes, opt_vars.hPolyIdx,
+                cfg_.max_vel * cfg_.optimization_dynamic_reserve_ratio,
+                cfg_.corridor_plane_tolerance_m);
+    Trajectory deterministic_nominal_seed = immutable_nominal_seed;
+    navigation_planning_backend::DeterministicNominalSeedCertificate
+            deterministic_seed_certificate;
+    bool deterministic_seed_uses_corridor_bezier = false;
+    if (corridor_seed_result.valid) {
+        deterministic_seed_certificate =
+                navigation_planning_backend::certifyDeterministicNominalSeed(
+                    corridor_seed_result.trajectory,
+                    opt_vars.hPolytopes,
+                    opt_vars.hPolyIdx,
+                    opt_vars.route_boundary_gates,
+                    opt_vars.route_boundary_points,
+                    opt_vars.route_boundary_radii,
+                    opt_vars.headPVAJ,
+                    opt_vars.tailPVAJ,
+                    cfg_);
+        if (deterministic_seed_certificate.valid) {
+            deterministic_nominal_seed = corridor_seed_result.trajectory;
+            deterministic_seed_uses_corridor_bezier = true;
+        }
+    }
+    // Preserve the historical exact MINCO interpolation only as a secondary
+    // fallback. Avoid running its expensive continuous certificate when the
+    // convex-hull-contained baseline already passed every hard gate.
+    if (!deterministic_seed_certificate.valid) {
+        const auto immutable_minco_seed_certificate =
+                navigation_planning_backend::certifyDeterministicNominalSeed(
+                    immutable_nominal_seed,
+                    opt_vars.hPolytopes,
+                    opt_vars.hPolyIdx,
+                    opt_vars.route_boundary_gates,
+                    opt_vars.route_boundary_points,
+                    opt_vars.route_boundary_radii,
+                    opt_vars.headPVAJ,
+                    opt_vars.tailPVAJ,
+                    cfg_);
+        if (immutable_minco_seed_certificate.valid ||
+            !corridor_seed_result.valid) {
+            deterministic_nominal_seed = immutable_nominal_seed;
+            deterministic_seed_certificate = immutable_minco_seed_certificate;
+            deterministic_seed_uses_corridor_bezier = false;
+        } else {
+            deterministic_nominal_seed = corridor_seed_result.trajectory;
+            deterministic_seed_uses_corridor_bezier = true;
+        }
+    }
     diagnostics_.certified_seed_failure_stage =
-            static_cast<int>(immutable_seed_certificate.failure_stage);
+            static_cast<int>(deterministic_seed_certificate.failure_stage);
 
     const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;
@@ -1216,8 +1258,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 rejected_candidate_violation,
                 cfg_.corridor_plane_tolerance_m, ret);
         const auto selection = navigation_planning_backend::selectNominalCandidate(
-                traj, false, immutable_nominal_seed,
-                immutable_seed_certificate, traj);
+                traj, false, deterministic_nominal_seed,
+                deterministic_seed_certificate, traj);
         if (selection == navigation_planning_backend::
                 NominalCandidateSelection::kCertifiedSeed) {
             update_dynamic_extrema();
@@ -1226,22 +1268,22 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                     "optimized_corridor_violation={} seed_corridor_violation={} "
                     "seed_boundary_residual={}",
                     rejected_candidate_violation,
-                    immutable_seed_certificate.maximum_corridor_violation_m,
-                    immutable_seed_certificate.maximum_boundary_residual);
+                    deterministic_seed_certificate.maximum_corridor_violation_m,
+                    deterministic_seed_certificate.maximum_boundary_residual);
             ret = lbfgs::LBFGS_STOP;
         } else {
-            const auto &flatness = immutable_seed_certificate.flatness_report;
+            const auto &flatness = deterministic_seed_certificate.flatness_report;
             planner_context_->warn(
                     " -- [ExpOpt] immutable pre-LBFGS seed unavailable: "
                     "stage={} corridor_violation={} boundary_residual={} "
                     "vel={}/{} acc={}/{} jerk={}/{} flatness_finite={} "
                     "body_rate={}/{} thrust=[{},{}]/[{},{}]",
-                    static_cast<int>(immutable_seed_certificate.failure_stage),
-                    immutable_seed_certificate.maximum_corridor_violation_m,
-                    immutable_seed_certificate.maximum_boundary_residual,
-                    immutable_seed_certificate.maximum_velocity_mps, cfg_.max_vel,
-                    immutable_seed_certificate.maximum_acceleration_mps2, cfg_.max_acc,
-                    immutable_seed_certificate.maximum_jerk_mps3, cfg_.max_jerk,
+                    static_cast<int>(deterministic_seed_certificate.failure_stage),
+                    deterministic_seed_certificate.maximum_corridor_violation_m,
+                    deterministic_seed_certificate.maximum_boundary_residual,
+                    deterministic_seed_certificate.maximum_velocity_mps, cfg_.max_vel,
+                    deterministic_seed_certificate.maximum_acceleration_mps2, cfg_.max_acc,
+                    deterministic_seed_certificate.maximum_jerk_mps3, cfg_.max_jerk,
                     flatness.finite,
                     flatness.maximum_body_rate_rad_s, cfg_.max_omg,
                     flatness.minimum_thrust_n, flatness.maximum_thrust_n,
@@ -1676,8 +1718,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     // that was independently certified before any optimizer mutation.
     if (ret < 0 && !diagnostics_.cancelled) {
         const auto selection = navigation_planning_backend::selectNominalCandidate(
-                traj, false, immutable_nominal_seed,
-                immutable_seed_certificate, traj);
+                traj, false, deterministic_nominal_seed,
+                deterministic_seed_certificate, traj);
         if (selection == navigation_planning_backend::
                 NominalCandidateSelection::kCertifiedSeed) {
             update_dynamic_extrema();
@@ -1689,11 +1731,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             ret = lbfgs::LBFGS_STOP;
             planner_context_->warn(
                     " -- [ExpOpt] MINCO refinement unavailable; selected exact "
-                    "pre-LBFGS certified seed: duration={} corridor_violation={} "
-                    "boundary_residual={} vel={}/{} acc={}/{} jerk={}/{}",
+                    "pre-LBFGS certified seed: source={} duration={} "
+                    "corridor_violation={} boundary_residual={} vel={}/{} "
+                    "acc={}/{} jerk={}/{}",
+                    deterministic_seed_uses_corridor_bezier
+                        ? "corridor_bezier" : "minco_interpolation",
                     diagnostics_.final_duration_s,
-                    immutable_seed_certificate.maximum_corridor_violation_m,
-                    immutable_seed_certificate.maximum_boundary_residual,
+                    deterministic_seed_certificate.maximum_corridor_violation_m,
+                    deterministic_seed_certificate.maximum_boundary_residual,
                     maximum_velocity, cfg_.max_vel,
                     maximum_acceleration, cfg_.max_acc,
                     maximum_jerk, cfg_.max_jerk);
@@ -1705,19 +1750,19 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     } else {
         traj.clear();
         minCostFunctional = INFINITY;
-        const auto &flatness = immutable_seed_certificate.flatness_report;
+        const auto &flatness = deterministic_seed_certificate.flatness_report;
         planner_context_->warn(
                 " -- [ExpOpt] MINCO and immutable seed unavailable: "
                 "solver={} seed_stage={} corridor_violation={} "
                 "boundary_residual={} vel={}/{} acc={}/{} jerk={}/{} "
                 "flatness_finite={} body_rate={}/{} thrust=[{},{}]/[{},{}]",
                 ret,
-                static_cast<int>(immutable_seed_certificate.failure_stage),
-                immutable_seed_certificate.maximum_corridor_violation_m,
-                immutable_seed_certificate.maximum_boundary_residual,
-                immutable_seed_certificate.maximum_velocity_mps, cfg_.max_vel,
-                immutable_seed_certificate.maximum_acceleration_mps2, cfg_.max_acc,
-                immutable_seed_certificate.maximum_jerk_mps3, cfg_.max_jerk,
+                static_cast<int>(deterministic_seed_certificate.failure_stage),
+                deterministic_seed_certificate.maximum_corridor_violation_m,
+                deterministic_seed_certificate.maximum_boundary_residual,
+                deterministic_seed_certificate.maximum_velocity_mps, cfg_.max_vel,
+                deterministic_seed_certificate.maximum_acceleration_mps2, cfg_.max_acc,
+                deterministic_seed_certificate.maximum_jerk_mps3, cfg_.max_jerk,
                 flatness.finite,
                 flatness.maximum_body_rate_rad_s, cfg_.max_omg,
                 flatness.minimum_thrust_n, flatness.maximum_thrust_n,

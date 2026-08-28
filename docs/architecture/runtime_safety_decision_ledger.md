@@ -9299,3 +9299,45 @@ release profiles must not use the former allowance.
   repeated three-column SITL and representative recorded data, requiring fewer
   solve/commit gaps and speed waves without degraded clearance, map accounting,
   ordered measured acceptance, altitude or External Mode retention.
+
+### 2026-08-28 - Add a convex-hull-contained nominal baseline before MINCO
+
+- **Owner:** Nominal trajectory construction, corridor containment and MINCO
+  candidate selection.
+- **Scope:** Build an immutable degree-seven piecewise Bezier candidate from
+  the same corridor junctions and durations used to initialize MINCO. Require
+  every Bernstein control point to lie in its assigned convex corridor, retain
+  exact endpoint P/V/A/J, and share P/V/A/J at every junction. Reduce only
+  internally selected junction velocity through a finite deterministic scale
+  set when required for adjacent-corridor containment. MINCO remains the
+  quality refinement; the Bezier baseline may replace it only after the same
+  continuous corridor, route-boundary, velocity, acceleration, jerk and
+  flatness certificate passes.
+- **Safety impact:** Convex-hull containment gives a construction-time geometric
+  guarantee in addition to, not instead of, continuous polynomial hard gates.
+  Endpoint derivatives, mission progress, UNKNOWN policy, world freshness and
+  command lease are unchanged. No failed boundary/dynamics/flatness candidate
+  is published; invalid inputs or a boundary control point outside its corridor
+  remain fail-closed. Internal velocity may be reduced to preserve containment,
+  but acceptance and speed thresholds are not relaxed.
+- **Evidence:** Exact-HEAD artifact
+  `.artifacts/runtime/external-mode-check-20260828T122307-1085850` completed the
+  route-backbone mission, yet 82 of 207 solves did not commit. Earlier artifact
+  `.artifacts/runtime/external-mode-check-20260828T120327-1058786` exposed that
+  92 of 102 immutable pre-LBFGS MINCO interpolation seeds failed at corridor
+  stage 2, so the nominal fallback was structurally unavailable even before
+  optimizer dynamics were considered. Unit geometry covers straight moving-
+  boundary continuity, a corner requiring deterministic junction-speed
+  reduction, full sampled containment and rejection of an immutable endpoint
+  derivative pointing outside its corridor.
+- **Removal/review condition:** Replace only with an equal-or-stronger
+  corridor-contained baseline such as a formally bounded B-spline/Bezier or
+  direct convex trajectory program that preserves endpoint and junction state
+  continuity. Do not restore MINCO as the sole command-availability owner or
+  use sampled collision checks as a substitute for continuous containment.
+- **Verification:** Run focused baseline/certificate tests, all backend tests
+  and Release build. Re-run repeated three-column and multi-waypoint SITL plus
+  recorded-data shadow planning; require higher commit ratio and shorter commit
+  gaps without increased clearance, route-regression, dynamics, altitude or
+  External Mode failures. Treat a lower internal-velocity scale as diagnostic,
+  not permission to weaken mission cruise acceptance.
