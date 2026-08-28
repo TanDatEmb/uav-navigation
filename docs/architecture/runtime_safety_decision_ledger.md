@@ -10496,8 +10496,12 @@ release profiles must not use the former allowance.
   jerk-rate certificates; planning numerical boundary, `PROVISIONAL`.
 - **Scope:** The auxiliary root-search interval used by
   `getMaxVelRate()`, `getMaxAccRate()` and `getMaxJerRate()` starts at the
-  existing `[-0.0625, 1.0625]` domain, but now moves each endpoint away from a
-  near-zero derivative value with a maximum of 128 iterations. A non-finite
+  existing `[-0.0625, 1.0625]` domain, but now expands each endpoint outward,
+  away from both the execution interval and a near-zero derivative value, with
+  a maximum of 128 iterations. Moving the left bound toward zero or the right
+  bound toward one is invalid because it can converge onto a legitimate
+  stationary point at an execution boundary and falsely reject a finite
+  trajectory. A non-finite
   polynomial value, floating-point no-progress, or exhausted bound returns a
   non-finite rate so the caller cannot authorize an uncertified candidate.
 - **Physical meaning and unsafe outcome:** The interval is a normalized

@@ -39,7 +39,10 @@ bool moveRootSearchBoundsAwayFromZeros(const Eigen::VectorXd& derivative_coeffic
                 derivative_coefficients, left_bound);
             if (!std::isfinite(value)) return false;
             if (std::abs(value) >= DBL_EPSILON) return true;
-            const double next_bound = 0.5 * left_bound;
+            // Expand away from the normalized execution interval [0, 1].
+            // Moving toward zero can converge onto a legitimate endpoint
+            // stationary point and incorrectly exhaust the guard.
+            const double next_bound = 2.0 * left_bound;
             if (next_bound == left_bound) return false;
             left_bound = next_bound;
         }
@@ -51,7 +54,7 @@ bool moveRootSearchBoundsAwayFromZeros(const Eigen::VectorXd& derivative_coeffic
                 derivative_coefficients, right_bound);
             if (!std::isfinite(value)) return false;
             if (std::abs(value) >= DBL_EPSILON) return true;
-            const double next_bound = 0.5 * (right_bound + 1.0);
+            const double next_bound = 1.0 + 2.0 * (right_bound - 1.0);
             if (next_bound == right_bound) return false;
             right_bound = next_bound;
         }

@@ -430,6 +430,26 @@ TEST(PlannerTrajectory, PieceRateCertificateBoundsRootSearchAtInitialBoundary) {
   EXPECT_NEAR(piece.getMaxVelRate(), 1.0625, 1.0e-9);
 }
 
+TEST(PlannerTrajectory, PieceRateRootSearchExpandsAwayFromExecutionInterval) {
+  // v(t) = t + 0.0625 has a squared-speed stationary point at the initial
+  // auxiliary left bound. The search must move farther left, not converge
+  // toward the legitimate t=0 execution boundary.
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
+  coefficients(0, 0) = 0.5;
+  coefficients(0, 1) = 0.0625;
+  const geometry_utils::Piece boundary_root_piece(1.0, coefficients);
+  EXPECT_TRUE(std::isfinite(boundary_root_piece.getMaxVelRate()));
+
+  // A normal stop starts with zero acceleration, so d|v|^2/dt is zero at
+  // t=0. Extrema certification must remain finite for that common boundary.
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(1) = Eigen::Vector3d{1.0, 0.0, 0.0};
+  const auto stop = navigation_planning_backend::minimumSnapStopPiece(initial, 1.0);
+  EXPECT_TRUE(std::isfinite(stop.getMaxVelRate()));
+  EXPECT_TRUE(std::isfinite(stop.getMaxAccRate()));
+  EXPECT_TRUE(std::isfinite(stop.getMaxJerRate()));
+}
+
 TEST(PlannerTrajectory, RootFinderRejectsDegenerateNumericalInputs) {
   const Eigen::VectorXd empty;
   EXPECT_EQ(math_utils::RootFinder::polyConv(empty, Eigen::VectorXd::Ones(1)).size(), 0);
