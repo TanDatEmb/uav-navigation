@@ -124,32 +124,57 @@ inline ControlPlaneViolation maximumControlPlaneViolation(
   return output;
 }
 
-inline Eigen::MatrixXd powerCoefficients(
-    const std::array<Eigen::Vector3d, kDegree + 1>& controls,
+// Construct the power basis from the endpoint PVAJ contract directly. The
+// equivalent Bernstein-to-power expansion subtracts nearly equal position
+// controls and then divides by T, T^2, or T^3. On short pieces that can erase
+// several digits from an otherwise exact initial derivative. Solving the
+// constant normalized-time Hermite boundary system in long double preserves
+// the same degree-seven curve without that avoidable cancellation.
+inline Eigen::MatrixXd hermitePowerCoefficients(
+    const navigation_math::StatePVAJ& start,
+    const navigation_math::StatePVAJ& end,
     const double duration_s) {
   Eigen::MatrixXd coefficients(3, kDegree + 1);
   coefficients.setZero();
-  constexpr std::array<double, kDegree + 1> choose_degree{
-      1.0, 7.0, 21.0, 35.0, 35.0, 21.0, 7.0, 1.0};
-  constexpr std::array<std::array<double, kDegree + 1>, kDegree + 1> choose{
-      std::array<double, 8>{1, 0, 0, 0, 0, 0, 0, 0},
-      std::array<double, 8>{1, 1, 0, 0, 0, 0, 0, 0},
-      std::array<double, 8>{1, 2, 1, 0, 0, 0, 0, 0},
-      std::array<double, 8>{1, 3, 3, 1, 0, 0, 0, 0},
-      std::array<double, 8>{1, 4, 6, 4, 1, 0, 0, 0},
-      std::array<double, 8>{1, 5, 10, 10, 5, 1, 0, 0},
-      std::array<double, 8>{1, 6, 15, 20, 15, 6, 1, 0},
-      std::array<double, 8>{1, 7, 21, 35, 35, 21, 7, 1}};
-  double duration_power = 1.0;
-  for (int power = 0; power <= kDegree; ++power) {
-    Eigen::Vector3d coefficient = Eigen::Vector3d::Zero();
-    for (int control = 0; control <= power; ++control) {
-      const double sign = ((power - control) % 2 == 0) ? 1.0 : -1.0;
-      coefficient += sign * choose_degree[power] * choose[power][control] *
-          controls[control];
-    }
-    coefficients.col(kDegree - power) = coefficient / duration_power;
-    duration_power *= duration_s;
+  if (!start.allFinite() || !end.allFinite() ||
+      !std::isfinite(duration_s) || duration_s <= 0.0) {
+    coefficients.setConstant(std::numeric_limits<double>::quiet_NaN());
+    return coefficients;
+  }
+
+  const long double duration = static_cast<long double>(duration_s);
+  const long double duration2 = duration * duration;
+  const long double duration3 = duration2 * duration;
+  const long double duration4 = duration3 * duration;
+  const long double duration5 = duration4 * duration;
+  const long double duration6 = duration5 * duration;
+  const long double duration7 = duration6 * duration;
+  for (int axis = 0; axis < 3; ++axis) {
+    const long double a0 = static_cast<long double>(start(axis, 0));
+    const long double a1 = duration * static_cast<long double>(start(axis, 1));
+    const long double a2 = duration2 * static_cast<long double>(start(axis, 2)) / 2.0L;
+    const long double a3 = duration3 * static_cast<long double>(start(axis, 3)) / 6.0L;
+    const long double r0 = static_cast<long double>(end(axis, 0)) -
+        (a0 + a1 + a2 + a3);
+    const long double r1 = duration * static_cast<long double>(end(axis, 1)) -
+        (a1 + 2.0L * a2 + 3.0L * a3);
+    const long double r2 = duration2 * static_cast<long double>(end(axis, 2)) -
+        (2.0L * a2 + 6.0L * a3);
+    const long double r3 = duration3 * static_cast<long double>(end(axis, 3)) -
+        6.0L * a3;
+    const long double a4 = 35.0L * r0 - 15.0L * r1 + 2.5L * r2 - r3 / 6.0L;
+    const long double a5 = -84.0L * r0 + 39.0L * r1 - 7.0L * r2 + r3 / 2.0L;
+    const long double a6 = 70.0L * r0 - 34.0L * r1 + 6.5L * r2 - r3 / 2.0L;
+    const long double a7 = -20.0L * r0 + 10.0L * r1 - 2.0L * r2 + r3 / 6.0L;
+
+    coefficients(axis, 7) = start(axis, 0);
+    coefficients(axis, 6) = start(axis, 1);
+    coefficients(axis, 5) = 0.5 * start(axis, 2);
+    coefficients(axis, 4) = start(axis, 3) / 6.0;
+    coefficients(axis, 3) = static_cast<double>(a4 / duration4);
+    coefficients(axis, 2) = static_cast<double>(a5 / duration5);
+    coefficients(axis, 1) = static_cast<double>(a6 / duration6);
+    coefficients(axis, 0) = static_cast<double>(a7 / duration7);
   }
   return coefficients;
 }
@@ -323,7 +348,9 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
       return output;
     }
     const Eigen::MatrixXd coefficients =
-        corridor_bezier_detail::powerCoefficients(controls, durations_s(piece));
+        corridor_bezier_detail::hermitePowerCoefficients(
+            states[static_cast<std::size_t>(piece)],
+            states[static_cast<std::size_t>(piece + 1)], durations_s(piece));
     if (!coefficients.allFinite()) {
       output.trajectory.clear();
       output.failure_stage = CorridorBezierSeedFailureStage::kCoefficient;

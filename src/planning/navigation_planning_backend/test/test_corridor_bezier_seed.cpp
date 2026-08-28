@@ -106,6 +106,60 @@ TEST(CorridorBezierSeed, MatchesStraightJunctionVelocityToPieceTiming) {
   EXPECT_NEAR(result.trajectory.getMaxJerRate(), 0.0, 1.0e-5);
 }
 
+TEST(CorridorBezierSeed, ShortOffsetPiecePreservesPvajWithinEvaluationRoundoff) {
+  const auto initial = state(
+      {50.0, -4.7, 2.92}, {1.0, -0.2, 0.05},
+      {0.4, -0.1, 0.02}, {0.2, 0.05, -0.01});
+  const auto terminal = state(
+      {50.18, -4.72, 2.93}, {0.8, -0.1, 0.02},
+      {-0.3, 0.08, -0.01}, {-0.1, -0.03, 0.01});
+  navigation_math::PolyhedraH corridors{
+      box({45.0, -10.0, 0.0}, {55.0, 2.0, 6.0})};
+  navigation_math::Mat3Df junctions(3, 0);
+  navigation_math::VecDf durations(1);
+  durations << 0.18;
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+
+  const auto result =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          initial, terminal, junctions, durations, corridors, mapping,
+          5.0, 1.0e-8);
+  ASSERT_TRUE(result.valid);
+  ASSERT_EQ(result.trajectory.getPieceNum(), 1);
+  const auto& piece = result.trajectory[0];
+  const auto controls =
+      navigation_planning_backend::corridor_bezier_detail::controlPoints(
+          initial, terminal, 0.18);
+  for (int sample = 0; sample <= 10; ++sample) {
+    const double u = static_cast<double>(sample) / 10.0;
+    auto de_casteljau = controls;
+    for (int level = 1;
+         level <= navigation_planning_backend::corridor_bezier_detail::kDegree;
+         ++level) {
+      for (int index = 0;
+           index <= navigation_planning_backend::corridor_bezier_detail::kDegree - level;
+           ++index) {
+        de_casteljau[static_cast<std::size_t>(index)] =
+            (1.0 - u) * de_casteljau[static_cast<std::size_t>(index)] +
+            u * de_casteljau[static_cast<std::size_t>(index + 1)];
+      }
+    }
+    EXPECT_NEAR((piece.getPos(0.18 * u) - de_casteljau[0]).norm(),
+                0.0, 1.0e-9);
+  }
+  const auto initial_residual =
+      (navigation_planning_backend::pieceState(piece, 0.0) - initial).cwiseAbs();
+  const auto terminal_residual =
+      (navigation_planning_backend::pieceState(piece, 0.18) - terminal).cwiseAbs();
+  EXPECT_TRUE((initial_residual.array() <=
+               navigation_planning_backend::pieceStateRoundoffBound(
+                   piece, 0.0).array()).all());
+  EXPECT_TRUE((terminal_residual.array() <=
+               navigation_planning_backend::pieceStateRoundoffBound(
+                   piece, 0.18).array()).all());
+}
+
 TEST(CorridorBezierSeed, ReducesJunctionVelocityToContainACorner) {
   navigation_math::PolyhedraH corridors{
       box({-1.0, -0.1, 2.0}, {10.5, 2.0, 4.0}),

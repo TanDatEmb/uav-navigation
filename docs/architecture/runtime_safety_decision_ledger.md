@@ -10752,3 +10752,52 @@ release profiles must not use the former allowance.
   --gtest_color=no`; then `make build && make test`; then repeat the exact
   `long_three_pillars_multiwaypoint` scenario and compare against
   `external-mode-check-20260828T191726-1487080`.
+
+### 2026-08-29 - Preserve deterministic seed PVAJ through basis conversion
+
+- **Owner/status:** Nominal deterministic-seed construction and numerical
+  boundary certificate, correctness fix, `PROVISIONAL` pending repeated SITL.
+- **Scope:** Keep Bernstein control points as the convex-corridor construction
+  and containment proof, but generate the equivalent degree-seven power basis
+  from the endpoint PVAJ Hermite system in normalized time. Initial P/V/A/J
+  coefficients are stored directly; the constant four-by-four terminal system
+  is evaluated in `long double` before conversion to the executable basis.
+- **Safety impact:** No corridor tolerance, V/A/J limit, flatness envelope,
+  route-boundary gate, world sweep, deadline or fallback rule changes. The
+  converted trajectory is still subjected to the complete continuous
+  corridor, exact endpoint/junction, analytic dynamics and flatness
+  certificates. Non-finite coefficients remain fail-closed.
+- **Behavioral reason:** Exact-HEAD artifact
+  `external-mode-check-20260828T193725-1510526` confirmed the executable-clock
+  fix (three emergency replacements and zero false command-boundary messages),
+  but stopped after accepting waypoints `[0,1,2,3]`. Of 57 solves, 51
+  deterministic seeds failed the boundary stage. Logged initial acceleration
+  and jerk residuals were commonly `1e-13` to `7e-11`, while the evaluator-only
+  roundoff bound could be `1e-15` to `3e-11`. The old Bernstein expansion
+  formed derivatives by subtracting nearly equal position controls and
+  dividing by short powers of duration, so the certificate measured
+  construction cancellation that its evaluator-only bound did not model.
+- **False-accept/false-reject consequences:** This removes the avoidable
+  cancellation rather than increasing an acceptance epsilon. A physically
+  mismatched boundary remains rejected by the unchanged certificate. The
+  direct power curve is compared with de Casteljau evaluation in regression
+  tests, and its endpoint residuals must remain within the existing
+  machine-epsilon-derived evaluation bound.
+- **Runtime cost and evidence required:** Constant work per piece (three axes,
+  fixed formulas), replacing a nested degree-seven expansion. Focused corridor
+  seed and optimizer tests, Release build and full tests must pass. Repeated
+  5 m/s SITL must show boundary-stage failures collapse without increased
+  corridor violation, collision, clearance loss, dynamic violation, yaw or
+  altitude regression, and must quantify planning p50/p95/p99.
+- **Removal/review condition:** Preserve direct Hermite construction while
+  `Piece` executes a power basis. Replace only with a native Bernstein
+  trajectory representation whose evaluation and certificates avoid the
+  lossy conversion entirely.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_corridor_bezier_seed test_exp_optimizer_seed -j2 &&
+  ./build/navigation_planning_backend/test_corridor_bezier_seed
+  --gtest_color=no &&
+  ./build/navigation_planning_backend/test_exp_optimizer_seed
+  --gtest_color=no`; then `make build && make test`; then repeat the exact
+  `long_three_pillars_multiwaypoint` 5 m/s scenario and compare against
+  `external-mode-check-20260828T193725-1510526`.
