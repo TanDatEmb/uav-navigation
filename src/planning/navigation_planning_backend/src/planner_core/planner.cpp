@@ -2395,6 +2395,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 " -- [planner] backup certificate selected without a braking polynomial");
             return OPT_FAILED;
         }
+        // The selected candidate SFC is the geometric contract for the backup
+        // optimizer.  Keep it attached to BackupTraj before refinement and
+        // before exporting the warm-start condition; otherwise the optimizer
+        // receives its default empty polytope and rejects every valid seed as
+        // "Invalid corridor planes".
+        back_traj_info.setSFC(temp_poly);
         if (cfg_.print_log && initial_switch_guess - heu_ts > cfg_.sample_traj_dt_s * 0.5) {
             planner_context_->info(
                     " -- [planner] moved backup switch backward from {} to {} for certified hull",
