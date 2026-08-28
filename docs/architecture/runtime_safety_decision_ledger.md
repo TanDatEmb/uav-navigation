@@ -10889,3 +10889,37 @@ release profiles must not use the former allowance.
   ./build/navigation_planning_backend/test_exp_optimizer_seed
   --gtest_color=no`; then `make build && make test`; then repeated exact 5 m/s
   `long_three_pillars_multiwaypoint` SITL and representative dataset checks.
+
+### 2026-08-29 - Bound trajectory indexing and cumulative time arithmetic
+
+- **Owner/status:** Planning trajectory container and slicing API,
+  correctness hardening, `VERIFIED` by focused regression tests.
+- **Scope:** Reject trajectory construction whose piece count cannot be
+  represented by the legacy integer API, use `size_t` for reservation, and
+  make indexed piece access throw on negative or out-of-range indices. Reject
+  non-finite cumulative waypoint times and partial trajectories whose derived
+  command wall time overflows. Guard concatenation and append size arithmetic.
+- **Safety impact:** No path geometry, dynamics, corridor, mission, deadline,
+  acceptance or fallback policy changes. Malformed or unrepresentable public
+  API inputs now fail closed instead of relying on narrowing conversion,
+  unchecked vector indexing, or propagating `+inf` command timestamps.
+- **Behavioral reason:** `Trajectory(const vector&, ...)` narrowed
+  `vector::size_type` to `int` before validation; `getPieceNum`, `reserve`, and
+  unchecked `operator[]` repeated the implicit integer contract. Waypoint and
+  partial-trajectory paths accumulated duration and start wall time without
+  checking each sum, allowing individually finite values to overflow.
+- **False-accept/false-reject consequences:** Valid product trajectories are
+  unchanged. Invalid indices now produce a deterministic exception at the API
+  boundary; cumulative overflow returns NaN/false and clears partial output.
+  No tolerance is added and no malformed trajectory is made executable.
+- **Runtime cost and evidence:** Constant-time bounds checks on indexed access
+  and finite checks during existing duration loops. Focused tests cover
+  negative/high indices, cumulative duration overflow, partial-ID wall-time
+  overflow and partial-time wall-time overflow; the complete trajectory suite
+  passes 100/100.
+- **Removal/review condition:** Keep while the public trajectory API exposes
+  integer piece identifiers. A future `size_t`/optional API may replace the
+  compatibility checks only with equivalent fail-closed semantics.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.

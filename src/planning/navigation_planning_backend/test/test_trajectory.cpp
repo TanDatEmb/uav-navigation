@@ -414,6 +414,41 @@ TEST(PlannerTrajectory, TrajectoryRejectsMismatchedDurationAndCoefficientInputs)
                std::invalid_argument);
 }
 
+TEST(PlannerTrajectory, PieceAccessRejectsOutOfRangeIndices) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory trajectory({1.0}, {coefficients});
+
+  EXPECT_THROW(static_cast<void>(trajectory[-1]), std::out_of_range);
+  EXPECT_THROW(static_cast<void>(trajectory[1]), std::out_of_range);
+}
+
+TEST(PlannerTrajectory, CumulativeTimeOverflowFailsClosed) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  const double large_duration = std::numeric_limits<double>::max() * 0.75;
+  geometry_utils::Trajectory trajectory(
+      {large_duration, large_duration}, {coefficients, coefficients});
+
+  EXPECT_FALSE(std::isfinite(trajectory.getTotalDuration()));
+  EXPECT_FALSE(std::isfinite(trajectory.getWaypointTT(1)));
+
+  trajectory.start_WT = std::numeric_limits<double>::max();
+  geometry_utils::Trajectory partial;
+  EXPECT_FALSE(trajectory.getPartialTrajectoryByID(1, -1, partial));
+  EXPECT_TRUE(partial.empty());
+}
+
+TEST(PlannerTrajectory, PartialTimeSliceRejectsWallTimeOverflow) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  const double maximum = std::numeric_limits<double>::max();
+  geometry_utils::Trajectory trajectory({maximum * 0.75}, {coefficients});
+  trajectory.start_WT = maximum * 0.75;
+  geometry_utils::Trajectory partial;
+
+  EXPECT_FALSE(trajectory.getPartialTrajectoryByTime(
+      maximum * 0.5, maximum * 0.6, partial));
+  EXPECT_TRUE(partial.empty());
+}
+
 TEST(PlannerTrajectory, InvalidTrajectoryEvaluationFailsClosed) {
   geometry_utils::Trajectory empty;
   navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();

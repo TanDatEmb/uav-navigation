@@ -31,6 +31,9 @@
 #ifndef GEOMETRY_UTILS_TRAJECTORY_H
 #define GEOMETRY_UTILS_TRAJECTORY_H
 
+#include <cstddef>
+#include <stdexcept>
+
 #include <data_structure/base/piece.h>
 #include "utils/header/color_msg_utils.hpp"
 
@@ -57,6 +60,10 @@ namespace geometry_utils {
 
         Trajectory operator+(const Trajectory& traj_in) const {
             Trajectory new_traj;
+            if (traj_in.pieces.size() >
+                new_traj.pieces.max_size() - pieces.size()) {
+                throw std::length_error("combined trajectory is too large");
+            }
             new_traj.pieces.reserve(pieces.size() + traj_in.pieces.size());
             new_traj.pieces.insert(new_traj.pieces.end(), pieces.begin(), pieces.end());
             new_traj.pieces.insert(new_traj.pieces.end(), traj_in.pieces.begin(),
@@ -77,11 +84,13 @@ namespace geometry_utils {
         double getTotalDuration() const;
 
         const Piece& operator[](int i) const {
-            return pieces[i];
+            if (i < 0) throw std::out_of_range("negative trajectory piece index");
+            return pieces.at(static_cast<std::size_t>(i));
         }
 
         Piece& operator[](int i) {
-            return pieces[i];
+            if (i < 0) throw std::out_of_range("negative trajectory piece index");
+            return pieces.at(static_cast<std::size_t>(i));
         }
 
         void clear();
@@ -106,7 +115,7 @@ namespace geometry_utils {
             return pieces.size();
         }
 
-        void reserve(const int& n);
+        void reserve(std::size_t n);
 
         void emplace_back(const Piece& piece);
 
@@ -117,7 +126,7 @@ namespace geometry_utils {
 
         int locatePieceIdx(double& t) const;
 
-        double getWaypointTT(const int& waypoint_id) const;
+        double getWaypointTT(int waypoint_id) const;
 
         Eigen::Vector3d getPos(double t) const;
 

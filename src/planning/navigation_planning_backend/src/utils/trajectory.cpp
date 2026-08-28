@@ -14,7 +14,7 @@
 using namespace geometry_utils;
 using namespace navigation_math;
 using namespace color_text;
-// Trasjectory==================================================
+// Trajectory===================================================
 
 namespace {
 
@@ -89,8 +89,11 @@ Trajectory::Trajectory(const std::vector<double> &durs,
         throw std::invalid_argument(
             "trajectory durations and coefficient matrices must have equal sizes");
     }
+    if (durs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw std::length_error("trajectory piece count exceeds the supported range");
+    }
     const int N = static_cast<int>(durs.size());
-    pieces.reserve(N);
+    pieces.reserve(durs.size());
     for (int i = 0; i < N; i++) {
         pieces.emplace_back(durs[i], cMats[i]);
     }
@@ -114,7 +117,10 @@ bool Trajectory::empty() const  {
 }
 
 int Trajectory::getPieceNum() const {
-    return pieces.size();
+    if (pieces.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw std::length_error("trajectory piece count exceeds the supported range");
+    }
+    return static_cast<int>(pieces.size());
 }
 
 Eigen::VectorXd Trajectory::getDurations() const {
@@ -146,9 +152,8 @@ void Trajectory::clear() {
     return;
 }
 
-void Trajectory::reserve(const int &n) {
+void Trajectory::reserve(const std::size_t n) {
     pieces.reserve(n);
-    return;
 }
 
 void Trajectory::emplace_back(const Piece &piece) {
@@ -163,8 +168,10 @@ void Trajectory::emplace_back(const double &dur,
 }
 
 void Trajectory::append(const Trajectory &traj) {
+    if (traj.pieces.size() > pieces.max_size() - pieces.size()) {
+        throw std::length_error("appended trajectory is too large");
+    }
     pieces.insert(pieces.end(), traj.begin(), traj.end());
-    return;
 }
 
 int Trajectory::locatePieceIdx(double &t) const {
@@ -191,7 +198,7 @@ int Trajectory::locatePieceIdx(double &t) const {
     return N - 1;
 }
 
-double Trajectory::getWaypointTT(const int &waypoint_id) const {
+double Trajectory::getWaypointTT(const int waypoint_id) const {
     if (waypoint_id < 0 || waypoint_id >= getPieceNum()) {
         return std::numeric_limits<double>::quiet_NaN();
     }
@@ -201,6 +208,9 @@ double Trajectory::getWaypointTT(const int &waypoint_id) const {
             return std::numeric_limits<double>::quiet_NaN();
         }
         t += pieces[i].getDuration();
+        if (!std::isfinite(t)) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
     }
     return t;
 }
@@ -305,12 +315,20 @@ bool Trajectory::getPartialTrajectoryByID(const int &start_id, const int &end_id
     double start_time = 0.0;
     for (int i = 0; i < end_id_; ++i) {
         if (!validPiece(pieces[i])) return false;
-        if (i < start_id) start_time += pieces[i].getDuration();
+        if (i < start_id) {
+            start_time += pieces[i].getDuration();
+            if (!std::isfinite(start_time)) return false;
+        }
     }
     for (int i = start_id; i < end_id_; ++i) {
         out_traj.emplace_back(pieces[i]);
     }
-    out_traj.start_WT = start_WT + start_time;
+    const double partial_start_wall_time = start_WT + start_time;
+    if (!std::isfinite(partial_start_wall_time)) {
+        out_traj.clear();
+        return false;
+    }
+    out_traj.start_WT = partial_start_wall_time;
     return true;
 }
 
@@ -326,6 +344,8 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
     if (end_TT <= start_TT) {
         return false;
     }
+    const double partial_start_wall_time = start_WT + start_TT;
+    if (!std::isfinite(partial_start_wall_time)) return false;
 
     if (start_TT == 0) {
         // Only the final piece duration changes; its local polynomial remains
@@ -339,7 +359,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         Piece new_pie = pieces[pieceEndIdx];
         new_pie.setDuration(end_local_t);
         out_traj.emplace_back(new_pie);
-        out_traj.start_WT = start_WT;
+        out_traj.start_WT = partial_start_wall_time;
         return true;
     }
 
@@ -373,7 +393,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         Piece new_pie(p1_t, coef_mat);
         out_traj.pieces.push_back(new_pie);
         if (pieceIdx == pieceEndIdx) {
-            out_traj.start_WT = start_WT + start_TT;
+            out_traj.start_WT = partial_start_wall_time;
             return true;
         }
         // Append the untouched interior pieces and a truncated final piece.
@@ -383,7 +403,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         Eigen::MatrixXd end_coef = pieces[pieceEndIdx].getCoeffMat();
         Piece new_pie_end(local_end_t, end_coef);
         out_traj.pieces.push_back(new_pie_end);
-        out_traj.start_WT = start_WT + start_TT;
+        out_traj.start_WT = partial_start_wall_time;
         return true;
     } else if (pieces[pieceIdx].getDegree() == 7) {
         double t02 = t0 * t0;
@@ -410,7 +430,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         Piece new_pie(p1_t, coef_mat);
         out_traj.pieces.push_back(new_pie);
         if (pieceIdx == pieceEndIdx) {
-            out_traj.start_WT = start_WT + start_TT;
+            out_traj.start_WT = partial_start_wall_time;
             return true;
         }
         // Append the untouched interior pieces and a truncated final piece.
@@ -420,7 +440,7 @@ bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double
         Eigen::MatrixXd end_coef = pieces[pieceEndIdx].getCoeffMat();
         Piece new_pie_end(local_end_t, end_coef);
         out_traj.pieces.push_back(new_pie_end);
-        out_traj.start_WT = start_WT + start_TT;
+        out_traj.start_WT = partial_start_wall_time;
         return true;
 
     } else {
