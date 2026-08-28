@@ -23,10 +23,11 @@ planner:
   # 5 m/s^2 acceleration and 12 m/s^3 jerk limits, a fail-closed stop plus two
   # replan-forward intervals and the 0.8 m body/error tube requires 22.5 m.
   visibility_horizon_cap_m: 23.0
-  # Preserve the measured-stable local CIRI problem size at ordinary mission
-  # speeds. Config raises it only when the actual mission braking envelope
-  # requires more visibility, up to the product cap above.
-  visibility_horizon_floor_m: 14.0
+  # Use the complete certified local visibility budget at every mission speed.
+  # The global route remains the long-range backbone; this longer local window
+  # gives a failed replacement solve more than one short 14 m trajectory to
+  # recover without changing speed, safety radius, or UNKNOWN semantics.
+  visibility_horizon_floor_m: 23.0
   # One CIRI pass already separates every occupied point from the seed line.
     # Additional passes only enlarge the inscribed volume and create an
     # unbounded latency tail near dense obstacle surfaces.

@@ -9551,3 +9551,32 @@ release profiles must not use the former allowance.
   reach waypoint 1 and speed p95 was 4.408 m/s. Keep the tracking gate and
   mission threshold unchanged; review repeated tracking-error evidence and the
   main/backup trajectory contract before any threshold decision.
+
+### 2026-08-28 - Use the complete certified local visibility budget
+
+- **Owner:** Planner global-route/local-visibility horizon contract.
+- **Scope:** Raise the ordinary-speed visibility floor from 14 m to the
+  existing 23 m cap. The 45 m global route window remains the geometric
+  backbone and the executable trajectory remains bounded by current map
+  evidence, corridor generation and the existing main/backup certificate.
+- **Safety impact:** Speed, acceleration, jerk, collision radius, UNKNOWN and
+  OUT_OF_MAP policy, solve deadline, command freshness and PX4 gates are
+  unchanged. This increases local search/corridor/optimization work and must be
+  rejected if latency tails, feasibility or map containment regress.
+- **Evidence:** Across exact-head three-column artifacts, successful local
+  trajectories are repeatedly followed by bursts of replacement-plan failure;
+  artifact `.artifacts/runtime/external-mode-check-20260828T132546-1159975`
+  committed `99/163` solves and still entered a retained suffix before stopping
+  at about 82 m. Its planner total p95 was 45.975 ms under the 180 ms deadline,
+  leaving measured compute headroom for an A/B of the already configured 23 m
+  cap. This change is not evidence that 23 m is accepted.
+- **Removal/review condition:** Revert to 14 m if repeated SITL or recorded-data
+  distributions show deadline, dynamics-stage, clearance or continuity
+  regression. Replace fixed local visibility only with a bounded adaptive
+  policy derived from map extent, braking horizon and measured latency tails.
+- **Verification:** Run planner config/backend/workspace tests and Release
+  build. Compare exact-head repeated three-column runs against the cited 14 m
+  artifacts for guide length, commit ratio, planning p50/p95/p99, command
+  suspension/recovery, speed continuity, tracking, clearance and mission
+  completion. Do not change the 180 ms deadline or tracking envelope during
+  this A/B.
