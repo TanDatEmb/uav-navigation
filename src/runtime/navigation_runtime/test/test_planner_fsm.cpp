@@ -92,6 +92,41 @@ TEST(PlannerFsm, SupersedingCertifiedBundleDoesNotRevokeCommandAvailability) {
       41, 41, 7, 9, 7, 9, 1200, 1100, true, false, false));
 }
 
+TEST(PlannerFsm, DefersNominalReplacementOnlyOutsideBoundedRetryReserve) {
+  // MAIN boundary at 2.0 s, current time 0.5 s. The 0.18 s solve deadline and
+  // three 0.2 s retry ticks require 0.78 s, so this command can be retained.
+  EXPECT_TRUE(nominalReplacementMayBeDeferred(
+      true, false, false, false, true, true,
+      0.5, 2.0, 5.0, 0.18, 0.2, 3));
+  EXPECT_FALSE(nominalReplacementMayBeDeferred(
+      true, false, false, false, true, true,
+      1.25, 2.0, 5.0, 0.18, 0.2, 3));
+
+  // A main-only bundle uses its declared end as the wake-up boundary.
+  EXPECT_TRUE(nominalReplacementMayBeDeferred(
+      true, false, false, false, true, false,
+      1.0, 0.0, 4.0, 0.18, 0.2, 3));
+
+  EXPECT_FALSE(nominalReplacementMayBeDeferred(
+      false, false, false, false, true, true,
+      0.5, 2.0, 5.0, 0.18, 0.2, 3));
+  EXPECT_FALSE(nominalReplacementMayBeDeferred(
+      true, true, false, false, true, true,
+      0.5, 2.0, 5.0, 0.18, 0.2, 3));
+  EXPECT_FALSE(nominalReplacementMayBeDeferred(
+      true, false, true, false, true, true,
+      0.5, 2.0, 5.0, 0.18, 0.2, 3));
+  EXPECT_FALSE(nominalReplacementMayBeDeferred(
+      true, false, false, true, true, true,
+      0.5, 2.0, 5.0, 0.18, 0.2, 3));
+  EXPECT_FALSE(nominalReplacementMayBeDeferred(
+      true, false, false, false, false, true,
+      0.5, 2.0, 5.0, 0.18, 0.2, 3));
+  EXPECT_FALSE(nominalReplacementMayBeDeferred(
+      true, false, false, false, true, true,
+      0.5, 2.0, 5.0, 0.18, 0.2, 0));
+}
+
 TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kSuccess, false, true, false),
             PlannerResultDisposition::FailClosed);

@@ -155,6 +155,46 @@ inline bool supersedingBundleMayRemainAvailable(
          !planner_failure_latched && execution_lease_allows_command;
 }
 
+// A certified command does not need replacement on every timer tick. Mapping
+// independently revalidates it against each published world snapshot. Defer a
+// nominal replacement only while the MAIN interval has enough time for one
+// full solve plus a bounded number of subsequent timer attempts. Once inside
+// that reserve (or while draining a safety suffix), the normal planner rate is
+// restored automatically.
+inline bool nominalReplacementMayBeDeferred(
+    bool command_available,
+    bool planner_failure_latched,
+    bool safety_suffix_active,
+    bool trajectory_finished,
+    bool bundle_valid,
+    bool backup_available,
+    double elapsed_s,
+    double backup_start_s,
+    double total_duration_s,
+    double solve_deadline_s,
+    double planning_period_s,
+    std::uint32_t reserved_retry_ticks) noexcept {
+  if (!command_available || planner_failure_latched || safety_suffix_active ||
+      trajectory_finished || !bundle_valid || reserved_retry_ticks == 0U ||
+      !std::isfinite(elapsed_s) || !std::isfinite(backup_start_s) ||
+      !std::isfinite(total_duration_s) || !std::isfinite(solve_deadline_s) ||
+      !std::isfinite(planning_period_s) || elapsed_s < 0.0 ||
+      total_duration_s <= elapsed_s || solve_deadline_s <= 0.0 ||
+      planning_period_s <= 0.0) {
+    return false;
+  }
+  const double nominal_boundary_s = backup_available
+      ? backup_start_s : total_duration_s;
+  if (!std::isfinite(nominal_boundary_s) || nominal_boundary_s <= elapsed_s ||
+      nominal_boundary_s > total_duration_s) {
+    return false;
+  }
+  const double replacement_reserve_s = solve_deadline_s +
+      planning_period_s * static_cast<double>(reserved_retry_ticks);
+  return std::isfinite(replacement_reserve_s) &&
+      nominal_boundary_s - elapsed_s > replacement_reserve_s;
+}
+
 // Bounds consecutive rest-to-rest solve failures for one logical waypoint.
 // This state belongs to the mission/planner FSM, not to the optimizer: a
 // transient startup miss may be retried, but an unreachable goal must not be
