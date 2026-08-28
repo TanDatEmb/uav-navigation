@@ -160,6 +160,58 @@ namespace geometry_utils {
         double terminal_velocity_mps{0.0};
     };
 
+    // Corridor generation has a bounded line-seed contract.  A* may return a
+    // sparse path whose final direct edge is longer than that contract even
+    // though the complete polyline is collision-free.  Preserve every source
+    // waypoint while inserting deterministic interior samples for long edges.
+    inline bool subdividePathByMaximumSegmentLength(
+        const vec_Vec3f &path, const double max_segment_length,
+        vec_Vec3f &subdivided_path) {
+        subdivided_path.clear();
+        if (path.empty() || !std::isfinite(max_segment_length) ||
+            max_segment_length <= 0.0) {
+            return false;
+        }
+
+        constexpr std::size_t kMaximumSubsegmentsPerEdge = 4096U;
+        subdivided_path.reserve(path.size());
+        subdivided_path.emplace_back(path.front());
+        for (std::size_t index = 1U; index < path.size(); ++index) {
+            const Vec3f &start = path[index - 1U];
+            const Vec3f &end = path[index];
+            if (!start.allFinite() || !end.allFinite()) {
+                subdivided_path.clear();
+                return false;
+            }
+            const double segment_length = (end - start).norm();
+            if (!std::isfinite(segment_length)) {
+                subdivided_path.clear();
+                return false;
+            }
+            const double segment_ratio = segment_length / max_segment_length;
+            if (!std::isfinite(segment_ratio) ||
+                segment_ratio > static_cast<double>(kMaximumSubsegmentsPerEdge)) {
+                subdivided_path.clear();
+                return false;
+            }
+            const std::size_t segment_count = std::max<std::size_t>(
+                1U, static_cast<std::size_t>(std::ceil(segment_ratio)));
+            for (std::size_t segment = 1U; segment <= segment_count; ++segment) {
+                if (segment == segment_count) {
+                    // Keep the caller's exact endpoint rather than accumulating
+                    // interpolation roundoff across a long guide.
+                    subdivided_path.emplace_back(end);
+                    continue;
+                }
+                const double fraction = static_cast<double>(segment) /
+                    static_cast<double>(segment_count);
+                subdivided_path.emplace_back(
+                    start + static_cast<float>(fraction) * (end - start));
+            }
+        }
+        return true;
+    }
+
     inline bool allocateGuideElapsedTimes(const double a_max,
                                            const double v_max,
                                            const double initial_speed,

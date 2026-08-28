@@ -7457,3 +7457,38 @@ release profiles must not use the former allowance.
   make external-mode-check` and the declared dataset shadow-planning replay,
   inspecting corner cap, route-boundary diagnostics, waypoint order, speed,
   altitude, clearance, strict backup, and p50/p95/p99 planning latency.
+
+### 2026-08-28 - Normalize every guide edge before bounded corridor seeding
+
+- **Owner:** Corridor-generation and navigation-planning maintainers.
+- **Scope:** Before CIRI corridor construction, every finite guide-path edge is
+  deterministically subdivided so each line seed is no longer than the existing
+  `seed_line_max_length` contract. Exact source endpoints, including marked
+  pass-through route boundaries, are retained; a bounded per-edge subsegment
+  limit rejects malformed or unbounded input.
+- **Safety impact:** `SAFETY_INVARIANT` preservation. This closes a frontend
+  consistency hole where a collision-free A* guide with a sparse final edge
+  could be rejected by the corridor hard bound after the planner had already
+  produced a valid visible prefix. It does not permit an overlong CIRI seed,
+  bypass occupancy/UNKNOWN/OUT_OF_MAP checks, or relax overlap, corridor,
+  dynamic, swept-world, backup, identity, freshness, anchor, or deadline gates.
+- **Derivation and cost:** The maximum segment length is the existing bounded
+  corridor-seed owner; inserted samples are linear interpolation only and do
+  not change route geometry. At most `ceil(edge_length / max_seed_length)`
+  bounded samples are added per edge, with no extra optimizer or planner pass.
+- **Evidence:** The geometry characterization tests cover a 6 m waypoint edge
+  and a following 5.7 m outgoing edge with a 3 m seed bound, exact endpoint
+  preservation, maximum edge length, and invalid-input rejection. Build and
+  planner/trajectory/runtime tests must pass; the structured three-pillar SITL
+  must show no `seed line max` rejection and must still verify route completion,
+  speed, altitude, clearance, strict backup, and p50/p95/p99 latency.
+- **Removal/review condition:** Revisit if subdivision changes waypoint
+  ordering or PVA continuity, increases CIRI/optimizer tails, creates false
+  corridor feasibility, or regresses collision/clearance or mission
+  completion. Do not increase the seed bound to hide a sparse-guide failure.
+- **Verification:** `make build`; source `install/setup.bash` and run focused
+  planner/trajectory/mission/runtime tests; then repeat
+  `SPEED_CAP_MPS=3 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check`, inspecting bounded seed diagnostics, waypoint order,
+  speed recovery, altitude, clearance, strict backup, and p50/p95/p99 planning
+  latency.

@@ -1208,6 +1208,37 @@ TEST(PlannerTrajectory, GuideTimeAllocationUsesPointAlignedTravelledDistance) {
   }
 }
 
+TEST(PlannerTrajectory, SubdividesEverySparseGuideEdgeForCorridorSeeds) {
+  const navigation_math::vec_Vec3f path{
+      navigation_math::Vec3f{44.0F, 5.0F, 3.0F},
+      navigation_math::Vec3f{50.0F, 5.0F, 3.0F},
+      navigation_math::Vec3f{50.0F, -0.7F, 3.0F}};
+  navigation_math::vec_Vec3f subdivided;
+  ASSERT_TRUE(geometry_utils::subdividePathByMaximumSegmentLength(
+      path, 3.0, subdivided));
+  ASSERT_EQ(subdivided.front(), path.front());
+  ASSERT_EQ(subdivided.back(), path.back());
+  ASSERT_EQ(subdivided.size(), 5U);
+  for (std::size_t index = 1U; index < subdivided.size(); ++index) {
+    EXPECT_LE((subdivided[index] - subdivided[index - 1U]).norm(), 3.0 + 1.0e-6);
+  }
+  EXPECT_TRUE(subdivided[2].isApprox(navigation_math::Vec3f{50.0F, 5.0F, 3.0F}));
+}
+
+TEST(PlannerTrajectory, SparseGuideSubdivisionRejectsInvalidInputs) {
+  navigation_math::vec_Vec3f subdivided;
+  EXPECT_FALSE(geometry_utils::subdividePathByMaximumSegmentLength(
+      {}, 3.0, subdivided));
+  EXPECT_FALSE(geometry_utils::subdividePathByMaximumSegmentLength(
+      navigation_math::vec_Vec3f{navigation_math::Vec3f::Zero()}, 0.0, subdivided));
+  EXPECT_FALSE(geometry_utils::subdividePathByMaximumSegmentLength(
+      navigation_math::vec_Vec3f{
+          navigation_math::Vec3f::Zero(),
+          navigation_math::Vec3f{
+              std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.0F}},
+      3.0, subdivided));
+}
+
 TEST(PlannerTrajectory, GuideTimeAllocationPreservesNonZeroInitialSpeedOnShortPath) {
   const navigation_math::Vec3f start(0.0, 0.0, 0.0);
   const navigation_math::vec_Vec3f short_path{

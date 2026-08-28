@@ -68,12 +68,21 @@ namespace navigation_planning_backend {
             return false;
         }
 
-        // A* allocation can leave one long final segment before the active
-        // waypoint. The normal corridor search deliberately rejects line
-        // seeds beyond its bounded length; split only that incoming segment
-        // so the mandatory gate remains representable without allowing a
-        // long unbounded CIRI seed.
-        vec_Vec3f corridor_path = path;
+        // A* allocation can leave sparse direct edges, especially the final
+        // edge into a waypoint. The normal corridor search deliberately
+        // rejects line seeds beyond its bounded length, so normalize every
+        // guide edge before constructing any CIRI seed. This keeps the
+        // bounded-seed contract independent of which edge contains a route
+        // boundary and avoids a late hard reject that strands the committed
+        // trajectory at the previous safe prefix.
+        vec_Vec3f corridor_path;
+        if (!geometry_utils::subdividePathByMaximumSegmentLength(
+                path, seed_line_max_length_, corridor_path)) {
+            planner_context_->warn(
+                " -- [planner] guide path contains invalid or unbounded segment");
+            solve_stage_.store(0);
+            return false;
+        }
         std::optional<std::size_t> route_boundary_index;
         if (route_boundary_gate.has_value()) {
             if (!route_boundary_gate->point.allFinite() ||
@@ -92,32 +101,6 @@ namespace navigation_planning_backend {
                 if (distance < nearest_distance) {
                     nearest_distance = distance;
                     nearest_index = index;
-                }
-            }
-            const double max_seed_length = std::max(1.0e-6, seed_line_max_length_);
-            if (nearest_index > 0U) {
-                const double incoming_length =
-                    (path[nearest_index] - path[nearest_index - 1U]).norm();
-                if (std::isfinite(incoming_length) &&
-                    incoming_length > max_seed_length + 1.0e-6) {
-                    const std::size_t segment_count = static_cast<std::size_t>(
-                        std::ceil(incoming_length / max_seed_length));
-                    corridor_path.clear();
-                    corridor_path.reserve(path.size() + segment_count);
-                    for (std::size_t index = 0; index < path.size(); ++index) {
-                        if (index == nearest_index) {
-                            const Vec3f start = path[index - 1U];
-                            const Vec3f delta = path[index] - start;
-                            for (std::size_t segment = 1U;
-                                 segment < segment_count; ++segment) {
-                                const double fraction = static_cast<double>(segment) /
-                                    static_cast<double>(segment_count);
-                                corridor_path.emplace_back(
-                                    start + static_cast<float>(fraction) * delta);
-                            }
-                        }
-                        corridor_path.emplace_back(path[index]);
-                    }
                 }
             }
             nearest_distance = std::numeric_limits<double>::infinity();
