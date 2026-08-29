@@ -12071,3 +12071,24 @@ release profiles must not use the former allowance.
 - **Removal/review condition:** Keep with the sample-count contract and cap.
 - **Verification:** `cmake --build build/navigation_runtime
   --target test_navigation_runtime_shutdown -j2`; focused test binary.
+
+### 2026-08-29 - Keep route yaw finite for extreme measured angles
+
+- **Owner/status:** Planning route-yaw reference boundary, `VERIFIED` by the
+  focused route-yaw test suite.
+- **Scope:** Reduce measured and target yaw modulo one turn before subtracting
+  them, and reject a non-finite result. This prevents overflow in
+  `target-anchor` from turning a finite input into a valid NaN reference.
+- **Safety impact:** Yaw remains a finite shortest-unwrapped route heading;
+  malformed inputs fail closed as an invalid route reference.
+- **False-accept/false-reject consequences:** Normal headings and terminal
+  route-turn behavior retain their existing semantics. Extreme finite angles
+  are reduced to their physical equivalent instead of being rejected solely
+  because their representation is large.
+- **Runtime cost and evidence:** Two bounded `remainder` operations per active
+  yaw update; `test_route_yaw_reference` passes 10/10.
+- **Removal/review condition:** Keep until yaw is represented by a bounded
+  typed angle at the command boundary.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_planning_backend --target
+  test_route_yaw_reference -j2`; focused test binary.

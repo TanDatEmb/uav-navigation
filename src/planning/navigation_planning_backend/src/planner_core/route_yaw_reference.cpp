@@ -11,7 +11,14 @@ constexpr double kGeometryTieM2 = 1.0e-12;
 
 double unwrapNear(const double anchor, const double target) noexcept {
   if (!std::isfinite(anchor) || !std::isfinite(target)) return anchor;
-  return anchor + std::remainder(target - anchor, 2.0 * M_PI);
+  // Reduce both operands before subtraction.  A finite but extreme measured
+  // yaw can otherwise overflow target-anchor and poison the reference with
+  // NaN even though the desired route bearing is representable.
+  const double normalized_anchor = std::remainder(anchor, 2.0 * M_PI);
+  const double normalized_target = std::remainder(target, 2.0 * M_PI);
+  const double result = normalized_anchor +
+      std::remainder(normalized_target - normalized_anchor, 2.0 * M_PI);
+  return std::isfinite(result) ? result : anchor;
 }
 
 double projectedProgressArc(
@@ -176,6 +183,10 @@ RouteYawReference computeRouteYawReference(
   output.valid = true;
   output.target_yaw_rad = unwrapNear(
       measured_yaw_rad, std::atan2(direction.y(), direction.x()));
+  if (!std::isfinite(output.target_yaw_rad)) {
+    return holdReference(measured_yaw_rad, progress, *target_point,
+                         RouteYawSource::kInvalidRoute);
+  }
   output.lookahead_m = lookahead;
   output.progress_arc_m = progress;
   output.target_point = *target_point;

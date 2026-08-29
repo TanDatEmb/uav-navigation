@@ -10,7 +10,8 @@ class GeometricJumpLatch final {
   bool observeGeometricJump(bool jump);
 
   // PX4 reset/frame generations and gate transitions intentionally have no
-  // method here. Only a new producer-owned public LIO generation may recover.
+  // method here. Only a strictly newer producer-owned public LIO generation
+  // may recover.
   bool observePublicFrameGeneration(bool valid, std::uint64_t generation);
   bool observeOperatorReset(bool requested, std::uint64_t sequence);
 

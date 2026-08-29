@@ -1,6 +1,7 @@
 #include "planner_core/route_yaw_reference.hpp"
 
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -72,6 +73,17 @@ TEST(RouteYawReference, HoldsMeasuredYawAtStandstillAndPureVerticalMotion) {
   EXPECT_DOUBLE_EQ(climbing.target_yaw_rad, -0.8);
 }
 
+TEST(RouteYawReference, ExtremeFiniteMeasuredYawDoesNotProduceNaN) {
+  const auto route = makeSnapshot({
+      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{20.0, 0.0, 3.0}});
+  const auto reference = navigation_planning_backend::computeRouteYawReference(
+      route, Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{4.0, 0.0, 0.0},
+      std::numeric_limits<double>::max());
+  ASSERT_TRUE(reference.valid);
+  EXPECT_TRUE(std::isfinite(reference.target_yaw_rad));
+  EXPECT_NEAR(reference.target_yaw_rad, 0.0, 1.0e-12);
+}
+
 TEST(RouteYawReference, StraightLegTargetDoesNotDependOnTrajectoryGeneration) {
   const auto route = makeSnapshot({
       Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{50.0, 0.0, 3.0}});
@@ -103,6 +115,7 @@ TEST(RouteYawReference, TerminalOvershootKeepsIncomingRouteHeading) {
   route.measured_progress.progress_arc_m = route.total_length_m;
   route.measured_progress.projection.valid = true;
   route.measured_progress.projection.segment_index = 0U;
+  route.measured_progress.projection.segment_fraction = 1.0;
   route.measured_progress.projection.arc_length_m = route.total_length_m;
   route.measured_progress.projection.point = route.waypoints.back().position_enu;
   route.measured_progress.projection.tangent = route.segments.back().tangent;
@@ -110,6 +123,7 @@ TEST(RouteYawReference, TerminalOvershootKeepsIncomingRouteHeading) {
   const Eigen::Vector3d incoming =
       route.waypoints.back().position_enu - route.waypoints.front().position_enu;
   const double incoming_yaw = std::atan2(incoming.y(), incoming.x());
+  ASSERT_TRUE(route.valid());
   const auto reference = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{20.8, 5.2, 3.0},
       Eigen::Vector3d{-0.8, -0.2, 0.0}, 0.2);
@@ -127,9 +141,11 @@ TEST(RouteYawReference, LooksIntoOutgoingCornerBeforeWaypointAcceptance) {
   route.measured_progress.progress_arc_m = 7.0;
   route.measured_progress.projection.valid = true;
   route.measured_progress.projection.segment_index = 0U;
+  route.measured_progress.projection.segment_fraction = 0.7;
   route.measured_progress.projection.arc_length_m = 7.0;
   route.measured_progress.projection.point = Eigen::Vector3d{7.0, 0.0, 3.0};
   route.measured_progress.projection.tangent = Eigen::Vector3d::UnitX();
+  ASSERT_TRUE(route.valid());
   const auto reference = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{8.0, 0.0, 3.0}, Eigen::Vector3d{5.0, 0.0, 0.0}, 0.0);
   ASSERT_TRUE(reference.valid);
@@ -147,9 +163,11 @@ TEST(RouteYawReference, ReversalDoesNotTurnBeforeStopTurnGoBoundary) {
   route.measured_progress.progress_arc_m = 8.0;
   route.measured_progress.projection.valid = true;
   route.measured_progress.projection.segment_index = 0U;
+  route.measured_progress.projection.segment_fraction = 0.8;
   route.measured_progress.projection.arc_length_m = 8.0;
   route.measured_progress.projection.point = Eigen::Vector3d{8.0, 0.0, 3.0};
   route.measured_progress.projection.tangent = Eigen::Vector3d::UnitX();
+  ASSERT_TRUE(route.valid());
   const auto approaching = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{8.0, 0.0, 3.0}, Eigen::Vector3d{4.0, 0.0, 0.0}, 0.0);
   ASSERT_TRUE(approaching.valid);
@@ -165,9 +183,11 @@ TEST(RouteYawReference, ReversalTurnsTowardOutgoingLegOnlyAfterTransition) {
   route.measured_progress.progress_arc_m = 10.0;
   route.measured_progress.projection.valid = true;
   route.measured_progress.projection.segment_index = 0U;
+  route.measured_progress.projection.segment_fraction = 1.0;
   route.measured_progress.projection.arc_length_m = 10.0;
   route.measured_progress.projection.point = Eigen::Vector3d{10.0, 0.0, 3.0};
   route.measured_progress.projection.tangent = Eigen::Vector3d::UnitX();
+  ASSERT_TRUE(route.valid());
 
   const auto turning = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{10.0, 0.0, 3.0}, Eigen::Vector3d::Zero(), 0.0);
@@ -187,9 +207,11 @@ TEST(RouteYawReference, CrossingGeometryCannotJumpBeyondActiveWaypoint) {
   route.measured_progress.progress_arc_m = 8.0;
   route.measured_progress.projection.valid = true;
   route.measured_progress.projection.segment_index = 0U;
+  route.measured_progress.projection.segment_fraction = 0.8;
   route.measured_progress.projection.arc_length_m = 8.0;
   route.measured_progress.projection.point = Eigen::Vector3d{-2.0, 0.0, 3.0};
   route.measured_progress.projection.tangent = Eigen::Vector3d::UnitX();
+  ASSERT_TRUE(route.valid());
 
   const auto reference = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{0.0, 0.0, 3.0},
