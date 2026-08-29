@@ -85,6 +85,7 @@ if(BUILD_TESTING)
     test/test_measurement_buffer.cpp
     test/test_measurement_synchronizer.cpp
     test/test_plane_estimator.cpp
+    test/test_point_filter.cpp
     test/test_pose_interpolator.cpp
     test/test_registration_map.cpp
     test/test_residual_builder.cpp

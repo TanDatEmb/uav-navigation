@@ -12,9 +12,12 @@ bool PointFilter::accepts(const LidarPoint& point) const noexcept {
       config_.maximum_range_m < config_.minimum_range_m) {
     return false;
   }
-  const double squared_range = point.position_lidar_m.cast<double>().squaredNorm();
-  return squared_range >= config_.minimum_range_m * config_.minimum_range_m &&
-         squared_range <= config_.maximum_range_m * config_.maximum_range_m;
+  const Eigen::Vector3d position = point.position_lidar_m.cast<double>();
+  const double scale = position.cwiseAbs().maxCoeff();
+  if (!std::isfinite(scale)) return false;
+  const double range = scale == 0.0 ? 0.0 : scale * (position / scale).norm();
+  if (!std::isfinite(range)) return false;
+  return range >= config_.minimum_range_m && range <= config_.maximum_range_m;
 }
 
 std::vector<LidarPoint> PointFilter::filter(const std::vector<LidarPoint>& points) const {

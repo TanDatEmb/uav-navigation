@@ -12816,3 +12816,23 @@ release profiles must not use the former allowance.
   test_mapping_world_model -j2 && ./build/navigation_mapping/test_mapping_world_model
   --gtest_filter=MappingWorldSnapshot.IndexConversionRejectsNonRepresentableProduct
   --gtest_color=no`.
+
+### 2026-08-29 - Use stable point-filter range comparisons
+
+- **Owner/status:** FAST-LIO point-filter ingress, `PROVISIONAL`; verified by
+  the focused point-filter test.
+- **Scope:** Range acceptance now computes a scaled Euclidean norm instead of
+  squaring both point coordinates and configured limits in `double`.
+- **Safety impact:** Finite extreme values cannot turn `Inf <= Inf` into an
+  accepted measurement or silently reject valid values solely because a square
+  overflowed. Non-finite points and non-finite derived ranges still reject.
+- **False-accept/false-reject consequences:** Normal range behavior is
+  unchanged. A point whose representable norm exceeds the configured finite
+  maximum is rejected; a configuration with invalid ordering remains rejected.
+- **Runtime cost and evidence:** Three-component scaling adds bounded arithmetic
+  per point. `test_point_filter` covers large finite limits and non-finite input.
+- **Removal/review condition:** Keep until sensor range types provide checked
+  norm operations and configuration validation owns the full representable
+  range contract.
+- **Verification:** `cmake --build build/fast_lio_core --target test_point_filter
+  -j2 && ./build/fast_lio_core/test_point_filter --gtest_color=no`.
