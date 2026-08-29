@@ -118,6 +118,7 @@ class StreamStats:
     arrival_gap_event_total: int = 0
     arrival_gap_event_overflow: int = 0
     nonfinite_messages: int = 0
+    sampled_nonfinite_points: int = 0
     invalid_quaternions: int = 0
     invalid_covariances: int = 0
     frame_ids: set[str] = field(default_factory=set)
@@ -132,6 +133,7 @@ class StreamStats:
         *,
         frame_id: str = "",
         nonfinite: int = 0,
+        sampled_nonfinite_points: int = 0,
         invalid_quaternion: bool = False,
         invalid_covariance: bool = False,
     ) -> bool:
@@ -190,6 +192,7 @@ class StreamStats:
         if frame_id:
             self.frame_ids.add(frame_id)
         self.nonfinite_messages += int(nonfinite > 0)
+        self.sampled_nonfinite_points += max(0, int(sampled_nonfinite_points))
         self.invalid_quaternions += int(invalid_quaternion)
         self.invalid_covariances += int(invalid_covariance)
         self._stale_reported = False
@@ -246,6 +249,7 @@ class StreamStats:
             "timestamp_epoch_discard_count": self.timestamp_epoch_discard_count,
             "invalid_source_timestamp_count": self.invalid_source_timestamp_count,
             "nonfinite_message_count": self.nonfinite_messages,
+            "sampled_nonfinite_point_count": self.sampled_nonfinite_points,
             "invalid_quaternion_count": self.invalid_quaternions,
             "invalid_covariance_count": self.invalid_covariances,
             "frame_ids": sorted(self.frame_ids),
@@ -312,7 +316,7 @@ def _pointcloud_payload(message: Any) -> tuple[dict[str, Any], int]:
         "height": int(getattr(message, "height", 0)),
         "is_dense": bool(getattr(message, "is_dense", False)),
     }
-    invalid = 0
+    nonfinite_points = 0
     try:
         from sensor_msgs_py import point_cloud2
 
@@ -322,16 +326,23 @@ def _pointcloud_payload(message: Any) -> tuple[dict[str, Any], int]:
         ):
             values = [float(value) for value in point]
             if any(not math.isfinite(value) for value in values):
-                invalid += 1
+                nonfinite_points += 1
             elif index % 16 == 0:
                 samples.append(values)
             if index >= 4096:
                 break
         payload["sampled_finite_points"] = len(samples)
-        payload["sampled_nonfinite_points"] = invalid
+        payload["sampled_nonfinite_points"] = nonfinite_points
     except (ImportError, RuntimeError, TypeError, ValueError):
         payload["point_decode"] = "NOT_AVAILABLE"
-    return payload, invalid
+    return payload, nonfinite_points
+
+
+def _pointcloud_nonfinite_message(
+    payload: dict[str, Any], sampled_nonfinite_points: int
+) -> bool:
+    """Return whether nonfinite points contradict the cloud density contract."""
+    return bool(payload.get("is_dense", False)) and sampled_nonfinite_points > 0
 
 
 def _diagnostic_payload(message: Any) -> dict[str, Any]:
@@ -555,18 +566,25 @@ class RuntimeMonitor:
     def _callback(self, spec: TopicSpec) -> Callable[[Any], None]:
         def callback(message: Any) -> None:
             arrival_ns = time.time_ns()
+            sampled_nonfinite_points = 0
             try:
                 if spec.name == "lidar":
-                    payload, point_invalid = _pointcloud_payload(message)
+                    payload, sampled_nonfinite_points = _pointcloud_payload(message)
                 else:
                     payload = spec.formatter(message)
-                    point_invalid = 0
             except (AttributeError, RuntimeError, TypeError, ValueError) as error:
                 payload = {"decode_error": str(error), "stamp_ns": _message_stamp_ns(message)}
-                point_invalid = 1
             stamp_ns = int(payload.get("stamp_ns", _message_stamp_ns(message)))
             frame_id = str(payload.get("frame_id", ""))
-            nonfinite = _recursive_nonfinite(payload) + point_invalid
+            # PointCloud2 uses is_dense=false to explicitly permit NaN/Inf
+            # points (for example a simulated lidar ray with no return). Keep
+            # that count as diagnostic evidence, but reject it as a malformed
+            # message only when the producer claimed a dense cloud.
+            dense_cloud_with_nonfinite = (
+                spec.name == "lidar"
+                and _pointcloud_nonfinite_message(payload, sampled_nonfinite_points)
+            )
+            nonfinite = _recursive_nonfinite(payload) + int(dense_cloud_with_nonfinite)
             q = payload.get("q_xyzw") or payload.get("q_wxyz")
             invalid_q = False
             if q:
@@ -580,6 +598,7 @@ class RuntimeMonitor:
                 arrival_ns,
                 frame_id=frame_id,
                 nonfinite=nonfinite,
+                sampled_nonfinite_points=sampled_nonfinite_points,
                 invalid_quaternion=invalid_q,
                 invalid_covariance=invalid_covariance,
             )

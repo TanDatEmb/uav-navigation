@@ -519,6 +519,7 @@ def _rate_row(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         "invalid_source_timestamp_count": int(row.get("invalid_source_timestamp_count", 0)),
         "timestamp_duplicate_count": int(row.get("timestamp_duplicate_count", 0)),
         "nonfinite_message_count": int(row.get("nonfinite_message_count", 0)),
+        "sampled_nonfinite_point_count": int(row.get("sampled_nonfinite_point_count", 0)),
         "invalid_quaternion_count": int(row.get("invalid_quaternion_count", 0)),
         "invalid_covariance_count": int(row.get("invalid_covariance_count", 0)),
     }

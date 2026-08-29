@@ -13650,3 +13650,30 @@ release profiles must not use the former allowance.
   `test_planner_config --gtest_filter=PlannerKinematicStateBoundary.*
   --gtest_color=no`, the complete backend CTest suite, and representative
   `make external-mode-check` runs on the open and structured-obstacle maps.
+
+### 2026-08-29 - Treat sparse PointCloud2 no-return points as diagnostic data
+
+- **Owner/status:** runtime lidar monitor/report validity accounting,
+  `PROVISIONAL`; simulated and recorded-cloud regression evidence required.
+- **Scope:** PointCloud2 parsing now records the sampled nonfinite point count
+  separately. A cloud is counted as a nonfinite *message* only when it declares
+  `is_dense=true` while containing nonfinite points. `is_dense=false` clouds may
+  legally contain NaN/Inf no-return points; these remain visible in the
+  diagnostic `sampled_nonfinite_point_count` without invalidating the stream.
+- **Safety impact:** the report no longer converts a valid sparse lidar stream
+  into a false FAIL solely because no-return samples are present. A dense cloud
+  that violates its own declaration still fails closed, and timestamp, decode,
+  freshness, mapping, planner, and collision gates are unchanged.
+- **False-accept/false-reject consequences:** sparse clouds with valid ROS
+  density semantics are no longer false-rejected; malformed dense clouds remain
+  rejected. This changes report classification only and does not change the
+  FAST-LIO ingress filtering or any trajectory certificate.
+- **Runtime cost and evidence:** one integer counter per monitor stream and the
+  existing bounded point scan; no asymptotic change. The runtime contract test
+  covers sparse-versus-dense semantics. Re-run map and recorded-cloud reports
+  before using lidar validity as acceptance evidence.
+- **Removal/review condition:** keep until the monitor consumes a typed lidar
+  validity contract that distinguishes no-return, invalid-point, and decode
+  failure without inference from `is_dense` alone.
+- **Verification:** runtime contract suite, a valid simulated PointCloud2
+  report, and recorded-data lidar replay with explicit nonfinite-point counts.

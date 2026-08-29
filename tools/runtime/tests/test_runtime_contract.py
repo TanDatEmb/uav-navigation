@@ -1294,6 +1294,30 @@ class RuntimeContractTest(unittest.TestCase):
         stats.update(0, 4_000)
         self.assertEqual(stats.as_dict()["invalid_source_timestamp_count"], 1)
 
+    def test_sparse_pointcloud_nonfinite_returns_are_diagnostic_not_message_invalid(self) -> None:
+        payload = {"is_dense": False, "sampled_nonfinite_points": 5}
+        dense_payload = {"is_dense": True, "sampled_nonfinite_points": 5}
+        self.assertEqual(
+            monitor._pointcloud_nonfinite_message(payload, payload["sampled_nonfinite_points"]),
+            False,
+        )
+        self.assertEqual(
+            monitor._pointcloud_nonfinite_message(
+                dense_payload, dense_payload["sampled_nonfinite_points"]
+            ),
+            True,
+        )
+        stats = monitor.StreamStats("lidar", "/lidar/points")
+        stats.update(
+            1_000_000_000,
+            1_000_000_000,
+            nonfinite=0,
+            sampled_nonfinite_points=5,
+        )
+        snapshot = stats.as_dict()
+        self.assertEqual(snapshot["nonfinite_message_count"], 0)
+        self.assertEqual(snapshot["sampled_nonfinite_point_count"], 5)
+
     def test_dataset_shadow_planning_is_product_goal_with_fail_closed_report_evidence(self) -> None:
         source = (ROOT / "tools/runtime/runner.py").read_text(encoding="utf-8")
         dataset_body = source[source.index("def run_dataset("):source.index("def _sim_prerequisites(")]
