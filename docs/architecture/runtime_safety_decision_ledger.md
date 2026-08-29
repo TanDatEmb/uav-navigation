@@ -12765,3 +12765,29 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_mission --target
   test_mission_contract -j2 && ./build/navigation_mission/test_mission_contract
   --gtest_color=no`.
+
+### 2026-08-29 - Fail closed on derived world geometry overflow
+
+- **Owner/status:** Navigation world-model geometry helpers, `PROVISIONAL`;
+  verified by planner configuration/facade regressions.
+- **Scope:** Directional local-boundary support and observed-occupancy tube
+  checks now validate wide intermediate arithmetic and the derived finite
+  `AxisAlignedBox` before querying a world implementation. Non-representable
+  bounds, segment lengths, projections, or distances reject the certificate.
+- **Safety impact:** Extreme finite inputs cannot be converted into an invalid
+  query that an empty/optimistic backend response turns into a clear-path
+  result. This preserves the existing fail-closed safety policy without
+  changing normal map geometry or planner-window orientation.
+- **False-accept/false-reject consequences:** Ordinary finite geometry keeps
+  existing results. Coordinates/radii outside the representable double
+  geometry envelope are conservatively rejected and require upstream
+  validation or a separately reviewed wide-coordinate contract.
+- **Runtime cost and evidence:** The checks are bounded over three axes and
+  occupied points. `test_planner_config` passes 51/51 and
+  `test_planner_facade` passes 3/3, including near-`DBL_MAX` regressions.
+- **Removal/review condition:** Keep until world geometry uses a typed checked
+  geometry/result API with explicit wide-coordinate semantics.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_planner_config test_planner_facade -j2 &&
+  ./build/navigation_planning_backend/test_planner_config --gtest_color=no &&
+  ./build/navigation_planning_backend/test_planner_facade --gtest_color=no`.

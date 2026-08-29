@@ -26,26 +26,62 @@ namespace navigation_world_model {
     return false;
   }
 
-  const double query_radius = radius_m + kClearanceToleranceM;
-  if (!std::isfinite(query_radius)) return false;
+  const long double query_radius = static_cast<long double>(radius_m) +
+                                   static_cast<long double>(kClearanceToleranceM);
+  if (!std::isfinite(query_radius) ||
+      query_radius > static_cast<long double>(std::numeric_limits<double>::max())) {
+    return false;
+  }
   try {
-    const AxisAlignedBox query_box{
-        start.cwiseMin(end).array() - query_radius,
-        start.cwiseMax(end).array() + query_radius};
+    AxisAlignedBox query_box;
+    for (int axis = 0; axis < 3; ++axis) {
+      const long double lower = std::min(static_cast<long double>(start(axis)),
+                                         static_cast<long double>(end(axis))) - query_radius;
+      const long double upper = std::max(static_cast<long double>(start(axis)),
+                                         static_cast<long double>(end(axis))) + query_radius;
+      if (!std::isfinite(lower) || !std::isfinite(upper) ||
+          lower < static_cast<long double>(std::numeric_limits<double>::lowest()) ||
+          upper > static_cast<long double>(std::numeric_limits<double>::max())) {
+        return false;
+      }
+      query_box.minimum(axis) = static_cast<double>(lower);
+      query_box.maximum(axis) = static_cast<double>(upper);
+    }
+    if (!query_box.valid()) return false;
     const auto occupied = world.observedOccupiedPoints(query_box);
-    const Point3 segment = end - start;
-    const double segment_squared_norm = segment.squaredNorm();
+    long double segment_squared_norm = 0.0L;
+    for (int axis = 0; axis < 3; ++axis) {
+      const long double delta = static_cast<long double>(end(axis)) -
+                                static_cast<long double>(start(axis));
+      if (!std::isfinite(delta)) return false;
+      segment_squared_norm += delta * delta;
+    }
+    if (!std::isfinite(segment_squared_norm)) return false;
     for (const Point3& point : occupied) {
       if (!point.allFinite()) return false;
-      double projection = 0.0;
-      if (segment_squared_norm > std::numeric_limits<double>::epsilon()) {
-        projection = (point - start).dot(segment) / segment_squared_norm;
-        projection = std::clamp(projection, 0.0, 1.0);
+      long double projection = 0.0L;
+      if (segment_squared_norm > static_cast<long double>(std::numeric_limits<double>::epsilon())) {
+        long double numerator = 0.0L;
+        for (int axis = 0; axis < 3; ++axis) {
+          const long double delta = static_cast<long double>(end(axis)) -
+                                    static_cast<long double>(start(axis));
+          numerator += (static_cast<long double>(point(axis)) -
+                        static_cast<long double>(start(axis))) * delta;
+        }
+        if (!std::isfinite(numerator)) return false;
+        projection = std::clamp(numerator / segment_squared_norm, 0.0L, 1.0L);
       }
-      const Point3 closest = start + projection * segment;
-      const double distance = (point - closest).norm();
+      long double distance_squared = 0.0L;
+      for (int axis = 0; axis < 3; ++axis) {
+        const long double delta = static_cast<long double>(point(axis)) -
+                                  (static_cast<long double>(start(axis)) + projection *
+                                   (static_cast<long double>(end(axis)) -
+                                    static_cast<long double>(start(axis))));
+        distance_squared += delta * delta;
+      }
+      const long double distance = std::sqrt(distance_squared);
       if (!std::isfinite(distance) ||
-          distance < radius_m - kClearanceToleranceM) {
+          distance < static_cast<long double>(radius_m - kClearanceToleranceM)) {
         return false;
       }
     }

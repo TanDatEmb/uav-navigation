@@ -717,6 +717,13 @@ TEST(PlannerProductConfig, DirectionalSupportUsesTheFirstAxisAlignedBoundary) {
       *navigation_world_model::directionalSupportToLocalBoundary(
           Eigen::Vector3d{0.0, 20.0, 0.0}, Eigen::Vector3d::UnitY(), world_geometry),
       0.0);
+
+  world_geometry.local_center_m = Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::max());
+  world_geometry.local_size_m = Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::max());
+  EXPECT_FALSE(navigation_world_model::directionalSupportToLocalBoundary(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::UnitX(), world_geometry));
 }
 
 TEST(PlannerCorridorPlanes, NormalizesFinitePlanesAndRejectsMalformedNormals) {

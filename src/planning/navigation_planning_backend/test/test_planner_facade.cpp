@@ -1,6 +1,8 @@
 #include <navigation_planning_backend/planner_facade.hpp>
 #include <planner_core/route_yaw_reference.hpp>
+#include <navigation_world_model/continuous_clearance.hpp>
 
+#include <limits>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -59,6 +61,14 @@ class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
     return {};
   }
 };
+
+TEST(WorldGeometryBoundaries, ContinuousClearanceRejectsOverflowingDerivedQueryBox) {
+  const auto world = std::make_shared<IdentityOnlyWorld>();
+  const auto limit = std::numeric_limits<double>::max();
+  EXPECT_FALSE(navigation_world_model::observedOccupiedTubeIsClear(
+      *world, Eigen::Vector3d{limit, 0.0, 0.0},
+      Eigen::Vector3d{-limit, 0.0, 0.0}, limit));
+}
 
 class TestCommitAuthorizer final : public navigation_world_model::WorldCommitAuthorizer {
  public:

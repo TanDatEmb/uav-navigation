@@ -7,7 +7,6 @@
 #include <memory>
 #include <optional>
 #include <vector>
-#include <vector>
 
 #include <Eigen/Core>
 #include <Eigen/StdVector>
@@ -122,14 +121,32 @@ struct WorldGeometry {
     return std::nullopt;
   }
 
-  const double direction_norm = direction.norm();
+  const double direction_scale = direction.cwiseAbs().maxCoeff();
+  if (!std::isfinite(direction_scale) || direction_scale <= 0.0) {
+    return std::nullopt;
+  }
+  const double direction_norm = direction_scale *
+      (direction / direction_scale).norm();
   if (!std::isfinite(direction_norm) || direction_norm <= 1.0e-12) {
     return std::nullopt;
   }
   const Point3 unit_direction = direction / direction_norm;
-  const Point3 half_size = 0.5 * geometry.local_size_m;
-  const Point3 local_min = geometry.local_center_m - half_size;
-  const Point3 local_max = geometry.local_center_m + half_size;
+  Point3 local_min;
+  Point3 local_max;
+  for (int axis = 0; axis < 3; ++axis) {
+    const long double half = 0.5L * static_cast<long double>(geometry.local_size_m(axis));
+    const long double center = static_cast<long double>(geometry.local_center_m(axis));
+    const long double minimum = center - half;
+    const long double maximum = center + half;
+    if (!std::isfinite(minimum) || !std::isfinite(maximum) ||
+        minimum < static_cast<long double>(std::numeric_limits<double>::lowest()) ||
+        maximum > static_cast<long double>(std::numeric_limits<double>::max()) ||
+        minimum > maximum) {
+      return std::nullopt;
+    }
+    local_min(axis) = static_cast<double>(minimum);
+    local_max(axis) = static_cast<double>(maximum);
+  }
   constexpr double kBoundaryEpsilonM = 1.0e-9;
   if ((origin.array() < local_min.array() - kBoundaryEpsilonM).any() ||
       (origin.array() > local_max.array() + kBoundaryEpsilonM).any()) {
@@ -143,11 +160,15 @@ struct WorldGeometry {
       continue;
     }
     const double boundary = component > 0.0 ? local_max(axis) : local_min(axis);
-    const double distance = (boundary - origin(axis)) / component;
-    if (!std::isfinite(distance) || distance < -kBoundaryEpsilonM) {
+    const long double distance =
+        (static_cast<long double>(boundary) - static_cast<long double>(origin(axis))) /
+        static_cast<long double>(component);
+    if (!std::isfinite(distance) ||
+        distance < -static_cast<long double>(kBoundaryEpsilonM) ||
+        distance > static_cast<long double>(std::numeric_limits<double>::max())) {
       return std::nullopt;
     }
-    support_m = std::min(support_m, std::max(0.0, distance));
+    support_m = std::min(support_m, std::max(0.0, static_cast<double>(distance)));
   }
   if (!std::isfinite(support_m)) {
     return std::nullopt;
