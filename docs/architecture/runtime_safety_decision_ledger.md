@@ -11705,3 +11705,27 @@ release profiles must not use the former allowance.
   && colcon build --packages-select px4_navigation_external_mode
   --symlink-install`; `colcon test --packages-select
   px4_navigation_external_mode`; `colcon test-result --verbose`.
+
+### 2026-08-29 - Validate direct trajectory optimizer configuration boundaries
+
+- **Owner/status:** Trajectory optimizer configuration boundary, `VERIFIED`
+  by the focused backend suite.
+- **Scope:** Add one validation contract for direct `traj_opt::Config` users and
+  invoke it in nominal/backup optimizer construction. Validate physical
+  limits, thrust ordering, objective/tolerance values, reserve policy, retry
+  limits, L-BFGS memory, and backup piece count.
+- **Safety impact:** Invalid direct configuration can no longer reach division,
+  MINCO sizing, flatness, or optimizer setup with zero/negative/non-finite
+  domains. No physical limit or unknown-space policy is relaxed.
+- **False-accept/false-reject consequences:** Default or malformed direct
+  configurations now throw at the optimizer boundary. Existing YAML profiles
+  remain accepted and nominal piece count remains corridor-derived.
+- **Runtime cost and evidence:** One constant-size validation at construction;
+  the package build and focused backend suite passed, including 107 trajectory
+  tests and 49 planner/config tests.
+- **Removal/review condition:** Keep until optimizer inputs use an immutable
+  typed configuration object validated at construction.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-up-to navigation_planning_backend
+  --symlink-install`; `colcon test --packages-select
+  navigation_planning_backend`; `colcon test-result --verbose`.

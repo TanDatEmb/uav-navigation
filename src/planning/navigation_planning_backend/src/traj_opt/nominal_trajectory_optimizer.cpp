@@ -1952,6 +1952,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 ExpTrajOpt::ExpTrajOpt(const traj_opt::Config &cfg, const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context) :
         cfg_(cfg),
         planner_context_(planner_context) {
+    cfg_.validate(false);
     if (!planner_context_) {
         throw std::invalid_argument("ExpTrajOpt requires a planner runtime context");
     }
@@ -2094,7 +2095,20 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                 i);
             return false;
         }
+        const bool route_boundary_gate = sfcs[i].IsRouteBoundaryGate();
+        const auto route_boundary_point = sfcs[i].GetRouteBoundaryPoint();
+        const double route_boundary_radius = sfcs[i].GetRouteBoundaryRadius();
+        if (route_boundary_gate &&
+            (!route_boundary_point.allFinite() ||
+             !std::isfinite(route_boundary_radius) || route_boundary_radius <= 0.0)) {
+            planner_context_->warn(
+                " -- [ExpOpt] corridor {} has invalid route-boundary metadata", i);
+            return false;
+        }
         sfcs[i].SetPlanes(std::move(planes));
+        if (route_boundary_gate) {
+            sfcs[i].SetRouteBoundaryContract(route_boundary_point, route_boundary_radius);
+        }
     }
 
     if (!SimplifySFC(headPVAJ.col(0), tailPVAJ.col(0), sfcs)) {
@@ -2222,7 +2236,20 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                 i);
             return false;
         }
+        const bool route_boundary_gate = sfcs[i].IsRouteBoundaryGate();
+        const auto route_boundary_point = sfcs[i].GetRouteBoundaryPoint();
+        const double route_boundary_radius = sfcs[i].GetRouteBoundaryRadius();
+        if (route_boundary_gate &&
+            (!route_boundary_point.allFinite() ||
+             !std::isfinite(route_boundary_radius) || route_boundary_radius <= 0.0)) {
+            planner_context_->warn(
+                " -- [ExpOpt] corridor {} has invalid route-boundary metadata", i);
+            return false;
+        }
         sfcs[i].SetPlanes(std::move(planes));
+        if (route_boundary_gate) {
+            sfcs[i].SetRouteBoundaryContract(route_boundary_point, route_boundary_radius);
+        }
     }
 
     if (!SimplifySFC(headPVAJ.col(0), tailPVAJ.col(0), sfcs)) {

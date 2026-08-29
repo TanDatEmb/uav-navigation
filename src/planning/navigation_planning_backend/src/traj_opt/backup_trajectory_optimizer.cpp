@@ -607,6 +607,7 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const navigation_plann
     using namespace std;
 
     cfg_ = cfg;
+    cfg_.validate(true);
     std::string filename = "back_opt_log.csv";
     if(cfg_.save_log_en){
         failed_traj_log.open(NAVIGATION_PLANNER_DEBUG_FILE_DIR(filename), std::ios::out | std::ios::trunc);

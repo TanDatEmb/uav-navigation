@@ -98,6 +98,57 @@ namespace traj_opt {
 
         Config() = default;
 
+        // Validate the complete optimizer contract at every direct API
+        // boundary. The YAML loader is not the only owner of Config: tests,
+        // embedders and planner factories can construct or mutate it directly.
+        // `require_piece_count` is true only for the fixed-size backup
+        // optimizer; nominal pieces are derived from the corridor.
+        void validate(const bool require_piece_count = false) const {
+            const auto finiteNonNegative = [](const double value) {
+                return std::isfinite(value) && value >= 0.0;
+            };
+            if ((pos_constraint_type != WAYPOINT && pos_constraint_type != CORRIDOR) ||
+                !std::isfinite(mass) || mass <= 0.0 || !std::isfinite(grav) || grav <= 0.0 ||
+                !finiteNonNegative(dh) || !finiteNonNegative(dv) ||
+                !finiteNonNegative(cp) || !std::isfinite(v_eps) || v_eps <= 0.0 ||
+                !std::isfinite(max_vel) || max_vel <= 0.0 ||
+                !std::isfinite(max_acc) || max_acc <= 0.0 ||
+                !std::isfinite(max_jerk) || max_jerk <= 0.0 ||
+                !std::isfinite(max_omg) || max_omg <= 0.0 ||
+                !std::isfinite(min_acc_thr) || min_acc_thr < 0.0 ||
+                !std::isfinite(max_acc_thr) || max_acc_thr <= 0.0 ||
+                min_acc_thr > max_acc_thr ||
+                !std::isfinite(min_acc_thr * mass) ||
+                !std::isfinite(max_acc_thr * mass) || integral_reso <= 0 ||
+                !std::isfinite(smooth_eps) || smooth_eps <= 0.0 ||
+                !std::isfinite(opt_accuracy) || opt_accuracy <= 0.0 ||
+                piece_num < 0 || (require_piece_count && piece_num <= 0) ||
+                !std::isfinite(corridor_plane_tolerance_m) ||
+                corridor_plane_tolerance_m < 0.0 ||
+                !finiteNonNegative(velocity_penalty_weight) ||
+                !finiteNonNegative(acceleration_penalty_weight) ||
+                !finiteNonNegative(jerk_penalty_weight) ||
+                !finiteNonNegative(angular_rate_penalty_weight) ||
+                !finiteNonNegative(thrust_penalty_weight) ||
+                !finiteNonNegative(time_weight) ||
+                !finiteNonNegative(position_penalty_weight) ||
+                !finiteNonNegative(waypoint_attraction_weight) ||
+                !finiteNonNegative(terminal_time_weight) ||
+                !finiteNonNegative(route_reference_lateral_weight) ||
+                !finiteNonNegative(route_reference_vertical_weight) ||
+                !finiteNonNegative(route_reference_lateral_deadband_m) ||
+                !finiteNonNegative(route_reference_vertical_deadband_m) ||
+                !std::isfinite(optimization_dynamic_reserve_ratio) ||
+                optimization_dynamic_reserve_ratio <= 0.0 ||
+                optimization_dynamic_reserve_ratio > 1.0 ||
+                !std::isfinite(dynamic_limit_tolerance_ratio) ||
+                dynamic_limit_tolerance_ratio != 0.0 ||
+                feasibility_retry_max_iterations <= 0 ||
+                lbfgs_memory_size < 3 || lbfgs_memory_size > 256) {
+                throw std::invalid_argument("invalid trajectory optimizer configuration");
+            }
+        }
+
         Config(const std::string & cfg_path, string ns)
             : Config(yaml_loader::YamlLoader(cfg_path), std::move(ns)) {}
 
@@ -226,6 +277,7 @@ namespace traj_opt {
             }
 
             quadrotot_flatness.reset(mass, grav, dh, dv, cp, v_eps);
+            validate(backup_profile);
         }
     };
 }

@@ -29,6 +29,41 @@ TEST(PlannerDynamicLimits, BoundaryAccountingIsUlpsOnly) {
       std::numeric_limits<double>::infinity(), limit));
 }
 
+TEST(TrajOptConfig, RejectsMalformedDirectOptimizerConfiguration) {
+  traj_opt::Config config;
+  EXPECT_THROW(config.validate(), std::invalid_argument);
+
+  // A valid loaded configuration can still be modified by a direct caller;
+  // the optimizer constructor must not trust the YAML-loader validation that
+  // happened before this mutation.
+  config.mass = 1.0;
+  config.grav = 9.81;
+  config.v_eps = 1.0e-4;
+  config.max_vel = 8.0;
+  config.max_acc = 4.0;
+  config.max_jerk = 12.0;
+  config.max_omg = 5.0;
+  config.max_acc_thr = 25.0;
+  config.min_acc_thr = 6.0;
+  config.integral_reso = 10;
+  config.smooth_eps = 0.01;
+  config.opt_accuracy = 1.0e-5;
+  config.pos_constraint_type = traj_opt::CORRIDOR;
+  config.dh = 0.35;
+  config.dv = 0.35;
+  config.cp = 0.001;
+  config.validate();
+
+  config.pos_constraint_type = 99;
+  EXPECT_THROW(config.validate(), std::invalid_argument);
+  config.pos_constraint_type = traj_opt::CORRIDOR;
+  config.max_omg = std::numeric_limits<double>::infinity();
+  EXPECT_THROW(config.validate(), std::invalid_argument);
+  config.max_omg = 5.0;
+  config.min_acc_thr = 26.0;
+  EXPECT_THROW(config.validate(), std::invalid_argument);
+}
+
 TEST(GuideVerticalEnvelope, UsesOneInflatedVoxelAroundCertifiedGuide) {
   navigation_math::vec_Vec3f guide{
       navigation_math::Vec3f{0.0, 0.0, 3.0},
