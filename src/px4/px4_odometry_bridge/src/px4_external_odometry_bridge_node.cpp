@@ -19,6 +19,7 @@
 
 #include "px4_odometry_bridge/external_odometry_conversion.hpp"
 #include "px4_odometry_bridge/external_odometry_gate.hpp"
+#include "px4_odometry_bridge/frame_generation_policy.hpp"
 #include "px4_odometry_bridge/geometric_jump_continuity.hpp"
 #include "px4_odometry_bridge/geometric_jump_latch.hpp"
 #include "px4_odometry_bridge/timestamp_conversion.hpp"
@@ -100,12 +101,12 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     lio_sub_ = create_subscription<navigation_contracts::msg::PropagatedOdometry>(
         kLioPropagatedOdometryTopic, rclcpp::QoS(20).reliable(),
         [this](navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr message) {
-          on_lio(*message);
+          if (message) on_lio(*message);
         });
     lio_diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
         "/lio/diagnostics", rclcpp::QoS(20).best_effort(),
         [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
-          on_lio_diagnostics(*message);
+          if (message) on_lio_diagnostics(*message);
         });
     node_ready_ = true;
   }
@@ -215,10 +216,10 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
 
   void on_lio(const navigation_contracts::msg::PropagatedOdometry& message) {
     const bool previous_publication_active = publication_active_;
-    if (message.localization_epoch == 0U || message.sequence == 0U ||
-        (last_lio_epoch_ != 0U && message.localization_epoch < last_lio_epoch_) ||
-        (message.localization_epoch == last_lio_epoch_ &&
-         message.sequence <= last_lio_sequence_)) {
+    if (!strictly_newer_source_identity(highest_received_lio_epoch_,
+                                        highest_received_lio_sequence_,
+                                        message.localization_epoch,
+                                        message.sequence)) {
       ++rejected_count_;
       last_frame_valid_ = false;
       last_rejection_reason_ = "PROPAGATED_STATE_IDENTITY_REJECTED";
@@ -226,7 +227,14 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       publication_active_ = false;
       return;
     }
-    if (last_lio_epoch_ != 0U && message.localization_epoch != last_lio_epoch_) {
+    const bool epoch_changed = highest_received_lio_epoch_ != 0U &&
+                               message.localization_epoch != highest_received_lio_epoch_;
+    // Advance the source high-water mark before conversion and publication
+    // gates. A newer sample that is temporarily gated must still prevent a
+    // delayed older sample from being published after the gate recovers.
+    highest_received_lio_epoch_ = message.localization_epoch;
+    highest_received_lio_sequence_ = message.sequence;
+    if (epoch_changed) {
       // The typed state identity is the authoritative reset boundary. Clear
       // continuity baselines before considering the first sample of the new
       // epoch; diagnostics still has to certify estimator health before PX4
@@ -330,9 +338,6 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
       return;
     }
 
-    last_lio_epoch_ = message.localization_epoch;
-    last_lio_sequence_ = message.sequence;
-
     VehicleOdometry output;
     output.timestamp = last_timestamp_result_.publication_time_us;
     output.timestamp_sample = last_timestamp_result_.measurement_time_us;
@@ -397,8 +402,8 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   std::uint8_t last_reset_counter_{0};
   GeometricJumpLatch jump_latch_;
   std::uint64_t lio_public_frame_generation_{0};
-  std::uint64_t last_lio_epoch_{0};
-  std::uint64_t last_lio_sequence_{0};
+  std::uint64_t highest_received_lio_epoch_{0};
+  std::uint64_t highest_received_lio_sequence_{0};
   std::int64_t last_lio_diagnostics_ns_{0};
   std::int64_t last_lio_diagnostics_stamp_ns_{0};
   bool node_ready_{false};

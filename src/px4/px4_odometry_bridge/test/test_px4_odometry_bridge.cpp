@@ -665,3 +665,25 @@ TEST(Px4RingBuffer, FrameAndTimeGenerationChangesRejectCrossBoundaryInterpolatio
   ASSERT_TRUE(time_buffer.push(second));
   EXPECT_FALSE(time_buffer.sample(2'010'000'000).has_value());
 }
+
+TEST(Px4SourceIdentityPolicy, GatedNewerSampleInvalidatesDelayedOlderSample) {
+  std::uint64_t highest_epoch = 4U;
+  std::uint64_t highest_sequence = 10U;
+
+  ASSERT_TRUE(px4_odometry_bridge::strictly_newer_source_identity(
+      highest_epoch, highest_sequence, 4U, 11U));
+  highest_sequence = 11U;  // The sample is recorded before its publication gate.
+
+  EXPECT_FALSE(px4_odometry_bridge::strictly_newer_source_identity(
+      highest_epoch, highest_sequence, 4U, 10U));
+  EXPECT_FALSE(px4_odometry_bridge::strictly_newer_source_identity(
+      highest_epoch, highest_sequence, 3U, 99U));
+  EXPECT_TRUE(px4_odometry_bridge::strictly_newer_source_identity(
+      highest_epoch, highest_sequence, 5U, 1U));
+}
+
+TEST(Px4SourceIdentityPolicy, RejectsZeroSourceIdentity) {
+  EXPECT_FALSE(px4_odometry_bridge::strictly_newer_source_identity(0U, 0U, 0U, 1U));
+  EXPECT_FALSE(px4_odometry_bridge::strictly_newer_source_identity(0U, 0U, 1U, 0U));
+  EXPECT_TRUE(px4_odometry_bridge::strictly_newer_source_identity(0U, 0U, 1U, 1U));
+}

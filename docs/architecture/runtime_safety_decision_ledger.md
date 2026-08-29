@@ -12340,6 +12340,32 @@ release profiles must not use the former allowance.
   && cmake --build build/fast_lio_ros --target test_ros_imu_adapter -j2`;
   focused test binary.
 
+### 2026-08-29 - Record gated external-odometry identities at ingress
+
+- **Owner/status:** PX4 external odometry bridge source identity boundary,
+  `PROVISIONAL`, verified by policy regressions and external-node build.
+- **Scope:** The bridge now advances its source epoch/sequence high-water mark
+  immediately after identity validation, before conversion and publication
+  gates. Delayed older samples are rejected even when a newer sample was
+  temporarily gated. Null subscription messages are ignored safely.
+- **Safety impact:** A gated new estimator epoch or sequence cannot be followed
+  by an old sample that is published after health/transport recovery, which
+  would otherwise reintroduce stale pose continuity and reset semantics.
+- **False-accept/false-reject consequences:** Strictly newer valid identities
+  retain existing behavior. Invalid, duplicate, regressed, or delayed samples
+  are rejected; a source that exhausts or loses ordered identity remains
+  fail-closed until a valid producer reset boundary is observed.
+- **Runtime cost and evidence:** One constant-time identity comparison and two
+  assignments per accepted ingress sample; `test_px4_odometry_bridge` passes
+  44/44 and `px4_odometry_bridge_external_node` builds.
+- **Removal/review condition:** Keep until source identity ordering is carried
+  by a shared typed ingress contract and the node exposes a dedicated recovery
+  state for identity exhaustion.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/px4_odometry_bridge --target
+  test_px4_odometry_bridge px4_odometry_bridge_external_node -j2
+  && ./build/px4_odometry_bridge/test_px4_odometry_bridge --gtest_color=no`.
+
 ### 2026-08-29 - Honor synchronized estimator propagation epoch
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,
