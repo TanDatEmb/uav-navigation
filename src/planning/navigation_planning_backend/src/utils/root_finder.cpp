@@ -291,7 +291,7 @@ math_utils::RootFinderPriv::eigenSolveRealRoots(const Eigen::VectorXd &coeffs, d
     int eivalsNum = eivals.size();
     for (int i = 0; i < eivalsNum; i++) {
         real = eivals(i).real();
-        if (eivals(i).imag() < tol && real > lbound && real < ubound)
+        if (std::abs(eivals(i).imag()) < tol && real > lbound && real < ubound)
             rts.insert(real);
     }
 
@@ -650,6 +650,13 @@ int math_utils::RootFinder::countRoots(const Eigen::VectorXd &coeffs, double l, 
         } else {
             break;
         }
+    }
+
+    // A nonzero constant has no roots.  It must not enter the Sturm setup:
+    // that sequence has order zero and the derivative initialization divides
+    // by the order.
+    if (valid <= 1) {
+        return 0;
     }
 
     if (valid > 0 && fabs(coeffs(originalSize - 1)) > zeroTolerance) {

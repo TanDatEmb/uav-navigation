@@ -11011,3 +11011,24 @@ release profiles must not use the former allowance.
   test_planning_contracts -j2 && ./build/navigation_planning/test_planning_contracts
   --gtest_color=no`; `cmake --build build/navigation_contracts --target
   test_typed_interfaces -j2`; and the committed-store test target.
+
+### 2026-08-29 - Harden RootFinder constant and complex-root boundaries
+
+- **Owner/status:** Planning polynomial utility, `VERIFIED` by trajectory
+  regression tests.
+- **Scope:** Return zero for nonzero constant polynomials before constructing a
+  zero-order Sturm sequence, and require the absolute companion-root
+  imaginary component to be below tolerance in non-isolation mode.
+- **Safety impact:** Prevents division-by-zero/invalid Sturm state and avoids
+  treating complex roots with negative imaginary parts as real. No trajectory
+  limit, timing, fallback or acceptance policy changes.
+- **False-accept/false-reject consequences:** Real roots are unchanged;
+  malformed or non-real roots are no longer reported as usable extrema.
+- **Runtime cost and evidence:** One constant-degree branch and one absolute
+  value in the existing bounded root loop. Tests cover constant input and
+  degree-six complex-only input.
+- **Removal/review condition:** Keep until RootFinder is replaced by a typed,
+  bounded polynomial solver with the same real-root contract.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.

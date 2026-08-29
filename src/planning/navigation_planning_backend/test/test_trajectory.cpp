@@ -534,6 +534,15 @@ TEST(PlannerTrajectory, RootFinderRejectsDegenerateNumericalInputs) {
       Eigen::VectorXd::Ones(2), 1.0, 0.0, 1.0e-6).empty());
   EXPECT_EQ(math_utils::RootFinder::countRoots(
       Eigen::VectorXd::Ones(2), 1.0, 0.0), -1);
+  EXPECT_EQ(math_utils::RootFinder::countRoots(Eigen::VectorXd::Ones(1), 0.0, 1.0), 0);
+
+  // x^6 + 1 has no real roots.  The non-isolation companion-matrix path
+  // must reject both signs of the complex imaginary component.
+  Eigen::VectorXd complex_only = Eigen::VectorXd::Zero(7);
+  complex_only(0) = 1.0;
+  complex_only(6) = 1.0;
+  EXPECT_TRUE(math_utils::RootFinder::solvePolynomial(
+      complex_only, -2.0, 2.0, 1.0e-6, false).empty());
 }
 
 TEST(PlannerTrajectory, PartialTrajectoryByIdAcceptsExclusiveEndSentinel) {
