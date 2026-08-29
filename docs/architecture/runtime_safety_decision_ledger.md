@@ -10969,6 +10969,28 @@ release profiles must not use the former allowance.
   test_committed_bundle_store -j2 &&
   ./build/navigation_execution/test_committed_bundle_store --gtest_color=no`.
 
+### 2026-08-29 - Make route geometry snapshots structurally fail closed
+
+- **Owner/status:** Navigation mission route-progress contract, `VERIFIED`
+  by the focused mission-contract suite.
+- **Scope:** Validate waypoint hold/behavior semantics, checked cumulative arc
+  addition, complete ordered coverage of every non-degenerate waypoint leg,
+  unit/aligned segment tangents, and reject non-finite mutable arc queries.
+- **Safety impact:** A forged partial/disconnected snapshot or a NaN query can
+  no longer be accepted as valid geometry or silently clamp to route origin.
+  Waypoint acceptance radius and mission control behavior are unchanged.
+- **False-accept/false-reject consequences:** Loader-produced routes and
+  ordinary finite arcs retain their behavior. Malformed direct-constructor
+  missions, incomplete snapshots, and unrepresentable arc arithmetic reject.
+- **Runtime cost and evidence:** One structural validation pass over the route
+  plus constant-time finite checks; regressions cover missing segments, invalid
+  tangents, NaN/Inf arc queries, and direct waypoint semantics.
+- **Removal/review condition:** Keep until route geometry is represented by an
+  immutable validated type rather than a public mutable snapshot struct.
+- **Verification:** `cmake --build build/navigation_mission --target
+  test_mission_contract -j2 && ./build/navigation_mission/test_mission_contract
+  --gtest_color=no`.
+
 ### 2026-08-29 - Synchronize Fast-LIO public frame generation and transform publication
 
 - **Owner/status:** Fast-LIO ROS public-frame generation and TF publisher,

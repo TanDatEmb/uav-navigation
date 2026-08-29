@@ -233,3 +233,37 @@ TEST(RouteProgress, ImmutableSnapshotRepresentsSingleWaypointWithoutSegment) {
   EXPECT_TRUE(snapshot.routeLookaheadPoint(10.0)->isApprox(
       mission.waypoints.front().position_enu));
 }
+
+TEST(RouteProgress, RejectsNonFiniteArcQueriesInsteadOfClampingToOrigin) {
+  const navigation_mission::RouteProgress route(makeRouteMission());
+  EXPECT_FALSE(route.pointAtArc(std::numeric_limits<double>::quiet_NaN()));
+  EXPECT_TRUE(std::isnan(route.altitudeAtArc(
+      std::numeric_limits<double>::infinity())));
+}
+
+TEST(RouteProgress, ImmutableSnapshotRequiresCompleteOrderedGeometry) {
+  navigation_mission::RouteProgress route(makeRouteMission());
+  ASSERT_TRUE(route.update(Eigen::Vector3d{4.0, 0.0, 2.4}).valid);
+  auto snapshot = route.snapshot("mission", "lio_odom", 1U, 1U, 1U);
+  ASSERT_TRUE(snapshot.valid());
+
+  snapshot.segments.pop_back();
+  EXPECT_FALSE(snapshot.valid());
+
+  snapshot = route.snapshot("mission", "lio_odom", 1U, 1U, 1U);
+  snapshot.segments.front().tangent = Eigen::Vector3d::Zero();
+  EXPECT_FALSE(snapshot.valid());
+}
+
+TEST(RouteProgress, RejectsInvalidDirectWaypointSemantics) {
+  auto mission = makeRouteMission();
+  mission.waypoints.front().hold_s = -1.0;
+  EXPECT_THROW({ const navigation_mission::RouteProgress route(mission); },
+               std::invalid_argument);
+
+  mission = makeRouteMission();
+  mission.waypoints.front().behavior =
+      static_cast<navigation_mission::MissionWaypoint::Behavior>(255U);
+  EXPECT_THROW({ const navigation_mission::RouteProgress route(mission); },
+               std::invalid_argument);
+}
