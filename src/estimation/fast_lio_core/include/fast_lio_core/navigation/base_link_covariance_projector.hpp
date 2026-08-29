@@ -32,6 +32,8 @@ struct BaseLinkCovarianceProjectionDiagnostics {
   bool source_zero{false};
   bool output_pose_nonfinite{false};
   bool output_twist_nonfinite{false};
+  bool output_pose_asymmetry{false};
+  bool output_twist_asymmetry{false};
   bool output_pose_non_psd{false};
   bool output_twist_non_psd{false};
   bool roundoff_repair{false};
