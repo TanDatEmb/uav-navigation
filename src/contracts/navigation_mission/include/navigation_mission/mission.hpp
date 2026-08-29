@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -39,6 +41,36 @@ struct Mission {
   std::vector<MissionWaypoint> waypoints;
   MissionPlanningConfig planning;
   MissionControlConfig control;
+
+  [[nodiscard]] bool valid() const noexcept {
+    if (schema_version != 1 || id.empty() || frame.empty() || waypoints.empty() ||
+        !std::isfinite(planning.max_velocity_mps) || planning.max_velocity_mps <= 0.0 ||
+        !std::isfinite(planning.max_acceleration_mps2) ||
+        planning.max_acceleration_mps2 <= 0.0 ||
+        !std::isfinite(planning.max_jerk_mps3) || planning.max_jerk_mps3 <= 0.0 ||
+        (planning.unknown_policy != navigation_world_model::UnknownPolicy::kAllowUnknown &&
+         planning.unknown_policy != navigation_world_model::UnknownPolicy::kRequireKnownFree) ||
+        !std::isfinite(control.acceptance_speed_mps) || control.acceptance_speed_mps < 0.0 ||
+        !std::isfinite(control.acceptance_confirmation_s) ||
+        control.acceptance_confirmation_s < 0.0) {
+      return false;
+    }
+    std::set<std::string> waypoint_ids;
+    for (const auto& waypoint : waypoints) {
+      if (waypoint.id.empty() || !waypoint.position_enu.allFinite() ||
+          !std::isfinite(waypoint.acceptance_radius_m) ||
+          waypoint.acceptance_radius_m <= 0.0 || !std::isfinite(waypoint.hold_s) ||
+          waypoint.hold_s < 0.0 ||
+          (waypoint.behavior != MissionWaypoint::Behavior::PassThrough &&
+           waypoint.behavior != MissionWaypoint::Behavior::Stop) ||
+          (waypoint.behavior == MissionWaypoint::Behavior::PassThrough &&
+           waypoint.hold_s > 0.0) ||
+          !waypoint_ids.insert(waypoint.id).second) {
+        return false;
+      }
+    }
+    return true;
+  }
 };
 
 [[nodiscard]] Mission loadMission(const std::string& path,

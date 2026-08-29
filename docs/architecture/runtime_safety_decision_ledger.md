@@ -11754,6 +11754,30 @@ release profiles must not use the former allowance.
   && colcon build --packages-select navigation_planning_backend
   --symlink-install`; direct execution of all eight backend test binaries.
 
+### 2026-08-29 - Enforce direct mission and route-snapshot contracts
+
+- **Owner/status:** Navigation mission route geometry boundary, `VERIFIED`
+  by package build and focused contract tests.
+- **Scope:** Add a shared `Mission::valid()` contract for direct callers and
+  require it before constructing `RouteProgress`; validate mission identity,
+  planning/control limits, waypoint IDs/semantics and unknown-space enum. A
+  forged immutable snapshot must also carry a bounded projection fraction,
+  point, tangent and arc consistent with its certified segment.
+- **Safety impact:** Direct in-memory missions and forged route snapshots can
+  no longer bypass loader semantics or present disconnected/misaligned measured
+  geometry to route-yaw/planner consumers.
+- **False-accept/false-reject consequences:** Empty/custom-invalid mission
+  metadata is rejected at construction. Valid loaded missions and duplicate
+  geometric waypoints retain their existing route behavior.
+- **Runtime cost and evidence:** One bounded ID/field validation at route
+  construction and constant-size checks at snapshot validation; mission
+  contract test suite passes 14/14.
+- **Removal/review condition:** Keep until Mission and RouteSnapshot are
+  immutable validated value types at their public constructors.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select navigation_mission
+  --symlink-install`; `colcon test --packages-select navigation_mission`.
+
 ### 2026-08-29 - Fail closed on unrepresentable PX4 hold positions
 
 - **Owner/status:** PX4 External Mode terminal, handover and mission-hold

@@ -44,13 +44,16 @@ bool ImmutableRouteSnapshot::valid() const noexcept {
       !std::isfinite(measured_progress.progress_arc_m) ||
       !std::isfinite(measured_progress.projection.arc_length_m) ||
       !std::isfinite(measured_progress.projection.lateral_error_m) ||
+      !std::isfinite(measured_progress.projection.segment_fraction) ||
       !measured_progress.projection.point.allFinite() ||
       !measured_progress.projection.tangent.allFinite() ||
       measured_progress.progress_arc_m < 0.0 ||
       measured_progress.progress_arc_m > total_length_m + 1.0e-6 ||
       measured_progress.projection.arc_length_m < 0.0 ||
       measured_progress.projection.arc_length_m > total_length_m + 1.0e-6 ||
-      measured_progress.projection.lateral_error_m < 0.0) {
+      measured_progress.projection.lateral_error_m < 0.0 ||
+      measured_progress.projection.segment_fraction < 0.0 ||
+      measured_progress.projection.segment_fraction > 1.0) {
     return false;
   }
   std::set<std::string> waypoint_ids;
@@ -131,8 +134,20 @@ bool ImmutableRouteSnapshot::valid() const noexcept {
       segments[measured_progress.projection.segment_index];
   if (measured_progress.projection.arc_length_m + 1.0e-6 <
           measured_segment.start_arc_m ||
-      measured_progress.projection.arc_length_m >
+          measured_progress.projection.arc_length_m >
           measured_segment.end_arc_m + 1.0e-6) {
+    return false;
+  }
+  const Eigen::Vector3d expected_projection = measured_segment.start +
+      measured_progress.projection.segment_fraction *
+          (measured_segment.end - measured_segment.start);
+  if (!expected_projection.allFinite() ||
+      (expected_projection - measured_progress.projection.point).norm() > 1.0e-6 ||
+      (measured_progress.projection.tangent - measured_segment.tangent).norm() > 1.0e-6 ||
+      std::abs(measured_progress.projection.arc_length_m -
+               (measured_segment.start_arc_m +
+                measured_progress.projection.segment_fraction * measured_segment.length_m)) >
+          1.0e-6) {
     return false;
   }
   return true;
@@ -164,8 +179,8 @@ std::optional<Eigen::Vector3d> ImmutableRouteSnapshot::routeLookaheadPoint(
 
 RouteProgress::RouteProgress(const Mission& mission, RouteProgressConfig config)
     : waypoints_(mission.waypoints), config_(config) {
-  if (waypoints_.empty()) {
-    throw std::invalid_argument("route progress requires at least one waypoint");
+  if (!mission.valid()) {
+    throw std::invalid_argument("route progress requires a valid mission contract");
   }
   if (!std::isfinite(config_.backtrack_tolerance_m) ||
       config_.backtrack_tolerance_m < 0.0) {

@@ -92,6 +92,8 @@ namespace {
 
 navigation_mission::Mission makeRouteMission() {
   navigation_mission::Mission mission;
+  mission.id = "route";
+  mission.frame = "lio_odom";
   mission.waypoints = {
       {"start", Eigen::Vector3d{0.0, 0.0, 2.0}, 0.5, 0.0,
        navigation_mission::MissionWaypoint::Behavior::PassThrough},
@@ -175,6 +177,8 @@ TEST(RouteProgress, MeasuredBoundaryAcceptsForwardJumpButRejectsLateralMiss) {
 
 TEST(RouteProgress, MonotonicProjectionSelectsReturnBranchAtReversal) {
   navigation_mission::Mission mission;
+  mission.id = "reverse";
+  mission.frame = "lio_odom";
   mission.waypoints = {
       {"start", Eigen::Vector3d{0.0, 0.0, 3.0}, 0.5, 0.0,
        navigation_mission::MissionWaypoint::Behavior::PassThrough},
@@ -253,6 +257,14 @@ TEST(RouteProgress, ImmutableSnapshotRequiresCompleteOrderedGeometry) {
   snapshot = route.snapshot("mission", "lio_odom", 1U, 1U, 1U);
   snapshot.segments.front().tangent = Eigen::Vector3d::Zero();
   EXPECT_FALSE(snapshot.valid());
+
+  snapshot = route.snapshot("mission", "lio_odom", 1U, 1U, 1U);
+  snapshot.measured_progress.projection.segment_fraction = 1.5;
+  EXPECT_FALSE(snapshot.valid());
+
+  snapshot = route.snapshot("mission", "lio_odom", 1U, 1U, 1U);
+  snapshot.measured_progress.projection.point += Eigen::Vector3d{0.1, 0.0, 0.0};
+  EXPECT_FALSE(snapshot.valid());
 }
 
 TEST(RouteProgress, RejectsInvalidDirectWaypointSemantics) {
@@ -264,6 +276,24 @@ TEST(RouteProgress, RejectsInvalidDirectWaypointSemantics) {
   mission = makeRouteMission();
   mission.waypoints.front().behavior =
       static_cast<navigation_mission::MissionWaypoint::Behavior>(255U);
+  EXPECT_THROW({ const navigation_mission::RouteProgress route(mission); },
+               std::invalid_argument);
+}
+
+TEST(RouteProgress, RejectsInvalidDirectMissionIdentityAndLimits) {
+  auto mission = makeRouteMission();
+  mission.id.clear();
+  EXPECT_THROW({ const navigation_mission::RouteProgress route(mission); },
+               std::invalid_argument);
+
+  mission = makeRouteMission();
+  mission.planning.unknown_policy =
+      static_cast<navigation_world_model::UnknownPolicy>(255U);
+  EXPECT_THROW({ const navigation_mission::RouteProgress route(mission); },
+               std::invalid_argument);
+
+  mission = makeRouteMission();
+  mission.control.acceptance_speed_mps = -1.0;
   EXPECT_THROW({ const navigation_mission::RouteProgress route(mission); },
                std::invalid_argument);
 }
