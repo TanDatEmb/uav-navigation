@@ -12052,3 +12052,22 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/px4_odometry_bridge
   --target test_geometric_jump_latch -j2`; `./build/px4_odometry_bridge/test_geometric_jump_latch
   --gtest_color=no`.
+
+### 2026-08-29 - Preserve the trajectory sample-count upper boundary
+
+- **Owner/status:** Navigation runtime bounded trajectory sampling helper,
+  `VERIFIED` by the focused runtime boundary test.
+- **Scope:** A duration whose ceiling is exactly the maximum allowed interval
+  count now returns the configured maximum sample count instead of being
+  rejected by an off-by-one comparison.
+- **Safety impact:** This changes only a valid bounded representation case; it
+  does not increase the configured point cap or permit an unbounded cast/allocation.
+- **False-accept/false-reject consequences:** The exact upper representable
+  boundary is accepted with the existing cap. Non-finite, invalid and over-cap
+  durations remain rejected/capped.
+- **Runtime cost and evidence:** One comparison in a helper already using
+  long-double arithmetic; runtime boundary tests cover just-below-cap and
+  extreme-duration inputs.
+- **Removal/review condition:** Keep with the sample-count contract and cap.
+- **Verification:** `cmake --build build/navigation_runtime
+  --target test_navigation_runtime_shutdown -j2`; focused test binary.

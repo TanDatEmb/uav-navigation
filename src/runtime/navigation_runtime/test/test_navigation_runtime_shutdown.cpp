@@ -112,6 +112,7 @@ TEST(NavigationRuntimeBoundaries, RatePeriodMustBePositiveAndRepresentable) {
 
 TEST(NavigationRuntimeBoundaries, TrajectorySamplingCapsBeforeFloatingPointCast) {
   EXPECT_EQ(boundedTrajectorySampleCount(0.16, 0.08, 64U), 3U);
+  EXPECT_EQ(boundedTrajectorySampleCount(2.999, 1.0, 4U), 4U);
   EXPECT_EQ(boundedTrajectorySampleCount(std::numeric_limits<double>::max(), 0.08, 64U),
             64U);
   EXPECT_FALSE(boundedTrajectorySampleCount(1.0, 0.0, 64U).has_value());

@@ -48,9 +48,10 @@ inline std::optional<std::size_t> boundedTrajectorySampleCount(
   const long double cap = static_cast<long double>(maximum_points - 1U);
   if (!std::isfinite(ratio) || ratio >= cap) return maximum_points;
   const long double intervals = std::ceil(ratio);
-  if (!std::isfinite(intervals) || intervals < 1.0L || intervals >= cap) {
+  if (!std::isfinite(intervals) || intervals < 1.0L || intervals > cap) {
     return std::nullopt;
   }
+  if (intervals == cap) return maximum_points;
   return static_cast<std::size_t>(intervals) + 1U;
 }
 
