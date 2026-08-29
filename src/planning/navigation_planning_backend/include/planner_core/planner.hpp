@@ -190,14 +190,6 @@ namespace navigation_planning_backend {
 
         ~Planner() = default;
 
-        void lockCommittedTraj() {
-            cmd_traj_info_.lock();
-        }
-
-        void unlockCommittedTraj() {
-            cmd_traj_info_.unlock();
-        }
-
         bool goalValid() const {
             return gi_.goal_valid;
         }
@@ -214,7 +206,7 @@ namespace navigation_planning_backend {
         // accessors keep backend trajectory ownership private while allowing the
         // mission/PX4 FSM to validate its optimized safety suffix.
         bool committedBackupTrajectoryAvailable() const {
-            return cmd_traj_info_.backupTrajAvilibale();
+            return cmd_traj_info_.backupTrajectoryAvailable();
         }
 
         double getCommittedBackupStartTrajectoryTime() const {

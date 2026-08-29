@@ -13376,3 +13376,40 @@ release profiles must not use the former allowance.
   navigation_planning_backend --cmake-args -DBUILD_TESTING=ON`, then
   `test_trajectory --gtest_filter=PlannerTrajectory.SimplifySfcPreservesRouteBoundaryGate
   --gtest_color=no`.
+
+### 2026-08-29 - Make committed trajectory reads snapshot-safe
+
+- **Owner/status:** Navigation planner command-trajectory publication and
+  sampling boundary, `PROVISIONAL`; repeated runtime and latency evidence
+  required.
+- **Scope:** `CmdTraj` now protects all public committed-state reads with its
+  mutex. Multi-field planner consumers use one atomic `snapshot()` per
+  command evaluation, and trajectory/certificate/wall-time accessors return
+  copies instead of references that outlive the lock. The unused manual
+  `lock()`/`unlock()` API and the unused first-backup-prefix helper were
+  removed. The misspelled backup-availability field/API was renamed to
+  `backup_trajectory_available_`/`backupTrajectoryAvailable()` and all known
+  callers were updated.
+- **Safety impact:** A planner heartbeat, command sampler, or hot-replan
+  decision cannot combine fields from different committed generations or read
+  mutable trajectory storage after its mutex is released. The change closes a
+  data-race/use-after-lock boundary; it does not relax candidate validation,
+  backup policy, or publication gates.
+- **False-accept/false-reject consequences:** A consumer observes one
+  internally consistent committed generation. In-flight commits are either
+  observed before or after the snapshot. Valid command behavior is unchanged;
+  an invalid mixed-generation observation is no longer possible.
+- **Runtime cost and evidence:** Scalar accessors add one short mutex scope;
+  snapshot consumers copy the already committed trajectory bundle once per
+  evaluation, trading bounded copy work for lifetime safety. The package
+  build passes, the concurrent commit/snapshot regression passes, and 114
+  trajectory/geometry tests pass with the unrelated malformed-shape test
+  excluded pending its staged test-only fix in the parent checkout.
+- **Removal/review condition:** Keep until production timing evidence confirms
+  the copy cost remains within the planner heartbeat/sampling budget and a
+  typed immutable command bundle can replace the current lock-and-copy API.
+- **Verification:** `colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON`,
+  `test_trajectory --gtest_filter=PlannerTrajectory.ConcurrentCommitAndSnapshotNeverMixGenerations
+  --gtest_color=no`, and the full trajectory suite with only the known
+  malformed-shape test excluded.

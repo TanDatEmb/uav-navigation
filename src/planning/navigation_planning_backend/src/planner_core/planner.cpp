@@ -821,7 +821,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                 cmd_traj_info_.getStartWallTime();
         const bool retain_backup_capable_command =
                 shouldRetainBackupCapableCommand(
-                    new_goal, cmd_traj_info_.backupTrajAvilibale());
+                    new_goal, cmd_traj_info_.backupTrajectoryAvailable());
         if ((back_ret_code == NO_NEED || back_ret_code == FINISH) &&
             retain_backup_capable_command) {
             latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS);
@@ -926,16 +926,16 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
     }
 
     void Planner::getOneHeartbeatTime(double &start_WT_pos, bool &traj_finish) {
-        cmd_traj_info_.lock();
-        double eval_t = (planner_context_->getSimTime() - cmd_traj_info_.getStartWallTime());
+        const auto committed = cmd_traj_info_.snapshot();
+        double eval_t = (planner_context_->getSimTime() -
+                         committed.position.start_WT);
         traj_finish = false;
-        double total_dur = cmd_traj_info_.getTotalDuration();
+        const double total_dur = committed.position.getTotalDuration();
         if (eval_t > total_dur) {
             traj_finish = true;
             eval_t = total_dur;
         }
-        start_WT_pos = cmd_traj_info_.getStartWallTime();
-        cmd_traj_info_.unlock();
+        start_WT_pos = committed.position.start_WT;
     }
 
     Trajectory Planner::getCommittedPositionTrajectory() {
@@ -962,38 +962,30 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
 
     Planner::CommandSample Planner::sampleCommand() {
         CommandSample sample;
-        cmd_traj_info_.lock();
-        const double &cur_t = planner_context_->getSimTime();
-        const double &cmd_start_WT = cmd_traj_info_.getStartWallTime();
-//        const bool &backup_avilibale = cmd_traj_info_.backupTrajAvilibale();
-//        const double &backup_start_TT = cmd_traj_info_.getBackupTrajStartTT();
-        const double &total_dur = cmd_traj_info_.getTotalDuration();
+        const auto committed = cmd_traj_info_.snapshot();
+        const double cur_t = planner_context_->getSimTime();
+        const double cmd_start_WT = committed.position.start_WT;
+        const double total_dur = committed.position.getTotalDuration();
 
         const auto command_time = commandTrajectoryTime(cur_t, cmd_start_WT, total_dur);
         sample.finished = command_time.finished;
         const double eval_t = command_time.trajectory_time_s;
         sample.trajectory_time_s = eval_t;
-        sample.role = cmd_traj_info_.isTTOnBackupTraj(eval_t)
-                          ? TrajectoryRole::BACKUP : TrajectoryRole::MAIN;
-        sample.pvaj = cmd_traj_info_.posTraj().getState(eval_t);
-        sample.yaw = cmd_traj_info_.getYaw(eval_t)[0];
-        sample.yaw_rate = cmd_traj_info_.getYawRate(eval_t)[0];
-        sample.generation = cmd_traj_info_.generation();
-        sample.certificate_world = cmd_traj_info_.certificate().validated_world;
+        for (const auto& interval : committed.roles) {
+            if (interval.role == CandidateTrajectoryRole::BACKUP &&
+                eval_t >= interval.begin_tt && eval_t <= interval.end_tt) {
+                sample.role = TrajectoryRole::BACKUP;
+                break;
+            }
+        }
+        sample.pvaj = committed.position.getState(eval_t);
+        sample.yaw = committed.yaw.getPos(eval_t)[0];
+        sample.yaw_rate = committed.yaw.getVel(eval_t)[0];
+        sample.generation = committed.generation;
+        sample.certificate_world = committed.certificate.validated_world;
         sample.valid = sample.pvaj.allFinite() && std::isfinite(sample.yaw) &&
                        std::isfinite(sample.yaw_rate) &&
                        std::isfinite(sample.trajectory_time_s);
-
-//        if (last_round_robot_on_backup_traj != robot_on_backup_traj_) {
-//            if (last_round_robot_on_backup_traj) {
-//                planner_context_->info(" -- [CMD] Emergency Stop End ========================");
-//            } else {
-//                planner_context_->info(" -- [CMD] Emergency Stop Start ========================");
-//            }
-//        }
-
-//        double cur_yaw = geometry_utils::get_yaw_from_quaternion(robot_state_.q);
-        cmd_traj_info_.unlock();
         return sample;
     }
 
@@ -1159,22 +1151,21 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         // planner-side recovery, not a relaxation of the command-anchor safety
         // gate.
         if (!last_exp_traj_info.empty()) {
-            cmd_traj_info_.lock();
-            const double committed_start_WT = cmd_traj_info_.getStartWallTime();
-            const double committed_duration = cmd_traj_info_.getTotalDuration();
+            const auto committed = cmd_traj_info_.snapshot();
+            const double committed_start_WT = committed.position.start_WT;
+            const double committed_duration = committed.position.getTotalDuration();
             const double committed_tt = std::clamp(
                     replan_process_start_WT - committed_start_WT,
                     0.0, std::max(0.0, committed_duration));
-            const StatePVAJ committed_state = cmd_traj_info_.posTraj().getState(committed_tt);
+            const StatePVAJ committed_state = committed.position.getState(committed_tt);
             const double committed_future_tt = std::clamp(
                     committed_tt + cfg_.replan_forward_dt_s,
                     committed_tt, std::max(committed_tt, committed_duration));
             const StatePVAJ committed_future_state =
-                    cmd_traj_info_.posTraj().getState(committed_future_tt);
+                    committed.position.getState(committed_future_tt);
             StatePVAJ committed_yaw_state;
             const bool committed_yaw_state_valid =
-                    cmd_traj_info_.yawTraj().getState(committed_tt, committed_yaw_state);
-            cmd_traj_info_.unlock();
+                    committed.yaw.getState(committed_tt, committed_yaw_state);
             const double command_anchor_error =
                     (committed_state.col(0) - solve_state_.p).norm();
             const double splice_horizon_s = committed_future_tt - committed_tt;

@@ -144,7 +144,7 @@ namespace navigation_planning_backend {
 
         /* some flags */
         bool flag_empty_{true};
-        bool flag_backup_traj_avilibale_{false};
+        bool backup_trajectory_available_{false};
         std::uint64_t generation_{0};
         CommandIdentity identity_{};
         std::vector<CandidateRoleInterval> role_intervals_{};
@@ -181,17 +181,6 @@ namespace navigation_planning_backend {
             return true;
         }
 
-        void checkFirstPartBackupTraj(const ExpTraj & exp) {
-            double tmp_s, tmp_e;
-            if(exp.getFirstPartBackupTraj(tmp_s, tmp_e)) {
-                on_backup_end_TT_ = tmp_e;
-                on_backup_start_TT_ = tmp_s;
-                first_part_exp_has_backup_traj_ = true;
-            }else {
-                first_part_exp_has_backup_traj_ =false;
-            }
-        }
-
     public:
         explicit  CmdTraj() = default;
 
@@ -204,7 +193,7 @@ namespace navigation_planning_backend {
             backup_traj_start_TT_ = 0.0;
             on_backup_start_TT_ = on_backup_end_TT_ = -1.0;
             first_part_exp_has_backup_traj_ = false;
-            flag_backup_traj_avilibale_ = false;
+            backup_trajectory_available_ = false;
             identity_ = {};
             role_intervals_.clear();
             certificate_ = {};
@@ -212,15 +201,8 @@ namespace navigation_planning_backend {
         }
 
         bool empty() const {
+            LOCK_G
             return flag_empty_;
-        }
-
-        void lock() {
-            mtx_.lock();
-        }
-
-        void unlock() {
-            mtx_.unlock();
         }
 
 
@@ -458,7 +440,7 @@ namespace navigation_planning_backend {
             yaw_traj_ = std::move(candidate.yaw);
             start_WT_ = pos_traj_.start_WT;
             flag_empty_ = false;
-            flag_backup_traj_avilibale_ = candidate.backup_suffix_available;
+            backup_trajectory_available_ = candidate.backup_suffix_available;
             backup_traj_start_TT_ = candidate.backup_start_tt;
             role_intervals_ = std::move(candidate.roles);
             identity_ = {
@@ -470,7 +452,7 @@ namespace navigation_planning_backend {
             on_backup_start_TT_ = on_backup_end_TT_ = -1.0;
             for (const auto& interval : role_intervals_) {
                 if (interval.role == CandidateTrajectoryRole::BACKUP &&
-                    (!flag_backup_traj_avilibale_ ||
+                    (!backup_trajectory_available_ ||
                      interval.end_tt < backup_traj_start_TT_)) {
                     first_part_exp_has_backup_traj_ = true;
                     on_backup_start_TT_ = interval.begin_tt;
@@ -505,7 +487,7 @@ namespace navigation_planning_backend {
             snapshot.diagnostics = commit_diagnostics_;
             snapshot.roles = role_intervals_;
             snapshot.empty = flag_empty_;
-            snapshot.backup_available = flag_backup_traj_avilibale_;
+            snapshot.backup_available = backup_trajectory_available_;
             snapshot.backup_start_tt = backup_traj_start_TT_;
             return snapshot;
         }
@@ -531,6 +513,7 @@ namespace navigation_planning_backend {
         }
 
         bool isTTOnBackupTraj(const double & checkTT) const {
+            LOCK_G
             for (const auto& interval : role_intervals_) {
                 if (interval.role == CandidateTrajectoryRole::BACKUP &&
                     checkTT >= interval.begin_tt && checkTT <= interval.end_tt) {
@@ -540,52 +523,70 @@ namespace navigation_planning_backend {
             return false;
         }
 
-        bool backupTrajAvilibale() const {
-            return flag_backup_traj_avilibale_;
+        bool backupTrajectoryAvailable() const {
+            LOCK_G
+            return backup_trajectory_available_;
         }
 
 
         double getTotalDuration() const {
+            LOCK_G
             return pos_traj_.getTotalDuration();
         }
 
         double getBackupTrajStartTT() const {
+            LOCK_G
             return backup_traj_start_TT_;
         }
 
-        std::uint64_t generation() const { return generation_; }
-        const CommandCertificate& certificate() const { return certificate_; }
+        std::uint64_t generation() const {
+            LOCK_G
+            return generation_;
+        }
+
+        CommandCertificate certificate() const {
+            LOCK_G
+            return certificate_;
+        }
 
         Vec3f getPos(const double & t)const {
+            LOCK_G
             return pos_traj_.getPos(t);
         }
 
         Vec3f getVel(const double & t)const {
+            LOCK_G
             return pos_traj_.getVel(t);
         }
 
         Vec3f getYaw(const double & t)const {
+            LOCK_G
             return yaw_traj_.getPos(t);
         }
 
         Vec3f getYawRate(const double & t)const {
+            LOCK_G
             return yaw_traj_.getVel(t);
         }
 
         StatePVAJ getYawState(const double &t)const {
+            LOCK_G
             return yaw_traj_.getState(t);
         }
 
-        const Trajectory & posTraj() const {
+        Trajectory posTraj() const {
+            LOCK_G
             return pos_traj_;
         }
 
-        const Trajectory & yawTraj() const {
+        Trajectory yawTraj() const {
+            LOCK_G
             return yaw_traj_;
         }
 
 
-        const double & getStartWallTime() const {
+        double getStartWallTime() const {
+            LOCK_G
             return pos_traj_.start_WT;
         }
 
@@ -593,6 +594,8 @@ namespace navigation_planning_backend {
             const double & end_t,
             Trajectory & partial_pos_traj,
             Trajectory & partial_yaw_traj) {
+
+            LOCK_G
 
             if(!pos_traj_.getPartialTrajectoryByTime(start_t,end_t,partial_pos_traj)) {
                 return false;

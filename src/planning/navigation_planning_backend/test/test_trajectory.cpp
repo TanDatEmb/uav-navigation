@@ -945,7 +945,7 @@ TEST(PlannerTrajectory, EmergencyBundleIsAtomicallyOwnedByBackup) {
   navigation_planning_backend::CmdTraj command;
   ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
   EXPECT_FALSE(command.empty());
-  EXPECT_TRUE(command.backupTrajAvilibale());
+  EXPECT_TRUE(command.backupTrajectoryAvailable());
   EXPECT_DOUBLE_EQ(command.getBackupTrajStartTT(), 0.0);
   EXPECT_TRUE(command.isTTOnBackupTraj(0.01));
   EXPECT_NEAR(command.getPos(0.5).x(), 0.5, 1.0e-12);
@@ -1180,7 +1180,7 @@ TEST(PlannerTrajectory, InheritedBackupPrefixSurvivesMainOnlyCommit) {
   certificate.protected_region.minimum = Eigen::Vector3d::Zero();
   certificate.protected_region.maximum = Eigen::Vector3d::Ones();
   ASSERT_TRUE(command.commitCandidate(std::move(*candidate), certificate));
-  EXPECT_FALSE(command.backupTrajAvilibale());
+  EXPECT_FALSE(command.backupTrajectoryAvailable());
   EXPECT_TRUE(command.isTTOnBackupTraj(0.0));
   EXPECT_TRUE(command.isTTOnBackupTraj(0.4));
   EXPECT_FALSE(command.isTTOnBackupTraj(0.5));
