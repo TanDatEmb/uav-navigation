@@ -1,15 +1,16 @@
 # Đánh giá tái triển khai navigation
 
-Ngày đánh giá: 2026-08-27. Phạm vi là source hiện tại trên branch
-`codex/navigation-stability-checkpoint`, gồm estimator, mapping, planner,
-execution, runtime và PX4 boundary. Đây là đánh giá kỹ thuật, không phải chứng
-nhận bay.
+Ngày đánh giá/cập nhật: 2026-08-29. Reviewed HEAD: `6d02b980a79f8de20fa6a0dd22c050853594d89d`
+trên branch `codex/navigation-stability-checkpoint`; worktree sạch tại thời điểm
+checkpoint. Phạm vi gồm estimator, mapping, planner, execution, runtime và PX4
+boundary. Đây là đánh giá kỹ thuật, không phải chứng nhận bay.
 
 ## Kết luận điều hành
 
 Chưa thể kết luận stack đã hoàn tất. Các lỗi ownership, timestamp, policy,
-world snapshot, A*, CIRI, command commit và một số dead parameter đã được sửa ở
-mức source/unit. Tuy nhiên còn ba khoảng trống P0/P1 không được che bằng gate:
+world snapshot, A*, CIRI, command commit, ROG-map boundary, optimizer boundary
+và một số dead parameter đã được sửa ở mức source/unit tại các checkpoint trước
+và HEAD này. Tuy nhiên còn ba khoảng trống P0/P1 không được che bằng gate:
 
 1. Chưa có bằng chứng end-to-end lặp lại cho chuỗi mapping → A* → corridor →
    nominal → backup → commit → command → PX4.
