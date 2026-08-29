@@ -9,6 +9,7 @@
 #include "px4_odometry_bridge/frame_generation_policy.hpp"
 #include "px4_odometry_bridge/odometry_ring_buffer.hpp"
 #include "px4_odometry_bridge/reset_compensator.hpp"
+#include "px4_odometry_bridge/timestamp_conversion.hpp"
 #include "px4_odometry_bridge/time_validator.hpp"
 #include "px4_odometry_bridge/topic_version.hpp"
 
@@ -250,6 +251,11 @@ TEST(Px4TimeValidator, UsesCheckedNanosecondServiceTime) {
             std::optional<std::int64_t>(2'000'000'345));
   EXPECT_FALSE(px4_odometry_bridge::checked_ros_time_to_nanoseconds(-1, 0).has_value());
   EXPECT_FALSE(px4_odometry_bridge::checked_ros_time_to_nanoseconds(1, 1'000'000'000U).has_value());
+}
+
+TEST(Px4TimestampConverter, RejectsInvalidMaximumAge) {
+  EXPECT_THROW(px4_odometry_bridge::TimestampConverter(0), std::invalid_argument);
+  EXPECT_THROW(px4_odometry_bridge::TimestampConverter(-1), std::invalid_argument);
 }
 
 TEST(Px4RingBuffer, InterpolatesWithoutExtrapolationOrGenerationCrossing) {
@@ -539,6 +545,21 @@ TEST(Px4ResetCompensator, CombinedResetRequiresDetailedMetadata) {
   metadata.velocity_delta_source = Eigen::Vector3d(0.0, 1.0, 0.0);
   metadata.heading_delta_rad = 0.1;
   EXPECT_FALSE(compensator.observe(reset, metadata).has_value());
+}
+
+TEST(Px4ResetCompensator, RejectsOverflowingAttitudeResetQuaternion) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto first = sample(1'000'000'000);
+  ASSERT_TRUE(compensator.observe(first).accepted());
+  auto reset = sample(1'010'000'000);
+  reset.reset_counter = 1;
+  px4_odometry_bridge::DetailedResetMetadata metadata;
+  metadata.available = true;
+  metadata.timestamp_ns = reset.timestamp_ns;
+  metadata.attitude_reset = true;
+  metadata.attitude_delta.coeffs().setConstant(std::numeric_limits<double>::max());
+  const auto result = compensator.observe(reset, metadata);
+  EXPECT_EQ(result.status, px4_odometry_bridge::ResetObservationStatus::kInvalidResetRotation);
 }
 
 TEST(Px4RingBuffer, RequiresStableSamplesAfterGenerationChange) {

@@ -10971,6 +10971,28 @@ release profiles must not use the former allowance.
 - **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract
   tools.runtime.tests.test_html_report`.
 
+### 2026-08-29 - Harden PX4 timestamp and reset-rotation boundaries
+
+- **Owner/status:** PX4 timestamp converter and reset compensator,
+  `VERIFIED` by the focused bridge suite.
+- **Scope:** Require a positive timestamp age configuration, reject
+  overflow-prone reset quaternions using a finite squared norm, and compute
+  metadata association deltas without signed subtraction before comparison.
+- **Safety impact:** Direct consumers cannot construct a converter with an
+  invalid threshold; malformed attitude resets cannot normalize an infinite
+  norm into a corrupt rotation; extreme positive timestamp pairs remain
+  deterministic at the association gate.
+- **False-accept/false-reject consequences:** Invalid configurations and
+  malformed reset metadata are rejected; ordinary normalized resets and
+  timestamp association behavior are unchanged.
+- **Runtime cost and evidence:** Constant-time domain checks and widened-safe
+  ordering arithmetic. The focused PX4 bridge suite passes 39/39 tests.
+- **Removal/review condition:** Keep until PX4 timestamp and reset metadata
+  are owned by validated value types.
+- **Verification:** `cmake --build build/px4_odometry_bridge --target
+  test_px4_odometry_bridge -j2 && ./build/px4_odometry_bridge/test_px4_odometry_bridge
+  --gtest_color=no`.
+
 ### 2026-08-29 - Tighten standalone navigation command contract
 
 - **Owner/status:** Navigation command message contract, `VERIFIED` by the

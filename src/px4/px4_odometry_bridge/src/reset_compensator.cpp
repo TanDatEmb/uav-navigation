@@ -75,8 +75,10 @@ ResetObservation ResetCompensator::observe(
 
       Eigen::Matrix3d reset_rotation_world = Eigen::Matrix3d::Identity();
       if (metadata.attitude_reset) {
+        const double attitude_norm_squared = metadata.attitude_delta.squaredNorm();
         if (!metadata.attitude_delta.coeffs().allFinite() ||
-            metadata.attitude_delta.norm() < 1e-9) {
+            !std::isfinite(attitude_norm_squared) ||
+            attitude_norm_squared < 1.0e-18) {
           result.status = ResetObservationStatus::kInvalidResetRotation;
           result.reset_generation = reset_generation_;
           return result;

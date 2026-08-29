@@ -257,7 +257,9 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
         (local && local->association_invalid) ||
         (attitude && attitude->association_invalid);
     if (local && attitude && local->hasReset() && attitude->hasReset() &&
-        std::llabs(local->timestamp_ns - attitude->timestamp_ns) >
+        ((local->timestamp_ns >= attitude->timestamp_ns
+              ? local->timestamp_ns - attitude->timestamp_ns
+              : attitude->timestamp_ns - local->timestamp_ns) >
             maximum_metadata_association_gap_ns_) {
       result.association_invalid = true;
     }

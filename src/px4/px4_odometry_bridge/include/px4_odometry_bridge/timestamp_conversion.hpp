@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -47,7 +48,11 @@ enum class TimestampMappingMode : std::uint8_t {
 class TimestampConverter final {
  public:
   explicit TimestampConverter(std::int64_t maximum_age_ns)
-      : maximum_age_ns_(maximum_age_ns) {}
+      : maximum_age_ns_(maximum_age_ns) {
+    if (maximum_age_ns_ <= 0) {
+      throw std::invalid_argument("PX4 timestamp maximum age must be positive");
+    }
+  }
 
   [[nodiscard]] TimestampConversionResult convert(
       std::int64_t measurement_time_ns, std::int64_t publication_time_ns,
