@@ -28,8 +28,29 @@ namespace {
 constexpr char kModeName[] = "Avoidance Mission";
 constexpr char kTrajectoryFailureReason[] = "navigation trajectory unavailable or stale";
 
-Eigen::Vector3f enuToNed(const Eigen::Vector3d& value_enu) {
-  return navigation_common::enuToNed(value_enu).cast<float>();
+bool floatRepresentable(const double value) {
+  return std::isfinite(value) &&
+         std::abs(value) <= static_cast<double>(std::numeric_limits<float>::max());
+}
+
+std::optional<Eigen::Vector3f> checkedEnuToNed(const Eigen::Vector3d& value_enu) {
+  if (!value_enu.allFinite()) return std::nullopt;
+  const Eigen::Vector3d value_ned = navigation_common::enuToNed(value_enu);
+  if (!value_ned.allFinite() ||
+      (value_ned.cwiseAbs().array() > static_cast<double>(std::numeric_limits<float>::max()))
+          .any()) {
+    return std::nullopt;
+  }
+  return value_ned.cast<float>();
+}
+
+std::optional<std::int64_t> checkedTimestampAdd(const std::int64_t base_ns,
+                                                 const std::int64_t delta_ns) {
+  if ((delta_ns > 0 && base_ns > std::numeric_limits<std::int64_t>::max() - delta_ns) ||
+      (delta_ns < 0 && base_ns < std::numeric_limits<std::int64_t>::min() - delta_ns)) {
+    return std::nullopt;
+  }
+  return base_ns + delta_ns;
 }
 
 }  // namespace
@@ -52,15 +73,24 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.trajectory_wait_timeout_s", 2.0)),
       planner_recovery_wait_timeout_s_(node.declare_parameter<double>(
           "navigation.planner_recovery_wait_timeout_s", 0.5)) {
+  const auto stale_after_ns = navigation_common::secondsToNanoseconds(stale_after_s_);
+  const auto state_stale_after_ns = navigation_common::secondsToNanoseconds(state_stale_after_s_);
+  const auto planner_recovery_wait_timeout_ns =
+      navigation_common::secondsToNanoseconds(planner_recovery_wait_timeout_s_);
   if (navigation_command_topic_.empty() || goal_topic_.empty() || planning_frame_.empty() ||
       !std::isfinite(stale_after_s_) || stale_after_s_ <= 0.0 ||
       !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
       !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
       !std::isfinite(planner_recovery_wait_timeout_s_) ||
       planner_recovery_wait_timeout_s_ <= 0.0 ||
-      planner_recovery_wait_timeout_s_ > trajectory_wait_timeout_s_) {
+      planner_recovery_wait_timeout_s_ > trajectory_wait_timeout_s_ || !stale_after_ns ||
+      !state_stale_after_ns || !planner_recovery_wait_timeout_ns || *stale_after_ns <= 0 ||
+      *state_stale_after_ns <= 0 || *planner_recovery_wait_timeout_ns <= 0) {
     throw std::invalid_argument("invalid PX4 navigation external mode parameters");
   }
+  stale_after_ns_ = *stale_after_ns;
+  state_stale_after_ns_ = *state_stale_after_ns;
+  planner_recovery_wait_timeout_ns_ = *planner_recovery_wait_timeout_ns;
   navigation_command_subscription_ = node.create_subscription<
       navigation_contracts::msg::NavigationCommand>(
       navigation_command_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
@@ -284,6 +314,8 @@ void NavigationMode::onNavigationCommand(
   bool terminal_backup_hold_inside_acceptance = false;
   bool terminal_main_hold_inside_acceptance = false;
   bool terminal_recovery_needed = false;
+  bool recovery_deadline_invalid = false;
+  std::optional<nav_msgs::msg::Odometry> completed_command_odometry;
   navigation_contracts::ExecutionStateFreshness odometry_freshness;
   TrackingEnvelopeResult tracking_envelope;
   std::optional<RejectProvenance> reject_provenance;
@@ -400,6 +432,7 @@ void NavigationMode::onNavigationCommand(
       last_command_receive_ns_ = node().get_clock()->now().nanoseconds();
       failure_reported_ = false;
       accepted = true;
+      if (completed_command) completed_command_odometry = odometry_;
     }
   }
   if (odometry_stale) {
@@ -489,13 +522,17 @@ void NavigationMode::onNavigationCommand(
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       if (!planner_recovery_pending_) {
         const auto now_ns = node().get_clock()->now().nanoseconds();
-        planner_recovery_pending_ = true;
-        planner_recovery_deadline_ns_ = now_ns + static_cast<std::int64_t>(
-            planner_recovery_wait_timeout_s_ * 1.0e9);
-        RCLCPP_WARN(node().get_logger(),
-                    "planner backend terminal endpoint has not settled waypoint acceptance; "
-                    "holding for bounded planner recovery window %.3f s",
-                    planner_recovery_wait_timeout_s_);
+        const auto deadline = checkedTimestampAdd(now_ns, planner_recovery_wait_timeout_ns_);
+        if (!deadline) {
+          recovery_deadline_invalid = true;
+        } else {
+          planner_recovery_pending_ = true;
+          planner_recovery_deadline_ns_ = *deadline;
+          RCLCPP_WARN(node().get_logger(),
+                      "planner backend terminal endpoint has not settled waypoint acceptance; "
+                      "holding for bounded planner recovery window %.3f s",
+                      planner_recovery_wait_timeout_s_);
+        }
       }
     }
     if (mission_controller_) {
@@ -520,18 +557,24 @@ void NavigationMode::onNavigationCommand(
       mission_controller_->onNativeTerminalHoldObserved();
     }
   }
+  if (recovery_deadline_invalid) {
+    safetyStopNavigation("planner recovery deadline is not representable");
+    return;
+  }
   if (accepted && completed_command && mission_controller_) {
     const auto waypoint = mission_controller_->waypointAt(message->waypoint_index);
     const auto state = mission_controller_->state();
-    const Eigen::Vector3d measured = odometry_
-        ? Eigen::Vector3d{odometry_->pose.pose.position.x, odometry_->pose.pose.position.y,
-                          odometry_->pose.pose.position.z}
+    const Eigen::Vector3d measured = completed_command_odometry
+        ? Eigen::Vector3d{completed_command_odometry->pose.pose.position.x,
+                          completed_command_odometry->pose.pose.position.y,
+                          completed_command_odometry->pose.pose.position.z}
         : Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
     const Eigen::Vector3d command_position{message->position.x, message->position.y,
                                            message->position.z};
-    const double measured_speed = odometry_
-        ? Eigen::Vector3d{odometry_->twist.twist.linear.x, odometry_->twist.twist.linear.y,
-                          odometry_->twist.twist.linear.z}
+    const double measured_speed = completed_command_odometry
+        ? Eigen::Vector3d{completed_command_odometry->twist.twist.linear.x,
+                          completed_command_odometry->twist.twist.linear.y,
+                          completed_command_odometry->twist.twist.linear.z}
               .norm()
         : -1.0;
     RCLCPP_INFO_THROTTLE(
@@ -976,18 +1019,22 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     if (!position_enu.has_value()) {
       setpoint.withVelocity(Eigen::Vector3f::Zero());
     } else {
-      setpoint.withPosition(enuToNed(*position_enu)).withVelocity(Eigen::Vector3f::Zero());
-      setpoint.withAcceleration(Eigen::Vector3f::Zero());
+      if (const auto position_ned = checkedEnuToNed(*position_enu)) {
+        setpoint.withPosition(*position_ned);
+        setpoint.withAcceleration(Eigen::Vector3f::Zero());
+      }
+      setpoint.withVelocity(Eigen::Vector3f::Zero());
     }
     if (odometry.has_value()) {
       const auto& q = odometry->pose.pose.orientation;
       const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
-      if (orientation.coeffs().allFinite() && orientation.squaredNorm() > 1.0e-12) {
+      if (orientation.coeffs().allFinite() && std::isfinite(orientation.squaredNorm()) &&
+          orientation.squaredNorm() > 1.0e-12) {
         const Eigen::Quaterniond normalized = orientation.normalized();
         const double yaw_enu = std::atan2(
             2.0 * (normalized.w() * normalized.z() + normalized.x() * normalized.y()),
             1.0 - 2.0 * (normalized.y() * normalized.y() + normalized.z() * normalized.z()));
-        if (std::isfinite(yaw_enu)) {
+        if (floatRepresentable(yaw_enu)) {
           setpoint.withYaw(px4_ros2::yawEnuToNed(static_cast<float>(yaw_enu)))
               .withYawRate(0.0F);
         }
@@ -1002,16 +1049,20 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     // the external velocity tracker the sole source of position correction;
     // use PX4's position controller for this short, latched terminal hold.
     px4_ros2::TrajectorySetpoint setpoint;
-    setpoint.withPosition(enuToNed(position_enu)).withVelocity(Eigen::Vector3f::Zero());
+    if (const auto position_ned = checkedEnuToNed(position_enu)) {
+      setpoint.withPosition(*position_ned);
+    }
+    setpoint.withVelocity(Eigen::Vector3f::Zero());
     if (odometry.has_value()) {
       const auto& q = odometry->pose.pose.orientation;
       const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
-      if (orientation.coeffs().allFinite() && orientation.squaredNorm() > 1.0e-12) {
+      if (orientation.coeffs().allFinite() && std::isfinite(orientation.squaredNorm()) &&
+          orientation.squaredNorm() > 1.0e-12) {
         const Eigen::Quaterniond normalized = orientation.normalized();
         const double yaw_enu = std::atan2(
             2.0 * (normalized.w() * normalized.z() + normalized.x() * normalized.y()),
             1.0 - 2.0 * (normalized.y() * normalized.y() + normalized.z() * normalized.z()));
-        if (std::isfinite(yaw_enu)) {
+        if (floatRepresentable(yaw_enu)) {
           setpoint.withYaw(px4_ros2::yawEnuToNed(static_cast<float>(yaw_enu)))
               .withYawRate(0.0F);
         }
@@ -1114,7 +1165,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     return;
   }
   if ((!diagnostics_missing && !lio_healthy) ||
-      lio_diagnostics_age_ns > static_cast<std::int64_t>(state_stale_after_s_ * 1e9) ||
+      lio_diagnostics_age_ns > state_stale_after_ns_ ||
       (diagnostics_missing &&
        (typed_health_seen || since_activation_s > diagnostics_wait_s))) {
     std::uint8_t health_state = 0U;
@@ -1165,7 +1216,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       return last_command_receive_ns_;
     }();
     if (receive_ns > 0 && now.nanoseconds() >= receive_ns &&
-        static_cast<double>(now.nanoseconds() - receive_ns) / 1e9 > stale_after_s_) {
+        now.nanoseconds() - receive_ns > stale_after_ns_) {
       safetyStopNavigation("planner backend PVA command stale");
       return;
     }
@@ -1174,9 +1225,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         navigation_common::rosTimeToNanoseconds(command.header.stamp).value_or(0);
     if (command_stamp_ns <= 0 ||
         (now.nanoseconds() >= command_stamp_ns &&
-         static_cast<double>(now.nanoseconds() - command_stamp_ns) / 1e9 > stale_after_s_) ||
+         now.nanoseconds() - command_stamp_ns > stale_after_ns_) ||
         (command_stamp_ns > now.nanoseconds() &&
-         static_cast<double>(command_stamp_ns - now.nanoseconds()) / 1e9 > stale_after_s_)) {
+         command_stamp_ns - now.nanoseconds() > stale_after_ns_)) {
       safetyStopNavigation("planner backend PVA command timestamp invalid or stale");
       return;
     }
@@ -1236,16 +1287,26 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         // arrive immediately after this completed sample. Keep publishing
         // the exact endpoint hold for one bounded recovery window; the mission
         // timer performs the fail-closed handover if no replacement arrives.
-        std::lock_guard<std::mutex> lock(trajectory_mutex_);
-        if (!planner_recovery_pending_) {
-          const auto now_ns = now.nanoseconds();
-          planner_recovery_pending_ = true;
-          planner_recovery_deadline_ns_ = now_ns + static_cast<std::int64_t>(
-              planner_recovery_wait_timeout_s_ * 1.0e9);
-          RCLCPP_WARN(node().get_logger(),
-                      "planner backend terminal endpoint reached; holding for bounded "
-                      "planner recovery window %.3f s",
-                      planner_recovery_wait_timeout_s_);
+        bool recovery_deadline_invalid = false;
+        {
+          std::lock_guard<std::mutex> lock(trajectory_mutex_);
+          if (!planner_recovery_pending_) {
+            const auto deadline =
+                checkedTimestampAdd(now.nanoseconds(), planner_recovery_wait_timeout_ns_);
+            if (!deadline) {
+              recovery_deadline_invalid = true;
+            } else {
+              planner_recovery_pending_ = true;
+              planner_recovery_deadline_ns_ = *deadline;
+              RCLCPP_WARN(node().get_logger(),
+                          "planner backend terminal endpoint reached; holding for bounded "
+                          "planner recovery window %.3f s",
+                          planner_recovery_wait_timeout_s_);
+            }
+          }
+        }
+        if (recovery_deadline_invalid) {
+          safetyStopNavigation("planner recovery deadline is not representable");
         }
         return;
       }
@@ -1253,10 +1314,18 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       last_setpoint_time_ = now;
       return;
     }
+    const auto position_ned = checkedEnuToNed(position_enu);
+    const auto velocity_ned = checkedEnuToNed(velocity_enu);
+    const auto acceleration_ned = checkedEnuToNed(acceleration_enu);
+    if (!position_ned || !velocity_ned || !acceleration_ned ||
+        !floatRepresentable(command.yaw) || !floatRepresentable(command.yaw_rate)) {
+      safetyStopNavigation("planner backend PVA command is not representable by PX4");
+      return;
+    }
     px4_ros2::TrajectorySetpoint setpoint;
-    setpoint.withPosition(enuToNed(position_enu))
-        .withVelocity(enuToNed(velocity_enu))
-        .withAcceleration(enuToNed(acceleration_enu))
+    setpoint.withPosition(*position_ned)
+        .withVelocity(*velocity_ned)
+        .withAcceleration(*acceleration_ned)
         .withYaw(px4_ros2::yawEnuToNed(static_cast<float>(command.yaw)))
         .withYawRate(px4_ros2::yawRateEnuToNed(static_cast<float>(command.yaw_rate)));
     trajectory_setpoint_->update(setpoint);

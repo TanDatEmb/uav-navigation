@@ -11676,3 +11676,32 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
+
+### 2026-08-29 - Bound PX4 External Mode timestamp and setpoint boundaries
+
+- **Owner/status:** PX4 External Mode navigation setpoint path, `VERIFIED` by
+  package build and focused contract tests.
+- **Scope:** Convert stale/recovery thresholds to checked integer
+  nanoseconds, use checked timestamp addition for recovery deadlines, snapshot
+  odometry under the trajectory mutex for completion diagnostics, and reject
+  PVA/yaw values that cannot be represented by PX4 float setpoints.
+- **Safety impact:** Extreme finite parameters can no longer reach an
+  overflowing duration cast or deadline addition. Concurrent odometry updates
+  cannot race with completion logging. A non-representable command now takes
+  the existing safety-stop path instead of publishing an infinite/rounded
+  PX4 setpoint.
+- **False-accept/false-reject consequences:** Ordinary configured thresholds,
+  representable commands, and the existing trajectory/health policy are
+  unchanged. Unrepresentable configuration or setpoint data is rejected
+  fail-closed; stationary fallback omits an invalid position reference while
+  retaining zero velocity.
+- **Runtime cost and evidence:** One checked conversion at construction,
+  bounded integer addition on terminal recovery, one odometry copy for the
+  completion log, and finite float checks per native command. The package
+  build and all three package tests pass.
+- **Removal/review condition:** Keep until PX4 setpoints and timing are
+  represented by typed bounded contracts at the mode boundary.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select px4_navigation_external_mode
+  --symlink-install`; `colcon test --packages-select
+  px4_navigation_external_mode`; `colcon test-result --verbose`.

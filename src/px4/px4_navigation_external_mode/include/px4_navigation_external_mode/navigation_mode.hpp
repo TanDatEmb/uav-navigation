@@ -76,6 +76,9 @@ class NavigationMode final : public px4_ros2::ModeBase {
   double state_stale_after_s_{0.5};
   double trajectory_wait_timeout_s_{2.0};
   double planner_recovery_wait_timeout_s_{0.5};
+  std::int64_t stale_after_ns_{0};
+  std::int64_t state_stale_after_ns_{0};
+  std::int64_t planner_recovery_wait_timeout_ns_{0};
   std::optional<nav_msgs::msg::Odometry> odometry_;
   std::optional<navigation_contracts::msg::NavigationCommand> navigation_command_;
   bool lio_health_valid_{false};
