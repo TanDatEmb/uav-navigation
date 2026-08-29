@@ -509,7 +509,7 @@ bool BackupTrajOpt::setupProblemAndCheck() {
 
 double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     // 1. Initialize the trajectory
-    //      the optimization varibles include time allocation [1] * pieceN + tailWaypoints [vPoly_size] * pieceN + split time [1]
+    //      the optimization variables include time allocation [1] * pieceN + tail waypoints [vPoly_size] * pieceN + split time [1]
     Eigen::VectorXd x(opt_vars.temporalDim + opt_vars.spatialDim + 1);
     Eigen::Map<Eigen::VectorXd> tau(x.data(), opt_vars.temporalDim);
     Eigen::Map<Eigen::VectorXd> xi(x.data() + opt_vars.temporalDim, opt_vars.spatialDim);
@@ -601,7 +601,7 @@ double BackupTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     }
     using namespace std;
     if (cfg_.print_optimizer_log) {
-        cout << " -- [BaclOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
+        cout << " -- [BackupOpt] Optimization finished, with iter num: " << opt_vars.iter_num << "\n";
         cout << "\tEnergy: " << opt_vars.penalty_log(0) << endl;
         cout << "\tPos: " << opt_vars.penalty_log(1) << endl;
         cout << "\tVel: " << opt_vars.penalty_log(2) << endl;

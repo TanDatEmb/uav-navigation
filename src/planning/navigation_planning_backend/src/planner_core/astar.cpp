@@ -845,7 +845,7 @@ namespace path_search {
                         }
 
                         if (md_.unknown_as_occ && neighbor_type == CellState::kUnknown && neighborPtr) {
-                            // the frontier is recorded but not expand.
+                            // The frontier is recorded but not expanded.
                             neighborPtr->father_ptr = current;
                             rog_map::Vec3f pos;
                             globalIndexToPos(neighborIdx, pos);

@@ -13350,3 +13350,29 @@ release profiles must not use the former allowance.
   decoder or a validated endian-neutral message type.
 - **Verification:** Navigation runtime build and a PointCloud2 big-endian
   regression test.
+
+### 2026-08-29 - Preserve fixed-width plane storage during Polytope reset
+
+- **Owner/status:** Planning geometry utility, `PROVISIONAL`; verified by the
+  focused route-boundary regression.
+- **Scope:** `Polytope::Reset()` now clears the dynamic row count while retaining
+  the required four-column `MatD4f` layout. The previous `resize(0, 0)` call
+  violated Eigen's fixed-column invariant and could abort any subsequent
+  `SetPlanes()` call in a debug/assert-enabled build.
+- **Safety impact:** A valid corridor/polytope construction no longer aborts at
+  the reset boundary before geometry validation. Invalid planes continue to
+  leave the polytope undefined and fail closed; no corridor or occupancy gate
+  is relaxed.
+- **False-accept/false-reject consequences:** Valid plane sets retain their
+  existing geometry. Malformed plane sets remain rejected by `validPlanes()`;
+  the change only makes the empty intermediate representation legal.
+- **Runtime cost and evidence:** No additional runtime work; the reset still
+  changes only the matrix row count and metadata. The route-boundary simplify
+  regression passes, and the remaining trajectory suite passes when the
+  unrelated malformed-shape test is excluded pending its staged test fix.
+- **Removal/review condition:** Keep until `MatD4f` is replaced with a type
+  whose empty-state construction makes its fixed-width invariant explicit.
+- **Verification:** `colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON`, then
+  `test_trajectory --gtest_filter=PlannerTrajectory.SimplifySfcPreservesRouteBoundaryGate
+  --gtest_color=no`.

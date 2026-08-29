@@ -257,7 +257,7 @@ namespace geometry_utils {
                 return ConvexHull<T>();
             }
         }
-        buildMesh(pointCloud, CCW, useOriginalIndices, epsilon);
+        buildMesh(pointCloud, epsilon);
         return ConvexHull<T>(m_mesh, m_vertexData, CCW, useOriginalIndices);
     }
 
@@ -316,17 +316,12 @@ namespace geometry_utils {
             }
         }
         VertexDataSource<FloatType> vertexDataSource((const vec3 *) vertexData, vertexCount);
-        buildMesh(vertexDataSource, CCW, false, epsilon);
+        buildMesh(vertexDataSource, epsilon);
         return HalfEdgeMesh<FloatType, size_t>(m_mesh, m_vertexData);
     }
 
     template<typename T>
-    void QuickHull<T>::buildMesh(const VertexDataSource<T> &pointCloud, bool CCW, bool useOriginalIndices, T epsilon) {
-        // CCW is unused for now
-        (void) CCW;
-        // useOriginalIndices is unused for now
-        (void) useOriginalIndices;
-
+    void QuickHull<T>::buildMesh(const VertexDataSource<T> &pointCloud, T epsilon) {
         if (pointCloud.size() == 0) {
             m_mesh = MeshBuilder<T>();
             return;
@@ -489,7 +484,7 @@ namespace geometry_utils {
                 }
                 // Disable the face, but retain pointer to the points that were on the positive side of it. We need to assign those points
                 // to the new faces we create shortly.
-                auto t = std::move(m_mesh.disableFace(faceIndex));
+                auto t = m_mesh.disableFace(faceIndex);
                 if (t) {
                     assert(t->size()); // Because we should not assign point vectors to faces unless needed...
                     m_disabledFacePointVectors.push_back(std::move(t));
@@ -781,7 +776,7 @@ namespace geometry_utils {
 
     template<typename T>
     std::unique_ptr<std::vector<size_t>> QuickHull<T>::getIndexVectorFromPool() {
-        auto r = std::move(m_indexVectorPool.get());
+        auto r = m_indexVectorPool.get();
         r->clear();
         return r;
     }

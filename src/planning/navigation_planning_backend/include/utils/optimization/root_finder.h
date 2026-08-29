@@ -59,7 +59,7 @@ namespace math_utils {
 
 
         static int solveResolvent(double *x, double a, double b, double c);
-// Solve resolvent eqaution of corresponding Quartic equation
+// Solve the resolvent equation of the corresponding quartic equation.
 // The input x must be of length 3
 // Number of zeros are returned
 

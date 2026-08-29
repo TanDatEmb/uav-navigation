@@ -526,7 +526,7 @@ namespace geometry_utils {
 
         // Constructs the convex hull into a MeshBuilder object
         // which can be converted to a ConvexHull or Mesh object
-        void buildMesh(const VertexDataSource<T> &pointCloud, bool CCW, bool useOriginalIndices, T eps);
+        void buildMesh(const VertexDataSource<T> &pointCloud, T eps);
 
         // The public getConvexHull functions will
         // setup a VertexDataSource object and call this

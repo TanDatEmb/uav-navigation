@@ -43,7 +43,7 @@ namespace geometry_utils {
         typedef std::vector<Piece> Pieces;
         Pieces pieces;
 
-        // serial method for logging
+        // Serialization method for logging and persistence.
     public:
         template <class Archive>
         void serialize(Archive& archive) {

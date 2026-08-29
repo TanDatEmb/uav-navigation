@@ -109,7 +109,9 @@ MatD4f Polytope::GetPlanes() const {
 void Polytope::Reset() {
     undefined = true;
     is_known_free = false;
-    planes.resize(0, 0);
+    // MatD4f has a fixed four-column plane layout; only its row count is
+    // dynamic, so preserve that invariant when clearing the geometry.
+    planes.resize(0, 4);
     have_seed_line = false;
     seed_line = {};
     robot_r = std::numeric_limits<double>::quiet_NaN();

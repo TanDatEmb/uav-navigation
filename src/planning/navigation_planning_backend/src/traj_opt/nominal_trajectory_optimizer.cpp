@@ -405,7 +405,7 @@ double ExpTrajOpt::costFunctional(void *ptr,
         return INFINITY;
     }
 
-    /* 2) Reconstruct the optimization varibles */
+    /* 2) Reconstruct the optimization variables */
 
     Mat3Df points;
     VecDf times;
@@ -504,7 +504,7 @@ double ExpTrajOpt::costFunctional(void *ptr,
     cost += weightT * times.sum();
     gradByTimes.array() += weightT;
 
-    /* 6) Propagate the gradient from PT to optimization varibles*/
+    /* 6) Propagate the gradient from PT to optimization variables. */
     gcopter::propagateGradientTToTau(tau, gradByTimes, gradTau);
     switch (pos_constraint_type) {
         case 1: {
@@ -870,7 +870,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
         return INFINITY;
     }
 
-    /* 1) allocate vector for optimization varibles */
+    /* 1) Allocate the vector for optimization variables. */
     VecDf x(opt_vars.temporalDim + opt_vars.spatialDim);
     /*    creat map for the opt_var vector */
     Eigen::Map<VecDf> tau(x.data(), opt_vars.temporalDim);
@@ -892,7 +892,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     opt_vars.first_nonfinite_gradient_norm =
             std::numeric_limits<double>::quiet_NaN();
 
-    /* 2) check the initial value of the optimization varibles */
+    /* 2) Check the initial value of the optimization variables. */
     if (!opt_vars.times.allFinite() || opt_vars.times.minCoeff() < 1e-3) {
         cout << YELLOW << " -- [TrajOpt] Error, the init times have zero, force return." << RESET << endl;
         cout << " -- Head PVAJ: " << endl;
@@ -938,7 +938,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     diagnostics_.initial_minimum_piece_duration_s = opt_vars.times.minCoeff();
     diagnostics_.initial_maximum_piece_duration_s = opt_vars.times.maxCoeff();
 
-    /* 3)  construct the initial guess of the optimization varibles*/
+    /* 3) Construct the initial guess of the optimization variables. */
     opt_vars.duration_lower_bound.resize(0);
     // Keep the collision-checked guide available to the route-reference
     // quality objective on every solve. Its weights are explicit quality
