@@ -106,6 +106,7 @@ class FastLioNode : public rclcpp::Node {
   RuntimeDiagnostics runtime_diagnostics_;
   RuntimeStatistics runtime_statistics_;
   std::deque<PendingLidarTiming> pending_lidar_timings_;
+  std::int64_t maximum_processing_lag_ns_{0};
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::int64_t previous_ros_imu_ns_{-1};
   std::uint64_t correction_sequence_{0U};

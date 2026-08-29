@@ -228,6 +228,13 @@ TEST_F(ParameterLoaderTest, PriorFrameRequiresExplicitStartupTransform) {
   EXPECT_NO_THROW(ParameterLoader::validate(parameters));
 }
 
+TEST_F(ParameterLoaderTest, RejectsUnrepresentableProcessingLag) {
+  rclcpp::Node node{"parameter_loader_processing_lag_test"};
+  auto parameters = ParameterLoader::declareAndLoad(node);
+  parameters.maximum_processing_lag_s = std::numeric_limits<double>::max();
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+}
+
 TEST_F(ParameterLoaderTest, AistRetainsDatasetSpecificExtrinsic) {
   const auto profile = loadCanonicalEstimatorProfile(
       UAV_NAV_RUNTIME_CONFIG_DIR "/dataset.yaml");

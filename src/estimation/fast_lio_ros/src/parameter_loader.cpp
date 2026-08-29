@@ -540,7 +540,9 @@ void ParameterLoader::validate(const RosParameters& p) {
   }
   if (p.imu_queue_capacity <= 0 || p.lidar_queue_capacity <= 0 ||
       !std::isfinite(p.maximum_processing_lag_s) ||
-      p.maximum_processing_lag_s <= 0.0 || p.overload_policy != "fail") {
+      p.maximum_processing_lag_s <= 0.0 ||
+      !navigation_common::secondsToNanoseconds(p.maximum_processing_lag_s).has_value() ||
+      p.overload_policy != "fail") {
     throw std::invalid_argument(
         "runtime queues must be positive and overload_policy must be fail");
   }

@@ -9,6 +9,7 @@
 
 #include "fast_lio_ros/qos_profiles.hpp"
 #include "fast_lio_ros/ros_static_transform_resolver.hpp"
+#include <navigation_common/time.hpp>
 
 namespace uav::nav::lio {
 namespace {
@@ -123,6 +124,8 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
           publicFrameGenerationSeed())),
       output_publisher_(*this, parameters_, public_frame_generation_),
       transform_publisher_(*this) {
+  maximum_processing_lag_ns_ = ParameterLoader::durationNanosecondsFromSeconds(
+      parameters_.maximum_processing_lag_s);
   runtime_diagnostics_.imu_queue_capacity =
       static_cast<std::size_t>(parameters_.imu_queue_capacity);
   runtime_diagnostics_.lidar_queue_capacity =
@@ -277,6 +280,10 @@ FastLioNode::~FastLioNode() {
 
 void FastLioNode::onLivoxCustom(
     const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr& message) {
+  if (!message) {
+    RCLCPP_WARN(get_logger(), "discarding null Livox CustomMsg");
+    return;
+  }
   try {
     (void)enqueue(livox_custom_adapter_.convert(*message));
   } catch (const std::exception& error) {
@@ -286,6 +293,10 @@ void FastLioNode::onLivoxCustom(
 }
 
 void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
+  if (!message) {
+    RCLCPP_WARN(get_logger(), "discarding null IMU message");
+    return;
+  }
   try {
     const ImuSample sample = imu_adapter_.convert(*message);
     const bool main_accepted = enqueue(InputMeasurement{sample});
@@ -323,6 +334,10 @@ void FastLioNode::onImu(const sensor_msgs::msg::Imu::ConstSharedPtr& message) {
 }
 
 void FastLioNode::onLidar(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& message) {
+  if (!message) {
+    RCLCPP_WARN(get_logger(), "discarding null LiDAR message");
+    return;
+  }
   try {
     (void)enqueue(lidar_adapter_.convert(*message));
   } catch (const std::exception& error) {
@@ -344,12 +359,19 @@ void FastLioNode::onVisibilityCloud(
 
 void FastLioNode::onInitialStatePrior(
     const nav_msgs::msg::Odometry::ConstSharedPtr& message) {
+  if (!message) {
+    RCLCPP_WARN(get_logger(), "discarding null initial-state prior");
+    return;
+  }
+  const auto prior_timestamp_ns = navigation_common::rosTimeToNanoseconds(
+      message->header.stamp);
+  if (!prior_timestamp_ns || *prior_timestamp_ns <= 0) {
+    RCLCPP_WARN(get_logger(), "discarding initial-state prior with invalid timestamp");
+    return;
+  }
   InitialStatePrior prior;
   const auto clock_domain = parseClockDomain(parameters_.input_clock_domain);
-  prior.sample_time = Timestamp(
-      static_cast<std::int64_t>(message->header.stamp.sec) * 1'000'000'000LL +
-          static_cast<std::int64_t>(message->header.stamp.nanosec),
-      clock_domain);
+  prior.sample_time = Timestamp(*prior_timestamp_ns, clock_domain);
   const std::string source_frame = message->header.frame_id;
   if (source_frame == parameters_.odom_frame &&
       parameters_.initial_prior_source_frame_transform == "same_frame") {
@@ -660,7 +682,7 @@ void FastLioNode::processingLoop() {
       runtime_diagnostics_.processing_lag_exceeded =
           runtime_diagnostics_.processing_lag_exceeded ||
           runtime_diagnostics_.processing_lag_ns >
-              static_cast<double>(parameters_.maximum_processing_lag_s) * 1.0e9;
+              maximum_processing_lag_ns_;
       ++runtime_diagnostics_.worker_heartbeat;
       runtime_diagnostics_.worker_last_progress_wall_time_ns =
           std::chrono::duration_cast<std::chrono::nanoseconds>(

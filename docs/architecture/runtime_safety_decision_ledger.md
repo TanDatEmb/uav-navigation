@@ -10947,6 +10947,27 @@ release profiles must not use the former allowance.
   test_px4_odometry_bridge -j2 && ./build/px4_odometry_bridge/test_px4_odometry_bridge
   --gtest_color=no`.
 
+### 2026-08-29 - Harden Fast-LIO ROS callback and lag boundaries
+
+- **Owner/status:** Fast-LIO ROS node ingress and processing-lag diagnostic,
+  `VERIFIED` by the parameter-loader suite.
+- **Scope:** Reject null IMU/LiDAR/Livox/prior callbacks before dereference,
+  convert prior ROS time through the checked common helper, and store a
+  representable integer processing-lag threshold validated at configuration.
+- **Safety impact:** Direct malformed callback invocations cannot crash the
+  executor or inject a negative/invalid prior epoch; an unrepresentable lag
+  threshold cannot silently disable overload diagnostics through infinity.
+- **False-accept/false-reject consequences:** Valid ROS messages and ordinary
+  lag thresholds are unchanged. Null, invalid-time and unrepresentable
+  configuration inputs are rejected at their owning boundary.
+- **Runtime cost and evidence:** Constant-time guards and one integer threshold
+  conversion during construction. Parameter-loader tests pass 20/20.
+- **Removal/review condition:** Keep until ROS callback wrappers provide
+  non-null typed messages and all lag/deadline fields use checked durations.
+- **Verification:** `cmake --build build/fast_lio_ros --target
+  test_parameter_loader -j2 && ./build/fast_lio_ros/test_parameter_loader
+  --gtest_color=no`.
+
 ### 2026-08-29 - Harden runtime harness ownership and evidence parsing
 
 - **Owner/status:** Runtime process harness, shell environment and report
