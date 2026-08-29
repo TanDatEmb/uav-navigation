@@ -418,8 +418,16 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   diagnostics_.prediction.attempted = true;
   diagnostics_.prediction.start_time_ns = propagation_start.nanoseconds();
   diagnostics_.prediction.end_time_ns = group.scan.end_time.nanoseconds();
-  diagnostics_.prediction.interval_ns =
-      group.scan.end_time.nanoseconds() - propagation_start.nanoseconds();
+  const auto prediction_interval =
+      checkedDifference(group.scan.end_time, propagation_start);
+  if (!prediction_interval.ok()) {
+    result.rejection_reason = "PREDICTION_TIME_INTERVAL_OVERFLOW";
+    diagnostics_.prediction.rejection_reason = result.rejection_reason;
+    diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kPrediction);
+    return finalizeResult(std::move(result));
+  }
+  diagnostics_.prediction.interval_ns = prediction_interval.value().nanoseconds();
   std::vector<ImuSample> prediction_samples;
   const Status sample_status = buildPredictionImuSamples(
       group, propagation_start, group.scan.end_time, prediction_samples);
@@ -943,8 +951,13 @@ Status FastLioPipeline::buildPredictionImuSamples(
   // retained sample immediately before an exact start bracket may itself be
   // separated by a discontinuity that was already handled by the rebase.
   for (std::size_t index = first_index + 1U; index <= end_index; ++index) {
-    const std::int64_t gap = prediction_samples[index].time.nanoseconds() -
-                             prediction_samples[index - 1U].time.nanoseconds();
+    const auto gap_result = checkedDifference(prediction_samples[index].time,
+                                              prediction_samples[index - 1U].time);
+    if (!gap_result.ok()) {
+      return Status(StatusCode::kOutOfRange,
+                    "Prediction IMU timestamp gap overflows int64");
+    }
+    const std::int64_t gap = gap_result.value().nanoseconds();
     if (gap <= 0) {
       return Status(StatusCode::kTimestampRegression,
                     "Prediction IMU history timestamp regressed");
@@ -981,10 +994,11 @@ void FastLioPipeline::retainPriorImuSample(const ImuSample& sample) {
     }
   }
   prior_imu_history_.push_back(sample);
-  while (prior_imu_history_.size() >= 2U &&
-         sample.time.nanoseconds() -
-                 prior_imu_history_.front().time.nanoseconds() >
-             kPriorImuHistoryDurationNs) {
+  while (prior_imu_history_.size() >= 2U) {
+    const auto history_span = checkedDifference(
+        sample.time, prior_imu_history_.front().time);
+    if (!history_span.ok()) return;
+    if (history_span.value().nanoseconds() <= kPriorImuHistoryDurationNs) break;
     prior_imu_history_.pop_front();
   }
 }
@@ -1314,20 +1328,26 @@ bool FastLioPipeline::resolveInitialStatePrior(const Timestamp& application_time
   }
   if (candidate.has_value()) {
     diagnostics_.initial_prior.candidate_timestamp_ns = candidate->sample_time.nanoseconds();
-    diagnostics_.initial_prior.time_delta_ns =
-        application_time.nanoseconds() - candidate->sample_time.nanoseconds();
+    const auto candidate_delta =
+        checkedDifference(application_time, candidate->sample_time);
     if (!candidate->sample_time.sameClockDomain(application_time)) {
       std::scoped_lock lock(initial_prior_mutex_);
       ++prior_timestamp_rejected_count_;
       ++prior_rejected_count_;
       initial_prior_candidate_.reset();
       diagnostics_.initial_prior.reason = "TOPIC_PRIOR_CLOCK_DOMAIN_MISMATCH";
+    } else if (!candidate_delta.ok()) {
+      std::scoped_lock lock(initial_prior_mutex_);
+      ++prior_timestamp_rejected_count_;
+      ++prior_rejected_count_;
+      initial_prior_candidate_.reset();
+      diagnostics_.initial_prior.reason = "TOPIC_PRIOR_TIMESTAMP_OVERFLOW";
     } else if (candidate->sample_time.nanoseconds() > application_time.nanoseconds()) {
       diagnostics_.initial_prior.waiting_for_sensor_time = true;
       diagnostics_.initial_prior.status = InitialPriorStatus::kWaiting;
       diagnostics_.initial_prior.reason = "TOPIC_PRIOR_WAITING_FOR_SENSOR_TIME";
     } else {
-      const std::int64_t age = application_time.nanoseconds() - candidate->sample_time.nanoseconds();
+      const std::int64_t age = candidate_delta.value().nanoseconds();
       diagnostics_.initial_prior.candidate_age_ns = age;
       diagnostics_.initial_prior.candidate_timestamp_ns = candidate->sample_time.nanoseconds();
       if (age <= config_.initial_prior.maximum_topic_prior_age_ns) {
@@ -1351,7 +1371,13 @@ bool FastLioPipeline::resolveInitialStatePrior(const Timestamp& application_time
     diagnostics_.initial_prior.reason = "TOPIC_PRIOR_WAIT_CLOCK_DOMAIN_MISMATCH";
     return false;
   }
-  const std::int64_t elapsed = application_time.nanoseconds() - wait_start.nanoseconds();
+  const auto elapsed_result = checkedDifference(application_time, wait_start);
+  if (!elapsed_result.ok()) {
+    diagnostics_.initial_prior.status = InitialPriorStatus::kRejected;
+    diagnostics_.initial_prior.reason = "TOPIC_PRIOR_WAIT_TIMESTAMP_OVERFLOW";
+    return false;
+  }
+  const std::int64_t elapsed = elapsed_result.value().nanoseconds();
   if (elapsed < config_.initial_prior.topic_wait_timeout_ns) {
     return false;
   }
@@ -1498,8 +1524,9 @@ void FastLioPipeline::fillStateDiagnostics(EstimatorDiagnostics& diagnostics) co
           : -std::numeric_limits<double>::infinity();
   if (last_correction_time_.has_value() && state_time_.has_value() &&
       last_correction_time_->sameClockDomain(*state_time_)) {
+    const auto age = checkedDifference(*state_time_, *last_correction_time_);
     diagnostics.state.last_lidar_correction_age_ns =
-        state_time_->nanoseconds() - last_correction_time_->nanoseconds();
+        age.ok() ? age.value().nanoseconds() : -1;
   } else {
     diagnostics.state.last_lidar_correction_age_ns = -1;
   }

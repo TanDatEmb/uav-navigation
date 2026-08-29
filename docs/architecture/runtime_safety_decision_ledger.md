@@ -12366,6 +12366,29 @@ release profiles must not use the former allowance.
   test_px4_odometry_bridge px4_odometry_bridge_external_node -j2
   && ./build/px4_odometry_bridge/test_px4_odometry_bridge --gtest_color=no`.
 
+### 2026-08-29 - Use checked timestamp deltas in FAST-LIO pipeline
+
+- **Owner/status:** FAST-LIO pipeline timestamp arithmetic,
+  `PROVISIONAL`, verified by the focused pipeline suite.
+- **Scope:** Prediction interval, IMU bracket gaps, retained-history pruning,
+  initial-prior age/wait deltas, and correction-age diagnostics now use the
+  shared checked timestamp difference instead of raw signed subtraction.
+- **Safety impact:** Extreme or clock-inconsistent public timestamps cannot
+  overflow an `int64_t` delta and silently pass a prediction, prior, or age
+  gate. The affected operation rejects or reports an unavailable age while
+  preserving the existing fail-closed lifecycle.
+- **False-accept/false-reject consequences:** Ordinary ordered timestamps are
+  unchanged. An unrepresentable delta may reject a group or prior and trigger
+  recovery/hold rather than integrate or accept an ambiguous interval.
+- **Runtime cost and evidence:** One checked subtraction at each existing
+  delta boundary; `test_fast_lio_pipeline` passes 19/19, including epoch and
+  malformed-input regressions.
+- **Removal/review condition:** Keep until all FAST-LIO timestamp arithmetic
+  is centralized behind a validated time-interval type.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/fast_lio_core --target test_fast_lio_pipeline -j2
+  && ./build/fast_lio_core/test_fast_lio_pipeline --gtest_color=no`.
+
 ### 2026-08-29 - Honor synchronized estimator propagation epoch
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,
