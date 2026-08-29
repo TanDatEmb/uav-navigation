@@ -23,9 +23,51 @@
 
 #include <rog_map/rog_map_core/sliding_map.h>
 
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+
 using namespace rog_map;
 using namespace color_text;
 using namespace navigation_math;
+
+namespace {
+bool indexFromCoordinate(const double coordinate, const double resolution, int &index) {
+    if (!std::isfinite(coordinate) || !std::isfinite(resolution) || resolution <= 0.0) {
+        index = 0;
+        return false;
+    }
+    const long double scaled = static_cast<long double>(coordinate) /
+                               static_cast<long double>(resolution);
+#ifdef ORIGIN_AT_CENTER
+    const int sign = (coordinate > 0.0) - (coordinate < 0.0);
+    const long double candidate = scaled + static_cast<long double>(sign) * 0.5L;
+#else
+    const long double candidate = std::floor(scaled);
+#endif
+    if (!std::isfinite(candidate) ||
+        candidate < static_cast<long double>(std::numeric_limits<int>::min()) ||
+        candidate > static_cast<long double>(std::numeric_limits<int>::max())) {
+        index = 0;
+        return false;
+    }
+    index = static_cast<int>(candidate);
+    return true;
+}
+
+bool indexFromPosition(const Vec3f &position, const double resolution, Vec3i &index) {
+    if (!position.allFinite()) {
+        index.setZero();
+        return false;
+    }
+    bool valid = true;
+    for (int axis = 0; axis < 3; ++axis) {
+        valid = indexFromCoordinate(static_cast<double>(position(axis)), resolution, index(axis)) && valid;
+    }
+    if (!valid) index.setZero();
+    return valid;
+}
+}  // namespace
 
 SlidingMap::SlidingMap(const Vec3i &half_map_size_i, const double &resolution, const bool &map_sliding_en,
                        const double &sliding_thresh, const Vec3f &fix_map_origin) {
@@ -48,6 +90,10 @@ SlidingMap::initSlidingMap(const rog_map::Vec3i &half_map_size_i, const double &
     throw std::runtime_error(" -- [SlidingMap]: ORIGIN_AT_CORNER and ORIGIN_AT_CENTER cannot be both true!");
 #endif
 #endif
+    Vec3i origin_index;
+    if (!indexFromPosition(fix_map_origin, resolution, origin_index)) {
+        throw std::invalid_argument(" -- [SlidingMap]: map origin is not representable at the configured resolution");
+    }
     sc_.resolution = resolution;
     sc_.resolution_inv = 1.0 / resolution;
     sc_.map_sliding_en = map_sliding_en;
@@ -60,7 +106,7 @@ SlidingMap::initSlidingMap(const rog_map::Vec3i &half_map_size_i, const double &
     // sliding-enabled maps compared an uninitialized local_map_origin_i_
     // against the requested origin, making fresh-map state nondeterministic.
     local_map_origin_d_ = fix_map_origin;
-    posToGlobalIndex(local_map_origin_d_, local_map_origin_i_);
+    local_map_origin_i_ = origin_index;
     had_been_initialized = true;
 }
 
@@ -74,13 +120,17 @@ void SlidingMap::printMapInformation() {
 
 bool SlidingMap::insideLocalMap(const Vec3f &pos) const {
     Vec3i id_g;
-    posToGlobalIndex(pos, id_g);
+    if (!indexFromPosition(pos, sc_.resolution, id_g)) return false;
     return insideLocalMap(id_g);
 }
 
 bool SlidingMap::insideLocalMap(const Vec3i &id_g) const {
-    if (((id_g - local_map_origin_i_).cwiseAbs() - sc_.half_map_size_i).maxCoeff() > 0) {
-        return false;
+    for (int axis = 0; axis < 3; ++axis) {
+        const std::int64_t delta = static_cast<std::int64_t>(id_g(axis)) -
+                                   static_cast<std::int64_t>(local_map_origin_i_(axis));
+        if (std::llabs(delta) > static_cast<std::int64_t>(sc_.half_map_size_i(axis))) {
+            return false;
+        }
     }
     return true;
 }
@@ -118,7 +168,7 @@ void SlidingMap::mapSliding(const Vec3f &odom) {
     last_slide_cells_cleared_ = 0;
     /// Compute the shifting index
     Vec3i new_origin_i;
-    posToGlobalIndex(odom, new_origin_i);
+    if (!indexFromPosition(odom, sc_.resolution, new_origin_i)) return;
     Vec3f new_origin_d = new_origin_i.cast<double>() * sc_.resolution;
     /// Compute the delta shift
     Vec3i shift_num = new_origin_i - local_map_origin_i_;
@@ -181,23 +231,11 @@ int SlidingMap::getLocalIndexHash(const Vec3i &id_in) const {
 }
 
 void SlidingMap::posToGlobalIndex(const Vec3f &pos, Vec3i &id) const {
-
-#ifdef ORIGIN_AT_CENTER
-    id = (sc_.resolution_inv * pos + pos.cwiseSign() * 0.5).cast<int>();
-#endif
-
-#ifdef ORIGIN_AT_CORNER
-    id = (pos.array() * sc_.resolution_inv).floor().cast<int>();
-#endif
+    indexFromPosition(pos, sc_.resolution, id);
 }
 
 void SlidingMap::posToGlobalIndex(const double &pos, int &id) const {
-#ifdef ORIGIN_AT_CENTER
-    id = static_cast<int>((sc_.resolution_inv * pos + NAVIGATION_MATH_SIGN(pos) * 0.5));
-#endif
-#ifdef ORIGIN_AT_CORNER
-    id = floor(pos * sc_.resolution_inv);
-#endif
+    indexFromCoordinate(pos, sc_.resolution, id);
 }
 
 void SlidingMap::globalIndexToPos(const Vec3i &id_g, Vec3f &pos) const {
@@ -298,7 +336,7 @@ void SlidingMap::hashIdToPos(const int &hash_id, Vec3f &pos) const {
 
 int SlidingMap::getHashIndexFromPos(const Vec3f &pos) const {
     Vec3i id_g, id_l;
-    posToGlobalIndex(pos, id_g);
+    if (!indexFromPosition(pos, sc_.resolution, id_g) || !insideLocalMap(id_g)) return -1;
     globalIndexToLocalIndex(id_g, id_l);
     return getLocalIndexHash(id_l);
 }

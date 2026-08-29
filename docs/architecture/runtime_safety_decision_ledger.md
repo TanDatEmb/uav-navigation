@@ -1,5 +1,26 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Reject unrepresentable ROG-Map query coordinates
+
+- **Owner/status:** ROG-Map boundary adapter, `PROVISIONAL`; verified by the
+  vendor configuration test.
+- **Scope:** Position-to-grid conversion now validates finite coordinates and
+  representability before floating-point to integer conversion. Direct map
+  queries return OUT_OF_MAP or an invalid hash for malformed coordinates, and
+  map initialization rejects an unrepresentable fixed origin or virtual plane.
+- **Safety impact:** Extreme finite/invalid positions cannot alias grid cell 0
+  or reach an implementation-defined integer conversion and then be treated as
+  valid occupancy evidence.
+- **False-accept/false-reject consequences:** Valid in-range query behavior is
+  unchanged. Out-of-domain coordinates are rejected conservatively.
+- **Runtime cost and evidence:** Three scalar long-double checks per query and
+  one-time checks during initialization; `test_yaml_loader` covers an origin
+  outside the integer index domain and invalid ray coordinates.
+- **Removal/review condition:** Keep until ROG-Map exposes a checked position to
+  index API and its remaining vendor arithmetic is bounded independently.
+- **Verification:** `cmake --build build/rog_map_vendor --target test_yaml_loader
+  -j2 && ./build/rog_map_vendor/test_yaml_loader --gtest_color=no`.
+
 ### 2026-08-29 - Fail closed on malformed Polytope and QuickHull inputs
 
 - **Owner/status:** planning geometry utilities, `PROVISIONAL`; verified by

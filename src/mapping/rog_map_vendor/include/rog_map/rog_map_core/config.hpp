@@ -357,6 +357,23 @@ namespace rog_map {
             const auto nonNegativeFinite = [](const double value) {
                 return std::isfinite(value) && value >= 0.0;
             };
+            const auto indexRepresentable = [](const long double coordinate,
+                                               const long double grid_resolution) {
+                if (!std::isfinite(coordinate) || !std::isfinite(grid_resolution) ||
+                    grid_resolution <= 0.0L) {
+                    return false;
+                }
+                const long double scaled = coordinate / grid_resolution;
+#ifdef ORIGIN_AT_CENTER
+                const int sign = (coordinate > 0.0L) - (coordinate < 0.0L);
+                const long double index = scaled + static_cast<long double>(sign) * 0.5L;
+#else
+                const long double index = std::floor(scaled);
+#endif
+                return std::isfinite(index) &&
+                       index >= static_cast<long double>(std::numeric_limits<int>::min()) &&
+                       index <= static_cast<long double>(std::numeric_limits<int>::max());
+            };
             if (!positiveFinite(resolution) || !positiveFinite(inflation_resolution) ||
                 inflation_resolution < resolution || inflation_step <= 0 ||
                 unk_inflation_step <= 0 || !map_size_d.allFinite() ||
@@ -465,9 +482,24 @@ namespace rog_map {
                 throw std::invalid_argument(
                     "rog_map virtual ground and ceiling must be finite and ordered");
             }
+            for (int axis = 0; axis < 3; ++axis) {
+                if (!indexRepresentable(static_cast<long double>(fix_map_origin(axis)),
+                                        static_cast<long double>(resolution))) {
+                    throw std::invalid_argument(
+                        "rog_map fix_map_origin is outside the representable integer index domain");
+                }
+            }
+            if (!indexRepresentable(static_cast<long double>(virtual_ground_height),
+                                    static_cast<long double>(inflation_resolution)) ||
+                !indexRepresentable(static_cast<long double>(virtual_ceil_height),
+                                    static_cast<long double>(inflation_resolution))) {
+                throw std::invalid_argument(
+                    "rog_map virtual plane heights are outside the representable integer index domain");
+            }
         }
 
         void resetMapSize() {
+            validateConfiguration();
             const int inflation_ratio = static_cast<int>(std::ceil(
                 static_cast<long double>(inflation_resolution) /
                 static_cast<long double>(resolution)));

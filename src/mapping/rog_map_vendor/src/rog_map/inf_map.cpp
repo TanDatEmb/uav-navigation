@@ -464,6 +464,9 @@ namespace rog_map {
 
     GridType InfMap::getGridType(const Vec3f& pos) const {
         Vec3i id_g, id_l;
+        if (!pos.allFinite() || !insideLocalMap(pos)) {
+            return OUT_OF_MAP;
+        }
         // 1. check virtual ceil and ground
         if (cfg_.virtual_ground_ceiling_en &&
             (pos.z() >= cfg_.virtual_ceil_height - cfg_.inflation_resolution * (1 + cfg_.inflation_step) ||

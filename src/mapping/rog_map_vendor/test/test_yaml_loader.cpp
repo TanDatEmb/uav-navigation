@@ -170,6 +170,13 @@ TEST(YamlLoader, MappingSafetyConfigurationRejectsInvalidValues) {
   ASSERT_FALSE(huge_inflation_step.empty());
   EXPECT_THROW({ rog_map::Config config(huge_inflation_step); }, std::invalid_argument);
   std::remove(huge_inflation_step.c_str());
+
+  const auto unrepresentable_origin = configVariant(
+      "  fix_map_origin: [1e12, 0.0, 0.0]",
+      "uav_navigation_invalid_map_origin.yaml");
+  ASSERT_FALSE(unrepresentable_origin.empty());
+  EXPECT_THROW({ rog_map::Config config(unrepresentable_origin); }, std::invalid_argument);
+  std::remove(unrepresentable_origin.c_str());
 }
 
 TEST(RayCaster, RejectsInvalidResolutionAndCoordinates) {
