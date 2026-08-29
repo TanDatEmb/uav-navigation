@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <stdexcept>
 
 namespace px4_odometry_bridge {
 
@@ -36,7 +37,13 @@ struct TimeValidationResult {
 
 class TimestampValidator {
  public:
-  explicit TimestampValidator(TimeValidationConfig config = {}) : config_(config) {}
+  explicit TimestampValidator(TimeValidationConfig config = {}) : config_(config) {
+    if (config_.max_stale_ns <= 0 || config_.max_future_ns <= 0 ||
+        config_.probable_restart_regression_ns <= 0 ||
+        config_.restart_low_epoch_max_ns <= 0) {
+      throw std::invalid_argument("invalid PX4 timestamp validation configuration");
+    }
+  }
   TimeValidationResult observe(std::uint64_t timestamp_us, std::int64_t now_ns);
   void clear();
 

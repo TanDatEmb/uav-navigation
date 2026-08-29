@@ -202,6 +202,15 @@ TEST(Px4TimeValidator, RejectsZeroDuplicateOverflowAndFuture) {
   EXPECT_FALSE(validator.observe(2'000, 1'000'000).accepted);
 }
 
+TEST(Px4TimeValidator, RejectsInvalidConfigurationAndCurrentClock) {
+  EXPECT_THROW(px4_odometry_bridge::TimestampValidator({.max_stale_ns = 0}),
+               std::invalid_argument);
+  px4_odometry_bridge::TimestampValidator validator;
+  const auto result = validator.observe(1'000, 0);
+  EXPECT_FALSE(result.accepted);
+  EXPECT_EQ(result.event, px4_odometry_bridge::TimestampEvent::kInvalid);
+}
+
 TEST(Px4TimeValidator, RejectsStaleAndAcceptsPausedClockWithoutWallTimeDecay) {
   px4_odometry_bridge::TimestampValidator validator({.max_stale_ns = 100,
                                                       .max_future_ns = 100});
@@ -253,6 +262,19 @@ TEST(Px4RingBuffer, InterpolatesWithoutExtrapolationOrGenerationCrossing) {
   EXPECT_TRUE(result->interpolated);
   EXPECT_DOUBLE_EQ(result->value.position.x(), 1.01);
   EXPECT_FALSE(buffer.sample(999'000'000).has_value());
+}
+
+TEST(Px4RingBuffer, RejectsInvalidConfigurationAndNonFiniteSamples) {
+  EXPECT_THROW(px4_odometry_bridge::OdometryRingBuffer({.capacity = 0}),
+               std::invalid_argument);
+  px4_odometry_bridge::OdometryRingBuffer buffer({
+      .duration_ns = 2'000'000'000, .capacity = 512, .max_gap_ns = 50'000'000, .stable_samples = 1});
+  auto invalid = sample(1'000'000'000);
+  invalid.orientation.coeffs().setConstant(std::numeric_limits<double>::max());
+  EXPECT_FALSE(buffer.push(invalid));
+  invalid = sample(1'000'000'000);
+  invalid.position.x() = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(buffer.push(invalid));
 }
 
 TEST(Px4ResetCompensator, SuppressesTransitionAndPreservesPoseContinuity) {

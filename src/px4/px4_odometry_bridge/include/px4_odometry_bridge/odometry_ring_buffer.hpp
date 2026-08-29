@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <stdexcept>
 
 #include "px4_odometry_bridge/frame_converter.hpp"
 
@@ -23,7 +24,12 @@ struct SampledOdometry {
 
 class OdometryRingBuffer {
  public:
-  explicit OdometryRingBuffer(RingBufferConfig config = {});
+  explicit OdometryRingBuffer(RingBufferConfig config = {}) : config_(config) {
+    if (config_.duration_ns <= 0 || config_.capacity == 0U ||
+        config_.max_gap_ns <= 0 || config_.stable_samples == 0U) {
+      throw std::invalid_argument("invalid odometry ring-buffer configuration");
+    }
+  }
   bool push(const ConvertedOdometry &sample);
   std::optional<SampledOdometry> sample(std::int64_t timestamp_ns) const;
   void clear();

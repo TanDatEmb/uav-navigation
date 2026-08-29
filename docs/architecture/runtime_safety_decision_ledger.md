@@ -10924,6 +10924,29 @@ release profiles must not use the former allowance.
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
 
+### 2026-08-29 - Fail closed on PX4 odometry buffer boundaries
+
+- **Owner/status:** PX4 odometry ring buffer and timestamp validator,
+  `VERIFIED` by the focused bridge suite.
+- **Scope:** Reject zero/negative buffer limits, invalid current clocks and
+  malformed converted odometry; prevent timestamp-generation exhaustion and
+  retain checked monotonic ordering before interpolation.
+- **Safety impact:** A zero-capacity buffer can no longer pop its only element
+  and dereference an empty deque. Non-finite pose/velocity/quaternion inputs
+  and invalid validator configuration cannot enter interpolation or freshness
+  decisions.
+- **False-accept/false-reject consequences:** Invalid direct API callers are
+  rejected; normal positive epochs, normalized attitudes and configured
+  covariance values retain existing behavior.
+- **Runtime cost and evidence:** Constant-time finite/domain checks per push
+  and one generation-boundary check. Regression covers invalid config, invalid
+  current clock and malformed samples.
+- **Removal/review condition:** Keep until converted odometry is constructed
+  only through a validated immutable state type.
+- **Verification:** `cmake --build build/px4_odometry_bridge --target
+  test_px4_odometry_bridge -j2 && ./build/px4_odometry_bridge/test_px4_odometry_bridge
+  --gtest_color=no`.
+
 ### 2026-08-29 - Tighten standalone navigation command contract
 
 - **Owner/status:** Navigation command message contract, `VERIFIED` by the

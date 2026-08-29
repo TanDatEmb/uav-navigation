@@ -1,5 +1,7 @@
 #include "px4_odometry_bridge/time_validator.hpp"
 
+#include <limits>
+
 #include <navigation_common/time.hpp>
 
 namespace px4_odometry_bridge {
@@ -19,6 +21,9 @@ std::optional<std::int64_t> checked_ros_time_to_nanoseconds(
 
 TimeValidationResult TimestampValidator::observe(std::uint64_t timestamp_us,
                                                  std::int64_t now_ns) {
+  if (now_ns <= 0) {
+    return {false, generation_, "invalid current time", TimestampEvent::kInvalid};
+  }
   const auto timestamp_ns = checked_microseconds_to_nanoseconds(timestamp_us);
   if (!timestamp_ns.has_value()) {
     return {false, generation_, "timestamp conversion overflow/zero", TimestampEvent::kInvalid};
@@ -31,6 +36,9 @@ TimeValidationResult TimestampValidator::observe(std::uint64_t timestamp_us,
     if (regression_ns >= config_.probable_restart_regression_ns &&
         *last_timestamp_ns_ > config_.restart_low_epoch_max_ns &&
         *timestamp_ns <= config_.restart_low_epoch_max_ns) {
+      if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
+        return {false, generation_, "timestamp generation exhausted", TimestampEvent::kInvalid};
+      }
       ++generation_;
       last_timestamp_ns_ = *timestamp_ns;
       return {true, generation_, "probable PX4 source restart", TimestampEvent::kProbableSourceRestart};
@@ -49,7 +57,7 @@ TimeValidationResult TimestampValidator::observe(std::uint64_t timestamp_us,
 
 void TimestampValidator::clear() {
   last_timestamp_ns_.reset();
-  ++generation_;
+  if (generation_ != std::numeric_limits<std::uint64_t>::max()) ++generation_;
 }
 
 }  // namespace px4_odometry_bridge

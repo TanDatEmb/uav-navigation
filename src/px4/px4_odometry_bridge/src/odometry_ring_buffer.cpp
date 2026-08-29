@@ -1,6 +1,7 @@
 #include "px4_odometry_bridge/odometry_ring_buffer.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace px4_odometry_bridge {
 
@@ -8,10 +9,28 @@ std::uint64_t OdometryRingBuffer::frameGeneration(const ConvertedOdometry &sampl
   return sample.frame_generation;
 }
 
-OdometryRingBuffer::OdometryRingBuffer(RingBufferConfig config) : config_(config) {}
+namespace {
+
+bool validConvertedOdometry(const ConvertedOdometry& sample) {
+  const double orientation_norm_squared = sample.orientation.squaredNorm();
+  const auto valid_variance = [](const Eigen::Vector3d& value, const bool available) {
+    return value.allFinite() && (!available || (value.array() >= 0.0).all());
+  };
+  return sample.timestamp_ns > 0 && sample.frame_generation != 0U &&
+         sample.position.allFinite() && sample.velocity_world.allFinite() &&
+         sample.velocity_body.allFinite() && sample.angular_velocity_body.allFinite() &&
+         sample.orientation.coeffs().allFinite() &&
+         std::isfinite(orientation_norm_squared) &&
+         std::abs(orientation_norm_squared - 1.0) <= 1.0e-6 &&
+         valid_variance(sample.position_variance, sample.position_covariance_available) &&
+         valid_variance(sample.velocity_variance, sample.velocity_covariance_available) &&
+         valid_variance(sample.orientation_variance, sample.orientation_covariance_available);
+}
+
+}  // namespace
 
 bool OdometryRingBuffer::push(const ConvertedOdometry &sample) {
-  if (sample.timestamp_ns <= 0 || sample.frame_generation == 0 ||
+  if (!validConvertedOdometry(sample) ||
       (!samples_.empty() && sample.timestamp_ns <= samples_.back().timestamp_ns)) {
     samples_.clear();
     post_reset_stable_ = false;
