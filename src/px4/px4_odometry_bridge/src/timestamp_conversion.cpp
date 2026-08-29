@@ -63,16 +63,13 @@ TimestampConversionResult TimestampConverter::convert(
   if (!measurement_us || !publication_us) {
     return fail("TIMESTAMP_ZERO_OR_OVERFLOW");
   }
-  std::int64_t age = 0;
-  if (publication_time_ns >= measurement_time_ns) {
-    age = publication_time_ns - measurement_time_ns;
-  } else {
-    age = -(measurement_time_ns - publication_time_ns);
-  }
-  if (age > maximum_age_ns_) {
+  const auto age = navigation_common::checkedDifference(
+      publication_time_ns, measurement_time_ns);
+  if (!age) return fail("TIMESTAMP_DELTA_OVERFLOW");
+  if (*age > maximum_age_ns_) {
     return fail("TIMESTAMP_STALE");
   }
-  if (age < -maximum_age_ns_) {
+  if (*age < -maximum_age_ns_) {
     return fail("TIMESTAMP_FUTURE");
   }
   if (!mapping_generation_changed) {
@@ -91,7 +88,7 @@ TimestampConversionResult TimestampConverter::convert(
       result.suppressed = true;
       result.measurement_time_us = *measurement_us;
       result.publication_time_us = *publication_us;
-      result.timestamp_age_ns = age;
+  result.timestamp_age_ns = *age;
       return result;
     }
     if (last_publication_time_us_.has_value() &&
@@ -117,7 +114,7 @@ TimestampConversionResult TimestampConverter::convert(
   result.measurement_time_us = *measurement_us;
   result.publication_time_us = *publication_us;
   result.timestamp_mapping_generation = timestamp_mapping_generation;
-  result.timestamp_age_ns = static_cast<std::int64_t>(age);
+  result.timestamp_age_ns = *age;
   return result;
 }
 

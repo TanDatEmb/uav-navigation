@@ -288,6 +288,20 @@ TEST(Px4RingBuffer, InterpolatesWithoutExtrapolationOrGenerationCrossing) {
   EXPECT_FALSE(buffer.sample(999'000'000).has_value());
 }
 
+TEST(Px4RingBuffer, InterpolatesWorldVelocityAlongsideBodyVelocity) {
+  px4_odometry_bridge::OdometryRingBuffer buffer({
+      .duration_ns = 2'000'000'000, .capacity = 512, .max_gap_ns = 50'000'000, .stable_samples = 1});
+  auto first = sample(1'000'000'000);
+  auto second = sample(1'020'000'000);
+  first.velocity_world.x() = 0.0;
+  second.velocity_world.x() = 2.0;
+  ASSERT_TRUE(buffer.push(first));
+  ASSERT_TRUE(buffer.push(second));
+  const auto result = buffer.sample(1'010'000'000);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_DOUBLE_EQ(result->value.velocity_world.x(), 1.0);
+}
+
 TEST(Px4RingBuffer, RejectsInvalidConfigurationAndNonFiniteSamples) {
   EXPECT_THROW(px4_odometry_bridge::OdometryRingBuffer({.capacity = 0}),
                std::invalid_argument);

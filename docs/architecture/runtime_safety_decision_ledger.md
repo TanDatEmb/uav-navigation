@@ -25,6 +25,29 @@
   --gtest_filter=PlannerTrajectory.BackupOptimizerRejectsMalformedPublicBoundaryInputs
   --gtest_color=no`.
 
+### 2026-08-29 - Preserve velocity invariants in PX4 odometry interpolation
+
+- **Owner/status:** PX4 odometry bridge ring buffer, `PROVISIONAL`; verified by
+  the focused bridge tests.
+- **Scope:** Interpolated samples now interpolate `velocity_world` together
+  with body velocity, and ring-buffer span/bracket/alpha arithmetic uses
+  checked timestamp differences with invalid results rejected. Timestamp
+  conversion uses the same checked age operation.
+- **Safety impact:** A sampled odometry state no longer combines a newly
+  interpolated body/pose state with stale world velocity, and extreme timestamp
+  arithmetic cannot silently produce a false age or interpolation ratio.
+- **False-accept/false-reject consequences:** Ordinary interpolation is
+  unchanged except for the corrected world-velocity value. Invalid or
+  unrepresentable brackets are rejected fail-closed.
+- **Runtime cost and evidence:** Constant-time checked differences per buffer
+  operation; regression confirms midpoint world velocity and existing bracket
+  behavior.
+- **Removal/review condition:** Keep until odometry samples use a single typed
+  world/body velocity representation with a checked timestamp domain.
+- **Verification:** `cmake --build build/px4_odometry_bridge --target
+  test_px4_odometry_bridge -j2 &&
+  ./build/px4_odometry_bridge/test_px4_odometry_bridge --gtest_color=no`.
+
 ### 2026-08-29 - Reject malformed External Mode odometry orientation
 
 - **Owner/status:** PX4 External Mode odometry ingress, `PROVISIONAL`; verified

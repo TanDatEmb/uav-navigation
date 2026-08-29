@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include <navigation_common/time.hpp>
+
 namespace px4_odometry_bridge {
 
 std::uint64_t OdometryRingBuffer::frameGeneration(const ConvertedOdometry &sample) {
@@ -51,9 +53,11 @@ bool OdometryRingBuffer::push(const ConvertedOdometry &sample) {
   }
   post_reset_stable_ = true;
   samples_.push_back(sample);
-  while (samples_.size() > config_.capacity ||
-         (samples_.back().timestamp_ns - samples_.front().timestamp_ns) >
-             config_.duration_ns) {
+  while (samples_.size() > config_.capacity || [&]() {
+           const auto span = navigation_common::checkedDifference(
+               samples_.back().timestamp_ns, samples_.front().timestamp_ns);
+           return !span || *span > config_.duration_ns;
+         }()) {
     samples_.pop_front();
   }
   return true;
@@ -74,22 +78,42 @@ std::optional<SampledOdometry> OdometryRingBuffer::sample(std::int64_t timestamp
   if (upper == samples_.begin() || upper == samples_.end()) return std::nullopt;
   const auto &before = *(upper - 1);
   const auto &after = *upper;
+  const auto bracket_delta = navigation_common::checkedDifference(
+      after.timestamp_ns, before.timestamp_ns);
   if (frameGeneration(after) != frameGeneration(before) ||
-      after.time_generation != before.time_generation ||
-      after.timestamp_ns - before.timestamp_ns > config_.max_gap_ns) {
+      after.time_generation != before.time_generation || !bracket_delta ||
+      *bracket_delta > config_.max_gap_ns) {
     return std::nullopt;
   }
-  return SampledOdometry{interpolate(before, after, timestamp_ns), true};
+  const auto sampled = interpolate(before, after, timestamp_ns);
+  if (!validConvertedOdometry(sampled)) return std::nullopt;
+  return SampledOdometry{sampled, true};
 }
 
 ConvertedOdometry OdometryRingBuffer::interpolate(const ConvertedOdometry &a,
                                                   const ConvertedOdometry &b,
                                                   std::int64_t timestamp_ns) {
-  const double alpha = static_cast<double>(timestamp_ns - a.timestamp_ns) /
-                       static_cast<double>(b.timestamp_ns - a.timestamp_ns);
+  const auto numerator = navigation_common::checkedDifference(
+      timestamp_ns, a.timestamp_ns);
+  const auto denominator = navigation_common::checkedDifference(
+      b.timestamp_ns, a.timestamp_ns);
+  if (!numerator || !denominator || *denominator <= 0) {
+    ConvertedOdometry invalid = a;
+    invalid.timestamp_ns = 0;
+    return invalid;
+  }
+  const double alpha = static_cast<double>(*numerator) /
+                       static_cast<double>(*denominator);
+  if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
+    ConvertedOdometry invalid = a;
+    invalid.timestamp_ns = 0;
+    return invalid;
+  }
   ConvertedOdometry output = a;
   output.timestamp_ns = timestamp_ns;
   output.position = a.position + alpha * (b.position - a.position);
+  output.velocity_world =
+      a.velocity_world + alpha * (b.velocity_world - a.velocity_world);
   output.velocity_body = a.velocity_body + alpha * (b.velocity_body - a.velocity_body);
   output.angular_velocity_body =
       a.angular_velocity_body + alpha * (b.angular_velocity_body - a.angular_velocity_body);
