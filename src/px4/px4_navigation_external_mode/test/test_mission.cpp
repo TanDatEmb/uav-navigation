@@ -2,6 +2,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 
 #include <gtest/gtest.h>
 
@@ -795,6 +796,23 @@ TEST(MissionController, SafetyFallbackBrakesAndRequestsPositionControl) {
   EXPECT_EQ(handover.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::RequestPositionControl);
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Paused);
+}
+
+TEST(MissionController, RejectsUnrepresentableBrakingDeadline) {
+  const auto path = writeMission(kValidMission);
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(1.0);
+  ASSERT_EQ(controller.update(1.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 1U, 2U, std::numeric_limits<double>::max(),
+                          std::numeric_limits<double>::max());
+  EXPECT_EQ(controller.state(),
+            px4_navigation_external_mode::MissionControllerState::Paused);
+  EXPECT_EQ(controller.update(2.0, std::nullopt, true, Eigen::Vector3d::Zero()).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::RequestPositionControl);
 }
 
 TEST(MissionController, CompletedBackupInsidePassThroughAcceptanceAdvances) {

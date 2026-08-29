@@ -12150,3 +12150,22 @@ release profiles must not use the former allowance.
   one checked monotonic allocator.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/fast_lio_core --target test_imu_state_propagator -j2`.
+
+### 2026-08-29 - Bound MissionController braking deadlines
+
+- **Owner/status:** PX4 External Mode mission braking lifecycle, `VERIFIED`
+  by the focused mission-controller test and contract build.
+- **Scope:** Braking end times are formed with checked long-double seconds
+  addition. An unrepresentable finite deadline transitions to the existing
+  paused/position-control handover path instead of storing `+inf`.
+- **Safety impact:** A malformed duration cannot keep a safety stop in Braking
+  indefinitely or make confirmation/timeout comparisons meaningless.
+- **False-accept/false-reject consequences:** Normal finite deadlines are
+  unchanged. Only an unrepresentable deadline fails closed to position control.
+- **Runtime cost and evidence:** One checked addition on each accepted braking
+  trajectory; the regression test confirms the handover request.
+- **Removal/review condition:** Keep until mission durations use a validated
+  integer timestamp/deadline type at the controller boundary.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/px4_navigation_external_mode --target test_mission -j2`;
+  focused test binary.

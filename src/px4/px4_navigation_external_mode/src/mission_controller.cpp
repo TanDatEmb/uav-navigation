@@ -7,6 +7,23 @@
 #include <utility>
 
 namespace px4_navigation_external_mode {
+namespace {
+
+std::optional<double> checkedAddSeconds(const double base_s,
+                                        const double offset_s) noexcept {
+  if (!std::isfinite(base_s) || !std::isfinite(offset_s) || offset_s < 0.0) {
+    return std::nullopt;
+  }
+  const long double sum = static_cast<long double>(base_s) +
+                          static_cast<long double>(offset_s);
+  if (!std::isfinite(sum) ||
+      sum > static_cast<long double>(std::numeric_limits<double>::max())) {
+    return std::nullopt;
+  }
+  return static_cast<double>(sum);
+}
+
+}  // namespace
 
 MissionController::MissionController(Mission mission)
     : mission_(std::move(mission)), route_progress_(mission_) {
@@ -109,8 +126,19 @@ void MissionController::onTrajectory(bool success, std::uint8_t trajectory_role,
         // A positive-duration replacement is a new braking interval. Restart its
         // own confirmation window so an old stopped interval cannot trigger an
         // early handover while the replacement trajectory is still active.
+        const auto braking_end = checkedAddSeconds(now_s, duration_s);
+        if (!braking_end) {
+          state_ = MissionControllerState::Paused;
+          checkpoint_valid_ = true;
+          trajectory_ready_ = false;
+          pending_position_control_ = true;
+          braking_start_time_s_.reset();
+          braking_end_time_s_.reset();
+          stopped_start_time_s_.reset();
+          return;
+        }
         braking_start_time_s_ = now_s;
-        braking_end_time_s_ = now_s + duration_s;
+        braking_end_time_s_ = *braking_end;
         stopped_start_time_s_.reset();
       } else {
         // The rolling planner may refresh a zero-duration braking stop on every
@@ -139,9 +167,19 @@ void MissionController::onTrajectory(bool success, std::uint8_t trajectory_role,
 
   if (success && trajectory_role == kSafetyTrajectoryRole &&
       safety_plan_kind == kSafetyStopKind) {
+    const double effective_duration =
+        std::isfinite(duration_s) ? std::max(0.0, duration_s) : 0.0;
+    const auto braking_end = checkedAddSeconds(now_s, effective_duration);
+    if (!braking_end) {
+      state_ = MissionControllerState::Paused;
+      checkpoint_valid_ = true;
+      trajectory_ready_ = false;
+      pending_position_control_ = true;
+      return;
+    }
     state_ = MissionControllerState::Braking;
     braking_start_time_s_ = now_s;
-    braking_end_time_s_ = now_s + (std::isfinite(duration_s) ? std::max(0.0, duration_s) : 0.0);
+    braking_end_time_s_ = *braking_end;
     stopped_start_time_s_.reset();
     arrival_start_time_s_.reset();
     trajectory_ready_ = false;
