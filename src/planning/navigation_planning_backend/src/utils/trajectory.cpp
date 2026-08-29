@@ -150,6 +150,7 @@ double Trajectory::getTotalDuration() const {
 
 void Trajectory::clear() {
     pieces.clear();
+    start_WT = 0.0;
     return;
 }
 

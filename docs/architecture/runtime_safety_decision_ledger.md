@@ -1,5 +1,24 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Clear trajectory timing metadata with trajectory data
+
+- **Owner/status:** planning trajectory container, `PROVISIONAL`; verified by
+  the focused trajectory regression.
+- **Scope:** `Trajectory::clear()` now resets `start_WT` together with its
+  pieces, so a failed extraction or explicit clear cannot retain stale wall
+  time on an empty command.
+- **Safety impact:** Empty trajectories no longer expose timing metadata from a
+  previous command to logging or downstream scheduling.
+- **False-accept/false-reject consequences:** No valid piece or timing data is
+  changed; only stale metadata on an empty container is removed.
+- **Runtime cost and evidence:** One scalar assignment; regression checks the
+  reset after clearing an empty trajectory.
+- **Removal/review condition:** Keep until trajectory metadata is encapsulated
+  in an immutable checked snapshot.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.
+
 ### 2026-08-29 - Fail closed at the L-BFGS numerical boundary
 
 - **Owner/status:** planning numerical optimization, `PROVISIONAL`; verified

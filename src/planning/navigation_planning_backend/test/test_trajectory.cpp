@@ -462,6 +462,10 @@ TEST(PlannerTrajectory, InvalidTrajectoryEvaluationFailsClosed) {
   EXPECT_FALSE(empty.getState(0.0).allFinite());
   EXPECT_FALSE(std::isfinite(empty.getWaypointTT(-1)));
 
+  empty.start_WT = 42.0;
+  empty.clear();
+  EXPECT_DOUBLE_EQ(empty.start_WT, 0.0);
+
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
   geometry_utils::Trajectory malformed({0.0}, {coefficients});
   EXPECT_FALSE(malformed.getState(0.0, state));
