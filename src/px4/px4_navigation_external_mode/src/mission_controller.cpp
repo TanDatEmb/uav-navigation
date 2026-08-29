@@ -297,7 +297,10 @@ MissionControllerEvent MissionController::update(
         trajectory_ready_ = false;
         arrival_start_time_s_.reset();
         next_goal_time_s_ = std::numeric_limits<double>::infinity();
-        ++request_id_;
+        if (!advanceRequestId()) {
+          state_ = MissionControllerState::Failed;
+          return {MissionControllerEvent::Type::Failure, active_waypoint_index_, request_id_};
+        }
         braking_start_time_s_.reset();
         braking_end_time_s_.reset();
         stopped_start_time_s_.reset();
@@ -432,7 +435,10 @@ MissionControllerEvent MissionController::update(
         trajectory_ready_ = false;
         arrival_start_time_s_.reset();
         next_goal_time_s_ = std::numeric_limits<double>::infinity();
-        ++request_id_;
+        if (!advanceRequestId()) {
+          state_ = MissionControllerState::Failed;
+          return {MissionControllerEvent::Type::Failure, active_waypoint_index_, request_id_};
+        }
         MissionControllerEvent event{MissionControllerEvent::Type::PublishGoal,
                                      active_waypoint_index_, request_id_};
         event.waypoint_accepted = true;
@@ -453,7 +459,10 @@ MissionControllerEvent MissionController::update(
     if (now_s >= next_goal_time_s_) {
       next_goal_time_s_ = std::numeric_limits<double>::infinity();
       trajectory_ready_ = false;
-      ++request_id_;
+      if (!advanceRequestId()) {
+        state_ = MissionControllerState::Failed;
+        return {MissionControllerEvent::Type::Failure, active_waypoint_index_, request_id_};
+      }
       return {MissionControllerEvent::Type::PublishGoal, active_waypoint_index_, request_id_};
     }
     return {};
@@ -465,7 +474,10 @@ MissionControllerEvent MissionController::update(
       trajectory_ready_ = false;
       arrival_start_time_s_.reset();
       next_goal_time_s_ = std::numeric_limits<double>::infinity();
-      ++request_id_;
+      if (!advanceRequestId()) {
+        state_ = MissionControllerState::Failed;
+        return {MissionControllerEvent::Type::Failure, active_waypoint_index_, request_id_};
+      }
       return {MissionControllerEvent::Type::PublishGoal, active_waypoint_index_, request_id_};
     }
     if (!slowEnough()) {
@@ -496,7 +508,10 @@ MissionControllerEvent MissionController::update(
       trajectory_ready_ = false;
       arrival_start_time_s_.reset();
       next_goal_time_s_ = std::numeric_limits<double>::infinity();
-      ++request_id_;
+      if (!advanceRequestId()) {
+        state_ = MissionControllerState::Failed;
+        return {MissionControllerEvent::Type::Failure, active_waypoint_index_, request_id_};
+      }
       MissionControllerEvent event{MissionControllerEvent::Type::PublishGoal,
                                    active_waypoint_index_, request_id_};
       event.waypoint_accepted = true;
@@ -530,9 +545,16 @@ std::uint64_t MissionController::activeRequestId() const {
   return request_id_;
 }
 
-MissionWaypoint MissionController::activeWaypoint() const {
+std::optional<MissionWaypoint> MissionController::activeWaypoint() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return mission_.waypoints.at(active_waypoint_index_);
+  if (active_waypoint_index_ >= mission_.waypoints.size()) return std::nullopt;
+  return mission_.waypoints[active_waypoint_index_];
+}
+
+bool MissionController::advanceRequestId() noexcept {
+  if (request_id_ == std::numeric_limits<std::uint64_t>::max()) return false;
+  ++request_id_;
+  return request_id_ != 0U;
 }
 
 std::optional<MissionWaypoint> MissionController::waypointAt(std::size_t index) const {

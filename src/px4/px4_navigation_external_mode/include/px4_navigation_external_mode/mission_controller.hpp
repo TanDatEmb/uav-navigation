@@ -73,7 +73,7 @@ class MissionController final {
   [[nodiscard]] bool waitingForAirborne() const;
   [[nodiscard]] std::size_t activeWaypointIndex() const;
   [[nodiscard]] std::uint64_t activeRequestId() const;
-  [[nodiscard]] MissionWaypoint activeWaypoint() const;
+  [[nodiscard]] std::optional<MissionWaypoint> activeWaypoint() const;
   [[nodiscard]] std::optional<MissionWaypoint> waypointAt(std::size_t index) const;
   [[nodiscard]] std::optional<MissionWaypoint> nextWaypoint() const;
   [[nodiscard]] bool nativeTrajectoryReady() const;
@@ -89,6 +89,8 @@ class MissionController final {
   static constexpr std::uint8_t kSafetyTrajectoryRole = 1U;
   static constexpr std::uint8_t kSafetyRouteKind = 1U;
   static constexpr std::uint8_t kSafetyStopKind = 2U;
+
+  [[nodiscard]] bool advanceRequestId() noexcept;
 
   Mission mission_;
   navigation_mission::RouteProgress route_progress_;

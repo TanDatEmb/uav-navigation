@@ -372,7 +372,10 @@ void NavigationMode::onNavigationCommand(
     // activeWaypoint() for that late terminal notification.
     if (completed_command && !mission_terminal_ && mission_controller_ &&
         odometry_.has_value()) {
-      const auto& waypoint = mission_controller_->activeWaypoint();
+      const auto waypoint = mission_controller_->activeWaypoint();
+      if (!waypoint.has_value()) {
+        completed_command = false;
+      } else {
       const auto& point = odometry_->pose.pose.position;
       const Eigen::Vector3d measured{point.x, point.y, point.z};
       const Eigen::Vector3d command_position{message->position.x, message->position.y,
@@ -380,11 +383,11 @@ void NavigationMode::onNavigationCommand(
       const bool measured_finite = measured.allFinite();
       const bool command_finite = command_position.allFinite();
       const bool measured_inside_acceptance =
-          measured_finite && (measured - waypoint.position_enu).norm() <=
-              waypoint.acceptance_radius_m;
+          measured_finite && (measured - waypoint->position_enu).norm() <=
+              waypoint->acceptance_radius_m;
       const bool command_inside_acceptance =
-          command_finite && (command_position - waypoint.position_enu).norm() <=
-              waypoint.acceptance_radius_m;
+          command_finite && (command_position - waypoint->position_enu).norm() <=
+              waypoint->acceptance_radius_m;
       terminal_backup_hold_inside_acceptance =
           message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
           measured_inside_acceptance &&
@@ -394,7 +397,7 @@ void NavigationMode::onNavigationCommand(
               navigation_contracts::kCommandAnchorErrorLimitM);
       terminal_hold_inside_acceptance =
           terminal_backup_hold_inside_acceptance ||
-          (waypoint.behavior == MissionWaypoint::Behavior::Stop &&
+          (waypoint->behavior == MissionWaypoint::Behavior::Stop &&
            measured_inside_acceptance && command_inside_acceptance);
       terminal_main_hold_inside_acceptance =
           message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
@@ -404,6 +407,7 @@ void NavigationMode::onNavigationCommand(
            !terminal_backup_hold_inside_acceptance) ||
           (message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
            !terminal_main_hold_inside_acceptance);
+      }
     }
     if (!odometry_stale && !terminal_failure && !terminal_hold_inside_acceptance &&
         odometry_.has_value()) {
@@ -637,8 +641,8 @@ void NavigationMode::updateMission() {
   const auto state = mission_controller_->state();
   const auto native_ready = mission_controller_->nativeTrajectoryReady();
   const auto terminal_hold_pending = mission_controller_->terminalHoldPending();
-  const double position_error = position.has_value()
-                                    ? (*position - active_waypoint.position_enu).norm()
+  const double position_error = position.has_value() && active_waypoint.has_value()
+                                    ? (*position - active_waypoint->position_enu).norm()
                                     : -1.0;
   const double speed = velocity.has_value() ? velocity->norm() : -1.0;
   RCLCPP_INFO_THROTTLE(
@@ -648,7 +652,8 @@ void NavigationMode::updateMission() {
       "terminal_hold_pending=%s",
       mission_controller_->activeWaypointIndex(),
       static_cast<unsigned long>(mission_controller_->activeRequestId()),
-      static_cast<unsigned>(state), position_error, active_waypoint.acceptance_radius_m, speed,
+      static_cast<unsigned>(state), position_error,
+      active_waypoint.has_value() ? active_waypoint->acceptance_radius_m : -1.0, speed,
       mission_controller_->acceptanceSpeedMps(), airborne ? "true" : "false",
       native_ready ? "true" : "false", terminal_hold_pending ? "true" : "false");
   const auto event = mission_controller_->update(now_s, position, airborne, velocity);
@@ -666,7 +671,11 @@ void NavigationMode::updateMission() {
 void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, double now_s) {
   if (!mission_controller_ || event.type == MissionControllerEvent::Type::None) return;
   if (event.type == MissionControllerEvent::Type::PublishGoal) {
-    const auto& waypoint = mission_controller_->activeWaypoint();
+    const auto waypoint = mission_controller_->activeWaypoint();
+    if (!waypoint.has_value()) {
+      handover_requested_ = true;
+      return;
+    }
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       // Waypoint acceptance and planner publication run on independent
@@ -686,11 +695,11 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     goal.mission_id = mission_->id;
     goal.waypoint_index = static_cast<std::uint32_t>(event.waypoint_index);
     goal.request_id = event.request_id;
-    goal.target.x = waypoint.position_enu.x();
-    goal.target.y = waypoint.position_enu.y();
-    goal.target.z = waypoint.position_enu.z();
-    goal.acceptance_radius_m = waypoint.acceptance_radius_m;
-    goal.behavior = waypoint.behavior == MissionWaypoint::Behavior::Stop
+    goal.target.x = waypoint->position_enu.x();
+    goal.target.y = waypoint->position_enu.y();
+    goal.target.z = waypoint->position_enu.z();
+    goal.acceptance_radius_m = waypoint->acceptance_radius_m;
+    goal.behavior = waypoint->behavior == MissionWaypoint::Behavior::Stop
                         ? navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
                         : navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
     const auto next_waypoint = mission_controller_->nextWaypoint();
@@ -754,13 +763,13 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     if (next_waypoint.has_value()) {
       RCLCPP_INFO(node().get_logger(),
                   "Published mission waypoint %zu (%s) behavior=%u next_target=(%.3f,%.3f,%.3f)",
-                  event.waypoint_index, waypoint.id.c_str(),
+                  event.waypoint_index, waypoint->id.c_str(),
                   static_cast<unsigned>(goal.behavior), next_waypoint->position_enu.x(),
                   next_waypoint->position_enu.y(), next_waypoint->position_enu.z());
     } else {
       RCLCPP_INFO(node().get_logger(),
                   "Published mission waypoint %zu (%s) behavior=%u terminal=true",
-                  event.waypoint_index, waypoint.id.c_str(),
+                  event.waypoint_index, waypoint->id.c_str(),
                   static_cast<unsigned>(goal.behavior));
     }
     return;
@@ -1105,7 +1114,8 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       if (safety_hold_position_.has_value()) {
         handover_position = safety_hold_position_;
       } else if (mission_controller_) {
-        handover_position = mission_controller_->activeWaypoint().position_enu;
+        const auto waypoint = mission_controller_->activeWaypoint();
+        if (waypoint.has_value()) handover_position = waypoint->position_enu;
       }
       publishStationary(handover_position);
       last_setpoint_time_ = now;
@@ -1147,7 +1157,11 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   }
   if (mission_controller_ && mission_controller_->holding()) {
     const auto waypoint = mission_controller_->activeWaypoint();
-    if (!publishPositionHold(waypoint.position_enu)) {
+    if (!waypoint.has_value()) {
+      safetyStopNavigation("mission hold has no active waypoint");
+      return;
+    }
+    if (!publishPositionHold(waypoint->position_enu)) {
       safetyStopNavigation("mission hold position is not representable by PX4");
     }
     return;
@@ -1261,18 +1275,22 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
          command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN) &&
         !mission_terminal_ && mission_controller_ && odometry.has_value()) {
       const auto waypoint = mission_controller_->activeWaypoint();
+      if (!waypoint.has_value()) {
+        safetyStopNavigation("completed command has no active waypoint");
+        return;
+      }
       const auto& point = odometry->pose.pose.position;
       const Eigen::Vector3d measured{point.x, point.y, point.z};
       const Eigen::Vector3d command_position{command.position.x, command.position.y,
                                              command.position.z};
       const bool command_inside_acceptance =
           command_position.allFinite() &&
-          (command_position - waypoint.position_enu).norm() <=
-              waypoint.acceptance_radius_m;
+          (command_position - waypoint->position_enu).norm() <=
+              waypoint->acceptance_radius_m;
       const bool measured_inside_acceptance =
           measured.allFinite() &&
-          (measured - waypoint.position_enu).norm() <=
-              waypoint.acceptance_radius_m;
+          (measured - waypoint->position_enu).norm() <=
+              waypoint->acceptance_radius_m;
       if (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
         terminal_hold_inside_acceptance = measured_inside_acceptance &&
             backupEndpointHoldIsAnchored(

@@ -217,6 +217,7 @@ TEST(MissionController, PublishesWaypointsAndCompletesWithoutFlightActions) {
   expectWaypointAccepted(event, 1U);
   EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Complete);
   EXPECT_EQ(controller.activeWaypointIndex(), mission.waypoints.size());
+  EXPECT_FALSE(controller.activeWaypoint().has_value());
   EXPECT_FALSE(controller.waypointAt(controller.activeWaypointIndex()).has_value());
   const auto terminal_waypoint = controller.waypointAt(event.waypoint_index);
   ASSERT_TRUE(terminal_waypoint.has_value());

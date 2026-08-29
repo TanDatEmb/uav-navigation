@@ -11706,6 +11706,29 @@ release profiles must not use the former allowance.
   --symlink-install`; `colcon test --packages-select
   px4_navigation_external_mode`; `colcon test-result --verbose`.
 
+### 2026-08-29 - Make MissionController active-waypoint and request IDs fail closed
+
+- **Owner/status:** PX4 External Mode mission lifecycle boundary, `VERIFIED`
+  by package build and the complete mission test binary.
+- **Scope:** `activeWaypoint()` now returns an optional value after mission
+  completion instead of throwing when the completed index equals waypoint
+  count. Request-id advancement is checked before every new mission request;
+  exhaustion transitions the controller to `Failed` without publishing a
+  wrapped identity.
+- **Safety impact:** Terminal/racing callbacks cannot crash on a completed
+  mission or reuse request identity zero after uint64 exhaustion.
+- **False-accept/false-reject consequences:** Normal waypoint publication and
+  completion behavior is unchanged. A malformed lifecycle call or exhausted
+  request counter fails closed and requests handover/failure handling.
+- **Runtime cost and evidence:** Optional copy under the existing controller
+  mutex and one bounded integer check per request. `test_mission` passes 34/34.
+- **Removal/review condition:** Keep until mission lifecycle snapshots and
+  monotonic IDs are represented by immutable typed contracts.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select px4_navigation_external_mode
+  --symlink-install`; `./build/px4_navigation_external_mode/test_mission
+  --gtest_color=no`.
+
 ### 2026-08-29 - Validate direct trajectory optimizer configuration boundaries
 
 - **Owner/status:** Trajectory optimizer configuration boundary, `VERIFIED`
