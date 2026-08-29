@@ -56,6 +56,7 @@ RosLidarAdapter::RosLidarAdapter(std::string expected_frame,
 }
 
 LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message) const {
+  std::lock_guard lock(state_mutex_);
   if (message.header.frame_id != expected_frame_) {
     throw std::invalid_argument("point cloud frame does not match configured lidar frame");
   }
@@ -92,6 +93,7 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
   if (point_count == 0U) {
     throw std::invalid_argument("PointCloud2 must contain at least one point");
   }
+  normalization_statistics_.input_point_count += point_count;
 
   const auto header_time =
       RosTimeConverter::fromRos(message.header.stamp, clock_domain_);
@@ -153,8 +155,6 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
   if (scan.points.empty()) {
     throw std::invalid_argument("PointCloud2 contains no finite XYZ point");
   }
-  normalization_statistics_.input_point_count += scan.points.size();
-
   if (!absolute_times.empty() && previous_emitted_end_ns_ >= 0) {
     const auto minimum_time =
         *std::min_element(absolute_times.begin(), absolute_times.end());
@@ -238,6 +238,7 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
 
 PointTimeNormalizationStatistics
 RosLidarAdapter::normalizationStatistics() const noexcept {
+  std::lock_guard lock(state_mutex_);
   return normalization_statistics_;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -49,6 +50,7 @@ class RosLidarAdapter {
   PointTimeConfig point_time_;
   mutable std::int64_t previous_scan_start_ns_{-1};
   mutable std::int64_t previous_emitted_end_ns_{-1};
+  mutable std::mutex state_mutex_;
   mutable PointTimeNormalizationStatistics normalization_statistics_{};
 };
 
