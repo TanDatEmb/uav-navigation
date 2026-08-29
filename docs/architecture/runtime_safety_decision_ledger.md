@@ -70,6 +70,27 @@
   test_tracking_envelope px4_navigation_external_mode_node -j2 &&
   ./build/px4_navigation_external_mode/test_tracking_envelope --gtest_color=no`.
 
+### 2026-08-29 - Make RootFinder interval refinement overflow-safe
+
+- **Owner/status:** planning polynomial root refinement, `PROVISIONAL`; verified
+  by the focused trajectory regression.
+- **Scope:** RootFinder safe-Newton refinement now keeps interval widths and
+  bisection arithmetic in `long double`, checks every generated iterate, and
+  avoids overflowing `xh-xl` for finite bounds near opposite double limits.
+- **Safety impact:** Extreme but finite root brackets cannot create an infinite
+  width/NaN iterate that is later mistaken for a usable extrema root.
+- **False-accept/false-reject consequences:** Ordinary brackets retain the
+  existing Newton/bisection behavior. Unrepresentable refinement iterates now
+  fail closed with NaN for the existing rejection path.
+- **Runtime cost and evidence:** A few long-double operations per refinement
+  iteration; the existing root-refinement regression suite remains green.
+- **Removal/review condition:** Keep until root APIs expose a typed checked
+  result with explicit interval and residual guarantees.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_filter=PlannerTrajectory.RootFinderRejectsDegenerateNumericalInputs
+  --gtest_color=no`.
+
 ### 2026-08-29 - Harden SDLP numerical boundaries
 
 - **Owner/status:** planning geometry LP solver, `PROVISIONAL`; verified by the

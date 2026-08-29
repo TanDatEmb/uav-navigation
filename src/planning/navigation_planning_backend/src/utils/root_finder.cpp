@@ -355,8 +355,9 @@ double math_utils::RootFinderPriv::safeNewton(const F &func, const DF &dfunc, co
     }
 
     double rts = std::midpoint(xl, xh);
-    double dxold = fabs(xh - xl);
-    double dx = dxold;
+    long double dxold = std::abs(static_cast<long double>(xh) -
+                                 static_cast<long double>(xl));
+    long double dx = dxold;
     double f = func(rts);
     double df = dfunc(rts);
     if (!std::isfinite(f) || !std::isfinite(df)) {
@@ -367,38 +368,54 @@ double math_utils::RootFinderPriv::safeNewton(const F &func, const DF &dfunc, co
     }
     double temp;
     for (int j = 0; j < maxIts; j++) {
-        const double left_test = (rts - xh) * df - f;
-        const double right_test = (rts - xl) * df - f;
+        const long double left_test =
+            (static_cast<long double>(rts) - xh) * df - f;
+        const long double right_test =
+            (static_cast<long double>(rts) - xl) * df - f;
+        const long double scaled_derivative = dxold * df;
         const bool use_bisection = !std::isfinite(left_test) ||
             !std::isfinite(right_test) ||
             left_test * right_test > 0.0 ||
-            !std::isfinite(dxold * df) ||
-            fabs(2.0 * f) > fabs(dxold * df) ||
+            !std::isfinite(scaled_derivative) ||
+            std::abs(2.0L * f) > std::abs(scaled_derivative) ||
             df == 0.0;
         if (use_bisection) {
             dxold = dx;
-            dx = 0.5 * (xh - xl);
-            rts = xl + dx;
+            dx = 0.5L * (static_cast<long double>(xh) - xl);
+            const double next_rts = static_cast<double>(
+                static_cast<long double>(xl) + dx);
+            if (!std::isfinite(next_rts)) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
+            rts = next_rts;
             if (xl == rts) {
                 break;
             }
         } else {
             dxold = dx;
-            dx = f / df;
+            dx = static_cast<long double>(f) / df;
             if (!std::isfinite(dx)) {
                 dxold = dx;
-                dx = 0.5 * (xh - xl);
-                rts = xl + dx;
+                dx = 0.5L * (static_cast<long double>(xh) - xl);
+                const double next_rts = static_cast<double>(
+                    static_cast<long double>(xl) + dx);
+                if (!std::isfinite(next_rts)) {
+                    return std::numeric_limits<double>::quiet_NaN();
+                }
+                rts = next_rts;
             } else {
             temp = rts;
-            rts -= dx;
+            rts = static_cast<double>(static_cast<long double>(rts) - dx);
+            if (!std::isfinite(rts)) {
+                return std::numeric_limits<double>::quiet_NaN();
+            }
             if (temp == rts) {
                 break;
             }
             }
         }
 
-        if (fabs(dx) < tol) {
+        if (std::abs(dx) < static_cast<long double>(tol)) {
             break;
         }
 
