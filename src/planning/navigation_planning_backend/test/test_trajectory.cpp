@@ -617,6 +617,16 @@ TEST(PlannerTrajectory, FovPlanesHaveNoUninitializedRowsAndAnglesArePerInstance)
   EXPECT_GT((narrow_planes - wide_planes).norm(), 1.0e-3);
 }
 
+TEST(PlannerTrajectory, SensingHorizonCutIsTransactionalOnInfeasiblePolytope) {
+  navigation_planning_backend::FOVChecker checker(
+      navigation_planning_backend::OMNI, 0.0, -35.0, 35.0);
+  geometry_utils::Polytope poly;
+  EXPECT_FALSE(checker.cutPolyBySensingHorizon(
+      navigation_math::Vec3f::Zero(), navigation_math::Vec3f::UnitX(), 1.0,
+      poly));
+  EXPECT_TRUE(poly.empty());
+}
+
 TEST(PlannerTrajectory, FlatnessMapHasSafeDefaultsAndRejectsInvalidReset) {
   flatness::FlatnessMap map;
   double thrust = 0.0;

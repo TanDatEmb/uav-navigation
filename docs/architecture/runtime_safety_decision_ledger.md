@@ -25,6 +25,29 @@
   --gtest_filter=PlannerTrajectory.BackupOptimizerRejectsMalformedPublicBoundaryInputs
   --gtest_color=no`.
 
+### 2026-08-29 - Make sensing-horizon FOV cuts transactional
+
+- **Owner/status:** planning FOV corridor boundary, `PROVISIONAL`; verified by
+  the focused trajectory regression.
+- **Scope:** Removed unconditional stdout flushing from the sensing-horizon
+  hot path and moved Polytope mutation after the new plane set passes the
+  interior-feasibility check.
+- **Safety impact:** A failed horizon-plane solve no longer leaves a partially
+  modified corridor that later code might consume. This does not relax FOV,
+  occupancy, or corridor feasibility checks.
+- **False-accept/false-reject consequences:** Valid feasible cuts preserve the
+  existing geometry. Failed cuts preserve the caller's original Polytope and
+  return false, allowing the existing planner failure path to handle them.
+- **Runtime cost and evidence:** Removes three synchronous stdout writes; adds
+  no solver pass beyond the existing feasibility check. Regression confirms an
+  infeasible cut leaves an empty Polytope unchanged.
+- **Removal/review condition:** Keep until FOV operations return an immutable
+  checked corridor result rather than mutating caller-owned geometry.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_filter=PlannerTrajectory.SensingHorizonCutIsTransactionalOnInfeasiblePolytope
+  --gtest_color=no`.
+
 ### 2026-08-29 - Correct translated Ellipsoid plane transformation
 
 - **Owner/status:** planning corridor geometry, `PROVISIONAL`; verified by the

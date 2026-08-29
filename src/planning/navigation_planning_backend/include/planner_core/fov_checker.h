@@ -50,19 +50,16 @@ namespace navigation_planning_backend {
             Vec4f new_plane;
             new_plane.head(3) = dir;
             new_plane(3) = -dir.dot(p);
-            cout<<new_plane.transpose()<<endl;
             auto planes = poly.GetPlanes();
             MatD4f new_planes(planes.rows() + 1, 4);
             new_planes.topRows(planes.rows()) =planes;
             new_planes.bottomRows(1) = new_plane.transpose();
-            cout<<"123123124512======================"<<endl;
-            cout<<new_planes<<endl;
-            poly.SetPlanes(new_planes);
             Vec3f it;
             //// h0*x + h1*y + h2*z + h3 <= 0
             if (!geometry_utils::findInterior(new_planes,it)) {
                 return false;
             }
+            poly.SetPlanes(new_planes);
             return true;
         }
 
