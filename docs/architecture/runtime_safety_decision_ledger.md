@@ -13073,3 +13073,26 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_planner_config test_trajectory -j2 &&
   ./build/navigation_planning_backend/test_planner_config --gtest_color=no`.
+
+### 2026-08-29 - Reject non-finite nominal optimizer costs
+
+- **Owner/status:** Nominal trajectory optimizer result boundary,
+  `PROVISIONAL`; verified by the focused trajectory suite.
+- **Scope:** Both public nominal optimization overloads now treat any
+  non-finite L-BFGS cost as a failed optimization, including `NaN` (not only
+  positive/negative infinity).
+- **Safety impact:** A malformed or numerically failed nominal solve cannot
+  continue to publish an apparently successful trajectory. No feasibility,
+  corridor, dynamic, flatness, world, or execution gate is relaxed.
+- **False-accept/false-reject consequences:** Ordinary finite optimizer
+  results are unchanged. Failed/non-finite results are rejected earlier with
+  the existing failure path.
+- **Runtime cost and evidence:** The change is two finite checks at the
+  existing optimization boundary. `test_trajectory` passed 114/114 after the
+  checkpoint.
+- **Removal/review condition:** Keep until the optimizer API returns an
+  explicit status/result object instead of encoding failure in a floating
+  point cost.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.

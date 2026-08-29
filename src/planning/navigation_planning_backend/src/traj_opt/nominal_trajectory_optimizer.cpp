@@ -2167,7 +2167,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     out_traj.clear();
 
 
-    if (success && std::isinf(optimize(out_traj, cfg_.opt_accuracy))) {
+    if (success && !std::isfinite(optimize(out_traj, cfg_.opt_accuracy))) {
         cout << YELLOW << " -- [planner] Minco exp_traj opt failed." << RESET << endl;
         success = false;
     }
@@ -2309,7 +2309,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
 
     out_traj.clear();
 
-    if (success && std::isinf(optimize(out_traj, cfg_.opt_accuracy))) {
+    if (success && !std::isfinite(optimize(out_traj, cfg_.opt_accuracy))) {
         cout << YELLOW << " -- [planner] Minco exp_traj opt failed." << RESET << endl;
         success = false;
     }
