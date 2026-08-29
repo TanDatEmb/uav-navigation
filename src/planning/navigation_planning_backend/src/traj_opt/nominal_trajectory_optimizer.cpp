@@ -534,7 +534,7 @@ static void truncateToSixDecimals(double &num) {
 }
 
 bool ExpTrajOpt::processCorridorWithGuideTraj() {
-    if (opt_vars.hPolytopes.size() < 2U ||
+    if (opt_vars.hPolytopes.empty() ||
         opt_vars.guide_path.size() < 2U ||
         opt_vars.guide_path.size() != opt_vars.guide_t.size()) {
         planner_context_->warn(
@@ -739,7 +739,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
 }
 
 bool ExpTrajOpt::setupProblemAndCheck() {
-    if (opt_vars.hPolytopes.size() < 2U ||
+    if (opt_vars.hPolytopes.empty() ||
         opt_vars.hPolytopes.size() >
             static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         return false;
@@ -1952,6 +1952,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 ExpTrajOpt::ExpTrajOpt(const traj_opt::Config &cfg, const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context) :
         cfg_(cfg),
         planner_context_(planner_context) {
+    if (!planner_context_) {
+        throw std::invalid_argument("ExpTrajOpt requires a planner runtime context");
+    }
     /// Use time as log file name
     //    auto now = std::chrono::system_clock::now();
     //    std::time_t t = std::chrono::system_clock::to_time_t(now);

@@ -10930,7 +10930,8 @@ release profiles must not use the former allowance.
   `VERIFIED` by the focused planning trajectory suite.
 - **Scope:** Reject empty or inconsistent corridor/guide inputs before size
   arithmetic, reject empty vertex enumerations, validate finite initial edges,
-  and use one MINCO piece per already subdivision-bounded corridor cell.
+  require the planner context dependency, and use one MINCO piece per already
+  subdivision-bounded corridor cell.
 - **Safety impact:** Removes the `/ INFINITY` placeholder and its undefined
   floating-to-integer behavior. A non-finite or structurally empty corridor
   now fails closed instead of reaching Eigen indexing or under-allocated

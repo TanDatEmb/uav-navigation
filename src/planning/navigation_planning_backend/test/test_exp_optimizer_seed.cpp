@@ -69,6 +69,11 @@ TEST(ExpOptimizer, GuideTimeIsTheInitialDurationSeed) {
   EXPECT_FALSE(trajectory.empty());
 }
 
+TEST(ExpOptimizer, RejectsMissingPlannerContext) {
+  const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  EXPECT_THROW(traj_opt::ExpTrajOpt(config, nullptr), std::invalid_argument);
+}
+
 TEST(PieceCertificate, IgnoresRoundoffOnlyLeadingPolynomialTerms) {
   constexpr double duration_s = 0.2;
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
