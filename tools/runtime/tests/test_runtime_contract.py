@@ -584,7 +584,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(capped_planner["traj_opt"]["boundary"]["max_vel"], 2.0)
 
             external = runner._external_mode_params(
-                session, ROOT / "config/runtime/external_mode.yaml", mission
+                session, ROOT / "config/runtime/external_mode.yaml"
             )
             external_parameters = yaml.safe_load(external.read_text(encoding="utf-8"))["px4_navigation_external_mode"]["ros__parameters"]
             self.assertNotIn("velocity_tracker", external_parameters["navigation"])

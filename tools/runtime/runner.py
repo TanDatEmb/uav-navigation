@@ -917,14 +917,12 @@ def _resolve_map_descriptor(session: Session, map_profile: str, map_seed: int) -
     return world_name, descriptor
 
 
-def _external_mode_params(session: Session, source: Path, mission_file: Path | None,
-                          speed_cap_mps: float | None = None) -> Path:
+def _external_mode_params(session: Session, source: Path) -> Path:
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "px4_navigation_external_mode" not in value:
         raise ValueError(f"runtime config is missing px4_navigation_external_mode: {source}")
-    # planner backend PVA is the nominal contract.  Limits are injected into planner backend by
-    # _mapping_params, never into this transport layer.
-    del mission_file, speed_cap_mps
+    # Planner backend PVA is the nominal contract. Limits are injected into
+    # planner backend by _mapping_params, never into this transport layer.
     target = session.directory / "external_mode_params.yaml"
     target.write_text(yaml.safe_dump({"px4_navigation_external_mode": value["px4_navigation_external_mode"]}, sort_keys=False), encoding="utf-8")
     return target
@@ -1956,8 +1954,7 @@ def _run_sim_unlocked(
                 "external_mode",
                 _ros_shell(
                     _external_mode_launch_command(
-                        _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml", mission_file,
-                                              speed_cap_mps),
+                        _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml"),
                         mission_file,
                     ),
                     enable_rviz=True,
@@ -1997,8 +1994,7 @@ def _run_sim_unlocked(
             )
             if control_interface == "external_mode":
                 external_mode_args = _external_mode_launch_command(
-                    _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml", mission_file,
-                                          speed_cap_mps),
+                    _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml"),
                     mission_file,
                 )
                 session.start("external_mode", _ros_shell([
