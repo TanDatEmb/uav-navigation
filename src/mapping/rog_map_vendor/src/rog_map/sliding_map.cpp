@@ -24,6 +24,7 @@
 #include <rog_map/rog_map_core/sliding_map.h>
 
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 
@@ -32,6 +33,19 @@ using namespace color_text;
 using namespace navigation_math;
 
 namespace {
+bool checkedIndexOffset(const Vec3i& base, const Vec3i& offset, Vec3i& result) {
+    for (int axis = 0; axis < 3; ++axis) {
+        const std::int64_t value = static_cast<std::int64_t>(base(axis)) +
+                                   static_cast<std::int64_t>(offset(axis));
+        if (value < static_cast<std::int64_t>(std::numeric_limits<int>::min()) ||
+            value > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
+            return false;
+        }
+        result(axis) = static_cast<int>(value);
+    }
+    return true;
+}
+
 bool indexFromCoordinate(const double coordinate, const double resolution, int &index) {
     if (!std::isfinite(coordinate) || !std::isfinite(resolution) || resolution <= 0.0) {
         index = 0;
@@ -137,11 +151,17 @@ bool SlidingMap::insideLocalMap(const Vec3i &id_g) const {
 
 void SlidingMap::updateLocalMapOriginAndBound(const rog_map::Vec3f &new_origin_d, const rog_map::Vec3i &new_origin_i) {
     // update local map origin and local map bound
+    Vec3i maximum_index;
+    Vec3i minimum_index;
+    if (!checkedIndexOffset(new_origin_i, sc_.half_map_size_i, maximum_index) ||
+        !checkedIndexOffset(new_origin_i, -sc_.half_map_size_i, minimum_index)) {
+        return;
+    }
     local_map_origin_i_ = new_origin_i;
     local_map_origin_d_ = new_origin_d;
 
-    local_map_bound_max_i_ = local_map_origin_i_ + sc_.half_map_size_i;
-    local_map_bound_min_i_ = local_map_origin_i_ - sc_.half_map_size_i;
+    local_map_bound_max_i_ = maximum_index;
+    local_map_bound_min_i_ = minimum_index;
 
     // the double map bound only consider the closed cell center
     globalIndexToPos(local_map_bound_min_i_, local_map_bound_min_d_);
@@ -171,9 +191,11 @@ void SlidingMap::mapSliding(const Vec3f &odom) {
     if (!indexFromPosition(odom, sc_.resolution, new_origin_i)) return;
     Vec3f new_origin_d = new_origin_i.cast<double>() * sc_.resolution;
     /// Compute the delta shift
-    Vec3i shift_num = new_origin_i - local_map_origin_i_;
+    std::int64_t shift_num[3]{};
     for (long unsigned int i = 0; i < 3; i++) {
-        if (fabs(shift_num[i]) > sc_.map_size_i[i]) {
+        shift_num[i] = static_cast<std::int64_t>(new_origin_i[i]) -
+                       static_cast<std::int64_t>(local_map_origin_i_[i]);
+        if (std::llabs(shift_num[i]) > sc_.map_size_i[i]) {
             // Clear all map
             resetLocalMap();
             last_slide_cells_cleared_ = static_cast<std::uint64_t>(sc_.map_vox_num);
@@ -192,19 +214,20 @@ void SlidingMap::mapSliding(const Vec3f &odom) {
         if (shift_num[i] == 0) {
             continue;
         }
+        const int shift = static_cast<int>(shift_num[i]);
         int min_id_g = -sc_.half_map_size_i(i) + local_map_origin_i_(i);
         int min_id_l = min_id_g % sc_.map_size_i(i);
         vector<int> clear_id;
-        if (shift_num(i) > 0) {
+        if (shift > 0) {
             /// forward shift, the min id should be cut
-            for (int k = 0; k < shift_num(i); k++) {
+            for (int k = 0; k < shift; k++) {
                 int temp_id = min_id_l + k;
                 temp_id = normalize(temp_id, -sc_.half_map_size_i(i), sc_.half_map_size_i(i));
                 clear_id.push_back(temp_id);
             }
         } else {
             /// backward shift, the max should be shifted
-            for (int k = -1; k >= shift_num(i); k--) {
+            for (int k = -1; k >= shift; k--) {
                 int temp_id = min_id_l + k;
                 temp_id = normalize(temp_id, -sc_.half_map_size_i(i), sc_.half_map_size_i(i));
                 clear_id.push_back(temp_id);

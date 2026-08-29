@@ -12836,3 +12836,29 @@ release profiles must not use the former allowance.
   range contract.
 - **Verification:** `cmake --build build/fast_lio_core --target test_point_filter
   -j2 && ./build/fast_lio_core/test_point_filter --gtest_color=no`.
+
+### 2026-08-29 - Guard ROG-Map derived index arithmetic
+
+- **Owner/status:** ROG-Map vendor configuration and sliding-map boundary,
+  `PROVISIONAL`; verified by the focused vendor suite.
+- **Scope:** Derived inflation resolution, virtual ground/ceiling indices, map
+  origin offsets, local-boundary offsets, and sliding deltas now use checked
+  wide arithmetic before narrowing to `int`. Overflow leaves the map state
+  unchanged or rejects initialization instead of wrapping an index.
+- **Safety impact:** A finite but non-representable map configuration or
+  sliding update cannot corrupt grid bounds or address calculations. This is a
+  vendor boundary hardening change; it does not relax occupancy or unknown-
+  space policy.
+- **False-accept/false-reject consequences:** Normal CORNER-origin maps and
+  ordinary sliding updates are unchanged. Configurations whose derived index
+  cannot be represented are rejected; an unrepresentable runtime slide is
+  ignored rather than mutating the current map.
+- **Runtime cost and evidence:** The checks are bounded over three axes and do
+  not add an allocation or ray traversal. `test_rog_map_vendor` passes 26/26,
+  including invalid resolution, extreme coordinate, and invalid configuration
+  regressions.
+- **Removal/review condition:** Keep until ROG-Map is replaced by a checked
+  grid-index API with explicit resource and coordinate-domain contracts.
+- **Verification:** `cmake --build build/rog_map_vendor --target
+  test_rog_map_vendor -j2 && ./build/rog_map_vendor/test_rog_map_vendor
+  --gtest_color=no`.

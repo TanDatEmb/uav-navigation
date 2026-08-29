@@ -513,7 +513,21 @@ namespace rog_map {
     std::cout << YELLOW << " -- [RM-Config] inflation_ratio: " << inflation_ratio << std::endl;
 #endif
 
-            inflation_resolution = resolution * inflation_ratio;
+            const long double derived_inflation_resolution =
+                static_cast<long double>(resolution) *
+                static_cast<long double>(inflation_ratio);
+            if (!std::isfinite(derived_inflation_resolution) ||
+                derived_inflation_resolution <= 0.0L ||
+                derived_inflation_resolution >
+                    static_cast<long double>(std::numeric_limits<double>::max())) {
+                throw std::invalid_argument(
+                    "rog_map derived inflation resolution is not representable");
+            }
+            inflation_resolution = static_cast<double>(derived_inflation_resolution);
+            if (!std::isfinite(inflation_resolution) || inflation_resolution <= 0.0) {
+                throw std::invalid_argument(
+                    "rog_map derived inflation resolution is not finite");
+            }
             std::cout << color_text::GREEN << " -- [RM-Config] inflation_resolution: " << inflation_resolution <<
                       color_text::RESET <<
                       std::endl;
@@ -559,16 +573,47 @@ namespace rog_map {
 #endif
 
 #ifdef ORIGIN_AT_CORNER
-            inf_virtual_ceil_height_id_g = static_cast<int>(floor(virtual_ceil_height / inflation_resolution)) -
-                                           inflation_step;
-            inf_virtual_ground_height_id_g = static_cast<int>(floor(virtual_ground_height / inflation_resolution)) +
-                                             inflation_step;
+            const long double ceil_index = std::floor(
+                static_cast<long double>(virtual_ceil_height) /
+                static_cast<long double>(inflation_resolution));
+            const long double ground_index = std::floor(
+                static_cast<long double>(virtual_ground_height) /
+                static_cast<long double>(inflation_resolution));
+            const long double final_ceil_index = ceil_index -
+                static_cast<long double>(inflation_step);
+            const long double final_ground_index = ground_index +
+                static_cast<long double>(inflation_step);
+            if (!std::isfinite(final_ceil_index) || !std::isfinite(final_ground_index) ||
+                final_ceil_index < static_cast<long double>(std::numeric_limits<int>::min()) ||
+                final_ceil_index > static_cast<long double>(std::numeric_limits<int>::max()) ||
+                final_ground_index < static_cast<long double>(std::numeric_limits<int>::min()) ||
+                final_ground_index > static_cast<long double>(std::numeric_limits<int>::max())) {
+                throw std::invalid_argument(
+                    "rog_map virtual plane index plus inflation halo is not representable");
+            }
+            inf_virtual_ceil_height_id_g = static_cast<int>(final_ceil_index);
+            inf_virtual_ground_height_id_g = static_cast<int>(final_ground_index);
 
             fmt::print(" -- [ROG-Map] Init, resetMapSize: ORIGIN_AT_CORNER.\n");
 #endif
 
-            virtual_ceil_height = inf_virtual_ceil_height_id_g * inflation_resolution - 0.5 * inflation_resolution;
-            virtual_ground_height = inf_virtual_ground_height_id_g * inflation_resolution + 0.5 * inflation_resolution;
+            const long double final_ceil_height =
+                static_cast<long double>(inf_virtual_ceil_height_id_g) *
+                    static_cast<long double>(inflation_resolution) -
+                0.5L * static_cast<long double>(inflation_resolution);
+            const long double final_ground_height =
+                static_cast<long double>(inf_virtual_ground_height_id_g) *
+                    static_cast<long double>(inflation_resolution) +
+                0.5L * static_cast<long double>(inflation_resolution);
+            if (!std::isfinite(final_ceil_height) || !std::isfinite(final_ground_height) ||
+                final_ground_height >= final_ceil_height ||
+                final_ground_height < static_cast<long double>(std::numeric_limits<double>::lowest()) ||
+                final_ceil_height > static_cast<long double>(std::numeric_limits<double>::max())) {
+                throw std::invalid_argument(
+                    "rog_map virtual plane heights are not representable");
+            }
+            virtual_ceil_height = static_cast<double>(final_ceil_height);
+            virtual_ground_height = static_cast<double>(final_ground_height);
             fmt::print(" -- [ROG-Map] Init, resetMapSize: virtual_ceil_height: {}, virtual_ground_height: {}.\n",
                        virtual_ceil_height, virtual_ground_height);
         }
