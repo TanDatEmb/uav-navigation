@@ -12190,3 +12190,23 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/px4_odometry_bridge --target
   test_px4_odometry_bridge test_geometric_jump_continuity -j2`; focused tests.
+
+### 2026-08-29 - Reject invalid mission unknown-space policy
+
+- **Owner/status:** Planning configuration boundary, `VERIFIED` by the focused
+  planner-config test.
+- **Scope:** Mission dynamic-limit injection now uses the shared
+  `DynamicLimits::valid()` contract, including explicit enum validation, before
+  mapping the policy into the planner configuration.
+- **Safety impact:** An unknown policy value can no longer silently map to
+  AllowUnknown and weaken collision semantics.
+- **False-accept/false-reject consequences:** Valid AllowUnknown and
+  RequireKnownFree missions are unchanged; malformed policy values are rejected
+  at construction.
+- **Runtime cost and evidence:** One bounded validation call during config
+  construction; focused planner-config suite passes.
+- **Removal/review condition:** Keep until mission limits are represented by a
+  strongly typed validated configuration object end-to-end.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_planning_backend --target
+  test_planner_config -j2`; focused test binary.

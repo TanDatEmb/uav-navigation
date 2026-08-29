@@ -90,14 +90,9 @@ namespace navigation_planning_backend {
             astar_cfg = path_search::PathSearchConfig(loader);
             if (mission_limits.has_value()) {
                 const auto &limits = *mission_limits;
-                if (!std::isfinite(limits.max_velocity_mps) ||
-                    !std::isfinite(limits.max_acceleration_mps2) ||
-                    !std::isfinite(limits.max_jerk_mps3) ||
-                    limits.max_velocity_mps <= 0.0 ||
-                    limits.max_acceleration_mps2 <= 0.0 ||
-                    limits.max_jerk_mps3 <= 0.0) {
+                if (!limits.valid()) {
                     throw std::invalid_argument(
-                        "mission dynamic limits must be finite and positive");
+                        "mission dynamic limits or unknown-space policy are invalid");
                 }
                 if (limits.max_velocity_mps > exp_traj_cfg.max_vel + 1.0e-9 ||
                     limits.max_acceleration_mps2 > exp_traj_cfg.max_acc + 1.0e-9 ||

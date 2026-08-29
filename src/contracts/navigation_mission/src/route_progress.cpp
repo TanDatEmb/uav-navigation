@@ -330,7 +330,10 @@ double RouteProgress::waypointArcLengthM(const std::size_t waypoint_index) const
 }
 
 std::size_t RouteProgress::segmentForArc(const double arc_length_m) const noexcept {
-  if (segments_.empty()) return std::numeric_limits<std::size_t>::max();
+  if (segments_.empty() || !std::isfinite(arc_length_m) ||
+      !std::isfinite(total_length_m_) || total_length_m_ < 0.0) {
+    return std::numeric_limits<std::size_t>::max();
+  }
   const double clamped_arc = clampArc(arc_length_m, total_length_m_);
   const auto iterator = std::lower_bound(
       segments_.begin(), segments_.end(), clamped_arc,

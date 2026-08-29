@@ -659,6 +659,15 @@ TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
       std::invalid_argument);
 }
 
+TEST(PlannerProductConfig, RejectsUnknownMissionSpacePolicy) {
+  navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
+  mission.unknown_space_policy =
+      static_cast<navigation_planning::UnknownSpacePolicy>(255U);
+  EXPECT_THROW(
+      (navigation_planning_backend::Config(PLANNER_PRODUCT_CONFIG_PATH, mission)),
+      std::invalid_argument);
+}
+
 TEST(PlannerProductConfig, RejectsMapBelowThePlannerSafetyEnvelope) {
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
   navigation_world_model::WorldGeometry world_geometry;

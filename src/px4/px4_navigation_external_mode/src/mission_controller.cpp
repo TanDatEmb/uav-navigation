@@ -99,6 +99,27 @@ void MissionController::onTrajectory(bool success, std::uint8_t trajectory_role,
   if (!std::isfinite(now_s)) return;
   std::lock_guard<std::mutex> lock(mutex_);
 
+  // The callback is a public transport boundary. Do not let an unknown
+  // role/kind pair look like a successful nominal trajectory: in Braking it
+  // could clear the safety phase, and in ExecutingWaypoint it could mark an
+  // uncertified callback as ready.
+  const bool nominal_trajectory =
+      trajectory_role == 0U &&
+      (safety_plan_kind == 0U || safety_plan_kind == kSafetyRouteKind);
+  const bool safety_trajectory =
+      trajectory_role == kSafetyTrajectoryRole &&
+      (safety_plan_kind == kSafetyRouteKind ||
+       safety_plan_kind == kSafetyStopKind);
+  if (success && !nominal_trajectory && !safety_trajectory) {
+    if (state_ == MissionControllerState::ExecutingWaypoint) {
+      state_ = MissionControllerState::Paused;
+      checkpoint_valid_ = true;
+      trajectory_ready_ = false;
+      pending_position_control_ = true;
+    }
+    return;
+  }
+
   // A map revision may replace the currently executing braking stop. Keep the
   // mission in Braking and restart its confirmation window from the new
   // trajectory's own time origin; do not let the old duration cause an early
