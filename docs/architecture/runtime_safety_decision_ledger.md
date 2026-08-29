@@ -13744,3 +13744,37 @@ release profiles must not use the former allowance.
   and can aggregate evidence without string matching.
 - **Verification:** full runtime contract suite plus one mission-complete and
   one safety-stop report inspection.
+
+### 2026-08-29 - Route anchor recovery through the bounded rest-planning ladder
+
+- **Owner/status:** runtime planner supervisor, `PROVISIONAL`; requires repeated
+  5 m/s SITL evidence on the three-column and hardest multiwaypoint maps.
+- **Scope:** when a visible MAIN command approaches the existing measured-anchor
+  envelope, the supervisor now enters the existing measured-state
+  `PlanFromRest` transition instead of issuing another nominal `ReplanOnce`.
+  The existing bounded velocity ladder (1.00, 0.75, 0.50, 0.35) therefore
+  applies to this recoverable tracking/dynamic failure path.
+- **Safety impact:** no freshness, timeout, world, identity, corridor, dynamic,
+  flatness, or command-publication gate is relaxed. A recovery solve must still
+  produce a newly certified immutable candidate; exhaustion still enters the
+  existing fail-closed PX4 handover path.
+- **False-accept/false-reject consequences:** a transient high-jerk or anchor
+  miss can receive a lower-speed certified trajectory rather than being
+  classified terminal after one failed hot replan. A path remains rejected when
+  no profile in the bounded ladder is certified; this does not authorize
+  continuation on an uncertified retained command.
+- **Runtime cost and evidence:** recovery uses the existing optimizer and
+  bounded failure budget; it does not add an unbounded retry loop. Focused FSM
+  tests and Release builds pass. The first post-change map run recovered a
+  failed `main_minco` solve on the next `PlanFromRest` attempt, but later
+  replanning still expired its command lease, so the SITL acceptance claim is
+  intentionally OPEN pending the required repeated runs.
+- **Removal/review condition:** keep until recovery reason taxonomy and the
+  profile ladder are represented as typed planner-supervisor policy, with
+  repeated mission-complete evidence and no regressions in clearance, tracking,
+  latency tails, or PX4 handover behavior.
+- **Verification:** `./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no`, `make build`, `make test`, and repeated
+  `SPEED_CAP_MPS=5 MAP_PROFILE=long_three_pillars make external-mode-check`
+  plus `SPEED_CAP_MPS=5 MAP_PROFILE=long_three_pillars_multiwaypoint make
+  external-mode-check`.

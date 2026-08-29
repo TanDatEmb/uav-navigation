@@ -2022,10 +2022,18 @@ void NavigationRuntimeNode::runCycle() {
       planner_command_available_.load(std::memory_order_acquire), transition_role,
       transition_anchor_error_m,
       navigation_contracts::kCommandAnchorErrorLimitM);
-  const bool plan_from_rest_with_transition = plan_from_rest || measured_state_goal_transition;
+  // A retained main command that has drifted toward the anchor envelope is a
+  // recoverable planning condition, not a terminal handover. Re-enter the
+  // measured-state PlanFromRest path so the same bounded recovery ladder can
+  // lower the velocity envelope and rebuild a certified trajectory. Keep
+  // hot-retarget semantics ahead of this only when a new goal owns the
+  // transition; never let a recovery request silently use the nominal
+  // ReplanOnce profile again.
+  const bool recovery_replan = anchor_recovery_due && !plan_from_rest &&
+      !measured_state_goal_transition && !hot_goal_transition;
+  const bool plan_from_rest_with_transition = plan_from_rest ||
+      measured_state_goal_transition || recovery_replan;
   const bool replan_for_new_goal = hot_goal_transition && !plan_from_rest_with_transition;
-  const bool recovery_replan = anchor_recovery_due &&
-      !plan_from_rest_with_transition && !replan_for_new_goal;
   if (new_goal) {
     // MissionController has invalidated the previous waypoint already. Do
     // not publish that waypoint while PlanFromRest runs.
