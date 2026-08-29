@@ -12006,3 +12006,26 @@ release profiles must not use the former allowance.
 - **Removal/review condition:** Keep until report inputs are immutable,
   schema-validated artifacts with an attested provenance service.
 - **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract -q`.
+
+### 2026-08-29 - Harden the transitional mapping view boundary
+
+- **Owner/status:** Navigation mapping world-model adapter, `VERIFIED` by the
+  focused mapping world-model test binary.
+- **Scope:** Validate grid-dimension conversion in long-double space before any
+  floating-to-integer cast, reject unrepresentable center-bound arithmetic,
+  reject invalid grid-layer/unknown-policy/distance inputs, and reject
+  non-finite query outputs. Null map dependencies now fail closed at this
+  private transitional boundary.
+- **Safety impact:** Malformed map geometry can no longer invoke undefined
+  floating-to-integer conversion or silently select the inflated/allow-unknown
+  semantics for an unknown enum value.
+- **False-accept/false-reject consequences:** Valid evidence/inflated queries
+  retain their behavior. Invalid direct adapter inputs return an empty/false
+  result instead of reaching ROG-Map.
+- **Runtime cost and evidence:** Three bounded dimension checks and enum/domain
+  checks per query; `test_mapping_world_model` passes 16/16.
+- **Removal/review condition:** Keep until the transitional adapter is removed
+  or replaced by an immutable validated world-model value type.
+- **Verification:** `cmake --build build/navigation_mapping
+  --target test_mapping_world_model -j2`; `./build/navigation_mapping/test_mapping_world_model
+  --gtest_color=no`.

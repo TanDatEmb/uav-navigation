@@ -47,6 +47,7 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
   }
 
   [[nodiscard]] navigation_world_model::WorldGeometry geometry() const noexcept override {
+    if (!map_) return {};
     const auto& config = map_->getMapConfig();
     const auto center = map_->getLocalMapOrigin();
     const auto size = map_->getLocalMapSize();
@@ -62,7 +63,18 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
         return bounds;
       }
       const auto count_real = size.array() / resolution;
-      const auto count = count_real.round().cast<int>().matrix().eval();
+      Eigen::Vector3i count{Eigen::Vector3i::Zero()};
+      for (int axis = 0; axis < 3; ++axis) {
+        const long double raw = static_cast<long double>(size(axis)) /
+            static_cast<long double>(resolution);
+        if (!std::isfinite(raw)) return navigation_world_model::GridBounds{};
+        const long double rounded = std::round(raw);
+        if (!std::isfinite(rounded) || rounded < 1.0L ||
+            rounded > static_cast<long double>(std::numeric_limits<int>::max())) {
+          return navigation_world_model::GridBounds{};
+        }
+        count(axis) = static_cast<int>(rounded);
+      }
       const auto count_as_real = count.cast<double>().array();
       const auto center_index = positionToIndex(center, layer);
       const auto tolerance = 64.0 * std::numeric_limits<double>::epsilon() *
@@ -70,6 +82,14 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
       if ((count.array() <= 0).any() ||
           ((count_real - count_as_real).cwiseAbs() > tolerance).any()) {
         return bounds;
+      }
+      for (int axis = 0; axis < 3; ++axis) {
+        const std::int64_t minimum = static_cast<std::int64_t>(center_index(axis)) -
+            static_cast<std::int64_t>(count(axis) / 2);
+        if (minimum < static_cast<std::int64_t>(std::numeric_limits<int>::min()) ||
+            minimum > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
+          return navigation_world_model::GridBounds{};
+        }
       }
       bounds.dimensions = count;
       bounds.global_min_index = center_index - count / 2;
@@ -98,25 +118,35 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
   [[nodiscard]] navigation_world_model::CellState classify(
       const navigation_world_model::Point3& point,
       navigation_world_model::GridLayer layer) const noexcept override {
-    if (!point.allFinite()) return navigation_world_model::CellState::kOutOfMap;
-    return toProductCell(layer == navigation_world_model::GridLayer::kInflated
-                             ? map_->getInfGridType(point)
-                             : map_->getGridType(point));
+    if (!map_ || !point.allFinite()) return navigation_world_model::CellState::kOutOfMap;
+    switch (layer) {
+      case navigation_world_model::GridLayer::kEvidence:
+        return toProductCell(map_->getGridType(point));
+      case navigation_world_model::GridLayer::kInflated:
+        return toProductCell(map_->getInfGridType(point));
+    }
+    return navigation_world_model::CellState::kOutOfMap;
   }
 
   [[nodiscard]] bool contains(
       const navigation_world_model::Point3& point) const noexcept override {
-    return point.allFinite() && map_->insideLocalMap(point);
+    return map_ && point.allFinite() && map_->insideLocalMap(point);
   }
 
   [[nodiscard]] navigation_world_model::GridIndex3 positionToIndex(
       const navigation_world_model::Point3& point,
       navigation_world_model::GridLayer layer) const noexcept override {
     navigation_world_model::GridIndex3 index{0, 0, 0};
-    if (layer == navigation_world_model::GridLayer::kInflated) {
-      map_->infMapPosToGlobalIndex(point, index);
-    } else {
-      map_->probMapPosToGlobalIndex(point, index);
+    if (!map_ || !point.allFinite()) return index;
+    switch (layer) {
+      case navigation_world_model::GridLayer::kInflated:
+        map_->infMapPosToGlobalIndex(point, index);
+        break;
+      case navigation_world_model::GridLayer::kEvidence:
+        map_->probMapPosToGlobalIndex(point, index);
+        break;
+      default:
+        return index;
     }
     return index;
   }
@@ -125,10 +155,16 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
       const navigation_world_model::GridIndex3& index,
       navigation_world_model::GridLayer layer) const noexcept override {
     navigation_world_model::Point3 point{navigation_world_model::Point3::Zero()};
-    if (layer == navigation_world_model::GridLayer::kInflated) {
-      map_->infMapGlobalIndexToPos(index, point);
-    } else {
-      map_->probMapGlobalIndexToPos(index, point);
+    if (!map_) return point;
+    switch (layer) {
+      case navigation_world_model::GridLayer::kInflated:
+        map_->infMapGlobalIndexToPos(index, point);
+        break;
+      case navigation_world_model::GridLayer::kEvidence:
+        map_->probMapGlobalIndexToPos(index, point);
+        break;
+      default:
+        return point;
     }
     return point;
   }
@@ -137,13 +173,26 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
       const navigation_world_model::Point3& start,
       navigation_world_model::GridLayer layer,
       double maximum_distance_m) const override {
+    if (!map_ || !start.allFinite() || !std::isfinite(maximum_distance_m) ||
+        maximum_distance_m < 0.0) {
+      return std::nullopt;
+    }
     navigation_world_model::Point3 nearest = start;
-    const bool found = layer == navigation_world_model::GridLayer::kInflated
-        ? map_->getNearestInfCellNot(rog_map::GridType::OCCUPIED, start, nearest,
-                                    maximum_distance_m)
-        : map_->getNearestCellNot(rog_map::GridType::OCCUPIED, start, nearest,
-                                 maximum_distance_m);
-    return found ? std::optional<navigation_world_model::Point3>{nearest} : std::nullopt;
+    bool found = false;
+    switch (layer) {
+      case navigation_world_model::GridLayer::kInflated:
+        found = map_->getNearestInfCellNot(rog_map::GridType::OCCUPIED, start, nearest,
+                                           maximum_distance_m);
+        break;
+      case navigation_world_model::GridLayer::kEvidence:
+        found = map_->getNearestCellNot(rog_map::GridType::OCCUPIED, start, nearest,
+                                        maximum_distance_m);
+        break;
+      default:
+        return std::nullopt;
+    }
+    return found && nearest.allFinite()
+        ? std::optional<navigation_world_model::Point3>{nearest} : std::nullopt;
   }
 
   [[nodiscard]] bool isSegmentTraversable(
@@ -151,7 +200,15 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
       const navigation_world_model::Point3& end,
       navigation_world_model::GridLayer layer,
       navigation_world_model::UnknownPolicy unknown_policy) const noexcept override {
-    if (!start.allFinite() || !end.allFinite()) return false;
+    if (!map_ || !start.allFinite() || !end.allFinite()) return false;
+    if (unknown_policy != navigation_world_model::UnknownPolicy::kAllowUnknown &&
+        unknown_policy != navigation_world_model::UnknownPolicy::kRequireKnownFree) {
+      return false;
+    }
+    if (layer != navigation_world_model::GridLayer::kEvidence &&
+        layer != navigation_world_model::GridLayer::kInflated) {
+      return false;
+    }
     if (!map_->isLineFree(
         start, end, layer == navigation_world_model::GridLayer::kInflated,
         unknown_policy == navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
@@ -165,6 +222,7 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
   [[nodiscard]] navigation_world_model::AxisAlignedBox clampToLocalBounds(
       const navigation_world_model::AxisAlignedBox& requested) const noexcept override {
     auto result = requested;
+    if (!map_ || !result.minimum.allFinite() || !result.maximum.allFinite()) return {};
     map_->boundBoxByLocalMap(result.minimum, result.maximum);
     return result;
   }
@@ -172,6 +230,7 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
   [[nodiscard]] navigation_world_model::PointVector observedOccupiedPoints(
       const navigation_world_model::AxisAlignedBox& box) const override {
     navigation_world_model::PointVector points;
+    if (!map_ || !box.minimum.allFinite() || !box.maximum.allFinite()) return points;
     map_->boxSearchObservedOccupied(box.minimum, box.maximum, points);
     return points;
   }

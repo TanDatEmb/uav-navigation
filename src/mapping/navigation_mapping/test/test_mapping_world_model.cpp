@@ -100,6 +100,26 @@ TEST_F(MappingWorldModelTest, GeometryAndIdentityAreProductOwned) {
   EXPECT_EQ(view->identity().observation_stamp_ns, 123456789);
 }
 
+TEST_F(MappingWorldModelTest, InvalidLayerAndDistanceFailClosed) {
+  const auto invalid_layer = static_cast<navigation_world_model::GridLayer>(255);
+  const auto point = Eigen::Vector3d::Zero();
+
+  EXPECT_EQ(view->classify(point, invalid_layer),
+            navigation_world_model::CellState::kOutOfMap);
+  EXPECT_EQ(view->positionToIndex(point, invalid_layer),
+            navigation_world_model::GridIndex3::Zero());
+  EXPECT_EQ(view->indexToPosition(navigation_world_model::GridIndex3::Zero(), invalid_layer),
+            navigation_world_model::Point3::Zero());
+  EXPECT_FALSE(view->nearestNotOccupied(point, invalid_layer, 1.0).has_value());
+  EXPECT_FALSE(view->nearestNotOccupied(point,
+                                        navigation_world_model::GridLayer::kEvidence,
+                                        std::numeric_limits<double>::quiet_NaN())
+                   .has_value());
+  EXPECT_FALSE(view->isSegmentTraversable(
+      point, point, navigation_world_model::GridLayer::kEvidence,
+      static_cast<navigation_world_model::UnknownPolicy>(255)));
+}
+
 TEST_F(MappingWorldModelTest, SnapshotChangeHistoryOnlyExemptsDisjointRegions) {
   const auto identity = navigation_world_model::WorldSnapshotIdentity{1, 1, 2, 200};
   const navigation_world_model::WorldChangeRecord record{
