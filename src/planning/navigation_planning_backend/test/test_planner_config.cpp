@@ -62,6 +62,14 @@ TEST(TrajOptConfig, RejectsMalformedDirectOptimizerConfiguration) {
   config.max_omg = 5.0;
   config.min_acc_thr = 26.0;
   EXPECT_THROW(config.validate(), std::invalid_argument);
+
+  config.min_acc_thr = 6.0;
+  config.integral_reso = traj_opt::Config::kMaximumIntegralResolution + 1;
+  EXPECT_THROW(config.validate(), std::invalid_argument);
+  config.integral_reso = 10;
+  config.feasibility_retry_max_iterations =
+      traj_opt::Config::kMaximumFeasibilityRetryIterations + 1;
+  EXPECT_THROW(config.validate(), std::invalid_argument);
 }
 
 TEST(GuideVerticalEnvelope, UsesOneInflatedVoxelAroundCertifiedGuide) {

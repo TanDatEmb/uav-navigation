@@ -626,7 +626,7 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const navigation_plann
     opt_vars.block_energy_cost = cfg_.block_energy_cost;
     opt_vars.smooth_eps = cfg_.smooth_eps;
     opt_vars.integral_res = cfg_.integral_reso;
-    opt_vars.quadrotor_flatness = cfg_.quadrotot_flatness;
+    opt_vars.quadrotor_flatness = cfg_.quadrotor_flatness;
     opt_vars.weight_ts = cfg_.terminal_time_weight;
     opt_vars.uniform_time_en = cfg_.uniform_time_en;
     opt_vars.piece_num = cfg_.piece_num;

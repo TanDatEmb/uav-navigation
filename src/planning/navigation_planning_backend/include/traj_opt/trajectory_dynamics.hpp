@@ -60,7 +60,7 @@ inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
     }
     const std::size_t intervals = std::max<std::size_t>(
             1U, static_cast<std::size_t>(interval_count));
-    flatness::FlatnessMap flatness = config.quadrotot_flatness;
+    flatness::FlatnessMap flatness = config.quadrotor_flatness;
     const auto evaluate_sample = [&](const double time) {
         if (!std::isfinite(time) || time < 0.0 || time > duration) {
             report.finite = false;

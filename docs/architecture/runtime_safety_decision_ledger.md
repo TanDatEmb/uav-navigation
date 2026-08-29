@@ -12887,3 +12887,27 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/rog_map_vendor --target
   test_rog_map_vendor -j2 && ./build/rog_map_vendor/test_rog_map_vendor
   --gtest_color=no`.
+
+### 2026-08-29 - Bound trajectory optimizer configuration work
+
+- **Owner/status:** Nominal/backup trajectory optimizer configuration,
+  `PROVISIONAL`; focused configuration and trajectory tests required.
+- **Scope:** The public flatness field is now consistently named
+  `quadrotor_flatness`. Numerical integration resolution and feasibility-retry
+  iterations have explicit upper bounds before the corresponding nested loops
+  or retry path can consume them.
+- **Safety impact:** This prevents malformed direct/YAML configuration from
+  creating unbounded optimizer CPU work. The limits are resource safeguards;
+  they do not relax geometric, dynamic, or flatness certificates.
+- **False-accept/false-reject consequences:** Existing values remain valid and
+  unchanged. A request above the reviewed computation budget is rejected at
+  configuration construction/validation and must be reviewed with a new
+  budget rather than silently clamped.
+- **Runtime cost and evidence:** Validation is constant time and the loop
+  bounds remain unchanged for current product defaults. Regression coverage
+  rejects integral resolution above 1000 and retry iterations above 256.
+- **Removal/review condition:** Revisit only with measured optimizer latency
+  distributions and an explicit resource budget for the deployment target.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_planner_config test_trajectory -j2 &&
+  ./build/navigation_planning_backend/test_planner_config --gtest_color=no`.

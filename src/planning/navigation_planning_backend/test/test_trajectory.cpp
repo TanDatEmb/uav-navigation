@@ -857,7 +857,7 @@ TEST(PlannerTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
   config.max_omg = 2.0;
   config.min_acc_thr = 6.0;
   config.max_acc_thr = 15.0;
-  config.quadrotot_flatness.reset(config.mass, config.grav, config.dh, config.dv,
+  config.quadrotor_flatness.reset(config.mass, config.grav, config.dh, config.dv,
                                   config.cp, config.v_eps);
 
   Eigen::MatrixXd hover_coefficients = Eigen::MatrixXd::Zero(3, 6);

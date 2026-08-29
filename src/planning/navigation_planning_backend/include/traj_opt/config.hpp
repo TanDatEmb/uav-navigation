@@ -34,9 +34,12 @@ namespace traj_opt {
 
     class Config {
     public:
+        static constexpr int kMaximumIntegralResolution = 1000;
+        static constexpr int kMaximumFeasibilityRetryIterations = 256;
+
         bool uniform_time_en{false};
 
-        flatness::FlatnessMap quadrotot_flatness;
+        flatness::FlatnessMap quadrotor_flatness;
 
         bool print_optimizer_log{false};
 
@@ -144,6 +147,8 @@ namespace traj_opt {
                 !std::isfinite(dynamic_limit_tolerance_ratio) ||
                 dynamic_limit_tolerance_ratio != 0.0 ||
                 feasibility_retry_max_iterations <= 0 ||
+                feasibility_retry_max_iterations > kMaximumFeasibilityRetryIterations ||
+                integral_reso > kMaximumIntegralResolution ||
                 lbfgs_memory_size < 3 || lbfgs_memory_size > 256) {
                 throw std::invalid_argument("invalid trajectory optimizer configuration");
             }
@@ -268,7 +273,9 @@ namespace traj_opt {
                 !std::isfinite(opt_accuracy) ||
                 opt_accuracy <= 0.0 ||
                 integral_reso <= 0 ||
+                integral_reso > kMaximumIntegralResolution ||
                 feasibility_retry_max_iterations <= 0 ||
+                feasibility_retry_max_iterations > kMaximumFeasibilityRetryIterations ||
                 lbfgs_memory_size < 3 || lbfgs_memory_size > 256) {
                 throw std::invalid_argument(
                     "trajectory smoothing and geometric tolerances must be finite; "
@@ -276,7 +283,7 @@ namespace traj_opt {
                     "retry iterations positive, and L-BFGS memory must be within [3, 256]");
             }
 
-            quadrotot_flatness.reset(mass, grav, dh, dv, cp, v_eps);
+            quadrotor_flatness.reset(mass, grav, dh, dv, cp, v_eps);
             validate(backup_profile);
         }
     };

@@ -1982,7 +1982,7 @@ ExpTrajOpt::ExpTrajOpt(const traj_opt::Config &cfg, const navigation_planner_con
     opt_vars.block_energy_cost = cfg_.block_energy_cost;
     opt_vars.smooth_eps = cfg_.smooth_eps;
     opt_vars.integral_res = cfg_.integral_reso;
-    opt_vars.quadrotor_flatness = cfg_.quadrotot_flatness;
+    opt_vars.quadrotor_flatness = cfg_.quadrotor_flatness;
     opt_vars.route_reference_lateral_weight = cfg_.route_reference_lateral_weight;
     opt_vars.route_reference_vertical_weight = cfg_.route_reference_vertical_weight;
     opt_vars.route_reference_lateral_deadband_m = cfg_.route_reference_lateral_deadband_m;
