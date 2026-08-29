@@ -329,6 +329,27 @@ TEST(CiriGeometry, RejectsDegenerateSeedSegmentBeforeEllipsoidConstruction) {
             navigation_math::INIT_ERROR);
 }
 
+TEST(CiriGeometry, RejectsObstacleAtClosedSeedClearanceBoundary) {
+  navigation_planning_backend::CIRI ciri;
+  ciri.setupParams(0.35, 1);
+
+  Eigen::MatrixX4d bounds(6, 4);
+  bounds <<
+      1.0, 0.0, 0.0, -2.0,
+     -1.0, 0.0, 0.0, -2.0,
+      0.0, 1.0, 0.0, -2.0,
+      0.0, -1.0, 0.0, -2.0,
+      0.0, 0.0, 1.0, -2.0,
+      0.0, 0.0, -1.0, -2.0;
+  Eigen::Matrix3Xd obstacles(3, 1);
+  obstacles.col(0) = Eigen::Vector3d{0.0, 0.35 - 0.01, 0.0};
+
+  EXPECT_EQ(ciri.comvexDecomposition(
+                bounds, obstacles, Eigen::Vector3d{-1.0, 0.0, 0.0},
+                Eigen::Vector3d{1.0, 0.0, 0.0}),
+            navigation_math::FAILED);
+}
+
 TEST(PlannerTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
   std::vector<double> durations{1.0, 1.0};
   std::vector<Eigen::MatrixXd> coefficients;

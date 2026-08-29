@@ -13,6 +13,8 @@ namespace {
 
 class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
  public:
+  navigation_world_model::PointVector occupied_points;
+
   navigation_world_model::WorldGeometry geometry() const noexcept override {
     navigation_world_model::WorldGeometry result;
     result.evidence_resolution_m = 0.2;
@@ -57,8 +59,15 @@ class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
     return box;
   }
   navigation_world_model::PointVector observedOccupiedPoints(
-      const navigation_world_model::AxisAlignedBox&) const override {
-    return {};
+      const navigation_world_model::AxisAlignedBox& box) const override {
+    navigation_world_model::PointVector result;
+    for (const auto& point : occupied_points) {
+      if ((point.array() >= box.minimum.array()).all() &&
+          (point.array() <= box.maximum.array()).all()) {
+        result.push_back(point);
+      }
+    }
+    return result;
   }
 };
 
@@ -68,6 +77,23 @@ TEST(WorldGeometryBoundaries, ContinuousClearanceRejectsOverflowingDerivedQueryB
   EXPECT_FALSE(navigation_world_model::observedOccupiedTubeIsClear(
       *world, Eigen::Vector3d{limit, 0.0, 0.0},
       Eigen::Vector3d{-limit, 0.0, 0.0}, limit));
+}
+
+TEST(WorldGeometryBoundaries,
+     ContinuousClearanceRejectsToleranceBoundaryAndZeroRadiusCollision) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  const double tolerance_boundary = 0.35 - 0.01;
+  world->occupied_points.push_back(
+      Eigen::Vector3d{0.0, tolerance_boundary, 0.0});
+  EXPECT_FALSE(navigation_world_model::observedOccupiedTubeIsClear(
+      *world, Eigen::Vector3d{-1.0, 0.0, 0.0},
+      Eigen::Vector3d{1.0, 0.0, 0.0}, 0.35));
+
+  world->occupied_points.clear();
+  world->occupied_points.push_back(Eigen::Vector3d{0.0, 0.0, 0.0});
+  EXPECT_FALSE(navigation_world_model::observedOccupiedTubeIsClear(
+      *world, Eigen::Vector3d{-1.0, 0.0, 0.0},
+      Eigen::Vector3d{1.0, 0.0, 0.0}, 0.0));
 }
 
 class TestCommitAuthorizer final : public navigation_world_model::WorldCommitAuthorizer {

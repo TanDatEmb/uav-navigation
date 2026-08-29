@@ -113,7 +113,9 @@ namespace navigation_planning_backend {
                     const auto & pt_w = pc.col(pcMinId);
                     const auto dis = distancePointToSegment(pt_w,a,b);
                     constexpr double kSeedClearanceToleranceM = 0.01;
-                    if(dis < robot_r_ - kSeedClearanceToleranceM) {
+                    const double minimum_clearance = std::max(
+                        0.0, robot_r_ - kSeedClearanceToleranceM);
+                    if(dis <= minimum_clearance) {
 //                        infeasible_problem = true;
                         infeasible_pt_w = pt_w;
                         cout<<YELLOW<<" -- [CIRI] WARNING! The problem is not feasible, the min dis to obstacle is only: "<<dis<<RESET<<endl;

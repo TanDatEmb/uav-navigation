@@ -28,7 +28,11 @@ namespace navigation_world_model {
 
   const long double query_radius = static_cast<long double>(radius_m) +
                                    static_cast<long double>(kClearanceToleranceM);
+  const long double minimum_clearance = std::max(
+      0.0L, static_cast<long double>(radius_m) -
+                static_cast<long double>(kClearanceToleranceM));
   if (!std::isfinite(query_radius) ||
+      !std::isfinite(minimum_clearance) ||
       query_radius > static_cast<long double>(std::numeric_limits<double>::max())) {
     return false;
   }
@@ -80,8 +84,7 @@ namespace navigation_world_model {
         distance_squared += delta * delta;
       }
       const long double distance = std::sqrt(distance_squared);
-      if (!std::isfinite(distance) ||
-          distance < static_cast<long double>(radius_m - kClearanceToleranceM)) {
+      if (!std::isfinite(distance) || distance <= minimum_clearance) {
         return false;
       }
     }

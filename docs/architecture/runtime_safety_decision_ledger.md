@@ -13535,6 +13535,31 @@ release profiles must not use the former allowance.
   and repeated latency/backpressure replay; this item remains open until that
   evidence exists.
 
+### 2026-08-29 - Close continuous-clearance boundary semantics
+
+- **Owner/status:** world-model continuous occupied-tube check and CIRI seed
+  clearance, `PROVISIONAL`; focused geometry regressions required.
+- **Scope:** Continuous clearance and CIRI now reject an observed obstacle at
+  or inside `radius - 0.01 m`, matching the stated closed boundary. For robot
+  radii below the 1 cm numerical tolerance, the effective minimum clearance is
+  clamped to zero so an obstacle on a zero/small-radius centerline cannot pass
+  through a negative rejection threshold.
+- **Safety impact:** Exact tolerance-boundary and centerline collisions remain
+  fail-closed instead of being accepted by a strict-`<` or negative-threshold
+  comparison. No unknown-cell policy or geometric radius is enlarged.
+- **False-accept/false-reject consequences:** Obstacles strictly outside the
+  effective clearance retain the existing result. Obstacles exactly at the
+  documented boundary, and centerline obstacles for a zero/small radius, are
+  rejected deterministically.
+- **Runtime cost and evidence:** One clamped threshold per clearance query;
+  no asymptotic change. The world-model tolerance-boundary/zero-radius
+  regression is required together with the CIRI trajectory suite.
+- **Removal/review condition:** Keep until the shared clearance contract is a
+  typed distance predicate used directly by both CIRI and world-model views.
+- **Verification:** `navigation_planning_backend` focused planner-facade and
+  CIRI tests, then the complete trajectory suite with only any separately
+  staged malformed-shape fixture excluded.
+
 ### 2026-08-29 - Keep PX4 rejection provenance velocity frames explicit
 
 - **Owner/status:** PX4 External Mode rejection diagnostics, `PROVISIONAL`;
