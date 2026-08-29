@@ -202,7 +202,7 @@ Eigen::MatrixX4d Ellipsoid::toEllipsoidFrame(const Eigen::MatrixX4d &planes_w) c
 Eigen::MatrixX4d Ellipsoid::toWorldFrame(const Eigen::MatrixX4d &planes_e) const {
     Eigen::MatrixX4d planes_w(planes_e.rows(), planes_e.cols());
     planes_w.leftCols(3) = planes_e.leftCols(3) * C_inv_;
-    planes_w.rightCols(1) = planes_e.rightCols(1) + planes_w.leftCols(3) * d_;
+    planes_w.rightCols(1) = planes_e.rightCols(1) - planes_w.leftCols(3) * d_;
     return planes_w;
 }
 

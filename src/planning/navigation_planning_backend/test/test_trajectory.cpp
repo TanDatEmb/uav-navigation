@@ -2421,6 +2421,28 @@ TEST(PlannerTrajectory, EllipsoidBoundariesFailClosedAndPreserveSourceIds) {
   EXPECT_EQ(inside_points.cols(), 2);
 }
 
+TEST(PlannerTrajectory, EllipsoidMatrixPlaneTransformMatchesScalarTransform) {
+  const geometry_utils::Ellipsoid ellipsoid(
+      navigation_math::Mat3f::Identity(),
+      navigation_math::Vec3f{2.0F, 3.0F, 4.0F},
+      navigation_math::Vec3f{10.0F, 20.0F, 30.0F});
+  ASSERT_FALSE(ellipsoid.empty());
+
+  Eigen::MatrixX4d planes_e(2, 4);
+  planes_e << 1.0, 0.0, 0.0, -1.0,
+              0.0, -1.0, 0.0, -2.0;
+  const Eigen::MatrixX4d planes_w = ellipsoid.toWorldFrame(planes_e);
+
+  ASSERT_EQ(planes_w.rows(), planes_e.rows());
+  for (Eigen::Index row = 0; row < planes_e.rows(); ++row) {
+    const Eigen::Vector4d plane_e = planes_e.row(row).transpose();
+    EXPECT_TRUE(planes_w.row(row).transpose().isApprox(
+        ellipsoid.toWorldFrame(plane_e), 1.0e-12));
+  }
+  EXPECT_DOUBLE_EQ(planes_w(0, 3), -6.0);
+  EXPECT_DOUBLE_EQ(planes_w(1, 3), 14.0 / 3.0);
+}
+
 TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
   auto world = std::make_shared<SweepWorld>();
   navigation_planner_context::PlannerRuntimeContext::Ptr context =

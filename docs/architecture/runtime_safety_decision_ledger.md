@@ -1,5 +1,29 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Correct translated Ellipsoid plane transformation
+
+- **Owner/status:** planning corridor geometry, `PROVISIONAL`; verified by the
+  focused trajectory regression.
+- **Scope:** The matrix `Ellipsoid::toWorldFrame()` overload now applies the
+  same inverse-affine constant-term transform as the scalar overload. For
+  `x = C e + d`, the world half-space constant is `b_w = b_e - n_w dot d`.
+- **Safety impact:** CIRI-generated world half-spaces no longer shift in the
+  wrong direction when the ellipsoid center is translated. This restores
+  corridor geometry consistency and does not relax collision or occupancy
+  checks.
+- **False-accept/false-reject consequences:** Translated ellipsoids may change
+  the generated corridor back to the intended geometry; malformed or invalid
+  ellipsoid inputs remain rejected by the existing validity checks.
+- **Runtime cost and evidence:** One sign-correct matrix expression; the
+  regression compares matrix and scalar transforms row by row and checks a
+  translated center.
+- **Removal/review condition:** Keep until the corridor geometry API uses a
+  single checked affine-plane transform implementation.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_filter=PlannerTrajectory.EllipsoidMatrixPlaneTransformMatchesScalarTransform
+  --gtest_color=no`.
+
 ### 2026-08-29 - Clear trajectory timing metadata with trajectory data
 
 - **Owner/status:** planning trajectory container, `PROVISIONAL`; verified by
