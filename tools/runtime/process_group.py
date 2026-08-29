@@ -203,10 +203,25 @@ class Session:
             "log": str(log_path),
             "started_at": time.time(),
         }
-        registry = self._registry()
-        registry.setdefault("processes", []).append(record)
-        _atomic_json(self.registry_path, registry)
-        self.write_state({"last_started_role": role})
+        try:
+            registry = self._registry()
+            registry.setdefault("processes", []).append(record)
+            _atomic_json(self.registry_path, registry)
+            self.write_state({"last_started_role": role})
+        except BaseException:
+            # Registration is part of process ownership.  Never leave a
+            # successfully spawned child unmanaged when registry/state
+            # persistence fails.
+            try:
+                os.killpg(record["pgid"], signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            try:
+                process.wait(timeout=2.0)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            log.close()
+            raise
         # The file descriptor is inherited by the child; close the parent copy.
         log.close()
         return process
@@ -248,7 +263,7 @@ class Session:
             # A reused PID must never authorize killing a new process group.
             expected_ticks = record.get("start_ticks")
             actual_ticks = _start_ticks(pid)
-            if expected_ticks is not None and actual_ticks not in {expected_ticks, None}:
+            if expected_ticks is not None and actual_ticks != expected_ticks:
                 failures.append(f"process identity changed for {record.get('role', pgid)}")
                 continue
             try:
@@ -287,8 +302,9 @@ class Session:
 
 
 def resolve_latest(root: Path) -> Path:
-    latest = (root / "latest").resolve()
-    if not latest.is_dir():
+    resolved_root = root.resolve()
+    latest = (resolved_root / "latest").resolve()
+    if latest.parent != resolved_root or not latest.is_dir():
         raise FileNotFoundError(f"no runtime session under {root}")
     return latest
 

@@ -1107,6 +1107,38 @@ class RuntimeContractTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 session.start("../escape", ["true"], cwd=Path(temporary))
 
+    def test_latest_resolution_rejects_external_symlink_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "runtime"
+            root.mkdir()
+            external = Path(temporary) / "external-session"
+            external.mkdir()
+            (root / "latest").symlink_to(external)
+            with self.assertRaises(FileNotFoundError):
+                process_group.resolve_latest(root)
+
+    def test_stop_fails_closed_when_process_identity_cannot_be_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = process_group.Session(Path(temporary) / "session")
+            session.registry_path.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "processes": [{
+                        "role": "owned",
+                        "pid": 999999,
+                        "pgid": 999999,
+                        "start_ticks": 123,
+                    }],
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.object(process_group, "_group_exists", return_value=True), \
+                    mock.patch.object(process_group, "_start_ticks", return_value=None), \
+                    mock.patch.object(os, "killpg") as killpg:
+                failures = session.stop(grace_s=0.0)
+            self.assertTrue(failures)
+            killpg.assert_not_called()
+
     def test_rviz_command_uses_sim_clock_without_legacy_topic_remap(self) -> None:
         command = runner._rviz_command(use_sim_time=True)
         self.assertIn("--ros-args", command)
