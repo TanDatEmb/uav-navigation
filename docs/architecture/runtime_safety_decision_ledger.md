@@ -12229,3 +12229,24 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/navigation_runtime --target test_planner_fsm -j2`;
   focused test binary.
+
+### 2026-08-29 - Keep route-backbone targets ahead of route high-water
+
+- **Owner/status:** Planning route-backbone target selection, `VERIFIED` by
+  the focused route-backbone suite.
+- **Scope:** The guidance target arc is now the maximum of the projected
+  forward-support target and the measured high-water start arc, bounded by
+  the active waypoint. A target that cannot advance beyond high-water remains
+  rejected rather than being allowed to regress along the route.
+- **Safety impact:** Replanning cannot issue a route target behind committed
+  mission progress, avoiding reverse guidance and the associated yaw reversal.
+- **False-accept/false-reject consequences:** Normal projection-based targets
+  are unchanged. An inconsistent/off-route high-water state may reject a
+  local target until a valid forward segment is available.
+- **Runtime cost and evidence:** One max operation per route target selection;
+  focused `test_route_backbone` passes 7/7.
+- **Removal/review condition:** Keep until route progress and planning-start
+  state share a typed, monotonic route-progress contract.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_planning_backend --target
+  test_route_backbone -j2`; focused test binary.

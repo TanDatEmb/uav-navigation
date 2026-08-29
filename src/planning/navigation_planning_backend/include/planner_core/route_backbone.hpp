@@ -75,7 +75,8 @@ inline RouteBackboneTarget selectRouteBackboneTarget(
   const double forward_support =
       std::sqrt(std::max(0.0, radius_squared - lateral_distance_squared));
   const double target_arc =
-      std::min(active_boundary, projected_arc + forward_support);
+      std::min(active_boundary,
+               std::max(start_arc, projected_arc + forward_support));
   const auto target_point = route.pointAtArc(target_arc);
   if (!target_point.has_value() || !target_point->allFinite() ||
       target_arc <= start_arc + 1.0e-6) {

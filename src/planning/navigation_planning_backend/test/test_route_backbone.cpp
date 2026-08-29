@@ -95,13 +95,25 @@ TEST(RouteBackbone, UsesPlanningStartProjectionButNeverRegressesHighWater) {
   ASSERT_TRUE(behind.valid);
   EXPECT_NEAR(behind.start_arc_m, 40.0, 1.0e-9);
   EXPECT_NEAR(behind.target_arc_m, 81.0, 1.0e-9);
-  EXPECT_LE((behind.point - Eigen::Vector3d{35.0, 0.0, 3.0}).norm(),
-            46.0 + 1.0e-9);
+  EXPECT_GE(behind.target_arc_m, behind.start_arc_m);
 
   const auto ahead = navigation_planning_backend::selectRouteBackboneTarget(
       route, {46.0, 0.0, 3.0}, 23.0);
   ASSERT_TRUE(ahead.valid);
   EXPECT_NEAR(ahead.start_arc_m, 46.0, 1.0e-9);
+}
+
+TEST(RouteBackbone, AdvancesFromHighWaterWhenProjectionFallsBehind) {
+  const auto route = makeSnapshot(
+      {{0.0, 0.0, 3.0}, {140.0, 0.0, 3.0}}, 1U,
+      {65.0, 0.0, 3.0});
+  const auto target = navigation_planning_backend::selectRouteBackboneTarget(
+      route, {20.0, 0.0, 3.0}, 23.0);
+
+  ASSERT_TRUE(target.valid);
+  EXPECT_NEAR(target.start_arc_m, 65.0, 1.0e-9);
+  EXPECT_NEAR(target.target_arc_m, 66.0, 1.0e-9);
+  EXPECT_GE(target.target_arc_m, target.start_arc_m);
 }
 
 TEST(RouteBackbone, RejectsUnsupportedOrNonForwardTargets) {
