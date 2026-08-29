@@ -13467,14 +13467,39 @@ release profiles must not use the former allowance.
 - **Runtime cost and evidence:** One absolute-time vector and a bounded
   filtering pass per CustomMsg; memory is proportional to the bounded input
   point count. Livox and PointCloud2 adapter regressions pass. Full package
-  CTest requires the sourced ROS Python environment; one pre-existing
-  propagated-worker timing test remains flaky and is tracked separately.
+  CTest requires the sourced ROS Python environment; the worker regression
+  setup was separately serialized at its documented following-IMU boundary.
 - **Removal/review condition:** Keep until both ingress types use one shared
   typed point-time normalizer and runtime diagnostics expose normalization
   counters directly.
 - **Verification:** `colcon build --packages-select fast_lio_ros
   --cmake-args -DBUILD_TESTING=ON`, `test_ros_livox_custom_adapter`,
   `test_ros_lidar_adapter`, and sourced package CTest.
+
+### 2026-08-29 - Serialize propagated-worker publication regression setup
+
+- **Owner/status:** FAST-LIO propagated-odometry worker test harness,
+  `PROVISIONAL`; repeated worker-suite evidence required.
+- **Scope:** The callback-exception and continuity-gap regressions now wait for
+  the first IMU sample to be observed before enqueueing the correction, then
+  enqueue the following IMU event that is required to trigger publication.
+  This matches the worker contract that correction processing alone does not
+  publish an output.
+- **Safety impact:** Test results now distinguish a real callback-suspension or
+  continuity failure from a scheduling race in test setup. Production worker
+  behavior and publication gates are unchanged.
+- **False-accept/false-reject consequences:** The regressions no longer
+  intermittently fail before exercising their intended callback/continuity
+  assertion. No acceptance or safety behavior is bypassed.
+- **Runtime cost and evidence:** Test-only synchronization adds no production
+  runtime cost. The complete 27-test worker binary passed in five consecutive
+  runs after the change.
+- **Removal/review condition:** Keep until the worker test fixture provides an
+  explicit event/barrier API for publication-trigger ordering.
+- **Verification:** `colcon build --packages-select fast_lio_ros
+  --cmake-target test_propagated_odometry_worker --cmake-args
+  -DBUILD_TESTING=ON` and five repeated runs of
+  `test_propagated_odometry_worker --gtest_color=no`.
 
 ### 2026-08-29 - Keep PX4 rejection provenance velocity frames explicit
 

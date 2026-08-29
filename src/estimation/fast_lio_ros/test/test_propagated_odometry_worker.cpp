@@ -74,8 +74,11 @@ TEST(PropagatedOdometryWorkerTest, PendingCorrectionMailboxIsClearedAfterTake) {
   PropagatedOdometryWorker worker(PropagatedOdometryWorkerConfig{});
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
-  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.propagator.latest_imu_time.has_value();
+  }));
   ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(1, 1U)));
+  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
   ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
     return diagnostics.last_applied_correction_sequence == 1U;
   }));
@@ -102,8 +105,11 @@ TEST(PropagatedOdometryWorkerTest, CallbackExceptionSuspendsPublication) {
       });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
-  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.propagator.latest_imu_time.has_value();
+  }));
   ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(1, 1U)));
+  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
   ASSERT_TRUE(waitForDiagnostics(worker, [&](const auto& diagnostics) {
     return diagnostics.publication_skip_count > 0U &&
            callback_count.load(std::memory_order_relaxed) == 1U;
@@ -366,8 +372,11 @@ TEST(PropagatedOdometryWorkerTest,
       [&](const auto& output) { collector.push(output); });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
-  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
+    return diagnostics.propagator.latest_imu_time.has_value();
+  }));
   ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(1, 1U)));
+  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
   ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
     return diagnostics.last_applied_correction_sequence == 1U;
   }));
