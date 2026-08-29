@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <fmt/color.h>
 #include <rog_map/rog_map_core/common_lib.hpp>
 
@@ -33,6 +34,28 @@ namespace path_search {
         }
         result = base + delta;
         return true;
+    }
+
+    std::optional<std::chrono::steady_clock::duration> checkedSearchDuration(
+            const double requested_seconds, const double fallback_seconds) {
+        if (std::isnan(requested_seconds) ||
+            (std::isinf(requested_seconds) && requested_seconds > 0.0)) {
+            return std::nullopt;
+        }
+        const double seconds = requested_seconds >= 0.0
+                ? requested_seconds : fallback_seconds;
+        if (!std::isfinite(seconds) || seconds <= 0.0) return std::nullopt;
+        const long double nanoseconds =
+                static_cast<long double>(seconds) * 1000000000.0L;
+        using Rep = std::chrono::steady_clock::duration::rep;
+        const long double maximum =
+                static_cast<long double>(std::numeric_limits<Rep>::max());
+        if (!std::isfinite(nanoseconds) || nanoseconds < 1.0L ||
+            nanoseconds > maximum) {
+            return std::nullopt;
+        }
+        return std::chrono::steady_clock::duration(
+                static_cast<Rep>(nanoseconds));
     }
 
 
@@ -153,7 +176,8 @@ namespace path_search {
         if (searching_horizon > 0) {
             md_.local_map_center_d = start_pt;
         } else {
-            md_.local_map_center_d = (start_pt.cast<double>() + goal_pt.cast<double>()) / 2.0;
+            md_.local_map_center_d = start_pt.cast<double>() * 0.5 +
+                                     goal_pt.cast<double>() * 0.5;
         }
 
         posToGlobalIndex(md_.local_map_center_d, md_.local_map_center_id_g);
@@ -177,7 +201,7 @@ namespace path_search {
                                      static_cast<double>(node2->id_g(2)));
 
                 double h = 0.0;
-                int diag = std::min(std::min(dx, dy), dz);
+                const double diag = std::min(std::min(dx, dy), dz);
                 dx -= diag;
                 dy -= diag;
                 dz -= diag;
@@ -204,7 +228,9 @@ namespace path_search {
                 return cfg_.heuristic_weight * (dx + dy + dz);
             }
             case EUCL: {
-                return cfg_.heuristic_weight * (node2->id_g - node1->id_g).norm();
+                const Eigen::Vector3d delta =
+                    node2->id_g.cast<double>() - node1->id_g.cast<double>();
+                return cfg_.heuristic_weight * delta.norm();
             }
             default: {
                 fmt::print(fg(fmt::color::indian_red), " -- [A*] Wrong hue type.\n");
@@ -312,10 +338,11 @@ namespace path_search {
             (std::isinf(time_out) && time_out > 0.0)) {
             return INIT_ERROR;
         }
-        const double effective_time_out = time_out >= 0.0 ? time_out : search_time_limit_s_;
+        const auto search_duration =
+            checkedSearchDuration(time_out, search_time_limit_s_);
+        if (!search_duration) return INIT_ERROR;
         const auto steady_deadline = std::chrono::steady_clock::now() +
-            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>(effective_time_out));
+                                     *search_duration;
         RET_CODE setup_ret = setup(start_pt, end_pt, flag, searching_horizon);
         if (setup_ret != SUCCESS) {
             return setup_ret;
@@ -324,6 +351,7 @@ namespace path_search {
         if (std::chrono::steady_clock::now() >= steady_deadline) {
             return TIME_OUT;
         }
+        if (rounds_ == std::numeric_limits<int>::max()) return INIT_ERROR;
         ++rounds_;
         /// 2) Switch both start and end point to local map
 
@@ -820,6 +848,10 @@ namespace path_search {
                             rog_map::Vec3f pos;
                             globalIndexToPos(neighborIdx, pos);
                             neighborPtr->distance_to_goal = getHeu(neighborPtr, endPtr, cfg_.heu_type);
+                            if (frontier_sequence_ ==
+                                std::numeric_limits<std::uint64_t>::max()) {
+                                return INIT_ERROR;
+                            }
                             neighborPtr->frontier_sequence = ++frontier_sequence_;
                             frontier_queue.push({neighborPtr,
                                                  neighborPtr->distance_to_goal,
@@ -904,10 +936,11 @@ namespace path_search {
                                      rog_map::vec_Vec3f &out_path,
                                      const bool prefer_start_altitude,
                                      const double time_out) {
-        const double effective_time_out = time_out >= 0.0 ? time_out : search_time_limit_s_;
+        const auto search_duration =
+            checkedSearchDuration(time_out, search_time_limit_s_);
+        if (!search_duration) return INIT_ERROR;
         const auto steady_deadline = std::chrono::steady_clock::now() +
-            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>(effective_time_out));
+                                     *search_duration;
         // setup() records the goal even though escape search only uses the
         // start-centred horizon. Avoid propagating an indeterminate Eigen
         // vector into mission state.
@@ -920,6 +953,7 @@ namespace path_search {
         if (std::chrono::steady_clock::now() >= steady_deadline) {
             return TIME_OUT;
         }
+        if (rounds_ == std::numeric_limits<int>::max()) return INIT_ERROR;
         ++rounds_;
 
         posToGlobalIndex(md_.local_map_center_d, md_.local_map_center_id_g);

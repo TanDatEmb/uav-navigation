@@ -2160,6 +2160,23 @@ TEST(PlannerTrajectory, AstarRejectsMalformedPublicBoundaries) {
                 navigation_math::Vec3f{5.5F, 0.5F, 1.5F}, flags, 20.0, path,
                 std::numeric_limits<double>::infinity(), true),
             navigation_math::INIT_ERROR);
+  EXPECT_EQ(astar.escapePathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F}, flags, path, true,
+                std::numeric_limits<double>::infinity()),
+            navigation_math::INIT_ERROR);
+  EXPECT_EQ(astar.escapePathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F}, flags, path, true,
+                std::numeric_limits<double>::quiet_NaN()),
+            navigation_math::INIT_ERROR);
+  EXPECT_EQ(astar.pointToPointPathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F},
+                navigation_math::Vec3f{5.5F, 0.5F, 1.5F}, flags, 20.0, path,
+                1.0e300, true),
+            navigation_math::INIT_ERROR);
+  EXPECT_EQ(astar.escapePathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F}, flags, path, true,
+                1.0e300),
+            navigation_math::INIT_ERROR);
 }
 
 TEST(PlannerTrajectory, DoesNotTruncateRouteWithinBound) {

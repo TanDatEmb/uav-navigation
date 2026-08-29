@@ -12250,3 +12250,26 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/navigation_planning_backend --target
   test_route_backbone -j2`; focused test binary.
+
+### 2026-08-29 - Bound A* public search inputs
+
+- **Owner/status:** Planning A* public boundary, `VERIFIED` by malformed-input
+  and full trajectory-planner tests.
+- **Scope:** A* now validates timeout values before converting them to the
+  steady-clock integer duration, rejects non-representable/zero durations,
+  uses overflow-safe midpoint and grid-distance arithmetic, and guards search
+  round/frontier counters before incrementing.
+- **Safety impact:** Malformed timeout or integer-boundary inputs cannot invoke
+  undefined floating/integer or signed-index arithmetic, hang frontier state,
+  or silently select a wrong heuristic.
+- **False-accept/false-reject consequences:** Valid ordinary searches retain
+  their behavior. Invalid, non-finite, or unrepresentable direct API inputs
+  return `INIT_ERROR`.
+- **Runtime cost and evidence:** One bounded timeout conversion per search and
+  checked arithmetic at setup/frontier boundaries; `test_trajectory` passes
+  108/108 after the regression additions.
+- **Removal/review condition:** Keep until A* uses typed bounded duration and
+  grid-index wrappers at its public API.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_planning_backend --target test_trajectory
+  -j2`; focused malformed-boundary tests.
