@@ -11152,3 +11152,27 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/fast_lio_ros --target
   test_ros_lidar_adapter -j2 && ./build/fast_lio_ros/test_ros_lidar_adapter
   --gtest_color=no`.
+
+### 2026-08-29 - Bound runtime diagnostic sampling and serialization
+
+- **Owner/status:** Navigation runtime callback, diagnostic JSON and watchdog
+  boundaries, `VERIFIED` by the runtime shutdown suite.
+- **Scope:** Cap trajectory diagnostic samples before any floating-to-size
+  conversion, escape all JSON control characters, use checked nanosecond
+  watchdog conversion, and validate PointCloud2 products in widened arithmetic
+  before reserve.
+- **Safety impact:** Malformed long-duration metadata cannot trigger an
+  out-of-range cast or oversized diagnostic allocation; malformed cloud layout
+  cannot be accepted because a uint32 product wrapped; watchdog behavior uses
+  the same representable integer duration as its constructor validation.
+- **False-accept/false-reject consequences:** Diagnostic paths may emit fewer
+  points for trajectories above the fixed 64-point display cap; valid normal
+  clouds, JSON strings and watchdog timing are unchanged. Invalid or
+  unrepresentable values fail closed.
+- **Runtime cost and evidence:** Constant-time bounded arithmetic and one
+  control-character escape pass. Runtime boundary and shutdown tests pass 6/6.
+- **Removal/review condition:** Keep until runtime diagnostic and watchdog
+  values are carried by checked typed-duration contracts.
+- **Verification:** `cmake --build build/navigation_runtime --target
+  test_navigation_runtime_shutdown -j2 &&
+  ./build/navigation_runtime/test_navigation_runtime_shutdown --gtest_color=no`.

@@ -35,4 +35,23 @@ inline std::optional<std::chrono::nanoseconds> ratePeriodNanoseconds(
   return std::chrono::nanoseconds{static_cast<std::int64_t>(period_ns)};
 }
 
+inline std::optional<std::size_t> boundedTrajectorySampleCount(
+    const double duration_s, const double sample_period_s,
+    const std::size_t maximum_points) noexcept {
+  if (!std::isfinite(duration_s) || duration_s <= 0.0 ||
+      !std::isfinite(sample_period_s) || sample_period_s <= 0.0 ||
+      maximum_points < 2U) {
+    return std::nullopt;
+  }
+  const long double ratio = static_cast<long double>(duration_s) /
+                            static_cast<long double>(sample_period_s);
+  const long double cap = static_cast<long double>(maximum_points - 1U);
+  if (!std::isfinite(ratio) || ratio >= cap) return maximum_points;
+  const long double intervals = std::ceil(ratio);
+  if (!std::isfinite(intervals) || intervals < 1.0L || intervals >= cap) {
+    return std::nullopt;
+  }
+  return static_cast<std::size_t>(intervals) + 1U;
+}
+
 }  // namespace navigation_runtime

@@ -249,7 +249,17 @@ void appendJsonString(std::ostringstream& output, const std::string_view value) 
       case '\n': output << "\\n"; break;
       case '\r': output << "\\r"; break;
       case '\t': output << "\\t"; break;
-      default: output << character; break;
+      case '\b': output << "\\b"; break;
+      case '\f': output << "\\f"; break;
+      default:
+        if (static_cast<unsigned char>(character) < 0x20U) {
+          constexpr char hex[] = "0123456789abcdef";
+          const auto value_byte = static_cast<unsigned char>(character);
+          output << "\\u00" << hex[value_byte >> 4U] << hex[value_byte & 0x0fU];
+        } else {
+          output << character;
+        }
+        break;
     }
   }
   output << '"';
@@ -308,16 +318,16 @@ std::string plannerPathSnapshotJson(
   if (has_committed_bundle && std::isfinite(trajectory.duration_s) &&
       trajectory.duration_s > 0.0) {
     constexpr std::size_t kMaximumPathPoints = 64U;
-    const auto point_count = std::min(
-        kMaximumPathPoints,
-        std::max<std::size_t>(2U, static_cast<std::size_t>(
-            std::ceil(trajectory.duration_s / 0.08)) + 1U));
-    nominal_path.reserve(point_count);
-    backup_path.reserve(point_count);
-    emergency_path.reserve(point_count);
-    for (std::size_t index = 0; index < point_count; ++index) {
+    const auto point_count = boundedTrajectorySampleCount(
+        trajectory.duration_s, 0.08, kMaximumPathPoints);
+    if (point_count) {
+      nominal_path.reserve(*point_count);
+      backup_path.reserve(*point_count);
+      emergency_path.reserve(*point_count);
+    }
+    for (std::size_t index = 0; point_count && index < *point_count; ++index) {
       const double trajectory_time = trajectory.duration_s * static_cast<double>(index) /
-                                     static_cast<double>(point_count - 1U);
+                                     static_cast<double>(*point_count - 1U);
       navigation_planning::TrajectoryPoint point;
       if (!trajectory.sample(trajectory_time, point)) continue;
       switch (point.role) {
@@ -467,11 +477,15 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   }
   const auto data_freshness_window_ns =
       navigation_common::secondsToNanoseconds(data_freshness_window_s_);
-  if (!data_freshness_window_ns || *data_freshness_window_ns <= 0) {
+  const auto planner_watchdog_timeout_ns =
+      navigation_common::secondsToNanoseconds(planner_watchdog_timeout_s_);
+  if (!data_freshness_window_ns || *data_freshness_window_ns <= 0 ||
+      !planner_watchdog_timeout_ns || *planner_watchdog_timeout_ns <= 0) {
     throw std::invalid_argument(
-        "navigation_runtime.data_freshness_window_s is too small for nanosecond precision");
+        "navigation_runtime timing values are too small or large for nanosecond precision");
   }
   data_freshness_window_ns_ = *data_freshness_window_ns;
+  planner_watchdog_timeout_ns_ = *planner_watchdog_timeout_ns;
   if (body_frame_id_.empty()) {
     throw std::invalid_argument("navigation_runtime.body_frame_id must not be empty");
   }
@@ -981,14 +995,21 @@ NavigationRuntimeNode::~NavigationRuntimeNode() {
 bool NavigationRuntimeNode::decodeCloud(const sensor_msgs::msg::PointCloud2& message,
                                       navigation_mapping::PointCloud& output,
                                       const bool require_nonempty) {
+  constexpr std::uint64_t kMaximumPointCount = 2'000'000U;
+  const std::uint64_t row_payload_bytes =
+      static_cast<std::uint64_t>(message.point_step) * message.width;
+  const std::uint64_t storage_bytes =
+      static_cast<std::uint64_t>(message.row_step) * message.height;
+  const std::uint64_t point_count =
+      static_cast<std::uint64_t>(message.width) * message.height;
   if (!hasFloatField(message, "x") || !hasFloatField(message, "y") ||
       !hasFloatField(message, "z") || message.point_step == 0U ||
-      message.row_step < message.point_step * message.width ||
-      static_cast<std::uint64_t>(message.row_step) * message.height > message.data.size()) {
+      message.row_step < row_payload_bytes || storage_bytes > message.data.size() ||
+      point_count > kMaximumPointCount) {
     return false;
   }
   output.clear();
-  output.reserve(static_cast<std::size_t>(message.width) * message.height);
+  output.reserve(static_cast<std::size_t>(point_count));
   try {
     sensor_msgs::PointCloud2ConstIterator<float> x(message, "x");
     sensor_msgs::PointCloud2ConstIterator<float> y(message, "y");
@@ -3017,7 +3038,7 @@ void NavigationRuntimeNode::publishCommand() {
     const std::int64_t solve_age_ns =
         navigation_common::steadyClockNowNanoseconds() -
         planner_solve_started_steady_ns_.load();
-    if (solve_age_ns > static_cast<std::int64_t>(planner_watchdog_timeout_s_ * 1e9)) {
+    if (solve_age_ns > planner_watchdog_timeout_ns_) {
       const std::uint64_t previous_timeout =
           timed_out_planner_solve_generation_.exchange(active_solve);
       if (previous_timeout != active_solve) {

@@ -110,6 +110,13 @@ TEST(NavigationRuntimeBoundaries, RatePeriodMustBePositiveAndRepresentable) {
   EXPECT_EQ(*ratePeriodNanoseconds(50.0), 20ms);
 }
 
+TEST(NavigationRuntimeBoundaries, TrajectorySamplingCapsBeforeFloatingPointCast) {
+  EXPECT_EQ(boundedTrajectorySampleCount(0.16, 0.08, 64U), 3U);
+  EXPECT_EQ(boundedTrajectorySampleCount(std::numeric_limits<double>::max(), 0.08, 64U),
+            64U);
+  EXPECT_FALSE(boundedTrajectorySampleCount(1.0, 0.0, 64U).has_value());
+}
+
 TEST(NavigationRuntimeCadence, RejectsPlannerPeriodShorterThanSolveBudget) {
   auto context = std::make_shared<rclcpp::Context>();
   context->init(0, nullptr);
