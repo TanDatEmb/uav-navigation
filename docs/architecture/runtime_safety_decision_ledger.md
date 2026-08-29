@@ -11081,3 +11081,28 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
+
+### 2026-08-29 - Make timestamp conversion and freshness fail closed
+
+- **Owner/status:** Common timestamp and execution freshness contracts,
+  `VERIFIED` by focused tests.
+- **Scope:** Perform seconds-to-nanoseconds multiplication and rounding in
+  `long double` with a post-round representability check; reject missing current
+  ROS/steady clocks and classify freshness using widened subtraction.
+- **Safety impact:** Extreme finite timestamps can no longer overflow a signed
+  subtraction or convert outside `int64`; a missing current clock cannot be
+  reported as valid execution state. Normal clock and lease behavior is
+  unchanged.
+- **False-accept/false-reject consequences:** Values at or beyond the integer
+  timestamp boundary are rejected when not representable; malformed zero-clock
+  inputs fail closed. No freshness window or planner deadline is changed.
+- **Runtime cost and evidence:** Constant-time widened arithmetic at existing
+  boundary helpers. Tests cover rounded upper-bound conversion, invalid clocks,
+  and `int64` extremes.
+- **Removal/review condition:** Keep until all timestamp arithmetic is owned by
+  a single checked time type and no public integer subtraction remains.
+- **Verification:** `cmake --build build/navigation_common --target
+  test_navigation_common -j2 && ./build/navigation_common/test_navigation_common
+  --gtest_color=no`; `cmake --build build/navigation_execution --target
+  test_execution_state -j2 && ./build/navigation_execution/test_execution_state
+  --gtest_color=no`.

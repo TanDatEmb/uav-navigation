@@ -51,6 +51,18 @@ TEST(NavigationCommon, ConvertsPositiveMicrosecondsWithOverflowProtection) {
                    .has_value());
 }
 
+TEST(NavigationCommon, SecondsToNanosecondsChecksRoundedProductBoundary) {
+  const double max_seconds = static_cast<double>(std::numeric_limits<std::int64_t>::max()) /
+                             static_cast<double>(navigation_common::kNanosecondsPerSecond);
+  const auto near_max = navigation_common::secondsToNanoseconds(
+      std::nextafter(max_seconds, 0.0));
+  if (near_max.has_value()) {
+    EXPECT_LE(*near_max, std::numeric_limits<std::int64_t>::max());
+  }
+  EXPECT_FALSE(navigation_common::secondsToNanoseconds(
+                   std::numeric_limits<double>::max()).has_value());
+}
+
 TEST(NavigationCommon, ConvertsNanosecondsToPositiveMicroseconds) {
   const auto converted = navigation_common::nanosecondsToMicroseconds(2'345'678LL);
   ASSERT_TRUE(converted.has_value());

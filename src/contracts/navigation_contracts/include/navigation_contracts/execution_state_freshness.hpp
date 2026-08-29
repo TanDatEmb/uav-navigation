@@ -30,7 +30,8 @@ inline ExecutionStateFreshness evaluateExecutionStateFreshness(
     std::int64_t now_steady_ns, std::int64_t receive_stamp_steady_ns,
     double maximum_age_s) noexcept {
   ExecutionStateFreshness result;
-  if (!std::isfinite(maximum_age_s) || maximum_age_s <= 0.0 ||
+  if (now_ros_ns <= 0 || now_steady_ns <= 0 ||
+      !std::isfinite(maximum_age_s) || maximum_age_s <= 0.0 ||
       maximum_age_s > static_cast<double>(std::numeric_limits<std::int64_t>::max()) * 1.0e-9) {
     return result;
   }

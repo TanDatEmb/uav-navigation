@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -26,6 +27,14 @@ TEST(TimestampFreshness, BoundaryIsAcceptedWithoutAbsoluteTimeComparison) {
             TimestampFreshness::VALID);
   EXPECT_EQ(classifyTimestampFreshness(now, now + limit, limit),
             TimestampFreshness::VALID);
+}
+
+TEST(TimestampFreshness, RejectsInvalidCurrentClockAndAvoidsExtremeSubtraction) {
+  EXPECT_EQ(classifyTimestampFreshness(0, 1, 500), TimestampFreshness::INVALID);
+  EXPECT_EQ(classifyTimestampFreshness(std::numeric_limits<std::int64_t>::max(), 1, 500),
+            TimestampFreshness::STALE);
+  EXPECT_EQ(classifyTimestampFreshness(1, std::numeric_limits<std::int64_t>::max(), 500),
+            TimestampFreshness::FUTURE);
 }
 
 TEST(ExecutionStateFreshness, RequiresBothRosSourceAndSteadyReceiptToBeFresh) {
@@ -78,6 +87,12 @@ TEST(ExecutionStateFreshness, FailsClosedForMissingFutureAndInvalidInputs) {
             Reason::kReceiveFuture);
   EXPECT_EQ(navigation_contracts::evaluateExecutionStateFreshness(
                 now_ros, now_ros, now_steady, now_steady, 0.0).reason,
+            Reason::kInvalidLimit);
+  EXPECT_EQ(navigation_contracts::evaluateExecutionStateFreshness(
+                0, 1, now_steady, now_steady, 0.5).reason,
+            Reason::kInvalidLimit);
+  EXPECT_EQ(navigation_contracts::evaluateExecutionStateFreshness(
+                now_ros, now_ros, 0, now_steady, 0.5).reason,
             Reason::kInvalidLimit);
 }
 

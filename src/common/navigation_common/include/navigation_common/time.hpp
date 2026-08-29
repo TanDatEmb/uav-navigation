@@ -55,13 +55,17 @@ inline constexpr TimestampNs kNanosecondsPerMicrosecond = 1'000LL;
 // before passing timestamps to integer-nanosecond core contracts.
 [[nodiscard]] inline std::optional<TimestampNs> secondsToNanoseconds(
     const double seconds) noexcept {
-  if (!std::isfinite(seconds) || seconds < 0.0 ||
-      seconds > static_cast<double>(std::numeric_limits<TimestampNs>::max()) /
-                    static_cast<double>(kNanosecondsPerSecond)) {
+  if (!std::isfinite(seconds) || seconds < 0.0) {
     return std::nullopt;
   }
-  return static_cast<TimestampNs>(
-      std::llround(seconds * static_cast<double>(kNanosecondsPerSecond)));
+  const long double product =
+      static_cast<long double>(seconds) * static_cast<long double>(kNanosecondsPerSecond);
+  const long double rounded = std::round(product);
+  if (!std::isfinite(rounded) || rounded < 0.0L ||
+      rounded > static_cast<long double>(std::numeric_limits<TimestampNs>::max())) {
+    return std::nullopt;
+  }
+  return static_cast<TimestampNs>(rounded);
 }
 
 [[nodiscard]] inline std::optional<TimestampNs> rosTimeToNanoseconds(
