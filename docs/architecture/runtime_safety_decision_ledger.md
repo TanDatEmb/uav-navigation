@@ -11729,3 +11729,27 @@ release profiles must not use the former allowance.
   && colcon build --packages-up-to navigation_planning_backend
   --symlink-install`; `colcon test --packages-select
   navigation_planning_backend`; `colcon test-result --verbose`.
+
+### 2026-08-29 - Preserve corridor metadata across plane normalization
+
+- **Owner/status:** Nominal corridor preprocessing and guide vertical
+  envelope, `VERIFIED` by the focused backend suite.
+- **Scope:** Preserve validated route-boundary contracts while normalizing
+  corridor planes, and preserve seed-line/known-free metadata while applying
+  the vertical guide envelope. `SetPlanes()` remains a geometry replacement
+  that clears stale metadata.
+- **Safety impact:** A valid mission boundary cannot silently disappear during
+  numerical normalization, and vertical-envelope validation no longer checks a
+  reset zero seed instead of the original certified seed. Invalid metadata is
+  rejected before restoration.
+- **False-accept/false-reject consequences:** Valid route gates, seed lines and
+  known-free flags survive these transformations. Malformed metadata continues
+  to fail closed; no corridor is widened by this change.
+- **Runtime cost and evidence:** Constant-size metadata copies per corridor
+  cell. The focused backend binaries passed: trajectory 107/107, planner
+  config 49/49, optimizer seed 13/13, plus the remaining planner binaries.
+- **Removal/review condition:** Keep until corridor geometry and its safety
+  metadata are represented by an immutable transactional value type.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select navigation_planning_backend
+  --symlink-install`; direct execution of all eight backend test binaries.
