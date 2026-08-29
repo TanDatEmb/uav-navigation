@@ -12273,3 +12273,27 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/navigation_planning_backend --target test_trajectory
   -j2`; focused malformed-boundary tests.
+
+### 2026-08-29 - Make ROG known-free line checks fail closed
+
+- **Owner/status:** ROG-Map known-free visibility boundary, `VERIFIED` by the
+  vendor smoke tests.
+- **Scope:** `isLineKnownFree` now validates finite and representable metric
+  endpoints, local-map bounds, both endpoint cell states, every traversed cell,
+  and the RayCaster result. Same-cell free endpoints remain valid; occupied,
+  unknown, out-of-map, and non-representable endpoints are rejected.
+- **Safety impact:** A failed or zero-length ray can no longer be interpreted
+  as a clear line without endpoint evidence, and malformed coordinates cannot
+  reach vendor floating-to-index conversion.
+- **False-accept/false-reject consequences:** This tightens only the known-free
+  API. Unknown-space and occupied endpoints that previously slipped through
+  are now rejected; ordinary known-free rays are unchanged.
+- **Runtime cost and evidence:** Endpoint classification plus one bounded
+  representability loop per call; `test_rog_map_vendor` focused smoke tests
+  pass 2/2 and the complete vendor binary passes 25/25.
+- **Removal/review condition:** Keep until the upstream ROG-Map API exposes
+  checked coordinate conversion and a typed line-query result; retain this
+  product wrapper guard even if vendor code changes.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/rog_map_vendor --target test_rog_map_vendor -j2`;
+  focused and complete smoke binary.

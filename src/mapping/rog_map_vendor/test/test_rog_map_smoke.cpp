@@ -1,5 +1,6 @@
 
 #include <gtest/gtest.h>
+#include <limits>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
@@ -67,6 +68,12 @@ TEST(RogMapVendorSmoke, EndpointOnlyGeometryOccupiedUnknown) {
   EXPECT_FALSE(map.isLineKnownFree(sensor_origin, rog_map::Vec3f(4.5, 0.0, 0.0)));
   EXPECT_FALSE(map.isLineFree(sensor_origin, rog_map::Vec3f(100.0, 0.0, 0.0),
                               true, false));
+  EXPECT_FALSE(map.isLineKnownFree(obstacle, obstacle));
+  EXPECT_FALSE(map.isLineKnownFree(rog_map::Vec3f(100.0, 0.0, 0.0),
+                                   rog_map::Vec3f(100.0, 0.0, 0.0)));
+  const rog_map::Vec3f huge_point(
+      std::numeric_limits<float>::max(), 0.0F, 0.0F);
+  EXPECT_FALSE(map.isLineKnownFree(huge_point, huge_point));
 }
 
 TEST(RogMapVendorSmoke, ExplicitNoReturnEndpointAddsMissOnlyEvidence) {
@@ -95,4 +102,6 @@ TEST(RogMapVendorSmoke, ExplicitNoReturnEndpointAddsMissOnlyEvidence) {
   // strictly before the endpoint must nevertheless become known free.
   EXPECT_TRUE(map.isKnownFree(rog_map::Vec3f(1.0, 0.0, 0.0)));
   EXPECT_FALSE(map.isOccupied(rog_map::Vec3f(4.0, 0.0, 0.0)));
+  EXPECT_TRUE(map.isLineKnownFree(rog_map::Vec3f(1.0, 0.0, 0.0),
+                                  rog_map::Vec3f(1.0, 0.0, 0.0)));
 }

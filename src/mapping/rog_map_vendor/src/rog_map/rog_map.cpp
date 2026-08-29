@@ -419,21 +419,47 @@ bool ROGMap::isLineKnownFree(const Vec3f& start_pt, const Vec3f& end_pt,
   }
 
   // ROG-Map can intentionally disable unknown inflation for the planner's
-  // endpoint-only visibility model.  A known-free query still has to combine
+  // endpoint-only visibility model. A known-free query still has to combine
   // the two independent facts we care about: the probabilistic cell was
   // observed free, and the robot-radius inflated layer contains no obstacle.
   // Falling back to the base layer alone drops the vehicle envelope; calling
   // isUnknownInflate() when that layer is disabled throws by contract.
-  if (start_pt.array().isNaN().any() || end_pt.array().isNaN().any()) {
+  const auto point_index_representable = [this](const Vec3f& point) {
+    if (!std::isfinite(cfg_.resolution) || cfg_.resolution <= 0.0) {
+      return false;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      const long double index =
+          static_cast<long double>(point(axis)) /
+          static_cast<long double>(cfg_.resolution);
+      if (!std::isfinite(index) ||
+          index < static_cast<long double>(std::numeric_limits<int>::min()) ||
+          index > static_cast<long double>(std::numeric_limits<int>::max())) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const auto point_is_known_free = [this, &point_index_representable](
+                                       const Vec3f& point) {
+    if (!point.allFinite() || !point_index_representable(point) ||
+        !insideLocalMap(point) ||
+        !isKnownFree(point) || isOccupiedInflate(point)) {
+      return false;
+    }
+    return !cfg_.unk_inflation_en || !isUnknownInflate(point);
+  };
+  if (!point_is_known_free(start_pt) || !point_is_known_free(end_pt)) {
     return false;
   }
   raycaster::RayCaster raycaster;
   raycaster.setResolution(std::min(cfg_.resolution, cfg_.inflation_resolution));
   Vec3f ray_pt;
-  raycaster.setInput(start_pt, end_pt);
-  while (raycaster.step(ray_pt)) {
-    if (!isKnownFree(ray_pt) || isOccupiedInflate(ray_pt)) {
-      return false;
+  if (raycaster.setInput(start_pt, end_pt)) {
+    while (raycaster.step(ray_pt)) {
+      if (!point_is_known_free(ray_pt)) {
+        return false;
+      }
     }
   }
   return true;
