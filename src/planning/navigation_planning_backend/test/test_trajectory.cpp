@@ -2346,6 +2346,30 @@ TEST(PlannerTrajectory, LbfgsRejectsMalformedBoundaryInputs) {
     EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, nullptr, nullptr, nullptr, nullptr, parameters),
               Lbfgs::LBFGSERR_INVALID_FUNCVAL);
   }
+  {
+    int callback_count = 0;
+    const auto failsOnSecondEvaluation = +[](void *raw, const Eigen::VectorXd &variables,
+                                             Eigen::VectorXd &gradient) {
+      auto *count = static_cast<int *>(raw);
+      ++(*count);
+      if (*count >= 2) {
+        gradient = Eigen::VectorXd::Constant(variables.size(),
+                                             std::numeric_limits<double>::quiet_NaN());
+        return std::numeric_limits<double>::quiet_NaN();
+      }
+      gradient = 2.0 * variables;
+      return variables.squaredNorm();
+    };
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    const auto parameters = Lbfgs::lbfgs_parameter_t{};
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, failsOnSecondEvaluation, nullptr, nullptr,
+                                    &callback_count, parameters),
+              Lbfgs::LBFGSERR_INVALID_FUNCVAL);
+    EXPECT_TRUE(std::isfinite(f));
+    EXPECT_DOUBLE_EQ(f, 2.0);
+    EXPECT_EQ(callback_count, 2);
+  }
 }
 
 TEST(PlannerTrajectory, PolytopeResetClearsGeometryAndMetadata) {

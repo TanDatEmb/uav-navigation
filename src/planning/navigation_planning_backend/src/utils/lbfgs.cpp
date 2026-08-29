@@ -213,12 +213,14 @@ int math_utils::lbfgs::lbfgs_optimize(Eigen::VectorXd &x, double &f,
             step = step < step_max ? step : 0.5 * step_max;
 
             /* Search for an optimal step. */
+            const double fx_before_line_search = fx;
             ls = line_search_lewisoverton(x, fx, g, step, d, xp, gp, step_min, step_max, cd, param);
 
             if (ls < 0) {
-                /* Revert to the previous point. */
+                /* Revert the point, gradient, and cost as one transaction. */
                 x = xp;
                 g = gp;
+                fx = fx_before_line_search;
                 ret = ls;
                 break;
             }

@@ -12837,6 +12837,31 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/fast_lio_core --target test_point_filter
   -j2 && ./build/fast_lio_core/test_point_filter --gtest_color=no`.
 
+### 2026-08-29 - Roll back L-BFGS cost with failed line search
+
+- **Owner/status:** Planning optimizer line-search boundary, `PROVISIONAL`;
+  verified by the focused trajectory suite.
+- **Scope:** When a trial evaluation or line search fails, L-BFGS now restores
+  the cost together with the previous point and gradient. The optimizer no
+  longer returns a finite rollback point paired with a stale `NaN`/`Inf` cost.
+- **Safety impact:** Failed nominal/backup optimization remains a rejected
+  result, with diagnostics representing the last valid evaluation. This does
+  not turn a failed solve into a successful solve and does not relax any
+  feasibility gate.
+- **False-accept/false-reject consequences:** No accepted trajectory changes.
+  Callers that inspect the returned cost receive a deterministic finite value
+  only when the rollback point was finite; the negative optimizer status still
+  requires the existing fail-closed handling.
+- **Runtime cost and evidence:** One scalar save/restore per line search;
+  `test_trajectory` covers a callback that fails on its second evaluation.
+- **Removal/review condition:** Keep until the optimizer API returns an
+  explicit result object containing status, point, gradient, and cost with a
+  transactional failure contract.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_filter=PlannerTrajectory.LbfgsRejectsMalformedBoundaryInputs
+  --gtest_color=no`.
+
 ### 2026-08-29 - Guard ROG-Map derived index arithmetic
 
 - **Owner/status:** ROG-Map vendor configuration and sliding-map boundary,
