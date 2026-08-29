@@ -11106,3 +11106,27 @@ release profiles must not use the former allowance.
   --gtest_color=no`; `cmake --build build/navigation_execution --target
   test_execution_state -j2 && ./build/navigation_execution/test_execution_state
   --gtest_color=no`.
+
+### 2026-08-29 - Remove runtime floating timestamp endpoint narrowing
+
+- **Owner/status:** Runtime command sampling and candidate endpoint conversion,
+  `VERIFIED` by common/focused tests.
+- **Scope:** Convert base-plus-offset trajectory times with widened checked
+  arithmetic and serialize world observation stamps directly from integer
+  nanoseconds; widen the local failure-window subtraction.
+- **Safety impact:** A finite but overflowing retained trajectory endpoint can
+  no longer reach a float-to-int cast, and large valid world stamps do not lose
+  nanosecond precision. No command lease, planner period, waypoint or physical
+  threshold changes.
+- **False-accept/false-reject consequences:** Representable endpoints and
+  ordinary world stamps are unchanged; unrepresentable metadata is rejected
+  at the sampling boundary.
+- **Runtime cost and evidence:** One bounded `long double` sum per retained
+  sample and direct integer ROS conversion. Common and runtime tests cover the
+  conversion boundary and retained-node construction.
+- **Removal/review condition:** Keep until all trajectory endpoint arithmetic is
+  represented by a checked timestamp type.
+- **Verification:** `cmake --build build/navigation_common --target
+  test_navigation_common -j2 && ./build/navigation_common/test_navigation_common
+  --gtest_color=no`; `cmake --build build/navigation_runtime --target
+  test_navigation_runtime_shutdown -j2`.

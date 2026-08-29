@@ -68,6 +68,23 @@ inline constexpr TimestampNs kNanosecondsPerMicrosecond = 1'000LL;
   return static_cast<TimestampNs>(rounded);
 }
 
+[[nodiscard]] inline std::optional<TimestampNs> secondsSumToNanoseconds(
+    const double base_seconds, const double offset_seconds) noexcept {
+  if (!std::isfinite(base_seconds) || !std::isfinite(offset_seconds) ||
+      base_seconds < 0.0 || offset_seconds < 0.0) {
+    return std::nullopt;
+  }
+  const long double seconds = static_cast<long double>(base_seconds) +
+                              static_cast<long double>(offset_seconds);
+  const long double rounded = std::round(seconds *
+                                         static_cast<long double>(kNanosecondsPerSecond));
+  if (!std::isfinite(rounded) || rounded < 0.0L ||
+      rounded > static_cast<long double>(std::numeric_limits<TimestampNs>::max())) {
+    return std::nullopt;
+  }
+  return static_cast<TimestampNs>(rounded);
+}
+
 [[nodiscard]] inline std::optional<TimestampNs> rosTimeToNanoseconds(
     const builtin_interfaces::msg::Time& stamp) noexcept {
   if (stamp.nanosec >= static_cast<std::uint32_t>(kNanosecondsPerSecond)) {

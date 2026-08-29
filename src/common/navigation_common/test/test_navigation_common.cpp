@@ -61,6 +61,8 @@ TEST(NavigationCommon, SecondsToNanosecondsChecksRoundedProductBoundary) {
   }
   EXPECT_FALSE(navigation_common::secondsToNanoseconds(
                    std::numeric_limits<double>::max()).has_value());
+  EXPECT_FALSE(navigation_common::secondsSumToNanoseconds(
+                   std::numeric_limits<double>::max(), 1.0).has_value());
 }
 
 TEST(NavigationCommon, ConvertsNanosecondsToPositiveMicroseconds) {

@@ -2131,7 +2131,8 @@ void NavigationRuntimeNode::runCycle() {
         }
         const bool count_exhausted = plan_from_rest_failure_budget_.recordFailure();
         const double failure_window_s = static_cast<double>(
-            failure_now_ns - plan_from_rest_first_failure_steady_ns_) * 1.0e-9;
+            static_cast<long double>(failure_now_ns) -
+            static_cast<long double>(plan_from_rest_first_failure_steady_ns_)) * 1.0e-9;
         failure_budget_exhausted = count_exhausted &&
             failure_window_s >= plan_from_rest_failure_confirmation_s_;
         failure_count = plan_from_rest_failure_budget_.failureCount();
@@ -2175,9 +2176,10 @@ void NavigationRuntimeNode::runCycle() {
         [&](const double trajectory_time_s,
             navigation_planning::TrajectoryPoint& output) {
           if (!committed) return false;
-          const auto stamp_ns = static_cast<std::int64_t>(
-              (committed_bundle->start_wall_time_s + trajectory_time_s) * 1.0e9);
-          const auto sample = committed_bundle->sample(stamp_ns);
+          const auto stamp_ns = navigation_common::secondsSumToNanoseconds(
+              committed_bundle->start_wall_time_s, trajectory_time_s);
+          if (!stamp_ns) return false;
+          const auto sample = committed_bundle->sample(*stamp_ns);
           if (!sample) return false;
           output = *sample;
           return true;
@@ -3293,9 +3295,8 @@ void NavigationRuntimeNode::publishCommand() {
   }
   command.world_generation = command_world_identity.generation;
   command.world_revision = command_world_identity.revision;
-  command.world_observation_stamp = navigation_common::secondsToRosTime(
-      static_cast<double>(command_world_identity.observation_stamp_ns) * 1.0e-9).value_or(
-          builtin_interfaces::msg::Time{});
+  command.world_observation_stamp = navigation_common::nanosecondsToRosTime(
+      command_world_identity.observation_stamp_ns).value_or(builtin_interfaces::msg::Time{});
   command.bundle_generation = trajectory_generation;
   const auto command_id = advanceMonotonicId(command_id_);
   if (!command_id) {

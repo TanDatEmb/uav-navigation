@@ -9,6 +9,7 @@
 #include <Eigen/Core>
 
 #include <navigation_planning/planning_request.hpp>
+#include <navigation_common/time.hpp>
 
 namespace navigation_planning {
 
@@ -103,15 +104,14 @@ struct CandidateBundle {
   // executable validity interval used by sample().
   [[nodiscard]] std::optional<TrajectoryPoint> sampleAtDeclaredEnd() const {
     if (!valid() || !hasDeclaredEndpointMetadata()) return std::nullopt;
-    const double end_wall_time_s = start_wall_time_s + duration_s;
-    if (!std::isfinite(end_wall_time_s) || end_wall_time_s <= 0.0 ||
-        end_wall_time_s > static_cast<double>(std::numeric_limits<std::int64_t>::max()) * 1.0e-9) {
+    const auto end_stamp_ns = navigation_common::secondsSumToNanoseconds(
+        start_wall_time_s, duration_s);
+    if (!end_stamp_ns || *end_stamp_ns <= 0) {
       return std::nullopt;
     }
     TrajectoryPoint point;
     point.role = role;
-    const auto end_stamp_ns = static_cast<std::int64_t>(end_wall_time_s * 1.0e9);
-    if (!evaluator(end_stamp_ns, point) || !point.finite() || point.role != role) {
+    if (!evaluator(*end_stamp_ns, point) || !point.finite() || point.role != role) {
       return std::nullopt;
     }
     // The evaluator's runtime completion predicate is intentionally strict
