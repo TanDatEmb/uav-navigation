@@ -13301,3 +13301,52 @@ release profiles must not use the former allowance.
   checked timestamp value type.
 - **Verification:** `cmake --build build/fast_lio_ros --target fast_lio_node
   -j2` plus runtime ingress/diagnostic tests.
+
+### 2026-08-29 - Keep route decoding and scenario transport contract aligned
+
+- **Owner/status:** Navigation runtime route ingress and External Mode SITL
+  harness, `PROVISIONAL`; focused route and scenario tests plus replay.
+- **Scope:** Runtime route decoding now derives and validates the measured
+  projection fraction from its arc coordinate before validating the immutable
+  snapshot. Immutable snapshots additionally require cumulative waypoint arcs
+  and segment arc spans to match geometry. The scenario publisher now loads
+  and validates the complete mission route, rejects unknown schema keys, and
+  publishes matching route mirrors. Interior projection decoding is covered
+  by the route/runtime contract regression rather than fabricated scenario
+  progress.
+- **Safety impact:** A valid interior route projection is no longer rejected
+  because of a default fraction, while forged or inconsistent arc metadata
+  remains fail-closed. The harness cannot misclassify malformed mission input
+  as a planner failure.
+- **False-accept/false-reject consequences:** Valid route geometry is
+  accepted with the canonical arc parameterization. Invalid mission metadata
+  is rejected before publication; no planner, occupancy, or execution gate is
+  relaxed.
+- **Runtime cost and evidence:** Decoder performs bounded arithmetic already
+  required by route validation. Scenario parsing is startup/test-only. Route
+  contract tests and a source-HEAD-matched smoke replay are required.
+- **Removal/review condition:** Keep until the transport message is replaced
+  by a shared typed route snapshot or the harness reuses the canonical loader
+  directly.
+- **Verification:** `test_mission_contract`, runtime contract tests (including
+  unknown-key rejection), `make build`, and External Mode smoke/open replay
+  with valid build provenance.
+
+### 2026-08-29 - Reject unsupported endian mode at RegisteredScan ingress
+
+- **Owner/status:** Navigation runtime PointCloud2 decoder, `PROVISIONAL`;
+  focused malformed-cloud coverage required.
+- **Scope:** `decodeCloud()` rejects big-endian PointCloud2 messages because
+  the iterator path reads native-endian floats and does not byte-swap.
+- **Safety impact:** Big-endian geometry cannot be interpreted as plausible
+  finite coordinates and enter mapping/traversability evidence under a wrong
+  location. No accepted little-endian path is changed.
+- **False-accept/false-reject consequences:** Unsupported endian payloads are
+  dropped at ingress until byte-swapping is implemented; valid native-endian
+  payloads retain behavior.
+- **Runtime cost and evidence:** One flag check before allocation/iteration;
+  add a malformed endian regression before promotion.
+- **Removal/review condition:** Replace the rejection with a tested byte-swap
+  decoder or a validated endian-neutral message type.
+- **Verification:** Navigation runtime build and a PointCloud2 big-endian
+  regression test.

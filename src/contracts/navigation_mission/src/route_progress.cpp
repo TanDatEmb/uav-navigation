@@ -57,6 +57,7 @@ bool ImmutableRouteSnapshot::valid() const noexcept {
     return false;
   }
   std::set<std::string> waypoint_ids;
+  double expected_waypoint_arc_m = 0.0;
   for (std::size_t index = 0; index < waypoints.size(); ++index) {
     const auto& waypoint = waypoints[index];
     if (waypoint.id.empty() || !waypoint.position_enu.allFinite() ||
@@ -71,9 +72,20 @@ bool ImmutableRouteSnapshot::valid() const noexcept {
       return false;
     }
     if (!waypoint_ids.insert(waypoint.id).second) return false;
-    if (index > 0U && waypoint_arc_lengths_m[index] + 1.0e-9 <
-                          waypoint_arc_lengths_m[index - 1U]) {
+    if (waypoint_arc_lengths_m[index] < 0.0 ||
+        (index > 0U && waypoint_arc_lengths_m[index] + 1.0e-9 <
+                          waypoint_arc_lengths_m[index - 1U])) {
       return false;
+    }
+    if (index > 0U) {
+      const double length_m =
+          (waypoints[index].position_enu - waypoints[index - 1U].position_enu).norm();
+      if (!std::isfinite(length_m)) return false;
+      if (length_m > kMinimumSegmentLengthM) expected_waypoint_arc_m += length_m;
+      if (!std::isfinite(expected_waypoint_arc_m) ||
+          std::abs(waypoint_arc_lengths_m[index] - expected_waypoint_arc_m) > 1.0e-6) {
+        return false;
+      }
     }
   }
   if (waypoint_arc_lengths_m.front() != 0.0) return false;
@@ -101,6 +113,7 @@ bool ImmutableRouteSnapshot::valid() const noexcept {
       return false;
     }
   }
+  segment_index = 0U;
   for (const auto& segment : segments) {
     if (segment.start_waypoint_index >= waypoints.size() ||
         segment.end_waypoint_index >= waypoints.size() ||
@@ -109,6 +122,15 @@ bool ImmutableRouteSnapshot::valid() const noexcept {
         !segment.tangent.allFinite() || !std::isfinite(segment.start_arc_m) ||
         !std::isfinite(segment.end_arc_m) || !std::isfinite(segment.length_m) ||
         segment.length_m <= 0.0 || segment.end_arc_m <= segment.start_arc_m) {
+      return false;
+    }
+    if (std::abs((segment.end_arc_m - segment.start_arc_m) -
+                 segment.length_m) > 1.0e-6) {
+      return false;
+    }
+    if (segment_index > 0U &&
+        std::abs(segment.start_arc_m -
+                 segments[segment_index - 1U].end_arc_m) > 1.0e-6) {
       return false;
     }
     if ((segment.start - waypoints[segment.start_waypoint_index].position_enu).norm() >
@@ -121,6 +143,7 @@ bool ImmutableRouteSnapshot::valid() const noexcept {
                  waypoint_arc_lengths_m[segment.end_waypoint_index]) > 1.0e-6) {
       return false;
     }
+    ++segment_index;
   }
   if (std::abs(waypoint_arc_lengths_m.back() - total_length_m) > 1.0e-6) {
     return false;

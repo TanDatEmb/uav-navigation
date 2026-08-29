@@ -2151,6 +2151,9 @@ class RuntimeContractTest(unittest.TestCase):
         spec.loader.exec_module(module)
 
         class Message:
+            BEHAVIOR_PASS_THROUGH = 0
+            BEHAVIOR_STOP = 1
+
             def __init__(self) -> None:
                 self.header = type("Header", (), {"frame_id": "", "stamp": type("Stamp", (), {})()})()
                 self.mission_id = ""
@@ -2158,6 +2161,25 @@ class RuntimeContractTest(unittest.TestCase):
                 self.request_id = 0
                 self.target = type("Point", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
                 self.acceptance_radius_m = 0.0
+                self.behavior = 0
+                self.has_next_target = False
+                self.next_target = type("Point", (), {"x": 0.0, "y": 0.0, "z": 0.0})()
+                self.route = type("Route", (), {
+                    "mission_id": "",
+                    "frame_id": "",
+                    "route_revision": 0,
+                    "request_id": 0,
+                    "active_waypoint_index": 0,
+                    "waypoint_positions": [],
+                    "waypoint_ids": [],
+                    "waypoint_acceptance_radii_m": [],
+                    "waypoint_behaviors": [],
+                    "measured_progress_valid": False,
+                    "measured_segment_index": 0,
+                    "measured_progress_arc_m": 0.0,
+                    "measured_projection_arc_m": 0.0,
+                    "measured_lateral_error_m": 0.0,
+                })()
 
         class Publisher:
             def __init__(self) -> None:
@@ -2171,6 +2193,7 @@ class RuntimeContractTest(unittest.TestCase):
         scenario.latest_odom = {"x": 2.0, "y": 3.0, "z": 4.0}
         scenario.sim_now_ns = 2_500_000_000
         scenario.NavigationGoal = Message
+        scenario.Point = type("Point", (), {"__init__": lambda self: None})
         scenario.goal_pub = Publisher()
         scenario.goal_publish_count = 0
         scenario.goal_request_id = 0
@@ -2190,6 +2213,22 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual((message.target.x, message.target.y, message.target.z),
                          (3.0, 2.5, 4.25))
         self.assertEqual(message.request_id, 1)
+
+    def test_external_mode_scenario_rejects_unknown_mission_keys(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_schema",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with self.assertRaises(ValueError):
+            module._reject_unknown_keys({"unexpected": True}, {"mission"}, "root")
+        with self.assertRaises(ValueError):
+            module._reject_unknown_keys(
+                {"id": "m", "unexpected": True}, {"id"}, "mission"
+            )
 
     def test_external_mode_scenario_treats_executor_handover_as_exit(self) -> None:
         spec = importlib.util.spec_from_file_location(

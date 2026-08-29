@@ -241,6 +241,8 @@ TEST(RouteProgress, ImmutableSnapshotCarriesMeasuredRouteIdentityAndLookahead) {
   EXPECT_EQ(snapshot.active_waypoint_index, 1U);
   EXPECT_DOUBLE_EQ(snapshot.measured_progress.progress_arc_m,
                    state.progress_arc_m);
+  EXPECT_GT(snapshot.measured_progress.projection.segment_fraction, 0.0);
+  EXPECT_LT(snapshot.measured_progress.projection.segment_fraction, 1.0);
   const auto lookahead = snapshot.routeLookaheadPoint(3.0);
   const auto expected = route.pointAtArc(state.progress_arc_m + 3.0);
   ASSERT_TRUE(lookahead.has_value());
@@ -299,6 +301,14 @@ TEST(RouteProgress, ImmutableSnapshotRequiresCompleteOrderedGeometry) {
 
   snapshot = route.snapshot("mission", "lio_odom", 1U, 1U, 1U);
   snapshot.measured_progress.projection.point += Eigen::Vector3d{0.1, 0.0, 0.0};
+  EXPECT_FALSE(snapshot.valid());
+
+  snapshot = route.snapshot("mission", "lio_odom", 1U, 1U, 1U);
+  snapshot.segments.front().end_arc_m += 0.1;
+  EXPECT_FALSE(snapshot.valid());
+
+  snapshot = route.snapshot("mission", "lio_odom", 1U, 1U, 1U);
+  snapshot.waypoint_arc_lengths_m[1] += 0.1;
   EXPECT_FALSE(snapshot.valid());
 }
 

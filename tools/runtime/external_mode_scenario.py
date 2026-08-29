@@ -20,6 +20,8 @@ import signal
 import time
 from typing import Any
 
+import yaml
+
 def _time_ns(value: Any) -> int:
     return int(value.sec) * 1_000_000_000 + int(value.nanosec)
 
@@ -29,6 +31,14 @@ def _finite_vector(values: Any, size: int = 3) -> bool:
         return len(values) == size and all(math.isfinite(float(value)) for value in values)
     except (TypeError, ValueError):
         return False
+
+
+def _reject_unknown_keys(value: Any, allowed: set[str], scope: str) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{scope} must be a mapping")
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported {scope} field(s): {', '.join(unknown)}")
 
 
 def _json_vector(values: Any) -> list[float | None]:
@@ -112,6 +122,7 @@ _MODE_STATUS_REASON_NAMES = {
 class ExternalModeScenario:
     def __init__(self, output: Path, config: dict[str, Any]) -> None:
         import rclpy
+        from geometry_msgs.msg import Point
         from nav_msgs.msg import Odometry
         from navigation_contracts.msg import (
             NavigationGoal,
@@ -137,6 +148,7 @@ class ExternalModeScenario:
         self.rclpy = rclpy
         self.Node = Node
         self.NavigationGoal = NavigationGoal
+        self.Point = Point
         self.NavigationModeStatus = NavigationModeStatus
         self.VehicleCommand = VehicleCommand
         self.ModeCompleted = ModeCompleted
@@ -1040,23 +1052,195 @@ class ExternalModeScenario:
             self.failure = "planner goal_offset_m must contain three finite values"
             self.finish("INVALID_GOAL_CONFIGURATION")
             return
-        goal = {
-            "x": self.latest_odom["x"] + float(offset[0]),
-            "y": self.latest_odom["y"] + float(offset[1]),
-            "z": self.latest_odom["z"] + float(offset[2]),
-        }
+        route_waypoints: list[dict[str, Any]] = []
+        route_id = str(self.config.get("mission_id", "external_mode_smoke"))
+        route_frame = str(self.config.get("planning_frame", "lio_odom"))
+        mission_file = self.config.get("mission_file")
+        if mission_file:
+            try:
+                mission_path = Path(str(mission_file)).expanduser()
+                if not mission_path.is_absolute():
+                    mission_path = Path(__file__).resolve().parents[2] / mission_path
+                document = yaml.safe_load(
+                    mission_path.resolve().read_text(encoding="utf-8")
+                )
+                _reject_unknown_keys(document, {"mission"}, "root")
+                mission = document.get("mission")
+                if not isinstance(mission, dict):
+                    raise ValueError("mission document must contain a mapping")
+                _reject_unknown_keys(
+                    mission,
+                    {"version", "id", "frame", "waypoints", "planning", "control"},
+                    "mission",
+                )
+                try:
+                    schema_version = int(mission.get("version", 0))
+                except (TypeError, ValueError):
+                    schema_version = 0
+                if schema_version != 1:
+                    raise ValueError("mission version must be 1")
+                planning = mission.get("planning", {})
+                control = mission.get("control", {})
+                if not isinstance(planning, dict) or not isinstance(control, dict):
+                    raise ValueError("mission planning/control must be mappings")
+                _reject_unknown_keys(
+                    planning,
+                    {"max_velocity_mps", "max_acceleration_mps2",
+                     "max_jerk_mps3", "unknown_policy"},
+                    "mission.planning",
+                )
+                _reject_unknown_keys(
+                    control,
+                    {"acceptance_speed_mps", "acceptance_confirmation_s"},
+                    "mission.control",
+                )
+                for name in ("max_velocity_mps", "max_acceleration_mps2", "max_jerk_mps3"):
+                    if name in planning:
+                        value = float(planning[name])
+                        if not math.isfinite(value) or value <= 0.0:
+                            raise ValueError(f"mission planning field {name} is invalid")
+                if ("unknown_policy" in planning and
+                        str(planning["unknown_policy"]) not in {"blocked", "allow_unknown"}):
+                    raise ValueError("mission planning unknown_policy is invalid")
+                for name in ("acceptance_speed_mps", "acceptance_confirmation_s"):
+                    if name in control:
+                        value = float(control[name])
+                        if not math.isfinite(value) or value < 0.0:
+                            raise ValueError(f"mission control field {name} is invalid")
+                mission_id = mission.get("id")
+                mission_frame = mission.get("frame")
+                if not isinstance(mission_id, str) or not isinstance(mission_frame, str):
+                    raise ValueError("mission id/frame must be strings")
+                route_id = mission_id
+                route_frame = mission_frame
+                raw_waypoints = mission.get("waypoints", [])
+                if (not route_id or len(route_id) > 256 or not route_frame or
+                        len(route_frame) > 128 or not isinstance(raw_waypoints, list) or
+                        not raw_waypoints or len(raw_waypoints) > 4096):
+                    raise ValueError("mission has no waypoints")
+                waypoint_ids: set[str] = set()
+                for item in raw_waypoints:
+                    if not isinstance(item, dict):
+                        raise ValueError("mission waypoint is not a mapping")
+                    _reject_unknown_keys(
+                        item,
+                        {"id", "position", "acceptance_radius_m", "hold_s", "behavior"},
+                        "mission.waypoints[]",
+                    )
+                    position = item.get("position")
+                    if not _finite_vector(position):
+                        raise ValueError("mission waypoint position is invalid")
+                    waypoint_id_value = item.get("id")
+                    if not isinstance(waypoint_id_value, str):
+                        raise ValueError("mission waypoint id must be a string")
+                    waypoint_id = waypoint_id_value
+                    radius = float(item.get("acceptance_radius_m", 0.0))
+                    hold_s = float(item.get("hold_s", 0.0))
+                    waypoint_index = len(route_waypoints)
+                    behavior_value = item.get("behavior")
+                    behavior = str(
+                        behavior_value if behavior_value is not None else
+                        ("stop" if hold_s > 0.0 or waypoint_index + 1 == len(raw_waypoints)
+                         else "pass_through")
+                    )
+                    if (not waypoint_id or len(waypoint_id) > 256 or
+                            waypoint_id in waypoint_ids or
+                            not math.isfinite(radius) or radius <= 0.0 or
+                            not math.isfinite(hold_s) or hold_s < 0.0 or
+                            (behavior == "pass_through" and hold_s > 0.0) or
+                            behavior not in {"stop", "pass_through"}):
+                        raise ValueError("mission waypoint metadata is invalid")
+                    waypoint_ids.add(waypoint_id)
+                    route_waypoints.append({
+                        "id": waypoint_id,
+                        "position": [float(value) for value in position],
+                        "acceptance_radius_m": radius,
+                        "behavior": behavior,
+                    })
+            except (OSError, TypeError, ValueError, yaml.YAMLError) as error:
+                self.failure = f"planner mission route is invalid: {error}"
+                self.finish("INVALID_GOAL_CONFIGURATION")
+                return
+
+        if route_waypoints:
+            active = route_waypoints[0]
+            goal = {
+                "x": active["position"][0],
+                "y": active["position"][1],
+                "z": active["position"][2],
+            }
+            acceptance_radius_m = active["acceptance_radius_m"]
+            behavior_name = active["behavior"]
+        else:
+            goal = {
+                "x": self.latest_odom["x"] + float(offset[0]),
+                "y": self.latest_odom["y"] + float(offset[1]),
+                "z": self.latest_odom["z"] + float(offset[2]),
+            }
+            route_waypoints = [{
+                "id": "scenario_goal",
+                "position": [goal["x"], goal["y"], goal["z"]],
+                "acceptance_radius_m": float(self.config.get("acceptance_radius_m", 0.5)),
+                "behavior": "stop",
+            }]
+            acceptance_radius_m = route_waypoints[0]["acceptance_radius_m"]
+            behavior_name = "stop"
+        if (not route_id or not route_frame or
+                not math.isfinite(float(acceptance_radius_m)) or
+                float(acceptance_radius_m) <= 0.0 or
+                behavior_name not in {"stop", "pass_through"}):
+            self.failure = "planner goal route metadata is invalid"
+            self.finish("INVALID_GOAL_CONFIGURATION")
+            return
         message = self.NavigationGoal()
-        message.header.frame_id = str(self.config.get("planning_frame", "lio_odom"))
+        message.header.frame_id = route_frame
         message.header.stamp.sec = self.sim_now_ns // 1_000_000_000
         message.header.stamp.nanosec = self.sim_now_ns % 1_000_000_000
-        message.mission_id = str(self.config.get("mission_id", "external_mode_smoke"))
+        message.mission_id = route_id
         message.waypoint_index = 0
         self.goal_request_id += 1
         message.request_id = self.goal_request_id
         message.target.x = goal["x"]
         message.target.y = goal["y"]
         message.target.z = goal["z"]
-        message.acceptance_radius_m = float(self.config.get("acceptance_radius_m", 0.5))
+        message.acceptance_radius_m = float(acceptance_radius_m)
+        message.behavior = (
+            self.NavigationGoal.BEHAVIOR_STOP
+            if behavior_name == "stop"
+            else self.NavigationGoal.BEHAVIOR_PASS_THROUGH
+        )
+        message.has_next_target = len(route_waypoints) > 1
+        if message.has_next_target:
+            next_point = route_waypoints[1]["position"]
+            message.next_target.x = next_point[0]
+            message.next_target.y = next_point[1]
+            message.next_target.z = next_point[2]
+        route = message.route
+        route.mission_id = route_id
+        route.frame_id = route_frame
+        route.route_revision = 1
+        route.request_id = message.request_id
+        route.active_waypoint_index = message.waypoint_index
+        for waypoint in route_waypoints:
+            point = self.Point()
+            point.x, point.y, point.z = waypoint["position"]
+            route.waypoint_positions.append(point)
+            route.waypoint_ids.append(waypoint["id"])
+            route.waypoint_acceptance_radii_m.append(waypoint["acceptance_radius_m"])
+            route.waypoint_behaviors.append(
+                self.NavigationGoal.BEHAVIOR_STOP
+                if waypoint["behavior"] == "stop"
+                else self.NavigationGoal.BEHAVIOR_PASS_THROUGH
+            )
+        route.measured_progress_valid = True
+        route.measured_segment_index = 0
+        # The scenario has no authoritative route-progress estimator. Keep
+        # this transport fixture at the canonical route start; interior arc
+        # decoding is covered by the runtime contract test, not fabricated
+        # here from the vehicle pose.
+        route.measured_progress_arc_m = 0.0
+        route.measured_projection_arc_m = 0.0
+        route.measured_lateral_error_m = 0.0
         self.goal_pub.publish(message)
         self.goal_publish_count += 1
         self.latest_goal = goal

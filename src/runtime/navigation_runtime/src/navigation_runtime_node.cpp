@@ -161,6 +161,23 @@ std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
       !std::isfinite(source.measured_lateral_error_m)) {
     return std::nullopt;
   }
+  if (snapshot.segments.empty()) {
+    if (std::abs(source.measured_projection_arc_m) > 1.0e-6) {
+      return std::nullopt;
+    }
+    snapshot.measured_progress.projection.segment_fraction = 0.0;
+  } else {
+    const auto& measured_segment =
+        snapshot.segments[source.measured_segment_index];
+    const double fraction =
+        (source.measured_projection_arc_m - measured_segment.start_arc_m) /
+        measured_segment.length_m;
+    if (!std::isfinite(fraction) || fraction < -1.0e-6 || fraction > 1.0 + 1.0e-6) {
+      return std::nullopt;
+    }
+    snapshot.measured_progress.projection.segment_fraction =
+        std::clamp(fraction, 0.0, 1.0);
+  }
   const auto progress_point = route.pointAtArc(source.measured_projection_arc_m);
   if (!progress_point.has_value()) return std::nullopt;
   snapshot.measured_progress.projection.point = *progress_point;
@@ -1007,7 +1024,11 @@ bool NavigationRuntimeNode::decodeCloud(const sensor_msgs::msg::PointCloud2& mes
       static_cast<std::uint64_t>(message.row_step) * message.height;
   const std::uint64_t point_count =
       static_cast<std::uint64_t>(message.width) * message.height;
-  if (!hasFloatField(message, "x") || !hasFloatField(message, "y") ||
+  // PointCloud2Iterator reads native-endian float storage.  This transport
+  // boundary has no byte-swap implementation, so accepting a big-endian
+  // cloud would turn valid bytes into plausible but incorrect geometry.
+  if (message.is_bigendian || !hasFloatField(message, "x") ||
+      !hasFloatField(message, "y") ||
       !hasFloatField(message, "z") || message.point_step == 0U ||
       message.row_step < row_payload_bytes || storage_bytes > message.data.size() ||
       point_count > kMaximumPointCount) {
@@ -1283,14 +1304,31 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
     return;
   }
   const auto route = decodeRouteSnapshot(*message);
-  if (!route.has_value() || !routeSnapshotMatchesGoalMirrors(*route, *message)) {
+  const bool route_mirrors_valid =
+      route.has_value() && routeSnapshotMatchesGoalMirrors(*route, *message);
+  if (!route.has_value() || !route_mirrors_valid) {
     planner_->cancelActiveSolve();
     command_bundle_store_.invalidate();
     planner_command_available_.store(false);
     planner_failure_latched_.store(true);
     safety_suffix_active_.store(false);
     RCLCPP_ERROR(get_logger(),
-                 "rejected navigation goal: immutable route identity or mirrors are invalid");
+                 "rejected navigation goal: %s (mission_len=%zu frame_len=%zu "
+                 "route_mission_len=%zu route_frame_len=%zu request=%llu "
+                 "route_request=%llu waypoints=%zu ids=%zu radii=%zu behaviors=%zu "
+                 "active=%u measured_segment=%u)",
+                 route.has_value() ? "immutable route mirrors are invalid"
+                                   : "immutable route snapshot is invalid",
+                 message->mission_id.size(), message->header.frame_id.size(),
+                 message->route.mission_id.size(), message->route.frame_id.size(),
+                 static_cast<unsigned long long>(message->request_id),
+                 static_cast<unsigned long long>(message->route.request_id),
+                 message->route.waypoint_positions.size(),
+                 message->route.waypoint_ids.size(),
+                 message->route.waypoint_acceptance_radii_m.size(),
+                 message->route.waypoint_behaviors.size(),
+                 message->route.active_waypoint_index,
+                 message->route.measured_segment_index);
     return;
   }
   std::lock_guard<std::mutex> lock(input_mutex_);
