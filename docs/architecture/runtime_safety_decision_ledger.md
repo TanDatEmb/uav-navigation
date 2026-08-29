@@ -1,5 +1,26 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Reject malformed safety-stop duration metadata
+
+- **Owner/status:** PX4 External Mode MissionController, `PROVISIONAL`; verified
+  by the focused mission-controller regression.
+- **Scope:** Successful safety-stop callbacks now reject negative, NaN, and
+  infinite durations and request position control instead of converting them to
+  an immediate zero-duration braking phase. Finite zero remains the explicit
+  refresh/legacy status semantics already used by the planner.
+- **Safety impact:** Malformed transport metadata cannot shorten the braking or
+  stationary-confirmation window and cannot silently clear the evidence that
+  the callback was invalid.
+- **False-accept/false-reject consequences:** Invalid callbacks fail closed to
+  the operator handover. Valid finite duration behavior is unchanged.
+- **Runtime cost and evidence:** One finite/domain check per callback;
+  regression covers negative, NaN, and positive-infinity durations.
+- **Removal/review condition:** Keep until the legacy callback overload is
+  replaced by a typed checked trajectory-result contract.
+- **Verification:** `cmake --build build/px4_navigation_external_mode --target
+  test_mission -j2 && ./build/px4_navigation_external_mode/test_mission
+  --gtest_color=no`.
+
 ### 2026-08-29 - Reject unrepresentable ROG-Map query coordinates
 
 - **Owner/status:** ROG-Map boundary adapter, `PROVISIONAL`; verified by the

@@ -120,6 +120,22 @@ void MissionController::onTrajectory(bool success, std::uint8_t trajectory_role,
     return;
   }
 
+  if (success && trajectory_role == kSafetyTrajectoryRole &&
+      safety_plan_kind == kSafetyStopKind &&
+      (!std::isfinite(duration_s) || duration_s < 0.0)) {
+    // A safety-stop duration is transport metadata, not an optional tuning
+    // hint.  Clamping NaN/Inf/negative values to zero would make the
+    // confirmation window immediately eligible and hide a malformed command.
+    state_ = MissionControllerState::Paused;
+    checkpoint_valid_ = true;
+    trajectory_ready_ = false;
+    pending_position_control_ = true;
+    braking_start_time_s_.reset();
+    braking_end_time_s_.reset();
+    stopped_start_time_s_.reset();
+    return;
+  }
+
   // A map revision may replace the currently executing braking stop. Keep the
   // mission in Braking and restart its confirmation window from the new
   // trajectory's own time origin; do not let the old duration cause an early
@@ -188,9 +204,7 @@ void MissionController::onTrajectory(bool success, std::uint8_t trajectory_role,
 
   if (success && trajectory_role == kSafetyTrajectoryRole &&
       safety_plan_kind == kSafetyStopKind) {
-    const double effective_duration =
-        std::isfinite(duration_s) ? std::max(0.0, duration_s) : 0.0;
-    const auto braking_end = checkedAddSeconds(now_s, effective_duration);
+    const auto braking_end = checkedAddSeconds(now_s, duration_s);
     if (!braking_end) {
       state_ = MissionControllerState::Paused;
       checkpoint_valid_ = true;
