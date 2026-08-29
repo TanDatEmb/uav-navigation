@@ -4,8 +4,18 @@
 #include <gtest/gtest.h>
 
 #include "px4_navigation_external_mode/tracking_envelope.hpp"
+#include "px4_navigation_external_mode/navigation_input_validation.hpp"
 
 using px4_navigation_external_mode::evaluateTrackingEnvelope;
+using px4_navigation_external_mode::isNormalizableOdometryQuaternion;
+
+TEST(TrackingEnvelope, RejectsZeroAndOverflowedOdometryQuaternion) {
+  EXPECT_FALSE(isNormalizableOdometryQuaternion(Eigen::Quaterniond(0.0, 0.0, 0.0, 0.0)));
+  EXPECT_FALSE(isNormalizableOdometryQuaternion(Eigen::Quaterniond(
+      std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+      0.0, 0.0)));
+  EXPECT_TRUE(isNormalizableOdometryQuaternion(Eigen::Quaterniond::Identity()));
+}
 
 TEST(TrackingEnvelope, AppliesOneFiniteGeometricLimitToForwardError) {
   const auto result = evaluateTrackingEnvelope(

@@ -16,6 +16,7 @@
 #include <px4_ros2/utils/frame_conversion.hpp>
 
 #include "px4_navigation_external_mode/tracking_envelope.hpp"
+#include "px4_navigation_external_mode/navigation_input_validation.hpp"
 #include "px4_navigation_external_mode/certified_command_handoff.hpp"
 #include "px4_navigation_external_mode/reject_provenance.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
@@ -833,7 +834,10 @@ void NavigationMode::onOdometry(
   if (odometry.header.frame_id != planning_frame_ ||
       odometry.child_frame_id != body_frame_ || odometry.header.stamp.sec < 0 ||
       !std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
-      !std::isfinite(velocity.x) || !std::isfinite(velocity.y) || !std::isfinite(velocity.z)) {
+      !std::isfinite(velocity.x) || !std::isfinite(velocity.y) || !std::isfinite(velocity.z) ||
+      !isNormalizableOdometryQuaternion(Eigen::Quaterniond(
+          odometry.pose.pose.orientation.w, odometry.pose.pose.orientation.x,
+          odometry.pose.pose.orientation.y, odometry.pose.pose.orientation.z))) {
     RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
                          "Rejecting navigation odometry with invalid frame or values");
     return;

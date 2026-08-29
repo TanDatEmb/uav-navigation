@@ -25,6 +25,28 @@
   --gtest_filter=PlannerTrajectory.BackupOptimizerRejectsMalformedPublicBoundaryInputs
   --gtest_color=no`.
 
+### 2026-08-29 - Reject malformed External Mode odometry orientation
+
+- **Owner/status:** PX4 External Mode odometry ingress, `PROVISIONAL`; verified
+  by the tracking-envelope regression and node build.
+- **Scope:** `NavigationMode::onOdometry()` now rejects zero, non-finite, or
+  non-representably huge quaternions before caching propagated odometry. The
+  shared validation helper uses finite squared norm and a normalizability floor.
+- **Safety impact:** Invalid orientation cannot remain in the cached state and
+  cannot silently cause a setpoint to omit yaw while continuing navigation.
+  Existing position/velocity/frame/timestamp gates remain unchanged.
+- **False-accept/false-reject consequences:** Valid normalized or normalizable
+  finite orientations remain accepted and are normalized at use. Invalid direct
+  ingress is rejected fail-closed.
+- **Runtime cost and evidence:** One quaternion norm check per odometry message;
+  regression covers zero, overflowed finite, and identity quaternions. The
+  External Mode node target also builds successfully.
+- **Removal/review condition:** Keep until propagated odometry is represented by
+  a typed validated state rather than a public ROS message.
+- **Verification:** `cmake --build build/px4_navigation_external_mode --target
+  test_tracking_envelope px4_navigation_external_mode_node -j2 &&
+  ./build/px4_navigation_external_mode/test_tracking_envelope --gtest_color=no`.
+
 ### 2026-08-29 - Harden SDLP numerical boundaries
 
 - **Owner/status:** planning geometry LP solver, `PROVISIONAL`; verified by the
