@@ -1,6 +1,6 @@
 # Đánh giá tái triển khai navigation
 
-Ngày đánh giá/cập nhật: 2026-08-29. Reviewed source HEAD: `b303695e47fe0b306b50b743c2e9052730c9cbee`
+Ngày đánh giá/cập nhật: 2026-08-29. Reviewed source HEAD: `293db98f39d6ca08c398726ca3812ff48666d689`
 trên branch `codex/navigation-stability-checkpoint`; worktree sạch tại thời điểm
 checkpoint. Phạm vi gồm estimator, mapping, planner, execution, runtime và PX4
 boundary. Đây là đánh giá kỹ thuật, không phải chứng nhận bay.
