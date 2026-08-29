@@ -256,6 +256,20 @@ TEST(Px4TimeValidator, UsesCheckedNanosecondServiceTime) {
   EXPECT_FALSE(px4_odometry_bridge::checked_ros_time_to_nanoseconds(1, 1'000'000'000U).has_value());
 }
 
+TEST(Px4TimeValidator, RejectsUnrepresentableTimestampDelta) {
+  px4_odometry_bridge::TimestampValidator validator({
+      .max_stale_ns = 200'000'000,
+      .max_future_ns = 200'000'000,
+      .probable_restart_regression_ns = 1'000'000'000,
+      .restart_low_epoch_max_ns = 10'000'000'000});
+  ASSERT_TRUE(validator.observe(1, 1).accepted);
+  const auto result = validator.observe(
+      std::numeric_limits<std::uint64_t>::max(),
+      std::numeric_limits<std::int64_t>::max());
+  EXPECT_FALSE(result.accepted);
+  EXPECT_EQ(result.event, px4_odometry_bridge::TimestampEvent::kInvalid);
+}
+
 TEST(Px4TimestampConverter, RejectsInvalidMaximumAge) {
   EXPECT_THROW(px4_odometry_bridge::TimestampConverter(0), std::invalid_argument);
   EXPECT_THROW(px4_odometry_bridge::TimestampConverter(-1), std::invalid_argument);

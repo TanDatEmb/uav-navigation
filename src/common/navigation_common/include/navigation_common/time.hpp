@@ -15,6 +15,21 @@ using TimestampNs = std::int64_t;
 inline constexpr TimestampNs kNanosecondsPerSecond = 1'000'000'000LL;
 inline constexpr TimestampNs kNanosecondsPerMicrosecond = 1'000LL;
 
+// Return lhs-rhs only when the signed result is representable. Timestamp
+// values originate at public transport boundaries and may legitimately be
+// close to either int64 endpoint; raw signed subtraction is therefore not a
+// safe age/delta operation.
+[[nodiscard]] inline std::optional<TimestampNs> checkedDifference(
+    const TimestampNs lhs, const TimestampNs rhs) noexcept {
+  const __int128 difference = static_cast<__int128>(lhs) -
+                              static_cast<__int128>(rhs);
+  if (difference < static_cast<__int128>(std::numeric_limits<TimestampNs>::min()) ||
+      difference > static_cast<__int128>(std::numeric_limits<TimestampNs>::max())) {
+    return std::nullopt;
+  }
+  return static_cast<TimestampNs>(difference);
+}
+
 // Steady time is only for local receive, timeout, and latency measurements.
 // It must not be compared with ROS, simulation, or sensor source timestamps.
 [[nodiscard]] inline TimestampNs steadyClockNowNanoseconds() noexcept {

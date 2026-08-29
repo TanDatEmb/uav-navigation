@@ -135,5 +135,23 @@ TEST(GeometricJumpContinuityTest, TrackingRecoveryWithContinuousFrameDoesNotRela
   EXPECT_EQ(after, before);
 }
 
+TEST(GeometricJumpContinuityTest, RejectsInvalidConfigAndExtremeTimestampDelta) {
+  GeometricJumpContinuityConfig config;
+  GeometricJumpContinuityState state;
+  auto first = frame(1, 0.0);
+  auto second = frame(std::numeric_limits<std::int64_t>::max(), 0.0);
+  (void)observe_geometric_jump_continuity(first, true, true, 1U, config, state);
+  const auto result = observe_geometric_jump_continuity(
+      second, true, true, 1U, config, state);
+  EXPECT_FALSE(result.evaluated);
+  EXPECT_EQ(result.reason, GeometricJumpContinuityReason::kDtTooLarge);
+
+  config.maximum_expected_speed_mps = -1.0;
+  const auto invalid = observe_geometric_jump_continuity(
+      frame(2'000'000'000LL, 0.0), true, true, 1U, config, state);
+  EXPECT_FALSE(invalid.evaluated);
+  EXPECT_EQ(invalid.reason, GeometricJumpContinuityReason::kCurrentFrameInvalid);
+}
+
 }  // namespace
 }  // namespace px4_odometry_bridge

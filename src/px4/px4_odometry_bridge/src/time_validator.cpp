@@ -32,7 +32,13 @@ TimeValidationResult TimestampValidator::observe(std::uint64_t timestamp_us,
     if (*timestamp_ns == *last_timestamp_ns_) {
       return {false, generation_, "duplicate PX4 sample timestamp", TimestampEvent::kDuplicate};
     }
-    const auto regression_ns = *last_timestamp_ns_ - *timestamp_ns;
+    const auto regression = navigation_common::checkedDifference(
+        *last_timestamp_ns_, *timestamp_ns);
+    if (!regression) {
+      return {false, generation_, "timestamp delta is not representable",
+              TimestampEvent::kInvalid};
+    }
+    const auto regression_ns = *regression;
     if (regression_ns >= config_.probable_restart_regression_ns &&
         *last_timestamp_ns_ > config_.restart_low_epoch_max_ns &&
         *timestamp_ns <= config_.restart_low_epoch_max_ns) {
@@ -45,10 +51,20 @@ TimeValidationResult TimestampValidator::observe(std::uint64_t timestamp_us,
     }
     return {false, generation_, "small PX4 timestamp regression", TimestampEvent::kSmallRegression};
   }
-  if (now_ns - *timestamp_ns > config_.max_stale_ns) {
+  const auto age = navigation_common::checkedDifference(now_ns, *timestamp_ns);
+  if (!age) {
+    return {false, generation_, "timestamp delta is not representable",
+            TimestampEvent::kInvalid};
+  }
+  if (*age > config_.max_stale_ns) {
     return {false, generation_, "stale PX4 sample timestamp", TimestampEvent::kStale};
   }
-  if (*timestamp_ns - now_ns > config_.max_future_ns) {
+  const auto future = navigation_common::checkedDifference(*timestamp_ns, now_ns);
+  if (!future) {
+    return {false, generation_, "timestamp delta is not representable",
+            TimestampEvent::kInvalid};
+  }
+  if (*future > config_.max_future_ns) {
     return {false, generation_, "future PX4 sample timestamp", TimestampEvent::kFuture};
   }
   last_timestamp_ns_ = *timestamp_ns;

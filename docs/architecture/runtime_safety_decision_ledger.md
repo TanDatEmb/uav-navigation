@@ -12169,3 +12169,24 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/px4_navigation_external_mode --target test_mission -j2`;
   focused test binary.
+
+### 2026-08-29 - Make PX4 timestamp deltas fail closed
+
+- **Owner/status:** PX4 timestamp validation and geometric continuity boundary,
+  `VERIFIED` by focused validator/continuity tests.
+- **Scope:** Add one checked signed timestamp-difference helper and use it for
+  PX4 freshness, restart, and continuity deltas. Direct continuity callers
+  also receive finite, unit-quaternion, positive-timestamp, and configuration
+  validation before geometry is evaluated.
+- **Safety impact:** Extreme or malformed timestamps/frames cannot overflow a
+  signed subtraction or make NaN geometry appear as a stable sample.
+- **False-accept/false-reject consequences:** Normal positive timestamp and
+  finite normalized frame behavior is unchanged. Unrepresentable deltas and
+  invalid direct inputs are rejected/reseeded fail closed.
+- **Runtime cost and evidence:** One `__int128` subtraction and bounded frame
+  checks per validator/continuity call; focused PX4 bridge tests pass.
+- **Removal/review condition:** Keep until all product timestamp arithmetic is
+  routed through the checked-time helper and timestamps use a typed domain.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/px4_odometry_bridge --target
+  test_px4_odometry_bridge test_geometric_jump_continuity -j2`; focused tests.

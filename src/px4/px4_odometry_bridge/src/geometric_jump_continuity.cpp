@@ -1,5 +1,9 @@
 #include "px4_odometry_bridge/geometric_jump_continuity.hpp"
 
+#include <cmath>
+
+#include <navigation_common/time.hpp>
+
 namespace px4_odometry_bridge {
 
 namespace {
@@ -27,6 +31,35 @@ GeometricJumpContinuityObservation observe_geometric_jump_continuity(
     const bool generation_valid, const std::uint64_t generation,
     const GeometricJumpContinuityConfig& config,
     GeometricJumpContinuityState& state) {
+  const auto config_valid = [&]() {
+    return std::isfinite(config.position_jump_margin_m) &&
+           config.position_jump_margin_m >= 0.0 &&
+           std::isfinite(config.orientation_jump_margin_rad) &&
+           config.orientation_jump_margin_rad >= 0.0 &&
+           std::isfinite(config.maximum_expected_speed_mps) &&
+           config.maximum_expected_speed_mps >= 0.0 &&
+           std::isfinite(config.maximum_expected_angular_rate_rad_s) &&
+           config.maximum_expected_angular_rate_rad_s >= 0.0 &&
+           std::isfinite(config.minimum_continuity_dt_s) &&
+           config.minimum_continuity_dt_s > 0.0 &&
+           std::isfinite(config.maximum_continuity_dt_s) &&
+           config.maximum_continuity_dt_s >= config.minimum_continuity_dt_s;
+  };
+  const auto frame_valid = [](const ExternalOdometryFrame& frame) {
+    const double quaternion_squared_norm =
+        frame.orientation_ned.squaredNorm();
+    return frame.timestamp_ns > 0 && frame.position_ned.allFinite() &&
+           frame.velocity_ned.allFinite() &&
+           frame.angular_velocity_body_frd.allFinite() &&
+           frame.orientation_ned.coeffs().allFinite() &&
+           std::isfinite(quaternion_squared_norm) &&
+           std::abs(quaternion_squared_norm - 1.0) <= 1.0e-6;
+  };
+  if (!config_valid() || !frame_valid(current)) {
+    return reseed(current, false, generation,
+                  GeometricJumpContinuityReason::kCurrentFrameInvalid,
+                  false, state);
+  }
   if (!source_valid) {
     return reseed(current, generation_valid, generation,
                   GeometricJumpContinuityReason::kSourceInvalid,
@@ -49,7 +82,7 @@ GeometricJumpContinuityObservation observe_geometric_jump_continuity(
                   GeometricJumpContinuityReason::kNoBaseline,
                   true, state);
   }
-  if (!state.last_received->frame_valid) {
+  if (!state.last_received->frame_valid || !frame_valid(*state.last_received)) {
     return reseed(current, generation_valid, generation,
                   GeometricJumpContinuityReason::kPreviousFrameInvalid,
                   true, state);
@@ -60,27 +93,28 @@ GeometricJumpContinuityObservation observe_geometric_jump_continuity(
                   true, state);
   }
 
-  const std::int64_t dt_ns = current.timestamp_ns - state.last_received->timestamp_ns;
-  if (dt_ns <= 0) {
+  const auto dt = navigation_common::checkedDifference(
+      current.timestamp_ns, state.last_received->timestamp_ns);
+  if (!dt || *dt <= 0) {
     return reseed(current, generation_valid, generation,
                   GeometricJumpContinuityReason::kTimestampNotIncreasing,
                   true, state);
   }
 
   GeometricJumpContinuityObservation observation;
-  observation.dt_s = static_cast<double>(dt_ns) * 1e-9;
+  observation.dt_s = static_cast<double>(*dt) * 1e-9;
   if (observation.dt_s < config.minimum_continuity_dt_s) {
     observation = reseed(current, generation_valid, generation,
                          GeometricJumpContinuityReason::kDtTooSmall,
                          true, state);
-    observation.dt_s = static_cast<double>(dt_ns) * 1e-9;
+    observation.dt_s = static_cast<double>(*dt) * 1e-9;
     return observation;
   }
   if (observation.dt_s > config.maximum_continuity_dt_s) {
     observation = reseed(current, generation_valid, generation,
                          GeometricJumpContinuityReason::kDtTooLarge,
                          true, state);
-    observation.dt_s = static_cast<double>(dt_ns) * 1e-9;
+    observation.dt_s = static_cast<double>(*dt) * 1e-9;
     return observation;
   }
 
