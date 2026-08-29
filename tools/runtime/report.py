@@ -418,6 +418,8 @@ def _samples(path: Path) -> list[dict[str, Any]]:
                 item = json.loads(line)
             except ValueError:
                 continue
+            if not isinstance(item, dict):
+                continue
             if item.get("kind") == "sample":
                 result.append(item)
     return result

@@ -10947,6 +10947,30 @@ release profiles must not use the former allowance.
   test_px4_odometry_bridge -j2 && ./build/px4_odometry_bridge/test_px4_odometry_bridge
   --gtest_color=no`.
 
+### 2026-08-29 - Harden runtime harness ownership and evidence parsing
+
+- **Owner/status:** Runtime process harness, shell environment and report
+  ingestion, `VERIFIED` by the focused Python suites.
+- **Scope:** Read PGID from the correct `/proc` field, validate registry
+  schema/ownership before signaling, reject unsafe log roles, shell-quote
+  inherited environment values, skip non-object sample rows, and reject
+  non-finite manual-goal inputs before ROS initialization.
+- **Safety impact:** Cleanup cannot mistake a session ID for a process group or
+  signal the runner's own group from a malformed registry; inherited values
+  cannot alter the shell command; partial evidence produces a robust report
+  input instead of an exception-driven generic abort.
+- **False-accept/false-reject consequences:** Malformed registry/process
+  records and malformed manual goals are rejected. Valid process sessions,
+  shell values and object sample rows are unchanged.
+- **Runtime cost and evidence:** Constant-time schema/domain checks and safe
+  quoting at process launch/report ingestion. The runtime contract and HTML
+  report suites pass 182/182 tests.
+- **Removal/review condition:** Keep until the harness uses a structured
+  process-control API without shell interpolation and report inputs have a
+  versioned schema validator.
+- **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract
+  tools.runtime.tests.test_html_report`.
+
 ### 2026-08-29 - Tighten standalone navigation command contract
 
 - **Owner/status:** Navigation command message contract, `VERIFIED` by the

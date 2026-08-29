@@ -26,9 +26,16 @@ from flight_review_report import (
     map_svg,
 )
 from html_report import _planning_continuity, _runtime_observability, _safety_timeline, _samples, _trajectory_smoothness
+import report
 
 
 class HtmlReportSmoothnessTest(unittest.TestCase):
+    def test_samples_skips_valid_json_scalars(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "samples.jsonl"
+            path.write_text("null\n[]\n{\"kind\": \"sample\"}\n", encoding="utf-8")
+            self.assertEqual(report._samples(path), [{"kind": "sample"}])
+
     def test_overlapping_plans_are_compared_at_handover_time(self) -> None:
         # Each plan is three seconds long but is replaced after 0.2 seconds.
         # The old implementation compared the old plan's terminal velocity to

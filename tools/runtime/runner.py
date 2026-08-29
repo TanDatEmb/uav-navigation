@@ -341,7 +341,8 @@ def _ros_shell(command: list[str], *, enable_rviz: bool = False) -> list[str]:
         if value:
             environment[key] = value
     parts = [
-        "export " + " ".join(f"{key}={value}" for key, value in environment.items()),
+        "export " + " ".join(f"{key}={shlex.quote(value)}"
+                              for key, value in environment.items()),
         "source /opt/ros/jazzy/setup.bash",
     ]
     install = ROOT / "install/setup.bash"

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 
 import rclpy
@@ -20,8 +21,14 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--period", type=float, default=1.0)
     args = parser.parse_args()
-    if args.repeat <= 0 or args.period <= 0.0:
-        parser.error("--repeat and --period must be positive")
+    if (not math.isfinite(args.x) or not math.isfinite(args.y) or
+            not math.isfinite(args.z)):
+        parser.error("goal coordinates must be finite")
+    if not args.frame:
+        parser.error("--frame must not be empty")
+    if (args.repeat <= 0 or not math.isfinite(args.period) or
+            args.period <= 0.0):
+        parser.error("--repeat and --period must be positive and finite")
 
     rclpy.init()
     node = Node("navigation_goal_harness")

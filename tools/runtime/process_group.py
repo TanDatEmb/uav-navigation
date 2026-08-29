@@ -25,6 +25,8 @@ def _start_ticks(pid: int) -> int | None:
 
 
 def _group_exists(pgid: int) -> bool:
+    if not isinstance(pgid, int) or isinstance(pgid, bool) or pgid <= 0:
+        return False
     try:
         os.killpg(pgid, 0)
     except (ProcessLookupError, PermissionError):
@@ -42,10 +44,12 @@ def _group_exists(pgid: int) -> bool:
         if closing < 0:
             continue
         fields = text[closing + 2 :].split()
-        if len(fields) <= 3:
+        if len(fields) <= 2:
             continue
         try:
-            member_pgid = int(fields[3])
+            # After the executable name and closing parenthesis, proc stat
+            # fields are state, ppid, pgrp, session, ... .
+            member_pgid = int(fields[2])
         except ValueError:
             continue
         if member_pgid == pgid:
@@ -128,9 +132,30 @@ class Session:
 
     def _registry(self) -> dict[str, Any]:
         try:
-            return json.loads(self.registry_path.read_text(encoding="utf-8"))
+            value = json.loads(self.registry_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {"schema_version": 1, "processes": []}
+            raise ValueError("runtime process registry is unreadable")
+        if not isinstance(value, dict) or value.get("schema_version") != 1:
+            raise ValueError("runtime process registry has an invalid schema")
+        processes = value.get("processes")
+        if not isinstance(processes, list):
+            raise ValueError("runtime process registry processes must be a list")
+        for record in processes:
+            if not isinstance(record, dict):
+                raise ValueError("runtime process registry contains a non-object record")
+            for key in ("pid", "pgid"):
+                number = record.get(key)
+                if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+                    raise ValueError(f"runtime process registry has invalid {key}")
+            if record["pid"] != record["pgid"]:
+                raise ValueError("runtime process registry violates process-group ownership")
+            if not isinstance(record.get("role"), str) or not record["role"]:
+                raise ValueError("runtime process registry has invalid role")
+            if "start_ticks" in record and record["start_ticks"] is not None:
+                ticks = record["start_ticks"]
+                if not isinstance(ticks, int) or isinstance(ticks, bool) or ticks < 0:
+                    raise ValueError("runtime process registry has invalid start_ticks")
+        return value
 
     def start(
         self,
@@ -141,6 +166,10 @@ class Session:
         env: dict[str, str] | None = None,
         env_remove: set[str] | None = None,
     ) -> subprocess.Popen[Any]:
+        if (not role or role in {".", ".."} or
+                any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+                    for character in role)):
+            raise ValueError(f"invalid runtime process role: {role!r}")
         log_path = self.logs / f"{role}.log"
         log = log_path.open("a", encoding="utf-8")
         child_env = os.environ.copy()
@@ -186,20 +215,33 @@ class Session:
         return list(self._registry().get("processes", []))
 
     def live_records(self) -> list[dict[str, Any]]:
-        return [record for record in self.records() if _group_exists(int(record["pgid"]))]
+        try:
+            records = self.records()
+        except ValueError:
+            return []
+        return [record for record in records if _group_exists(record["pgid"])]
 
     def stop(self, grace_s: float = 4.0) -> list[str]:
         """Stop only registered process groups and return cleanup failures."""
         failures: list[str] = []
-        records = list(reversed(self.records()))
+        try:
+            records = list(reversed(self.records()))
+        except ValueError as error:
+            failures.append(str(error))
+            self.write_state({"cleanup": "FAIL", "cleanup_failures": failures})
+            return failures
         monitors = [record for record in records if record.get("role") == "monitor"]
         records = monitors + [record for record in records if record.get("role") != "monitor"]
         for record in records:
             try:
-                pgid = int(record["pgid"])
-                pid = int(record["pid"])
+                pgid = record["pgid"]
+                pid = record["pid"]
             except (KeyError, TypeError, ValueError):
                 failures.append(f"invalid process record: {record!r}")
+                continue
+            if (pgid <= 0 or pid <= 0 or pgid != pid or
+                    pgid == os.getpgrp()):
+                failures.append(f"unsafe process-group ownership: {record!r}")
                 continue
             if not _group_exists(pgid):
                 continue

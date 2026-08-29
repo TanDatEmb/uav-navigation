@@ -26,6 +26,7 @@ import dataset_shadow_planning
 import gazebo_native_observer
 import report
 import runner
+import process_group
 
 
 def _valid_captured_provenance() -> dict[str, object]:
@@ -1088,6 +1089,23 @@ class RuntimeContractTest(unittest.TestCase):
     def test_rviz_shell_explicitly_enables_visualizer_environment(self) -> None:
         command = runner._ros_shell(["rviz2"], enable_rviz=True)[-1]
         self.assertIn("export ENABLE_RVIZ=1 RVIZ_ENABLE=1 DISABLE_RVIZ=0 NAVIGATION_NO_RVIZ=0", command)
+
+    def test_ros_shell_quotes_inherited_environment_values(self) -> None:
+        with mock.patch.dict(os.environ, {"ROS_LOG_DIR": "/tmp/log dir;$unsafe"}, clear=False):
+            command = runner._ros_shell(["echo", "ok"])[-1]
+        self.assertIn("ROS_LOG_DIR='/tmp/log dir;$unsafe'", command)
+
+    def test_process_registry_rejects_unvalidated_records_and_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = process_group.Session(Path(temporary) / "session")
+            (session.registry_path).write_text(
+                json.dumps({"schema_version": 1, "processes": [{"pid": 1, "pgid": 0}]}),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                session.records()
+            with self.assertRaises(ValueError):
+                session.start("../escape", ["true"], cwd=Path(temporary))
 
     def test_rviz_command_uses_sim_clock_without_legacy_topic_remap(self) -> None:
         command = runner._rviz_command(use_sim_time=True)
