@@ -14,6 +14,33 @@
 namespace uav::nav::lio {
 namespace {
 
+bool validClockDomain(const ClockDomain domain) {
+  switch (domain) {
+    case ClockDomain::kRosTime:
+    case ClockDomain::kSimulationTime:
+    case ClockDomain::kSensorTime:
+    case ClockDomain::kSystemTime:
+    case ClockDomain::kSteadyTime:
+      return true;
+  }
+  return false;
+}
+
+bool validTimingMode(const LidarTimingMode mode) {
+  return mode == LidarTimingMode::kSimultaneousScan ||
+         mode == LidarTimingMode::kPerPoint;
+}
+
+bool validPointTimeEncoding(const PointTimeEncoding encoding) {
+  return encoding == PointTimeEncoding::kUint32RelativeNanoseconds ||
+         encoding == PointTimeEncoding::kFloat64AbsoluteNanoseconds;
+}
+
+bool validScanReference(const ScanReference reference) {
+  return reference == ScanReference::kHeaderStamp ||
+         reference == ScanReference::kMinimumPointTime;
+}
+
 const sensor_msgs::msg::PointField& requireField(const sensor_msgs::msg::PointCloud2& message,
                                                  std::string_view name, std::uint8_t datatype) {
   const auto field = std::find_if(message.fields.begin(), message.fields.end(),
@@ -46,7 +73,10 @@ RosLidarAdapter::RosLidarAdapter(std::string expected_frame,
       timing_mode_(timing_mode),
       clock_domain_(clock_domain),
       point_time_(std::move(point_time)) {
-  if (expected_frame_.empty() || point_time_.field.empty() ||
+  if (expected_frame_.empty() || !validTimingMode(timing_mode_) ||
+      !validClockDomain(clock_domain_) || point_time_.field.empty() ||
+      !validPointTimeEncoding(point_time_.encoding) ||
+      !validScanReference(point_time_.scan_reference) ||
       point_time_.maximum_scan_duration_ns <= 0 ||
       point_time_.maximum_header_offset_ns < 0 ||
       point_time_.maximum_boundary_overlap_ns < 0 ||

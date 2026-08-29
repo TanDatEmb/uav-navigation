@@ -11729,6 +11729,28 @@ release profiles must not use the former allowance.
   --symlink-install`; `./build/px4_navigation_external_mode/test_mission
   --gtest_color=no`.
 
+### 2026-08-29 - Reject invalid Fast-LIO ROS adapter domains
+
+- **Owner/status:** Fast-LIO ROS PointCloud2/Livox ingress configuration,
+  `VERIFIED` by package build and adapter regression tests.
+- **Scope:** Validate timing mode, clock domain, point-time encoding/reference
+  and Livox timestamp policy in adapter constructors, including the existing
+  frame and duration checks. Unknown enum values no longer fall through to a
+  different timing interpretation.
+- **Safety impact:** A malformed direct adapter construction cannot silently
+  change scan timing, timestamp authority or deskew interpretation; startup or
+  construction fails closed.
+- **False-accept/false-reject consequences:** Existing valid simultaneous,
+  per-point, strict and explicitly legacy Livox configurations are unchanged.
+  Only values outside the declared enum domains are newly rejected.
+- **Runtime cost and evidence:** Constant-size constructor switches only;
+  PointCloud2/Livox adapter tests pass 16/16 and 6/6.
+- **Removal/review condition:** Keep until adapters receive typed validated
+  configuration objects rather than public enum fields.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select fast_lio_ros --symlink-install`; direct
+  execution of `test_ros_lidar_adapter` and `test_ros_livox_custom_adapter`.
+
 ### 2026-08-29 - Validate direct trajectory optimizer configuration boundaries
 
 - **Owner/status:** Trajectory optimizer configuration boundary, `VERIFIED`

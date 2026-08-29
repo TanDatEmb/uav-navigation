@@ -10,12 +10,38 @@
 
 namespace uav::nav::lio {
 
+namespace {
+
+bool validClockDomain(const ClockDomain domain) {
+  switch (domain) {
+    case ClockDomain::kRosTime:
+    case ClockDomain::kSimulationTime:
+    case ClockDomain::kSensorTime:
+    case ClockDomain::kSystemTime:
+    case ClockDomain::kSteadyTime:
+      return true;
+  }
+  return false;
+}
+
+bool validTimestampPolicy(const LivoxTimestampPolicy policy) {
+  return policy == LivoxTimestampPolicy::kRequireHeaderMatchesTimebase ||
+         policy == LivoxTimestampPolicy::kTimebaseAuthoritative;
+}
+
+}  // namespace
+
 RosLivoxCustomAdapter::RosLivoxCustomAdapter(
     std::string expected_frame, ClockDomain clock_domain,
     LivoxTimestampPolicy timestamp_policy)
     : expected_frame_(std::move(expected_frame)),
       clock_domain_(clock_domain),
-      timestamp_policy_(timestamp_policy) {}
+      timestamp_policy_(timestamp_policy) {
+  if (expected_frame_.empty() || !validClockDomain(clock_domain_) ||
+      !validTimestampPolicy(timestamp_policy_)) {
+    throw std::invalid_argument("invalid Livox CustomMsg adapter configuration");
+  }
+}
 
 LidarScan RosLivoxCustomAdapter::convert(
     const livox_ros_driver2::msg::CustomMsg& message) const {

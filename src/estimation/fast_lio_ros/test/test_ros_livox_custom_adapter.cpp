@@ -82,4 +82,15 @@ TEST(RosLivoxCustomAdapterTest, RejectsTimebaseOutsideCoreRange) {
       std::invalid_argument);
 }
 
+TEST(RosLivoxCustomAdapterTest, RejectsInvalidAdapterConfiguration) {
+  EXPECT_THROW(RosLivoxCustomAdapter("", ClockDomain::kSensorTime),
+               std::invalid_argument);
+  EXPECT_THROW(RosLivoxCustomAdapter("livox_frame", static_cast<ClockDomain>(255)),
+               std::invalid_argument);
+  EXPECT_THROW(RosLivoxCustomAdapter(
+                   "livox_frame", ClockDomain::kSensorTime,
+                   static_cast<LivoxTimestampPolicy>(255)),
+               std::invalid_argument);
+}
+
 }  // namespace uav::nav::lio

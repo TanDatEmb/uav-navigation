@@ -265,6 +265,25 @@ TEST(RosLidarAdapterTest, RejectsEmptyConfiguredFrame) {
   EXPECT_THROW(RosLidarAdapter("", LidarTimingMode::kPerPoint), std::invalid_argument);
 }
 
+TEST(RosLidarAdapterTest, RejectsUnknownConfigurationEnums) {
+  EXPECT_THROW(
+      RosLidarAdapter("livox_frame", static_cast<LidarTimingMode>(255)),
+      std::invalid_argument);
+  PointTimeConfig config;
+  config.encoding = static_cast<PointTimeEncoding>(255);
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint,
+                               ClockDomain::kSensorTime, config),
+               std::invalid_argument);
+  config.encoding = PointTimeEncoding::kUint32RelativeNanoseconds;
+  config.scan_reference = static_cast<ScanReference>(255);
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint,
+                               ClockDomain::kSensorTime, config),
+               std::invalid_argument);
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint,
+                               static_cast<ClockDomain>(255), PointTimeConfig{}),
+               std::invalid_argument);
+}
+
 TEST(RosLidarAdapterTest, RejectsFrameMismatch) {
   auto cloud = makeCloud();
   cloud.header.frame_id = "wrong";
