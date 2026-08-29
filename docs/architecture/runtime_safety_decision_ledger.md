@@ -12339,3 +12339,32 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/fast_lio_ros --target test_ros_imu_adapter -j2`;
   focused test binary.
+
+### 2026-08-29 - Honor synchronized estimator propagation epoch
+
+- **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,
+  `PROVISIONAL`, verified by the focused pipeline regression suite.
+- **Scope:** `FastLioPipeline::processInternal()` now validates the scan and
+  checked timestamp intervals before retaining IMU samples or changing
+  estimator state. A first group without a configured prior starts at
+  `MeasurementGroup::propagation_start_time`; later groups must match the
+  current estimator state epoch. Scan-duration diagnostics use checked
+  timestamp subtraction.
+- **Safety impact:** Direct/offline groups cannot silently skip inter-scan IMU
+  motion, and malformed scans cannot mutate the estimator before a later
+  deskew/preprocessing failure. Clock mismatch, reversed, and overflowing
+  intervals fail closed.
+- **False-accept/false-reject consequences:** Valid synchronized groups keep
+  their existing propagation and simultaneous-scan behavior. A stale or
+  forged propagation epoch is rejected, which may cause a bounded estimator
+  recovery/hold rather than integrating from an incorrect state.
+- **Runtime cost and evidence:** One scan validation and two checked interval
+  checks per direct group; `test_fast_lio_pipeline` passes 19/19, including
+  first-group epoch, state-epoch mismatch, and pre-mutation malformed-scan
+  regressions.
+- **Removal/review condition:** Keep until `MeasurementGroup` is replaced by a
+  typed validated synchronization result and every estimator entrypoint uses
+  that result.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/fast_lio_core --target test_fast_lio_pipeline -j2
+  && ./build/fast_lio_core/test_fast_lio_pipeline --gtest_color=no`.

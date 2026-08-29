@@ -12,11 +12,16 @@ namespace uav::nav::lio {
 namespace {
 
 constexpr std::int64_t kMillisecondNs = 1'000'000;
+constexpr std::int64_t kTestTimestampOffsetNs = 1'000'000'000;
+
+Timestamp testTimestamp(const std::int64_t time_ns) {
+  return Timestamp(time_ns + kTestTimestampOffsetNs);
+}
 
 LidarScan makePlanarScan(std::int64_t time_ns, double z_m = 0.0) {
   LidarScan scan;
-  scan.start_time = Timestamp(time_ns);
-  scan.end_time = Timestamp(time_ns);
+  scan.start_time = testTimestamp(time_ns);
+  scan.end_time = testTimestamp(time_ns);
   scan.has_per_point_time = false;
   for (int x = -3; x <= 3; ++x) {
     for (int y = -3; y <= 3; ++y) {
@@ -50,7 +55,7 @@ LidarScan makeCornerScan(std::int64_t time_ns) {
 
 ImuSample stationaryImu(std::int64_t time_ns) {
   ImuSample sample;
-  sample.time = Timestamp(time_ns);
+  sample.time = testTimestamp(time_ns);
   sample.angular_velocity_imu_rad_s.setZero();
   sample.linear_acceleration_imu_m_s2 = Eigen::Vector3d(0.0, 0.0, 9.80665);
   return sample;
@@ -61,7 +66,7 @@ MeasurementGroup makeGroup(LidarScan scan, std::int64_t propagation_start_ns,
   MeasurementGroup group;
   group.scan = std::move(scan);
   group.imu_samples = std::move(imu_samples);
-  group.propagation_start_time = Timestamp(propagation_start_ns);
+  group.propagation_start_time = testTimestamp(propagation_start_ns);
   group.has_start_bracket = true;
   group.has_end_bracket = true;
   group.max_imu_gap_ns = 50 * kMillisecondNs;
@@ -161,6 +166,75 @@ TEST(FastLioPipelineTest, PublishesOnlyAfterCorrectionAndInsertsCorrectedOdomPoi
   }
 }
 
+TEST(FastLioPipelineTest, UsesSynchronizedPropagationStartForFirstGroup) {
+  FastLioPipeline pipeline(testConfig());
+  constexpr std::int64_t propagation_start_ns = 500 * kMillisecondNs;
+  constexpr std::int64_t scan_time_ns = 1'000 * kMillisecondNs;
+  auto group = makeGroup(
+      makePlanarScan(scan_time_ns), propagation_start_ns,
+      {stationaryImu(propagation_start_ns), stationaryImu(550 * kMillisecondNs),
+       stationaryImu(600 * kMillisecondNs), stationaryImu(650 * kMillisecondNs),
+       stationaryImu(700 * kMillisecondNs), stationaryImu(750 * kMillisecondNs),
+       stationaryImu(800 * kMillisecondNs), stationaryImu(850 * kMillisecondNs),
+       stationaryImu(900 * kMillisecondNs), stationaryImu(950 * kMillisecondNs),
+       stationaryImu(scan_time_ns)});
+  group.max_imu_gap_ns = 600 * kMillisecondNs;
+  const ProcessResult result = pipeline.process(std::move(group));
+
+  ASSERT_EQ(result.rejection_reason, "INITIAL_MAP_REFERENCE_CAPTURED")
+      << result.rejection_reason;
+  EXPECT_EQ(result.diagnostics.prediction.start_time_ns,
+            testTimestamp(propagation_start_ns).nanoseconds());
+  EXPECT_EQ(result.diagnostics.prediction.end_time_ns,
+            testTimestamp(scan_time_ns).nanoseconds());
+}
+
+TEST(FastLioPipelineTest, RejectsPropagationStartThatDoesNotMatchStateTime) {
+  FastLioPipeline pipeline(testConfig());
+  ASSERT_EQ(pipeline.process(makeGroup(
+                 makePlanarScan(1'000 * kMillisecondNs),
+                 1'000 * kMillisecondNs,
+                 {stationaryImu(800 * kMillisecondNs),
+                  stationaryImu(900 * kMillisecondNs),
+                  stationaryImu(1'000 * kMillisecondNs)}))
+                .rejection_reason,
+            "INITIAL_MAP_REFERENCE_CAPTURED");
+
+  const ProcessResult result = pipeline.process(makeGroup(
+      makePlanarScan(2'000 * kMillisecondNs), 1'500 * kMillisecondNs,
+      {stationaryImu(1'500 * kMillisecondNs), stationaryImu(1'750 * kMillisecondNs),
+       stationaryImu(2'000 * kMillisecondNs)}));
+  EXPECT_EQ(result.rejection_reason, "PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME");
+}
+
+TEST(FastLioPipelineTest, RejectsMalformedScanBeforeMutatingEstimatorState) {
+  FastLioPipeline pipeline(testConfig());
+  ASSERT_EQ(pipeline.process(makeGroup(
+                 makePlanarScan(1'000 * kMillisecondNs),
+                 1'000 * kMillisecondNs,
+                 {stationaryImu(800 * kMillisecondNs),
+                  stationaryImu(900 * kMillisecondNs),
+                  stationaryImu(1'000 * kMillisecondNs)}))
+                .rejection_reason,
+            "INITIAL_MAP_REFERENCE_CAPTURED");
+  ASSERT_TRUE(pipeline.stateTime().has_value());
+  const auto state_time_before = pipeline.stateTime();
+  const auto status_before = pipeline.status();
+  const std::size_t map_size_before = pipeline.registrationMapSize();
+
+  auto malformed = makeGroup(
+      makePlanarScan(2'000 * kMillisecondNs), 1'000 * kMillisecondNs,
+      {stationaryImu(1'000 * kMillisecondNs), stationaryImu(1'500 * kMillisecondNs),
+       stationaryImu(2'000 * kMillisecondNs)});
+  malformed.scan.points.clear();
+  const ProcessResult result = pipeline.process(std::move(malformed));
+
+  EXPECT_EQ(result.rejection_reason, "LiDAR scan contains no points");
+  EXPECT_EQ(pipeline.stateTime(), state_time_before);
+  EXPECT_EQ(pipeline.status(), status_before);
+  EXPECT_EQ(pipeline.registrationMapSize(), map_size_before);
+}
+
 TEST(FastLioPipelineTest, AcceptedTerminalIterateAlsoUpdatesRegistrationMap) {
   auto config = testConfig();
   config.ikfom.maximum_iterations = 1U;
@@ -240,7 +314,7 @@ TEST(FastLioPipelineTest,
     ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
   }
   LidarScan crossing = makePlanarScan(105 * kMillisecondNs);
-  crossing.end_time = Timestamp(200 * kMillisecondNs);
+  crossing.end_time = testTimestamp(200 * kMillisecondNs);
   ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
 
   const auto discontinuity = pipeline.processNext();
@@ -254,7 +328,8 @@ TEST(FastLioPipelineTest,
   ASSERT_TRUE(pipeline.stateTime().has_value());
   ASSERT_TRUE(pipeline.synchronizationEpoch().has_value());
   EXPECT_EQ(*pipeline.stateTime(), *pipeline.synchronizationEpoch());
-  EXPECT_EQ(pipeline.stateTime()->nanoseconds(), 190 * kMillisecondNs);
+  EXPECT_EQ(pipeline.stateTime()->nanoseconds(),
+            testTimestamp(190 * kMillisecondNs).nanoseconds());
   EXPECT_GT(pipeline.covariance().trace(), covariance_before.trace());
 
   ASSERT_TRUE(
@@ -399,7 +474,7 @@ TEST(FastLioPipelineTest, ShortGapAtFailureThresholdStaysLost) {
     ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
   }
   LidarScan crossing = makePlanarScan(305 * kMillisecondNs);
-  crossing.end_time = Timestamp(400 * kMillisecondNs);
+  crossing.end_time = testTimestamp(400 * kMillisecondNs);
   ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
 
   const auto result = pipeline.processNext();
@@ -417,7 +492,7 @@ TEST(FastLioPipelineTest, ShortGapAtFailureThresholdStaysLost) {
     ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
   }
   LidarScan while_lost = makePlanarScan(405 * kMillisecondNs);
-  while_lost.end_time = Timestamp(500 * kMillisecondNs);
+  while_lost.end_time = testTimestamp(500 * kMillisecondNs);
   ASSERT_TRUE(pipeline.pushLidar(std::move(while_lost)).ok());
   const auto still_lost = pipeline.processNext();
   ASSERT_TRUE(still_lost.has_value());
@@ -448,7 +523,7 @@ TEST(FastLioPipelineTest, LongGapLostRecoveryRequiresConfirmation) {
     ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
   }
   LidarScan crossing = makePlanarScan(105 * kMillisecondNs);
-  crossing.end_time = Timestamp(210 * kMillisecondNs);
+  crossing.end_time = testTimestamp(210 * kMillisecondNs);
   ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
   const auto lost = pipeline.processNext();
   ASSERT_TRUE(lost.has_value());
@@ -528,7 +603,7 @@ TEST(FastLioPipelineTest, RepeatedDiscontinuityInflationRemainsValid) {
       ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
     }
     LidarScan crossing = makePlanarScan(epoch_ns + 5 * kMillisecondNs);
-    crossing.end_time = Timestamp(end_ns);
+    crossing.end_time = testTimestamp(end_ns);
     ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
     ASSERT_TRUE(pipeline.processNext().has_value());
     const auto covariance = pipeline.covariance();
@@ -582,7 +657,7 @@ TEST(FastLioPipelineTest, InitialMapShortGapKeepsBootstrapForCorrection) {
     ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
   }
   LidarScan crossing = makePlanarScan(5 * kMillisecondNs);
-  crossing.end_time = Timestamp(45 * kMillisecondNs);
+  crossing.end_time = testTimestamp(45 * kMillisecondNs);
   ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
   ASSERT_TRUE(pipeline.processNext().has_value());
   ASSERT_EQ(pipeline.status(), EstimatorStatus::kInitializingMap);
@@ -611,7 +686,7 @@ TEST(FastLioPipelineTest, InitialMapLongGapRestartsBootstrapAcquisition) {
     ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
   }
   LidarScan crossing = makePlanarScan(5 * kMillisecondNs);
-  crossing.end_time = Timestamp(105 * kMillisecondNs);
+  crossing.end_time = testTimestamp(105 * kMillisecondNs);
   ASSERT_TRUE(pipeline.pushLidar(std::move(crossing)).ok());
   const auto discontinuity = pipeline.processNext();
   ASSERT_TRUE(discontinuity.has_value());
@@ -679,7 +754,7 @@ TEST(FastLioPipelineTest, OverlapRejectionDoesNotRepeatCorrectedScanDiagnostics)
     ASSERT_TRUE(pipeline.pushImu(stationaryImu(time_ns)).ok());
   }
   auto corrected_scan = makePlanarScan(90 * kMillisecondNs);
-  corrected_scan.end_time = Timestamp(100 * kMillisecondNs);
+  corrected_scan.end_time = testTimestamp(100 * kMillisecondNs);
   ASSERT_TRUE(pipeline.pushLidar(std::move(corrected_scan)).ok());
   const auto corrected = pipeline.processNext();
   ASSERT_TRUE(corrected.has_value());
@@ -687,7 +762,7 @@ TEST(FastLioPipelineTest, OverlapRejectionDoesNotRepeatCorrectedScanDiagnostics)
   ASSERT_TRUE(corrected->diagnostics.registration.correction_attempted);
 
   auto overlap = makePlanarScan(99 * kMillisecondNs);
-  overlap.end_time = Timestamp(110 * kMillisecondNs);
+  overlap.end_time = testTimestamp(110 * kMillisecondNs);
   ASSERT_TRUE(pipeline.pushLidar(std::move(overlap)).ok());
   const auto rejected = pipeline.processNext();
   ASSERT_TRUE(rejected.has_value());

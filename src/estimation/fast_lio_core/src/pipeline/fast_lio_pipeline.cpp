@@ -289,8 +289,33 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   const EstimatorStatus status_before = status_;
   result.status_before = status_before;
 
+  const auto scan_interval = checkedDifference(group.scan.end_time,
+                                               group.scan.start_time);
+  const auto propagation_interval = checkedDifference(
+      group.scan.end_time, group.propagation_start_time);
+  if (!scan_interval.ok() || scan_interval.value().nanoseconds() < 0) {
+    result.rejection_reason = "INVALID_SCAN_TIME_INTERVAL";
+    diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
+    return finalizeResult(std::move(result));
+  }
+  if (!propagation_interval.ok() || propagation_interval.value().nanoseconds() < 0) {
+    result.rejection_reason = "INVALID_PROPAGATION_START_TIME";
+    diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
+    return finalizeResult(std::move(result));
+  }
+
   if (!group.fullyBracketed()) {
     result.rejection_reason = "MEASUREMENT_GROUP_NOT_FULLY_BRACKETED";
+    diagnostics_.synchronization.sync_rejection_reason = result.rejection_reason;
+    diagnostics_.reason = result.rejection_reason;
+    recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
+    return finalizeResult(std::move(result));
+  }
+  const Status scan_status = group.scan.validate();
+  if (!scan_status.ok()) {
+    result.rejection_reason = scan_status.message();
     diagnostics_.synchronization.sync_rejection_reason = result.rejection_reason;
     diagnostics_.reason = result.rejection_reason;
     recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
@@ -339,9 +364,14 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     return finalizeResult(std::move(result));
   }
 
-  Timestamp propagation_start = group.scan.start_time;
+  Timestamp propagation_start = group.propagation_start_time;
   if (!state_time_.has_value()) {
-    const Timestamp initial_epoch = initial_prior_state_time_.value_or(group.scan.start_time);
+    const bool configured_prior_owns_epoch =
+        config_.initial_prior.source != InitialStatePriorSource::kZero &&
+        !initial_prior_fallback_applied_ && initial_prior_state_time_.has_value();
+    const Timestamp initial_epoch =
+        configured_prior_owns_epoch ? *initial_prior_state_time_
+                                    : group.propagation_start_time;
     if (!initial_epoch.sameClockDomain(group.scan.start_time)) {
       result.rejection_reason = "INITIAL_PRIOR_CLOCK_DOMAIN_MISMATCH";
       diagnostics_.reason = result.rejection_reason;
@@ -365,6 +395,13 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     state_time_ = initial_epoch;
     propagation_start = initial_epoch;
   } else {
+    if (!state_time_->sameClockDomain(group.propagation_start_time) ||
+        state_time_->nanoseconds() != group.propagation_start_time.nanoseconds()) {
+      result.rejection_reason = "PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME";
+      diagnostics_.reason = result.rejection_reason;
+      recordUncorrectedUpdate(LidarUpdateFailureClass::kPrediction);
+      return finalizeResult(std::move(result));
+    }
     propagation_start = *state_time_;
   }
   if (!state_time_.has_value() ||
@@ -1366,8 +1403,9 @@ ProcessResult FastLioPipeline::makeBaseResult(const MeasurementGroup& group) con
   result.diagnostics = diagnostics_;
   result.diagnostics.synchronization.scan_start_ns = group.scan.start_time.nanoseconds();
   result.diagnostics.synchronization.scan_end_ns = group.scan.end_time.nanoseconds();
+  const auto scan_duration = checkedDifference(group.scan.end_time, group.scan.start_time);
   result.diagnostics.synchronization.scan_duration_ns =
-      group.scan.end_time.nanoseconds() - group.scan.start_time.nanoseconds();
+      scan_duration.ok() ? scan_duration.value().nanoseconds() : 0;
   result.diagnostics.synchronization.imu_samples_per_scan = group.imu_samples.size();
   result.diagnostics.synchronization.imu_gap_max_ns = group.max_imu_gap_ns;
   result.diagnostics.synchronization.has_start_bracket = group.has_start_bracket;
