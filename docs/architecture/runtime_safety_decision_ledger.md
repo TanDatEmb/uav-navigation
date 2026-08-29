@@ -13501,6 +13501,37 @@ release profiles must not use the former allowance.
   -DBUILD_TESTING=ON` and five repeated runs of
   `test_propagated_odometry_worker --gtest_color=no`.
 
+### 2026-08-29 - Make command-exposure lock latency debt explicit
+
+- **Owner/status:** runtime command publication transaction,
+  `OPEN PERFORMANCE DEBT`; a transactional/non-blocking transport design and
+  repeated latency evidence are still required.
+- **Scope:** The store mutex intentionally remains held while
+  `publishIfCurrent()` invokes the transport exposure callback. This is the
+  linearization boundary that prevents a world/goal invalidation from
+  completing between pointer/identity validation and command publication. The
+  runtime comment now states that the outer transition mutex is also held and
+  that the elapsed store-publication duration is monitored.
+- **Safety impact:** Removing the lock around the callback without replacing
+  the linearization contract could publish a stale command after a completed
+  invalidation. Keeping it preserves fail-closed ordering but can block store
+  writers and lease/goal transitions for the callback duration.
+- **False-accept/false-reject consequences:** Current command acceptance and
+  stale-command rejection are unchanged. A slow or backpressured DDS publish
+  can increase transition latency; it must not be “fixed” by dropping the lock
+  or weakening the exposure gate.
+- **Runtime cost and evidence:** One lock-held external callback per exposed
+  command, with `store_publish_us` and transition-lock wait telemetry already
+  emitted by the runtime. No timing-distribution or transport backpressure
+  evidence is present in this checkpoint.
+- **Removal/review condition:** Replace the callback-in-critical-section
+  design with a tested transactional publisher/serialization fence that keeps
+  invalidation-before-exposure ordering, then validate p95/p99 transition and
+  publication latency under representative DDS backpressure.
+- **Verification:** `navigation_execution` store tests, runtime focused build,
+  and repeated latency/backpressure replay; this item remains open until that
+  evidence exists.
+
 ### 2026-08-29 - Keep PX4 rejection provenance velocity frames explicit
 
 - **Owner/status:** PX4 External Mode rejection diagnostics, `PROVISIONAL`;

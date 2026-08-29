@@ -31,7 +31,7 @@ enum class CommitDecision : std::uint8_t {
 
 // Sole owner of the product command candidate that is allowed to reach the
 // sampler. Candidate construction and validation happen before tryCommit();
-// the critical section only compares identities and swaps one shared pointer.
+// the store critical section compares identities and swaps one shared pointer.
 class CommittedBundleStore final {
  public:
   CommittedBundleStore() = default;
@@ -145,10 +145,12 @@ class CommittedBundleStore final {
   }
 
   // Execute the exposure callback while the same transaction lock protects
-  // the committed bundle, goal epoch and world identity.  A sampler may have
+  // the committed bundle, goal epoch and world identity. A sampler may have
   // loaded a shared_ptr just before a map update invalidated it; pointer and
   // identity revalidation at this boundary prevents that stale command from
-  // reaching the transport.
+  // reaching the transport. The callback is intentionally inside the lock so
+  // invalidation cannot complete before an already-authorized exposure; the
+  // caller must keep this callback bounded because it serializes store writes.
   template <typename ExposureFn>
   bool publishIfCurrent(
       const std::shared_ptr<const navigation_planning::CandidateBundle>& expected,

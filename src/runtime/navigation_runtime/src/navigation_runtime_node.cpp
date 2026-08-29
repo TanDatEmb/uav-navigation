@@ -3422,8 +3422,10 @@ void NavigationRuntimeNode::publishCommand() {
     {
       // Recheck the non-store execution state immediately before entering the
       // store's pointer/world transaction. Sampling and message assembly are
-      // intentionally outside this lock so DDS serialization cannot block
-      // goal, lease, or planner transitions for the whole command cycle.
+      // intentionally outside this lock. The final store transaction keeps
+      // this transition lock while the exposure callback runs so a lease or
+      // goal transition cannot complete between validation and transport;
+      // its duration is recorded as store_publish_us for latency monitoring.
       std::lock_guard<std::mutex> command_lock(
           command_execution_lease_failure_latch_.transitionMutex());
       if (localization_epoch_ready_.load(std::memory_order_acquire) &&
