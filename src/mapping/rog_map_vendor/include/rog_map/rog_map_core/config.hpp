@@ -388,6 +388,11 @@ namespace rog_map {
             }
             const long double inflationResolution =
                 static_cast<long double>(resolution) * inflationRatioReal;
+            if (!std::isfinite(inflationResolution) ||
+                inflationResolution > static_cast<long double>(std::numeric_limits<double>::max())) {
+                throw std::invalid_argument(
+                    "rog_map derived inflation resolution is not representable as double");
+            }
             long double mapSide[3]{};
             for (int axis = 0; axis < 3; ++axis) {
                 const long double infHalf = std::ceil(

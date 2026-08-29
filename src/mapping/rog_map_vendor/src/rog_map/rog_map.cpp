@@ -467,61 +467,88 @@ bool ROGMap::isLineKnownFree(const Vec3f& start_pt, const Vec3f& end_pt,
 
 bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, const double& max_dis,
                         const vec_Vec3i& neighbor_list) const {
+  if (!start_pt.allFinite() || !end_pt.allFinite() ||
+      !std::isfinite(max_dis) || max_dis < 0.0 ||
+      !insideLocalMap(start_pt) || !insideLocalMap(end_pt)) {
+    return false;
+  }
+  const auto point_is_clear = [this, &neighbor_list](const Vec3f& point) {
+    if (!point.allFinite() || !insideLocalMap(point)) return false;
+    if (neighbor_list.empty()) return !isOccupied(point);
+    Vec3i point_id;
+    posToGlobalIndex(point, point_id);
+    for (const auto& neighbor : neighbor_list) {
+      Vec3i shifted = point_id;
+      for (int axis = 0; axis < 3; ++axis) {
+        const std::int64_t value = static_cast<std::int64_t>(point_id(axis)) +
+                                   static_cast<std::int64_t>(neighbor(axis));
+        if (value < std::numeric_limits<int>::min() ||
+            value > std::numeric_limits<int>::max()) return false;
+        shifted(axis) = static_cast<int>(value);
+      }
+      if (isOccupied(shifted)) return false;
+    }
+    return true;
+  };
+  if (!point_is_clear(start_pt)) return false;
   raycaster::RayCaster raycaster;
   raycaster.setResolution(cfg_.resolution);
   Vec3f ray_pt;
-  raycaster.setInput(start_pt, end_pt);
+  if (!raycaster.setInput(start_pt, end_pt)) return point_is_clear(end_pt);
   while (raycaster.step(ray_pt)) {
     if (max_dis > 0 && (ray_pt - start_pt).norm() > max_dis) {
       return false;
     }
 
-    if (neighbor_list.empty()) {
-      if (isOccupied(ray_pt)) {
-        return false;
-      }
-    } else {
-      Vec3i ray_pt_id_g;
-      posToGlobalIndex(ray_pt, ray_pt_id_g);
-      for (const auto& nei : neighbor_list) {
-        Vec3i shift_tmp = ray_pt_id_g + nei;
-        if (isOccupied(shift_tmp)) {
-          return false;
-        }
-      }
-    }
+    if (!point_is_clear(ray_pt)) return false;
   }
-  return true;
+  return point_is_clear(end_pt);
 }
 
 bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, Vec3f& free_local_goal,
                         const double& max_dis, const vec_Vec3i& neighbor_list) const {
+  free_local_goal = start_pt;
+  if (!start_pt.allFinite() || !end_pt.allFinite() ||
+      !std::isfinite(max_dis) || max_dis < 0.0 ||
+      !insideLocalMap(start_pt) || !insideLocalMap(end_pt)) {
+    return false;
+  }
+  const auto point_is_clear = [this, &neighbor_list](const Vec3f& point) {
+    if (!point.allFinite() || !insideLocalMap(point)) return false;
+    if (neighbor_list.empty()) return !isOccupied(point);
+    Vec3i point_id;
+    posToGlobalIndex(point, point_id);
+    for (const auto& neighbor : neighbor_list) {
+      Vec3i shifted = point_id;
+      for (int axis = 0; axis < 3; ++axis) {
+        const std::int64_t value = static_cast<std::int64_t>(point_id(axis)) +
+                                   static_cast<std::int64_t>(neighbor(axis));
+        if (value < std::numeric_limits<int>::min() ||
+            value > std::numeric_limits<int>::max()) return false;
+        shifted(axis) = static_cast<int>(value);
+      }
+      if (isOccupied(shifted)) return false;
+    }
+    return true;
+  };
+  if (!point_is_clear(start_pt)) return false;
   raycaster::RayCaster raycaster;
   raycaster.setResolution(cfg_.resolution);
   Vec3f ray_pt;
-  raycaster.setInput(start_pt, end_pt);
-  free_local_goal = start_pt;
+  if (!raycaster.setInput(start_pt, end_pt)) {
+    if (!point_is_clear(end_pt)) return false;
+    free_local_goal = end_pt;
+    return true;
+  }
   while (raycaster.step(ray_pt)) {
     free_local_goal = ray_pt;
     if (max_dis > 0 && (ray_pt - start_pt).norm() > max_dis) {
       return false;
     }
 
-    if (neighbor_list.empty()) {
-      if (isOccupied(ray_pt)) {
-        return false;
-      }
-    } else {
-      Vec3i ray_pt_id_g;
-      posToGlobalIndex(ray_pt, ray_pt_id_g);
-      for (const auto& nei : neighbor_list) {
-        Vec3i shift_tmp = ray_pt_id_g + nei;
-        if (isOccupied(shift_tmp)) {
-          return false;
-        }
-      }
-    }
+    if (!point_is_clear(ray_pt)) return false;
   }
+  if (!point_is_clear(end_pt)) return false;
   free_local_goal = end_pt;
   return true;
 }
