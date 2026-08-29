@@ -1187,6 +1187,37 @@ class RuntimeContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite"):
             dataset_shadow_planning.relative_goal((0, 0, math.nan), (1, 0, 0), 5.0)
 
+    def test_dataset_shadow_commands_require_matching_goal_identity(self) -> None:
+        goal = SimpleNamespace(mission_id="shadow", waypoint_index=2, request_id=7)
+        command = SimpleNamespace(
+            localization_epoch=3, goal_epoch=9, mission_id="shadow",
+            waypoint_index=2, request_id=7,
+        )
+        self.assertTrue(
+            dataset_shadow_planning.command_matches_shadow_goal(command, goal, 3)
+        )
+        command.request_id = 8
+        self.assertFalse(
+            dataset_shadow_planning.command_matches_shadow_goal(command, goal, 3)
+        )
+        command.request_id = 7
+        command.localization_epoch = 4
+        self.assertFalse(
+            dataset_shadow_planning.command_matches_shadow_goal(command, goal, 3)
+        )
+
+    def test_monitor_keeps_source_timestamp_high_water(self) -> None:
+        stats = monitor.StreamStats("imu", "/imu")
+        self.assertTrue(stats.update(100, 1_000))
+        self.assertTrue(stats.update(90, 2_000))
+        self.assertTrue(stats.update(101, 3_000))
+        snapshot = stats.as_dict()
+        self.assertEqual(snapshot["timestamp_regression_count"], 1)
+        self.assertEqual(snapshot["last_stamp_ns"], 101)
+        self.assertEqual(snapshot["maximum_gap_ms"], 1.0e-6)
+        stats.update(0, 4_000)
+        self.assertEqual(stats.as_dict()["invalid_source_timestamp_count"], 1)
+
     def test_dataset_shadow_planning_is_product_goal_with_fail_closed_report_evidence(self) -> None:
         source = (ROOT / "tools/runtime/runner.py").read_text(encoding="utf-8")
         dataset_body = source[source.index("def run_dataset("):source.index("def _sim_prerequisites(")]

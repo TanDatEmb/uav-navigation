@@ -510,6 +510,7 @@ def _rate_row(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
         "stale_event_times_ns": list(row.get("stale_event_times_ns", [])),
         "timestamp_regression_count": int(row.get("timestamp_regression_count", 0)),
         "timestamp_epoch_discard_count": int(row.get("timestamp_epoch_discard_count", 0)),
+        "invalid_source_timestamp_count": int(row.get("invalid_source_timestamp_count", 0)),
         "timestamp_duplicate_count": int(row.get("timestamp_duplicate_count", 0)),
         "nonfinite_message_count": int(row.get("nonfinite_message_count", 0)),
         "invalid_quaternion_count": int(row.get("invalid_quaternion_count", 0)),
@@ -2540,7 +2541,10 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
         expected = _number(config.get("runtime", {}).get("streams", {}).get(name, {}).get("expected_hz"))
         if expected and row["mean_rate_hz"] < expected * minimum_fraction:
             reasons.append(f"{name} rate below contract")
-        if row["timestamp_regression_count"] or row["source_stale_event_count"] or row["nonfinite_message_count"]:
+        if (row["timestamp_regression_count"] or
+                row["invalid_source_timestamp_count"] or
+                row["source_stale_event_count"] or
+                row["nonfinite_message_count"]):
             reasons.append(f"{name} timestamp/freshness/validity violation")
     diagnostics = _diag_values(snapshot)
     tracking_observed = "TRACKING" in diagnostic_states or str(diagnostics.get("state", "")).upper() == "TRACKING"
@@ -2657,7 +2661,9 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
             fail_closed_handover or terminal_handover
         ):
             stale_violation = 0
-        if streams[name]["timestamp_regression_count"] or stale_violation or streams[name]["nonfinite_message_count"]:
+        if (streams[name]["timestamp_regression_count"] or
+                streams[name]["invalid_source_timestamp_count"] or
+                stale_violation or streams[name]["nonfinite_message_count"]):
             reasons.append(f"{name} timestamp/freshness/validity violation")
     external_expected = _number(config.get("runtime", {}).get("streams", {}).get("external_odometry", {}).get("expected_hz"))
     if external_expected and streams["external_odometry"]["mean_rate_hz"] < external_expected * _number(thresholds.get("minimum_rate_fraction"), 0.90):

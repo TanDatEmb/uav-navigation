@@ -41,6 +41,24 @@ def relative_goal(
     )
 
 
+def command_matches_shadow_goal(
+    command: Any, goal: Any, localization_epoch: int | None
+) -> bool:
+    """Require the command identity to belong to this synthetic goal."""
+    if goal is None or localization_epoch is None or localization_epoch <= 0:
+        return False
+    try:
+        return (
+            int(command.localization_epoch) == localization_epoch
+            and int(command.goal_epoch) > 0
+            and str(command.mission_id) == str(goal.mission_id)
+            and int(command.waypoint_index) == int(goal.waypoint_index)
+            and int(command.request_id) == int(goal.request_id)
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
@@ -109,6 +127,8 @@ def main() -> int:
 
     first_odom_stamp_ns: int | None = None
     latest_odom: Any | None = None
+    latest_localization_epoch: int | None = None
+    goal_localization_epoch: int | None = None
     goal_message: Any | None = None
     ready_started_stamp_ns: int | None = None
     ready_generations: set[int] = set()
@@ -145,10 +165,12 @@ def main() -> int:
             emergency_command_count += 1
 
     def on_propagated_odometry(message: Any) -> None:
+        nonlocal latest_localization_epoch
         # The propagated topic carries the product-owned epoch/sequence
         # envelope.  The nested odometry is the state used for goal geometry.
         if int(message.localization_epoch) <= 0 or int(message.sequence) <= 0:
             return
+        latest_localization_epoch = int(message.localization_epoch)
         on_odometry(message.odometry)
 
     node.create_subscription(
@@ -160,7 +182,9 @@ def main() -> int:
     node.create_subscription(NavigationCommand, "/navigation/navigation_command", on_command, best_effort)
 
     def publish_teardown(odometry: Any) -> None:
-        if goal_message is None:
+        if not command_matches_shadow_goal(
+            message, goal_message, goal_localization_epoch
+        ):
             return
         discovery_deadline = time.monotonic() + 1.0
         while (
@@ -221,6 +245,7 @@ def main() -> int:
                 goal_message.mission_id = "dataset_shadow_planning"
                 goal_message.waypoint_index = 0
                 goal_message.request_id = 1
+                goal_localization_epoch = latest_localization_epoch
                 goal_message.target.x, goal_message.target.y, goal_message.target.z = target
                 goal_message.acceptance_radius_m = 0.20
                 goal_message.behavior = NavigationGoal.BEHAVIOR_STOP

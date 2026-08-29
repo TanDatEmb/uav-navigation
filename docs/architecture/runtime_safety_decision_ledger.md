@@ -11794,6 +11794,28 @@ release profiles must not use the former allowance.
   kernel-backed supervisor rather than a JSON registry.
 - **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract -q`.
 
+### 2026-08-29 - Preserve monitor high-water and shadow-goal identity
+
+- **Owner/status:** Runtime monitor and dataset shadow-planning evidence,
+  `VERIFIED` by Python runtime contract tests (163/163).
+- **Scope:** Keep a separate source-timestamp high-water mark so regressions
+  cannot be hidden by a later sample; count non-positive source timestamps;
+  propagate LiDAR non-finite-point counts; and accept shadow READY/REJECTED
+  evidence only when mission, waypoint, request, localization epoch and
+  nonzero command goal identity match the tracked synthetic goal.
+- **Safety impact:** Malformed sensor evidence and commands from another goal
+  cannot be counted as healthy shadow-planning evidence or silently omitted
+  from the report.
+- **False-accept/false-reject consequences:** Out-of-order, invalid-timestamp
+  or foreign-command records can make a dataset verdict fail/insufficient;
+  ordered records for the active goal retain existing semantics.
+- **Runtime cost and evidence:** Constant-time high-water/identity checks and
+  one existing LiDAR invalid-point count; `test_runtime_contract` passes
+  163/163.
+- **Removal/review condition:** Keep until monitor and shadow evidence are
+  consumed through typed validated event schemas.
+- **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract -q`.
+
 ### 2026-08-29 - Contain FAST-LIO worker exceptions and expose failure
 
 - **Owner/status:** FAST-LIO ROS main and propagated-odometry worker loops,

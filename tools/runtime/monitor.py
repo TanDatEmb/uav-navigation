@@ -100,6 +100,7 @@ class StreamStats:
     received: int = 0
     first_stamp_ns: int = 0
     last_stamp_ns: int = 0
+    maximum_stamp_ns: int = 0
     last_arrival_ns: int = 0
     intervals_ms: list[float] = field(default_factory=list)
     maximum_source_gap_ms: float = 0.0
@@ -108,6 +109,7 @@ class StreamStats:
     timestamp_duplicates: int = 0
     timestamp_regressions: int = 0
     timestamp_epoch_discard_count: int = 0
+    invalid_source_timestamp_count: int = 0
     stale_events: int = 0
     stale_event_times_ns: list[int] = field(default_factory=list)
     arrival_gap_event_times_ns: list[int] = field(default_factory=list)
@@ -167,20 +169,24 @@ class StreamStats:
         self.received += 1
         self.last_arrival_ns = arrival_ns
         self.arrival_times_s.append(arrival_ns / 1e9)
-        if stamp_ns:
-            if self.last_stamp_ns:
-                delta_ms = (stamp_ns - self.last_stamp_ns) / 1e6
-                if delta_ms == 0:
+        if stamp_ns <= 0:
+            self.invalid_source_timestamp_count += 1
+        else:
+            if self.maximum_stamp_ns:
+                if stamp_ns == self.maximum_stamp_ns:
                     self.timestamp_duplicates += 1
-                elif delta_ms < 0:
+                elif stamp_ns < self.maximum_stamp_ns:
                     self.timestamp_regressions += 1
                 else:
+                    delta_ms = (stamp_ns - self.maximum_stamp_ns) / 1e6
                     self.maximum_source_gap_ms = max(self.maximum_source_gap_ms, delta_ms)
                     if self.interval_history_enabled:
                         self.intervals_ms.append(delta_ms)
             if not self.first_stamp_ns:
                 self.first_stamp_ns = stamp_ns
-            self.last_stamp_ns = stamp_ns
+            if stamp_ns > self.maximum_stamp_ns:
+                self.maximum_stamp_ns = stamp_ns
+                self.last_stamp_ns = stamp_ns
         if frame_id:
             self.frame_ids.add(frame_id)
         self.nonfinite_messages += int(nonfinite > 0)
@@ -238,6 +244,7 @@ class StreamStats:
             "timestamp_duplicate_count": self.timestamp_duplicates,
             "timestamp_regression_count": self.timestamp_regressions,
             "timestamp_epoch_discard_count": self.timestamp_epoch_discard_count,
+            "invalid_source_timestamp_count": self.invalid_source_timestamp_count,
             "nonfinite_message_count": self.nonfinite_messages,
             "invalid_quaternion_count": self.invalid_quaternions,
             "invalid_covariance_count": self.invalid_covariances,
@@ -550,8 +557,7 @@ class RuntimeMonitor:
             arrival_ns = time.time_ns()
             try:
                 if spec.name == "lidar":
-                    payload, _ = _pointcloud_payload(message)
-                    point_invalid = 0
+                    payload, point_invalid = _pointcloud_payload(message)
                 else:
                     payload = spec.formatter(message)
                     point_invalid = 0
