@@ -12466,6 +12466,27 @@ release profiles must not use the former allowance.
   -j2 && ./build/fast_lio_core/test_measurement_synchronizer
   --gtest_color=no`.
 
+### 2026-08-29 - Use checked deltas in propagated IMU history maintenance
+
+- **Owner/status:** FAST-LIO propagated IMU history and integration boundary,
+  `PROVISIONAL`; verified by the focused propagator suite.
+- **Scope:** IMU integration intervals and history cutoffs now use checked
+  timestamp/duration arithmetic. A cutoff that would be non-positive is handled
+  without subtraction; an otherwise unrepresentable delta invalidates the
+  propagator rather than wrapping.
+- **Safety impact:** Extreme timestamp or history-duration inputs cannot alter
+  gap detection or prune the wrong samples through signed overflow.
+- **False-accept/false-reject consequences:** Normal positive monotonic IMU
+  integration and pruning are unchanged. Unrepresentable arithmetic fails
+  closed and requires a fresh correction/restart.
+- **Runtime cost and evidence:** Constant-time checked arithmetic on each
+  accepted sample and prune; focused propagator tests are required.
+- **Removal/review condition:** Keep until all estimator time arithmetic uses a
+  single checked timestamp API and sensor contracts no longer expose raw epochs.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/fast_lio_core --target test_imu_state_propagator -j2
+  && ./build/fast_lio_core/test_imu_state_propagator --gtest_color=no`.
+
 ### 2026-08-29 - Honor synchronized estimator propagation epoch
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,

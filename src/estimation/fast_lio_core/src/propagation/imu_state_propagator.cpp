@@ -84,9 +84,14 @@ ImuRecordResult ImuStatePropagator::validateAndRecordImu(
       setFailure(failure);
       return {failure, ImuRecordDisposition::kRejected};
     }
-    if (sample.time.nanoseconds() -
-                diagnostics_.latest_imu_time->nanoseconds() >
-            config_.ikfom.maximum_integration_step_ns) {
+    const auto interval = checkedDifference(
+        sample.time, *diagnostics_.latest_imu_time);
+    if (!interval.ok()) {
+      setFailure(interval.status());
+      return {interval.status(), ImuRecordDisposition::kRejected};
+    }
+    if (interval.value().nanoseconds() >
+        config_.ikfom.maximum_integration_step_ns) {
       return restartContinuity(sample);
     }
   }
@@ -316,8 +321,18 @@ void ImuStatePropagator::pruneHistory() {
   if (!diagnostics_.latest_imu_time.has_value()) {
     return;
   }
-  const std::int64_t cutoff = diagnostics_.latest_imu_time->nanoseconds() -
-                              config_.imu_history_duration_ns;
+  const auto latest_time = diagnostics_.latest_imu_time.value();
+  if (latest_time.nanoseconds() <= config_.imu_history_duration_ns) {
+    diagnostics_.current_imu_history_size = history_.size();
+    return;
+  }
+  const auto cutoff_result = checkedSubtract(
+      latest_time, Duration(config_.imu_history_duration_ns));
+  if (!cutoff_result.ok()) {
+    setFailure(cutoff_result.status());
+    return;
+  }
+  const std::int64_t cutoff = cutoff_result.value().nanoseconds();
   while (history_.size() >= 2U && history_[1].time.nanoseconds() < cutoff) {
     history_.pop_front();
   }

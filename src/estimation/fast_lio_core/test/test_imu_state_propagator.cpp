@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <vector>
 
 #include "fast_lio_core/propagation/imu_state_propagator.hpp"
@@ -7,14 +8,20 @@
 namespace uav::nav::lio {
 namespace {
 
+constexpr std::int64_t kTestEpochNs = 1'000'000'000;
+
+std::int64_t testTimestamp(const std::int64_t time_ns) {
+  return kTestEpochNs + time_ns;
+}
+
 ImuSample sample(std::int64_t time_ns) {
-  return ImuSample{Timestamp(time_ns), {0.01, -0.02, 0.03},
+  return ImuSample{Timestamp(testTimestamp(time_ns)), {0.01, -0.02, 0.03},
                    {0.1, -0.1, 9.80665}};
 }
 
 StateEstimate correction(std::int64_t time_ns) {
   StateEstimate result;
-  result.time = Timestamp(time_ns);
+  result.time = Timestamp(testTimestamp(time_ns));
   result.state.set_position_odom_imu_m({1.0, 2.0, 3.0});
   result.covariance = 0.001 * ManifoldState::Covariance::Identity();
   return result;
@@ -29,13 +36,14 @@ TEST(ImuStatePropagatorTest, ReanchorsBetweenSamplesAndPropagatesForward) {
   ASSERT_TRUE(propagator.reanchorAndReplay(correction(55'000'000)).ok());
   ASSERT_TRUE(propagator.valid());
   ASSERT_TRUE(propagator.estimate().has_value());
-  EXPECT_EQ(propagator.estimate()->time.nanoseconds(), 100'000'000);
-  EXPECT_EQ(propagator.diagnostics().anchor_time->nanoseconds(), 55'000'000);
+  EXPECT_EQ(propagator.estimate()->time.nanoseconds(), testTimestamp(100'000'000));
+  EXPECT_EQ(propagator.diagnostics().anchor_time->nanoseconds(),
+            testTimestamp(55'000'000));
   EXPECT_EQ(propagator.diagnostics().last_replay_sample_count, 6U);
 
   ASSERT_TRUE(propagator.acceptImu(sample(110'000'000)).ok());
   ASSERT_TRUE(propagator.flushPendingPrediction().ok());
-  EXPECT_EQ(propagator.estimate()->time.nanoseconds(), 110'000'000);
+  EXPECT_EQ(propagator.estimate()->time.nanoseconds(), testTimestamp(110'000'000));
 }
 
 TEST(ImuStatePropagatorTest, KinematicEstimatePairsLatestStateWithExactImuSample) {
@@ -46,7 +54,7 @@ TEST(ImuStatePropagatorTest, KinematicEstimatePairsLatestStateWithExactImuSample
 
   const auto kinematic = propagator.kinematicEstimate();
   ASSERT_TRUE(kinematic.has_value());
-  EXPECT_EQ(kinematic->estimate.time.nanoseconds(), 10'000'000);
+  EXPECT_EQ(kinematic->estimate.time.nanoseconds(), testTimestamp(10'000'000));
   EXPECT_TRUE(kinematic->angular_velocity_imu_rad_s.isApprox(
       Eigen::Vector3d(0.01, -0.02, 0.03)));
   EXPECT_EQ(propagator.diagnostics().angular_velocity.exact_sample_count, 1U);
@@ -75,7 +83,7 @@ TEST(ImuStatePropagatorTest, RecordsReplayImuWithoutPrediction) {
   EXPECT_FALSE(propagator.estimate().has_value());
   ASSERT_TRUE(propagator.diagnostics().latest_imu_time.has_value());
   EXPECT_EQ(propagator.diagnostics().latest_imu_time->nanoseconds(),
-            10'000'000);
+            testTimestamp(10'000'000));
   EXPECT_FALSE(propagator.diagnostics().propagated_time.has_value());
   EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 2U);
 }
@@ -140,9 +148,9 @@ TEST(ImuStatePropagatorTest, ForwardGapStartsNewContinuityEpoch) {
   EXPECT_EQ(propagator.diagnostics().continuity_reset_count, 1U);
   ASSERT_TRUE(propagator.diagnostics().last_continuity_reset_time.has_value());
   EXPECT_EQ(propagator.diagnostics().last_continuity_reset_time->nanoseconds(),
-            40'000'000);
+            testTimestamp(40'000'000));
   EXPECT_EQ(propagator.diagnostics().latest_imu_time->nanoseconds(),
-            40'000'000);
+            testTimestamp(40'000'000));
   EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 1U);
 }
 
@@ -155,7 +163,7 @@ TEST(ImuStatePropagatorTest, SampleAfterGapIsRecordedAsNewEpochStart) {
   ASSERT_TRUE(propagator.recordImuForReplay(sample(60'000'000)).ok());
   EXPECT_EQ(propagator.diagnostics().continuity_epoch, 1U);
   EXPECT_EQ(propagator.diagnostics().latest_imu_time->nanoseconds(),
-            60'000'000);
+            testTimestamp(60'000'000));
   EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 3U);
   EXPECT_FALSE(propagator.diagnostics().propagated_time.has_value());
 }
@@ -170,7 +178,7 @@ TEST(ImuStatePropagatorTest, SamplesContinueAdvancingAfterGap) {
               ImuRecordDisposition::kRecorded);
   }
   EXPECT_EQ(propagator.diagnostics().latest_imu_time->nanoseconds(),
-            60'000'000);
+            testTimestamp(60'000'000));
 }
 
 TEST(ImuStatePropagatorTest, GapRequiresNewCorrectionBeforePrediction) {
@@ -197,7 +205,7 @@ TEST(ImuStatePropagatorTest, SuccessfulCorrectionClearsRequiresReanchor) {
   ASSERT_TRUE(propagator.reanchorAndReplay(correction(40'000'000)).ok());
   EXPECT_FALSE(propagator.diagnostics().requires_reanchor);
   EXPECT_TRUE(propagator.valid());
-  EXPECT_EQ(propagator.estimate()->time.nanoseconds(), 50'000'000);
+  EXPECT_EQ(propagator.estimate()->time.nanoseconds(), testTimestamp(50'000'000));
 }
 
 TEST(ImuStatePropagatorTest, FlushCannotRestoreValidityWithoutCorrection) {
@@ -221,6 +229,14 @@ TEST(ImuStatePropagatorTest, PruningRetainsSampleBeforeCutoff) {
   }
   EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 4U);
   EXPECT_TRUE(propagator.reanchorAndReplay(correction(75'000'000)).ok());
+}
+
+TEST(ImuStatePropagatorTest, MaximumHistoryDurationDoesNotOverflowCutoff) {
+  ImuStatePropagatorConfig config;
+  config.imu_history_duration_ns = std::numeric_limits<std::int64_t>::max();
+  ImuStatePropagator propagator(config);
+  ASSERT_TRUE(propagator.acceptImu(sample(1)).ok());
+  EXPECT_EQ(propagator.diagnostics().current_imu_history_size, 1U);
 }
 
 }  // namespace
