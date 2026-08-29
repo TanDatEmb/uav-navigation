@@ -174,6 +174,7 @@ PropagatedOdometryWorker::diagnostics() const {
 
 void PropagatedOdometryWorker::run() {
   (void)pthread_setname_np(pthread_self(), "lio_propagated");
+  try {
   while (true) {
     std::vector<ImuSample> batch;
     {
@@ -227,6 +228,27 @@ void PropagatedOdometryWorker::run() {
       (void)processPendingCorrection();
     }
     updateSnapshot();
+  }
+  } catch (const std::exception& error) {
+    std::lock_guard lock(mutex_);
+    diagnostics_.worker_failed = true;
+    diagnostics_.worker_failure_message = error.what();
+    diagnostics_.replay_in_progress = false;
+    diagnostics_.current_imu_ingress_depth = 0U;
+    accepting_ = false;
+    suspended_.store(true, std::memory_order_release);
+    stop_requested_.store(true, std::memory_order_release);
+    imu_ingress_.clear();
+  } catch (...) {
+    std::lock_guard lock(mutex_);
+    diagnostics_.worker_failed = true;
+    diagnostics_.worker_failure_message = "unknown exception";
+    diagnostics_.replay_in_progress = false;
+    diagnostics_.current_imu_ingress_depth = 0U;
+    accepting_ = false;
+    suspended_.store(true, std::memory_order_release);
+    stop_requested_.store(true, std::memory_order_release);
+    imu_ingress_.clear();
   }
 }
 

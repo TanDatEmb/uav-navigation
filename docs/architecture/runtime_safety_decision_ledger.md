@@ -11794,6 +11794,51 @@ release profiles must not use the former allowance.
   kernel-backed supervisor rather than a JSON registry.
 - **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract -q`.
 
+### 2026-08-29 - Contain FAST-LIO worker exceptions and expose failure
+
+- **Owner/status:** FAST-LIO ROS main and propagated-odometry worker loops,
+  `VERIFIED` by package build and focused worker test.
+- **Scope:** Catch unexpected exceptions at both worker boundaries, stop input
+  admission, mark the worker failed/suspended, clear pending ingress, and
+  publish bounded failure diagnostics instead of allowing silent thread loss.
+- **Safety impact:** Estimator processing loss becomes an explicit error for
+  downstream health and propagated-odometry consumers; no safety gate is
+  weakened and no fallback is introduced.
+- **False-accept/false-reject consequences:** Malformed input or programming
+  exceptions stop the affected worker and can terminate navigation through the
+  existing health gate. Valid processing is unchanged.
+- **Runtime cost and evidence:** One outer exception boundary and diagnostic
+  fields. `fast_lio_ros` builds successfully and
+  `test_propagated_odometry_worker` passes 27/27.
+- **Removal/review condition:** Keep until worker calls have a typed no-throw
+  result boundary and supervisor-level containment.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select fast_lio_ros --symlink-install`; direct
+  `./build/fast_lio_ros/test_propagated_odometry_worker --gtest_color=no`.
+
+### 2026-08-29 - Fail closed when FAST-LIO processing workers terminate
+
+- **Owner/status:** FAST-LIO ROS processing and propagated-odometry worker
+  boundaries, `IN_PROGRESS` pending package verification.
+- **Scope:** Catch unexpected exceptions at both worker loops, stop accepting
+  new input, clear pending ingress, mark the worker failed/suspended, and
+  publish the failure state and message through diagnostics instead of letting
+  a thread terminate silently.
+- **Safety impact:** Loss of estimator processing is observable and fail-closed
+  to downstream health/propagated-odometry consumers; no fallback or relaxed
+  gate is introduced.
+- **False-accept/false-reject consequences:** A transient programming or
+  malformed-input exception now produces an explicit error and stops the
+  worker. Valid processing behavior is unchanged.
+- **Runtime cost and evidence:** One outer exception boundary and bounded
+  diagnostic state; focused FAST-LIO ROS worker/node tests and package build
+  are required before changing this entry to VERIFIED.
+- **Removal/review condition:** Keep until the worker call graph has a typed
+  no-throw result boundary and equivalent supervisor-level containment.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select fast_lio_ros --symlink-install`; focused
+  propagated-worker and node tests.
+
 ### 2026-08-29 - Validate direct trajectory optimizer configuration boundaries
 
 - **Owner/status:** Trajectory optimizer configuration boundary, `VERIFIED`

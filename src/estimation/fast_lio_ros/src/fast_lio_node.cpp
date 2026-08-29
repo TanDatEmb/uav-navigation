@@ -587,6 +587,7 @@ bool FastLioNode::enqueue(InputMeasurement measurement) {
 
 void FastLioNode::processingLoop() {
   (void)pthread_setname_np(pthread_self(), "fast_lio_main");
+  try {
   while (true) {
     InputMeasurement measurement;
     {
@@ -695,6 +696,27 @@ void FastLioNode::processingLoop() {
                 .count());
       }
     }
+  }
+  } catch (const std::exception& error) {
+    {
+      std::lock_guard lock(input_mutex_);
+      runtime_diagnostics_.processing_worker_failed = true;
+      runtime_diagnostics_.processing_worker_failure_message = error.what();
+      stopping_ = true;
+    }
+    input_ready_.notify_all();
+    RCLCPP_ERROR(get_logger(), "FAST-LIO processing worker stopped: %s",
+                 error.what());
+  } catch (...) {
+    {
+      std::lock_guard lock(input_mutex_);
+      runtime_diagnostics_.processing_worker_failed = true;
+      runtime_diagnostics_.processing_worker_failure_message =
+          "unknown exception";
+      stopping_ = true;
+    }
+    input_ready_.notify_all();
+    RCLCPP_ERROR(get_logger(), "FAST-LIO processing worker stopped: unknown exception");
   }
 }
 

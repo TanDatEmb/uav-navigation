@@ -33,6 +33,13 @@ TEST(MeasurementBufferTest, AcceptsOrderedStreams) {
   EXPECT_EQ(buffer.stats().accepted_imu_samples, 1U);
 }
 
+TEST(MeasurementBufferTest, AcceptsZeroDurationSimultaneousScan) {
+  MeasurementBuffer buffer;
+  const auto status = buffer.pushLidar(makeScan(10, 10));
+  EXPECT_TRUE(status.ok()) << status.message();
+  EXPECT_EQ(buffer.lidarSize(), 1U);
+}
+
 TEST(MeasurementBufferTest, RejectsInvalidCapacityAndEpoch) {
   MeasurementBufferConfig config;
   config.maximum_lidar_scans = 0;

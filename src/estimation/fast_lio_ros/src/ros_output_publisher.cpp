@@ -597,6 +597,10 @@ void RosOutputPublisher::publishTransportSnapshot(
       keyValue("queue_depth", std::to_string(runtime.current_input_queue_depth)),
       keyValue("queue_maximum", std::to_string(runtime.maximum_queue_depth)),
       keyValue("processing_lag_ns", std::to_string(runtime.processing_lag_ns)),
+      keyValue("processing_worker_failed",
+               runtime.processing_worker_failed ? "true" : "false"),
+      keyValue("processing_worker_failure_message",
+               runtime.processing_worker_failure_message),
       keyValue("scan_processing_p95_us", std::to_string(runtime.p95_scan_processing_us)),
       keyValue("correction_accepted_count",
                std::to_string(processing.correction_success_count)),
@@ -641,9 +645,11 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = "fast_lio/propagated_odometry";
   status.hardware_id = "lidar_imu";
-  status.level = propagated.propagator.status == PropagatedOdometryStatus::kReady
-                     ? diagnostic_msgs::msg::DiagnosticStatus::OK
-                     : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+  status.level = propagated.worker_failed
+                     ? diagnostic_msgs::msg::DiagnosticStatus::ERROR
+                     : (propagated.propagator.status == PropagatedOdometryStatus::kReady
+                            ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                            : diagnostic_msgs::msg::DiagnosticStatus::WARN);
   status.message = toString(propagated.propagator.status);
   const auto timeNs = [](const std::optional<Timestamp>& time) {
     return std::to_string(time.has_value() ? time->nanoseconds() : 0);
@@ -675,6 +681,8 @@ void RosOutputPublisher::publishPropagatedOdometryDiagnostics(
       keyValue("load_shedding_count", std::to_string(propagated.load_shedding_count)),
       keyValue("maximum_imu_batch_size", std::to_string(propagated.maximum_imu_batch_size)),
       keyValue("stale_stop_count", std::to_string(propagated.stale_stop_count)),
+      keyValue("worker_failed", propagated.worker_failed ? "true" : "false"),
+      keyValue("worker_failure_message", propagated.worker_failure_message),
   };
   array.status.push_back(std::move(status));
   diagnostics_->publish(array);

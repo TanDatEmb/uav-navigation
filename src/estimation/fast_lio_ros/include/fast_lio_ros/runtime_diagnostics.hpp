@@ -192,6 +192,8 @@ struct RuntimeDiagnostics {
   double worker_busy_ratio{0.0};
   bool overflow_detected{false};
   bool processing_lag_exceeded{false};
+  bool processing_worker_failed{false};
+  std::string processing_worker_failure_message;
   bool static_geometry_ready{false};
   std::string static_geometry_source;
   std::string dynamic_tf_owner;

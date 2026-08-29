@@ -9,6 +9,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <thread>
 #include <chrono>
 
@@ -77,6 +78,8 @@ struct PropagatedOdometryWorkerDiagnostics {
   std::uint64_t load_shedding_count{0U};
   std::uint64_t correction_coalesced_count{0U};
   std::uint64_t stale_generation_correction_drop_count{0U};
+  bool worker_failed{false};
+  std::string worker_failure_message;
 };
 
 class PropagatedOdometryWorker {

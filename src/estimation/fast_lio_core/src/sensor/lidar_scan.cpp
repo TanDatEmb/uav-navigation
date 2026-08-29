@@ -13,8 +13,12 @@ Status LidarScan::validate() const {
   if (!scan_duration.ok()) {
     return scan_duration.status();
   }
-  if (scan_duration.value().nanoseconds() <= 0) {
-    return Status(StatusCode::kTimestampRegression, "LiDAR scan end precedes scan start");
+  if (scan_duration.value().nanoseconds() < 0 ||
+      (scan_duration.value().nanoseconds() == 0 && has_per_point_time)) {
+    return Status(StatusCode::kTimestampRegression,
+                  has_per_point_time
+                      ? "Timed LiDAR scan must have positive duration"
+                      : "LiDAR scan end precedes scan start");
   }
   if (points.empty()) {
     return Status(StatusCode::kInvalidArgument, "LiDAR scan contains no points");
