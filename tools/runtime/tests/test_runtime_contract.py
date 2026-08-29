@@ -30,16 +30,18 @@ import process_group
 
 
 def _valid_captured_provenance() -> dict[str, object]:
+    artifact_path = RUNTIME / "report.py"
+    artifact_bytes = artifact_path.read_bytes()
     manifest = {
         "schema_version": 1,
         "authoritative": True,
         "build_mode": "release",
         "source": {"sha256": "b" * 64, "git_head": "run-head"},
         "artifacts": [{
-            "path": "install/product/node",
-            "resolved_path": "/workspace/build/product/node",
-            "size_bytes": 123,
-            "sha256": "c" * 64,
+            "path": str(artifact_path),
+            "resolved_path": str(artifact_path.resolve()),
+            "size_bytes": len(artifact_bytes),
+            "sha256": hashlib.sha256(artifact_bytes).hexdigest(),
         }],
     }
     manifest_sha = hashlib.sha256(
@@ -2529,6 +2531,24 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(
             report._provenance_reasons({"build_provenance": {"status": "VALID"}}),
             ["runtime did not capture a validated authoritative Release build manifest"],
+        )
+
+    def test_captured_provenance_rechecks_artifact_digest(self) -> None:
+        captured = _valid_captured_provenance()
+        self.assertTrue(report._captured_provenance_valid(captured))
+        artifact = captured["manifest"]["artifacts"][0]
+        artifact["sha256"] = "0" * 64
+        self.assertFalse(report._captured_provenance_valid(captured))
+
+    def test_metric_summary_does_not_overflow_rms(self) -> None:
+        summary = report._metric_summary([1.0e308, -1.0e308])
+        self.assertTrue(math.isfinite(summary["rmse"]))
+        self.assertEqual(summary["rmse"], 1.0e308)
+
+    def test_match_rejects_out_of_order_stream(self) -> None:
+        sample = lambda stamp: {"timestamp_ns": stamp, "payload": {}}
+        self.assertEqual(
+            report._match([sample(2), sample(1)], [sample(1), sample(2)], 0), []
         )
 
     def test_simulation_stream_discards_wall_epoch_without_regression(self) -> None:

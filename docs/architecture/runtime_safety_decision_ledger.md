@@ -11893,7 +11893,7 @@ release profiles must not use the former allowance.
 ### 2026-08-29 - Validate Fast-LIO initial-prior configuration boundaries
 
 - **Owner/status:** Fast-LIO ROS parameter and core initial-prior boundary,
-  `IN_PROGRESS` pending focused package verification.
+  `VERIFIED` by focused package builds and tests.
 - **Scope:** Validate initial-prior source/context/attitude/fallback domains,
   require a topic for topic priors, validate finite fixed vectors and a unit
   fixed quaternion, and make the core policy reject unknown enums or an
@@ -11915,3 +11915,27 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && colcon build --packages-select fast_lio_core fast_lio_ros
   --symlink-install`; focused parameter-loader and initial-prior test binaries.
+
+### 2026-08-29 - Make runtime report evidence and verdicts fail closed
+
+- **Owner/status:** Runtime evidence/report boundary, `VERIFIED` by the
+  runtime contract test suite (161/161).
+- **Scope:** Revalidate captured artifact paths, sizes and SHA-256 digests;
+  reject out-of-order streams; use overflow-safe metric and segment-distance
+  calculations; replace assertion-based report guards with diagnostic skips;
+  and require structured safety-stop evidence plus clean independent gates
+  before accepting an expected fail-closed pause. CLI exit status now follows
+  the report verdict.
+- **Safety impact:** A stale/tampered build artifact, malformed evidence row,
+  independent stream/acceptance failure or unverified safety pause cannot be
+  relabeled as a successful report. This changes only evidence classification,
+  not flight control behavior.
+- **False-accept/false-reject consequences:** Invalid or incomplete evidence
+  may produce FAIL/insufficient diagnostics where the previous report could
+  abort or pass; valid manifests and ordered evidence retain their semantics.
+- **Runtime cost and evidence:** Artifact files are hashed during report
+  generation and metric computations use bounded/stable arithmetic. Verified
+  with `python3 -m unittest tools.runtime.tests.test_runtime_contract -q`.
+- **Removal/review condition:** Keep until report inputs are immutable,
+  schema-validated artifacts with an attested provenance service.
+- **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract -q`.

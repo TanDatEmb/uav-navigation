@@ -99,6 +99,26 @@ def _captured_provenance_valid(captured: Any) -> bool:
             and len(artifact["sha256"]) == 64
         ):
             return False
+        if any(
+            character not in "0123456789abcdef" for character in artifact["sha256"].lower()
+        ):
+            return False
+        resolved_path = Path(artifact["resolved_path"])
+        if not resolved_path.is_absolute():
+            return False
+        try:
+            resolved_path = resolved_path.resolve(strict=True)
+            stat = resolved_path.stat()
+            if not resolved_path.is_file() or stat.st_size != artifact["size_bytes"]:
+                return False
+            digest = hashlib.sha256()
+            with resolved_path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != artifact["sha256"].lower():
+                return False
+        except (OSError, ValueError):
+            return False
     return True
 
 
@@ -171,15 +191,22 @@ def _segment_distance_2d(
 ) -> float:
     dx = end[0] - start[0]
     dy = end[1] - start[1]
-    length_sq = dx * dx + dy * dy
-    if length_sq <= 1e-12:
+    if not all(math.isfinite(value) for value in (dx, dy)):
+        return math.inf
+    scale = max(abs(dx), abs(dy))
+    if scale == 0.0:
         return math.hypot(point[0] - start[0], point[1] - start[1])
-    projection = ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length_sq
+    ux = dx / scale
+    uy = dy / scale
+    px = (point[0] - start[0]) / scale
+    py = (point[1] - start[1]) / scale
+    if not all(math.isfinite(value) for value in (px, py)):
+        return math.inf
+    length_sq = ux * ux + uy * uy
+    projection = (px * ux + py * uy) / length_sq
     projection = max(0.0, min(1.0, projection))
-    return math.hypot(
-        point[0] - (start[0] + projection * dx),
-        point[1] - (start[1] + projection * dy),
-    )
+    residual = scale * math.hypot(px - projection * ux, py - projection * uy)
+    return residual if math.isfinite(residual) else math.inf
 
 
 def _acceptance_threshold(config: dict[str, Any], scenario_config: dict[str, Any]) -> float:
@@ -813,10 +840,23 @@ def _sim_stream_stale_violation(name: str, row: dict[str, Any]) -> int:
 
 
 def _metric_summary(values: list[float]) -> dict[str, Any]:
+    if not all(math.isfinite(value) for value in values):
+        return {
+            "count": len(values), "mean": None, "rmse": None,
+            "p50": None, "p95": None, "maximum": None,
+        }
+    scale = max((abs(value) for value in values), default=0.0)
+    if scale == 0.0:
+        rmse = 0.0 if values else None
+    else:
+        scaled_sum = math.fsum((value / scale) ** 2 for value in values)
+        rmse = scale * math.sqrt(scaled_sum / len(values)) if values else None
+        if not math.isfinite(rmse):
+            rmse = None
     return {
         "count": len(values),
-        "mean": sum(values) / len(values) if values else None,
-        "rmse": math.sqrt(sum(value * value for value in values) / len(values)) if values else None,
+        "mean": math.fsum(values) / len(values) if values else None,
+        "rmse": rmse,
         "p50": _p(values, 0.50),
         "p95": _p(values, 0.95),
         "maximum": max(values) if values else None,
@@ -1116,7 +1156,12 @@ def _match(a: list[dict[str, Any]], b: list[dict[str, Any]], tolerance_ns: int) 
     # These streams share the ROS/PX4 simulation epoch. Never normalize each
     # stream to its own first sample: startup latency is real and subtracting
     # it pairs samples from different physical times.
+    timestamped_a = [(item, _sample_time(item)) for item in a]
     timestamped_b = [(item, _sample_time(item)) for item in b]
+    if any(left[1] > right[1] for left, right in zip(timestamped_a, timestamped_a[1:])):
+        return []
+    if any(left[1] > right[1] for left, right in zip(timestamped_b, timestamped_b[1:])):
+        return []
     result: list[tuple[dict[str, Any], dict[str, Any], int]] = []
     index = 0
     for left in a:
@@ -1164,8 +1209,8 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
             alignment = _quaternion_normalize(_quaternion_multiply(rq, _quaternion_inverse(lq)))
             first_lio_position = lp
             first_px4_position = rp
-        assert first_lio_position is not None
-        assert first_px4_position is not None
+        if first_lio_position is None or first_px4_position is None:
+            continue
         aligned_position = _quaternion_rotate(
             alignment,
             (
@@ -1411,7 +1456,8 @@ def _planner_reference_residuals(
                 origin_state = state
                 origin_px4 = px4_position
                 origin_reset = reset_counter
-            assert origin_px4 is not None
+            if origin_px4 is None:
+                continue
             state_delta = tuple(state[index] - origin_state[index] for index in range(3))
             px4_delta = tuple(px4_position[index] - origin_px4[index] for index in range(3))
             errors.append(tuple(state_delta[index] - px4_delta[index] for index in range(3)))
@@ -1598,7 +1644,8 @@ def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) 
             if first_gt_position is None:
                 first_gt_position = gt_position
                 first_lio_position = estimate_position
-            assert first_lio_position is not None
+            if first_lio_position is None:
+                continue
             lio_position_errors.append(tuple(
                 (estimate_position[index] - first_lio_position[index]) -
                 (gt_position[index] - first_gt_position[index])
@@ -1643,8 +1690,8 @@ def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) 
                 first_gt_position_external = gt_position
             if first_external_position is None:
                 first_external_position = estimate_position
-            assert first_external_position is not None
-            assert first_gt_position_external is not None
+            if first_external_position is None or first_gt_position_external is None:
+                continue
             expected_delta = _matrix_vector(
                 _C_NED_FROM_ENU,
                 tuple(gt_position[index] - first_gt_position_external[index] for index in range(3)),
@@ -1701,8 +1748,8 @@ def _ground_truth_residuals(samples: list[dict[str, Any]], tolerance_ms: float) 
                 first_gt_position_px4 = gt_position
             if first_px4_position is None:
                 first_px4_position = estimate_position
-            assert first_gt_position_px4 is not None
-            assert first_px4_position is not None
+            if first_gt_position_px4 is None or first_px4_position is None:
+                continue
             expected_delta = _matrix_vector(
                 _C_NED_FROM_ENU,
                 tuple(gt_position[index] - first_gt_position_px4[index] for index in range(3)),
@@ -2585,10 +2632,12 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "COMPLETE", "ABORTED_OPERATOR", "PAUSED_SAFETY_STOP", "FAILED_COMPONENT"
     }
     expected_fail_closed = str(scenario.get("expected_outcome", "complete")) == "fail_closed"
-    fail_closed_handover = expected_fail_closed and (
-        bool(scenario.get("mode_failure_observed", False)) or
-        terminal_outcome == "PAUSED_SAFETY_STOP"
+    structured_safety_stop = (
+        terminal_outcome == "PAUSED_SAFETY_STOP" and
+        (bool(scenario.get("mode_failure_observed", False)) or
+         bool(scenario.get("safety_stop_observed", False)))
     )
+    fail_closed_handover = expected_fail_closed and structured_safety_stop
     reasons: list[str] = []
     reasons.extend(_provenance_reasons(runtime))
     for name in ("simulation_clock", "imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "local_position", "estimator_status_flags"):
@@ -2638,7 +2687,15 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         # from the handover interval, so classify by the structured outcome
         # before applying the generic reason list.
         if outcome == "PAUSED_SAFETY_STOP":
-            verdict = "PASS" if expected_fail_closed else "BLOCKED"
+            if not expected_fail_closed:
+                verdict = "BLOCKED"
+            elif not structured_safety_stop:
+                reasons.append("structured safety-stop evidence is missing")
+                verdict = "FAIL"
+            else:
+                handover_reason = "mission did not reach COMPLETE outcome: PAUSED_SAFETY_STOP"
+                reasons = [reason for reason in reasons if reason != handover_reason]
+                verdict = "PASS" if not reasons else "FAIL"
         elif outcome == "ABORTED_OPERATOR":
             verdict = "BLOCKED"
         elif outcome == "FAILED_COMPONENT":
@@ -2813,7 +2870,7 @@ def main() -> int:
     args = parser.parse_args()
     report = build(args.session.resolve(), args.workflow, args.config.resolve(), args.workspace.resolve(), args.px4_dir, args.observation_complete)
     print(report["verdict"])
-    return 0 if report["verdict"] == "PASS" or report.get("observation_status") == "OBSERVATION_COMPLETE" else 1
+    return 0 if report["verdict"] == "PASS" else 1
 
 
 if __name__ == "__main__":
