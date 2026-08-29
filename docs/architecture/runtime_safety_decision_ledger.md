@@ -11032,3 +11032,27 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
+
+### 2026-08-29 - Correct FOV angle units and plane output shape
+
+- **Owner/status:** Planner FOV geometry utility, `VERIFIED` by trajectory
+  regression tests.
+- **Scope:** Use the already converted per-instance radian angles rather than
+  raw degree values or static first-instance state, reject malformed FOV input
+  directions, and return eight initialized planes from `GetFovPlanes`.
+- **Safety impact:** FOV-enabled planning now evaluates the configured cone in
+  the intended units and cannot consume two uninitialized planes. Degenerate
+  guide/horizon input fails closed; normal planner geometry and map semantics
+  are unchanged.
+- **False-accept/false-reject consequences:** Valid FOV configurations may
+  change from the previous incorrect degree/radian geometry to the configured
+  geometry. Invalid or degenerate inputs are rejected instead of generating
+  NaN planes. No obstacle or dynamic gate is relaxed.
+- **Runtime cost and evidence:** Constant-time finite checks and an eight-row
+  output allocation; no per-cycle search change. Tests cover initialized plane
+  rows and independent angle state for multiple FOV instances.
+- **Removal/review condition:** Keep until the FOV utility is replaced by a
+  typed, unit-explicit frustum representation with equivalent checks.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.

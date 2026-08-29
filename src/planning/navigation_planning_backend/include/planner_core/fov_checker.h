@@ -6,6 +6,9 @@
 
 #pragma once
 
+#include <cmath>
+#include <stdexcept>
+
 #include <utils/geometry/geometry_utils.h>
 
 namespace navigation_planning_backend {
@@ -36,7 +39,13 @@ namespace navigation_planning_backend {
 
         bool cutPolyBySensingHorizon( const Vec3f & robot_p, const Vec3f & guide_p,
                                       const double & sensing_horizon, Polytope & poly) const {
-            Vec3f dir = (guide_p - robot_p).normalized();
+            const Vec3f delta = guide_p - robot_p;
+            if (!robot_p.allFinite() || !guide_p.allFinite() ||
+                !std::isfinite(sensing_horizon) || sensing_horizon <= 0.0 ||
+                !delta.allFinite() || delta.squaredNorm() <= 1.0e-12) {
+                return false;
+            }
+            Vec3f dir = delta.normalized();
             Vec3f p = robot_p + dir * sensing_horizon;
             Vec4f new_plane;
             new_plane.head(3) = dir;
@@ -60,7 +69,13 @@ namespace navigation_planning_backend {
         bool cutPolyByFov(const Vec3f & robot_p, const navigation_math::Quatf & robot_q,
             const Vec3f & guide_p, Polytope & poly) const {
             const double small_x = 0.1;
-            Vec3f guide_p_B = robot_q.matrix().transpose() * (guide_p - robot_p);
+            const Vec3f delta = guide_p - robot_p;
+            if (!robot_p.allFinite() || !guide_p.allFinite() || !delta.allFinite() ||
+                delta.squaredNorm() <= 1.0e-12 || !robot_q.coeffs().allFinite() ||
+                std::abs(robot_q.norm() - 1.0) > 1.0e-5) {
+                return false;
+            }
+            Vec3f guide_p_B = robot_q.matrix().transpose() * delta;
             double yaw_in_body_frame = atan2(guide_p_B.y(), guide_p_B.x());
             Mat3f rotation_matrix3;
             rotation_matrix3 = Eigen::AngleAxisd(yaw_in_body_frame, Eigen::Vector3d::UnitZ());
@@ -84,6 +99,10 @@ namespace navigation_planning_backend {
                    const double &cone_fov_angle,
                    const double &lower_fov_angle,
                    const double &upper_fov_angle) {
+            if (!std::isfinite(cone_fov_angle) || !std::isfinite(lower_fov_angle) ||
+                !std::isfinite(upper_fov_angle) || lower_fov_angle >= upper_fov_angle) {
+                throw std::invalid_argument("FOV angles must be finite and ordered");
+            }
             cfg_.type = fov_type;
             cfg_.angle = cone_fov_angle / 180.0 * M_PI;
             cfg_.lower_angle = lower_fov_angle / 180.0 * M_PI;
@@ -91,10 +110,10 @@ namespace navigation_planning_backend {
             switch (cfg_.type) {
                 case OMNI: {
                     static const double sqrt2 = sqrt(2);
-                    static double zup = sin(upper_fov_angle) * 5;
-                    static double rup = cos(upper_fov_angle) * 5;
-                    static double zdown = sin(lower_fov_angle) * 5;
-                    static double rdown = cos(lower_fov_angle) * 5;
+                    const double zup = sin(cfg_.upper_angle) * 5;
+                    const double rup = cos(cfg_.upper_angle) * 5;
+                    const double zdown = sin(cfg_.lower_angle) * 5;
+                    const double rdown = cos(cfg_.lower_angle) * 5;
                     four_pts_.resize(3, 4);
                     four_pts_.col(0) = Eigen::Vector3d(rup, -3, zup);
                     four_pts_.col(1) = Eigen::Vector3d(rup, 3, zup);

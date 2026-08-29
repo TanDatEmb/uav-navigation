@@ -473,7 +473,7 @@ void geometry_utils::getFovCheckPlane(const Eigen::Matrix3d R, const Eigen::Vect
 
 void geometry_utils::GetFovPlanes(const Eigen::Matrix3d R, const Eigen::Vector3d t, Eigen::MatrixX4d& fov_planes,
                                   std::vector<Eigen::Matrix3d>& fov_pts) {
-    fov_planes.resize(10, 4);
+    fov_planes.resize(8, 4);
     fov_pts.clear();
     // 1) 获得前三个面
     static const double sqrt2 = sqrt(2);
@@ -524,7 +524,7 @@ void geometry_utils::GetFovPlanes(const Eigen::Matrix3d R, const Eigen::Vector3d
         if (temp.head(3).dot(fov_inner_pt2) + temp(3) > 0) {
             temp = -temp;
         }
-        fov_planes.row(i) = temp;
+        fov_planes.row(i - 1) = temp;
     }
 
     // 4）转为平面方程输出

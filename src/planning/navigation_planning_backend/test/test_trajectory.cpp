@@ -13,6 +13,7 @@
 #include "data_structure/base/trajectory.h"
 #include <navigation_world_model/goal_contract.hpp>
 #include "planner_core/planner.hpp"
+#include "planner_core/fov_checker.h"
 #include "path_search/astar.h"
 #include "planner_core/absolute_deadline.hpp"
 #include "planner_core/command_time.hpp"
@@ -543,6 +544,30 @@ TEST(PlannerTrajectory, RootFinderRejectsDegenerateNumericalInputs) {
   complex_only(6) = 1.0;
   EXPECT_TRUE(math_utils::RootFinder::solvePolynomial(
       complex_only, -2.0, 2.0, 1.0e-6, false).empty());
+}
+
+TEST(PlannerTrajectory, FovPlanesHaveNoUninitializedRowsAndAnglesArePerInstance) {
+  Eigen::MatrixX4d planes;
+  std::vector<Eigen::Matrix3d> points;
+  geometry_utils::GetFovPlanes(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero(),
+                               planes, points);
+  ASSERT_EQ(planes.rows(), 8);
+  ASSERT_EQ(points.size(), 8U);
+  EXPECT_TRUE(planes.allFinite());
+
+  navigation_planning_backend::FOVChecker narrow(
+      navigation_planning_backend::OMNI, 0.0, -5.0, 35.0);
+  navigation_planning_backend::FOVChecker wide(
+      navigation_planning_backend::OMNI, 0.0, -35.0, 35.0);
+  Eigen::MatrixX4d narrow_planes;
+  Eigen::MatrixX4d wide_planes;
+  narrow.getFovCheckPlane(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero(),
+                          narrow_planes);
+  wide.getFovCheckPlane(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero(),
+                        wide_planes);
+  ASSERT_TRUE(narrow_planes.allFinite());
+  ASSERT_TRUE(wide_planes.allFinite());
+  EXPECT_GT((narrow_planes - wide_planes).norm(), 1.0e-3);
 }
 
 TEST(PlannerTrajectory, PartialTrajectoryByIdAcceptsExclusiveEndSentinel) {
