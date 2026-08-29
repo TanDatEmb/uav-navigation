@@ -12389,6 +12389,30 @@ release profiles must not use the former allowance.
   && cmake --build build/fast_lio_core --target test_fast_lio_pipeline -j2
   && ./build/fast_lio_core/test_fast_lio_pipeline --gtest_color=no`.
 
+### 2026-08-29 - Require the configured odometry body frame
+
+- **Owner/status:** PX4 External Mode propagated-odometry ingress,
+  `PROVISIONAL`, verified by the node build and tracking-envelope regression.
+- **Scope:** Navigation Mode now declares `navigation.body_frame` (default
+  `base_link`) and rejects propagated odometry unless both the world frame and
+  nested body frame match the configured contract.
+- **Safety impact:** A velocity/pose message expressed in a different body
+  frame cannot enter tracking and setpoint generation under a false frame
+  assumption.
+- **False-accept/false-reject consequences:** Correctly configured messages
+  are unchanged. Misconfigured producers are rejected and the existing stale
+  or invalid-odometry fail-closed path remains authoritative.
+- **Runtime cost and evidence:** One string comparison per odometry callback;
+  `px4_navigation_external_mode_node` builds and `test_tracking_envelope`
+  passes 9/9.
+- **Removal/review condition:** Keep until propagated odometry uses a typed
+  frame contract shared by FAST-LIO serialization and PX4 mode ingress.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/px4_navigation_external_mode --target
+  px4_navigation_external_mode_node test_tracking_envelope -j2
+  && ./build/px4_navigation_external_mode/test_tracking_envelope
+  --gtest_color=no`.
+
 ### 2026-08-29 - Honor synchronized estimator propagation epoch
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,

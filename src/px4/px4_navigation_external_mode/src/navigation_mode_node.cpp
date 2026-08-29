@@ -65,6 +65,8 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.goal_topic", "/navigation/goal")),
       planning_frame_(node.declare_parameter<std::string>(
           "navigation.planning_frame", "lio_odom")),
+      body_frame_(node.declare_parameter<std::string>(
+          "navigation.body_frame", "base_link")),
       stale_after_s_(node.declare_parameter<double>(
           "navigation.trajectory_stale_after_s", 0.75)),
       state_stale_after_s_(node.declare_parameter<double>(
@@ -78,6 +80,7 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
   const auto planner_recovery_wait_timeout_ns =
       navigation_common::secondsToNanoseconds(planner_recovery_wait_timeout_s_);
   if (navigation_command_topic_.empty() || goal_topic_.empty() || planning_frame_.empty() ||
+      body_frame_.empty() ||
       !std::isfinite(stale_after_s_) || stale_after_s_ <= 0.0 ||
       !std::isfinite(state_stale_after_s_) || state_stale_after_s_ <= 0.0 ||
       !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
@@ -827,7 +830,8 @@ void NavigationMode::onOdometry(
   const auto& odometry = message->odometry;
   const auto& position = odometry.pose.pose.position;
   const auto& velocity = odometry.twist.twist.linear;
-  if (odometry.header.frame_id != planning_frame_ || odometry.header.stamp.sec < 0 ||
+  if (odometry.header.frame_id != planning_frame_ ||
+      odometry.child_frame_id != body_frame_ || odometry.header.stamp.sec < 0 ||
       !std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
       !std::isfinite(velocity.x) || !std::isfinite(velocity.y) || !std::isfinite(velocity.z)) {
     RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
