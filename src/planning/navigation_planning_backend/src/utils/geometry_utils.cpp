@@ -842,25 +842,10 @@ Eigen::Quaternion<Scalar_t> geometry_utils::yaw_to_quaternion(Scalar_t yaw) {
 
 template <typename Scalar_t>
 Scalar_t geometry_utils::normalize_angle(Scalar_t a) {
-    int cnt = 0;
-    while (true) {
-        cnt++;
-
-        if (a < -M_PI) {
-            a += M_PI * 2.0;
-        }
-        else if (a > M_PI) {
-            a -= M_PI * 2.0;
-        }
-
-        if (-M_PI <= a && a <= M_PI) {
-            break;
-        };
-
-        assert(cnt < 10 && "[uav_utils/geometry_msgs] INVALID INPUT ANGLE");
+    if (!std::isfinite(a)) {
+        return std::numeric_limits<Scalar_t>::quiet_NaN();
     }
-
-    return a;
+    return std::remainder(a, static_cast<Scalar_t>(2.0 * M_PI));
 }
 
 template <typename Scalar_t>

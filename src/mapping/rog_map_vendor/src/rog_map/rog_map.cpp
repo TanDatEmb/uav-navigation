@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 
 // uav-navigation local modification: pcl::io::loadPCDFile (used only by the
 // optional disabled load_pcd_en path below) was previously pulled in
@@ -314,8 +315,7 @@ void ROGMap::init() {
     string pcd_path = cfg_.pcd_name;
     PointCloud::Ptr pcd_map(new PointCloud);
     if (pcl::io::loadPCDFile(pcd_path, *pcd_map) == -1) {
-      cout << YELLOW << "Load pcd file at: [" << cfg_.pcd_name << "] failed!" << RESET << endl;
-      exit(-1);
+      throw std::runtime_error("failed to load configured PCD file: " + cfg_.pcd_name);
     }
     Pose cur_pose;
     cur_pose.first = Vec3f(0, 0, 0);

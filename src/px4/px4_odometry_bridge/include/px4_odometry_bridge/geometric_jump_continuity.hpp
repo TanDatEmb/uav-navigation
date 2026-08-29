@@ -26,6 +26,7 @@ enum class GeometricJumpContinuityReason {
   kTimestampNotIncreasing,
   kDtTooSmall,
   kDtTooLarge,
+  kThresholdOverflow,
   kWithinThreshold,
   kJumpDetected,
 };

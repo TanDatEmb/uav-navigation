@@ -47,6 +47,7 @@ enum class ResetObservationStatus : std::uint8_t {
   kInvalidMetadata,
   kCounterDiscontinuity,
   kInvalidResetRotation,
+  kInvalidCompensatedOutput,
   kProbableSourceRestart,
   kGenerationExhausted,
 };

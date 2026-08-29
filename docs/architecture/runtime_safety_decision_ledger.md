@@ -13096,3 +13096,69 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
+
+### 2026-08-29 - Bound geometric-jump thresholds and compensation output
+
+- **Owner/status:** PX4 odometry bridge continuity boundary, `PROVISIONAL`;
+  focused bridge tests required.
+- **Scope:** Geometric continuity now rejects configurations whose worst-case
+  allowed jump cannot remain representable as a finite `double`. Reset
+  compensation computes continuity updates transactionally and rejects any
+  non-finite compensated pose, velocity, orientation, or covariance before
+  publishing or updating the last-output state.
+- **Safety impact:** Extreme finite parameters or accumulated reset offsets
+  cannot turn overflow into an accepted external-odometry sample. Invalid
+  compensation also participates in the existing frame-invalid fail-closed
+  path.
+- **False-accept/false-reject consequences:** Normal finite configurations
+  and compensation are unchanged. Unrepresentable thresholds/outputs are
+  rejected and reported with explicit statuses.
+- **Runtime cost and evidence:** The checks are bounded scalar/vector
+  operations per continuity/reset event. Regressions cover threshold overflow
+  and compensated-position overflow.
+- **Removal/review condition:** Keep until bridge frame/continuity APIs return
+  typed checked results with explicit numeric domains.
+- **Verification:** `cmake --build build/px4_odometry_bridge --target
+  test_px4_odometry_bridge test_geometric_jump_continuity -j2` followed by
+  both focused GoogleTest binaries.
+
+### 2026-08-29 - Fail closed on configured PCD load failure
+
+- **Owner/status:** ROG-Map vendor initialization boundary, `PROVISIONAL`.
+- **Scope:** A configured PCD load failure now raises an initialization
+  exception instead of calling `exit(-1)` from the library.
+- **Safety impact:** The ROS owner retains lifecycle/control of the failure;
+  a partially initialized map is not presented as usable and the process is
+  not terminated by vendor code.
+- **False-accept/false-reject consequences:** Successful PCD loading is
+  unchanged. A missing/corrupt configured file fails initialization and must
+  be handled by the owning node.
+- **Runtime cost and evidence:** No cost on the success path; existing ROG
+  vendor suite remains the regression gate.
+- **Removal/review condition:** Keep until map initialization exposes a
+  typed status/result owned by the mapping lifecycle.
+- **Verification:** `cmake --build build/rog_map_vendor --target
+  test_rog_map_vendor -j2 && ./build/rog_map_vendor/test_rog_map_vendor
+  --gtest_color=no`.
+
+### 2026-08-29 - Make angle normalization bounded and finite
+
+- **Owner/status:** Planning geometry utility boundary, `PROVISIONAL`; focused
+  trajectory regression.
+- **Scope:** `normalize_angle` now rejects non-finite input with a non-finite
+  result and uses the bounded `std::remainder` reduction instead of repeatedly
+  adding or subtracting `2*pi` in an assertion-bounded loop.
+- **Safety impact:** Extreme finite angles cannot hang a planner hot path, and
+  invalid angles cannot be silently returned as apparently normalized values.
+  No feasibility, occupancy, dynamic, or execution gate is relaxed.
+- **False-accept/false-reject consequences:** Ordinary finite angles retain
+  the same `[-pi, pi]` normalization contract. Non-finite inputs now propagate
+  an explicit invalid result and must be rejected by the owning caller.
+- **Runtime cost and evidence:** The operation is a single bounded remainder;
+  `test_trajectory` passed 115/115, including extreme finite and non-finite
+  angle regressions.
+- **Removal/review condition:** Keep until public geometry helpers expose
+  checked result types and all callers explicitly handle invalid angles.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.

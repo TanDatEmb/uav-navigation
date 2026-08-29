@@ -594,6 +594,15 @@ TEST(PlannerTrajectory, RootFinderRejectsDegenerateNumericalInputs) {
       complex_only, -2.0, 2.0, 1.0e-6, false).empty());
 }
 
+TEST(PlannerTrajectory, NormalizeAngleHandlesExtremeAndNonFiniteInputs) {
+  const double normalized = geometry_utils::normalize_angle(
+      std::numeric_limits<double>::max());
+  EXPECT_TRUE(std::isfinite(normalized));
+  EXPECT_LE(std::abs(normalized), M_PI);
+  EXPECT_TRUE(std::isnan(geometry_utils::normalize_angle(
+      std::numeric_limits<double>::infinity())));
+}
+
 TEST(PlannerTrajectory, FovPlanesHaveNoUninitializedRowsAndAnglesArePerInstance) {
   Eigen::MatrixX4d planes;
   std::vector<Eigen::Matrix3d> points;

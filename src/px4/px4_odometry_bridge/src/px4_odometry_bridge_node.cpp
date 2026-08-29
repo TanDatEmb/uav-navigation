@@ -260,7 +260,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
         ((local->timestamp_ns >= attitude->timestamp_ns
               ? local->timestamp_ns - attitude->timestamp_ns
               : attitude->timestamp_ns - local->timestamp_ns) >
-            maximum_metadata_association_gap_ns_) {
+            maximum_metadata_association_gap_ns_)) {
       result.association_invalid = true;
     }
     if (local) {
@@ -369,7 +369,7 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       ++reset_event_generation_;
     }
     if (reset_counter_changed && output_valid_ &&
-        (observation.status == ResetObservationStatus::kInvalidMetadata ||
+         (observation.status == ResetObservationStatus::kInvalidMetadata ||
          observation.status == ResetObservationStatus::kCounterDiscontinuity ||
          observation.status == ResetObservationStatus::kInvalidResetRotation)) {
       // The reset cannot be compensated, so the old public PX4 frame ends.

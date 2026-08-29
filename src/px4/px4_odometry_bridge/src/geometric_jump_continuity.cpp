@@ -1,6 +1,7 @@
 #include "px4_odometry_bridge/geometric_jump_continuity.hpp"
 
 #include <cmath>
+#include <limits>
 
 #include <navigation_common/time.hpp>
 
@@ -43,7 +44,23 @@ GeometricJumpContinuityObservation observe_geometric_jump_continuity(
            std::isfinite(config.minimum_continuity_dt_s) &&
            config.minimum_continuity_dt_s > 0.0 &&
            std::isfinite(config.maximum_continuity_dt_s) &&
-           config.maximum_continuity_dt_s >= config.minimum_continuity_dt_s;
+           config.maximum_continuity_dt_s >= config.minimum_continuity_dt_s &&
+           [&]() {
+             const long double position_bound =
+                 static_cast<long double>(config.position_jump_margin_m) +
+                 static_cast<long double>(config.maximum_expected_speed_mps) *
+                     static_cast<long double>(config.maximum_continuity_dt_s);
+             const long double orientation_bound =
+                 static_cast<long double>(config.orientation_jump_margin_rad) +
+                 static_cast<long double>(config.maximum_expected_angular_rate_rad_s) *
+                     static_cast<long double>(config.maximum_continuity_dt_s);
+             return std::isfinite(position_bound) &&
+                    position_bound <= static_cast<long double>(
+                                          std::numeric_limits<double>::max()) &&
+                    std::isfinite(orientation_bound) &&
+                    orientation_bound <= static_cast<long double>(
+                                             std::numeric_limits<double>::max());
+           }();
   };
   const auto frame_valid = [](const ExternalOdometryFrame& frame) {
     const double quaternion_squared_norm =
@@ -124,10 +141,19 @@ GeometricJumpContinuityObservation observe_geometric_jump_continuity(
   observation.orientation_delta_rad =
       state.last_received->orientation_ned.angularDistance(current.orientation_ned);
   observation.allowed_position_delta_m =
-      config.position_jump_margin_m + config.maximum_expected_speed_mps * observation.dt_s;
+      static_cast<double>(static_cast<long double>(config.position_jump_margin_m) +
+                          static_cast<long double>(config.maximum_expected_speed_mps) *
+                              static_cast<long double>(observation.dt_s));
   observation.allowed_orientation_delta_rad =
-      config.orientation_jump_margin_rad +
-      config.maximum_expected_angular_rate_rad_s * observation.dt_s;
+      static_cast<double>(static_cast<long double>(config.orientation_jump_margin_rad) +
+                          static_cast<long double>(config.maximum_expected_angular_rate_rad_s) *
+                              static_cast<long double>(observation.dt_s));
+  if (!std::isfinite(observation.allowed_position_delta_m) ||
+      !std::isfinite(observation.allowed_orientation_delta_rad)) {
+    return reseed(current, generation_valid, generation,
+                  GeometricJumpContinuityReason::kThresholdOverflow,
+                  false, state);
+  }
   observation.jumped =
       observation.position_delta_m > observation.allowed_position_delta_m ||
       observation.orientation_delta_rad > observation.allowed_orientation_delta_rad;
@@ -162,6 +188,8 @@ const char* to_string(const GeometricJumpContinuityReason reason) noexcept {
       return "DT_TOO_SMALL";
     case GeometricJumpContinuityReason::kDtTooLarge:
       return "DT_TOO_LARGE";
+    case GeometricJumpContinuityReason::kThresholdOverflow:
+      return "THRESHOLD_OVERFLOW";
     case GeometricJumpContinuityReason::kWithinThreshold:
       return "WITHIN_THRESHOLD";
     case GeometricJumpContinuityReason::kJumpDetected:

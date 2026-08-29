@@ -47,6 +47,7 @@ const char* toString(const ResetObservationStatus status) noexcept {
     case ResetObservationStatus::kInvalidMetadata: return "invalid_metadata";
     case ResetObservationStatus::kCounterDiscontinuity: return "counter_discontinuity";
     case ResetObservationStatus::kInvalidResetRotation: return "invalid_reset_rotation";
+    case ResetObservationStatus::kInvalidCompensatedOutput: return "invalid_compensated_output";
     case ResetObservationStatus::kProbableSourceRestart: return "probable_source_restart";
     case ResetObservationStatus::kGenerationExhausted: return "generation_exhausted";
   }
@@ -56,7 +57,8 @@ const char* toString(const ResetObservationStatus status) noexcept {
 ResetObservation ResetCompensator::observe(
     ConvertedOdometry sample, DetailedResetMetadata metadata) {
   ResetObservation result;
-  const double orientation_norm_squared = sample.orientation.squaredNorm();
+  const double compensated_orientation_norm_squared =
+      sample.orientation.squaredNorm();
   const auto valid_variance = [](const Eigen::Vector3d& value, const bool available) {
     return value.allFinite() && (!available || (value.array() >= 0.0).all());
   };
@@ -67,8 +69,8 @@ ResetObservation ResetCompensator::observe(
       !sample.position.allFinite() || !sample.velocity_world.allFinite() ||
       !sample.velocity_body.allFinite() || !sample.angular_velocity_body.allFinite() ||
       !sample.orientation.coeffs().allFinite() ||
-      !std::isfinite(orientation_norm_squared) ||
-      std::abs(orientation_norm_squared - 1.0) > 1.0e-6 ||
+      !std::isfinite(compensated_orientation_norm_squared) ||
+      std::abs(compensated_orientation_norm_squared - 1.0) > 1.0e-6 ||
       !valid_variance(sample.position_variance, sample.position_covariance_available) ||
       !valid_variance(sample.velocity_variance, sample.velocity_covariance_available) ||
       !valid_variance(sample.orientation_variance, sample.orientation_covariance_available)) {
@@ -142,19 +144,33 @@ ResetObservation ResetCompensator::observe(
             FrameConverter::c_enu_ned().transpose();
       }
       const Eigen::Matrix3d inverse_reset = reset_rotation_world.transpose();
-      continuity_rotation_ *= inverse_reset;
+      const Eigen::Matrix3d next_continuity_rotation =
+          continuity_rotation_ * inverse_reset;
+      Eigen::Vector3d next_continuity_translation = continuity_translation_;
+      Eigen::Vector3d next_continuity_velocity_translation =
+          continuity_velocity_translation_;
       if (metadata.position_xy_reset || metadata.position_z_reset) {
         const Eigen::Vector3d position_delta =
-            continuity_rotation_ *
+            next_continuity_rotation *
             (FrameConverter::c_enu_ned() * metadata.position_delta_source);
-        continuity_translation_ -= position_delta;
+        next_continuity_translation -= position_delta;
       }
       if (metadata.velocity_xy_reset || metadata.velocity_z_reset) {
         const Eigen::Vector3d velocity_delta =
-            continuity_rotation_ *
+            next_continuity_rotation *
             (FrameConverter::c_enu_ned() * metadata.velocity_delta_source);
-        continuity_velocity_translation_ -= velocity_delta;
+        next_continuity_velocity_translation -= velocity_delta;
       }
+      if (!next_continuity_rotation.allFinite() ||
+          !next_continuity_translation.allFinite() ||
+          !next_continuity_velocity_translation.allFinite()) {
+        result.status = ResetObservationStatus::kInvalidCompensatedOutput;
+        result.reset_generation = reset_generation_;
+        return result;
+      }
+      continuity_rotation_ = next_continuity_rotation;
+      continuity_translation_ = next_continuity_translation;
+      continuity_velocity_translation_ = next_continuity_velocity_translation;
       ++reset_generation_;
       last_counter_ = sample.reset_counter;
       // The transition sample is intentionally suppressed. The next sample
@@ -181,6 +197,26 @@ ResetObservation ResetCompensator::observe(
                          sample.velocity_world;
   sample.reset_generation = reset_generation_;
   sample.reset_event_generation = reset_generation_;
+  const double orientation_norm_squared = sample.orientation.squaredNorm();
+  const auto valid_output_variance = [](const Eigen::Vector3d& value,
+                                        const bool available) {
+    return value.allFinite() && (!available || (value.array() >= 0.0).all());
+  };
+  if (!sample.position.allFinite() || !sample.velocity_world.allFinite() ||
+      !sample.velocity_body.allFinite() || !sample.angular_velocity_body.allFinite() ||
+      !sample.orientation.coeffs().allFinite() ||
+      !std::isfinite(orientation_norm_squared) ||
+      std::abs(orientation_norm_squared - 1.0) > 1.0e-6 ||
+      !valid_output_variance(sample.position_variance,
+                             sample.position_covariance_available) ||
+      !valid_output_variance(sample.velocity_variance,
+                             sample.velocity_covariance_available) ||
+      !valid_output_variance(sample.orientation_variance,
+                             sample.orientation_covariance_available)) {
+    result.status = ResetObservationStatus::kInvalidCompensatedOutput;
+    result.reset_generation = reset_generation_;
+    return result;
+  }
   last_output_ = sample;
   result.status = ResetObservationStatus::kAccepted;
   result.sample = std::move(sample);
@@ -196,8 +232,13 @@ std::optional<Eigen::Vector3d> ResetCompensator::rebasePositionAtCurrentOutput()
     return std::nullopt;
   }
   const Eigen::Vector3d origin = last_output_->position;
-  continuity_translation_ -= origin;
-  last_output_->position -= origin;
+  const Eigen::Vector3d next_translation = continuity_translation_ - origin;
+  const Eigen::Vector3d next_position = last_output_->position - origin;
+  if (!next_translation.allFinite() || !next_position.allFinite()) {
+    return std::nullopt;
+  }
+  continuity_translation_ = next_translation;
+  last_output_->position = next_position;
   return origin;
 }
 

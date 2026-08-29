@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Geometry>
+#include <limits>
 
 #include "px4_odometry_bridge/geometric_jump_continuity.hpp"
 #include "px4_odometry_bridge/geometric_jump_latch.hpp"
@@ -151,6 +152,19 @@ TEST(GeometricJumpContinuityTest, RejectsInvalidConfigAndExtremeTimestampDelta) 
       frame(2'000'000'000LL, 0.0), true, true, 1U, config, state);
   EXPECT_FALSE(invalid.evaluated);
   EXPECT_EQ(invalid.reason, GeometricJumpContinuityReason::kCurrentFrameInvalid);
+}
+
+TEST(GeometricJumpContinuityTest, RejectsThresholdThatCannotBeRepresented) {
+  GeometricJumpContinuityConfig config;
+  config.position_jump_margin_m = std::numeric_limits<double>::max();
+  config.maximum_expected_speed_mps = std::numeric_limits<double>::max();
+  GeometricJumpContinuityState state;
+
+  const auto result = observe_geometric_jump_continuity(
+      frame(1'000'000'000LL, 0.0), true, true, 1U, config, state);
+  EXPECT_FALSE(result.evaluated);
+  EXPECT_EQ(result.reason, GeometricJumpContinuityReason::kCurrentFrameInvalid);
+  EXPECT_FALSE(state.continuity_trusted);
 }
 
 }  // namespace

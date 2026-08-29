@@ -603,6 +603,34 @@ TEST(Px4ResetCompensator, RejectsMalformedConvertedOdometryAtIngress) {
   EXPECT_EQ(result.status, px4_odometry_bridge::ResetObservationStatus::kInvalidMetadata);
 }
 
+TEST(Px4ResetCompensator, RejectsOverflowingCompensatedOutput) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto first = sample(1'000'000'000);
+  first.position = Eigen::Vector3d::Constant(std::numeric_limits<double>::max());
+  ASSERT_TRUE(compensator.observe(first).accepted());
+
+  auto reset = first;
+  reset.timestamp_ns = 1'010'000'000;
+  reset.reset_counter = 1;
+  reset.position = Eigen::Vector3d::Zero();
+  px4_odometry_bridge::DetailedResetMetadata metadata;
+  metadata.available = true;
+  metadata.timestamp_ns = reset.timestamp_ns;
+  metadata.position_xy_reset = true;
+  metadata.position_delta_source =
+      Eigen::Vector3d(-std::numeric_limits<double>::max(), 0.0, 0.0);
+  EXPECT_FALSE(compensator.observe(reset, metadata).accepted());
+
+  auto overflowing = reset;
+  overflowing.timestamp_ns = 1'020'000'000;
+  overflowing.position = Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::max());
+  const auto result = compensator.observe(overflowing, metadata);
+  EXPECT_FALSE(result.accepted());
+  EXPECT_EQ(result.status,
+            px4_odometry_bridge::ResetObservationStatus::kInvalidCompensatedOutput);
+}
+
 TEST(Px4RingBuffer, RequiresStableSamplesAfterGenerationChange) {
   px4_odometry_bridge::OdometryRingBuffer buffer({
       .duration_ns = 2'000'000'000, .capacity = 512, .max_gap_ns = 50'000'000, .stable_samples = 3});
