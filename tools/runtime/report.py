@@ -37,6 +37,11 @@ def _number(value: Any, default: float = 0.0) -> float:
     return number if math.isfinite(number) else default
 
 
+def _dedupe_reasons(reasons: list[str]) -> list[str]:
+    """Preserve first-seen report reasons without repeating the same finding."""
+    return list(dict.fromkeys(str(reason) for reason in reasons))
+
+
 def _p(values: list[float], fraction: float) -> float | None:
     if not values:
         return None
@@ -2564,6 +2569,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     reasons.extend(_mapping_integrity_reasons(navigation_mapping))
     reasons.extend(_dataset_shadow_planning_reasons(runtime, shadow_planning, planning))
     reasons.extend(failures)
+    reasons = _dedupe_reasons(reasons)
     verdict = "PASS" if not reasons else "FAIL"
     if not any(streams[name]["sample_count"] for name in streams):
         verdict = "BLOCKED"
@@ -2692,6 +2698,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     reasons.extend(failures)
     acceptance = _mission_acceptance(session, config, scenario, workspace)
     reasons.extend(str(item) for item in acceptance["reasons"])
+    reasons = _dedupe_reasons(reasons)
     verdict = "PASS" if not reasons else "FAIL"
     if workflow == "external-mode":
         outcome = str(scenario.get("outcome", ""))

@@ -1294,6 +1294,12 @@ class RuntimeContractTest(unittest.TestCase):
         stats.update(0, 4_000)
         self.assertEqual(stats.as_dict()["invalid_source_timestamp_count"], 1)
 
+    def test_report_reasons_are_deduplicated_in_first_seen_order(self) -> None:
+        self.assertEqual(
+            report._dedupe_reasons(["planner failed", "planner failed", "cleanup failed"]),
+            ["planner failed", "cleanup failed"],
+        )
+
     def test_sparse_pointcloud_nonfinite_returns_are_diagnostic_not_message_invalid(self) -> None:
         payload = {"is_dense": False, "sampled_nonfinite_points": 5}
         dense_payload = {"is_dense": True, "sampled_nonfinite_points": 5}

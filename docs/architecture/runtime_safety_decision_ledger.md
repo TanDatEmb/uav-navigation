@@ -13722,3 +13722,25 @@ release profiles must not use the former allowance.
   failure without inference from `is_dense` alone.
 - **Verification:** runtime contract suite, a valid simulated PointCloud2
   report, and recorded-data lidar replay with explicit nonfinite-point counts.
+
+### 2026-08-29 - Deduplicate overlapping runtime report findings
+
+- **Owner/status:** runtime report reason aggregation, `PROVISIONAL`; verify
+  against complete and fail-closed scenario artifacts.
+- **Scope:** report verdict construction now preserves the first occurrence of
+  each reason when the same condition is emitted by both the scenario and
+  acceptance layers. The machine-readable verdict and underlying gates remain
+  unchanged; only repeated presentation rows are removed.
+- **Safety impact:** no acceptance or safety condition is dropped. Distinct
+  reasons remain visible, while duplicate strings no longer obscure the causal
+  summary or inflate the apparent number of independent failures.
+- **False-accept/false-reject consequences:** none for verdict computation;
+  deduplication is applied before the existing PASS/FAIL/BLOCKED logic and
+  retains first-seen order for stable reports.
+- **Runtime cost and evidence:** linear in the bounded reason list and only at
+  report finalization. A runtime contract regression covers ordering and
+  duplicate removal.
+- **Removal/review condition:** keep until report reasons use typed issue IDs
+  and can aggregate evidence without string matching.
+- **Verification:** full runtime contract suite plus one mission-complete and
+  one safety-stop report inspection.
