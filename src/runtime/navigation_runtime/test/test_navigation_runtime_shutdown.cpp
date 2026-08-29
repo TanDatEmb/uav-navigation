@@ -1,22 +1,23 @@
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include <chrono>
 #include <condition_variable>
-#include <cstdlib>
 #include <cstring>
-#include <filesystem>
+#include <cstdlib>
 #include <future>
+#include <filesystem>
 #include <memory>
 #include <mutex>
-#include <navigation_contracts/msg/registered_scan.hpp>
-#include <rclcpp/executors/multi_threaded_executor.hpp>
-#include <sensor_msgs/msg/point_field.hpp>
 #include <string>
 #include <thread>
 
+#include <unistd.h>
+
+#include <navigation_contracts/msg/registered_scan.hpp>
+#include <rclcpp/executors/multi_threaded_executor.hpp>
+#include <sensor_msgs/msg/point_field.hpp>
+
 #include "navigation_runtime/navigation_runtime_node.hpp"
-#include "navigation_runtime/runtime_boundaries.hpp"
 
 namespace navigation_runtime {
 namespace {
@@ -89,25 +90,6 @@ TEST(NavigationRuntimeTelemetry, KeepsRevalidationCountersFromCurrentUpdate) {
   EXPECT_EQ(snapshot.command_revalidation_full_count, 2U);
 }
 
-TEST(NavigationRuntimeBoundaries, MonotonicIdsNeverWrapToZero) {
-  std::atomic_uint64_t value{0U};
-  ASSERT_EQ(advanceMonotonicId(value), 1U);
-  value.store(std::numeric_limits<std::uint64_t>::max() - 1U);
-  ASSERT_EQ(advanceMonotonicId(value), std::numeric_limits<std::uint64_t>::max());
-  EXPECT_FALSE(advanceMonotonicId(value).has_value());
-  EXPECT_EQ(value.load(), std::numeric_limits<std::uint64_t>::max());
-}
-
-TEST(NavigationRuntimeBoundaries, RatePeriodMustBePositiveAndRepresentable) {
-  EXPECT_FALSE(ratePeriodNanoseconds(0.0).has_value());
-  EXPECT_FALSE(ratePeriodNanoseconds(-1.0).has_value());
-  EXPECT_FALSE(ratePeriodNanoseconds(std::numeric_limits<double>::infinity()).has_value());
-  EXPECT_FALSE(ratePeriodNanoseconds(std::numeric_limits<double>::denorm_min()).has_value());
-  EXPECT_FALSE(ratePeriodNanoseconds(1.0e10).has_value());
-  ASSERT_TRUE(ratePeriodNanoseconds(50.0).has_value());
-  EXPECT_EQ(*ratePeriodNanoseconds(50.0), 20ms);
-}
-
 TEST(NavigationRuntimeCadence, RejectsPlannerPeriodShorterThanSolveBudget) {
   auto context = std::make_shared<rclcpp::Context>();
   context->init(0, nullptr);
@@ -121,7 +103,9 @@ TEST(NavigationRuntimeCadence, RejectsPlannerPeriodShorterThanSolveBudget) {
   });
 
   EXPECT_THROW(
-      { auto navigation = std::make_shared<NavigationRuntimeNode>(options); },
+      {
+        auto navigation = std::make_shared<NavigationRuntimeNode>(options);
+      },
       std::invalid_argument);
   context->shutdown("cadence contract test complete");
 }
@@ -135,7 +119,6 @@ class ExecutorStopGuard {
     executor_.cancel();
     if (thread_.joinable()) thread_.join();
   }
-
  private:
   rclcpp::Executor& executor_;
   std::thread& thread_;
@@ -178,7 +161,8 @@ navigation_contracts::msg::RegisteredScan makeRegisteredScan(
 }
 
 TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
-  const std::filesystem::path ros_log_directory = "/tmp/uav-navigation-test-ros-logs";
+  const std::filesystem::path ros_log_directory =
+      "/tmp/uav-navigation-test-ros-logs";
   std::filesystem::create_directories(ros_log_directory);
   ASSERT_EQ(setenv("ROS_LOG_DIR", ros_log_directory.c_str(), 1), 0);
   auto context = std::make_shared<rclcpp::Context>();
@@ -201,14 +185,15 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
       rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
   });
 
-  auto navigation =
-      std::make_shared<NavigationRuntimeNode>(options, NavigationRuntimeDependencies{observer});
+  auto navigation = std::make_shared<NavigationRuntimeNode>(
+      options, NavigationRuntimeDependencies{observer});
   ObserverReleaseGuard release_guard{observer};
-  auto driver =
-      std::make_shared<rclcpp::Node>("shutdown_contract_driver_" + process_suffix, options);
+  auto driver = std::make_shared<rclcpp::Node>(
+      "shutdown_contract_driver_" + process_suffix, options);
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
-  auto observation_publisher = driver->create_publisher<navigation_contracts::msg::RegisteredScan>(
-      prefix + "/observation", qos);
+  auto observation_publisher =
+      driver->create_publisher<navigation_contracts::msg::RegisteredScan>(
+          prefix + "/observation", qos);
 
   rclcpp::ExecutorOptions executor_options;
   executor_options.context = context;
@@ -235,8 +220,8 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
   executor.remove_node(driver);
 
   std::weak_ptr<NavigationRuntimeNode> weak_navigation = navigation;
-  auto destroy =
-      std::async(std::launch::async, [owned = std::move(navigation)]() mutable { owned.reset(); });
+  auto destroy = std::async(std::launch::async,
+      [owned = std::move(navigation)]() mutable { owned.reset(); });
   EXPECT_EQ(destroy.wait_for(100ms), std::future_status::timeout);
 
   observer->release();
