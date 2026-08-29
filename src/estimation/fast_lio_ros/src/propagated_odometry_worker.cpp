@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <pthread.h>
 #include <stdexcept>
 #include <utility>
@@ -24,8 +25,13 @@ PropagatedOdometryWorker::PropagatedOdometryWorker(
       !std::isfinite(config_.publish_rate_hz)) {
     throw std::invalid_argument("Propagated odometry publish rate is invalid");
   }
-  publish_period_ns_ = static_cast<std::int64_t>(
-      std::llround(1e9 / config_.publish_rate_hz));
+  const long double period_ns = std::round(
+      1.0e9L / static_cast<long double>(config_.publish_rate_hz));
+  if (!std::isfinite(period_ns) || period_ns < 1.0L ||
+      period_ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+    throw std::invalid_argument("Propagated odometry publish period is not representable");
+  }
+  publish_period_ns_ = static_cast<std::int64_t>(period_ns);
 }
 
 PropagatedOdometryWorker::~PropagatedOdometryWorker() { stop(); }
@@ -107,7 +113,19 @@ bool PropagatedOdometryWorker::enqueueEstimatorState(
       discardPendingCorrectionLocked(true);
       invalidation_requested_.store(true, std::memory_order_release);
     } else if (update.corrected_estimate.has_value()) {
+      if (update.correction_sequence == 0U ||
+          !update.corrected_estimate->allFinite()) {
+        return false;
+      }
       const auto& estimate = *update.corrected_estimate;
+      if (diagnostics_.last_correction_time.has_value() &&
+          !estimate.time.sameClockDomain(*diagnostics_.last_correction_time)) {
+        return false;
+      }
+      if (pending_correction_.has_value() &&
+          !estimate.time.sameClockDomain(pending_correction_->estimate.time)) {
+        return false;
+      }
       if (rejectCorrectionNotNewerThanAppliedLocked(
               update.correction_sequence, estimate.time)) {
         diagnostics_.last_received_correction_sequence =
@@ -257,11 +275,16 @@ void PropagatedOdometryWorker::processImuBatch(
     main_status = diagnostics_.main_status;
   }
   suspended = suspended_.load(std::memory_order_acquire);
+  std::optional<Timestamp> next_publish_deadline;
+  {
+    std::lock_guard lock(mutex_);
+    next_publish_deadline = next_publish_deadline_;
+  }
   if (!transition_pending && !suspended && status.ok() &&
       latest_recorded_sample.has_value() &&
-      (!next_publish_deadline_.has_value() ||
+      (!next_publish_deadline.has_value() ||
        latest_recorded_sample->time.nanoseconds() >=
-           next_publish_deadline_->nanoseconds())) {
+           next_publish_deadline->nanoseconds())) {
     status = propagator_.flushPendingPrediction();
   }
 
@@ -273,10 +296,10 @@ void PropagatedOdometryWorker::processImuBatch(
   if (!transition_pending && status.ok() &&
       propagator_.diagnostics().latest_imu_time.has_value() &&
       last_correction_time.has_value()) {
-    const std::int64_t correction_age =
-        propagator_.diagnostics().latest_imu_time->nanoseconds() -
-        last_correction_time->nanoseconds();
-    if (correction_age > config_.maximum_correction_age_ns) {
+    const auto correction_age = checkedDifference(
+        *propagator_.diagnostics().latest_imu_time, *last_correction_time);
+    if (correction_age.ok() &&
+        correction_age.value().nanoseconds() > config_.maximum_correction_age_ns) {
       if (propagator_.diagnostics().status !=
           PropagatedOdometryStatus::kStaleCorrection) {
         std::lock_guard lock(mutex_);
@@ -317,6 +340,7 @@ void PropagatedOdometryWorker::processImuBatch(
            applied_correction_time->nanoseconds())) {
     maybePublishOnImu(*latest_recorded_sample);
   } else {
+    std::lock_guard lock(mutex_);
     ++publication_skip_count_;
   }
 }
@@ -492,6 +516,10 @@ bool PropagatedOdometryWorker::rejectCorrectionNotNewerThanAppliedLocked(
 }
 
 void PropagatedOdometryWorker::maybePublishOnImu(const ImuSample& sample) {
+  const auto recordSkip = [this] {
+    std::lock_guard lock(mutex_);
+    ++publication_skip_count_;
+  };
   if (stop_requested_.load(std::memory_order_acquire)) {
     return;
   }
@@ -505,34 +533,59 @@ void PropagatedOdometryWorker::maybePublishOnImu(const ImuSample& sample) {
     }
   }
   if (propagator_.diagnostics().requires_reanchor) {
-    ++publication_skip_count_;
+    recordSkip();
     return;
   }
-  if (!next_publish_deadline_.has_value()) {
-    next_publish_deadline_ = sample.time;
+  std::optional<Timestamp> next_publish_deadline;
+  std::optional<Timestamp> last_published_time;
+  {
+    std::lock_guard lock(mutex_);
+    if (!next_publish_deadline_.has_value()) {
+      next_publish_deadline_ = sample.time;
+    }
+    next_publish_deadline = next_publish_deadline_;
+    last_published_time = last_published_time_;
   }
-  if (sample.time.nanoseconds() < next_publish_deadline_->nanoseconds()) {
-    ++publication_skip_count_;
+  if (sample.time.nanoseconds() < next_publish_deadline->nanoseconds()) {
+    recordSkip();
     return;
   }
   const auto estimate = propagator_.kinematicEstimate();
   if (!estimate.has_value() ||
-      (last_published_time_.has_value() &&
+      (last_published_time.has_value() &&
        estimate->estimate.time.nanoseconds() <=
-           last_published_time_->nanoseconds())) {
-    ++publication_skip_count_;
+           last_published_time->nanoseconds())) {
+    recordSkip();
     return;
   }
   if (imu_processed_callback_) {
-    imu_processed_callback_(estimate);
+    try {
+      imu_processed_callback_(estimate);
+    } catch (...) {
+      suspended_.store(true, std::memory_order_release);
+      recordSkip();
+      return;
+    }
   }
-  last_published_time_ = estimate->estimate.time;
-  ++publication_count_;
+  {
+    std::lock_guard lock(mutex_);
+    last_published_time_ = estimate->estimate.time;
+    ++publication_count_;
+  }
   do {
-    next_publish_deadline_ = Timestamp(
-        next_publish_deadline_->nanoseconds() + publish_period_ns_,
-        next_publish_deadline_->clock_domain());
-  } while (next_publish_deadline_->nanoseconds() <= sample.time.nanoseconds());
+    const auto next_deadline = checkedAdd(
+        *next_publish_deadline, Duration{publish_period_ns_});
+    if (!next_deadline.ok()) {
+      suspended_.store(true, std::memory_order_release);
+      recordSkip();
+      return;
+    }
+    next_publish_deadline = next_deadline.value();
+  } while (next_publish_deadline->nanoseconds() <= sample.time.nanoseconds());
+  {
+    std::lock_guard lock(mutex_);
+    next_publish_deadline_ = next_publish_deadline;
+  }
 }
 
 void PropagatedOdometryWorker::updateSnapshot() {

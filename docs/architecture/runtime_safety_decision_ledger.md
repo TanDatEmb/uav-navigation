@@ -10924,6 +10924,34 @@ release profiles must not use the former allowance.
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
 
+### 2026-08-29 - Bound propagated-odometry publication and correction ingress
+
+- **Owner/status:** FAST-LIO propagated-odometry worker, `VERIFIED` by the
+  focused worker suite.
+- **Scope:** Require a nonzero correction sequence and finite estimate at the
+  correction boundary, reject clock-domain mismatches, convert publish rate to
+  a representable positive nanosecond period, use checked timestamp arithmetic,
+  catch publication callback exceptions, and synchronize publication state
+  with diagnostic snapshots.
+- **Safety impact:** Malformed corrections cannot be replayed as valid state;
+  invalid rate configuration cannot create a zero-period busy loop or an
+  out-of-range duration; deadline overflow and callback failure suspend output
+  instead of terminating the worker or publishing an ambiguous sample.
+- **False-accept/false-reject consequences:** A correction with missing
+  sequence identity, incompatible clock domain, or non-finite state is
+  rejected. Valid same-domain corrections and normal publication cadence are
+  unchanged.
+- **Runtime cost and evidence:** One checked conversion at construction,
+  checked timestamp operations in replay/publication, and short mutex scopes
+  around worker state. Focused worker tests cover invalid rates, missing
+  sequence identity, callback exception, and existing replay behavior.
+- **Removal/review condition:** Keep until the worker consumes typed validated
+  correction and duration contracts and callback ownership is explicitly
+  `noexcept`.
+- **Verification:** `cmake --build build/fast_lio_ros --target
+  test_propagated_odometry_worker -j2 &&
+  ./build/fast_lio_ros/test_propagated_odometry_worker --gtest_color=no`.
+
 ### 2026-08-29 - Make tracking-envelope norm checks fail closed
 
 - **Owner/status:** PX4 External Mode tracking-envelope boundary, `VERIFIED`

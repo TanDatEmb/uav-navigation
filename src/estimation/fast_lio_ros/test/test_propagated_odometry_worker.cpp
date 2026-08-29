@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
@@ -80,6 +81,44 @@ TEST(PropagatedOdometryWorkerTest, PendingCorrectionMailboxIsClearedAfterTake) {
   }));
   EXPECT_EQ(worker.diagnostics().last_applied_correction_sequence, 1U);
   worker.stop();
+}
+
+TEST(PropagatedOdometryWorkerTest, RejectsCorrectionWithoutSequenceIdentity) {
+  PropagatedOdometryWorker worker(PropagatedOdometryWorkerConfig{});
+  worker.start();
+  EXPECT_FALSE(worker.enqueueEstimatorState(
+      trackingCorrection(0, 0U)));
+  EXPECT_EQ(worker.diagnostics().last_received_correction_sequence, 0U);
+  worker.stop();
+}
+
+TEST(PropagatedOdometryWorkerTest, CallbackExceptionSuspendsPublication) {
+  std::atomic<std::size_t> callback_count{0U};
+  PropagatedOdometryWorker worker(
+      PropagatedOdometryWorkerConfig{},
+      [&](const auto&) {
+        callback_count.fetch_add(1U, std::memory_order_relaxed);
+        throw std::runtime_error("publication failure");
+      });
+  worker.start();
+  ASSERT_TRUE(worker.enqueueImu(sample(0)));
+  ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
+  ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(0, 1U)));
+  ASSERT_TRUE(waitForDiagnostics(worker, [&](const auto& diagnostics) {
+    return diagnostics.publication_skip_count > 0U &&
+           callback_count.load(std::memory_order_relaxed) == 1U;
+  }));
+  worker.stop();
+  EXPECT_EQ(callback_count.load(std::memory_order_relaxed), 1U);
+}
+
+TEST(PropagatedOdometryWorkerTest, RejectsUnrepresentablePublishRates) {
+  auto config = PropagatedOdometryWorkerConfig{};
+  config.publish_rate_hz = 1.0e12;
+  EXPECT_THROW(PropagatedOdometryWorker(config, {}), std::invalid_argument);
+
+  config.publish_rate_hz = 1.0e-300;
+  EXPECT_THROW(PropagatedOdometryWorker(config, {}), std::invalid_argument);
 }
 
 TEST(PropagatedOdometryWorkerTest, IdleWorkerDoesNotBusyLoopAfterCorrection) {
