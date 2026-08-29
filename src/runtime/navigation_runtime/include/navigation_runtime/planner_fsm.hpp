@@ -66,7 +66,10 @@ inline bool hotRetargetNeedsMeasuredStatePlan(
   // continuity that pass-through semantics are intended to preserve. The
   // caller still rebases when the retained command is at its lease boundary.
   (void)goal_identity_changed;
-  if (!std::isfinite(command_elapsed_s) || !std::isfinite(command_duration_s) ||
+  if (!std::isfinite(command_elapsed_s) || command_elapsed_s < 0.0) {
+    return true;
+  }
+  if (!std::isfinite(command_duration_s) ||
       !std::isfinite(planning_interval_s) || planning_interval_s <= 0.0 ||
       command_duration_s <= 0.0) {
     return false;

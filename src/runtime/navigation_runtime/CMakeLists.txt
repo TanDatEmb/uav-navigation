@@ -120,7 +120,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_world_snapshot_store navigation_mapping)
   ament_add_gtest(test_planner_fsm test/test_planner_fsm.cpp)
   target_include_directories(test_planner_fsm PRIVATE include)
-  ament_target_dependencies(test_planner_fsm navigation_planning)
+  ament_target_dependencies(test_planner_fsm navigation_planning builtin_interfaces)
   ament_add_gtest(test_mission_dynamics
     test/test_mission_dynamics.cpp
     src/mission_dynamics.cpp)

@@ -208,6 +208,7 @@ TEST(PlannerFsm, SamplesDeclaredTerminalCandidateBeyondExecutionLease) {
   candidate.world_identity.localization_epoch = 1U;
   candidate.world_identity.generation = 1U;
   candidate.world_identity.revision = 1U;
+  candidate.world_identity.observation_stamp_ns = 10000000000LL;
   candidate.localization_epoch = 1U;
   candidate.goal_epoch = 1U;
   candidate.request_id = 1U;
@@ -236,6 +237,7 @@ TEST(PlannerFsm, SamplesDeclaredTerminalMainOnlyCandidateWithoutBackupMetadata) 
   candidate.world_identity.localization_epoch = 1U;
   candidate.world_identity.generation = 1U;
   candidate.world_identity.revision = 1U;
+  candidate.world_identity.observation_stamp_ns = 10000000000LL;
   candidate.localization_epoch = 1U;
   candidate.goal_epoch = 1U;
   candidate.request_id = 1U;
@@ -389,6 +391,8 @@ TEST(PlannerFsm, RebasesHotRetargetWhenThePreviousCommandIsAtItsBoundary) {
       true, false, true, 1.2, 1.1, 0.1, 0.2, 0.75));
   EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
       true, true, false, 1.2, 1.1, 0.0, 0.2, 0.75));
+  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(
+      true, true, false, -0.1, 1.1, 0.1, 0.2, 0.75));
 }
 
 TEST(PlannerFsm, RebasesDivergedHotRetargetBeforeAtomicCommit) {

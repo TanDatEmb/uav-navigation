@@ -13413,3 +13413,30 @@ release profiles must not use the former allowance.
   `test_trajectory --gtest_filter=PlannerTrajectory.ConcurrentCommitAndSnapshotNeverMixGenerations
   --gtest_color=no`, and the full trajectory suite with only the known
   malformed-shape test excluded.
+
+### 2026-08-29 - Reject rewound command clocks during hot retarget
+
+- **Owner/status:** Navigation runtime planner-renewal FSM, `PROVISIONAL`;
+  repeated clock-domain and replay evidence required.
+- **Scope:** `hotRetargetNeedsMeasuredStatePlan()` now treats a negative
+  command elapsed time as invalid and requires a measured-state PlanFromRest
+  transition. The negative value can only arise when the command clock moves
+  backward relative to its committed wall-time anchor or when malformed timing
+  metadata crosses the runtime boundary.
+- **Safety impact:** A clock rewind cannot make the old command appear eligible
+  for a hot stitch using a historical anchor. The runtime re-bases on measured
+  state; no validity window, clearance gate, or planner threshold is relaxed.
+- **False-accept/false-reject consequences:** Ordered non-negative elapsed
+  times retain the previous remaining-time policy. A rewound or malformed
+  elapsed time may trigger a more expensive measured-state plan, but is not
+  allowed to authorize an inconsistent trajectory splice.
+- **Runtime cost and evidence:** One sign check in the inline FSM helper. The
+  planner-FSM regression covers a negative elapsed value. The test target now
+  declares its direct `builtin_interfaces` dependency so clean overlays carry
+  the required generated-message include path; integration/replay evidence
+  must still verify the clock-domain contract.
+- **Removal/review condition:** Keep until command anchors use an explicitly
+  monotonic, epoch-tagged time type at the runtime/planner boundary.
+- **Verification:** `colcon build --packages-select navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON` and the focused planner-FSM test with the
+  existing runtime contract suite.
