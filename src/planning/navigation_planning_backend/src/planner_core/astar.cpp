@@ -148,7 +148,9 @@ namespace path_search {
             }
             const std::int64_t maximum_index = minimum_index +
                     static_cast<std::int64_t>(dimension) - 1;
-            if (maximum_index > std::numeric_limits<int>::max() ||
+            if (minimum_index > std::numeric_limits<int>::max() ||
+                minimum_index < std::numeric_limits<int>::min() ||
+                maximum_index > std::numeric_limits<int>::max() ||
                 maximum_index < std::numeric_limits<int>::min()) {
                 if (planner_context_) {
                     planner_context_->error(

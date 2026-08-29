@@ -12443,6 +12443,29 @@ release profiles must not use the former allowance.
   && ./build/navigation_mapping/test_mapping_actor --gtest_color=no
   && ./build/fast_lio_ros/test_propagated_odometry_worker --gtest_color=no`.
 
+### 2026-08-29 - Validate synchronizer scan and gap arithmetic at the queue boundary
+
+- **Owner/status:** FAST-LIO measurement synchronizer, `PROVISIONAL`; verified
+  by the focused synchronizer suite.
+- **Scope:** The synchronizer revalidates the front scan before bracket search
+  and uses checked timestamp differences for overlap diagnostics and IMU-gap
+  detection. Invalid or unrepresentable input is removed/rejected instead of
+  entering wait/bracket logic or signed subtraction.
+- **Safety impact:** A malformed scan or extreme timestamp pair cannot retain
+  stale queue state, produce a wrapped gap, or be mistaken for a usable
+  synchronized group.
+- **False-accept/false-reject consequences:** Valid simultaneous scans and
+  ordinary overlap/gap decisions are unchanged. Invalid direct queue state is
+  rejected and requires upstream resynchronization.
+- **Runtime cost and evidence:** One scan validation and checked deltas per
+  synchronizer attempt; `test_measurement_synchronizer` remains green.
+- **Removal/review condition:** Keep until the queue stores only a typed,
+  validated synchronization result rather than mutable sensor structs.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/fast_lio_core --target test_measurement_synchronizer
+  -j2 && ./build/fast_lio_core/test_measurement_synchronizer
+  --gtest_color=no`.
+
 ### 2026-08-29 - Honor synchronized estimator propagation epoch
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,

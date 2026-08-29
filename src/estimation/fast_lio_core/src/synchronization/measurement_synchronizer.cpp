@@ -17,6 +17,11 @@ Result<SynchronizationResult> MeasurementSynchronizer::synchronizeNext(
   }
 
   const LidarScan& scan = buffer.lidar_scans_.front();
+  const Status scan_status = scan.validate();
+  if (!scan_status.ok()) {
+    buffer.lidar_scans_.pop_front();
+    return scan_status;
+  }
   if (!scan.start_time.sameClockDomain(buffer.imu_samples_.front().time) ||
       !scan.start_time.sameClockDomain(buffer.imu_samples_.back().time)) {
     buffer.lidar_scans_.pop_front();
@@ -38,6 +43,12 @@ Result<SynchronizationResult> MeasurementSynchronizer::synchronizeNext(
           last_synchronized_end_time_->nanoseconds();
       const std::int64_t scan_start_ns = scan.start_time.nanoseconds();
       const std::int64_t scan_end_ns = scan.end_time.nanoseconds();
+      const auto overlap = checkedDifference(*last_synchronized_end_time_,
+                                             scan.start_time);
+      if (!overlap.ok()) {
+        buffer.lidar_scans_.pop_front();
+        return overlap.status();
+      }
       buffer.lidar_scans_.pop_front();
       ++stats_.rejected_scan_overlap;
       const std::size_t rejected_index = scan_index_++;
@@ -48,7 +59,7 @@ Result<SynchronizationResult> MeasurementSynchronizer::synchronizeNext(
               " current_scan_start_ns=" + std::to_string(scan_start_ns) +
               " current_scan_end_ns=" + std::to_string(scan_end_ns) +
               " overlap_duration_ns=" +
-              std::to_string(previous_end_ns - scan_start_ns) +
+              std::to_string(overlap.value().nanoseconds()) +
               " scan_index=" + std::to_string(rejected_index));
     }
   }
@@ -94,8 +105,12 @@ Result<SynchronizationResult> MeasurementSynchronizer::synchronizeNext(
   for (auto current = std::next(propagation_start_bracket); current != std::next(end_bracket);
        ++current) {
     const auto previous = std::prev(current);
-    const std::int64_t gap_ns =
-        current->time.nanoseconds() - previous->time.nanoseconds();
+    const auto gap = checkedDifference(current->time, previous->time);
+    if (!gap.ok()) {
+      buffer.lidar_scans_.pop_front();
+      return gap.status();
+    }
+    const std::int64_t gap_ns = gap.value().nanoseconds();
     if (gap_ns > maximum_gap_ns) {
       maximum_gap_ns = gap_ns;
       maximum_gap_previous_ns = previous->time.nanoseconds();
