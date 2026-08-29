@@ -36,6 +36,30 @@
 using namespace rog_map;
 using namespace navigation_math;
 
+namespace {
+bool pointIndexRepresentable(const Vec3f& point, const double resolution) {
+  if (!point.allFinite() || !std::isfinite(resolution) || resolution <= 0.0) {
+    return false;
+  }
+  for (int axis = 0; axis < 3; ++axis) {
+    const long double scaled = static_cast<long double>(point(axis)) /
+                               static_cast<long double>(resolution);
+#ifdef ORIGIN_AT_CORNER
+    const long double index = std::floor(scaled);
+#else
+    const long double index = scaled +
+        static_cast<long double>(signum(point(axis))) * 0.5L;
+#endif
+    if (!std::isfinite(index) ||
+        index < static_cast<long double>(std::numeric_limits<int>::min()) ||
+        index > static_cast<long double>(std::numeric_limits<int>::max())) {
+      return false;
+    }
+  }
+  return true;
+}
+}  // namespace
+
 PlanningGridExport ROGMap::exportPlanningGrid() const {
   PlanningGridExport output;
   output.base_layout.resolution_m = sc_.resolution;
@@ -308,12 +332,25 @@ void ROGMap::init() {
 bool ROGMap::findNearestCellThat(const bool& is, const GridType& target_type,
                                  const Vec3f& start_pos, Vec3f& nearest_pt,
                                  const double& max_dis) const {
+  if (!pointIndexRepresentable(start_pos, cfg_.resolution) ||
+      !std::isfinite(max_dis) || max_dis < 0.0 ||
+      !insideLocalMap(start_pos)) {
+    nearest_pt.setConstant(NAN);
+    return false;
+  }
   Vec3i start_id;
   posToGlobalIndex(start_pos, start_id);
   nearest_pt.setConstant(NAN);
 
   for (const auto& nei_id : cfg_.spherical_neighbor) {
-    const Vec3i q_id = start_id + nei_id;
+    Vec3i q_id = start_id;
+    for (int axis = 0; axis < 3; ++axis) {
+      const std::int64_t value = static_cast<std::int64_t>(start_id(axis)) +
+                                 static_cast<std::int64_t>(nei_id(axis));
+      if (value < std::numeric_limits<int>::min() ||
+          value > std::numeric_limits<int>::max()) return false;
+      q_id(axis) = static_cast<int>(value);
+    }
     Vec3f q_pos;
     globalIndexToPos(q_id, q_pos);
     if ((q_pos - start_pos).norm() > max_dis) {
@@ -332,12 +369,25 @@ bool ROGMap::findNearestCellThat(const bool& is, const GridType& target_type,
 bool ROGMap::findNearestInfCellThat(const bool& is, const GridType& target_type,
                                     const Vec3f& start_pos, Vec3f& nearest_pt,
                                     const double& max_dis) const {
+  if (!pointIndexRepresentable(start_pos, cfg_.resolution) ||
+      !std::isfinite(max_dis) || max_dis < 0.0 ||
+      !insideLocalMap(start_pos)) {
+    nearest_pt.setConstant(NAN);
+    return false;
+  }
   Vec3i start_id;
   posToGlobalIndex(start_pos, start_id);
   nearest_pt.setConstant(NAN);
 
   for (const auto& nei_id : cfg_.spherical_neighbor) {
-    const Vec3i q_id = start_id + nei_id;
+    Vec3i q_id = start_id;
+    for (int axis = 0; axis < 3; ++axis) {
+      const std::int64_t value = static_cast<std::int64_t>(start_id(axis)) +
+                                 static_cast<std::int64_t>(nei_id(axis));
+      if (value < std::numeric_limits<int>::min() ||
+          value > std::numeric_limits<int>::max()) return false;
+      q_id(axis) = static_cast<int>(value);
+    }
     Vec3f q_pos;
     globalIndexToPos(q_id, q_pos);
     if ((q_pos - start_pos).norm() > max_dis) {
@@ -358,18 +408,16 @@ bool ROGMap::findNearestInfCellThat(const bool& is, const GridType& target_type,
 
 bool ROGMap::isLineFree(const rog_map::Vec3f& start_pt, const rog_map::Vec3f& end_pt,
                         const bool& use_inf_map, const bool& use_unk_as_occ) const {
-  if (start_pt.array().isNaN().any() || end_pt.array().isNaN().any()) {
-    cout << YELLOW << " -- [ROGMap] Call isLineFree with NaN in start or end pt, return false."
+  const double ray_resolution = use_inf_map ? cfg_.inflation_resolution : cfg_.resolution;
+  if (!pointIndexRepresentable(start_pt, ray_resolution) ||
+      !pointIndexRepresentable(end_pt, ray_resolution)) {
+    cout << YELLOW << " -- [ROGMap] Call isLineFree with non-finite or unrepresentable endpoint, return false."
          << RESET << endl;
     return false;
   }
   if (!insideLocalMap(start_pt) || !insideLocalMap(end_pt)) return false;
   raycaster::RayCaster raycaster;
-  if (use_inf_map) {
-    raycaster.setResolution(cfg_.inflation_resolution);
-  } else {
-    raycaster.setResolution(cfg_.resolution);
-  }
+  raycaster.setResolution(ray_resolution);
   const auto point_is_traversable = [this, use_inf_map, use_unk_as_occ](const Vec3f& point) {
     if (!insideLocalMap(point)) return false;
     if (!use_unk_as_occ) {
@@ -400,7 +448,19 @@ bool ROGMap::isLineFree(const rog_map::Vec3f& start_pt, const rog_map::Vec3f& en
     return true;
   };
   if (!point_is_traversable(start_pt)) return false;
-  raycaster.setInput(start_pt, end_pt);
+  if (!raycaster.setInput(start_pt, end_pt)) {
+    int start_index[3]{};
+    int end_index[3]{};
+    raycaster.posToIndex(start_pt.x(), start_index[0]);
+    raycaster.posToIndex(start_pt.y(), start_index[1]);
+    raycaster.posToIndex(start_pt.z(), start_index[2]);
+    raycaster.posToIndex(end_pt.x(), end_index[0]);
+    raycaster.posToIndex(end_pt.y(), end_index[1]);
+    raycaster.posToIndex(end_pt.z(), end_index[2]);
+    if (start_index[0] != end_index[0] || start_index[1] != end_index[1] ||
+        start_index[2] != end_index[2]) return false;
+    return point_is_traversable(end_pt);
+  }
   Vec3f ray_pt;
   while (raycaster.step(ray_pt)) {
     if (!point_is_traversable(ray_pt)) return false;
@@ -461,6 +521,17 @@ bool ROGMap::isLineKnownFree(const Vec3f& start_pt, const Vec3f& end_pt,
         return false;
       }
     }
+  } else {
+    int start_index[3]{};
+    int end_index[3]{};
+    raycaster.posToIndex(start_pt.x(), start_index[0]);
+    raycaster.posToIndex(start_pt.y(), start_index[1]);
+    raycaster.posToIndex(start_pt.z(), start_index[2]);
+    raycaster.posToIndex(end_pt.x(), end_index[0]);
+    raycaster.posToIndex(end_pt.y(), end_index[1]);
+    raycaster.posToIndex(end_pt.z(), end_index[2]);
+    if (start_index[0] != end_index[0] || start_index[1] != end_index[1] ||
+        start_index[2] != end_index[2]) return false;
   }
   return true;
 }
@@ -469,49 +540,20 @@ bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, const double
                         const vec_Vec3i& neighbor_list) const {
   if (!start_pt.allFinite() || !end_pt.allFinite() ||
       !std::isfinite(max_dis) || max_dis < 0.0 ||
+      !pointIndexRepresentable(start_pt, cfg_.resolution) ||
+      !pointIndexRepresentable(end_pt, cfg_.resolution) ||
       !insideLocalMap(start_pt) || !insideLocalMap(end_pt)) {
     return false;
   }
-  const auto point_is_clear = [this, &neighbor_list](const Vec3f& point) {
-    if (!point.allFinite() || !insideLocalMap(point)) return false;
-    if (neighbor_list.empty()) return !isOccupied(point);
-    Vec3i point_id;
-    posToGlobalIndex(point, point_id);
-    for (const auto& neighbor : neighbor_list) {
-      Vec3i shifted = point_id;
-      for (int axis = 0; axis < 3; ++axis) {
-        const std::int64_t value = static_cast<std::int64_t>(point_id(axis)) +
-                                   static_cast<std::int64_t>(neighbor(axis));
-        if (value < std::numeric_limits<int>::min() ||
-            value > std::numeric_limits<int>::max()) return false;
-        shifted(axis) = static_cast<int>(value);
-      }
-      if (isOccupied(shifted)) return false;
-    }
-    return true;
-  };
-  if (!point_is_clear(start_pt)) return false;
-  raycaster::RayCaster raycaster;
-  raycaster.setResolution(cfg_.resolution);
-  Vec3f ray_pt;
-  if (!raycaster.setInput(start_pt, end_pt)) return point_is_clear(end_pt);
-  while (raycaster.step(ray_pt)) {
-    if (max_dis > 0 && (ray_pt - start_pt).norm() > max_dis) {
+  if (max_dis > 0.0) {
+    const long double dx = static_cast<long double>(end_pt.x()) - start_pt.x();
+    const long double dy = static_cast<long double>(end_pt.y()) - start_pt.y();
+    const long double dz = static_cast<long double>(end_pt.z()) - start_pt.z();
+    if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dz) ||
+        std::hypotl(std::fabs(dx), std::hypotl(std::fabs(dy), std::fabs(dz))) >
+            static_cast<long double>(max_dis)) {
       return false;
     }
-
-    if (!point_is_clear(ray_pt)) return false;
-  }
-  return point_is_clear(end_pt);
-}
-
-bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, Vec3f& free_local_goal,
-                        const double& max_dis, const vec_Vec3i& neighbor_list) const {
-  free_local_goal = start_pt;
-  if (!start_pt.allFinite() || !end_pt.allFinite() ||
-      !std::isfinite(max_dis) || max_dis < 0.0 ||
-      !insideLocalMap(start_pt) || !insideLocalMap(end_pt)) {
-    return false;
   }
   const auto point_is_clear = [this, &neighbor_list](const Vec3f& point) {
     if (!point.allFinite() || !insideLocalMap(point)) return false;
@@ -536,6 +578,81 @@ bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, Vec3f& free_
   raycaster.setResolution(cfg_.resolution);
   Vec3f ray_pt;
   if (!raycaster.setInput(start_pt, end_pt)) {
+    int start_index[3]{};
+    int end_index[3]{};
+    raycaster.posToIndex(start_pt.x(), start_index[0]);
+    raycaster.posToIndex(start_pt.y(), start_index[1]);
+    raycaster.posToIndex(start_pt.z(), start_index[2]);
+    raycaster.posToIndex(end_pt.x(), end_index[0]);
+    raycaster.posToIndex(end_pt.y(), end_index[1]);
+    raycaster.posToIndex(end_pt.z(), end_index[2]);
+    if (start_index[0] != end_index[0] || start_index[1] != end_index[1] ||
+        start_index[2] != end_index[2]) return false;
+    return point_is_clear(end_pt);
+  }
+  while (raycaster.step(ray_pt)) {
+    if (max_dis > 0 && (ray_pt - start_pt).norm() > max_dis) {
+      return false;
+    }
+
+    if (!point_is_clear(ray_pt)) return false;
+  }
+  return point_is_clear(end_pt);
+}
+
+bool ROGMap::isLineFree(const Vec3f& start_pt, const Vec3f& end_pt, Vec3f& free_local_goal,
+                        const double& max_dis, const vec_Vec3i& neighbor_list) const {
+  free_local_goal = start_pt;
+  if (!start_pt.allFinite() || !end_pt.allFinite() ||
+      !std::isfinite(max_dis) || max_dis < 0.0 ||
+      !pointIndexRepresentable(start_pt, cfg_.resolution) ||
+      !pointIndexRepresentable(end_pt, cfg_.resolution) ||
+      !insideLocalMap(start_pt) || !insideLocalMap(end_pt)) {
+    return false;
+  }
+  if (max_dis > 0.0) {
+    const long double dx = static_cast<long double>(end_pt.x()) - start_pt.x();
+    const long double dy = static_cast<long double>(end_pt.y()) - start_pt.y();
+    const long double dz = static_cast<long double>(end_pt.z()) - start_pt.z();
+    if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dz) ||
+        std::hypotl(std::fabs(dx), std::hypotl(std::fabs(dy), std::fabs(dz))) >
+            static_cast<long double>(max_dis)) {
+      return false;
+    }
+  }
+  const auto point_is_clear = [this, &neighbor_list](const Vec3f& point) {
+    if (!point.allFinite() || !insideLocalMap(point)) return false;
+    if (neighbor_list.empty()) return !isOccupied(point);
+    Vec3i point_id;
+    posToGlobalIndex(point, point_id);
+    for (const auto& neighbor : neighbor_list) {
+      Vec3i shifted = point_id;
+      for (int axis = 0; axis < 3; ++axis) {
+        const std::int64_t value = static_cast<std::int64_t>(point_id(axis)) +
+                                   static_cast<std::int64_t>(neighbor(axis));
+        if (value < std::numeric_limits<int>::min() ||
+            value > std::numeric_limits<int>::max()) return false;
+        shifted(axis) = static_cast<int>(value);
+      }
+      if (isOccupied(shifted)) return false;
+    }
+    return true;
+  };
+  if (!point_is_clear(start_pt)) return false;
+  raycaster::RayCaster raycaster;
+  raycaster.setResolution(cfg_.resolution);
+  Vec3f ray_pt;
+  if (!raycaster.setInput(start_pt, end_pt)) {
+    int start_index[3]{};
+    int end_index[3]{};
+    raycaster.posToIndex(start_pt.x(), start_index[0]);
+    raycaster.posToIndex(start_pt.y(), start_index[1]);
+    raycaster.posToIndex(start_pt.z(), start_index[2]);
+    raycaster.posToIndex(end_pt.x(), end_index[0]);
+    raycaster.posToIndex(end_pt.y(), end_index[1]);
+    raycaster.posToIndex(end_pt.z(), end_index[2]);
+    if (start_index[0] != end_index[0] || start_index[1] != end_index[1] ||
+        start_index[2] != end_index[2]) return false;
     if (!point_is_clear(end_pt)) return false;
     free_local_goal = end_pt;
     return true;

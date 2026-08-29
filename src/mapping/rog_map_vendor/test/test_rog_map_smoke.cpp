@@ -71,6 +71,21 @@ TEST(RogMapVendorSmoke, EndpointOnlyGeometryOccupiedUnknown) {
   EXPECT_FALSE(map.isLineKnownFree(obstacle, obstacle));
   EXPECT_FALSE(map.isLineKnownFree(rog_map::Vec3f(100.0, 0.0, 0.0),
                                    rog_map::Vec3f(100.0, 0.0, 0.0)));
+  // Same-cell queries must still classify the endpoint; a skipped DDA is not
+  // permission to accept an occupied cell.
+  EXPECT_FALSE(map.isLineFree(obstacle, obstacle, false, false));
+  EXPECT_TRUE(map.isLineFree(sensor_origin, sensor_origin, false, false));
+  rog_map::Vec3f same_cell_goal;
+  const rog_map::vec_Vec3i empty_neighbors;
+  EXPECT_FALSE(map.isLineFree(obstacle, obstacle, same_cell_goal, 0.0,
+                              empty_neighbors));
+  EXPECT_TRUE(map.isLineFree(sensor_origin, sensor_origin, same_cell_goal, 0.0,
+                             empty_neighbors));
+  EXPECT_FALSE(map.isLineFree(sensor_origin, rog_map::Vec3f(2.0, 0.0, 0.0), 1.0,
+                              empty_neighbors));
+  EXPECT_FALSE(map.isLineFree(sensor_origin,
+                              rog_map::Vec3f(std::numeric_limits<float>::infinity(), 0.0F, 0.0F),
+                              false, false));
   const rog_map::Vec3f huge_point(
       std::numeric_limits<float>::max(), 0.0F, 0.0F);
   EXPECT_FALSE(map.isLineKnownFree(huge_point, huge_point));

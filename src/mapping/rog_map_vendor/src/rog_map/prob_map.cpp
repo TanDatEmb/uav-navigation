@@ -1035,8 +1035,19 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud,
 
         // 4) process all inf points, updae free probability
         const auto add_miss_ray = [this, &cur_odom](const Vec3f& p) {
-            Vec3f raycast_start = (p - cur_odom).normalized() * cfg_.raycast_range_min + cur_odom;
-            raycast_data_.raycaster.setInput(raycast_start, p);
+            const Vec3f delta = p - cur_odom;
+            const float delta_norm = delta.norm();
+            if (!delta.allFinite() || !std::isfinite(delta_norm) || delta_norm <= 0.0F) {
+                ++last_diagnostics_.free_space_skipped_count;
+                return;
+            }
+            const Vec3f raycast_start =
+                delta.normalized() * cfg_.raycast_range_min + cur_odom;
+            if (!raycast_start.allFinite() ||
+                !raycast_data_.raycaster.setInput(raycast_start, p)) {
+                ++last_diagnostics_.free_space_skipped_count;
+                return;
+            }
             Vec3i ray_pt_id_g;
             std::uint64_t ray_steps = 0;
             while (raycast_data_.raycaster.stepIndex(ray_pt_id_g)) {
