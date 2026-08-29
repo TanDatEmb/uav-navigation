@@ -12092,3 +12092,42 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/navigation_planning_backend --target
   test_route_yaw_reference -j2`; focused test binary.
+
+### 2026-08-29 - Classify non-finite executable sweep bounds explicitly
+
+- **Owner/status:** Planning executable-trajectory world validator, `VERIFIED`
+  by the focused planner trajectory suite.
+- **Scope:** A non-finite polynomial acceleration bound or protected-region
+  arithmetic now returns `kNonFiniteTrajectory`; velocity norm overflow is
+  treated the same way. Protected-region updates are checked before they can
+  make a result appear valid.
+- **Safety impact:** Malformed trajectory math cannot be reported as a generic
+  failure with `failure=kNone`, and cannot publish a valid certificate with a
+  non-finite protected AABB.
+- **False-accept/false-reject consequences:** Valid trajectories retain the
+  same swept checks. Non-representable intermediate geometry is rejected with
+  an actionable reason.
+- **Runtime cost and evidence:** Finite checks occur once per sweep segment;
+  `test_trajectory` passes 105/105.
+- **Removal/review condition:** Keep until the validator uses a formally
+  bounded interval/extrema certificate instead of sampled dynamic bounds.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_planning_backend --target test_trajectory
+  -j2`; `./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
+
+### 2026-08-29 - Prevent Fast-LIO continuity-epoch exhaustion
+
+- **Owner/status:** Fast-LIO propagated IMU continuity boundary, `VERIFIED`
+  by compilation with the existing propagator tests.
+- **Scope:** A continuity restart at `UINT64_MAX` is rejected and invalidates
+  propagation instead of wrapping the epoch to zero.
+- **Safety impact:** Stale/new-epoch identity values cannot alias after an
+  exhausted counter.
+- **False-accept/false-reject consequences:** Normal gap recovery is unchanged;
+  only an exhausted identity counter fails closed.
+- **Runtime cost and evidence:** One boundary comparison per continuity reset;
+  propagator target builds successfully.
+- **Removal/review condition:** Keep until all estimator identity counters use
+  one checked monotonic allocator.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/fast_lio_core --target test_imu_state_propagator -j2`.

@@ -493,6 +493,13 @@ TEST(PlannerTrajectory, PieceRejectsMalformedAndLowDegreeRateInputs) {
   EXPECT_FALSE(constant_piece.checkMaxAccRate(-1.0));
 }
 
+TEST(PlannerTrajectory, NonFiniteAccelerationBoundIsClassifiedExplicitly) {
+  const geometry_utils::Piece malformed_piece(
+      1.0, Eigen::MatrixXd::Zero(2, 6));
+  EXPECT_FALSE(std::isfinite(
+      navigation_planning_backend::polynomialAccelerationBound(malformed_piece)));
+}
+
 TEST(PlannerTrajectory, TrajectoryRateCertificatesFailClosedAndSupportAliasing) {
   const Eigen::MatrixXd valid_coefficients = Eigen::MatrixXd::Zero(3, 1);
   const geometry_utils::Piece valid_piece(1.0, valid_coefficients);

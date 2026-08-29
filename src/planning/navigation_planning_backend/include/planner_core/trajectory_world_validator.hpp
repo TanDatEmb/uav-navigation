@@ -426,19 +426,16 @@ inline SweptValidationResult validateExecutableCandidate(
         [&result, resolution = geometry.inflated_resolution_m](
             const navigation_world_model::Point3& start,
             const navigation_world_model::Point3& end,
-            const double curve_deviation_m) {
+            const double curve_deviation_m) -> bool {
           const double cell_half_diagonal = 0.5 * std::sqrt(3.0) * resolution;
           const double expansion = curve_deviation_m + cell_half_diagonal;
           if (!start.allFinite() || !end.allFinite() ||
               !std::isfinite(expansion) || expansion < 0.0) {
-            result.protected_region.minimum =
-                navigation_world_model::Point3::Constant(
-                    std::numeric_limits<double>::quiet_NaN());
-            result.protected_region.maximum = result.protected_region.minimum;
-            return;
+            return false;
           }
           const auto minimum = start.cwiseMin(end).array() - expansion;
           const auto maximum = start.cwiseMax(end).array() + expansion;
+          if (!minimum.allFinite() || !maximum.allFinite()) return false;
           if (result.sample_count == 0U && result.segment_count == 0U) {
             result.protected_region.minimum = minimum.matrix();
             result.protected_region.maximum = maximum.matrix();
@@ -448,8 +445,13 @@ inline SweptValidationResult validateExecutableCandidate(
             result.protected_region.maximum =
                 result.protected_region.maximum.cwiseMax(maximum.matrix());
           }
+          return result.protected_region.minimum.allFinite() &&
+              result.protected_region.maximum.allFinite();
         };
-    include_protected_segment(previous, previous, 0.0);
+    if (!include_protected_segment(previous, previous, 0.0)) {
+        result.failure = SweptValidationResult::Failure::kNonFiniteTrajectory;
+        return result;
+    }
 
     const auto point_safe = [&world](const auto& point,
                                      const navigation_world_model::UnknownPolicy policy) {
@@ -488,8 +490,16 @@ inline SweptValidationResult validateExecutableCandidate(
         const int piece_index = piece_location->index;
         const auto& piece = candidate.position[piece_index];
         const double acceleration_bound = polynomialAccelerationBound(piece);
-        if (!std::isfinite(acceleration_bound)) return result;
-        const double speed = std::max(0.1, candidate.position.getVel(t).norm());
+        if (!std::isfinite(acceleration_bound)) {
+            result.failure = SweptValidationResult::Failure::kNonFiniteTrajectory;
+            return result;
+        }
+        const double speed_norm = candidate.position.getVel(t).norm();
+        if (!std::isfinite(speed_norm)) {
+            result.failure = SweptValidationResult::Failure::kNonFiniteTrajectory;
+            return result;
+        }
+        const double speed = std::max(0.1, speed_norm);
         double dt = std::clamp(spatial_step / speed, 0.002, 0.05);
         // Use the cumulative boundary returned by the same half-open lookup
         // instead of reconstructing it as `t + duration - local_time`.
@@ -556,7 +566,10 @@ inline SweptValidationResult validateExecutableCandidate(
             }
             return result;
         }
-        include_protected_segment(previous, next, curve_deviation_bound);
+        if (!include_protected_segment(previous, next, curve_deviation_bound)) {
+            result.failure = SweptValidationResult::Failure::kNonFiniteTrajectory;
+            return result;
+        }
         result.first_blocked_tt = next_t;
         const bool endpoint_safe = next.allFinite() && point_safe(next, segment_policy);
         const bool segment_safe = endpoint_safe && world.isSegmentTraversable(

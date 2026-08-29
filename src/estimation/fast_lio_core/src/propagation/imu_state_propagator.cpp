@@ -2,6 +2,7 @@
 
 #include <Eigen/Eigenvalues>
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -113,6 +114,12 @@ ImuRecordResult ImuStatePropagator::restartContinuity(const ImuSample& sample) {
   valid_ = false;
   requires_reanchor_ = true;
   diagnostics_.requires_reanchor = true;
+  if (continuity_epoch_ == std::numeric_limits<std::uint64_t>::max()) {
+    const Status failure(StatusCode::kOutOfRange,
+                         "IMU continuity epoch is exhausted");
+    setFailure(failure);
+    return {failure, ImuRecordDisposition::kRejected};
+  }
   ++continuity_epoch_;
   diagnostics_.continuity_epoch = continuity_epoch_;
   ++diagnostics_.continuity_reset_count;
