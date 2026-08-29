@@ -1798,7 +1798,6 @@ void NavigationRuntimeNode::runCycle() {
   // invalid without suppressing a corrected observation from ROG-Map.
   if (!propagated_state) return;
   const auto execution_stamp_ns = propagated_state->state.source_stamp_ns;
-  const auto execution_age_ns = now_ns - execution_stamp_ns;
   const auto execution_freshness =
       navigation_execution::classifyTimestampFreshness(now_ns, execution_stamp_ns, maximum_age_ns);
   if (execution_freshness != navigation_execution::TimestampFreshness::VALID) {
@@ -2543,7 +2542,7 @@ void NavigationRuntimeNode::runCycle() {
         planner_elapsed_ms > planner_diagnostics.solve_deadline_s * 1000.0;
     const auto trace_now_ns = now().nanoseconds();
     const double execution_age_at_trace_ms =
-        static_cast<double>(trace_now_ns - execution_stamp_ns) * 1.0e-6;
+        executionStateAgeMs(trace_now_ns, execution_stamp_ns);
     RCLCPP_INFO(get_logger(),
                 "planner backend decision_trace cycle=%lu solve_generation=%lu committed_generation=%lu "
                 "pinned_world_generation=%lu pinned_world_revision=%lu "
@@ -2572,7 +2571,7 @@ void NavigationRuntimeNode::runCycle() {
                 static_cast<long>(committed_certificate.validated_world.observation_stamp_ns),
                 static_cast<long>(cloud_stamp_ns), static_cast<long>(corrected_stamp_ns),
                 static_cast<long>(execution_stamp_ns),
-                static_cast<double>(execution_age_ns) * 1e-6,
+                execution_age_at_trace_ms,
                 plan_from_rest_with_transition ? "PlanFromRest" : "ReplanOnce",
                 static_cast<int>(result),
                 replan_return_code, commit_decision, solve_stage,

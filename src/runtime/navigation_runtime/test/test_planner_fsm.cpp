@@ -198,6 +198,9 @@ TEST(PlannerFsm, AttributesOnlyTheCommitProducedByThisSolveCycle) {
 TEST(PlannerFsm, ExecutionAgeUsesDeclaredSolveStartInstant) {
   EXPECT_DOUBLE_EQ(executionStateAgeMs(1'250'000'000LL, 1'000'000'000LL), 250.0);
   EXPECT_DOUBLE_EQ(executionStateAgeMs(900'000'000LL, 1'000'000'000LL), -100.0);
+  EXPECT_TRUE(std::isnan(executionStateAgeMs(
+      std::numeric_limits<std::int64_t>::max(),
+      std::numeric_limits<std::int64_t>::min())));
 }
 
 TEST(PlannerFsm, SamplesDeclaredTerminalCandidateBeyondExecutionLease) {

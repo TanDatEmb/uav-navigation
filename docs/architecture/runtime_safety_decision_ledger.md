@@ -12210,3 +12210,22 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/navigation_planning_backend --target
   test_planner_config -j2`; focused test binary.
+
+### 2026-08-29 - Make runtime execution-age diagnostics checked
+
+- **Owner/status:** Navigation runtime trace and planner-cycle diagnostics,
+  `VERIFIED` by the runtime FSM test and package build.
+- **Scope:** Remove the pre-gate raw timestamp subtraction and route execution
+  age reporting through the shared checked-difference helper.
+- **Safety impact:** Extreme external timestamps cannot invoke signed-overflow
+  undefined behavior while the freshness gate is being evaluated or logged.
+- **False-accept/false-reject consequences:** The existing freshness classifier
+  remains authoritative; an unrepresentable diagnostic delta reports NaN and
+  cannot alter command acceptance.
+- **Runtime cost and evidence:** One checked integer delta for the trace value;
+  focused runtime tests cover ordinary and endpoint values.
+- **Removal/review condition:** Keep until all runtime timestamp ages use typed
+  checked operations rather than raw integer subtraction.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_runtime --target test_planner_fsm -j2`;
+  focused test binary.
