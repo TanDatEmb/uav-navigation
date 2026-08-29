@@ -1364,11 +1364,14 @@ bool FastLioPipeline::resolveInitialStatePrior(const Timestamp& application_time
       initial_prior_candidate_.reset();
       diagnostics_.initial_prior.reason = "TOPIC_PRIOR_TIMESTAMP_OVERFLOW";
     } else if (candidate->sample_time.nanoseconds() > application_time.nanoseconds()) {
+      diagnostics_.initial_prior.time_delta_ns =
+          candidate_delta.value().nanoseconds();
       diagnostics_.initial_prior.waiting_for_sensor_time = true;
       diagnostics_.initial_prior.status = InitialPriorStatus::kWaiting;
       diagnostics_.initial_prior.reason = "TOPIC_PRIOR_WAITING_FOR_SENSOR_TIME";
     } else {
       const std::int64_t age = candidate_delta.value().nanoseconds();
+      diagnostics_.initial_prior.time_delta_ns = age;
       diagnostics_.initial_prior.candidate_age_ns = age;
       diagnostics_.initial_prior.candidate_timestamp_ns = candidate->sample_time.nanoseconds();
       if (age <= config_.initial_prior.maximum_topic_prior_age_ns) {

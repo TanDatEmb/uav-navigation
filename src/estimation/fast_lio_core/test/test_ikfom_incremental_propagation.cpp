@@ -27,9 +27,10 @@ std::vector<ImuSample> mixedMotion(std::size_t count,
   std::vector<ImuSample> samples;
   samples.reserve(count);
   for (std::size_t index = 0; index < count; ++index) {
-    const double time_s = static_cast<double>(index * period_ns) * 1e-9;
+    const auto sample_index = static_cast<std::int64_t>(index + 1U);
+    const double time_s = static_cast<double>(sample_index * period_ns) * 1e-9;
     samples.push_back(ImuSample{
-        Timestamp(static_cast<std::int64_t>(index) * period_ns),
+        Timestamp(sample_index * period_ns),
         {0.08 + 0.02 * std::sin(0.7 * time_s),
          -0.04 + 0.01 * std::cos(0.4 * time_s), 0.12},
         {0.3 * std::sin(0.3 * time_s), 0.2 * std::cos(0.5 * time_s),
@@ -136,7 +137,7 @@ TEST(IkfomIncrementalPropagationGate, ReanchorBatchAndReplayAreEquivalent) {
 
 TEST(IkfomIncrementalPropagationGate, InterpolatesCorrectionBoundary) {
   const auto samples = mixedMotion(202U, 5'000'000);
-  const Timestamp boundary(302'500'000);
+  const Timestamp boundary(307'500'000);
   ASSERT_LT(samples[60].time.nanoseconds(), boundary.nanoseconds());
   ASSERT_GT(samples[61].time.nanoseconds(), boundary.nanoseconds());
   ManifoldState corrected;
@@ -172,11 +173,11 @@ TEST(IkfomIncrementalPropagationGate, FailedPredictionRollsBackExactly) {
   for (auto& sample : invalid) {
     sample.time = Timestamp(sample.time.nanoseconds() + 50'000'000);
   }
-  invalid[3].time = Timestamp(95'000'000);
+  invalid[3].time = Timestamp(75'000'000);
   const auto failed = estimator.predict(invalid, invalid.front().time,
                                         invalid.back().time);
   ASSERT_FALSE(failed.ok());
-  EXPECT_EQ(failed.status().code(), StatusCode::kInsufficientData);
+  EXPECT_EQ(failed.status().code(), StatusCode::kTimestampRegression);
   const auto state_after = estimator.stateView();
   EXPECT_EQ((state_after.position_odom_imu_m() -
              state_before.position_odom_imu_m()).norm(), 0.0);

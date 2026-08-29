@@ -12689,6 +12689,9 @@ release profiles must not use the former allowance.
 - **Scope:** Prediction interval, IMU bracket gaps, retained-history pruning,
   initial-prior age/wait deltas, and correction-age diagnostics now use the
   shared checked timestamp difference instead of raw signed subtraction.
+  The checked initial-prior delta is also retained in diagnostics for both
+  waiting and applied candidates, preserving the established observability
+  contract without reintroducing unchecked arithmetic.
 - **Safety impact:** Extreme or clock-inconsistent public timestamps cannot
   overflow an `int64_t` delta and silently pass a prediction, prior, or age
   gate. The affected operation rejects or reports an unavailable age while
