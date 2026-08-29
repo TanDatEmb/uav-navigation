@@ -3,6 +3,8 @@
 #include <Eigen/Geometry>
 #include <Eigen/Eigenvalues>
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include "fast_lio_core/estimation/ikfom_estimator.hpp"
@@ -59,6 +61,22 @@ TEST(IkfomEstimatorTest, UsesUpstreamStateAndProcessJacobians) {
   EXPECT_EQ(state_jacobian.cols(), 23);
 }
 
+TEST(IkfomEstimatorTest, RejectsNonFiniteNoiseConfiguration) {
+  IkfomEstimatorConfig config;
+  config.gyro_noise_standard_deviation =
+      std::numeric_limits<double>::infinity();
+  EXPECT_THROW((IkfomEstimator(config, ResidualBuilderConfig{})),
+               std::invalid_argument);
+}
+
+TEST(IkfomEstimatorTest, RejectsIterationCountThatCannotReachUpstreamFilter) {
+  IkfomEstimatorConfig config;
+  config.maximum_iterations =
+      static_cast<std::size_t>(std::numeric_limits<int>::max()) + 1U;
+  EXPECT_THROW((IkfomEstimator(config, ResidualBuilderConfig{})),
+               std::invalid_argument);
+}
+
 TEST(IkfomEstimatorTest, PredictsThroughUpstreamFilterAndKeepsFixedExtrinsic) {
   IkfomEstimatorConfig config;
   config.maximum_integration_step_ns = 20'000'000;
@@ -74,12 +92,12 @@ TEST(IkfomEstimatorTest, PredictsThroughUpstreamFilterAndKeepsFixedExtrinsic) {
 
   std::vector<ImuSample> samples(3);
   for (std::size_t index = 0; index < samples.size(); ++index) {
-    samples[index].time = Timestamp(static_cast<std::int64_t>(index) * 10'000'000);
+    samples[index].time = Timestamp(1 + static_cast<std::int64_t>(index) * 10'000'000);
     samples[index].linear_acceleration_imu_m_s2 =
         Eigen::Vector3d(0.0, 0.0, 9.80665);
   }
   const auto trajectory =
-      estimator.predict(samples, Timestamp(0), Timestamp(20'000'000));
+      estimator.predict(samples, Timestamp(1), Timestamp(20'000'001));
   ASSERT_TRUE(trajectory.ok()) << trajectory.status().message();
   EXPECT_EQ(trajectory.value().size(), 3U);
 
@@ -237,7 +255,7 @@ TEST(IkfomEstimatorTest, CovarianceRemainsSymmetricAndPsdAcrossHundredsOfPredict
   IkfomEstimator estimator(config, ResidualBuilderConfig{});
   estimator.initialize(ManifoldState{});
   for (std::int64_t step = 0; step < 300; ++step) {
-    const std::int64_t start_ns = step * 10'000'000;
+    const std::int64_t start_ns = 1 + step * 10'000'000;
     const std::int64_t end_ns = start_ns + 10'000'000;
     std::vector<ImuSample> samples(2);
     samples[0].time = Timestamp(start_ns);
@@ -270,15 +288,15 @@ TEST(IkfomEstimatorTest, OversizedLaterIntervalDoesNotPartiallyPredict) {
   const ManifoldState state_before = estimator.stateView();
   const auto covariance_before = estimator.covariance();
   std::vector<ImuSample> samples(3);
-  samples[0].time = Timestamp(0);
-  samples[1].time = Timestamp(10'000'000);
-  samples[2].time = Timestamp(40'000'000);
+  samples[0].time = Timestamp(1);
+  samples[1].time = Timestamp(10'000'001);
+  samples[2].time = Timestamp(40'000'001);
   for (auto& sample : samples) {
     sample.linear_acceleration_imu_m_s2 = {0.1, 0.0, 9.80665};
   }
 
   const auto result =
-      estimator.predict(samples, Timestamp(0), Timestamp(40'000'000));
+      estimator.predict(samples, Timestamp(1), Timestamp(40'000'001));
 
   ASSERT_FALSE(result.ok());
   EXPECT_EQ(result.status().code(), StatusCode::kInsufficientData);
@@ -293,27 +311,27 @@ TEST(IkfomEstimatorTest, NumericalFailureRollsBackStateAndCovariance) {
   const ManifoldState state_before = estimator.stateView();
   const auto covariance_before = estimator.covariance();
   std::vector<ImuSample> samples(3);
-  samples[0].time = Timestamp(0);
-  samples[1].time = Timestamp(10'000'000);
-  samples[2].time = Timestamp(20'000'000);
+  samples[0].time = Timestamp(1);
+  samples[1].time = Timestamp(10'000'001);
+  samples[2].time = Timestamp(20'000'001);
   samples[0].linear_acceleration_imu_m_s2 = {0.0, 0.0, 9.80665};
   samples[1].linear_acceleration_imu_m_s2 = {0.0, 0.0, 9.80665};
   samples[2].linear_acceleration_imu_m_s2 = {
       std::numeric_limits<double>::max(), 0.0, 9.80665};
 
   const auto result =
-      estimator.predict(samples, Timestamp(0), Timestamp(20'000'000));
+      estimator.predict(samples, Timestamp(1), Timestamp(20'000'001));
 
   ASSERT_FALSE(result.ok());
   EXPECT_EQ(result.status().code(), StatusCode::kNumericalFailure);
   expectStateAndCovarianceEqual(state_before, covariance_before, estimator);
 
   samples.resize(2);
-  samples[0].time = Timestamp(0);
-  samples[1].time = Timestamp(10'000'000);
+  samples[0].time = Timestamp(1);
+  samples[1].time = Timestamp(10'000'001);
   samples[1].linear_acceleration_imu_m_s2 = {0.0, 0.0, 9.80665};
   const auto recovery =
-      estimator.predict(samples, Timestamp(0), Timestamp(10'000'000));
+      estimator.predict(samples, Timestamp(1), Timestamp(10'000'001));
   ASSERT_TRUE(recovery.ok()) << recovery.status().message();
 }
 

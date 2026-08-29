@@ -10924,6 +10924,55 @@ release profiles must not use the former allowance.
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
 
+### 2026-08-29 - Synchronize Fast-LIO public frame generation and transform publication
+
+- **Owner/status:** Fast-LIO ROS public-frame generation and TF publisher,
+  `VERIFIED` by ROS frame-generation tests and library compilation.
+- **Scope:** Protect public-frame snapshot/observe state with one mutex, reject
+  generation/discontinuity counter exhaustion, and snapshot the immutable
+  base-link converter before conversion in `RosTransformPublisher`.
+- **Safety impact:** Concurrent corrected-output, propagated-output and TF
+  publication cannot observe mixed generation state or race a late converter
+  replacement. Counter exhaustion invalidates the public frame instead of
+  wrapping its identity to zero.
+- **False-accept/false-reject consequences:** A converter absent at a
+  publication instant or an exhausted generation is suppressed/fails closed;
+  normal immutable converters and generation events are unchanged.
+- **Runtime cost and evidence:** One short mutex critical section per frame
+  snapshot/observe and one shared_ptr copy before conversion. The focused frame
+  suite passes 3/3; no planner threshold or fallback gate changed.
+- **Removal/review condition:** Keep until the public-frame generation and all
+  publisher lifecycles are represented by immutable/atomic typed snapshots.
+- **Verification:** `cmake --build build/fast_lio_ros --target
+  test_lio_public_frame_generation -j2 &&
+  ./build/fast_lio_ros/test_lio_public_frame_generation --gtest_color=no`.
+
+### 2026-08-29 - Validate IKFoM configuration and interpolation arithmetic
+
+- **Owner/status:** Fast-LIO IKFoM estimator constructor, prediction and
+  correction diagnostics, `VERIFIED` by the focused IKFoM estimator suite.
+- **Scope:** Reject non-finite/noise configurations and iteration counts that
+  cannot be represented by the upstream filter; use checked timestamp
+  differences for interpolation and integration; require finite terminal
+  increment/correction diagnostics before marking an update finite.
+- **Safety impact:** Direct estimator callers can no longer inject infinite
+  process covariance or overflow an int iteration count. Extreme timestamp
+  brackets fail closed, and a correction with non-representable diagnostics is
+  not reported as successful.
+- **False-accept/false-reject consequences:** Invalid direct configurations and
+  malformed timestamps are rejected. Zero noise remains allowed as an explicit
+  deterministic model, and ordinary finite IKFoM correction behavior is
+  unchanged.
+- **Runtime cost and evidence:** Constant-time config checks and one checked
+  subtraction per interpolation/integration interval. `test_ikfom_estimator`
+  passes 11/11, including invalid noise/iteration regressions.
+- **Removal/review condition:** Keep until all estimator configuration and
+  timestamp boundaries use shared validated value types and upstream status
+  APIs.
+- **Verification:** `cmake --build build/fast_lio_core --target
+  test_ikfom_estimator -j2 &&
+  ./build/fast_lio_core/test_ikfom_estimator --gtest_color=no`.
+
 ### 2026-08-29 - Harden Fast-LIO quaternion and timestamp interpolation boundaries
 
 - **Owner/status:** Fast-LIO rigid state, transform, trajectory and angular

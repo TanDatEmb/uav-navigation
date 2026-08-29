@@ -55,16 +55,25 @@ namespace {
                   "No IMU sample at or before IKFoM prediction boundary");
   }
   const auto lower = std::prev(upper);
-  const std::int64_t interval_ns =
-      upper->time.nanoseconds() - lower->time.nanoseconds();
+  const auto interval = checkedDifference(upper->time, lower->time);
+  if (!interval.ok()) {
+    return interval.status();
+  }
+  const std::int64_t interval_ns = interval.value().nanoseconds();
   if (interval_ns <= 0) {
     return Status(StatusCode::kTimestampRegression,
                   "IMU timestamps must be strictly increasing");
   }
-  const double alpha =
-      static_cast<double>(time.nanoseconds() -
-                          lower->time.nanoseconds()) /
-      static_cast<double>(interval_ns);
+  const auto elapsed = checkedDifference(time, lower->time);
+  if (!elapsed.ok()) {
+    return elapsed.status();
+  }
+  const double alpha = static_cast<double>(elapsed.value().nanoseconds()) /
+                       static_cast<double>(interval_ns);
+  if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
+    return Status(StatusCode::kNumericalFailure,
+                  "IKFoM interpolation ratio is not finite");
+  }
   return ImuSample{
       time,
       (1.0 - alpha) * lower->angular_velocity_imu_rad_s +
@@ -138,6 +147,22 @@ IkfomEstimator::IkfomEstimator(IkfomEstimatorConfig config,
       !(config_.convergence_limit > 0.0) ||
       !(config_.initial_covariance > 0.0)) {
     throw std::invalid_argument("invalid IKFoM runtime configuration");
+  }
+  if (config_.maximum_iterations >
+      static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument("IKFoM iteration count exceeds filter limit");
+  }
+  if (!std::isfinite(config_.convergence_limit) ||
+      !std::isfinite(config_.initial_covariance) ||
+      !std::isfinite(config_.gyro_noise_standard_deviation) ||
+      !std::isfinite(config_.accel_noise_standard_deviation) ||
+      !std::isfinite(config_.gyro_bias_random_walk_standard_deviation) ||
+      !std::isfinite(config_.accel_bias_random_walk_standard_deviation) ||
+      config_.gyro_noise_standard_deviation < 0.0 ||
+      config_.accel_noise_standard_deviation < 0.0 ||
+      config_.gyro_bias_random_walk_standard_deviation < 0.0 ||
+      config_.accel_bias_random_walk_standard_deviation < 0.0) {
+    throw std::invalid_argument("invalid IKFoM noise configuration");
   }
   std::array<double, IkfomState::DOF> limits{};
   limits.fill(config_.convergence_limit);
@@ -227,9 +252,12 @@ Result<ImuTrajectory> IkfomEstimator::predict(
   }
 
   for (std::size_t index = 1; index < integration_samples.size(); ++index) {
-    const std::int64_t dt_ns =
-        integration_samples[index].time.nanoseconds() -
-        integration_samples[index - 1].time.nanoseconds();
+    const auto dt = checkedDifference(integration_samples[index].time,
+                                      integration_samples[index - 1].time);
+    if (!dt.ok()) {
+      return dt.status();
+    }
+    const std::int64_t dt_ns = dt.value().nanoseconds();
     if (dt_ns <= 0 || dt_ns > config_.maximum_integration_step_ns) {
       return Status(StatusCode::kInsufficientData,
                     "IKFoM integration step is zero, negative or too large");
@@ -262,8 +290,12 @@ Result<ImuTrajectory> IkfomEstimator::predict(
   for (std::size_t index = 1; index < integration_samples.size(); ++index) {
     const auto& previous = integration_samples[index - 1];
     const auto& current = integration_samples[index];
-    const std::int64_t dt_ns =
-        current.time.nanoseconds() - previous.time.nanoseconds();
+    const auto dt = checkedDifference(current.time, previous.time);
+    if (!dt.ok()) {
+      restoreEstimatorState();
+      return dt.status();
+    }
+    const std::int64_t dt_ns = dt.value().nanoseconds();
     double dt_seconds = static_cast<double>(dt_ns) * 1e-9;
     filter_.predict(dt_seconds, noise, toIkfomInput(previous, current));
     filter_mutated = true;
@@ -339,8 +371,18 @@ IkfomCorrectionResult IkfomEstimator::correct(
   result.iteration_count =
       static_cast<std::size_t>(std::max(update.iteration_count, 0));
   result.final_increment_norm = update.final_increment_norm;
+  result.correction_translation_norm_m =
+      (result.corrected_state.position_odom_imu_m() -
+       result.predicted_state.position_odom_imu_m())
+          .norm();
+  result.correction_rotation_norm_rad =
+      result.predicted_state.orientation_odom_imu().angularDistance(
+          result.corrected_state.orientation_odom_imu());
   result.finite = result.corrected_state.allFinite() &&
-                  covarianceValid(result.corrected_covariance);
+                  covarianceValid(result.corrected_covariance) &&
+                  std::isfinite(result.final_increment_norm) &&
+                  std::isfinite(result.correction_translation_norm_m) &&
+                  std::isfinite(result.correction_rotation_norm_rad);
   const bool measurement_usable =
       update.measurement_valid && !update.numerical_failure &&
       result.residual_diagnostics.accepted_residual_count >=
@@ -366,13 +408,6 @@ IkfomCorrectionResult IkfomEstimator::correct(
   if (!result.residual_diagnostics.translation_observability_valid) {
     ++result.observability_rejection_count;
   }
-  result.correction_translation_norm_m =
-      (result.corrected_state.position_odom_imu_m() -
-       result.predicted_state.position_odom_imu_m())
-          .norm();
-  result.correction_rotation_norm_rad =
-      result.predicted_state.orientation_odom_imu().angularDistance(
-          result.corrected_state.orientation_odom_imu());
   if (!result.successful) {
     // A rejected LiDAR update must not become the prior for the next IMU
     // prediction. IKFoM updates in place, so restore the transactional prior.
