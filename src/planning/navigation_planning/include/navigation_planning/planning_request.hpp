@@ -22,7 +22,7 @@ struct GoalIdentity {
   Eigen::Vector3d target_world{Eigen::Vector3d::Zero()};
 
   [[nodiscard]] bool valid() const noexcept {
-    return localization_epoch != 0 && goal_epoch != 0 && request_id != 0 &&
+    return localization_epoch != 0 && goal_epoch != 0 && !mission_id.empty() && request_id != 0 &&
            target_world.allFinite();
   }
 };
@@ -43,7 +43,12 @@ struct PlanningRequest {
   [[nodiscard]] bool valid() const noexcept {
     return goal.valid() && start_state.finite() &&
            static_cast<bool>(world) && world->identity().localization_epoch ==
-               goal.localization_epoch && dynamics.valid() &&
+               goal.localization_epoch && world->identity().generation != 0 &&
+           world->identity().revision != 0 && world->identity().observation_stamp_ns > 0 &&
+           history.previous_velocity_world.allFinite() &&
+           (history.previous_bundle_generation != 0 ||
+            history.previous_velocity_world.isZero(1.0e-12)) &&
+           dynamics.valid() &&
            !budget.exhausted();
   }
 };

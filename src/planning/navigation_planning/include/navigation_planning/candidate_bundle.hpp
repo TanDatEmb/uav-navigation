@@ -14,6 +14,11 @@ namespace navigation_planning {
 
 enum class CandidateRole : std::uint8_t { kMain, kBackup, kEmergency };
 
+[[nodiscard]] constexpr bool candidateRoleValid(CandidateRole role) noexcept {
+  return role == CandidateRole::kMain || role == CandidateRole::kBackup ||
+         role == CandidateRole::kEmergency;
+}
+
 struct TrajectoryPoint {
   Eigen::Vector3d position_world{Eigen::Vector3d::Zero()};
   Eigen::Vector3d velocity_world{Eigen::Vector3d::Zero()};
@@ -57,8 +62,10 @@ struct CandidateBundle {
     return localization_epoch != 0 && goal_epoch != 0 && request_id != 0 &&
            bundle_generation != 0 && valid_from_ns > 0 &&
            valid_until_ns >= valid_from_ns && static_cast<bool>(evaluator) &&
+           candidateRoleValid(role) &&
            world_identity.localization_epoch == localization_epoch &&
-           world_identity.generation != 0 && world_identity.revision != 0;
+           world_identity.generation != 0 && world_identity.revision != 0 &&
+           world_identity.observation_stamp_ns > 0;
   }
 
   [[nodiscard]] bool hasTrajectoryMetadata() const noexcept {
@@ -84,7 +91,9 @@ struct CandidateBundle {
     }
     TrajectoryPoint point;
     point.role = role;
-    if (!evaluator(stamp_ns, point) || !point.finite()) return std::nullopt;
+    if (!evaluator(stamp_ns, point) || !point.finite() || point.role != role) {
+      return std::nullopt;
+    }
     return point;
   }
 
@@ -102,7 +111,9 @@ struct CandidateBundle {
     TrajectoryPoint point;
     point.role = role;
     const auto end_stamp_ns = static_cast<std::int64_t>(end_wall_time_s * 1.0e9);
-    if (!evaluator(end_stamp_ns, point) || !point.finite()) return std::nullopt;
+    if (!evaluator(end_stamp_ns, point) || !point.finite() || point.role != role) {
+      return std::nullopt;
+    }
     // The evaluator's runtime completion predicate is intentionally strict
     // (it marks a sample finished only after the declared end). This API is
     // explicitly the declared endpoint, so normalize its lifecycle flag for

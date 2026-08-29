@@ -40,6 +40,17 @@ TEST(PlanningCandidate, RejectsInvalidProvenanceAndNonFiniteSamples) {
   EXPECT_FALSE(candidate.valid());
 }
 
+TEST(PlanningCandidate, RejectsEvaluatorRoleMutationAndUnknownRole) {
+  auto candidate = validCandidate();
+  candidate.evaluator = [](std::int64_t, navigation_planning::TrajectoryPoint& point) {
+    point.role = navigation_planning::CandidateRole::kBackup;
+    return true;
+  };
+  EXPECT_FALSE(candidate.sample(150).has_value());
+  candidate.role = static_cast<navigation_planning::CandidateRole>(255U);
+  EXPECT_FALSE(candidate.valid());
+}
+
 TEST(PlanningOutcome, SuccessRequiresCandidateAndFailureDoesNotCarryOne) {
   navigation_planning::PlanningOutcome success;
   success.status = navigation_planning::PlanningStatus::kSuccess;
@@ -50,6 +61,8 @@ TEST(PlanningOutcome, SuccessRequiresCandidateAndFailureDoesNotCarryOne) {
   failure.status = navigation_planning::PlanningStatus::kDeadline;
   EXPECT_TRUE(failure.valid());
   failure.candidate = validCandidate();
+  EXPECT_FALSE(failure.valid());
+  failure.status = static_cast<navigation_planning::PlanningStatus>(255U);
   EXPECT_FALSE(failure.valid());
 }
 
@@ -90,7 +103,7 @@ TEST(KinematicState, QuaternionFiniteCheckIsStableForLargeFiniteCoefficients) {
 
   state.orientation_world_body = Eigen::Quaterniond(1.0e200, 1.0e200,
                                                       -1.0e200, 1.0e200);
-  EXPECT_TRUE(state.finite());
+  EXPECT_FALSE(state.finite());
 
   state.orientation_world_body = Eigen::Quaterniond(0.0, 0.0, 0.0, 0.0);
   EXPECT_FALSE(state.finite());

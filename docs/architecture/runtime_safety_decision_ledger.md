@@ -10985,3 +10985,29 @@ release profiles must not use the former allowance.
   test_navigation_runtime_shutdown -j2 &&
   ./build/navigation_runtime/test_navigation_runtime_shutdown
   --gtest_color=no`.
+
+### 2026-08-29 - Tighten planning and command public contracts
+
+- **Owner/status:** Planning request/candidate outcome and execution commit
+  boundaries, `VERIFIED` by focused contract tests.
+- **Scope:** Validate mission/world/history identity, unit quaternions and
+  unknown-space/role/status domains; reject evaluator role mutation and
+  future command headers; enforce strictly increasing commit transaction IDs.
+- **Safety impact:** Invalid public data can no longer weaken unknown-space
+  policy, change MAIN/BACKUP classification after evaluation, bypass future
+  command timing, or commit an out-of-order solve. Valid planner behavior and
+  existing physical limits are unchanged.
+- **False-accept/false-reject consequences:** Direct callers that previously
+  relied on loader-only validation or unnormalized quaternions are rejected;
+  the runtime-produced normalized state and current candidate path remain
+  accepted. No safety threshold is relaxed.
+- **Runtime cost and evidence:** Constant-time enum, identity and quaternion
+  checks plus one scalar transaction comparison per commit. Focused planning,
+  command-contract and committed-store regressions cover malformed domains and
+  out-of-order transactions.
+- **Removal/review condition:** Keep as the canonical product-boundary
+  contract until equivalent typed constructors replace public aggregate data.
+- **Verification:** `cmake --build build/navigation_planning --target
+  test_planning_contracts -j2 && ./build/navigation_planning/test_planning_contracts
+  --gtest_color=no`; `cmake --build build/navigation_contracts --target
+  test_typed_interfaces -j2`; and the committed-store test target.

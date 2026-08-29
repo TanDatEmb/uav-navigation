@@ -21,7 +21,9 @@ struct DynamicLimits {
   [[nodiscard]] bool valid() const noexcept {
     return std::isfinite(max_velocity_mps) && std::isfinite(max_acceleration_mps2) &&
            std::isfinite(max_jerk_mps3) && max_velocity_mps > 0.0 &&
-           max_acceleration_mps2 > 0.0 && max_jerk_mps3 > 0.0;
+           max_acceleration_mps2 > 0.0 && max_jerk_mps3 > 0.0 &&
+           (unknown_space_policy == UnknownSpacePolicy::kAllowUnknown ||
+            unknown_space_policy == UnknownSpacePolicy::kRequireKnownFree);
   }
 };
 

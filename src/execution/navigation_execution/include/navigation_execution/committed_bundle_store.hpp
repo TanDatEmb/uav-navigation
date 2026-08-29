@@ -191,7 +191,11 @@ class CommittedBundleStore final {
             *world_identity_, candidate->world_identity)) {
       return CommitDecision::kWorldAdvanced;
     }
+    if (expected.transaction_id <= last_transaction_id_) {
+      return CommitDecision::kCancelled;
+    }
     committed_ = std::move(candidate);
+    last_transaction_id_ = expected.transaction_id;
     return CommitDecision::kCommitted;
   }
 
@@ -214,6 +218,7 @@ class CommittedBundleStore final {
 
   mutable std::mutex mutex_;
   std::uint64_t active_goal_epoch_{0};
+  std::uint64_t last_transaction_id_{0};
   std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity_;
   std::shared_ptr<const navigation_planning::CandidateBundle> committed_;
 };

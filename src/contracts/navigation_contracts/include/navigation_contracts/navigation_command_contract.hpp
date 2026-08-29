@@ -20,8 +20,10 @@ inline std::int64_t commandStampNanoseconds(
 inline bool commandValidAt(
     const NavigationCommand& command, std::int64_t now_ns) noexcept {
   if (now_ns <= 0) return false;
+  const auto header_ns = commandStampNanoseconds(command.header.stamp);
   const auto valid_until_ns = commandStampNanoseconds(command.valid_until);
-  return valid_until_ns > 0 && now_ns <= valid_until_ns;
+  return header_ns > 0 && header_ns <= now_ns && valid_until_ns > header_ns &&
+         now_ns <= valid_until_ns;
 }
 
 inline bool commandMissionIdentityMatches(

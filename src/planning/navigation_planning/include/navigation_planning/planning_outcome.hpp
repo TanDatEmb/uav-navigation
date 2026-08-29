@@ -20,7 +20,8 @@ struct PlanningOutcome {
   PlanningTrace trace;
 
   [[nodiscard]] bool valid() const noexcept {
-    return planningSucceeded(status) == candidate.has_value() &&
+    return planningStatusKnown(status) && trace.elapsed_steady_ns >= 0 &&
+           planningSucceeded(status) == candidate.has_value() &&
            (!candidate || candidate->valid());
   }
 };

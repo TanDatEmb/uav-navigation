@@ -52,6 +52,20 @@ TEST(CommittedBundleStore, CommitRequiresCurrentWorldAndGoal) {
   EXPECT_TRUE(store.load());
 }
 
+TEST(CommittedBundleStore, RejectsOutOfOrderTransactionIdentity) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto first = std::make_shared<const navigation_planning::CandidateBundle>(candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, first),
+            navigation_execution::CommitDecision::kCommitted);
+  auto stale = std::make_shared<const navigation_planning::CandidateBundle>(candidateFor(7, 1));
+  EXPECT_EQ(store.tryCommit({world, 7, 1}, stale),
+            navigation_execution::CommitDecision::kCancelled);
+  EXPECT_EQ(store.load(), first);
+}
+
 TEST(CommittedBundleStore, GoalReplacementInvalidatesAndSamplerDoesNotLockWorld) {
   navigation_execution::CommittedBundleStore store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
