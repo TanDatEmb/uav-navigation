@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <limits>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -31,6 +32,7 @@
 #include "traj_opt/yaw_traj_opt.h"
 #include "data_structure/base/polytope.h"
 #include "utils/geometry/geometry_utils.h"
+#include "utils/geometry/quickhull.h"
 #include "utils/geometry/quadrotor_flatness.hpp"
 #include "utils/optimization/polynomial_interpolation.h"
 #include "utils/optimization/root_finder.h"
@@ -2257,6 +2259,32 @@ TEST(PlannerTrajectory, PolytopeRejectsMalformedPlanesAndPoints) {
   EXPECT_FALSE(valid.PointIsInside(
       navigation_math::Vec3f::Constant(std::numeric_limits<float>::quiet_NaN())));
   EXPECT_FALSE(valid.PointIsInside(navigation_math::Vec3f::Zero(), -1.0));
+}
+
+TEST(PlannerTrajectory, QuickHullRejectsEmptyAndMalformedPublicInputs) {
+  geometry_utils::QuickHull<double> quick_hull;
+  const std::vector<geometry_utils::Vector3<double>> empty;
+  EXPECT_TRUE(quick_hull.getConvexHull(empty, false, true).getIndexBuffer().empty());
+
+  const std::vector<geometry_utils::Vector3<double>> malformed{
+      {0.0, 0.0, 0.0},
+      {1.0, 0.0, 0.0},
+      {0.0, std::numeric_limits<double>::infinity(), 0.0},
+      {0.0, 0.0, 1.0}};
+  EXPECT_TRUE(quick_hull.getConvexHull(malformed, false, true)
+                  .getIndexBuffer()
+                  .empty());
+  EXPECT_TRUE(quick_hull.getConvexHull(malformed.data(), malformed.size(), false, true)
+                  .getIndexBuffer()
+                  .empty());
+
+  EXPECT_THROW(
+      quick_hull.getConvexHullAsMesh(static_cast<const double *>(nullptr), 1, false),
+      std::invalid_argument);
+  const std::vector<double> malformed_flat{0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                                           0.0, std::numeric_limits<double>::infinity(), 0.0,
+                                           0.0, 0.0, 1.0};
+  EXPECT_THROW(quick_hull.getConvexHullAsMesh(malformed_flat.data(), 4, false), std::invalid_argument);
 }
 
 TEST(PlannerTrajectory, PolytopeResetClearsGeometryAndMetadata) {

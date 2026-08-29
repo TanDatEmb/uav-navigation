@@ -5,6 +5,7 @@
  */
 
 #include <utils/geometry/quickhull.h>
+#include <stdexcept>
 #include <typeinfo>
 
 namespace geometry_utils {
@@ -245,6 +246,17 @@ namespace geometry_utils {
     template<typename T>
     ConvexHull<T>
     QuickHull<T>::getConvexHull(const VertexDataSource<T> &pointCloud, bool CCW, bool useOriginalIndices, T epsilon) {
+        if (!std::isfinite(epsilon) || epsilon <= T{} || pointCloud.size() == 0 ||
+            pointCloud.begin() == nullptr) {
+            return ConvexHull<T>();
+        }
+        for (size_t i = 0; i < pointCloud.size(); ++i) {
+            const auto &point = pointCloud[i];
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+                !std::isfinite(point.z)) {
+                return ConvexHull<T>();
+            }
+        }
         buildMesh(pointCloud, CCW, useOriginalIndices, epsilon);
         return ConvexHull<T>(m_mesh, m_vertexData, CCW, useOriginalIndices);
     }
@@ -256,6 +268,9 @@ namespace geometry_utils {
                                               bool CCW,
                                               bool useOriginalIndices, T
                                               epsilon) {
+        if (!std::isfinite(epsilon) || epsilon <= T{} || pointCloud.empty()) {
+            return ConvexHull<T>();
+        }
         VertexDataSource<T> vertexDataSource(pointCloud);
         return
                 getConvexHull(vertexDataSource, CCW, useOriginalIndices, epsilon
@@ -266,6 +281,10 @@ namespace geometry_utils {
     ConvexHull<T>
     QuickHull<T>::getConvexHull(const Vector3<T> *vertexData, size_t vertexCount, bool CCW, bool useOriginalIndices,
                                 T epsilon) {
+        if (!std::isfinite(epsilon) || epsilon <= T{} || vertexData == nullptr ||
+            vertexCount == 0) {
+            return ConvexHull<T>();
+        }
         VertexDataSource<T> vertexDataSource(vertexData, vertexCount);
         return getConvexHull(vertexDataSource, CCW, useOriginalIndices, epsilon);
     }
@@ -273,6 +292,10 @@ namespace geometry_utils {
     template<typename T>
     ConvexHull<T>
     QuickHull<T>::getConvexHull(const T *vertexData, size_t vertexCount, bool CCW, bool useOriginalIndices, T epsilon) {
+        if (!std::isfinite(epsilon) || epsilon <= T{} || vertexData == nullptr ||
+            vertexCount == 0) {
+            return ConvexHull<T>();
+        }
         VertexDataSource<T> vertexDataSource((const vec3 *) vertexData, vertexCount);
         return getConvexHull(vertexDataSource, CCW, useOriginalIndices, epsilon);
     }
@@ -282,6 +305,16 @@ namespace geometry_utils {
     HalfEdgeMesh<FloatType, size_t>
     QuickHull<FloatType>::getConvexHullAsMesh(const FloatType *vertexData, size_t vertexCount, bool CCW,
                                               FloatType epsilon) {
+        if (!std::isfinite(epsilon) || epsilon <= FloatType{} || vertexData == nullptr || vertexCount == 0) {
+            throw std::invalid_argument("QuickHull mesh input must have finite positive epsilon and non-empty data");
+        }
+        for (size_t i = 0; i < vertexCount; ++i) {
+            const size_t offset = i * 3U;
+            if (!std::isfinite(vertexData[offset]) || !std::isfinite(vertexData[offset + 1U]) ||
+                !std::isfinite(vertexData[offset + 2U])) {
+                throw std::invalid_argument("QuickHull mesh input contains non-finite coordinates");
+            }
+        }
         VertexDataSource<FloatType> vertexDataSource((const vec3 *) vertexData, vertexCount);
         buildMesh(vertexDataSource, CCW, false, epsilon);
         return HalfEdgeMesh<FloatType, size_t>(m_mesh, m_vertexData);

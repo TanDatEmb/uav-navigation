@@ -1,5 +1,27 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Fail closed on malformed Polytope and QuickHull inputs
+
+- **Owner/status:** planning geometry utilities, `PROVISIONAL`; verified by
+  the focused trajectory test.
+- **Scope:** Polytope volume rejects invalid/empty enumerations and validates
+  triangle-index shape/range/finite volume. QuickHull public point-cloud
+  overloads reject empty, null, non-finite, and invalid-epsilon inputs before
+  constructing the mesh; empty vector storage no longer takes `&vec[0]`.
+- **Safety impact:** Malformed corridor geometry cannot reach unchecked triangle
+  indexing or turn a geometry failure into an apparently valid volume/hull.
+- **False-accept/false-reject consequences:** Valid hull behavior is unchanged;
+  degenerate/malformed public calls return an empty hull or zero volume and
+  require the caller to handle failure.
+- **Runtime cost and evidence:** Validation is linear in the supplied point
+  count and occurs only at the geometry boundary. Regression covers empty,
+  null, non-finite, malformed-index, and invalid-plane paths.
+- **Removal/review condition:** Keep until geometry APIs expose an explicit
+  checked result type and eliminate legacy assert-based hull internals.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.
+
 ### 2026-08-29 - Bound planner safety-neighbor generation
 
 - **Owner/status:** planner/world-geometry binding, `PROVISIONAL`; verified by

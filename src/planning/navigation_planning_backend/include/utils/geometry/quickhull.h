@@ -23,7 +23,7 @@ namespace geometry_utils {
     template<typename T>
     class Vector3 {
     public:
-        Vector3() = default;
+        Vector3() : x(T{}), y(T{}), z(T{}) {}
 
         Vector3(const T &x, const T &y, const T &z) : x(x), y(y), z(z) {}
 
@@ -181,7 +181,7 @@ namespace geometry_utils {
                 : m_ptr(ptr), m_count(count) {}
 
         VertexDataSource(const std::vector<Vector3<T>> &vec)
-                : m_ptr(&vec[0]), m_count(vec.size()) {}
+                : m_ptr(vec.data()), m_count(vec.size()) {}
 
         VertexDataSource()
                 : m_ptr(nullptr), m_count(0) {}

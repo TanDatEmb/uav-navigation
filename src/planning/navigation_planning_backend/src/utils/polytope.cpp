@@ -163,6 +163,9 @@ bool Polytope::PointIsInside(const Vec3f &pt, const double & margin) const {
 }
 
 double Polytope::GetVolume() const {
+    if (empty() || !validPlanes(planes)) {
+        return 0.0;
+    }
     // 首先，我们需要获取多面体的顶点
     Eigen::Matrix<double, 3, -1, Eigen::ColMajor> vPoly;
     MatD4f planes = GetPlanes();
@@ -173,13 +176,21 @@ double Polytope::GetVolume() const {
 
     // 使用QuickHull库计算凸包
     geometry_utils::QuickHull<double> qh;
-    const auto convexHull = qh.getConvexHull(vPoly.data(), vPoly.cols(), false, true);
+    if (vPoly.cols() <= 0 || !vPoly.allFinite()) {
+        return 0.0;
+    }
+    const auto convexHull = qh.getConvexHull(vPoly.data(),
+                                             static_cast<std::size_t>(vPoly.cols()),
+                                             false, true);
     const auto &indexBuffer = convexHull.getIndexBuffer();
 
     // 确保我们至少有四个顶点，这样才能构成一个四面体
-    if (indexBuffer.size() < 4) {
+    if (indexBuffer.size() < 3 || indexBuffer.size() % 3 != 0) {
         printf("Not enough vertices to compute volume.\n");
         return 0;
+    }
+    for (const std::size_t index : indexBuffer) {
+        if (index >= static_cast<std::size_t>(vPoly.cols())) return 0.0;
     }
 
     // 计算多面体的重心
@@ -201,5 +212,5 @@ double Polytope::GetVolume() const {
         volume += std::abs(tetrahedronVolume);
     }
 
-    return volume;
+    return std::isfinite(volume) && volume >= 0.0 ? volume : 0.0;
 }
