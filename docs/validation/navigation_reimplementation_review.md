@@ -206,5 +206,6 @@ artifact provenance hoặc chưa truy vết được lỗi về source/test/scen
    không biến thành bypass.
 5. Sau khi end-to-end evidence xanh, hoàn tất các contract còn PARTIAL, chạy
    sanitizer/hardware evidence và lập checkpoint Git. Vocabulary/C++20 hygiene
-   product đã được thực hiện; provenance/license docs không được xóa. Hiện Git
-   index đang read-only nên chưa thể tạo commit an toàn trong workspace này.
+   product đã được thực hiện; provenance/license docs không được xóa. Source
+   checkpoint hiện tại là `293db98`; tài liệu provenance được cập nhật ngay sau
+   đó tại commit `abadf24`.
