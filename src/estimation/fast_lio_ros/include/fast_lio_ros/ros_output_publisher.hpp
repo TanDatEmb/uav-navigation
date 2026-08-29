@@ -116,6 +116,7 @@ class RosOutputPublisher {
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_;
   std::shared_ptr<const BaseLinkStateConverter> base_link_converter_;
   std::optional<BaseLinkCovarianceProjector> covariance_projector_;
+  mutable std::mutex converter_mutex_;
   std::shared_ptr<CovarianceProjectionRuntime> covariance_runtime_;
   std::shared_ptr<LioPublicFrameGeneration> public_frame_generation_;
   std::atomic_bool propagation_valid_{false};

@@ -7,6 +7,7 @@
 #include <diagnostic_msgs/msg/key_value.hpp>
 #include <chrono>
 #include <Eigen/Geometry>
+#include <limits>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <utility>
 
@@ -49,8 +50,11 @@ RosOutputPublisher::RosOutputPublisher(
 
 void RosOutputPublisher::setBaseLinkConverter(
     std::shared_ptr<const BaseLinkStateConverter> converter) {
+  std::lock_guard lock(converter_mutex_);
   if (converter) {
     covariance_projector_.emplace(converter->baseToImu());
+  } else {
+    covariance_projector_.reset();
   }
   base_link_converter_ = std::move(converter);
 }
@@ -72,14 +76,28 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeCloud(
   cloud.header.stamp = stamp;
   cloud.header.frame_id = parameters_.odom_frame;
   cloud.height = 1;
-  cloud.width = static_cast<std::uint32_t>(points.size());
+  if (points.size() > std::numeric_limits<std::uint32_t>::max()) {
+    return cloud;
+  }
+  const auto representable = [](const Eigen::Vector3d& point) {
+    return point.allFinite() &&
+           std::isfinite(static_cast<float>(point.x())) &&
+           std::isfinite(static_cast<float>(point.y())) &&
+           std::isfinite(static_cast<float>(point.z()));
+  };
+  std::size_t valid_count = 0U;
+  for (const auto& point : points) {
+    if (representable(point)) ++valid_count;
+  }
+  cloud.width = static_cast<std::uint32_t>(valid_count);
   sensor_msgs::PointCloud2Modifier modifier(cloud);
   modifier.setPointCloud2FieldsByString(1, "xyz");
-  modifier.resize(points.size());
+  modifier.resize(valid_count);
   sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
   sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
   sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");
   for (const auto& point : points) {
+    if (!representable(point)) continue;
     *x = static_cast<float>(point.x());
     *y = static_cast<float>(point.y());
     *z = static_cast<float>(point.z());
@@ -94,6 +112,11 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
     const sensor_msgs::msg::PointCloud2& cloud,
     const nav_msgs::msg::Odometry& corrected_odometry,
     const builtin_interfaces::msg::Time& stamp) const {
+  std::shared_ptr<const BaseLinkStateConverter> base_link_converter;
+  {
+    std::lock_guard lock(converter_mutex_);
+    base_link_converter = base_link_converter_;
+  }
   std::vector<Eigen::Vector3d> endpoints;
   if (cloud.header.frame_id != parameters_.lidar_frame ||
       cloud.header.stamp != stamp || cloud.height == 0U ||
@@ -103,7 +126,7 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
       cloud.data.size() <
           static_cast<std::size_t>(cloud.row_step) * cloud.height ||
       cloud.width * static_cast<std::size_t>(cloud.height) > 262144U ||
-      !base_link_converter_) {
+      !base_link_converter) {
     return makeCloud(endpoints, stamp);
   }
 
@@ -158,7 +181,7 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
       q_imu_lidar.y() / lidar_q_scale, q_imu_lidar.z() / lidar_q_scale);
   const Eigen::Matrix3d R_odom_base = normalized_odom_base.normalized().toRotationMatrix();
   const Eigen::Matrix3d R_base_imu =
-      base_link_converter_->baseToImu().rotation().toRotationMatrix();
+      base_link_converter->baseToImu().rotation().toRotationMatrix();
   const Eigen::Matrix3d R_base_lidar =
       R_base_imu * normalized_imu_lidar.normalized().toRotationMatrix();
   const Eigen::Vector3d t_base_lidar =
@@ -166,7 +189,7 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
           parameters_.translation_imu_lidar_m[0],
           parameters_.translation_imu_lidar_m[1],
           parameters_.translation_imu_lidar_m[2]) +
-      base_link_converter_->baseToImu().translation();
+      base_link_converter->baseToImu().translation();
   const Eigen::Vector3d p_odom_base(
       corrected_odometry.pose.pose.position.x,
       corrected_odometry.pose.pose.position.y,
@@ -289,13 +312,20 @@ void RosOutputPublisher::publish(const ProcessResult& result,
   if (transition_health.has_value() && !transitioned_to_usable) {
     publishDiagnostics(*transition_health, diagnostics_stamp);
   }
+  std::shared_ptr<const BaseLinkStateConverter> base_link_converter;
+  std::optional<BaseLinkCovarianceProjector> covariance_projector;
+  {
+    std::lock_guard lock(converter_mutex_);
+    base_link_converter = base_link_converter_;
+    covariance_projector = covariance_projector_;
+  }
   if (!result.hasCorrectedOutput() ||
       !result.corrected_kinematic_estimate.has_value() ||
-      !base_link_converter_) {
+      !base_link_converter) {
     publishTypedHealth(health, result, diagnostics_stamp);
     return;
   }
-  const auto converted = base_link_converter_->convert(
+  const auto converted = base_link_converter->convert(
       result.corrected_kinematic_estimate->estimate,
       result.corrected_kinematic_estimate->angular_velocity_imu_rad_s);
   if (!converted.ok()) {
@@ -304,10 +334,10 @@ void RosOutputPublisher::publish(const ProcessResult& result,
   }
   std::optional<builtin_interfaces::msg::Time> odometry_stamp;
   std::optional<nav_msgs::msg::Odometry> corrected_odometry;
-  if (covariance_projector_.has_value() && covariance_runtime_) {
+  if (covariance_projector.has_value() && covariance_runtime_) {
     BaseLinkCovarianceProjectionDiagnostics projection_diagnostics;
     const auto projection_started = std::chrono::steady_clock::now();
-    const auto covariance = covariance_projector_->project(
+    const auto covariance = covariance_projector->project(
         *result.corrected_kinematic_estimate, converted.value(),
         &projection_diagnostics);
     const auto projection_elapsed =
