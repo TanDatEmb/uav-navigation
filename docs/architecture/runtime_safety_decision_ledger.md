@@ -12297,3 +12297,26 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/rog_map_vendor --target test_rog_map_vendor -j2`;
   focused and complete smoke binary.
+
+### 2026-08-29 - Prevent estimator and PX4 identity counter wrap
+
+- **Owner/status:** FAST-LIO correction sequence and PX4 public/reset frame
+  identities, `VERIFIED` by the policy regression and package builds.
+- **Scope:** Correction output stops before publishing when its sequence is
+  exhausted. PX4 source-restart frame generation now returns a checked result;
+  reset-event and public-frame counters reject exhaustion instead of wrapping
+  to zero.
+- **Safety impact:** Stale correction, reset, or frame certificates cannot
+  alias a newly wrapped identity after long uptime or repeated restarts.
+- **False-accept/false-reject consequences:** Ordinary nonzero counters are
+  unchanged. Exhausted identity domains fail closed and require operator
+  restart/reinitialization rather than publishing ambiguous state.
+- **Runtime cost and evidence:** One max comparison on identity transitions;
+  PX4 frame-policy tests pass 3/3 and `fast_lio_ros` builds successfully.
+- **Removal/review condition:** Keep until all producer-owned identity fields
+  use a shared checked monotonic allocator and expose an explicit exhausted
+  lifecycle state.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/px4_odometry_bridge --target test_px4_odometry_bridge
+  -j2`; frame-policy focused tests; `cmake --build build/fast_lio_ros --target
+  fast_lio_ros -j2`.

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <px4_msgs/msg/timesync_status.hpp>
 #include <px4_msgs/msg/vehicle_attitude.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
@@ -614,11 +615,24 @@ TEST(Px4RingBuffer, ExplicitFrameGenerationDoesNotFallBackToResetGeneration) {
 }
 
 TEST(Px4FrameGenerationPolicy, StartupRestartKeepsFirstPublicFrameGeneration) {
-  EXPECT_EQ(px4_odometry_bridge::frame_generation_after_source_restart(1, false), 1U);
+  const auto generation =
+      px4_odometry_bridge::frame_generation_after_source_restart(1, false);
+  ASSERT_TRUE(generation.has_value());
+  EXPECT_EQ(*generation, 1U);
 }
 
 TEST(Px4FrameGenerationPolicy, RestartAfterPublicOutputCreatesNewFrame) {
-  EXPECT_EQ(px4_odometry_bridge::frame_generation_after_source_restart(1, true), 2U);
+  const auto generation =
+      px4_odometry_bridge::frame_generation_after_source_restart(1, true);
+  ASSERT_TRUE(generation.has_value());
+  EXPECT_EQ(*generation, 2U);
+}
+
+TEST(Px4FrameGenerationPolicy, ExhaustedGenerationFailsClosed) {
+  EXPECT_FALSE(px4_odometry_bridge::frame_generation_after_source_restart(
+      std::numeric_limits<std::uint64_t>::max(), true));
+  EXPECT_FALSE(px4_odometry_bridge::frame_generation_after_source_restart(
+      0U, false));
 }
 
 TEST(Px4RingBuffer, InvalidTimestampResetsStableGate) {

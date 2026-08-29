@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <pthread.h>
 #include <utility>
 
@@ -743,15 +744,28 @@ void FastLioNode::publishAvailableResults() {
           "FAST_LIO_PIPELINE_RESET");
       last_published_lio_generation_ = augmented.diagnostics.lio_generation;
     }
-    const auto scan_sequence = augmented.hasCorrectedOutput()
-                                    ? ++correction_sequence_
-                                    : correction_sequence_;
+    const bool corrected = augmented.hasCorrectedOutput();
+    if (corrected && correction_sequence_ ==
+                         std::numeric_limits<std::uint64_t>::max()) {
+      {
+        std::lock_guard lock(input_mutex_);
+        runtime_diagnostics_.processing_worker_failed = true;
+        runtime_diagnostics_.processing_worker_failure_message =
+            "correction sequence exhausted";
+        stopping_ = true;
+      }
+      input_ready_.notify_all();
+      RCLCPP_ERROR(get_logger(),
+                   "FAST-LIO corrected-output sequence exhausted; stopping");
+      return;
+    }
+    const auto scan_sequence = corrected ? ++correction_sequence_
+                                         : correction_sequence_;
     output_publisher_.publish(augmented, scan_sequence);
     if (augmented.diagnostics.initial_prior.applied) {
       closeInitialStatePriorStream();
     }
     if (propagated_odometry_worker_) {
-      const bool corrected = augmented.hasCorrectedOutput();
       EstimatorStateUpdate update;
       update.status = augmented.status_after;
       update.navigation_valid = augmented.diagnostics.navigation_valid;

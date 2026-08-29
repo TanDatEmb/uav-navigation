@@ -305,7 +305,15 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       return;
     }
     if (time_result.event == TimestampEvent::kProbableSourceRestart) {
-      frame_generation_ = frame_generation_after_source_restart(frame_generation_, output_valid_);
+      const auto next_frame_generation = frame_generation_after_source_restart(
+          frame_generation_, output_valid_);
+      if (!next_frame_generation) {
+        output_valid_ = false;
+        continuity_valid_ = false;
+        publish_diagnostics("rejected", "public frame generation exhausted");
+        return;
+      }
+      frame_generation_ = *next_frame_generation;
       history_.clear();
       local_reset_history_.clear();
       attitude_reset_history_.clear();
@@ -352,6 +360,12 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
     auto observation = reset_compensator_.observe(*converted.value, associated_metadata);
     last_reset_observation_status_ = toString(observation.status);
     if (observation.status == ResetObservationStatus::kResetTransitionSuppressed) {
+      if (reset_event_generation_ == std::numeric_limits<std::uint64_t>::max()) {
+        output_valid_ = false;
+        continuity_valid_ = false;
+        publish_diagnostics("rejected", "reset event generation exhausted");
+        return;
+      }
       ++reset_event_generation_;
     }
     if (reset_counter_changed && output_valid_ &&
@@ -361,6 +375,12 @@ class Px4OdometryBridgeNode final : public rclcpp::Node {
       // The reset cannot be compensated, so the old public PX4 frame ends.
       // This is distinct from the reset event counter and from the geometric
       // jump guard in the external publisher.
+      if (frame_generation_ == std::numeric_limits<std::uint64_t>::max()) {
+        output_valid_ = false;
+        continuity_valid_ = false;
+        publish_diagnostics("rejected", "public frame generation exhausted");
+        return;
+      }
       ++frame_generation_;
       history_.clear();
       reset_compensator_.clear();
