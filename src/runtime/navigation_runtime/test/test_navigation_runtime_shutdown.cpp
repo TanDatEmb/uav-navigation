@@ -18,6 +18,7 @@
 #include <sensor_msgs/msg/point_field.hpp>
 
 #include "navigation_runtime/navigation_runtime_node.hpp"
+#include "navigation_runtime/runtime_boundaries.hpp"
 
 namespace navigation_runtime {
 namespace {
@@ -88,6 +89,25 @@ TEST(NavigationRuntimeTelemetry, KeepsRevalidationCountersFromCurrentUpdate) {
   const auto snapshot = telemetry.snapshot();
   EXPECT_EQ(snapshot.command_revalidation_fast_path_count, 3U);
   EXPECT_EQ(snapshot.command_revalidation_full_count, 2U);
+}
+
+TEST(NavigationRuntimeBoundaries, MonotonicIdsNeverWrapToZero) {
+  std::atomic_uint64_t value{0U};
+  ASSERT_EQ(advanceMonotonicId(value), 1U);
+  value.store(std::numeric_limits<std::uint64_t>::max() - 1U);
+  ASSERT_EQ(advanceMonotonicId(value), std::numeric_limits<std::uint64_t>::max());
+  EXPECT_FALSE(advanceMonotonicId(value).has_value());
+  EXPECT_EQ(value.load(), std::numeric_limits<std::uint64_t>::max());
+}
+
+TEST(NavigationRuntimeBoundaries, RatePeriodMustBePositiveAndRepresentable) {
+  EXPECT_FALSE(ratePeriodNanoseconds(0.0).has_value());
+  EXPECT_FALSE(ratePeriodNanoseconds(-1.0).has_value());
+  EXPECT_FALSE(ratePeriodNanoseconds(std::numeric_limits<double>::infinity()).has_value());
+  EXPECT_FALSE(ratePeriodNanoseconds(std::numeric_limits<double>::denorm_min()).has_value());
+  EXPECT_FALSE(ratePeriodNanoseconds(1.0e10).has_value());
+  ASSERT_TRUE(ratePeriodNanoseconds(50.0).has_value());
+  EXPECT_EQ(*ratePeriodNanoseconds(50.0), 20ms);
 }
 
 TEST(NavigationRuntimeCadence, RejectsPlannerPeriodShorterThanSolveBudget) {

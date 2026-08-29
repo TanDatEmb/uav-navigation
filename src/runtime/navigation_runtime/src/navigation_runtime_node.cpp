@@ -6,6 +6,7 @@
 #include <navigation_mapping/mapping_actor.hpp>
 
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/runtime_boundaries.hpp"
 #include <navigation_execution/timestamp_freshness.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
 #include <navigation_contracts/execution_state_freshness.hpp>
@@ -84,7 +85,8 @@ double goalCompletionTolerance(
 }
 
 std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
-    const navigation_contracts::msg::NavigationGoal& goal) {
+    const navigation_contracts::msg::NavigationGoal& goal) noexcept {
+  try {
   const auto& source = goal.route;
   const std::size_t count = source.waypoint_positions.size();
   if (count == 0U || source.waypoint_ids.size() != count ||
@@ -160,10 +162,15 @@ std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
   snapshot.measured_progress.projection.tangent = snapshot.segments.empty()
       ? Eigen::Vector3d::Zero()
       : snapshot.segments[snapshot.measured_progress.projection.segment_index].tangent;
-  return snapshot.valid()
+    return snapshot.valid()
              ? std::optional<navigation_mission::ImmutableRouteSnapshot>{
                    std::move(snapshot)}
              : std::nullopt;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  } catch (...) {
+    return std::nullopt;
+  }
 }
 
 bool routeSnapshotMatchesGoalMirrors(
@@ -410,8 +417,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.planner_watchdog_timeout_s", 1.0);
   plan_from_rest_failure_confirmation_s_ = declare_parameter(
       "navigation_runtime.plan_from_rest_failure_confirmation_s", 0.5);
-  const auto max_plan_from_rest_failures =
-      declare_parameter("navigation_runtime.max_plan_from_rest_failures", 3);
+  const auto max_plan_from_rest_failures = declare_parameter(
+      "navigation_runtime.max_plan_from_rest_failures", std::int64_t{3});
   planner_config_path_ = declare_parameter("navigation_runtime.config_path", std::string{});
   const auto mission_file =
       declare_parameter("navigation_runtime.mission_file", std::string{});
@@ -434,6 +441,13 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   }
   if (!std::isfinite(planner_rate_hz_) || planner_rate_hz_ <= 0.0) {
     throw std::invalid_argument("navigation_runtime.planner_rate_hz must be positive");
+  }
+  const auto planning_period = ratePeriodNanoseconds(planner_rate_hz_);
+  const auto command_period = ratePeriodNanoseconds(command_rate_hz_);
+  if (!planning_period || !command_period ||
+      std::chrono::duration_cast<std::chrono::microseconds>(*planning_period).count() <= 0) {
+    throw std::invalid_argument(
+        "navigation_runtime planner/command rates must produce positive representable periods");
   }
   if (!std::isfinite(command_rate_hz_) || command_rate_hz_ <= 0.0 ||
       !std::isfinite(mapping_snapshot_publication_period_s_) ||
@@ -461,9 +475,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   if (body_frame_id_.empty()) {
     throw std::invalid_argument("navigation_runtime.body_frame_id must not be empty");
   }
-  if (max_plan_from_rest_failures <= 0) {
+  if (max_plan_from_rest_failures <= 0 ||
+      max_plan_from_rest_failures >
+          static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
     throw std::invalid_argument(
-        "navigation_runtime.max_plan_from_rest_failures must be positive");
+        "navigation_runtime.max_plan_from_rest_failures must fit uint32 and be positive");
   }
   max_plan_from_rest_failures_ =
       static_cast<std::uint32_t>(max_plan_from_rest_failures);
@@ -931,16 +947,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   // is allowed to run concurrently.
   planning_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   command_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
-  const auto planning_period = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::duration<double>(1.0 / planner_rate_hz_));
   planning_period_us_ =
-      std::chrono::duration_cast<std::chrono::microseconds>(planning_period).count();
-  const auto command_period = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::duration<double>(1.0 / command_rate_hz_));
+      std::chrono::duration_cast<std::chrono::microseconds>(*planning_period).count();
   planning_timer_ = create_wall_timer(
-      planning_period, std::bind(&NavigationRuntimeNode::runCycle, this), planning_callback_group_);
+      *planning_period, std::bind(&NavigationRuntimeNode::runCycle, this), planning_callback_group_);
   command_timer_ = create_wall_timer(
-      command_period, std::bind(&NavigationRuntimeNode::publishCommand, this),
+      *command_period, std::bind(&NavigationRuntimeNode::publishCommand, this),
       command_callback_group_);
   RCLCPP_INFO(get_logger(),
               "planner backend runtime ready: registered_scan=%s propagated_odom=%s goal=%s "
@@ -1032,9 +1044,14 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
   last_registered_scan_sequence_.store(0U, std::memory_order_release);
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
-    ++active_goal_epoch_;
-    (void)command_bundle_store_.setActiveGoalEpoch(
-        active_goal_epoch_.load(std::memory_order_acquire), false);
+    const auto next_goal_epoch = advanceMonotonicId(active_goal_epoch_);
+    if (next_goal_epoch) {
+      (void)command_bundle_store_.setActiveGoalEpoch(*next_goal_epoch, false);
+    } else {
+      active_goal_.reset();
+      command_bundle_store_.invalidate();
+      RCLCPP_ERROR(get_logger(), "active goal epoch exhausted during localization reset");
+    }
     new_goal_ = active_goal_.has_value();
     hot_goal_transition_ = false;
     restart_from_rest_ = false;
@@ -1062,6 +1079,10 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
 
 void NavigationRuntimeNode::onRegisteredScan(
     const navigation_contracts::msg::RegisteredScan::ConstSharedPtr& message) {
+  if (!message) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    return;
+  }
   const auto observation_stamp_ns = navigation_common::rosTimeToNanoseconds(
       message->header.stamp).value_or(0);
   const auto& free_space = message->free_space_endpoints;
@@ -1231,6 +1252,10 @@ void NavigationRuntimeNode::onPropagatedOdometry(
 }
 
 void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message) {
+  if (!message) {
+    RCLCPP_ERROR(get_logger(), "rejected null navigation goal");
+    return;
+  }
   const auto route = decodeRouteSnapshot(*message);
   if (!route.has_value() || !routeSnapshotMatchesGoalMirrors(*route, *message)) {
     planner_->cancelActiveSolve();
@@ -1273,15 +1298,22 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
     // the current bundle only until a newer world identity invalidates it; the
     // execution store never relabels a stale-world certificate as current.
     planner_->cancelActiveSolve();
-    ++active_goal_epoch_;
-    const auto next_goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
+    const auto next_goal_epoch = advanceMonotonicId(active_goal_epoch_);
+    if (!next_goal_epoch) {
+      command_bundle_store_.invalidate();
+      planner_command_available_.store(false);
+      planner_failure_latched_.store(true);
+      safety_suffix_active_.store(false);
+      RCLCPP_ERROR(get_logger(), "rejected navigation goal: active goal epoch exhausted");
+      return;
+    }
     const bool retain_bundle = reuse_completed_stop || can_hot_retarget;
-    if (!command_bundle_store_.setActiveGoalEpoch(next_goal_epoch, retain_bundle)) {
+    if (!command_bundle_store_.setActiveGoalEpoch(*next_goal_epoch, retain_bundle)) {
       effective_hot_retarget = false;
     }
     if (effective_hot_retarget &&
         !command_bundle_store_.rebindRetainedBundle(
-            next_goal_epoch, message->request_id, previous_goal_epoch)) {
+            *next_goal_epoch, message->request_id, previous_goal_epoch)) {
       // The physical command was not proven to belong to the exact previous
       // goal identity. Clear it and use the measured-state PlanFromRest path.
       effective_hot_retarget = false;
@@ -1338,6 +1370,10 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
 
 void NavigationRuntimeNode::onModeStatus(
     const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message) {
+  if (!message) {
+    RCLCPP_ERROR(get_logger(), "rejected null navigation mode status");
+    return;
+  }
   if (message->state == navigation_contracts::msg::NavigationModeStatus::ACTIVE ||
       message->state == navigation_contracts::msg::NavigationModeStatus::BRAKING) {
     return;
@@ -1354,9 +1390,13 @@ void NavigationRuntimeNode::onModeStatus(
               message->state, message->reason, message->mission_id.c_str(),
               message->waypoint_index, static_cast<unsigned long>(message->request_id));
   planner_->cancelActiveSolve();
-  ++active_goal_epoch_;
-  (void)command_bundle_store_.setActiveGoalEpoch(
-      active_goal_epoch_.load(std::memory_order_acquire), false);
+  const auto next_goal_epoch = advanceMonotonicId(active_goal_epoch_);
+  if (next_goal_epoch) {
+    (void)command_bundle_store_.setActiveGoalEpoch(*next_goal_epoch, false);
+  } else {
+    command_bundle_store_.invalidate();
+    RCLCPP_ERROR(get_logger(), "active goal epoch exhausted while clearing terminal goal");
+  }
   active_goal_.reset();
   new_goal_ = false;
   hot_goal_transition_ = false;
@@ -1472,8 +1512,17 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                 candidate_sample ? candidate_sample->position_world.z() : 0.0);
     return false;
   }
+  const auto transaction_id = advanceMonotonicId(execution_transaction_id_);
+  if (!transaction_id) {
+    planner_->discardCommandCandidate();
+    command_bundle_store_.invalidate();
+    planner_command_available_.store(false);
+    planner_failure_latched_.store(true);
+    RCLCPP_ERROR(get_logger(), "execution transaction id exhausted");
+    return false;
+  }
   const navigation_execution::CommitToken token{
-      candidate_ptr->world_identity, goal_epoch, ++execution_transaction_id_};
+      candidate_ptr->world_identity, goal_epoch, *transaction_id};
   if (command_bundle_store_.tryCommit(token, candidate_ptr) !=
       navigation_execution::CommitDecision::kCommitted) {
     planner_->discardCommandCandidate();
@@ -1941,7 +1990,15 @@ void NavigationRuntimeNode::runCycle() {
     ++optimizer_renewal_due_count_;
   }
   navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
-  const std::uint64_t solve_generation = ++planner_solve_generation_;
+  const auto solve_generation_value = advanceMonotonicId(planner_solve_generation_);
+  if (!solve_generation_value) {
+    command_bundle_store_.invalidate();
+    planner_command_available_.store(false);
+    planner_failure_latched_.store(true);
+    RCLCPP_ERROR(get_logger(), "planner solve generation exhausted");
+    return;
+  }
+  const std::uint64_t solve_generation = *solve_generation_value;
   const std::uint64_t localization_epoch_at_solve =
       active_localization_epoch_.load(std::memory_order_acquire);
   const std::uint64_t committed_generation_before_solve =
@@ -3200,7 +3257,7 @@ void NavigationRuntimeNode::publishCommand() {
               goalCompletionTolerance(*command_goal);
         }
         terminal_bundle_generation_.store(
-            endpoint_reaches_goal &&
+            endpoint_reaches_goal && command_goal &&
                     command_goal->behavior ==
                         navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
                 ? sample.bundle->bundle_generation
@@ -3240,7 +3297,15 @@ void NavigationRuntimeNode::publishCommand() {
       static_cast<double>(command_world_identity.observation_stamp_ns) * 1.0e-9).value_or(
           builtin_interfaces::msg::Time{});
   command.bundle_generation = trajectory_generation;
-  command.sample_id = ++command_id_;
+  const auto command_id = advanceMonotonicId(command_id_);
+  if (!command_id) {
+    command_bundle_store_.invalidate();
+    planner_command_available_.store(false);
+    planner_failure_latched_.store(true);
+    RCLCPP_ERROR(get_logger(), "command sample id exhausted");
+    return;
+  }
+  command.sample_id = *command_id;
   command.trajectory_time_s = trajectory_time_s;
   command.state_source_stamp = execution_state
       ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(

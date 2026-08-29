@@ -10955,3 +10955,33 @@ release profiles must not use the former allowance.
   MAP_PROFILE=long_three_pillars_multiwaypoint SPEED_CAP_MPS=5` and inspect
   `report.json` seed extrema, selected-mode counts, waypoint coverage and
   planner latency distribution.
+
+### 2026-08-29 - Fail closed runtime callback, timer and identity boundaries
+
+- **Owner/status:** Navigation runtime ROS adapter and command transaction
+  boundary, `VERIFIED` by focused regression tests.
+- **Scope:** Reject null callback payloads before dereference, convert planner
+  and command rates to positive representable nanosecond periods, reject an
+  unrepresentable failure budget, catch malformed route construction, and
+  allocate goal/solve/transaction/command identities without wrapping to the
+  reserved zero value. Terminal command handling no longer dereferences absent
+  goal metadata.
+- **Safety impact:** No planner geometry, dynamic limit, acceptance radius,
+  deadline, fallback or freshness threshold changes. Invalid adapter input or
+  exhausted identity space now fails closed instead of crashing, spinning a
+  zero-period timer, or reusing sentinel identity zero.
+- **False-accept/false-reject consequences:** Valid ROS callbacks, configured
+  rates and ordinary monotonic identities are unchanged. Inputs that cannot be
+  represented by the runtime clock or identity contracts are rejected; no
+  safety gate is relaxed.
+- **Runtime cost and evidence:** One bounded atomic compare/exchange loop per
+  generated identity and constant-time rate checks at startup. Regression tests
+  cover wrap prevention and rate conversion boundaries; runtime shutdown and
+  cadence tests exercise node construction and destruction.
+- **Removal/review condition:** Keep until the runtime moves to a wider or
+  externally assigned transaction identity and typed timer configuration with
+  equivalent fail-closed guarantees.
+- **Verification:** `cmake --build build/navigation_runtime --target
+  test_navigation_runtime_shutdown -j2 &&
+  ./build/navigation_runtime/test_navigation_runtime_shutdown
+  --gtest_color=no`.
