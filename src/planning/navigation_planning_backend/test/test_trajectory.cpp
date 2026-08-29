@@ -2468,9 +2468,13 @@ TEST(PlannerTrajectory, EllipsoidBoundariesFailClosedAndPreserveSourceIds) {
   geometry_utils::Ellipsoid empty;
   EXPECT_TRUE(empty.empty());
   EXPECT_FALSE(empty.inside(navigation_math::Vec3f::Zero()));
+  navigation_math::Vec3f closest_point = navigation_math::Vec3f::Zero();
+  EXPECT_TRUE(std::isnan(empty.pointDistanceToEllipsoid(
+      navigation_math::Vec3f::Zero(), closest_point)));
+  EXPECT_FALSE(closest_point.allFinite());
   EXPECT_EQ(empty.nearestPointId(Eigen::Matrix3Xd(3, 0)), -1);
   int point_id = 42;
-  EXPECT_TRUE(std::isnan(empty.nearestPointDis(Eigen::Matrix3Xd(3, 0), point_id)));
+  EXPECT_TRUE(std::isnan(empty.nearestPointDistance(Eigen::Matrix3Xd(3, 0), point_id)));
   EXPECT_EQ(point_id, -1);
 
   geometry_utils::Ellipsoid invalid(

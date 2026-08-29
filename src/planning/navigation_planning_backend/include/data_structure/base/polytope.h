@@ -46,9 +46,12 @@ namespace geometry_utils {
 
 
         double overlap_depth_with_last_one{0};
-        Vec3f interior_pt_with_last_one{};
+        Vec3f interior_pt_with_last_one{
+            Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         Ellipsoid ellipsoid_{};
-        std::pair<Vec3f, Vec3f> seed_line{};
+        std::pair<Vec3f, Vec3f> seed_line{
+            Vec3f::Constant(std::numeric_limits<double>::quiet_NaN()),
+            Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         double robot_r{};
 
         Polytope() = default;
@@ -59,7 +62,8 @@ namespace geometry_utils {
 
         bool HaveSeedLine() const;
 
-        void SetSeedLine(const std::pair<Vec3f, Vec3f> &_seed_line, double r = 0);
+        void SetSeedLine(const std::pair<Vec3f, Vec3f>& seed_line,
+                         double robot_radius = 0.0);
 
         int SurfNum() const;
 

@@ -169,7 +169,7 @@ namespace navigation_planning_backend {
                         const Vec3f &pt_w = pc.col(pcMinId);
                         Ellipsoid E_pe(C_inv * sphere_template_.C(), pt_e);
                         Vec3f close_pt_e;
-                        E_pe.pointDistaceToEllipsoid(Vec3f(0, 0, 0), close_pt_e);
+                        E_pe.pointDistanceToEllipsoid(Vec3f(0, 0, 0), close_pt_e);
                         Vec3f c_pt_w = E.toWorldFrame(close_pt_e);
                         temp_plane_w.head(3) = (pt_w - c_pt_w).normalized();
                         temp_plane_w(3) = -temp_plane_w.head(3).dot(c_pt_w);

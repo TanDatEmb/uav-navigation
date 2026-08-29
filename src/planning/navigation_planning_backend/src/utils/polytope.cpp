@@ -40,16 +40,18 @@ bool Polytope::HaveSeedLine() const  {
     return have_seed_line;
 }
 
-void Polytope::SetSeedLine(const std::pair<Vec3f, Vec3f> &_seed_line, double r) {
-    if (!_seed_line.first.allFinite() || !_seed_line.second.allFinite() ||
-        !std::isfinite(r) || r < 0.0) {
+void Polytope::SetSeedLine(const std::pair<Vec3f, Vec3f>& seed_line,
+                           double robot_radius) {
+    if (!seed_line.first.allFinite() || !seed_line.second.allFinite() ||
+        !std::isfinite(robot_radius) || robot_radius < 0.0) {
         have_seed_line = false;
-        seed_line = {};
+        this->seed_line.first.setConstant(std::numeric_limits<double>::quiet_NaN());
+        this->seed_line.second.setConstant(std::numeric_limits<double>::quiet_NaN());
         robot_r = std::numeric_limits<double>::quiet_NaN();
         return;
     }
-    robot_r = r;
-    seed_line = _seed_line;
+    robot_r = robot_radius;
+    this->seed_line = seed_line;
     have_seed_line = true;
 }
 
@@ -113,7 +115,8 @@ void Polytope::Reset() {
     // dynamic, so preserve that invariant when clearing the geometry.
     planes.resize(0, 4);
     have_seed_line = false;
-    seed_line = {};
+    seed_line.first.setConstant(std::numeric_limits<double>::quiet_NaN());
+    seed_line.second.setConstant(std::numeric_limits<double>::quiet_NaN());
     robot_r = std::numeric_limits<double>::quiet_NaN();
     overlap_depth_with_last_one = 0.0;
     interior_pt_with_last_one.setConstant(

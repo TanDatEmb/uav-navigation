@@ -6,6 +6,9 @@
 
 
 #pragma once
+
+#include <limits>
+
 #include <utils/header/type_utils.hpp>
 #include <utils/geometry/geometry_utils.h>
 #include <utils/header/color_msg_utils.hpp>
@@ -22,9 +25,11 @@ namespace geometry_utils {
         bool undefined{true};
 
         /// The ellipsoid is defined by shape C and center d
-        Mat3f C_{}, C_inv_{};
-        Mat3f R_{};
-        Vec3f r_{}, d_{};
+        Mat3f C_{Mat3f::Constant(std::numeric_limits<double>::quiet_NaN())};
+        Mat3f C_inv_{Mat3f::Constant(std::numeric_limits<double>::quiet_NaN())};
+        Mat3f R_{Mat3f::Constant(std::numeric_limits<double>::quiet_NaN())};
+        Vec3f r_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
+        Vec3f d_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
 
     public:
         Ellipsoid() = default;
@@ -41,7 +46,8 @@ namespace geometry_utils {
         /// If this ellipsoid is empty
         bool empty() const;
 
-        double pointDistaceToEllipsoid(const Vec3f& pt, Vec3f& closest_pt_on_ellip) const;
+        double pointDistanceToEllipsoid(const Vec3f& point,
+                                        Vec3f& closest_point_on_ellipsoid) const;
 
         /// Find the closestPoint in a point set
         int nearestPointId(const Eigen::Matrix3Xd& pc) const;
@@ -50,7 +56,8 @@ namespace geometry_utils {
         Vec3f nearestPoint(const Eigen::Matrix3Xd& pc) const;
 
         /// Find the closestPoint in a point set
-        double nearestPointDis(const Eigen::Matrix3Xd& pc, int& np_id) const;
+        double nearestPointDistance(const Eigen::Matrix3Xd& points,
+                                    int& nearest_point_id) const;
 
         /// Get the shape of the ellipsoid
         Mat3f C() const;

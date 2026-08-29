@@ -93,24 +93,25 @@ Ellipsoid::Ellipsoid(const Mat3f &R, const Vec3f &r, const Vec3f &d)
     undefined = !C_.allFinite() || !C_inv_.allFinite();
 }
 
-double Ellipsoid::pointDistaceToEllipsoid(const Vec3f &pt, Vec3f &closest_pt_on_ellip) const {
-    if (empty() || !pt.allFinite()) {
-        closest_pt_on_ellip = invalidPoint();
+double Ellipsoid::pointDistanceToEllipsoid(const Vec3f& point,
+                                           Vec3f& closest_point_on_ellipsoid) const {
+    if (empty() || !point.allFinite()) {
+        closest_point_on_ellipsoid = invalidPoint();
         return std::numeric_limits<double>::quiet_NaN();
     }
     /// step one: transform the point to the ellipsoid frame
-    Vec3f pt_ellip_frame = R_.transpose() * (pt - d_);
+    Vec3f point_ellipsoid_frame = R_.transpose() * (point - d_);
     double dist = geometry_utils::DistancePointEllipsoid(r_(0), r_(1), r_(2),
-                                                         pt_ellip_frame.x(),
-                                                         pt_ellip_frame.y(),
-                                                         pt_ellip_frame.z(),
-                                                         closest_pt_on_ellip.x(),
-                                                         closest_pt_on_ellip.y(),
-                                                         closest_pt_on_ellip.z());
+                                                         point_ellipsoid_frame.x(),
+                                                         point_ellipsoid_frame.y(),
+                                                         point_ellipsoid_frame.z(),
+                                                         closest_point_on_ellipsoid.x(),
+                                                         closest_point_on_ellipsoid.y(),
+                                                         closest_point_on_ellipsoid.z());
     /// step two: transform the closest point back to the world frame
-    closest_pt_on_ellip = R_ * closest_pt_on_ellip + d_;
-    if (!std::isfinite(dist) || !closest_pt_on_ellip.allFinite()) {
-        closest_pt_on_ellip = invalidPoint();
+    closest_point_on_ellipsoid = R_ * closest_point_on_ellipsoid + d_;
+    if (!std::isfinite(dist) || !closest_point_on_ellipsoid.allFinite()) {
+        closest_point_on_ellipsoid = invalidPoint();
         return std::numeric_limits<double>::quiet_NaN();
     }
     return dist;
@@ -134,14 +135,15 @@ Vec3f Ellipsoid::nearestPoint(const Eigen::Matrix3Xd &pc) const {
     return pc.col(np_id);
 }
 
-double Ellipsoid::nearestPointDis(const Eigen::Matrix3Xd &pc, int &np_id) const {
-    np_id = -1;
-    if (empty() || pc.cols() <= 0 || !pc.allFinite()) {
+double Ellipsoid::nearestPointDistance(const Eigen::Matrix3Xd& points,
+                                       int& nearest_point_id) const {
+    nearest_point_id = -1;
+    if (empty() || points.cols() <= 0 || !points.allFinite()) {
         return std::numeric_limits<double>::quiet_NaN();
     }
-    Eigen::VectorXd dists = (C_inv_ * (pc.colwise() - d_)).colwise().norm();
+    Eigen::VectorXd dists = (C_inv_ * (points.colwise() - d_)).colwise().norm();
     if (!dists.allFinite()) return std::numeric_limits<double>::quiet_NaN();
-    double np_dist = dists.minCoeff(&np_id);
+    double np_dist = dists.minCoeff(&nearest_point_id);
     return np_dist;
 }
 
