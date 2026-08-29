@@ -26,11 +26,13 @@ const sensor_msgs::msg::PointField& requireField(const sensor_msgs::msg::PointCl
 
 template <typename T>
 T readScalar(const std::uint8_t* point, std::uint32_t offset, std::uint32_t point_step) {
-  if (offset + sizeof(T) > point_step) {
+  const auto offset_size = static_cast<std::size_t>(offset);
+  const auto point_step_size = static_cast<std::size_t>(point_step);
+  if (offset_size > point_step_size || sizeof(T) > point_step_size - offset_size) {
     throw std::invalid_argument("PointCloud2 field exceeds point_step");
   }
   T value{};
-  std::memcpy(&value, point + offset, sizeof(T));
+  std::memcpy(&value, point + offset_size, sizeof(T));
   return value;
 }
 
@@ -44,7 +46,7 @@ RosLidarAdapter::RosLidarAdapter(std::string expected_frame,
       timing_mode_(timing_mode),
       clock_domain_(clock_domain),
       point_time_(std::move(point_time)) {
-  if (point_time_.field.empty() ||
+  if (expected_frame_.empty() || point_time_.field.empty() ||
       point_time_.maximum_scan_duration_ns <= 0 ||
       point_time_.maximum_header_offset_ns < 0 ||
       point_time_.maximum_boundary_overlap_ns < 0 ||
@@ -80,8 +82,13 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
           message.data.size()) {
     throw std::invalid_argument("PointCloud2 storage layout is inconsistent");
   }
-  const auto point_count =
-      static_cast<std::size_t>(message.width) * message.height;
+  const auto point_count_64 = static_cast<std::uint64_t>(message.width) *
+                              static_cast<std::uint64_t>(message.height);
+  constexpr std::uint64_t kMaximumPointCount = 2'000'000U;
+  if (point_count_64 == 0U || point_count_64 > kMaximumPointCount) {
+    throw std::invalid_argument("PointCloud2 point count is outside the supported bound");
+  }
+  const auto point_count = static_cast<std::size_t>(point_count_64);
   if (point_count == 0U) {
     throw std::invalid_argument("PointCloud2 must contain at least one point");
   }
@@ -96,9 +103,20 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
   LidarScan scan{header_time, header_time, {}, time != nullptr};
   scan.points.reserve(point_count);
   for (std::uint32_t row = 0; row < message.height; ++row) {
-    const auto* row_data = message.data.data() + row * message.row_step;
+    const auto row_offset = static_cast<std::uint64_t>(row) *
+                            static_cast<std::uint64_t>(message.row_step);
+    if (row_offset > message.data.size()) {
+      throw std::invalid_argument("PointCloud2 row offset exceeds storage");
+    }
+    const auto* row_data = message.data.data() + static_cast<std::size_t>(row_offset);
     for (std::uint32_t column = 0; column < message.width; ++column) {
-      const auto* point = row_data + column * message.point_step;
+      const auto point_offset = static_cast<std::uint64_t>(column) *
+                                static_cast<std::uint64_t>(message.point_step);
+      if (point_offset > message.row_step ||
+          message.point_step > message.row_step - point_offset) {
+        throw std::invalid_argument("PointCloud2 point offset exceeds row storage");
+      }
+      const auto* point = row_data + static_cast<std::size_t>(point_offset);
       LidarPoint converted;
       converted.position_lidar_m = {readScalar<float>(point, x.offset, message.point_step),
                                     readScalar<float>(point, y.offset, message.point_step),
@@ -140,7 +158,8 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
   if (!absolute_times.empty() && previous_emitted_end_ns_ >= 0) {
     const auto minimum_time =
         *std::min_element(absolute_times.begin(), absolute_times.end());
-    const std::int64_t overlap_ns = previous_emitted_end_ns_ - minimum_time;
+    const long double overlap_ns = static_cast<long double>(previous_emitted_end_ns_) -
+                                   static_cast<long double>(minimum_time);
     if (overlap_ns > 0 &&
         overlap_ns <= point_time_.maximum_boundary_overlap_ns) {
       std::vector<LidarPoint> emitted_points;

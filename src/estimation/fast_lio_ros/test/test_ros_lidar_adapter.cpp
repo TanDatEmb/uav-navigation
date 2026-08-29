@@ -250,6 +250,21 @@ TEST(RosLidarAdapterTest, RejectsInvalidStorageAndEmptyCloud) {
                std::invalid_argument);
 }
 
+TEST(RosLidarAdapterTest, RejectsOverflowingFieldOffsetAndPointCount) {
+  auto malformed = makeCloud();
+  malformed.fields[0].offset = std::numeric_limits<std::uint32_t>::max();
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint).convert(malformed),
+               std::invalid_argument);
+
+  auto oversized = makeCloud(2001U, 1000U);
+  EXPECT_THROW(RosLidarAdapter("livox_frame", LidarTimingMode::kPerPoint).convert(oversized),
+               std::invalid_argument);
+}
+
+TEST(RosLidarAdapterTest, RejectsEmptyConfiguredFrame) {
+  EXPECT_THROW(RosLidarAdapter("", LidarTimingMode::kPerPoint), std::invalid_argument);
+}
+
 TEST(RosLidarAdapterTest, RejectsFrameMismatch) {
   auto cloud = makeCloud();
   cloud.header.frame_id = "wrong";

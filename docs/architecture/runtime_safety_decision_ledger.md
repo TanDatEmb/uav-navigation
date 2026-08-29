@@ -11130,3 +11130,25 @@ release profiles must not use the former allowance.
   test_navigation_common -j2 && ./build/navigation_common/test_navigation_common
   --gtest_color=no`; `cmake --build build/navigation_runtime --target
   test_navigation_runtime_shutdown -j2`.
+
+### 2026-08-29 - Bound and validate Fast-LIO PointCloud2 ingress
+
+- **Owner/status:** Fast-LIO ROS lidar adapter, `VERIFIED` by adapter tests.
+- **Scope:** Reject empty configured frames and point-count exhaustion, validate
+  field offsets and row/column offsets in widened arithmetic before pointer
+  formation, and avoid signed overflow in absolute-time overlap calculation.
+- **Safety impact:** Malformed organized clouds can no longer wrap uint32
+  offsets into an out-of-bounds pointer or force unbounded allocation. Normal
+  clouds and point-time normalization semantics are unchanged.
+- **False-accept/false-reject consequences:** Clouds over the fixed ingress
+  budget are rejected before allocation; this is an explicit resource contract,
+  not a map/planner quality gate. Invalid offsets and empty frame contracts
+  fail closed.
+- **Runtime cost and evidence:** One widened multiplication and bounds check per
+  point plus a two-million-point resource cap. Tests cover malformed offsets,
+  oversized input, empty frame and existing organized/perscan behavior.
+- **Removal/review condition:** Revisit only with a measured transport memory
+  budget and equivalent checked pointer arithmetic.
+- **Verification:** `cmake --build build/fast_lio_ros --target
+  test_ros_lidar_adapter -j2 && ./build/fast_lio_ros/test_ros_lidar_adapter
+  --gtest_color=no`.
