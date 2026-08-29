@@ -127,4 +127,15 @@ TEST(RosLivoxCustomAdapterTest, RejectsOversizedPointPayloadBeforeReserve) {
       std::invalid_argument);
 }
 
+TEST(RosLivoxCustomAdapterTest, RejectsTimestampRegressionWithSharedPointTimePolicy) {
+  auto first = validMessage();
+  auto second = validMessage();
+  second.header.stamp.sec = 1;
+  second.header.stamp.nanosec = 900'000'000U;
+  second.timebase = 1'900'000'000ULL;
+  RosLivoxCustomAdapter adapter{"livox_frame", ClockDomain::kSensorTime};
+  static_cast<void>(adapter.convert(first));
+  EXPECT_THROW(adapter.convert(second), std::invalid_argument);
+}
+
 }  // namespace uav::nav::lio

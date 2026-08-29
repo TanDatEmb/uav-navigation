@@ -13218,7 +13218,9 @@ release profiles must not use the former allowance.
 - **Scope:** Livox CustomMsg now receives the canonical point-time limits,
   validates header-to-timebase offset for both timestamp policies, rejects
   payloads above the shared two-million-point cap, and enforces maximum scan
-  duration before reserving/copying the payload into core types.
+  duration before reserving/copying the payload into core types. It also keeps
+  a mutex-protected scan-start high-water mark when timestamp-regression
+  rejection is enabled, matching PointCloud2 ingress behavior.
 - **Safety impact:** A malformed or oversized Livox message cannot bypass the
   timing contract or force unbounded ingress allocation. This is fail-closed
   input validation; no accepted timing window is enlarged.
@@ -13227,7 +13229,8 @@ release profiles must not use the former allowance.
   those limits are rejected at the ROS boundary.
 - **Runtime cost and evidence:** Validation is bounded before payload copy;
   normal conversion retains its existing per-point work. Focused tests cover
-  duration, header offset, and oversized payload rejection.
+  duration, header offset, oversized payload, and timestamp-regression
+  rejection.
 - **Removal/review condition:** Keep until all LiDAR ingress paths share a
   typed timing/resource contract and recorded-data load evidence is complete.
 - **Verification:** `cmake --build build/fast_lio_ros --target

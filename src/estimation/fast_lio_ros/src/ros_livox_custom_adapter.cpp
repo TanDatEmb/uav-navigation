@@ -51,6 +51,7 @@ RosLivoxCustomAdapter::RosLivoxCustomAdapter(
 
 LidarScan RosLivoxCustomAdapter::convert(
     const livox_ros_driver2::msg::CustomMsg& message) const {
+  std::lock_guard lock(state_mutex_);
   if (message.header.frame_id != expected_frame_) {
     throw std::invalid_argument(
         "Livox CustomMsg frame does not match configured lidar frame");
@@ -66,7 +67,7 @@ LidarScan RosLivoxCustomAdapter::convert(
     throw std::invalid_argument(
         "Livox CustomMsg point count is outside the supported bound");
   }
-  if (message.timebase >
+  if (message.timebase == 0U || message.timebase >
       static_cast<std::uint64_t>(
           std::numeric_limits<std::int64_t>::max())) {
     throw std::invalid_argument(
@@ -76,6 +77,11 @@ LidarScan RosLivoxCustomAdapter::convert(
   const Timestamp header_time =
       RosTimeConverter::fromRos(message.header.stamp, clock_domain_);
   const auto timebase_ns = static_cast<std::int64_t>(message.timebase);
+  if (point_time_.reject_scan_timestamp_regression &&
+      previous_scan_start_ns_ > 0 && timebase_ns <= previous_scan_start_ns_) {
+    throw std::invalid_argument(
+        "Livox CustomMsg timestamp is not strictly increasing");
+  }
   const auto header_offset_ns = navigation_common::checkedDifference(
       header_time.nanoseconds(), timebase_ns);
   if (!header_offset_ns ||
@@ -126,6 +132,7 @@ LidarScan RosLivoxCustomAdapter::convert(
   if (!scan_status.ok()) {
     throw std::invalid_argument(scan_status.message());
   }
+  previous_scan_start_ns_ = timebase_ns;
   return scan;
 }
 

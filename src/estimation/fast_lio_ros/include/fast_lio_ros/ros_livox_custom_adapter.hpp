@@ -2,6 +2,8 @@
 
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 
+#include <cstdint>
+#include <mutex>
 #include <string>
 
 #include "fast_lio_core/sensor/lidar_scan.hpp"
@@ -34,6 +36,8 @@ class RosLivoxCustomAdapter {
   ClockDomain clock_domain_;
   LivoxTimestampPolicy timestamp_policy_;
   PointTimeConfig point_time_;
+  mutable std::mutex state_mutex_;
+  mutable std::int64_t previous_scan_start_ns_{-1};
 };
 
 }  // namespace uav::nav::lio
