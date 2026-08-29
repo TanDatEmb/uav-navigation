@@ -1,6 +1,6 @@
 # Đánh giá tái triển khai navigation
 
-Ngày đánh giá/cập nhật: 2026-08-29. Reviewed source HEAD: `2d6535f9e53acae13583cc50da27c2da12180aa3`
+Ngày đánh giá/cập nhật: 2026-08-29. Reviewed source HEAD: `ffe7e24b99692bf81fc7ad6572bfc1ef2fd1848d`
 trên branch `codex/navigation-stability-checkpoint`; worktree sạch tại thời điểm
 checkpoint. Manifest authoritative được tạo từ đúng HEAD này với
 `git_dirty=false`. Phạm vi gồm estimator, mapping, planner, execution, runtime
@@ -19,10 +19,10 @@ và HEAD này. Tuy nhiên còn ba khoảng trống P0/P1 không được che b�
 2. Chưa có continuous safety certificate đầy đủ cho thân phương tiện cộng sai
    số tracking, localization và mapping; kiểm tra tube hiện tại là kiểm tra
    bảo thủ cho độ cong quỹ đạo trên grid.
-3. SITL đã khởi động được sau `make build` và manifest sync; không còn lỗi UDP
-   provenance do build thiếu. Tuy nhiên PX4 preflight/mission acceptance chưa
-   hoàn tất trong các replay hiện tại, nên không được gọi đây là SITL PASS hay
-   dùng để chỉnh threshold.
+3. SITL/replay đã khởi động được sau `make build` và manifest sync; không còn lỗi
+   UDP provenance do build thiếu. Tuy nhiên PX4 preflight/mission acceptance và
+   planner completion chưa đạt trong các run hiện tại, nên không được gọi đây là
+   SITL PASS hay dùng để chỉnh threshold.
 
 ## Trạng thái theo nhóm kiểm tra
 
@@ -38,10 +38,10 @@ và HEAD này. Tuy nhiên còn ba khoảng trống P0/P1 không được che b�
 | Continuous trajectory safety | PARTIAL | Có adaptive subdivision và inflated-cell tube check với budget hữu hạn. Chưa bao phủ hình học thân phương tiện, tracking error, localization error, mapping error và mọi sai số số học theo một certificate độc lập. |
 | Commit/execution | PARTIAL | Commit transaction, identity recertification và publish revalidation đã có test. Chưa có race distribution end-to-end khi map thay đổi đúng lúc command publish. |
 | Safe stop/FSM/PX4 | PARTIAL | Các nhánh stale/invalid/failed được fail-closed và command provenance được kiểm tra. Chưa có repeated PX4 external-mode run để xác nhận hold/stop, waypoint acceptance, altitude và speed recovery. |
-| Performance | OPEN | Replay hiện cho thấy A* timeout khoảng 88 ms ở scene no-path và các hot-replan/backup khoảng 0.26–12 ms trong structured/open, nhưng mission chưa hoàn tất và chưa có phân phối p50/p95/p99 hoặc RSS trên bộ scene/recorded data đủ đại diện. Không được đổi rate, deadline, raycasting hoặc threshold từ các run này. |
-| Dataset | OPEN | Các artifact cũ chỉ là health/shadow evidence và không đại diện cho source hiện tại. Cần chạy lại scenario đại diện sau khi build ổn định. |
-| SITL | PARTIAL/FAIL-CLOSED | PX4/Gazebo và isolated XRCE UDP đã khởi động sau build sạch, nhưng sanity-open/structured chưa hoàn tất mission; planner failure chuyển sang safety stop/handover. No-path cũng fail-closed nhưng report còn FAIL vì lidar-validity evidence. |
-| C++20 và vocabulary | PARTIAL | Product build vẫn dùng C++20 và các boundary chính đã được harden; RootFinder midpoint/RigidTransform inverse và một số counter/ROG caller đã có checkpoint. Tuy nhiên product typo/dead-parameter/stdout cleanup và nhiều direct math API contract vẫn còn mở; không tuyên bố vocabulary đã hoàn tất. |
+| Performance | OPEN | Dataset replay hiện có mapping callback p50/p95/p99 `9.834/21.099/26.175 ms`, export snapshot `8.059/10.055/11.343 ms`, và peak map `227,817` points; đây mới là một bag/rate, chưa có phân phối scene/RSS đủ đại diện. Không được đổi rate, deadline, raycasting hoặc threshold từ các run này. |
+| Dataset | PARTIAL/FAIL-CLOSED | Bag `aist-mid360-drive` replay mapping-only PASS với đủ 55,435 IMU, 2,772 LiDAR và 2,760 mapping updates. Shadow planner chạy đúng identity/route nhưng phát EMER do known-free/jerk certificate nên report FAIL; đây là benchmark evidence, không phải flight acceptance. |
+| SITL | PARTIAL/FAIL-CLOSED | PX4/Gazebo và isolated XRCE UDP khởi động với manifest hợp lệ. `sanity_open` và `structured_obstacle` safety-stop trước completion; `planner_negative/no_path` FAIL đúng nhánh không đường đi. Chưa có mission PASS lặp lại. |
+| C++20 và vocabulary | PARTIAL | Product build vẫn dùng C++20; RootFinder, RigidTransform, CmdTraj snapshot, CIRI/corridor API và empty geometry state đã có checkpoint. Direct math/vendor API, sampled flatness certificate, stdout/dead-parameter và một số cleanup vẫn mở. |
 
 ## Ma trận truy vết bộ câu hỏi
 
@@ -65,7 +65,7 @@ và HEAD này. Tuy nhiên còn ba khoảng trống P0/P1 không được che b�
 | 15. Replan budget | PARTIAL | Absolute deadline dùng xuyên A*/CIRI/optimizer; chưa có p50/p95/p99 theo stage. |
 | 16. Hot-path efficiency | OPEN | Đã bỏ eager A* workspace và dead raycast override; snapshot export/raycast/copy/RSS chưa được đo lại. |
 | 17. Controller | OPEN | Planner có dynamic gate và PX4 envelope boundary; tracking error/controller equivalence chưa có evidence. |
-| 18. PX4 boundary | PARTIAL | Frame/time conversion, propagated odometry và fail-closed bridge có unit tests; SITL bị chặn trước launch. |
+| 18. PX4 boundary | PARTIAL | Frame/time conversion, propagated odometry và fail-closed bridge có unit tests; PX4/Gazebo đã khởi động nhưng closed-loop mission chưa hoàn tất. |
 | 19. Parameter correctness | PARTIAL | Nhiều duplicate/dead knobs đã gỡ; C++ mission schema và runtime profile đã một owner; runtime dùng `data_freshness_window_s` như một cửa sổ duy nhất trong cùng boundary, còn PX4/bridge giữ các lease khác clock. Boundary limits thiếu giá trị bị reject với default `0`, không còn sentinel âm. |
 | 20. Vehicle/sensor feasibility | OPEN | Chưa có hardware hoặc calibration evidence cho sensing, thrust-to-weight, CPU thermal và latency. |
 | 21. Adversarial scenarios | OPEN | Có regression cục bộ cho curve/degenerate/unknown/race; chưa chạy đủ thin obstacle, slope, ceiling, blackout và retarget suite. |
@@ -155,10 +155,10 @@ iterations, reject reason và latency distribution trước khi đổi số.
 
 ## Verification đã chạy
 
-Trên source sau các thay đổi hiện tại:
+Trên source sau các thay đổi hiện tại (HEAD `ffe7e24`):
 
 - `make build` thành công: **23 packages** finished và authoritative manifest
-  ghi `git_head=7ab0cbf`, `git_dirty=false`.
+  ghi HEAD `ffe7e24`, `git_dirty=false`.
 - `fast_lio_ros` build thành công; parameter-loader trực tiếp **19/19** pass
   khi source đúng ROS/workspace overlay và đặt
   `ROS_LOG_DIR=/tmp/uav-navigation-ros-log`. Lần chạy không đặt biến này bị
@@ -168,8 +168,8 @@ Trên source sau các thay đổi hiện tại:
 - `navigation_mission` CTest **1/1** và PX4 External Mode CTest **3/3** pass
   sau khi chuyển loader mission sang package dùng chung.
 - `navigation_runtime` CTest **7/7** pass.
-- Python runtime contract **164/164** pass; test route mission contract
-  **16/16** pass.
+- `make test` **200/200** pass; hai focused shadow-planning tests và
+  `py_compile` cũng pass.
 - Bridge, mapping vendor và execution đã rebuild/recheck sau các thay đổi liên
   quan và pass lần lượt **6/6**, **1/1** và **2/2**.
 - Lần chạy trực tiếp sau parameter cleanup xác nhận thêm: planner runtime
@@ -183,29 +183,30 @@ Trên source sau các thay đổi hiện tại:
 Các kết quả trên là build/unit/contract evidence. Chúng không thay thế dataset,
 SITL hoặc hardware acceptance.
 
-### Replay sau checkpoint `7ab0cbf`
+### Replay sau checkpoint `ffe7e24`
 
-- `external-mode-check-20260829T070338-1868543` (`sanity_open/positive`):
-  provenance manifest **VALID**, route được nhận, waypoint 0 được accept; các
-  lần `main_minco`/backup sau đó không hoàn tất mission, report `BLOCKED` và
-  runtime chuyển `PAUSED_SAFETY_STOP`.
-- `external-mode-check-20260829T070459-1870767`
-  (`structured_obstacle/detour`): provenance **VALID**, backup được commit và
-  có handoff waypoint; hot-replan sau đó mất safety suffix, runtime fail-closed,
-  report `BLOCKED`.
-- `external-mode-check-20260829T070612-1872748`
-  (`planner_negative/no_path`): provenance **VALID**, A* timeout lặp lại và
-  runtime phát safety stop như expected fail-closed; report vẫn `FAIL` do
-  lidar timestamp/freshness evidence, nên đây là negative-path evidence chứ
-  không phải PASS.
-- `external-mode-check-20260829T070828-1876275` (`sanity_open/positive`):
-  provenance **VALID** với HEAD `2d6535f`, route được nhận và waypoint 0 được
-  accept; `PlanFromRest/main_minco` thất bại lặp lại tại waypoint 1, sau đó
-  runtime fail-closed với `PAUSED_SAFETY_STOP`, report `BLOCKED`.
+- `external-mode-check-20260829T081217-1950458`
+  (`sanity_open/positive`): manifest provenance hợp lệ; LIO có 336 LiDAR
+  processed/0 dropped và không regression timestamp, nhưng `main_minco` fail,
+  runtime `PAUSED_SAFETY_STOP`, report `BLOCKED`. Cross-track p95 `0.459 m`.
+- `external-mode-check-20260829T081345-1952495`
+  (`structured_obstacle/detour`): safety-stop với 2 trajectory failures và
+  không hoàn tất waypoint; report `BLOCKED`. Cross-track p95 `0.074 m`.
+- `external-mode-check-20260829T081435-1954446`
+  (`planner_negative/no_path`): safety-stop đúng nhánh không đường đi; report
+  `FAIL` do lidar-validity evidence, không phải PASS.
+- `dataset-20260829T082822-1970532` (`aist-mid360-drive`, shadow 1x): replay
+  nhận đủ 55,435 IMU/2,772 LiDAR, LIO `TRACKING` 100%, mapping 2,760/2,760
+  updates, accounting hợp lệ. Shadow goal nhận 5 READY nhưng 1 EMER vì
+  known-free/jerk certificate; report `FAIL` và không được xem là flight pass.
+- `dataset-20260829T083330-1978934` (`aist-mid360-drive`, mapping-only 1x):
+  report **PASS**; mapping timing p50/p95/p99 `9.834/21.099/26.175 ms`,
+  snapshot export p50/p95/p99 `8.059/10.055/11.343 ms`, peak map `227,817`
+  points, không observation accounting violation.
 
-Không có recorded-dataset replay mới hoặc hardware run trong checkpoint này.
-Các số solve/hot-replan ở trên chỉ là quan sát của ba phiên, chưa đủ để điều
-chỉnh threshold hay kết luận hiệu năng.
+Các số trên là evidence đúng provenance của HEAD `ffe7e24`; chưa đủ để chỉnh
+threshold hoặc kết luận hiệu năng toàn hệ thống. Chưa có hardware/sanitizer
+certification.
 
 ## Lịch sử lỗi và nguyên tắc đóng
 
@@ -236,7 +237,7 @@ artifact provenance hoặc chưa truy vết được lỗi về source/test/scen
 5. Sau khi end-to-end evidence xanh, hoàn tất các contract còn PARTIAL, chạy
    sanitizer/hardware evidence và lập checkpoint Git. Vocabulary/C++20 hygiene
    product chưa hoàn tất; provenance/license docs không được xóa. Source
-   checkpoint hiện tại là `7ab0cbf`; các finding còn mở gồm planner
+   checkpoint hiện tại là `ffe7e24`; các finding còn mở gồm planner
    main-minco/backup robustness, continuous evidence, direct math/vendor API,
    visibility/decoder regression coverage, report/tooling robustness và
    repeated dataset/SITL/hardware evidence.
