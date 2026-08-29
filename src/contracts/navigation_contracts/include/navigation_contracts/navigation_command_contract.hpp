@@ -84,12 +84,14 @@ inline bool commandContractValid(
                             command.role == NavigationCommand::ROLE_BACKUP) &&
                            command.bundle_generation != 0U) ||
                           (rejected && command.role == NavigationCommand::ROLE_EMERGENCY);
-  return command.header.frame_id == expected_frame && header_ns > 0 &&
+  return !expected_frame.empty() && !command.mission_id.empty() &&
+         command.header.frame_id == expected_frame && header_ns > 0 &&
          valid_until_ns > header_ns && world_stamp_ns > 0 && state_stamp_ns > 0 &&
          command.localization_epoch != 0U && command.goal_epoch != 0U &&
          command.world_generation != 0U && command.world_revision != 0U &&
          command.sample_id != 0U && command.status != NavigationCommand::STATUS_EMPTY &&
-         (normal || rejected) && role_valid && pvaj_finite;
+         (normal || rejected) && role_valid && pvaj_finite &&
+         command.trajectory_time_s >= 0.0;
 }
 
 }  // namespace navigation_contracts

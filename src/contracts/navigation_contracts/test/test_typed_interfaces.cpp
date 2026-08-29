@@ -139,6 +139,7 @@ TEST(NavigationContracts, NavigationCommandContractRejectsMalformedOrRegressedId
   previous.valid_until.sec = 11;
   previous.world_observation_stamp.sec = 9;
   previous.state_source_stamp.sec = 9;
+  previous.mission_id = "mission-a";
   previous.localization_epoch = 3U;
   previous.goal_epoch = 5U;
   previous.world_generation = 13U;
@@ -163,6 +164,13 @@ TEST(NavigationContracts, NavigationCommandContractRejectsMalformedOrRegressedId
   regressed = newer;
   regressed.header.frame_id = "map";
   EXPECT_FALSE(navigation_contracts::commandContractValid(regressed, "lio_odom"));
+  auto malformed = previous;
+  malformed.mission_id.clear();
+  EXPECT_FALSE(navigation_contracts::commandContractValid(malformed, "lio_odom"));
+  malformed = previous;
+  malformed.trajectory_time_s = -1.0;
+  EXPECT_FALSE(navigation_contracts::commandContractValid(malformed, "lio_odom"));
+  EXPECT_FALSE(navigation_contracts::commandContractValid(previous, ""));
   EXPECT_TRUE(navigation_contracts::commandValidAt(previous, 10'500'000'000LL));
   EXPECT_FALSE(navigation_contracts::commandValidAt(previous, 11'000'000'001LL));
   EXPECT_TRUE(navigation_contracts::commandMissionIdentityMatches(

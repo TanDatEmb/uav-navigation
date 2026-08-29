@@ -10924,6 +10924,26 @@ release profiles must not use the former allowance.
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
 
+### 2026-08-29 - Tighten standalone navigation command contract
+
+- **Owner/status:** Navigation command message contract, `VERIFIED` by the
+  focused contracts test.
+- **Scope:** Require a nonempty expected frame and mission identity, and reject
+  negative trajectory sample time at the shared command validation boundary.
+- **Safety impact:** Standalone consumers can no longer accept an otherwise
+  well-formed READY/COMPLETED command with missing mission provenance or a
+  negative trajectory time. Runtime identity-specific checks remain unchanged.
+- **False-accept/false-reject consequences:** Commands emitted by the product
+  with complete mission metadata are unchanged; legacy callers that omitted
+  mission/frame metadata must now populate the contract or be rejected.
+- **Runtime cost and evidence:** Constant-time string/domain checks. Focused
+  typed-interface tests cover empty identity, negative time and empty frame.
+- **Removal/review condition:** Keep until command construction is represented
+  by a typed builder that makes mission/frame identity mandatory.
+- **Verification:** `cmake --build build/navigation_contracts --target
+  test_typed_interfaces -j2 && ./build/navigation_contracts/test_typed_interfaces
+  --gtest_color=no`.
+
 ### 2026-08-29 - Rejected experiment: independently retime outgoing lookahead
 
 - **Owner/status:** Planner guide timing, `REJECTED` and reverted by
