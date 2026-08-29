@@ -228,6 +228,30 @@ TEST_F(ParameterLoaderTest, PriorFrameRequiresExplicitStartupTransform) {
   EXPECT_NO_THROW(ParameterLoader::validate(parameters));
 }
 
+TEST_F(ParameterLoaderTest, RejectsMalformedInitialPriorBoundary) {
+  const auto load = [](const char* name) {
+    rclcpp::Node node{name};
+    return ParameterLoader::declareAndLoad(node);
+  };
+  auto parameters = load("parameter_loader_prior_values_source_test");
+  parameters.initial_prior_source = "invalid";
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+
+  parameters = load("parameter_loader_prior_values_topic_test");
+  parameters.initial_prior_source = "topic";
+  parameters.initial_prior_topic.clear();
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+
+  parameters = load("parameter_loader_prior_values_quaternion_test");
+  parameters.initial_prior_fixed_orientation_xyzw[0] = 2.0;
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+
+  parameters = load("parameter_loader_prior_values_position_test");
+  parameters.initial_prior_fixed_position_m[1] =
+      std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW(ParameterLoader::validate(parameters), std::invalid_argument);
+}
+
 TEST_F(ParameterLoaderTest, RejectsUnrepresentableProcessingLag) {
   rclcpp::Node node{"parameter_loader_processing_lag_test"};
   auto parameters = ParameterLoader::declareAndLoad(node);

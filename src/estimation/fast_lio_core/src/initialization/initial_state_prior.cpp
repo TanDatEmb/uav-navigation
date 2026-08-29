@@ -49,10 +49,11 @@ bool InitialStatePrior::allFinite() const noexcept {
   const bool angular_finite = !angular_velocity_base_rad_s.has_value() ||
                               angular_velocity_base_rad_s->allFinite();
   const bool covariance_finite = !covariance.has_value() || covariance->allFinite();
+  const double orientation_squared_norm = orientation_odom_base.squaredNorm();
   return position_odom_base_m.allFinite() && orientation_odom_base.coeffs().allFinite() &&
-         std::isfinite(orientation_odom_base.squaredNorm()) &&
-         orientation_odom_base.squaredNorm() > 1e-18 && linear_finite && angular_finite &&
-         covariance_finite;
+         std::isfinite(orientation_squared_norm) &&
+         std::abs(orientation_squared_norm - 1.0) <= 1e-6 && linear_finite &&
+         angular_finite && covariance_finite;
 }
 
 }  // namespace uav::nav::lio

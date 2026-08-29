@@ -11801,3 +11801,29 @@ release profiles must not use the former allowance.
   && colcon build --packages-select px4_navigation_external_mode
   --symlink-install`; `colcon test --packages-select
   px4_navigation_external_mode`; `colcon test-result --verbose`.
+
+### 2026-08-29 - Validate Fast-LIO initial-prior configuration boundaries
+
+- **Owner/status:** Fast-LIO ROS parameter and core initial-prior boundary,
+  `IN_PROGRESS` pending focused package verification.
+- **Scope:** Validate initial-prior source/context/attitude/fallback domains,
+  require a topic for topic priors, validate finite fixed vectors and a unit
+  fixed quaternion, and make the core policy reject unknown enums or an
+  inconsistent fixed prior. The prior numeric contract now requires a unit
+  quaternion rather than merely a nonzero quaternion.
+- **Safety impact:** Malformed YAML or direct `EstimatorConfig` construction
+  cannot silently select an unknown prior mode or feed a scaled quaternion into
+  attitude/lever-arm geometry. Invalid configuration fails during startup.
+- **False-accept/false-reject consequences:** Existing zero/fixed/topic
+  configurations with valid frames and values retain their behavior; malformed
+  source strings, missing topic names and non-unit/non-finite fixed values are
+  rejected before profile construction.
+- **Runtime cost and evidence:** Constant-size validation of four small arrays
+  and enum/string fields at startup; focused parameter-loader and initial-prior
+  tests are required before changing status to VERIFIED.
+- **Removal/review condition:** Keep until initial-prior settings are represented
+  by typed validated parameter values instead of strings and public mutable
+  arrays.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select fast_lio_core fast_lio_ros
+  --symlink-install`; focused parameter-loader and initial-prior test binaries.

@@ -22,6 +22,25 @@ LivoxTimestampPolicy parseTimestampPolicy(std::string_view value) {
   throw std::invalid_argument("unsupported timing.livox_timestamp_policy");
 }
 
+bool isFiniteArray(const auto& values) {
+  return std::all_of(values.begin(), values.end(),
+                     [](const double value) { return std::isfinite(value); });
+}
+
+bool isUnitQuaternion(const std::array<double, 4>& xyzw) {
+  double scale = 0.0;
+  for (const double value : xyzw) scale = std::max(scale, std::abs(value));
+  if (!(scale > 0.0) || !std::isfinite(scale)) return false;
+  long double squared_norm = 0.0L;
+  for (const double value : xyzw) {
+    const long double scaled = static_cast<long double>(value) / scale;
+    squared_norm += scaled * scaled;
+  }
+  const long double norm =
+      static_cast<long double>(scale) * std::sqrt(squared_norm);
+  return std::isfinite(norm) && std::abs(norm - 1.0L) <= 1e-6L;
+}
+
 InitialStatePriorSource parsePriorSource(std::string_view value) {
   if (value == "zero") return InitialStatePriorSource::kZero;
   if (value == "fixed") return InitialStatePriorSource::kFixed;
@@ -438,6 +457,15 @@ void ParameterLoader::validate(const RosParameters& p) {
   if (p.odom_frame == p.base_frame || p.imu_frame == p.lidar_frame) {
     throw std::invalid_argument("configured frames must identify distinct frames");
   }
+  const auto prior_source = parsePriorSource(p.initial_prior_source);
+  const auto prior_context = parsePriorContext(p.initial_prior_context);
+  static_cast<void>(parsePriorAttitude(p.initial_prior_attitude));
+  const auto prior_fallback = parsePriorFallback(p.initial_prior_fallback);
+  if (prior_source == InitialStatePriorSource::kTopic &&
+      p.initial_prior_topic.empty()) {
+    throw std::invalid_argument(
+        "initial_prior.topic must not be empty when source=topic");
+  }
   if (p.initial_prior_source_frame.empty() ||
       (p.initial_prior_source_frame != p.odom_frame &&
        p.initial_prior_source_frame_transform != "startup_coincident") ||
@@ -448,6 +476,19 @@ void ParameterLoader::validate(const RosParameters& p) {
     throw std::invalid_argument(
         "initial prior source frame needs an explicit same_frame or ground-startup "
         "startup_coincident transform");
+  }
+  if (!isFiniteArray(p.initial_prior_fixed_position_m) ||
+      !isFiniteArray(p.initial_prior_fixed_orientation_xyzw) ||
+      !isFiniteArray(p.initial_prior_fixed_linear_velocity_m_s) ||
+      !isFiniteArray(p.initial_prior_fixed_angular_velocity_rad_s) ||
+      !isUnitQuaternion(p.initial_prior_fixed_orientation_xyzw)) {
+    throw std::invalid_argument("initial_prior fixed values are invalid");
+  }
+  if (prior_source == InitialStatePriorSource::kTopic &&
+      prior_context == InitialStatePriorContext::kInFlightReinitialization &&
+      prior_fallback != InitialPriorFallback::kReject) {
+    throw std::invalid_argument(
+        "in-flight initial prior must reject on topic timeout");
   }
   if (!std::isfinite(p.initial_prior_wait_timeout_s) ||
       p.initial_prior_wait_timeout_s <= 0.0 ||
