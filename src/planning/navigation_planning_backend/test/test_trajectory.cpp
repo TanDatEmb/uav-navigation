@@ -2102,6 +2102,27 @@ TEST(PlannerTrajectory, InflatedAstarDoesNotRepeatIdenticalEdgeCertificates) {
   EXPECT_EQ(world->repeatedUndirectedEdgeQueries(), 0U);
 }
 
+TEST(PlannerTrajectory, AstarRejectsMalformedPublicBoundaries) {
+  auto world = std::make_shared<CountingAstarWorld>();
+  path_search::PathSearchConfig config;
+  config.heu_type = 2;
+  auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>();
+  EXPECT_THROW(
+      path_search::Astar(config, nullptr, world, 1.0), std::invalid_argument);
+
+  path_search::Astar astar(config, context, world, 1.0);
+  navigation_math::vec_Vec3f path;
+  const int flags = path_search::ON_INF_MAP |
+                    path_search::UNKNOWN_AS_FREE |
+                    path_search::DONT_USE_INF_NEIGHBOR;
+  EXPECT_EQ(astar.pointToPointPathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F},
+                navigation_math::Vec3f{5.5F, 0.5F, 1.5F}, flags, 20.0, path,
+                std::numeric_limits<double>::infinity(), true),
+            navigation_math::INIT_ERROR);
+}
+
 TEST(PlannerTrajectory, DoesNotTruncateRouteWithinBound) {
   const navigation_math::vec_Vec3f path{
       navigation_math::Vec3f{0.0F, 0.0F, 3.0F},

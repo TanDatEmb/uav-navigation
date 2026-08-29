@@ -26,6 +26,15 @@ namespace path_search {
     constexpr CellState KNOWN_FREE_CELL = CellState::kKnownFree;
     constexpr CellState UNKNOWN_CELL = CellState::kUnknown;
 
+    bool checkedIndexStep(const int base, const int delta, int& result) {
+        if ((delta > 0 && base > std::numeric_limits<int>::max() - delta) ||
+            (delta < 0 && base < std::numeric_limits<int>::min() - delta)) {
+            return false;
+        }
+        result = base + delta;
+        return true;
+    }
+
 
     Astar::Astar(const PathSearchConfig& config,
                  const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
@@ -37,6 +46,14 @@ namespace path_search {
             throw std::invalid_argument(
                 "planner A* attempt budget must be finite and positive");
         }
+        if (!planner_context_) {
+            throw std::invalid_argument("planner A* runtime context must not be null");
+        }
+        if (cfg_.heu_type < 0 || cfg_.heu_type > 2 ||
+            !std::isfinite(cfg_.heuristic_weight) ||
+            cfg_.heuristic_weight < 1.0 || cfg_.heuristic_weight > 5.0) {
+            throw std::invalid_argument("planner A* heuristic configuration is invalid");
+        }
         cout << GREEN << " -- [A*] Initialize sparse search workspace." << RESET << endl;
     }
 
@@ -44,6 +61,10 @@ namespace path_search {
 
     RET_CODE
     Astar::setup(const Vec3f &start_pt, const Vec3f &goal_pt, const int &flag, const double &searching_horizon) {
+        if (!start_pt.allFinite() || !goal_pt.allFinite() ||
+            !std::isfinite(searching_horizon)) {
+            return INIT_ERROR;
+        }
         visited_nodes_.clear();
         frontier_sequence_ = 0U;
         md_.start_pt = start_pt;
@@ -93,10 +114,18 @@ namespace path_search {
         for (int axis = 0; axis < 3; ++axis) {
             const int dimension = bounds.dimensions(axis);
             const std::int64_t minimum_index = bounds.global_min_index(axis);
+            if (dimension <= 0 ||
+                minimum_index > std::numeric_limits<std::int64_t>::max() -
+                    (static_cast<std::int64_t>(dimension) - 1)) {
+                if (planner_context_) {
+                    planner_context_->error(
+                            " -- [A*] World geometry axis {} cannot define a grid window.", axis);
+                }
+                return INIT_ERROR;
+            }
             const std::int64_t maximum_index = minimum_index +
                     static_cast<std::int64_t>(dimension) - 1;
-            if (dimension <= 0 ||
-                maximum_index > std::numeric_limits<int>::max() ||
+            if (maximum_index > std::numeric_limits<int>::max() ||
                 maximum_index < std::numeric_limits<int>::min()) {
                 if (planner_context_) {
                     planner_context_->error(
@@ -124,7 +153,7 @@ namespace path_search {
         if (searching_horizon > 0) {
             md_.local_map_center_d = start_pt;
         } else {
-            md_.local_map_center_d = (start_pt + goal_pt) / 2;
+            md_.local_map_center_d = (start_pt.cast<double>() + goal_pt.cast<double>()) / 2.0;
         }
 
         posToGlobalIndex(md_.local_map_center_d, md_.local_map_center_id_g);
@@ -140,9 +169,12 @@ namespace path_search {
     double Astar::getHeu(GridNodePtr node1, GridNodePtr node2, int type) const {
         switch (type) {
             case DIAG: {
-                double dx = std::abs(node1->id_g(0) - node2->id_g(0));
-                double dy = std::abs(node1->id_g(1) - node2->id_g(1));
-                double dz = std::abs(node1->id_g(2) - node2->id_g(2));
+                double dx = std::abs(static_cast<double>(node1->id_g(0)) -
+                                     static_cast<double>(node2->id_g(0)));
+                double dy = std::abs(static_cast<double>(node1->id_g(1)) -
+                                     static_cast<double>(node2->id_g(1)));
+                double dz = std::abs(static_cast<double>(node1->id_g(2)) -
+                                     static_cast<double>(node2->id_g(2)));
 
                 double h = 0.0;
                 int diag = std::min(std::min(dx, dy), dz);
@@ -162,9 +194,12 @@ namespace path_search {
                 return cfg_.heuristic_weight * h;
             }
             case MANH: {
-                double dx = std::abs(node1->id_g(0) - node2->id_g(0));
-                double dy = std::abs(node1->id_g(1) - node2->id_g(1));
-                double dz = std::abs(node1->id_g(2) - node2->id_g(2));
+                double dx = std::abs(static_cast<double>(node1->id_g(0)) -
+                                     static_cast<double>(node2->id_g(0)));
+                double dy = std::abs(static_cast<double>(node1->id_g(1)) -
+                                     static_cast<double>(node2->id_g(1)));
+                double dz = std::abs(static_cast<double>(node1->id_g(2)) -
+                                     static_cast<double>(node2->id_g(2)));
 
                 return cfg_.heuristic_weight * (dx + dy + dz);
             }
@@ -248,13 +283,18 @@ namespace path_search {
 
     void Astar::setFineInfNeighbors(const int &neighbor_step) {
         neighbor_list.clear();
+        constexpr int kMaximumNeighborStep = 64;
+        if (neighbor_step <= 0 || neighbor_step > kMaximumNeighborStep) return;
         for (int i = -neighbor_step; i <= neighbor_step; i++) {
             for (int j = -neighbor_step; j <= neighbor_step; j++) {
                 for (int k = -neighbor_step; k <= neighbor_step; k++) {
                     if (i == 0 && j == 0 && k == 0) {
                         continue;
                     }
-                    if (i * i + j * j + k * k > neighbor_step * neighbor_step) {
+                    if (static_cast<std::int64_t>(i) * i +
+                        static_cast<std::int64_t>(j) * j +
+                        static_cast<std::int64_t>(k) * k >
+                        static_cast<std::int64_t>(neighbor_step) * neighbor_step) {
                         continue;
                     }
                     neighbor_list.emplace_back(i, j, k);
@@ -268,6 +308,10 @@ namespace path_search {
                                            const int &flag, const double &searching_horizon,
                                            rog_map::vec_Vec3f &out_path, const double &time_out,
                                            const bool prefer_start_goal_altitude) {
+        if (std::isnan(time_out) ||
+            (std::isinf(time_out) && time_out > 0.0)) {
+            return INIT_ERROR;
+        }
         const double effective_time_out = time_out >= 0.0 ? time_out : search_time_limit_s_;
         const auto steady_deadline = std::chrono::steady_clock::now() +
             std::chrono::duration_cast<std::chrono::steady_clock::duration>(
@@ -520,8 +564,14 @@ namespace path_search {
                     md_.unknown_as_occ ? UnknownPolicy::kRequireKnownFree
                                        : UnknownPolicy::kAllowUnknown)) {
             const Vec3f delta = local_end_pt - local_start_pt;
+            const double distance = delta.cast<double>().norm();
+            const double sample_ratio = distance / md_.resolution;
+            if (!std::isfinite(distance) || !std::isfinite(sample_ratio) ||
+                sample_ratio > static_cast<double>(std::numeric_limits<int>::max() - 1)) {
+                return INIT_ERROR;
+            }
             const int sample_count = std::max(
-                    1, static_cast<int>(std::ceil(delta.norm() / md_.resolution)));
+                    1, static_cast<int>(std::ceil(sample_ratio)));
             out_path.reserve(static_cast<std::size_t>(sample_count + 1));
             for (int sample = 0; sample <= sample_count; ++sample) {
                 const double ratio = static_cast<double>(sample) /
@@ -663,9 +713,11 @@ namespace path_search {
 
                         rog_map::Vec3i neighborIdx;
                         rog_map::Vec3f neighborPos;
-                        neighborIdx(0) = (current->id_g)(0) + dx;
-                        neighborIdx(1) = (current->id_g)(1) + dy;
-                        neighborIdx(2) = (current->id_g)(2) + dz;
+                        if (!checkedIndexStep(current->id_g(0), dx, neighborIdx(0)) ||
+                            !checkedIndexStep(current->id_g(1), dy, neighborIdx(1)) ||
+                            !checkedIndexStep(current->id_g(2), dz, neighborIdx(2))) {
+                            continue;
+                        }
                         globalIndexToPos(neighborIdx, neighborPos);
 
                         if (!insideLocalMap(neighborIdx)) {
@@ -980,9 +1032,11 @@ namespace path_search {
                         }
                         rog_map::Vec3i neighborIdx;
                         rog_map::Vec3f neighborPos;
-                        neighborIdx(0) = (current->id_g)(0) + dx;
-                        neighborIdx(1) = (current->id_g)(1) + dy;
-                        neighborIdx(2) = (current->id_g)(2) + dz;
+                        if (!checkedIndexStep(current->id_g(0), dx, neighborIdx(0)) ||
+                            !checkedIndexStep(current->id_g(1), dy, neighborIdx(1)) ||
+                            !checkedIndexStep(current->id_g(2), dz, neighborIdx(2))) {
+                            continue;
+                        }
                         globalIndexToPos(neighborIdx, neighborPos);
                         if (!map_ptr_->contains(neighborPos) ||
                             !insideLocalMap(neighborIdx)) {

@@ -11176,3 +11176,26 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_runtime --target
   test_navigation_runtime_shutdown -j2 &&
   ./build/navigation_runtime/test_navigation_runtime_shutdown --gtest_color=no`.
+
+### 2026-08-29 - Harden A* public numeric and index boundaries
+
+- **Owner/status:** Navigation A* configuration and search boundary,
+  `VERIFIED` by the focused trajectory suite.
+- **Scope:** Validate heuristic domain and runtime context, reject malformed
+  points/timeouts, use widened midpoint and grid-bound arithmetic, bound fine
+  neighbor construction, and check integer neighbor stepping before addition.
+- **Safety impact:** Invalid public inputs fail with `INIT_ERROR` or a
+  constructor exception instead of reaching chrono casts, signed overflow,
+  null dereferences, or out-of-range graph indices. Normal A* search and
+  traversability policy are unchanged.
+- **False-accept/false-reject consequences:** NaN/infinite input, invalid
+  heuristic values, impossible grid windows, and oversized neighbor radii are
+  rejected; ordinary configured searches retain their existing path policy.
+- **Runtime cost and evidence:** Constant-time validation plus checked integer
+  stepping in the existing neighbor loop. Regression covers null context and
+  infinite timeout; the trajectory suite is the required verification.
+- **Removal/review condition:** Keep until A* uses typed validated grid/time
+  contracts at every public entrypoint.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.

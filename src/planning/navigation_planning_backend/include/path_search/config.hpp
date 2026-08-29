@@ -38,6 +38,9 @@ namespace path_search {
                 heuristic_weight > 5.0) {
                 throw std::invalid_argument("astar/heuristic_weight must be within [1, 5]");
             }
+            if (heu_type < 0 || heu_type > 2) {
+                throw std::invalid_argument("astar/heu_type must be one of 0, 1 or 2");
+            }
         }
 
     };
