@@ -118,6 +118,7 @@ class PropagatedOdometryWorker {
       std::uint64_t correction_sequence, const Timestamp& correction_time);
   void updateSnapshot();
   void maybePublishOnImu(const ImuSample& sample);
+  [[nodiscard]] bool advanceControlGenerationLocked();
 
   PropagatedOdometryWorkerConfig config_;
   ImuStatePropagator propagator_;

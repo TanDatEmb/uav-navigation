@@ -12413,6 +12413,35 @@ release profiles must not use the former allowance.
   && ./build/px4_navigation_external_mode/test_tracking_envelope
   --gtest_color=no`.
 
+### 2026-08-29 - Fail closed on estimator control-generation exhaustion
+
+- **Owner/status:** FAST-LIO propagated-odometry worker and mapping world
+  identity counters, `PROVISIONAL`; verified by package builds and focused
+  mapping/worker suites.
+- **Scope:** Mapping world generation/revision increments and worker
+  control-generation invalidation transitions now check `uint64_t` exhaustion
+  before incrementing. Exhaustion poisons/stops the affected owner instead of
+  wrapping to zero. Mapping snapshot-publication timestamp age also uses the
+  checked common delta helper.
+- **Safety impact:** A stale solve, correction, or world certificate cannot
+  become numerically indistinguishable from a fresh identity after long uptime
+  or repeated reset/load-shedding transitions; extreme snapshot timestamps
+  cannot corrupt publication scheduling.
+- **False-accept/false-reject consequences:** Normal counter transitions and
+  timestamp ages are unchanged. Exhausted identity or unrepresentable age
+  fails closed and requires owner restart/reinitialization.
+- **Runtime cost and evidence:** Constant-time max checks and one checked
+  timestamp subtraction per mapping publication decision; mapping actor passes
+  12/12 and propagated worker passes 27/27.
+- **Removal/review condition:** Keep until all producer identities use one
+  shared exhausted-state allocator and snapshot timestamps use a typed epoch.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_mapping --target test_mapping_actor -j2
+  && cmake --build build/fast_lio_ros --target
+  test_propagated_odometry_worker fast_lio_ros -j2
+  && ./build/navigation_mapping/test_mapping_actor --gtest_color=no
+  && ./build/fast_lio_ros/test_propagated_odometry_worker --gtest_color=no`.
+
 ### 2026-08-29 - Honor synchronized estimator propagation epoch
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,

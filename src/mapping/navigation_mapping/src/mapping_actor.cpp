@@ -242,6 +242,9 @@ class MappingActor::Impl final {
     try {
       MappingUpdateResult result;
       if (observation.localization_epoch > localization_epoch_) {
+        if (world_generation_ == std::numeric_limits<std::uint64_t>::max()) {
+          throw std::runtime_error("mapping world generation exhausted");
+        }
         // ROGMap::init() is intentionally one-shot for each instance. Build
         // and initialize a replacement before swapping it in so a public
         // localization-frame transition cannot double-init the live map. If
@@ -260,6 +263,10 @@ class MappingActor::Impl final {
         current_snapshot_.reset();
         pending_changed_region_ = {};
         pending_change_covers_world_ = false;
+      }
+
+      if (world_revision_ == std::numeric_limits<std::uint64_t>::max()) {
+        throw std::runtime_error("mapping world revision exhausted");
       }
 
       const auto map_started = std::chrono::steady_clock::now();
@@ -354,9 +361,16 @@ class MappingActor::Impl final {
         pending_change_covers_world_ = true;
       }
 
+      const auto snapshot_age = current_snapshot_
+          ? navigation_common::checkedDifference(
+                observation.stamp_ns,
+                current_snapshot_->identity().observation_stamp_ns)
+          : std::optional<std::int64_t>{};
+      if (current_snapshot_ && !snapshot_age.has_value()) {
+        throw std::runtime_error("mapping snapshot timestamp arithmetic overflow");
+      }
       const bool publication_due = !current_snapshot_ || pending_change_covers_world_ ||
-          observation.stamp_ns - current_snapshot_->identity().observation_stamp_ns >=
-              snapshot_publication_period_ns_;
+          *snapshot_age >= snapshot_publication_period_ns_;
       if (!publication_due) {
         result.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - map_started).count();

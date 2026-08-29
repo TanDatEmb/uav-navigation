@@ -108,8 +108,7 @@ bool PropagatedOdometryWorker::enqueueEstimatorState(
     diagnostics_.navigation_valid = update.navigation_valid;
     if (update.status != EstimatorStatus::kTracking ||
         !update.navigation_valid) {
-      ++control_generation_;
-      diagnostics_.control_generation = control_generation_;
+      if (!advanceControlGenerationLocked()) return false;
       discardPendingCorrectionLocked(true);
       invalidation_requested_.store(true, std::memory_order_release);
     } else if (update.corrected_estimate.has_value()) {
@@ -204,17 +203,18 @@ void PropagatedOdometryWorker::run() {
     }
 
     if (load_shed_requested_.exchange(false, std::memory_order_acq_rel)) {
+      bool generation_advanced = true;
       {
         std::lock_guard lock(mutex_);
         if (!suspended_.load(std::memory_order_acquire)) {
           suspended_.store(true, std::memory_order_release);
-          ++control_generation_;
-          diagnostics_.control_generation = control_generation_;
+          generation_advanced = advanceControlGenerationLocked();
           ++diagnostics_.load_shedding_count;
           ++diagnostics_.load_shedding_transition_count;
           discardPendingCorrectionLocked(true);
         }
       }
+      if (!generation_advanced) return;
       propagator_.invalidate(PropagatedOdometryStatus::kQueueOverflow);
     }
     if (invalidation_requested_.exchange(false, std::memory_order_acq_rel)) {
@@ -370,9 +370,22 @@ void PropagatedOdometryWorker::processImuBatch(
 void PropagatedOdometryWorker::handleContinuityReset() {
   std::lock_guard lock(mutex_);
   suspended_.store(true, std::memory_order_release);
+  if (!advanceControlGenerationLocked()) return;
+  discardPendingCorrectionLocked(true);
+}
+
+bool PropagatedOdometryWorker::advanceControlGenerationLocked() {
+  if (control_generation_ == std::numeric_limits<std::uint64_t>::max()) {
+    diagnostics_.worker_failed = true;
+    diagnostics_.worker_failure_message = "control generation exhausted";
+    accepting_ = false;
+    suspended_.store(true, std::memory_order_release);
+    stop_requested_.store(true, std::memory_order_release);
+    return false;
+  }
   ++control_generation_;
   diagnostics_.control_generation = control_generation_;
-  discardPendingCorrectionLocked(true);
+  return true;
 }
 
 std::optional<Timestamp> PropagatedOdometryWorker::processPendingCorrection() {
