@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 
 namespace uav::nav::lio {
@@ -31,6 +32,7 @@ class LioPublicFrameGeneration final {
   }
 
   [[nodiscard]] LioPublicFrameGenerationSnapshot snapshot() const noexcept {
+    std::lock_guard lock(mutex_);
     return snapshot_;
   }
 
@@ -42,6 +44,7 @@ class LioPublicFrameGeneration final {
  private:
   LioPublicFrameGenerationSnapshot snapshot_{};
   std::uint64_t last_event_token_{0};
+  mutable std::mutex mutex_;
 };
 
 }  // namespace uav::nav::lio

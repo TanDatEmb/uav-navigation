@@ -39,18 +39,20 @@ void publishConverted(tf2_ros::TransformBroadcaster& broadcaster,
 
 void RosTransformPublisher::publishPropagated(
     const KinematicStateEstimate& estimate) {
-  if (!base_link_converter_) {
-    return;
-  }
   publishKinematic(estimate);
 }
 
 void RosTransformPublisher::publishKinematic(
     const KinematicStateEstimate& estimate) {
-  if (!base_link_converter_) {
+  std::shared_ptr<const BaseLinkStateConverter> converter;
+  {
+    std::lock_guard lock(mutex_);
+    converter = base_link_converter_;
+  }
+  if (!converter) {
     return;
   }
-  const auto converted = base_link_converter_->convert(
+  const auto converted = converter->convert(
       estimate.estimate, estimate.angular_velocity_imu_rad_s);
   if (!converted.ok()) {
     std::lock_guard lock(mutex_);
