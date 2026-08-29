@@ -12741,3 +12741,27 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/rog_map_vendor --target test_rog_map_vendor -j2
   && ./build/rog_map_vendor/test_rog_map_vendor --gtest_color=no`.
+
+### 2026-08-29 - Bound mission route payload construction
+
+- **Owner/status:** Mission contract and runtime route decoder boundary,
+  `PROVISIONAL`; verified by the focused mission contract suite.
+- **Scope:** Mission IDs, frame IDs, waypoint IDs, and waypoint count now have
+  one shared bounded contract. The YAML loader and ROS `RouteSnapshot` decoder
+  reject oversized payloads before allocating or iterating over the route, and
+  direct `Mission::valid()` callers receive the same result.
+- **Safety impact:** Untrusted route messages/files cannot force unbounded
+  waypoint storage or route-geometry construction, limiting CPU/RAM starvation
+  of runtime callbacks. This is a resource boundary; it does not relax route
+  geometry, identity, or unknown-space safety checks.
+- **False-accept/false-reject consequences:** Existing missions within the
+  explicit envelope are unchanged. A larger mission is rejected at ingress and
+  must be split or handled by a separately reviewed transport contract.
+- **Runtime cost and evidence:** Constant-size metadata checks occur before
+  `reserve()` and route construction. `test_mission_contract` passes 16/16,
+  including oversized direct and YAML payload regressions.
+- **Removal/review condition:** Keep until route transport is replaced by a
+  bounded validated message type with an equivalent resource budget.
+- **Verification:** `cmake --build build/navigation_mission --target
+  test_mission_contract -j2 && ./build/navigation_mission/test_mission_contract
+  --gtest_color=no`.

@@ -66,7 +66,8 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
     }
     mission.id = node["id"] ? node["id"].as<std::string>() : "";
     mission.frame = node["frame"] ? node["frame"].as<std::string>() : "";
-    if (mission.id.empty() || mission.frame.empty() ||
+    if (mission.id.empty() || mission.id.size() > kMaximumMissionIdLength ||
+        mission.frame.empty() || mission.frame.size() > kMaximumMissionFrameLength ||
         (!expected_frame.empty() && mission.frame != expected_frame)) {
       throw std::invalid_argument("mission id/frame is empty or frame does not match planning frame");
     }
@@ -74,6 +75,9 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
     const YAML::Node waypoints = node["waypoints"];
     if (!waypoints || !waypoints.IsSequence() || waypoints.size() == 0U) {
       throw std::invalid_argument("mission.waypoints must be a non-empty sequence");
+    }
+    if (waypoints.size() > kMaximumMissionWaypoints) {
+      throw std::invalid_argument("mission.waypoints exceeds the configured maximum");
     }
     std::set<std::string> waypoint_ids;
     for (std::size_t index = 0; index < waypoints.size(); ++index) {
@@ -84,7 +88,8 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
                         "waypoints[]");
       MissionWaypoint waypoint;
       waypoint.id = waypoint_node["id"] ? waypoint_node["id"].as<std::string>() : "";
-      if (waypoint.id.empty() || !waypoint_ids.insert(waypoint.id).second) {
+      if (waypoint.id.empty() || waypoint.id.size() > kMaximumWaypointIdLength ||
+          !waypoint_ids.insert(waypoint.id).second) {
         throw std::invalid_argument("mission waypoint IDs must be non-empty and unique");
       }
       const YAML::Node position = waypoint_node["position"];
@@ -163,6 +168,9 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
         mission.control.acceptance_confirmation_s = finiteScalar(
             control["acceptance_confirmation_s"], "control.acceptance_confirmation_s", 0.0, true);
       }
+    }
+    if (!mission.valid()) {
+      throw std::invalid_argument("mission violates the mission contract");
     }
     return mission;
   } catch (const YAML::Exception& error) {

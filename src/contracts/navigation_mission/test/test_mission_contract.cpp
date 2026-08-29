@@ -5,6 +5,8 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -72,6 +74,24 @@ mission:
                std::invalid_argument);
 }
 
+TEST(MissionContract, LoaderRejectsOversizedWaypointSequenceBeforeConstruction) {
+  std::ostringstream yaml;
+  yaml << "mission:\n"
+       << "  version: 1\n"
+       << "  id: bounded\n"
+       << "  frame: lio_odom\n"
+       << "  waypoints:\n";
+  for (std::size_t index = 0U;
+       index < navigation_mission::kMaximumMissionWaypoints + 1U; ++index) {
+    yaml << "    - id: waypoint_" << index << "\n"
+         << "      position: [0.0, 0.0, 1.0]\n"
+         << "      acceptance_radius_m: 0.5\n";
+  }
+  const TemporaryMission mission(yaml.str().c_str());
+  EXPECT_THROW(navigation_mission::loadMission(mission.string(), "lio_odom"),
+               std::invalid_argument);
+}
+
 TEST(MissionContract, RejectsAValidMissionWithTheWrongPlanningFrame) {
   const TemporaryMission mission(R"(
 mission:
@@ -108,6 +128,21 @@ navigation_mission::Mission makeRouteMission() {
 }
 
 }  // namespace
+
+TEST(MissionContract, RejectsOversizedMissionPayloadsAtContractBoundary) {
+  auto mission = makeRouteMission();
+  mission.id.assign(navigation_mission::kMaximumMissionIdLength + 1U, 'm');
+  EXPECT_FALSE(mission.valid());
+
+  mission = makeRouteMission();
+  mission.waypoints.front().id.assign(
+      navigation_mission::kMaximumWaypointIdLength + 1U, 'w');
+  EXPECT_FALSE(mission.valid());
+
+  mission = makeRouteMission();
+  mission.waypoints.resize(navigation_mission::kMaximumMissionWaypoints + 1U);
+  EXPECT_FALSE(mission.valid());
+}
 
 TEST(RouteProgress, SkipsDuplicateWaypointsAndInterpolatesAltitude) {
   const navigation_mission::RouteProgress route(makeRouteMission());

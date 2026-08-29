@@ -11,6 +11,13 @@
 
 namespace navigation_mission {
 
+// Transport and loader boundaries share these limits.  They bound the work
+// performed by route construction before geometry/planning validation runs.
+inline constexpr std::size_t kMaximumMissionWaypoints = 4096U;
+inline constexpr std::size_t kMaximumMissionIdLength = 256U;
+inline constexpr std::size_t kMaximumMissionFrameLength = 128U;
+inline constexpr std::size_t kMaximumWaypointIdLength = 256U;
+
 struct MissionWaypoint {
   enum class Behavior : std::uint8_t { PassThrough = 0U, Stop = 1U };
 
@@ -43,7 +50,9 @@ struct Mission {
   MissionControlConfig control;
 
   [[nodiscard]] bool valid() const noexcept {
-    if (schema_version != 1 || id.empty() || frame.empty() || waypoints.empty() ||
+    if (schema_version != 1 || id.empty() || id.size() > kMaximumMissionIdLength ||
+        frame.empty() || frame.size() > kMaximumMissionFrameLength ||
+        waypoints.empty() || waypoints.size() > kMaximumMissionWaypoints ||
         !std::isfinite(planning.max_velocity_mps) || planning.max_velocity_mps <= 0.0 ||
         !std::isfinite(planning.max_acceleration_mps2) ||
         planning.max_acceleration_mps2 <= 0.0 ||
@@ -57,7 +66,8 @@ struct Mission {
     }
     std::set<std::string> waypoint_ids;
     for (const auto& waypoint : waypoints) {
-      if (waypoint.id.empty() || !waypoint.position_enu.allFinite() ||
+      if (waypoint.id.empty() || waypoint.id.size() > kMaximumWaypointIdLength ||
+          !waypoint.position_enu.allFinite() ||
           !std::isfinite(waypoint.acceptance_radius_m) ||
           waypoint.acceptance_radius_m <= 0.0 || !std::isfinite(waypoint.hold_s) ||
           waypoint.hold_s < 0.0 ||

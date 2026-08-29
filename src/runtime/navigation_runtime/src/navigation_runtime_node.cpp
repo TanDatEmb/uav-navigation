@@ -89,7 +89,10 @@ std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
   try {
   const auto& source = goal.route;
   const std::size_t count = source.waypoint_positions.size();
-  if (count == 0U || source.waypoint_ids.size() != count ||
+  if (count == 0U || count > navigation_mission::kMaximumMissionWaypoints ||
+      source.mission_id.size() > navigation_mission::kMaximumMissionIdLength ||
+      source.frame_id.size() > navigation_mission::kMaximumMissionFrameLength ||
+      source.waypoint_ids.size() != count ||
       source.waypoint_acceptance_radii_m.size() != count ||
       source.waypoint_behaviors.size() != count ||
       source.mission_id != goal.mission_id || source.frame_id != goal.header.frame_id ||
@@ -106,7 +109,9 @@ std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
     const auto& point = source.waypoint_positions[index];
     const double radius = source.waypoint_acceptance_radii_m[index];
     const std::uint8_t behavior = source.waypoint_behaviors[index];
-    if (source.waypoint_ids[index].empty() || !std::isfinite(point.x) ||
+    if (source.waypoint_ids[index].empty() ||
+        source.waypoint_ids[index].size() > navigation_mission::kMaximumWaypointIdLength ||
+        !std::isfinite(point.x) ||
         !std::isfinite(point.y) || !std::isfinite(point.z) ||
         !std::isfinite(radius) || radius <= 0.0 ||
         (behavior != navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH &&
