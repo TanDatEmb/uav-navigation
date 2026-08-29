@@ -196,7 +196,19 @@ namespace navigation_planning_backend {
         explicit  CmdTraj() = default;
 
         void setEmpty() {
+            LOCK_G
             flag_empty_ = true;
+            pos_traj_ = {};
+            yaw_traj_ = {};
+            start_WT_ = 0.0;
+            backup_traj_start_TT_ = 0.0;
+            on_backup_start_TT_ = on_backup_end_TT_ = -1.0;
+            first_part_exp_has_backup_traj_ = false;
+            flag_backup_traj_avilibale_ = false;
+            identity_ = {};
+            role_intervals_.clear();
+            certificate_ = {};
+            commit_diagnostics_ = {};
         }
 
         bool empty() const {
@@ -346,12 +358,59 @@ namespace navigation_planning_backend {
 
         bool commitCandidate(CandidateCommandBundle&& candidate,
                              const CommandCertificate& certificate) {
+            if (!trajectoryFinite(candidate.position) ||
+                !trajectoryFinite(candidate.yaw) ||
+                std::abs(candidate.position.start_WT - candidate.yaw.start_WT) >
+                    1.0e-6 || candidate.roles.empty()) {
+                return false;
+            }
+            const double duration = candidate.position.getTotalDuration();
+            double cursor = 0.0;
+            for (const auto& interval : candidate.roles) {
+                if (!std::isfinite(interval.begin_tt) ||
+                    !std::isfinite(interval.end_tt) || interval.begin_tt < cursor ||
+                    interval.begin_tt > cursor + 1.0e-6 ||
+                    interval.end_tt <= interval.begin_tt ||
+                    interval.end_tt > duration + 1.0e-6 ||
+                    (interval.role != CandidateTrajectoryRole::MAIN &&
+                     interval.role != CandidateTrajectoryRole::BACKUP)) {
+                    return false;
+                }
+                cursor = interval.end_tt;
+            }
+            if (std::abs(cursor - duration) > 1.0e-6 ||
+                !std::isfinite(candidate.start_wall_time) ||
+                std::abs(candidate.start_wall_time - candidate.position.start_WT) >
+                    1.0e-6) {
+                return false;
+            }
+            const bool emergency =
+                candidate.backup_disposition == BackupDisposition::EMERGENCY;
+            const CommandIdentity candidate_identity{candidate.localization_epoch,
+                                                     candidate.goal_epoch,
+                                                     candidate.request_id};
+            if (!emergency &&
+                (!candidate_identity.valid() ||
+                 certificate.pinned_world.localization_epoch == 0U ||
+                 certificate.pinned_world.generation == 0U ||
+                 certificate.pinned_world.revision == 0U ||
+                 certificate.pinned_world.observation_stamp_ns <= 0 ||
+                 certificate.validated_world.localization_epoch == 0U ||
+                 certificate.validated_world.generation == 0U ||
+                 certificate.validated_world.revision == 0U ||
+                 certificate.validated_world.observation_stamp_ns <= 0 ||
+                 !certificate.protected_region.valid())) {
+                return false;
+            }
             LOCK_G
             // A candidate that starts before the current bundle would make
             // command trajectory time jump forward at the generation switch.
             // Reject transactionally; never rebase historical polynomials or
             // mutate the current bundle/history to conceal the regression.
             if (!flag_empty_ && candidate.start_wall_time < start_WT_) {
+                return false;
+            }
+            if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
                 return false;
             }
             CommitDiagnostics diagnostics;

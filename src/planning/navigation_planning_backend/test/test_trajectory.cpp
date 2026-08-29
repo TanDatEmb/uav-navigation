@@ -1126,7 +1126,15 @@ TEST(PlannerTrajectory, InheritedBackupPrefixSurvivesMainOnlyCommit) {
   auto candidate = navigation_planning_backend::CmdTraj::buildCandidate(
       exp, nullptr, navigation_planning_backend::BackupDisposition::NO_NEED);
   ASSERT_TRUE(candidate);
-  ASSERT_TRUE(command.commitCandidate(std::move(*candidate), {}));
+  candidate->localization_epoch = 1U;
+  candidate->goal_epoch = 1U;
+  candidate->request_id = 1U;
+  navigation_planning_backend::CommandCertificate certificate;
+  certificate.pinned_world = {1U, 1U, 1U, 1};
+  certificate.validated_world = certificate.pinned_world;
+  certificate.protected_region.minimum = Eigen::Vector3d::Zero();
+  certificate.protected_region.maximum = Eigen::Vector3d::Ones();
+  ASSERT_TRUE(command.commitCandidate(std::move(*candidate), certificate));
   EXPECT_FALSE(command.backupTrajAvilibale());
   EXPECT_TRUE(command.isTTOnBackupTraj(0.0));
   EXPECT_TRUE(command.isTTOnBackupTraj(0.4));
