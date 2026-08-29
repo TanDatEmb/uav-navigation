@@ -348,6 +348,39 @@ TEST_F(MappingWorldModelTest, SegmentCertificateIsSymmetricAtVoxelCorners) {
       navigation_world_model::UnknownPolicy::kRequireKnownFree));
 }
 
+TEST_F(MappingWorldModelTest, StationaryAxisDoesNotCreateSpuriousDdaTie) {
+  auto grid = productGrid(map->exportPlanningGrid());
+  std::fill(grid.base_state.begin(), grid.base_state.end(),
+            static_cast<std::uint8_t>(navigation_world_model::CellState::kKnownFree));
+  std::fill(grid.inflated.occupied.begin(), grid.inflated.occupied.end(), 0U);
+  grid.unknown_inflation_enabled = false;
+  grid.virtual_ground_ceiling_enabled = false;
+
+  const auto start_index = grid.base_layout.global_min_index +
+      navigation_world_model::GridIndex3{4, 4, 4};
+  const auto spurious_diagonal = grid.base_layout.global_min_index +
+      navigation_world_model::GridIndex3{5, 5, 4};
+  const auto local = spurious_diagonal - grid.base_layout.global_min_index;
+  const auto obstacle_offset =
+      (static_cast<std::size_t>(local.x()) *
+           static_cast<std::size_t>(grid.base_layout.dimensions.y()) +
+       static_cast<std::size_t>(local.y())) *
+          static_cast<std::size_t>(grid.base_layout.dimensions.z()) +
+      static_cast<std::size_t>(local.z());
+  ASSERT_LT(obstacle_offset, grid.base_state.size());
+  grid.base_state[obstacle_offset] =
+      static_cast<std::uint8_t>(navigation_world_model::CellState::kOccupied);
+
+  navigation_mapping::MappingWorldSnapshot snapshot(
+      std::move(grid), navigation_world_model::WorldSnapshotIdentity{1, 1, 2, 123});
+  const auto end_index = start_index + navigation_world_model::GridIndex3{3, 1, 0};
+  EXPECT_TRUE(snapshot.isSegmentTraversable(
+      snapshot.indexToPosition(start_index, navigation_world_model::GridLayer::kEvidence),
+      snapshot.indexToPosition(end_index, navigation_world_model::GridLayer::kEvidence),
+      navigation_world_model::GridLayer::kEvidence,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree));
+}
+
 TEST_F(MappingWorldModelTest, InflatedSegmentRejectsObservedTubeBelowRobotRadius) {
   auto grid = productGrid(map->exportPlanningGrid());
   std::fill(grid.base_state.begin(), grid.base_state.end(),

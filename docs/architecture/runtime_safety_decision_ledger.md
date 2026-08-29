@@ -11751,6 +11751,29 @@ release profiles must not use the former allowance.
   && colcon build --packages-select fast_lio_ros --symlink-install`; direct
   execution of `test_ros_lidar_adapter` and `test_ros_livox_custom_adapter`.
 
+### 2026-08-29 - Exclude stationary axes from mapping DDA tie tolerance
+
+- **Owner/status:** immutable mapping segment traversability certificate,
+  `VERIFIED` by mapping package build and world-model tests.
+- **Scope:** DDA boundary tie scaling and tied-axis enumeration now ignore the
+  sentinel boundary for axes with no movement. A stationary axis therefore
+  cannot inflate the floating-point tie tolerance for active x/y/z crossings.
+- **Safety impact:** Traversability no longer examines diagonal cells that are
+  not geometrically touched merely because an inactive axis contributed the
+  largest sentinel boundary time; genuine corner ties remain conservative.
+- **False-accept/false-reject consequences:** Valid axis-aligned and corner
+  paths retain their prior semantics. The change removes false rejection of
+  an asymmetric active-axis crossing; no UNKNOWN or OUT_OF_MAP policy is
+  relaxed.
+- **Runtime cost and evidence:** Constant-size active-axis checks per DDA
+  iteration; `test_mapping_world_model` passes 16/16, including the asymmetric
+  stationary-axis regression.
+- **Removal/review condition:** Keep until the DDA uses an explicit typed
+  `optional<boundary_time>` instead of a floating-point sentinel.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select navigation_mapping --symlink-install`; direct
+  execution of `test_mapping_world_model --gtest_color=no`.
+
 ### 2026-08-29 - Validate direct trajectory optimizer configuration boundaries
 
 - **Owner/status:** Trajectory optimizer configuration boundary, `VERIFIED`

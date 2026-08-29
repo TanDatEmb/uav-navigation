@@ -343,14 +343,19 @@ class MappingWorldSnapshot final
         // the certificate independent of traversal direction; the old
         // single-axis tie break could accept A->B while rejecting B->A.
         double boundary_scale = std::max(1.0, std::abs(first_boundary));
-        if (std::isfinite(next_x)) boundary_scale = std::max(boundary_scale, std::abs(next_x));
-        if (std::isfinite(next_y)) boundary_scale = std::max(boundary_scale, std::abs(next_y));
-        if (std::isfinite(next_z)) boundary_scale = std::max(boundary_scale, std::abs(next_z));
+        const auto includeBoundaryScale = [&](const double boundary) {
+          if (std::isfinite(boundary) && boundary != never) {
+            boundary_scale = std::max(boundary_scale, std::abs(boundary));
+          }
+        };
+        includeBoundaryScale(next_x);
+        includeBoundaryScale(next_y);
+        includeBoundaryScale(next_z);
         const double tie_tolerance = std::numeric_limits<double>::epsilon() * boundary_scale;
         int tied_axes = 0;
-        if (std::abs(next_x - first_boundary) <= tie_tolerance) tied_axes |= 1;
-        if (std::abs(next_y - first_boundary) <= tie_tolerance) tied_axes |= 2;
-        if (std::abs(next_z - first_boundary) <= tie_tolerance) tied_axes |= 4;
+        if (next_x != never && std::abs(next_x - first_boundary) <= tie_tolerance) tied_axes |= 1;
+        if (next_y != never && std::abs(next_y - first_boundary) <= tie_tolerance) tied_axes |= 2;
+        if (next_z != never && std::abs(next_z - first_boundary) <= tie_tolerance) tied_axes |= 4;
         for (int subset = tied_axes; subset > 0; subset = (subset - 1) & tied_axes) {
           auto candidate = current;
           if ((subset & 1) != 0) candidate.x() += direction.x();
