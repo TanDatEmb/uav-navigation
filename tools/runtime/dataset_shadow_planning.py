@@ -151,6 +151,10 @@ def main() -> int:
         nonlocal ready_started_stamp_ns, ready_command_count, emergency_command_count
         if goal_message is None:
             return
+        if not command_matches_shadow_goal(
+            message, goal_message, goal_localization_epoch
+        ):
+            return
         if int(message.status) == int(NavigationCommand.STATUS_READY):
             ready_command_count += 1
             generation = int(message.bundle_generation)
@@ -182,9 +186,7 @@ def main() -> int:
     node.create_subscription(NavigationCommand, "/navigation/navigation_command", on_command, best_effort)
 
     def publish_teardown(odometry: Any) -> None:
-        if not command_matches_shadow_goal(
-            message, goal_message, goal_localization_epoch
-        ):
+        if odometry is None or goal_message is None:
             return
         discovery_deadline = time.monotonic() + 1.0
         while (

@@ -1,5 +1,31 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Make dataset shadow evidence identity-safe and runnable
+
+- **Owner/status:** dataset shadow-planning harness, `PROVISIONAL`; verified by
+  the runtime-contract regression and a prepared-bag replay.
+- **Scope:** Shadow command accounting now ignores READY/REJECTED messages that
+  do not match the active synthetic goal's mission, waypoint, request,
+  localization epoch, and nonzero goal epoch. Synthetic teardown no longer
+  references an out-of-scope callback variable and safely no-ops when its local
+  goal/odometry is absent.
+- **Safety impact:** Foreign commands cannot create false planner evidence, and
+  a replay failure is reported as a harness failure rather than aborting from a
+  callback-name error. This helper remains benchmark-only and never executes a
+  recorded-data command.
+- **False-accept/false-reject consequences:** Matching ordered commands retain
+  existing evidence semantics. Foreign or malformed commands are excluded and
+  leave the shadow result fail-closed.
+- **Runtime cost and evidence:** One constant-time identity comparison per
+  command; `python3 -m py_compile tools/runtime/dataset_shadow_planning.py` and
+  the focused runtime-contract test are required, followed by a prepared-bag
+  replay.
+- **Removal/review condition:** Keep until shadow events are consumed through a
+  typed validated event schema shared with the runtime.
+- **Verification:** `python3 -m py_compile tools/runtime/dataset_shadow_planning.py`
+  and `python3 -m unittest tools.runtime.tests.test_runtime_contract -q` plus
+  `make dataset-check DATASET=aist-mid360-drive RATE=1.0`.
+
 ### 2026-08-29 - Fail closed on BackupTrajOpt public inputs
 
 - **Owner/status:** backup trajectory optimizer boundary, `PROVISIONAL`; verified

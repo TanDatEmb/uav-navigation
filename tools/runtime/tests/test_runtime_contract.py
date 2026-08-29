@@ -1308,6 +1308,10 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("PropagatedOdometry", helper_source)
         self.assertIn("on_propagated_odometry", helper_source)
         self.assertIn("message.odometry", helper_source)
+        self.assertIn(
+            "if not command_matches_shadow_goal(\n            message, goal_message, goal_localization_epoch\n        ):",
+            helper_source,
+        )
         self.assertNotIn('create_subscription(Odometry, "/lio/odometry_propagated"', helper_source)
         self.assertIn("EMER before committing a READY shadow command", helper_source)
         self.assertIn("publish_teardown(latest_odom)", helper_source)
