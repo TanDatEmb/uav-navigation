@@ -13615,3 +13615,38 @@ release profiles must not use the former allowance.
   px4_navigation_external_mode --cmake-args -DBUILD_TESTING=ON`,
   `test_navigation_command --gtest_color=no`, and replay inspection of a
   tracking-envelope rejection.
+
+### 2026-08-29 - Exclude propagated derivative estimates from fresh command boundaries
+
+- **Owner/status:** planner fresh rest-plan state boundary, `PROVISIONAL`;
+  focused planner evidence and representative map replay are required.
+- **Scope:** `setState` now preserves the ingress `acceleration_estimated` and
+  `jerk_estimated` flags across the per-solve snapshot. When a fresh
+  `PlanFromRest`/route-reset solve builds its degree-seven PVAJ boundary,
+  `makeCommandBoundaryPVAJ` keeps measured position/velocity and replaces only
+  flagged finite-difference acceleration/jerk with zero. Explicitly measured
+  high-order derivatives remain unchanged.
+- **Safety impact:** finite-difference derivatives from propagated odometry can
+  no longer become immutable command-boundary constraints that place the first
+  Bernstein controls outside a narrow corridor and cause a misleading seed
+  rejection. The change does not relax corridor, dynamic, flatness, world
+  revision, or publication certificates; the candidate remains fail-closed if
+  any certificate is invalid.
+- **False-accept/false-reject consequences:** an estimated A/J is intentionally
+  not enforced as a fresh command boundary, so the generated connector may
+  choose a different initial acceleration/jerk while satisfying the normal
+  trajectory certificates. Measured A/J retain the prior boundary behavior.
+  A malformed/non-finite ingress state is still rejected by `KinematicState::finite()`.
+- **Runtime cost and evidence:** two boolean copies at each solve snapshot and
+  one four-column boundary construction; no asymptotic change. The regression
+  verifies estimated versus measured A/J handling. Map replays must inspect
+  corridor-seed failures, planner result, and command certificates rather than
+  treating a successful planner call alone as runtime acceptance.
+- **Removal/review condition:** keep until the odometry/planner boundary carries
+  typed measured-versus-estimated derivative provenance and the command-boundary
+  policy is represented by that type instead of parallel flags.
+- **Verification:** `colcon build --packages-select
+  navigation_planning_backend --cmake-args -DBUILD_TESTING=ON`,
+  `test_planner_config --gtest_filter=PlannerKinematicStateBoundary.*
+  --gtest_color=no`, the complete backend CTest suite, and representative
+  `make external-mode-check` runs on the open and structured-obstacle maps.

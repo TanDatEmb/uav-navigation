@@ -503,6 +503,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         {
             std::lock_guard<std::mutex> state_guard(drone_state_mutex_);
             solve_state_ = robot_state_;
+            solve_acceleration_estimated_ = robot_acceleration_estimated_;
+            solve_jerk_estimated_ = robot_jerk_estimated_;
         }
         const AbsoluteDeadline solve_deadline(
                 planner_context_->getSimTime(), cfg_.solve_deadline_s);
@@ -684,6 +686,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         {
             std::lock_guard<std::mutex> state_guard(drone_state_mutex_);
             solve_state_ = robot_state_;
+            solve_acceleration_estimated_ = robot_acceleration_estimated_;
+            solve_jerk_estimated_ = robot_jerk_estimated_;
         }
         const AbsoluteDeadline solve_deadline(
                 planner_context_->getSimTime(), cfg_.solve_deadline_s);
@@ -1243,14 +1247,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             /* 2.1) Generate from the latest measured state. */
             // A route reset must not silently become a kinematic reset. The
             // execution state may still carry motion when a local trajectory
-            // ends at a sensing frontier; preserve the latest propagated PVAJ
-            // state (A/J are explicitly marked as estimates when the
-            // odometry interface does not measure them) and only shift
-            // position to the collision-free map start.
-            pos_init_state.col(0) = solve_state_.p;
-            pos_init_state.col(1) = solve_state_.v;
-            pos_init_state.col(2) = solve_state_.a;
-            pos_init_state.col(3) = solve_state_.j;
+            // ends at a sensing frontier; preserve measured P/V and any
+            // genuinely measured A/J, while the boundary helper excludes
+            // finite-difference estimates from the immutable command state.
+            // Only position is shifted to the collision-free map start.
+            pos_init_state = makeCommandBoundaryPVAJ(
+                solve_state_, solve_acceleration_estimated_, solve_jerk_estimated_);
             pos_init_state.col(0) = local_start_p_;
             replan_process_start_TT = -1;
             replan_state_TT = -1;
@@ -3414,7 +3416,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         const bool jerk_bounded = !bounded_jerk.isApprox(state.jerk_world, 0.0);
         if ((acceleration_bounded || jerk_bounded) && !estimated_boundary_warning_emitted_) {
             planner_context_->warn(
-                " -- [planner] bounded estimated command-boundary derivatives: "
+                " -- [planner] bounded propagated derivative estimates: "
                 "acceleration={}/{} jerk={}/{}; raw estimates remain in runtime diagnostics",
                 state.acceleration_world.norm(), acceleration_limit,
                 state.jerk_world.norm(), jerk_limit);
@@ -3446,6 +3448,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         internal.rcv = true;
         std::lock_guard<std::mutex> guard(drone_state_mutex_);
         robot_state_ = internal;
+        robot_acceleration_estimated_ = state.acceleration_estimated;
+        robot_jerk_estimated_ = state.jerk_estimated;
         return true;
     }
 }

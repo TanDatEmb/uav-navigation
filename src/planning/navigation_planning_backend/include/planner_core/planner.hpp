@@ -76,6 +76,10 @@ namespace navigation_planning_backend {
         // Stable per-solve state. `robot_state_` is ingress-owned and may be
         // replaced by an odometry callback while a solve is running.
         navigation_math::RobotState solve_state_;
+        bool robot_acceleration_estimated_{false};
+        bool robot_jerk_estimated_{false};
+        bool solve_acceleration_estimated_{false};
+        bool solve_jerk_estimated_{false};
 
         std::mutex drone_state_mutex_;
         mutable std::mutex replan_lock_;

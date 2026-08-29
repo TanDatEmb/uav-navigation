@@ -11,11 +11,28 @@
 
 namespace navigation_planning_backend {
 
+// A fresh rest-plan starts from the measured position and velocity.  Propagated
+// acceleration and jerk are finite-difference estimates, not measured command
+// boundary derivatives; carrying them into a degree-seven connector can place
+// its first Bernstein controls outside a narrow corridor.  Preserve them only
+// when the ingress explicitly identifies them as measured.
+inline navigation_math::StatePVAJ makeCommandBoundaryPVAJ(
+    const navigation_math::RobotState& state,
+    const bool acceleration_estimated,
+    const bool jerk_estimated) noexcept {
+  navigation_math::StatePVAJ boundary = navigation_math::StatePVAJ::Zero();
+  boundary.col(0) = state.p;
+  boundary.col(1) = state.v;
+  boundary.col(2) = acceleration_estimated ? Eigen::Vector3d::Zero() : state.a;
+  boundary.col(3) = jerk_estimated ? Eigen::Vector3d::Zero() : state.j;
+  return boundary;
+}
+
 // Propagated odometry currently derives acceleration and jerk from finite
 // differences. Those values are useful diagnostics, but they are not measured
-// command-boundary constraints. Keep measured position and velocity untouched
-// while preventing an estimated high-order derivative from making the next
-// certified MINCO boundary physically infeasible.
+// command-boundary constraints. Bound them only for bounded diagnostic/state
+// storage; fresh command-boundary construction applies the provenance policy
+// above and does not turn estimates into immutable PVAJ constraints.
 inline Eigen::Vector3d boundEstimatedDerivative(
     const Eigen::Vector3d& derivative, bool estimated, double maximum_norm) noexcept {
   if (!estimated || !derivative.allFinite() || !std::isfinite(maximum_norm) ||

@@ -979,3 +979,23 @@ TEST(PlannerKinematicStateBoundary, BoundsOnlyEstimatedHighOrderDerivatives) {
       0.0, initial, 3.0, 5.0, 30.0, 0.05, 0.0);
   EXPECT_TRUE(bounded_seed.feasible);
 }
+
+TEST(PlannerKinematicStateBoundary, FreshRestPlanDropsEstimatedHighOrderDerivatives) {
+  navigation_math::RobotState state;
+  state.p << 1.0, 2.0, 3.0;
+  state.v << 0.5, -0.25, 0.1;
+  state.a << 1.0, 2.0, 3.0;
+  state.j << -4.0, 5.0, -6.0;
+
+  const auto boundary = navigation_planning_backend::makeCommandBoundaryPVAJ(
+      state, true, true);
+  EXPECT_TRUE(boundary.col(0).isApprox(state.p));
+  EXPECT_TRUE(boundary.col(1).isApprox(state.v));
+  EXPECT_TRUE(boundary.col(2).isApprox(Eigen::Vector3d::Zero()));
+  EXPECT_TRUE(boundary.col(3).isApprox(Eigen::Vector3d::Zero()));
+
+  const auto measured_boundary =
+      navigation_planning_backend::makeCommandBoundaryPVAJ(state, false, false);
+  EXPECT_TRUE(measured_boundary.col(2).isApprox(state.a));
+  EXPECT_TRUE(measured_boundary.col(3).isApprox(state.j));
+}
