@@ -188,6 +188,21 @@ TEST(RosLidarAdapterTest, DeterministicallyTrimsBoundedBoundaryOverlap) {
   EXPECT_EQ(stats.dropped_overlapping_point_count, 1U);
 }
 
+TEST(RosLidarAdapterTest, RejectsBoundaryOverlapBeyondConfiguredLimit) {
+  auto config = absoluteConfig();
+  config.maximum_boundary_overlap_ns = 2;
+  RosLidarAdapter adapter{"livox_frame", LidarTimingMode::kPerPoint,
+                          ClockDomain::kRosTime, config};
+  auto first = makeCloud();
+  setAbsolute(first, 0, 1'000'000'000.0);
+  setAbsolute(first, 1, 1'000'000'010.0);
+  static_cast<void>(adapter.convert(first));
+  auto second = makeCloud();
+  setAbsolute(second, 0, 1'000'000'005.0);
+  setAbsolute(second, 1, 1'000'000'020.0);
+  EXPECT_THROW(adapter.convert(second), std::invalid_argument);
+}
+
 TEST(RosLidarAdapterTest, RejectsNonFiniteAndOutOfRangeAbsoluteTimestamp) {
   for (const double invalid :
        {std::numeric_limits<double>::quiet_NaN(),

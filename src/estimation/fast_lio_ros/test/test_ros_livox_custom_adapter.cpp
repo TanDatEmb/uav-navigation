@@ -91,6 +91,20 @@ TEST(RosLivoxCustomAdapterTest, RejectsInvalidAdapterConfiguration) {
                    "livox_frame", ClockDomain::kSensorTime,
                    static_cast<LivoxTimestampPolicy>(255)),
                std::invalid_argument);
+  PointTimeConfig invalid_overlap;
+  invalid_overlap.maximum_boundary_overlap_ns = -1;
+  EXPECT_THROW(RosLivoxCustomAdapter(
+                   "livox_frame", ClockDomain::kSensorTime,
+                   LivoxTimestampPolicy::kRequireHeaderMatchesTimebase,
+                   invalid_overlap),
+               std::invalid_argument);
+  PointTimeConfig invalid_minimum;
+  invalid_minimum.minimum_points_after_overlap_trim = 0U;
+  EXPECT_THROW(RosLivoxCustomAdapter(
+                   "livox_frame", ClockDomain::kSensorTime,
+                   LivoxTimestampPolicy::kRequireHeaderMatchesTimebase,
+                   invalid_minimum),
+               std::invalid_argument);
 }
 
 TEST(RosLivoxCustomAdapterTest, EnforcesSharedScanDurationLimit) {
@@ -113,8 +127,45 @@ TEST(RosLivoxCustomAdapterTest, EnforcesHeaderOffsetForAuthoritativeTimebase) {
       RosLivoxCustomAdapter("livox_frame", ClockDomain::kSensorTime,
                             LivoxTimestampPolicy::kTimebaseAuthoritative,
                             point_time)
-          .convert(message),
+      .convert(message),
       std::invalid_argument);
+}
+
+TEST(RosLivoxCustomAdapterTest, DeterministicallyTrimsBoundedBoundaryOverlap) {
+  PointTimeConfig point_time;
+  point_time.maximum_boundary_overlap_ns = 100U;
+  point_time.minimum_points_after_overlap_trim = 1U;
+  RosLivoxCustomAdapter adapter{"livox_frame", ClockDomain::kSensorTime,
+                               LivoxTimestampPolicy::kRequireHeaderMatchesTimebase,
+                               point_time};
+  static_cast<void>(adapter.convert(validMessage()));
+  auto second = validMessage();
+  second.header.stamp.nanosec = 400U;
+  second.timebase = 2'000'000'400ULL;
+  second.points[0].offset_time = 0U;
+  second.points[1].offset_time = 200U;
+  const auto scan = adapter.convert(second);
+  ASSERT_EQ(scan.points.size(), 1U);
+  EXPECT_EQ(scan.points.front().relative_time_ns, 200U);
+  EXPECT_EQ(scan.end_time.nanoseconds(), 2'000'000'600LL);
+  const auto stats = adapter.normalizationStatistics();
+  EXPECT_EQ(stats.input_point_count, 4U);
+  EXPECT_EQ(stats.emitted_point_count, 3U);
+  EXPECT_EQ(stats.dropped_overlapping_point_count, 1U);
+}
+
+TEST(RosLivoxCustomAdapterTest, RejectsBoundaryOverlapBeyondConfiguredLimit) {
+  PointTimeConfig point_time;
+  point_time.maximum_boundary_overlap_ns = 50U;
+  RosLivoxCustomAdapter adapter{"livox_frame", ClockDomain::kSensorTime,
+                               LivoxTimestampPolicy::kRequireHeaderMatchesTimebase,
+                               point_time};
+  static_cast<void>(adapter.convert(validMessage()));
+  auto second = validMessage();
+  second.header.stamp.nanosec = 400U;
+  second.timebase = 2'000'000'400ULL;
+  second.points[1].offset_time = 200U;
+  EXPECT_THROW(adapter.convert(second), std::invalid_argument);
 }
 
 TEST(RosLivoxCustomAdapterTest, RejectsOversizedPointPayloadBeforeReserve) {

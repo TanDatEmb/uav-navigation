@@ -190,8 +190,11 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
         *std::min_element(absolute_times.begin(), absolute_times.end());
     const long double overlap_ns = static_cast<long double>(previous_emitted_end_ns_) -
                                    static_cast<long double>(minimum_time);
-    if (overlap_ns > 0 &&
-        overlap_ns <= point_time_.maximum_boundary_overlap_ns) {
+    if (overlap_ns > point_time_.maximum_boundary_overlap_ns) {
+      throw std::invalid_argument(
+          "PointCloud2 boundary overlap exceeds configured limit");
+    }
+    if (overlap_ns > 0) {
       std::vector<LidarPoint> emitted_points;
       std::vector<std::int64_t> emitted_times;
       emitted_points.reserve(scan.points.size());

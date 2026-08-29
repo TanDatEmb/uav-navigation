@@ -30,6 +30,7 @@ class RosLivoxCustomAdapter {
 
   [[nodiscard]] LidarScan convert(
       const livox_ros_driver2::msg::CustomMsg& message) const;
+  [[nodiscard]] PointTimeNormalizationStatistics normalizationStatistics() const noexcept;
 
  private:
   std::string expected_frame_;
@@ -38,6 +39,8 @@ class RosLivoxCustomAdapter {
   PointTimeConfig point_time_;
   mutable std::mutex state_mutex_;
   mutable std::int64_t previous_scan_start_ns_{-1};
+  mutable std::int64_t previous_emitted_end_ns_{-1};
+  mutable PointTimeNormalizationStatistics normalization_statistics_{};
 };
 
 }  // namespace uav::nav::lio

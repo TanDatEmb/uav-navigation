@@ -13441,6 +13441,41 @@ release profiles must not use the former allowance.
   --cmake-args -DBUILD_TESTING=ON` and the focused planner-FSM test with the
   existing runtime contract suite.
 
+### 2026-08-29 - Apply point-time overlap policy to Livox CustomMsg ingress
+
+- **Owner/status:** FAST-LIO ROS LiDAR ingress, `PROVISIONAL`; adapter and
+  package-wide focused tests required.
+- **Scope:** Both ROS LiDAR ingress adapters now apply the shared
+  boundary-overlap policy. `RosLivoxCustomAdapter` no longer silently ignores
+  it: it computes checked absolute point times from the Livox timebase, rejects
+  overlap beyond `maximum_boundary_overlap_ns`, trims points at or before the
+  previous emitted end when overlap is bounded, enforces
+  `minimum_points_after_overlap_trim`, honors `scan_reference`, and reports
+  input/emitted/dropped normalization counts. `RosLidarAdapter` also rejects
+  excessive overlap instead of passing it through unnormalized. The Livox
+  adapter rejects invalid overlap configuration and checks timestamp
+  additions/differences before converting back to relative `uint32` offsets.
+- **Safety impact:** A Livox stream cannot silently reintroduce duplicate or
+  excessively overlapping scan history into deskew/registration when the
+  shared policy is configured. Malformed timestamp arithmetic remains
+  fail-closed; no estimator acceptance or recovery gate is relaxed.
+- **False-accept/false-reject consequences:** Ordered non-overlapping Livox
+  scans retain their previous point geometry and official fields. Bounded
+  overlap loses duplicate points deterministically. Excessive overlap or a
+  trim that would leave too few points is rejected instead of being admitted as
+  an unnormalized scan.
+- **Runtime cost and evidence:** One absolute-time vector and a bounded
+  filtering pass per CustomMsg; memory is proportional to the bounded input
+  point count. Livox and PointCloud2 adapter regressions pass. Full package
+  CTest requires the sourced ROS Python environment; one pre-existing
+  propagated-worker timing test remains flaky and is tracked separately.
+- **Removal/review condition:** Keep until both ingress types use one shared
+  typed point-time normalizer and runtime diagnostics expose normalization
+  counters directly.
+- **Verification:** `colcon build --packages-select fast_lio_ros
+  --cmake-args -DBUILD_TESTING=ON`, `test_ros_livox_custom_adapter`,
+  `test_ros_lidar_adapter`, and sourced package CTest.
+
 ### 2026-08-29 - Keep PX4 rejection provenance velocity frames explicit
 
 - **Owner/status:** PX4 External Mode rejection diagnostics, `PROVISIONAL`;
