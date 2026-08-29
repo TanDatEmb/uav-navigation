@@ -11660,7 +11660,8 @@ release profiles must not use the former allowance.
   `VERIFIED` by the focused trajectory suite.
 - **Scope:** Validate heuristic domain and runtime context, reject malformed
   points/timeouts, use widened midpoint and grid-bound arithmetic, bound fine
-  neighbor construction, and check integer neighbor stepping before addition.
+  neighbor construction, and check every integer neighbor step before
+  addition, including local occupancy checks.
 - **Safety impact:** Invalid public inputs fail with `INIT_ERROR` or a
   constructor exception instead of reaching chrono casts, signed overflow,
   null dereferences, or out-of-range graph indices. Normal A* search and

@@ -1143,7 +1143,12 @@ namespace path_search {
 
     bool Astar::neighborHaveOne(const CellState& type, const rog_map::Vec3i& src_id) {
         for (const auto& nei : neighbor_list) {
-            rog_map::Vec3i nei_id = src_id + nei;
+            rog_map::Vec3i nei_id;
+            if (!checkedIndexStep(src_id(0), nei(0), nei_id(0)) ||
+                !checkedIndexStep(src_id(1), nei(1), nei_id(1)) ||
+                !checkedIndexStep(src_id(2), nei(2), nei_id(2))) {
+                continue;
+            }
             if (!insideLocalMap(nei_id)) {
                 continue;
             }
