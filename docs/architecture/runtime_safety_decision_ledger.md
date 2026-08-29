@@ -13808,3 +13808,32 @@ release profiles must not use the former allowance.
   --gtest_color=no`, `make build`, `make test`, and repeated 5 m/s SITL runs
   for `long_three_pillars` and
   `long_three_pillars_multiwaypoint`.
+
+### 2026-08-29 - Preserve a certified recovery bridge across one planner miss
+
+- **Owner/status:** runtime planner supervisor, `PROVISIONAL`; this requires
+  focused transition coverage and repeated SITL evidence before acceptance.
+- **Scope:** after a measured-state recovery solve misses, a currently
+  executing command may remain exposed only while its execution state is
+  fresh, its trajectory remains world/corridor certified, its anchor error is
+  within the existing tracking budget, its declared duration has not ended,
+  and the bounded recovery budget is not exhausted.
+- **Safety impact:** this is not a lease extension and not a fallback to an
+  uncertified trajectory. The execution lease, world identity, freshness,
+  anchor, dynamic, and command gates remain unchanged; once the bridge expires
+  or the budget is exhausted, the existing fail-closed handover path applies.
+- **False-accept/false-reject consequences:** a single transient optimizer
+  miss no longer latches PX4 handover while a safe command is still being
+  executed. A bridge is rejected when any freshness, clearance, endpoint,
+  duration, or anchor predicate is unavailable, so a no-path condition remains
+  fail-closed.
+- **Runtime cost and evidence:** only existing retained-command validation and
+  one boolean policy decision are reused. No hard threshold was relaxed. FSM
+  tests cover bounded recovery decisions; the previous 5 m/s three-column run
+  exposed the need for this state, so it remains an open SITL item.
+- **Removal/review condition:** replace this compatibility state with an
+  explicit typed `RECOVERY_BRIDGE` supervisor state after repeated map runs
+  prove mission completion without lease-driven or optimizer-miss handovers.
+- **Verification:** focused runtime FSM tests, `make build`, `make test`, and
+  repeated 5 m/s three-column and hardest multiwaypoint external-mode runs,
+  with mapping/External Mode/PX4 artifacts correlated by simulator time.

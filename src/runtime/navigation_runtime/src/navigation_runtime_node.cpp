@@ -2361,6 +2361,19 @@ void NavigationRuntimeNode::runCycle() {
         backup_available, elapsed_s, total_duration_s,
         safety_transition_s,
         projected_anchor_error_m, retained_tracking_limit_m, sampled_path_clear);
+    // A measured-state PlanFromRest attempt may fail while the currently
+    // executing bundle is still a fresh, continuously certified bridge. Keep
+    // that bridge alive until the bounded recovery budget is exhausted; a
+    // single optimizer miss must not convert an otherwise safe recovery
+    // opportunity into an immediate PX4 handover. This does not extend the
+    // command lease and does not allow a non-finite, stale, blocked, or
+    // over-error bundle to remain exposed.
+    const bool recovery_bridge_usable = plan_from_rest_with_transition &&
+        !planner_failure_latched_.load(std::memory_order_acquire) && committed &&
+        fresh_vehicle_state && command_anchor_valid && sampled_path_clear &&
+        std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
+        std::isfinite(total_duration_s) && elapsed_s <= total_duration_s + 1.0e-9 &&
+        std::isfinite(anchor_error_m) && anchor_error_m <= retained_tracking_limit_m;
     bool emergency_brake_committed = false;
     if (measuredStateEmergencyMayReplaceCommittedCommand(
             validate_without_new_commit, use_safety_suffix,
@@ -2407,6 +2420,12 @@ void NavigationRuntimeNode::runCycle() {
         planner_command_available_.store(false);
         planner_failure_latched_.store(true);
         safety_suffix_active_.store(false);
+      } else if (recovery_bridge_usable) {
+        planner_command_available_.store(true);
+        command_goal_epoch_.store(goal_epoch);
+        planner_failure_latched_.store(false);
+        safety_suffix_active_.store(false);
+        trajectory_finished_.store(false);
       } else if (!validate_without_new_commit ||
                  retained_transition == RetainedValidationTransition::FailClosed) {
         safety_suffix_active_.store(
@@ -2432,6 +2451,10 @@ void NavigationRuntimeNode::runCycle() {
       RCLCPP_DEBUG(get_logger(),
                    "planner backend reported NO_NEED; retained committed command remains "
                    "latest-world valid without a new commit");
+    } else if (recovery_bridge_usable) {
+      RCLCPP_WARN(get_logger(),
+                  "planner backend recovery solve missed; retaining the fresh certified "
+                  "command bridge while bounded recovery continues");
     } else if (use_safety_suffix) {
       RCLCPP_WARN(get_logger(),
                   "planner backend hot replan failed (%d); retaining visible committed trajectory "
