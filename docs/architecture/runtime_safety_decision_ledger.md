@@ -1,5 +1,30 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Fail closed on BackupTrajOpt public inputs
+
+- **Owner/status:** backup trajectory optimizer boundary, `PROVISIONAL`; verified
+  by focused trajectory regressions.
+- **Scope:** BackupTrajOpt now rejects a null runtime context, empty or malformed
+  reference trajectories, invalid time intervals/durations, malformed endpoints,
+  empty corridors, invalid warm starts, and non-finite optimizer results. Corridor
+  vertex extraction also rejects an empty/non-finite vertex set.
+- **Safety impact:** Direct callers cannot reach state evaluation, division by
+  piece count, MINCO setup, or corridor indexing with malformed inputs. A NaN
+  optimizer result is no longer treated as a successful refinement.
+- **False-accept/false-reject consequences:** Valid backup refinement behavior is
+  unchanged. Invalid direct calls return false and leave an empty output; this
+  does not relax the certified braking fallback or any hard safety gate.
+- **Runtime cost and evidence:** Boundary validation is linear in the reference
+  trajectory piece count; corridor validation remains bounded by the existing
+  geometry solver. Regression covers null context, empty trajectory/corridor,
+  and the public rejection path.
+- **Removal/review condition:** Keep until BackupTrajOpt accepts typed checked
+  trajectory/corridor inputs and exposes an explicit result status.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_filter=PlannerTrajectory.BackupOptimizerRejectsMalformedPublicBoundaryInputs
+  --gtest_color=no`.
+
 ### 2026-08-29 - Correct translated Ellipsoid plane transformation
 
 - **Owner/status:** planning corridor geometry, `PROVISIONAL`; verified by the

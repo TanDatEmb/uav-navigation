@@ -28,6 +28,47 @@ void forwardDurationAboveFloor(const Eigen::VectorXd &tau,
     duration += floor;
 }
 
+bool validReferenceTrajectory(const Trajectory &trajectory, const double query_time) {
+    if (trajectory.empty() || trajectory.getPieceNum() <= 0 ||
+        !std::isfinite(query_time) || query_time < 0.0) {
+        return false;
+    }
+    const double total_duration = trajectory.getTotalDuration();
+    if (!std::isfinite(total_duration) || total_duration <= 0.0 ||
+        query_time > total_duration) {
+        return false;
+    }
+    const Eigen::VectorXd durations = trajectory.getDurations();
+    if (durations.size() != trajectory.getPieceNum() || !durations.allFinite() ||
+        (durations.array() <= 0.0).any()) {
+        return false;
+    }
+    for (int piece_index = 0; piece_index < trajectory.getPieceNum(); ++piece_index) {
+        const auto &piece = trajectory[piece_index];
+        const auto &coefficients = piece.getCoeffMat();
+        if (coefficients.rows() != 3 || coefficients.cols() != piece.getDegree() + 1 ||
+            !coefficients.allFinite()) {
+            return false;
+        }
+    }
+    StatePVAJ state;
+    return trajectory.getState(query_time, state);
+}
+
+bool validBackupBoundaryInputs(const Trajectory &exp_traj,
+                               const double t_0,
+                               const double t_e,
+                               const double heu_ts,
+                               const VecDf &heu_end_pt,
+                               const double heu_dur,
+                               const Polytope &sfc) {
+    return validReferenceTrajectory(exp_traj, heu_ts) &&
+           std::isfinite(t_0) && std::isfinite(t_e) && std::isfinite(heu_ts) &&
+           std::isfinite(heu_dur) && t_0 >= 0.0 && t_e > t_0 &&
+           heu_ts >= t_0 && heu_ts <= t_e && heu_dur > 0.0 &&
+           heu_end_pt.size() == 3 && heu_end_pt.allFinite() && !sfc.empty();
+}
+
 }  // namespace
 
 int BackupTrajOpt::monitorProgress(void *instance,
@@ -415,7 +456,12 @@ bool BackupTrajOpt::processCorridor() {
         std::cout << YELLOW << " -- [MINCO] enumerateVs failed." << RESET << std::endl;
         return false;
     }
-    long nv = curIV.cols();
+    const Eigen::Index nv = curIV.cols();
+    if (nv <= 0 || !curIV.allFinite()) {
+        std::cout << YELLOW << " -- [MINCO] enumerateVs returned no finite vertices."
+                  << RESET << std::endl;
+        return false;
+    }
     curIOB.resize(3, nv);
     // 第一个点存储第一个顶点
     curIOB.col(0) = curIV.col(0);
@@ -608,6 +654,9 @@ BackupTrajOpt::BackupTrajOpt(const traj_opt::Config &cfg, const navigation_plann
 
     cfg_ = cfg;
     cfg_.validate(true);
+    if (!planner_context_) {
+        throw std::invalid_argument("BackupTrajOpt requires a planner runtime context");
+    }
     std::string filename = "back_opt_log.csv";
     if(cfg_.save_log_en){
         failed_traj_log.open(NAVIGATION_PLANNER_DEBUG_FILE_DIR(filename), std::ios::out | std::ios::trunc);
@@ -690,6 +739,12 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
                         Trajectory &out_traj,
                         double &out_ts,
                         const bool &debug) {
+    if (!validBackupBoundaryInputs(exp_traj, t_0, t_e, heu_ts, heu_end_pt,
+                                   heu_dur, sfc)) {
+        out_traj.clear();
+        out_ts = std::numeric_limits<double>::quiet_NaN();
+        return false;
+    }
     opt_vars.hPolytope = sfc.GetPlanes();
 
     opt_vars.debug_en = debug;
@@ -723,7 +778,7 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
         success = false;
     }
 
-    if (success && std::isinf(optimize(out_traj, cfg_.opt_accuracy))) {
+    if (success && !std::isfinite(optimize(out_traj, cfg_.opt_accuracy))) {
         std::cout << YELLOW << " -- [planner] Minco backup_traj opt failed." << RESET << std::endl;
         success = false;
     }
@@ -787,14 +842,23 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     // This path is called from the realtime planner and must fail closed on
     // malformed warm-start data.  In particular, init_ps.back() used to be
     // reachable with an empty vector, turning a bad candidate into UB.
-    if (cfg_.piece_num <= 0 || init_t_vec.size() != cfg_.piece_num ||
-        static_cast<int>(init_ps.size()) != cfg_.piece_num ||
+    if (!validReferenceTrajectory(exp_traj, heu_ts) ||
+        !std::isfinite(t_0) || !std::isfinite(t_e) || !std::isfinite(heu_ts) ||
+        t_0 < 0.0 || t_e <= t_0 || heu_ts < t_0 || heu_ts > t_e || sfc.empty() ||
+        cfg_.piece_num <= 0 ||
+        init_t_vec.size() != static_cast<Eigen::Index>(cfg_.piece_num) ||
+        init_ps.size() != static_cast<std::size_t>(cfg_.piece_num) ||
         init_t_vec.size() == 0 || !init_t_vec.allFinite() ||
         (init_t_vec.array() <= 0.0).any() ||
         !std::all_of(init_ps.begin(), init_ps.end(),
                      [](const Vec3f &point) { return point.allFinite(); })) {
         std::cout << YELLOW << " -- [BackTrajOpt] Invalid warm-start dimensions or values."
                   << RESET << std::endl;
+        out_traj.clear();
+        return false;
+    }
+    const double initial_duration = init_t_vec.sum();
+    if (!std::isfinite(initial_duration) || initial_duration <= 0.0) {
         out_traj.clear();
         return false;
     }
@@ -814,7 +878,7 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
     opt_vars.min_ts = t_0;
     opt_vars.tailPVAJ.col(0) = init_ps.back();
     opt_vars.times.resize(opt_vars.piece_num);
-    const double heu_dur = init_t_vec.sum();
+    const double heu_dur = initial_duration;
     opt_vars.times.setConstant(heu_dur / opt_vars.piece_num);
     opt_vars.minimum_time_floor = init_t_vec;
     opt_vars.ts = heu_ts;
@@ -835,7 +899,7 @@ BackupTrajOpt::optimize(const Trajectory &exp_traj,
         success = false;
     }
 
-    if (success && std::isinf(optimize(out_traj, cfg_.opt_accuracy))) {
+    if (success && !std::isfinite(optimize(out_traj, cfg_.opt_accuracy))) {
         std::cout << YELLOW << " -- [planner] Minco backup_traj opt failed." << RESET << std::endl;
         success = false;
     }

@@ -29,6 +29,7 @@
 #include "planner_core/trajectory_world_validator.hpp"
 #include "traj_opt/trajectory_dynamics.hpp"
 #include "traj_opt/nominal_trajectory_optimizer.hpp"
+#include "traj_opt/backup_trajectory_optimizer.hpp"
 #include "traj_opt/yaw_traj_opt.h"
 #include "data_structure/base/polytope.h"
 #include "utils/geometry/geometry_utils.h"
@@ -2441,6 +2442,44 @@ TEST(PlannerTrajectory, EllipsoidMatrixPlaneTransformMatchesScalarTransform) {
   }
   EXPECT_DOUBLE_EQ(planes_w(0, 3), -6.0);
   EXPECT_DOUBLE_EQ(planes_w(1, 3), 14.0 / 3.0);
+}
+
+TEST(PlannerTrajectory, BackupOptimizerRejectsMalformedPublicBoundaryInputs) {
+  traj_opt::Config config;
+  config.mass = 1.0;
+  config.grav = 9.81;
+  config.dh = 0.0;
+  config.dv = 0.0;
+  config.cp = 0.0;
+  config.v_eps = 1.0e-4;
+  config.max_vel = 5.0;
+  config.max_acc = 5.0;
+  config.max_jerk = 10.0;
+  config.max_omg = 5.0;
+  config.min_acc_thr = 1.0;
+  config.max_acc_thr = 20.0;
+  config.smooth_eps = 0.01;
+  config.opt_accuracy = 1.0e-5;
+  config.integral_reso = 10;
+  config.piece_num = 1;
+  config.quadrotor_flatness.reset(
+      config.mass, config.grav, config.dh, config.dv, config.cp, config.v_eps);
+
+  EXPECT_THROW(
+      traj_opt::BackupTrajOpt(config, nullptr), std::invalid_argument);
+
+  auto context = std::make_shared<
+      navigation_planner_context::PlannerRuntimeContext>();
+  traj_opt::BackupTrajOpt optimizer(config, context);
+  geometry_utils::Trajectory output;
+  double output_time = 0.0;
+  double duration = 1.0;
+  const navigation_math::VecDf endpoint = navigation_math::VecDf::Zero(3);
+  geometry_utils::Polytope empty_sfc;
+  EXPECT_FALSE(optimizer.optimize(geometry_utils::Trajectory{}, 0.0, 1.0, 0.0,
+                                  endpoint, duration, empty_sfc, output,
+                                  output_time));
+  EXPECT_TRUE(output.empty());
 }
 
 TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
