@@ -32,7 +32,9 @@ TEST(RigidTransformTest, CompositionAndInversePreserveFrameDirection) {
 
   const Eigen::Vector3d point_lidar(2.0, 3.0, 4.0);
   const Eigen::Vector3d point_odom = T_odom_lidar.value().apply(point_lidar);
-  EXPECT_TRUE(T_odom_lidar.value().inverse().apply(point_odom).isApprox(point_lidar, 1e-12));
+  const auto inverse = T_odom_lidar.value().inverse();
+  ASSERT_TRUE(inverse.ok());
+  EXPECT_TRUE(inverse.value().apply(point_odom).isApprox(point_lidar, 1e-12));
 }
 
 TEST(RigidTransformTest, RejectsInvalidCompositionDirection) {
@@ -55,6 +57,21 @@ TEST(RigidTransformTest, RejectsQuaternionWhoseSquaredNormOverflows) {
   RigidBodyState state;
   state.orientation_reference_body = malformed;
   EXPECT_FALSE(state.allFinite());
+}
+
+TEST(RigidTransformTest, RejectsNonFiniteCompositionAndInverse) {
+  const double huge = std::numeric_limits<double>::max();
+  const RigidTransform first(lioOdomFrame(), imuFrame(), Eigen::Quaterniond::Identity(),
+                             Eigen::Vector3d(huge, huge, huge));
+  const RigidTransform second(imuFrame(), lidarFrame(), Eigen::Quaterniond::Identity(),
+                              Eigen::Vector3d(huge, huge, huge));
+  EXPECT_FALSE(first.compose(second).ok());
+
+  const Eigen::Quaterniond diagonal(
+      Eigen::AngleAxisd(std::numbers::pi / 4.0, Eigen::Vector3d::UnitZ()));
+  const RigidTransform rotated(lioOdomFrame(), imuFrame(), diagonal,
+                               Eigen::Vector3d(huge, huge, 0.0));
+  EXPECT_FALSE(rotated.inverse().ok());
 }
 
 }  // namespace

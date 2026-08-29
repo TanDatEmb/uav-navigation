@@ -14,11 +14,19 @@ namespace {
   return Status(StatusCode::kInvalidArgument, std::move(message));
 }
 
+RigidTransform inverseOrThrow(const RigidTransform& transform) {
+  const auto inverse = transform.inverse();
+  if (!inverse.ok()) {
+    throw std::invalid_argument(inverse.status().message());
+  }
+  return inverse.value();
+}
+
 }  // namespace
 
 BaseLinkStateConverter::BaseLinkStateConverter(RigidTransform base_to_imu)
     : base_to_imu_(std::move(base_to_imu)),
-      imu_to_base_(base_to_imu_.inverse()),
+      imu_to_base_(inverseOrThrow(base_to_imu_)),
       r_base_imu_m_(base_to_imu_.translation()),
       R_base_imu_(base_to_imu_.rotation().toRotationMatrix()),
       source_frame_(imuFrame()),

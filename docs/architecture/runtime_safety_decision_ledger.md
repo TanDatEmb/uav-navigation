@@ -12487,6 +12487,33 @@ release profiles must not use the former allowance.
   && cmake --build build/fast_lio_core --target test_imu_state_propagator -j2
   && ./build/fast_lio_core/test_imu_state_propagator --gtest_color=no`.
 
+### 2026-08-29 - Make rigid-transform composition and inverse checked
+
+- **Owner/status:** FAST-LIO rigid geometry boundary, `PROVISIONAL`; verified
+  by rigid-transform, frame-convention, and deskew tests.
+- **Scope:** `RigidTransform::compose()` and `inverse()` now return a checked
+  `Result`, reject non-finite composed coefficients, and construct outputs
+  through the validated factory. Deskew propagates inverse failure instead of
+  throwing after an overflow; the base-link converter preserves its existing
+  constructor failure contract.
+- **Safety impact:** Finite-but-extreme translation/rotation arithmetic cannot
+  silently create a malformed transform or escape a Result boundary into
+  deskew/output processing.
+- **False-accept/false-reject consequences:** Ordinary frame composition and
+  inverse behavior is unchanged. Unrepresentable geometry is rejected and the
+  caller must hold/reinitialize rather than publish it.
+- **Runtime cost and evidence:** One finite postcondition and validated factory
+  call per transform operation; rigid transform 5/5, frame convention 4/4,
+  and deskew 5/5 tests pass.
+- **Removal/review condition:** Keep until all transform APIs expose typed
+  checked results, including point application and static-frame loading.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/fast_lio_core --target
+  test_rigid_transform test_frame_conventions test_scan_deskewer -j2
+  && ./build/fast_lio_core/test_rigid_transform --gtest_color=no
+  && ./build/fast_lio_core/test_frame_conventions --gtest_color=no
+  && ./build/fast_lio_core/test_scan_deskewer --gtest_color=no`.
+
 ### 2026-08-29 - Honor synchronized estimator propagation epoch
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,

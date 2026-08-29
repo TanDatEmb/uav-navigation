@@ -23,7 +23,9 @@ TEST(FrameConventionsTest, FactoryNominalLivoxExtrinsicHasExactInverse) {
   const Eigen::Vector3d factory_translation{0.011, 0.02329, -0.04412};
   const RigidTransform T_L_I(
       lidarFrame(), imuFrame(), Eigen::Quaterniond::Identity(), factory_translation);
-  const RigidTransform T_I_L = T_L_I.inverse();
+  const auto T_I_L_result = T_L_I.inverse();
+  ASSERT_TRUE(T_I_L_result.ok());
+  const RigidTransform& T_I_L = T_I_L_result.value();
 
   EXPECT_EQ(T_L_I.targetFrame().name(), "livox_frame");
   EXPECT_EQ(T_L_I.sourceFrame().name(), "livox_imu_frame");
@@ -61,7 +63,7 @@ TEST(FrameConventionsTest, Mid360DatasetExtrinsicPreservesBasisAndInverse) {
     const Eigen::Vector3d point_imu = T_imu_lidar.apply(basis);
     EXPECT_TRUE(point_imu.isApprox(basis + translation, 1e-12));
     EXPECT_TRUE(
-        T_imu_lidar.inverse().apply(point_imu).isApprox(basis, 1e-12));
+        T_imu_lidar.inverse().value().apply(point_imu).isApprox(basis, 1e-12));
   }
 
   const RigidTransform T_odom_imu(

@@ -34,7 +34,7 @@ class RigidTransform {
     return q_target_source_.toRotationMatrix().template cast<Scalar>() * point_source +
            t_target_source_.template cast<Scalar>();
   }
-  [[nodiscard]] RigidTransform inverse() const;
+  [[nodiscard]] Result<RigidTransform> inverse() const;
 
   // For this = ^A T_B and rhs = ^B T_C, returns ^A T_C.
   [[nodiscard]] Result<RigidTransform> compose(const RigidTransform& rhs) const;

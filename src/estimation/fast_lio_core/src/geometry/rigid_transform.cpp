@@ -75,10 +75,14 @@ bool RigidTransform::allFinite() const noexcept {
          q_target_source_.squaredNorm() > 1e-24 && t_target_source_.allFinite();
 }
 
-RigidTransform RigidTransform::inverse() const {
+Result<RigidTransform> RigidTransform::inverse() const {
   const Eigen::Quaterniond q_source_target = q_target_source_.conjugate();
-  return RigidTransform(source_frame_, target_frame_, q_source_target,
-                        -(q_source_target * t_target_source_));
+  const Eigen::Vector3d t_source_target = -(q_source_target * t_target_source_);
+  if (!q_source_target.coeffs().allFinite() || !t_source_target.allFinite()) {
+    return Status(StatusCode::kNumericalFailure,
+                  "RigidTransform inverse is not finite");
+  }
+  return Create(source_frame_, target_frame_, q_source_target, t_source_target);
 }
 
 Result<RigidTransform> RigidTransform::compose(const RigidTransform& rhs) const {
@@ -88,8 +92,14 @@ Result<RigidTransform> RigidTransform::compose(const RigidTransform& rhs) const 
                                                   "' does not match right target frame '" +
                                                   std::string(rhs.target_frame_.name()) + "'");
   }
-  return RigidTransform(target_frame_, rhs.source_frame_, q_target_source_ * rhs.q_target_source_,
-                        q_target_source_ * rhs.t_target_source_ + t_target_source_);
+  const Eigen::Quaterniond rotation = q_target_source_ * rhs.q_target_source_;
+  const Eigen::Vector3d translation =
+      q_target_source_ * rhs.t_target_source_ + t_target_source_;
+  if (!rotation.coeffs().allFinite() || !translation.allFinite()) {
+    return Status(StatusCode::kNumericalFailure,
+                  "RigidTransform composition is not finite");
+  }
+  return Create(target_frame_, rhs.source_frame_, rotation, translation);
 }
 
 }  // namespace uav::nav::lio

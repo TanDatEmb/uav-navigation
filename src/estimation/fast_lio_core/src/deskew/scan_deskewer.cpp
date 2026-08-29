@@ -59,7 +59,13 @@ Result<DeskewResult> ScanDeskewer::deskew(const LidarScan& scan,
   if (!T_odom_lidar_reference.ok()) {
     return T_odom_lidar_reference.status();
   }
-  const RigidTransform T_lidar_reference_odom = T_odom_lidar_reference.value().inverse();
+  const auto T_lidar_reference_odom_result =
+      T_odom_lidar_reference.value().inverse();
+  if (!T_lidar_reference_odom_result.ok()) {
+    return T_lidar_reference_odom_result.status();
+  }
+  const RigidTransform& T_lidar_reference_odom =
+      T_lidar_reference_odom_result.value();
 
   for (auto& point : output.scan.points) {
     const auto point_time = scan.pointTime(point);
