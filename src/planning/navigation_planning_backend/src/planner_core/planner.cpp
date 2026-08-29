@@ -193,8 +193,6 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                                       cfg_.corridor_bound_distance_m,
                                                       cfg_.corridor_segment_max_length_m,
                                                       cfg_.resolution,
-                                                      world_geometry.effective_virtual_ground_m,
-                                                      world_geometry.effective_virtual_ceiling_m,
                                                       cfg_.robot_r,
                                                       cfg_.iris_iter_num,
                                                       unknownPolicy());

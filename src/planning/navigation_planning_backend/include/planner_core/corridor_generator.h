@@ -9,7 +9,7 @@
 #include <atomic>
 #include <algorithm>
 #include <cstddef>
-#include "memory"
+#include <memory>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -44,8 +44,8 @@ namespace navigation_planning_backend {
         double min_overlap_threshold_;
         double robot_r_;
         int iris_iter_num_;
-        double virtual_groud_height_ = 0.0;
-        double virtual_ceil_height_ = 0.0;
+        double virtual_ground_height_ = 0.0;
+        double virtual_ceiling_height_ = 0.0;
         navigation_world_model::WorldModelViewPtr map_ptr_;
         navigation_world_model::UnknownPolicy unknown_policy_{
             navigation_world_model::UnknownPolicy::kAllowUnknown};
@@ -89,8 +89,6 @@ namespace navigation_planning_backend {
                           const double bound_dis,
                           const double seed_line_max_dis,
                           const double min_overlap_threshold,
-                          const double virtual_groud_height,
-                          const double virtual_ceil_height,
                           const double robot_r,
                           const int iris_iter_num,
                           navigation_world_model::UnknownPolicy unknown_policy);

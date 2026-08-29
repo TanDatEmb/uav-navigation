@@ -37,7 +37,6 @@ geometry_utils::Polytope acceptanceBallInnerCell(
     CorridorGenerator::CorridorGenerator(const navigation_planner_context::PlannerRuntimeContext::Ptr &planner_context,
                                          navigation_world_model::WorldModelViewPtr map_ptr, const double bound_dis,
                                          const double seed_line_max_dis, const double min_overlap_threshold,
-                                         const double virtual_groud_height, const double virtual_ceil_height,
                                          const double robot_r, const int iris_iter_num,
                                          const navigation_world_model::UnknownPolicy unknown_policy)
             : planner_context_(planner_context), map_ptr_(std::move(map_ptr)) {
@@ -62,8 +61,8 @@ geometry_utils::Polytope acceptanceBallInnerCell(
         // snapshot's sliding-map availability bounds.  Refreshing them on
         // every view change prevents a frozen absolute Z window after a slide.
         const auto map_geometry = map_ptr_->geometry();
-        virtual_ceil_height_ = map_geometry.effective_virtual_ceiling_m - robot_r_;
-        virtual_groud_height_ = map_geometry.effective_virtual_ground_m + robot_r_;
+        virtual_ceiling_height_ = map_geometry.effective_virtual_ceiling_m - robot_r_;
+        virtual_ground_height_ = map_geometry.effective_virtual_ground_m + robot_r_;
     }
 
 
@@ -398,8 +397,6 @@ geometry_utils::Polytope acceptanceBallInnerCell(
         box_max = p1.cwiseMax(p2);
         box_min -= Vec3f(bound_dis_, bound_dis_, bound_dis_);
         box_max += Vec3f(bound_dis_, bound_dis_, bound_dis_);
-//        box_min.z() = std::max(box_min.z(), virtual_groud_height_);
-//        box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
     }
 
     bool CorridorGenerator::GeneratePolytopeFromPoint(const Vec3f &pt, Polytope &polytope,
@@ -411,8 +408,8 @@ geometry_utils::Polytope acceptanceBallInnerCell(
         const auto bounded_box = map_ptr_->clampToLocalBounds({box_min, box_max});
         box_min = bounded_box.minimum;
         box_max = bounded_box.maximum;
-        box_min.z() = std::max(box_min.z(), virtual_groud_height_);
-        box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
+        box_min.z() = std::max(box_min.z(), virtual_ground_height_);
+        box_max.z() = std::min(box_max.z(), virtual_ceiling_height_);
         solve_stage_.store(5);
         pc = map_ptr_->observedOccupiedPoints({box_min, box_max});
         solve_point_count_.store(pc.size());
@@ -454,7 +451,7 @@ geometry_utils::Polytope acceptanceBallInnerCell(
         navigation_math::TimeConsuming tc("emvp", false);
         const auto ciri_start = std::chrono::steady_clock::now();
         solve_stage_.store(6);
-        RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b, deadline);
+        RET_CODE success = ciri_->convexDecomposition(bd, pp, a, b, deadline);
         const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - ciri_start).count();
         if (ciri_wall_ms > 100.0) {
@@ -524,8 +521,8 @@ geometry_utils::Polytope acceptanceBallInnerCell(
         const auto bounded_box = map_ptr_->clampToLocalBounds({box_min, box_max});
         box_min = bounded_box.minimum;
         box_max = bounded_box.maximum;
-        box_min.z() = std::max(box_min.z(), virtual_groud_height_);
-        box_max.z() = std::min(box_max.z(), virtual_ceil_height_);
+        box_min.z() = std::max(box_min.z(), virtual_ground_height_);
+        box_max.z() = std::min(box_max.z(), virtual_ceiling_height_);
         solve_stage_.store(2);
         pc = map_ptr_->observedOccupiedPoints({box_min, box_max});
         solve_point_count_.store(pc.size());
@@ -565,7 +562,7 @@ geometry_utils::Polytope acceptanceBallInnerCell(
         navigation_math::TimeConsuming tc("emvp", false);
         const auto ciri_start = std::chrono::steady_clock::now();
         solve_stage_.store(3);
-        RET_CODE success = ciri_->comvexDecomposition(bd, pp, a, b, deadline);
+        RET_CODE success = ciri_->convexDecomposition(bd, pp, a, b, deadline);
         const double ciri_wall_ms = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - ciri_start).count();
         if (ciri_wall_ms > 100.0) {

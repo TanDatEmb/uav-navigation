@@ -637,7 +637,7 @@ void geometry_utils::enumerateVs(const Eigen::MatrixX4d& hPoly,
         point = A.col(idBuffer[3 * i + 1]);
         edge0 = point - A.col(idBuffer[3 * i]);
         edge1 = A.col(idBuffer[3 * i + 2]) - point;
-        normal = edge0.cross(edge1); //cross in CW gives an outter normal
+        normal = edge0.cross(edge1); // cross in CW gives an outward normal
         rV.col(i) = normal / normal.dot(point);
     }
     filterVs(rV, epsilon, vPoly);

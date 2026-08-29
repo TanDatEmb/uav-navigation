@@ -16,14 +16,14 @@ using namespace navigation_math;
 
 namespace navigation_planning_backend {
 
-    RET_CODE CIRI::comvexDecomposition(const Eigen::MatrixX4d& bd, const Eigen::Matrix3Xd& pc, const Eigen::Vector3d& a,
+    RET_CODE CIRI::convexDecomposition(const Eigen::MatrixX4d& boundary_planes, const Eigen::Matrix3Xd& pc, const Eigen::Vector3d& a,
                                        const Eigen::Vector3d& b,
                                        const AbsoluteDeadline* deadline) {
         const auto deadlineExpired = [deadline]() noexcept {
             return deadline != nullptr && deadline->steadyExpired();
         };
         if (deadlineExpired()) return TIME_OUT;
-        if (bd.rows() <= 0 || pc.cols() <= 0 || !bd.allFinite() || !pc.allFinite() ||
+        if (boundary_planes.rows() <= 0 || pc.cols() <= 0 || !boundary_planes.allFinite() || !pc.allFinite() ||
             !a.allFinite() || !b.allFinite()) {
             return INIT_ERROR;
         }
@@ -40,17 +40,17 @@ namespace navigation_planning_backend {
         const Eigen::Vector4d bh(b(0), b(1), b(2), 1.0);
 
         /// force return if the seed is not inside the boundary
-        if ((bd * ah).maxCoeff() > epsilon_ ||
-            (bd * bh).maxCoeff() > epsilon_) {
+        if ((boundary_planes * ah).maxCoeff() > epsilon_ ||
+            (boundary_planes * bh).maxCoeff() > epsilon_) {
 //            cout << YELLOW << " -- [WARN] ah, bh not in BD, forced return." << endl;
-//            cout << "bd  * ah: " << (bd * ah).transpose().maxCoeff() << endl;
-//            cout << "bd  * bh: " << (bd * bh).transpose().maxCoeff() << endl;
+//            cout << "boundary_planes * ah: " << (boundary_planes * ah).transpose().maxCoeff() << endl;
+//            cout << "boundary_planes * bh: " << (boundary_planes * bh).transpose().maxCoeff() << endl;
             return INIT_ERROR;
         }
 
 
         /// Maximum M boundary constraints and N point constraints
-        const int M = bd.rows();
+        const int M = boundary_planes.rows();
         const int N = pc.cols();
 
         Ellipsoid E(Mat3f::Identity(), (a + b) / 2);
@@ -70,7 +70,7 @@ namespace navigation_planning_backend {
             // Initialize the boundary in ellipsoid frame
             const Eigen::Vector3d fwd_a = E.toEllipsoidFrame(a);
             const Eigen::Vector3d fwd_b = E.toEllipsoidFrame(b);
-            const Eigen::MatrixX4d bd_e = E.toEllipsoidFrame(bd);
+            const Eigen::MatrixX4d bd_e = E.toEllipsoidFrame(boundary_planes);
             const Eigen::VectorXd boundary_norms = bd_e.leftCols<3>().rowwise().norm();
             if (!boundary_norms.allFinite() ||
                 (boundary_norms.array() <= std::numeric_limits<double>::epsilon()).any()) {
@@ -107,7 +107,7 @@ namespace navigation_planning_backend {
                     bdFlags(bdMinId) = 0;
                 }
                 else {
-                    /// Case [Ob closer than Bd] enable the obstacle point constarin.
+                    /// Case [Ob closer than Bd] enable the obstacle point constraint.
                     ///     Compute the tangent plane of sphere
                     ///
                     const auto & pt_w = pc.col(pcMinId);
@@ -164,7 +164,7 @@ namespace navigation_planning_backend {
                         temp_plane_w = E.toWorldFrame(temp_tangent);
                     }
                     else {
-                        /// Case [Ob closer than Bd] enable the obstacle point constarin.
+                        /// Case [Ob closer than Bd] enable the obstacle point constraint.
                         const Vec3f &pt_e = pc_e.col(pcMinId);
                         const Vec3f &pt_w = pc.col(pcMinId);
                         Ellipsoid E_pe(C_inv * sphere_template_.C(), pt_e);
@@ -292,7 +292,7 @@ namespace navigation_planning_backend {
     bool CIRI::findTangentPlaneOfSphere(const Eigen::Vector3d& center, const double& r,
                                         const Eigen::Vector3d& pass_point,
                                         const Eigen::Vector3d& seed_p,
-                                        Eigen::Vector4d& outter_plane) {
+                                        Eigen::Vector4d& outer_plane) {
 
         const Eigen::Vector3d point_from_center = pass_point - center;
         const double point_distance = point_from_center.norm();
@@ -352,13 +352,13 @@ namespace navigation_planning_backend {
         }
         Q(2) = 0;
         // point(Q) + normal (AQ)
-        outter_plane.head(3) = R.transpose() * Q;
-        Q = outter_plane.head(3) + center;
-        outter_plane(3) = -Q.dot(outter_plane.head(3));
-        if (outter_plane.head(3).dot(seed_p) + outter_plane(3) > epsilon_) {
-            outter_plane = -outter_plane;
+        outer_plane.head(3) = R.transpose() * Q;
+        Q = outer_plane.head(3) + center;
+        outer_plane(3) = -Q.dot(outer_plane.head(3));
+        if (outer_plane.head(3).dot(seed_p) + outer_plane(3) > epsilon_) {
+            outer_plane = -outer_plane;
         }
-        return outter_plane.allFinite();
+        return outer_plane.allFinite();
     }
 
     void CIRI::findEllipsoid(const Eigen::Matrix3Xd& pc,

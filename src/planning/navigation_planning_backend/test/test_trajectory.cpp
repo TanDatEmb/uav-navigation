@@ -323,7 +323,7 @@ TEST(CiriGeometry, RejectsDegenerateSeedSegmentBeforeEllipsoidConstruction) {
   Eigen::Matrix3Xd obstacles(3, 1);
   obstacles.col(0) = Eigen::Vector3d(1.5, 1.5, 1.5);
 
-  EXPECT_EQ(ciri.comvexDecomposition(
+  EXPECT_EQ(ciri.convexDecomposition(
                 bounds, obstacles, Eigen::Vector3d::Zero(),
                 Eigen::Vector3d::Zero()),
             navigation_math::INIT_ERROR);
@@ -344,7 +344,7 @@ TEST(CiriGeometry, RejectsObstacleAtClosedSeedClearanceBoundary) {
   Eigen::Matrix3Xd obstacles(3, 1);
   obstacles.col(0) = Eigen::Vector3d{0.0, 0.35 - 0.01, 0.0};
 
-  EXPECT_EQ(ciri.comvexDecomposition(
+  EXPECT_EQ(ciri.convexDecomposition(
                 bounds, obstacles, Eigen::Vector3d{-1.0, 0.0, 0.0},
                 Eigen::Vector3d{1.0, 0.0, 0.0}),
             navigation_math::FAILED);
@@ -2557,7 +2557,7 @@ TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
   navigation_planner_context::PlannerRuntimeContext::Ptr context =
       std::make_shared<navigation_planner_context::PlannerRuntimeContext>();
   navigation_planning_backend::CorridorGenerator generator(
-      context, world, 10.0, 3.0, 0.1, -10.0, 10.0, 0.35, 1,
+      context, world, 10.0, 3.0, 0.1, 0.35, 1,
       navigation_world_model::UnknownPolicy::kAllowUnknown);
 
   const navigation_math::vec_Vec3f path{

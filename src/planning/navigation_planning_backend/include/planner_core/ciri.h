@@ -90,7 +90,7 @@ namespace navigation_planning_backend {
         static bool findTangentPlaneOfSphere(const Eigen::Vector3d &center, const double &r,
                                              const Eigen::Vector3d &pass_point,
                                              const Eigen::Vector3d &seed_p,
-                                             Eigen::Vector4d &outter_plane);
+                                             Eigen::Vector4d &outer_plane);
 
         static double distancePointToSegment(const Eigen::Vector3d& P, const Eigen::Vector3d& A, const Eigen::Vector3d& B) {
             if (!P.allFinite() || !A.allFinite() || !B.allFinite()) {
@@ -139,7 +139,7 @@ namespace navigation_planning_backend {
 
         void setupParams(double robot_r, int iter_num);
 
-        RET_CODE comvexDecomposition(const Eigen::MatrixX4d &bd,
+        RET_CODE convexDecomposition(const Eigen::MatrixX4d &boundary_planes,
                                      const Eigen::Matrix3Xd &pc,
                                      const Eigen::Vector3d &a,
                                      const Eigen::Vector3d &b,
