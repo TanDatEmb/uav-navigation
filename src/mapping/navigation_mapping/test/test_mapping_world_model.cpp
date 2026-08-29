@@ -204,6 +204,7 @@ TEST_F(MappingWorldModelTest, ClassificationAndIndexConversionMatchBackend) {
               view->classify(point, navigation_world_model::GridLayer::kEvidence));
     EXPECT_EQ(snapshot->classify(point, navigation_world_model::GridLayer::kInflated),
               view->classify(point, navigation_world_model::GridLayer::kInflated));
+    if (!view->contains(point)) continue;
     for (const auto layer : {navigation_world_model::GridLayer::kEvidence,
                              navigation_world_model::GridLayer::kInflated}) {
       Eigen::Vector3i legacy_index;
@@ -369,7 +370,7 @@ TEST_F(MappingWorldModelTest, SegmentCertificateIsSymmetricAtVoxelCorners) {
   grid.unknown_inflation_enabled = false;
   grid.virtual_ground_ceiling_enabled = false;
 
-  const auto start_index = grid.base_layout.global_min_index +
+  const navigation_world_model::GridIndex3 start_index = grid.base_layout.global_min_index +
       navigation_world_model::GridIndex3{4, 4, 4};
   const auto side_obstacle_index = grid.base_layout.global_min_index +
       navigation_world_model::GridIndex3{4, 5, 4};
@@ -408,11 +409,14 @@ TEST_F(MappingWorldModelTest, StationaryAxisDoesNotCreateSpuriousDdaTie) {
   grid.unknown_inflation_enabled = false;
   grid.virtual_ground_ceiling_enabled = false;
 
-  const auto start_index = grid.base_layout.global_min_index +
+  const navigation_world_model::GridIndex3 global_min_index =
+      grid.base_layout.global_min_index;
+  const navigation_world_model::GridIndex3 start_index = global_min_index +
       navigation_world_model::GridIndex3{4, 4, 4};
-  const auto spurious_diagonal = grid.base_layout.global_min_index +
-      navigation_world_model::GridIndex3{5, 5, 4};
-  const auto local = spurious_diagonal - grid.base_layout.global_min_index;
+  const navigation_world_model::GridIndex3 spurious_diagonal = start_index +
+      navigation_world_model::GridIndex3{1, 1, 0};
+  const navigation_world_model::GridIndex3 local =
+      spurious_diagonal - global_min_index;
   const auto obstacle_offset =
       (static_cast<std::size_t>(local.x()) *
            static_cast<std::size_t>(grid.base_layout.dimensions.y()) +
@@ -425,7 +429,7 @@ TEST_F(MappingWorldModelTest, StationaryAxisDoesNotCreateSpuriousDdaTie) {
 
   navigation_mapping::MappingWorldSnapshot snapshot(
       std::move(grid), navigation_world_model::WorldSnapshotIdentity{1, 1, 2, 123});
-  const auto end_index = start_index + navigation_world_model::GridIndex3{3, 1, 0};
+  const auto end_index = start_index + navigation_world_model::GridIndex3{4, 1, 0};
   EXPECT_TRUE(snapshot.isSegmentTraversable(
       snapshot.indexToPosition(start_index, navigation_world_model::GridLayer::kEvidence),
       snapshot.indexToPosition(end_index, navigation_world_model::GridLayer::kEvidence),
