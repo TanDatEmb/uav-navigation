@@ -1,3 +1,5 @@
+#include <limits>
+
 #include <Eigen/Core>
 #include <gtest/gtest.h>
 
@@ -106,4 +108,12 @@ TEST(TrackingEnvelope, StationaryCommandUsesStrictGeometricLimit) {
   EXPECT_FALSE(evaluateTrackingEnvelope(
       Eigen::Vector3d::Zero(), Eigen::Vector3d{0.8, 0.0, 0.0},
       Eigen::Vector3d::Zero(), 0.75).valid);
+}
+
+TEST(TrackingEnvelope, RejectsFiniteVelocityWhoseNormOverflows) {
+  const double huge = std::numeric_limits<double>::max();
+  const auto result = evaluateTrackingEnvelope(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d{huge, huge, huge}, 0.75);
+  EXPECT_FALSE(result.valid);
 }

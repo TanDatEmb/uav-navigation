@@ -10924,6 +10924,28 @@ release profiles must not use the former allowance.
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
 
+### 2026-08-29 - Make tracking-envelope norm checks fail closed
+
+- **Owner/status:** PX4 External Mode tracking-envelope boundary, `VERIFIED`
+  by the focused tracking-envelope suite.
+- **Scope:** Compute command speed and geometric residuals with stable
+  `hypot`-based norms, reject overflowed residuals after position subtraction,
+  and reject finite velocity vectors whose norm is not representable.
+- **Safety impact:** A malformed large finite command can no longer normalize
+  through an infinite norm into a zero tangent and pass the tracking gate.
+  The geometric envelope and all configured limits are unchanged.
+- **False-accept/false-reject consequences:** Ordinary finite commands retain
+  their previous result. Non-representable speed/residual arithmetic is
+  rejected at the execution boundary rather than classified as zero error.
+- **Runtime cost and evidence:** Two bounded `hypot` chains and finite checks
+  per envelope evaluation; regression covers a three-axis `DBL_MAX` velocity.
+- **Removal/review condition:** Keep until commands carry a checked physical
+  velocity type with a representable norm invariant.
+- **Verification:** `cmake --build build/px4_navigation_external_mode
+  --target test_tracking_envelope -j2 &&
+  ./build/px4_navigation_external_mode/test_tracking_envelope
+  --gtest_color=no`.
+
 ### 2026-08-29 - Synchronize Fast-LIO public frame generation and transform publication
 
 - **Owner/status:** Fast-LIO ROS public-frame generation and TF publisher,
