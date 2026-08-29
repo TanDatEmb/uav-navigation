@@ -13440,3 +13440,30 @@ release profiles must not use the former allowance.
 - **Verification:** `colcon build --packages-select navigation_runtime
   --cmake-args -DBUILD_TESTING=ON` and the focused planner-FSM test with the
   existing runtime contract suite.
+
+### 2026-08-29 - Keep PX4 rejection provenance velocity frames explicit
+
+- **Owner/status:** PX4 External Mode rejection diagnostics, `PROVISIONAL`;
+  focused command-contract test and node build required.
+- **Scope:** `RejectProvenance` names measured odometry velocity as
+  `body_frame`. The bridge publishes `nav_msgs/Odometry.twist.twist.linear` in
+  `child_frame_id` (`base_link`/FLU), while command PVA values and measured
+  position are in the planning/world ENU frame. The rejection log now exposes
+  the actual velocity frame instead of claiming ENU. Unavailable previous PVA
+  vectors are initialized explicitly to NaN rather than by aliasing the
+  previous-position initializer.
+- **Safety impact:** Diagnostic evidence cannot be interpreted as a world-frame
+  velocity when investigating tracking-envelope rejects. No acceptance gate,
+  setpoint conversion, or frame transform changes.
+- **False-accept/false-reject consequences:** Runtime acceptance behavior is
+  unchanged. Existing rejection records gain a truthful field label; a
+  missing previous command remains represented as unavailable NaN data.
+- **Runtime cost and evidence:** No additional runtime work beyond the same
+  field copy and log formatting. The command-contract regression and External
+  Mode node build are required.
+- **Removal/review condition:** Keep until rejection provenance is replaced by
+  a typed frame-aware diagnostic schema carrying explicit frame IDs.
+- **Verification:** `colcon build --packages-select
+  px4_navigation_external_mode --cmake-args -DBUILD_TESTING=ON`,
+  `test_navigation_command --gtest_color=no`, and replay inspection of a
+  tracking-envelope rejection.

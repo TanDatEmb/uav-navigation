@@ -179,7 +179,8 @@ TEST(NavigationCommandContract, RejectProvenanceIsExactWithoutPreviousCommand) {
   EXPECT_DOUBLE_EQ(result.odometry_receive_age_ms, 50.0);
   EXPECT_FALSE(result.previous_valid);
   EXPECT_TRUE(result.measured_position.isApprox(Eigen::Vector3d{1.0, 0.0, 0.0}));
-  EXPECT_TRUE(result.measured_velocity.isApprox(Eigen::Vector3d{0.0, 2.0, 0.0}));
+  EXPECT_TRUE(result.measured_velocity_body_frame.isApprox(
+      Eigen::Vector3d{0.0, 2.0, 0.0}));
   EXPECT_TRUE(std::isnan(result.command_delta_position_m));
 }
 

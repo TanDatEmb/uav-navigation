@@ -472,7 +472,7 @@ void NavigationMode::onNavigationCommand(
                  "planner backend tracking envelope exceeded: longitudinal=%.3f/%.3f m "
                  "reverse=%.3f/%.3f m lateral=%.3f/%.3f m "
                  "measured_enu=[%.3f,%.3f,%.3f] command_enu=[%.3f,%.3f,%.3f] "
-                 "measured_velocity_enu=[%.3f,%.3f,%.3f] "
+                 "measured_velocity_body_frame=[%.3f,%.3f,%.3f] "
                  "command_velocity_enu=[%.3f,%.3f,%.3f] "
                  "command_acceleration_enu=[%.3f,%.3f,%.3f] "
                  "command_jerk_enu=[%.3f,%.3f,%.3f] "
@@ -494,8 +494,9 @@ void NavigationMode::onNavigationCommand(
                  provenance.measured_position.x(), provenance.measured_position.y(),
                  provenance.measured_position.z(),
                  message->position.x, message->position.y, message->position.z,
-                 provenance.measured_velocity.x(), provenance.measured_velocity.y(),
-                 provenance.measured_velocity.z(),
+                 provenance.measured_velocity_body_frame.x(),
+                 provenance.measured_velocity_body_frame.y(),
+                 provenance.measured_velocity_body_frame.z(),
                  message->velocity.x, message->velocity.y, message->velocity.z,
                  message->acceleration.x, message->acceleration.y,
                  message->acceleration.z,

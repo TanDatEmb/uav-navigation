@@ -16,16 +16,21 @@ struct RejectProvenance {
   double odometry_header_age_ms{0.0};
   double odometry_receive_age_ms{0.0};
   Eigen::Vector3d measured_position{Eigen::Vector3d::Zero()};
-  Eigen::Vector3d measured_velocity{Eigen::Vector3d::Zero()};
+  // nav_msgs/Odometry.twist is expressed in child_frame_id (base_link/FLU
+  // for the bridge output), not in the planning/world ENU frame.
+  Eigen::Vector3d measured_velocity_body_frame{Eigen::Vector3d::Zero()};
   bool previous_valid{false};
   navigation_contracts::msg::NavigationCommand previous{};
   bool generation_changed{false};
   std::int64_t generation_delta{0};
   Eigen::Vector3d previous_position{Eigen::Vector3d::Constant(
       std::numeric_limits<double>::quiet_NaN())};
-  Eigen::Vector3d previous_velocity{previous_position};
-  Eigen::Vector3d previous_acceleration{previous_position};
-  Eigen::Vector3d previous_jerk{previous_position};
+  Eigen::Vector3d previous_velocity{Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN())};
+  Eigen::Vector3d previous_acceleration{Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN())};
+  Eigen::Vector3d previous_jerk{Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN())};
   double command_delta_position_m{std::numeric_limits<double>::quiet_NaN()};
   double command_delta_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
   double command_delta_acceleration_mps2{std::numeric_limits<double>::quiet_NaN()};
@@ -45,8 +50,9 @@ inline RejectProvenance buildRejectProvenance(
       static_cast<double>(now_ns - odometry_receive_ns) * 1.0e-6;
   result.measured_position = {odometry.pose.pose.position.x, odometry.pose.pose.position.y,
                               odometry.pose.pose.position.z};
-  result.measured_velocity = {odometry.twist.twist.linear.x, odometry.twist.twist.linear.y,
-                              odometry.twist.twist.linear.z};
+  result.measured_velocity_body_frame = {
+      odometry.twist.twist.linear.x, odometry.twist.twist.linear.y,
+      odometry.twist.twist.linear.z};
   if (!previous) return result;
 
   result.previous_valid = true;
