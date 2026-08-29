@@ -27,6 +27,10 @@
 // include is rewritten to the installed include path. No behavior changes.
 #include <rog_map/rog_map_core/raycaster.h>
 
+#include <cmath>
+#include <cstdint>
+#include <limits>
+
 namespace rog_map {
     namespace raycaster {
         RayCaster::RayCaster(const double &resolution) {
@@ -42,7 +46,7 @@ namespace rog_map {
 #endif
 #endif
 
-            if (resolution < 0) {
+            if (!std::isfinite(resolution) || resolution <= 0.0) {
                 throw std::runtime_error(" -- [Raycaster]: resolution must be positive!");
             } else {
                 resolution_ = resolution;
@@ -50,17 +54,33 @@ namespace rog_map {
         }
 
         void RayCaster::setResolution(const double &resolution) {
+            if (!std::isfinite(resolution) || resolution <= 0.0) {
+                throw std::invalid_argument(" -- [RayCaster]: resolution must be finite and positive!");
+            }
             resolution_ = resolution;
         }
 
         void RayCaster::posToIndex(const double d, int &id) const {
+            if (!std::isfinite(d) || !std::isfinite(resolution_) || resolution_ <= 0.0) {
+                id = 0;
+                return;
+            }
+            const long double scaled = static_cast<long double>(d) /
+                                       static_cast<long double>(resolution_);
 #ifdef ORIGIN_AT_CORNER
-            id = std::floor((d / resolution_));
+            const long double index = std::floor(scaled);
 #endif
 
 #ifdef ORIGIN_AT_CENTER
-            id = static_cast<int>((d / resolution_ + signum(d) * 0.5));
+            const long double index = scaled + static_cast<long double>(signum(d)) * 0.5L;
 #endif
+            if (!std::isfinite(index) ||
+                index < static_cast<long double>(std::numeric_limits<int>::min()) ||
+                index > static_cast<long double>(std::numeric_limits<int>::max())) {
+                id = 0;
+                return;
+            }
+            id = static_cast<int>(index);
         }
 
         void RayCaster::indexToPos(const int &id, double &d) const {
@@ -73,9 +93,29 @@ namespace rog_map {
         }
 
         bool RayCaster::setInput(const Eigen::Vector3d &start, const Eigen::Vector3d &end) {
-            if (resolution_ < 0) {
+            if (!std::isfinite(resolution_) || resolution_ <= 0.0) {
                 throw std::runtime_error(" -- [RayCaster] Resolution is not set!");
             }
+            if (!start.allFinite() || !end.allFinite()) {
+                return false;
+            }
+            const auto coordinateToIndex = [this](const double value, int &index) {
+                const long double scaled = static_cast<long double>(value) /
+                                           static_cast<long double>(resolution_);
+#ifdef ORIGIN_AT_CORNER
+                const long double candidate = std::floor(scaled);
+#else
+                const long double candidate = scaled +
+                    static_cast<long double>(signum(value)) * 0.5L;
+#endif
+                if (!std::isfinite(candidate) ||
+                    candidate < static_cast<long double>(std::numeric_limits<int>::min()) ||
+                    candidate > static_cast<long double>(std::numeric_limits<int>::max())) {
+                    return false;
+                }
+                index = static_cast<int>(candidate);
+                return true;
+            };
             start_x_d_ = start.x();
             start_y_d_ = start.y();
             start_z_d_ = start.z();
@@ -85,36 +125,43 @@ namespace rog_map {
             end_z_d_ = end.z();
 
             // Calculate expand dir and index
-            posToIndex(start_x_d_, start_x_i_);
-            posToIndex(start_y_d_, start_y_i_);
-            posToIndex(start_z_d_, start_z_i_);
+            if (!coordinateToIndex(start_x_d_, start_x_i_) ||
+                !coordinateToIndex(start_y_d_, start_y_i_) ||
+                !coordinateToIndex(start_z_d_, start_z_i_) ||
+                !coordinateToIndex(end_x_d_, end_x_i_) ||
+                !coordinateToIndex(end_y_d_, end_y_i_) ||
+                !coordinateToIndex(end_z_d_, end_z_i_)) {
+                return false;
+            }
 
-            posToIndex(end_x_d_, end_x_i_);
-            posToIndex(end_y_d_, end_y_i_);
-            posToIndex(end_z_d_, end_z_i_);
-
-            int delta_X = end_x_i_ - start_x_i_;
-            int delta_Y = end_y_i_ - start_y_i_;
-            int delta_Z = end_z_i_ - start_z_i_;
+            const std::int64_t delta_X = static_cast<std::int64_t>(end_x_i_) - start_x_i_;
+            const std::int64_t delta_Y = static_cast<std::int64_t>(end_y_i_) - start_y_i_;
+            const std::int64_t delta_Z = static_cast<std::int64_t>(end_z_i_) - start_z_i_;
 
             cur_ray_pt_id_x_ = start_x_i_;
             cur_ray_pt_id_y_ = start_y_i_;
             cur_ray_pt_id_z_ = start_z_i_;
 
-            expand_dir_x_ = static_cast<int>(signum(static_cast<int>(delta_X)));
-            expand_dir_y_ = static_cast<int>(signum(static_cast<int>(delta_Y)));
-            expand_dir_z_ = static_cast<int>(signum(static_cast<int>(delta_Z)));
+            expand_dir_x_ = static_cast<int>(signum(delta_X));
+            expand_dir_y_ = static_cast<int>(signum(delta_Y));
+            expand_dir_z_ = static_cast<int>(signum(delta_Z));
 //                std::cout<<"expand_dir_x_:"<<expand_dir_x_<<" expand_dir_y_:"<<expand_dir_y_<<" expand_dir_z_:"<<expand_dir_z_<<std::endl;
             if (expand_dir_x_ == 0 && expand_dir_y_ == 0 && expand_dir_z_ == 0) {
                 return false;
             }
 
-            double dis_x_over_t, dis_y_over_t, dis_z_over_t, t_max;
-            dis_x_over_t = std::abs(end_x_d_ - start_x_d_);
-            dis_y_over_t = std::abs(end_y_d_ - start_y_d_);
-            dis_z_over_t = std::abs(end_z_d_ - start_z_d_);
-
-            t_max = sqrt(dis_x_over_t * dis_x_over_t + dis_y_over_t * dis_y_over_t + dis_z_over_t * dis_z_over_t);
+            const long double dx = std::fabs(static_cast<long double>(end_x_d_) - start_x_d_);
+            const long double dy = std::fabs(static_cast<long double>(end_y_d_) - start_y_d_);
+            const long double dz = std::fabs(static_cast<long double>(end_z_d_) - start_z_d_);
+            const long double t_max_ld = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (!std::isfinite(t_max_ld) || t_max_ld <= 0.0L ||
+                t_max_ld > static_cast<long double>(std::numeric_limits<double>::max())) {
+                return false;
+            }
+            double dis_x_over_t = static_cast<double>(dx);
+            double dis_y_over_t = static_cast<double>(dy);
+            double dis_z_over_t = static_cast<double>(dz);
+            const double t_max = static_cast<double>(t_max_ld);
 
             dis_x_over_t /= t_max;
             dis_y_over_t /= t_max;

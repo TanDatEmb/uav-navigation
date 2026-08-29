@@ -26,6 +26,7 @@
 #include <rog_map/rog_map_core/common_lib.hpp>
 #include <navigation_math/yaml_loader.hpp>
 
+#include <cstdint>
 #include <limits>
 
 #ifndef ORIGIN_AT_CORNER
@@ -347,6 +348,9 @@ namespace rog_map {
         double map_sliding_thresh{};
 
         void validateConfiguration() const {
+            constexpr long double kMaximumGeneratedNeighborCells = 8'000'000.0L;
+            constexpr long double kMaximumGridCells = 128'000'000.0L;
+            constexpr long double kMaximumHalfExtent = 1'000'000.0L;
             const auto positiveFinite = [](const double value) {
                 return std::isfinite(value) && value > 0.0;
             };
@@ -360,6 +364,53 @@ namespace rog_map {
                 throw std::invalid_argument(
                     "rog_map geometry requires finite positive resolutions, inflation steps, "
                     "map size, and map origin");
+            }
+            const auto neighborBudgetValid = [&](const long double step) {
+                if (!std::isfinite(step) || step < 0.0L || step > 99.0L) {
+                    return false;
+                }
+                const long double side = 2.0L * step + 1.0L;
+                return side * side * side <= kMaximumGeneratedNeighborCells;
+            };
+            const long double inflationRatioReal = std::ceil(
+                static_cast<long double>(inflation_resolution) /
+                static_cast<long double>(resolution));
+            const long double nearestSearchStepReal = std::ceil(
+                5.0L / static_cast<long double>(resolution));
+            const int maxInflationStep = std::max(inflation_step, unk_inflation_step);
+            if (!std::isfinite(inflationRatioReal) || inflationRatioReal < 1.0L ||
+                inflationRatioReal > 99.0L ||
+                !neighborBudgetValid(static_cast<long double>(inflation_step)) ||
+                !neighborBudgetValid(static_cast<long double>(unk_inflation_step)) ||
+                !neighborBudgetValid(nearestSearchStepReal)) {
+                throw std::invalid_argument(
+                    "rog_map grid ratios and neighbor steps exceed the bounded integer/resource envelope");
+            }
+            const long double inflationResolution =
+                static_cast<long double>(resolution) * inflationRatioReal;
+            long double mapSide[3]{};
+            for (int axis = 0; axis < 3; ++axis) {
+                const long double infHalf = std::ceil(
+                    static_cast<long double>(map_size_d(axis)) * 0.5L /
+                    inflationResolution) + static_cast<long double>(maxInflationStep + 1);
+                const long double localHalf = std::ceil(
+                    static_cast<long double>(local_update_box_d(axis)) * 0.5L /
+                    static_cast<long double>(resolution));
+                if (!std::isfinite(infHalf) || !std::isfinite(localHalf) ||
+                    infHalf < 0.0L || localHalf < 0.0L ||
+                    infHalf > kMaximumHalfExtent || localHalf > kMaximumHalfExtent) {
+                    throw std::invalid_argument(
+                        "rog_map grid extents exceed the bounded integer/resource envelope");
+                }
+                mapSide[axis] = 2.0L *
+                    (std::ceil(static_cast<long double>(map_size_d(axis)) * 0.5L /
+                               inflationResolution) - 1.0L) * inflationRatioReal + 1.0L;
+            }
+            if (mapSide[0] <= 0.0L || mapSide[1] <= 0.0L || mapSide[2] <= 0.0L ||
+                !std::isfinite(mapSide[0]) || !std::isfinite(mapSide[1]) ||
+                !std::isfinite(mapSide[2]) ||
+                mapSide[0] * mapSide[1] * mapSide[2] > kMaximumGridCells) {
+                throw std::invalid_argument("rog_map map allocation exceeds the bounded resource envelope");
             }
             if (map_sliding_en && !positiveFinite(map_sliding_thresh)) {
                 throw std::invalid_argument(
@@ -412,7 +463,9 @@ namespace rog_map {
         }
 
         void resetMapSize() {
-            int inflation_ratio = ceil(inflation_resolution / resolution);
+            const int inflation_ratio = static_cast<int>(std::ceil(
+                static_cast<long double>(inflation_resolution) /
+                static_cast<long double>(resolution)));
 
 #ifdef ORIGIN_AT_CENTER
             // When discretized in such a way that the origin is at cell center

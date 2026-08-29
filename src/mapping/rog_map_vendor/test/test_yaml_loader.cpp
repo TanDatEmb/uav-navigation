@@ -1,9 +1,12 @@
 #include <navigation_math/yaml_loader.hpp>
 #include <rog_map/rog_map_core/config.hpp>
+#include <rog_map/rog_map_core/raycaster.h>
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -155,6 +158,27 @@ TEST(YamlLoader, MappingSafetyConfigurationRejectsInvalidValues) {
   ASSERT_FALSE(invalid_batch_size.empty());
   EXPECT_THROW({ rog_map::Config config(invalid_batch_size); }, std::invalid_argument);
   std::remove(invalid_batch_size.c_str());
+
+  const auto tiny_resolution = configVariant(
+      "  resolution: 1e-300", "uav_navigation_invalid_map_resolution.yaml");
+  ASSERT_FALSE(tiny_resolution.empty());
+  EXPECT_THROW({ rog_map::Config config(tiny_resolution); }, std::invalid_argument);
+  std::remove(tiny_resolution.c_str());
+
+  const auto huge_inflation_step = configVariant(
+      "  inflation_step: 1000", "uav_navigation_invalid_inflation_step.yaml");
+  ASSERT_FALSE(huge_inflation_step.empty());
+  EXPECT_THROW({ rog_map::Config config(huge_inflation_step); }, std::invalid_argument);
+  std::remove(huge_inflation_step.c_str());
+}
+
+TEST(RayCaster, RejectsInvalidResolutionAndCoordinates) {
+  EXPECT_THROW({ rog_map::raycaster::RayCaster ray(0.0); }, std::runtime_error);
+  rog_map::raycaster::RayCaster ray(0.2);
+  EXPECT_THROW(ray.setResolution(std::numeric_limits<double>::quiet_NaN()),
+               std::invalid_argument);
+  EXPECT_FALSE(ray.setInput(Eigen::Vector3d::Constant(std::numeric_limits<double>::max()),
+                            Eigen::Vector3d::Zero()));
 }
 
 }  // namespace

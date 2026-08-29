@@ -12564,3 +12564,27 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && cmake --build build/fast_lio_core --target test_fast_lio_pipeline -j2
   && ./build/fast_lio_core/test_fast_lio_pipeline --gtest_color=no`.
+### 2026-08-29 - Bound ROG-Map vendor grid and raycaster inputs
+
+- **Owner/status:** ROG-Map vendor boundary wrapper, `PROVISIONAL`; verified
+  by vendor YAML/raycaster tests.
+- **Scope:** Positive-finite raycaster resolution and representable finite
+  endpoints are required. Map/inflation ratios, integer grid half-extents,
+  neighbor-step generation, and nearest-neighbor search budgets are bounded
+  before floating-to-integer casts or cubic loops.
+- **Safety impact:** Malformed/extreme map configuration cannot create wrapped
+  voxel indices, invalid ray traversal, or unbounded neighbor allocation that
+  starves mapping/planner callbacks.
+- **False-accept/false-reject consequences:** Existing normal maps remain
+  unchanged. Configurations exceeding the explicit integer/resource envelope
+  fail startup and require a smaller map/resolution or a separately reviewed
+  vendor replacement.
+- **Runtime cost and evidence:** Validation is startup-only; ray input adds
+  finite/range checks and uses overflow-safe distance arithmetic. Vendor
+  boundary tests cover zero resolution, NaN resolution, huge endpoint, tiny
+  map resolution, and oversized inflation step.
+- **Removal/review condition:** Keep until ROG-Map is replaced by a product
+  grid API with checked index types and bounded allocation contracts.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/rog_map_vendor --target test_rog_map_vendor -j2
+  && ./build/rog_map_vendor/test_rog_map_vendor --gtest_color=no`.
