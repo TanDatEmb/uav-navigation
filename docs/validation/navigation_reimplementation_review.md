@@ -1,6 +1,6 @@
 # Đánh giá tái triển khai navigation
 
-Ngày đánh giá/cập nhật: 2026-08-29. Reviewed source HEAD: `7ab0cbf8c3d74d6d20a7c3b01ebb1cf6846adad8`
+Ngày đánh giá/cập nhật: 2026-08-29. Reviewed source HEAD: `2d6535f9e53acae13583cc50da27c2da12180aa3`
 trên branch `codex/navigation-stability-checkpoint`; worktree sạch tại thời điểm
 checkpoint. Manifest authoritative được tạo từ đúng HEAD này với
 `git_dirty=false`. Phạm vi gồm estimator, mapping, planner, execution, runtime
@@ -198,6 +198,10 @@ SITL hoặc hardware acceptance.
   runtime phát safety stop như expected fail-closed; report vẫn `FAIL` do
   lidar timestamp/freshness evidence, nên đây là negative-path evidence chứ
   không phải PASS.
+- `external-mode-check-20260829T070828-1876275` (`sanity_open/positive`):
+  provenance **VALID** với HEAD `2d6535f`, route được nhận và waypoint 0 được
+  accept; `PlanFromRest/main_minco` thất bại lặp lại tại waypoint 1, sau đó
+  runtime fail-closed với `PAUSED_SAFETY_STOP`, report `BLOCKED`.
 
 Không có recorded-dataset replay mới hoặc hardware run trong checkpoint này.
 Các số solve/hot-replan ở trên chỉ là quan sát của ba phiên, chưa đủ để điều
