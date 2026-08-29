@@ -77,6 +77,13 @@ TEST(IkfomEstimatorTest, RejectsIterationCountThatCannotReachUpstreamFilter) {
                std::invalid_argument);
 }
 
+TEST(IkfomEstimatorTest, RejectsGravityWhoseSquaredNormOverflows) {
+  ManifoldState state;
+  const double huge = std::numeric_limits<double>::max();
+  state.set_gravity_odom_m_s2(Eigen::Vector3d(huge, huge, huge));
+  EXPECT_FALSE(state.allFinite());
+}
+
 TEST(IkfomEstimatorTest, PredictsThroughUpstreamFilterAndKeepsFixedExtrinsic) {
   IkfomEstimatorConfig config;
   config.maximum_integration_step_ns = 20'000'000;

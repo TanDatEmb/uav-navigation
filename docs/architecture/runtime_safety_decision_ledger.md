@@ -10973,6 +10973,29 @@ release profiles must not use the former allowance.
   test_ikfom_estimator -j2 &&
   ./build/fast_lio_core/test_ikfom_estimator --gtest_color=no`.
 
+### 2026-08-29 - Fail closed on IMU initialization overflow and state norms
+
+- **Owner/status:** Fast-LIO IMU initializer and manifold-state numerical
+  boundary, `VERIFIED` by initializer and IKFoM tests.
+- **Scope:** Validate initializer sample/threshold/gravity configuration, use
+  long-double accumulation for means and variances, reject non-finite final
+  initialization results, and check gravity squared norm before accepting a
+  manifold state.
+- **Safety impact:** Finite-but-extreme sensor values can no longer overflow
+  statistics and produce a NaN gravity quaternion, while extreme gravity
+  vectors cannot pass state validity because `norm()` happened to overflow.
+- **False-accept/false-reject consequences:** Invalid configuration and
+  non-representable statistics fail initialization. Normal stationary windows,
+  including zero-noise configurations, retain their existing estimates.
+- **Runtime cost and evidence:** Long-double accumulation over the bounded
+  initializer window and constant-time final checks. Initializer tests pass
+  4/4; IKFoM estimator tests pass 11/11.
+- **Removal/review condition:** Keep until estimator states/statistics use
+  validated physical-value types and a shared checked norm implementation.
+- **Verification:** `cmake --build build/fast_lio_core --target
+  test_imu_initializer test_ikfom_estimator -j2`, followed by both focused
+  executables with `--gtest_color=no`.
+
 ### 2026-08-29 - Harden Fast-LIO quaternion and timestamp interpolation boundaries
 
 - **Owner/status:** Fast-LIO rigid state, transform, trajectory and angular

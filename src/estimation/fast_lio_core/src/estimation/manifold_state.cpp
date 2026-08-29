@@ -98,7 +98,8 @@ bool ManifoldState::allFinite() const noexcept {
          finiteQuaternion(rotation_imu_lidar_) && position_imu_lidar_m_.allFinite() &&
          velocity_odom_imu_m_s_.allFinite() && gyro_bias_rad_s_.allFinite() &&
          accel_bias_m_s2_.allFinite() && gravity_odom_m_s2_.allFinite() &&
-         gravity_odom_m_s2_.norm() > 1e-9;
+         std::isfinite(gravity_odom_m_s2_.squaredNorm()) &&
+         gravity_odom_m_s2_.squaredNorm() > 1e-18;
 }
 
 }  // namespace uav::nav::lio

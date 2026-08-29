@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <numbers>
+#include <stdexcept>
 
 #include "fast_lio_core/initialization/imu_initializer.hpp"
 
@@ -25,7 +27,7 @@ TEST(ImuInitializerTest, EstimatesStationaryGravityAndGyroBias) {
   const Eigen::Vector3d gyro_bias(0.01, -0.02, 0.005);
   for (std::int64_t index = 0; index < 200; ++index) {
     ASSERT_TRUE(initializer
-                    .addSample(initializerSample(index * 5'000'000, gyro_bias,
+                    .addSample(initializerSample(1 + index * 5'000'000, gyro_bias,
                                                  Eigen::Vector3d(0.0, 0.0, kStandardGravityMps2)))
                     .ok());
   }
@@ -37,6 +39,18 @@ TEST(ImuInitializerTest, EstimatesStationaryGravityAndGyroBias) {
   EXPECT_TRUE(result.value().orientation_odom_imu.isApprox(Eigen::Quaterniond::Identity(), 1e-12));
   EXPECT_TRUE(result.value().accel_bias_m_s2.isZero(1e-12));
   EXPECT_TRUE(result.value().quality.stationary);
+}
+
+TEST(ImuInitializerTest, RejectsInvalidConfiguration) {
+  ImuInitializerConfig config;
+  config.minimum_imu_samples = 11;
+  config.maximum_imu_samples = 10;
+  EXPECT_THROW({ ImuInitializer initializer(config); }, std::invalid_argument);
+
+  config = {};
+  config.maximum_gyro_variance_rad2_s2 =
+      std::numeric_limits<double>::infinity();
+  EXPECT_THROW({ ImuInitializer initializer(config); }, std::invalid_argument);
 }
 
 TEST(ImuInitializerTest, AlignsTiltedMeasuredGravityToOdomUp) {
