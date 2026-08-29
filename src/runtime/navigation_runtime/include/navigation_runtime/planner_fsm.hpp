@@ -126,6 +126,22 @@ inline bool commandAnchorRecoveryDue(
   return command_anchor_error_m >= 0.5 * maximum_anchor_error_m;
 }
 
+// The short execution lease is intentionally fail-closed, but a planner
+// supervisor must start replacement work before that lease expires. This
+// predicate is a scheduling trigger only; it never extends the lease or
+// authorizes the current bundle past valid_until_ns.
+inline bool commandLeaseRenewalDue(
+    bool command_available, std::int64_t now_ns, std::int64_t valid_until_ns,
+    double required_lead_time_s) noexcept {
+  if (!command_available || now_ns <= 0 || valid_until_ns <= 0 ||
+      !std::isfinite(required_lead_time_s) || required_lead_time_s <= 0.0) {
+    return false;
+  }
+  if (valid_until_ns < now_ns) return true;
+  const long double remaining_s = static_cast<long double>(valid_until_ns - now_ns) * 1.0e-9L;
+  return remaining_s <= static_cast<long double>(required_lead_time_s);
+}
+
 // A failed rest-to-rest solve is retried with a slower velocity envelope.
 // This never relaxes physical limits; it gives the same jerk/acceleration
 // certificate more time to satisfy tight geometry. The failure budget remains

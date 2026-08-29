@@ -2022,6 +2022,10 @@ void NavigationRuntimeNode::runCycle() {
       planner_command_available_.load(std::memory_order_acquire), transition_role,
       transition_anchor_error_m,
       navigation_contracts::kCommandAnchorErrorLimitM);
+  const bool command_lease_recovery_due = transition_bundle && commandLeaseRenewalDue(
+      planner_command_available_.load(std::memory_order_acquire), now_ns,
+      transition_bundle->valid_until_ns,
+      planning_interval_s + planner_->solveDeadlineSeconds());
   // A retained main command that has drifted toward the anchor envelope is a
   // recoverable planning condition, not a terminal handover. Re-enter the
   // measured-state PlanFromRest path so the same bounded recovery ladder can
@@ -2029,8 +2033,8 @@ void NavigationRuntimeNode::runCycle() {
   // hot-retarget semantics ahead of this only when a new goal owns the
   // transition; never let a recovery request silently use the nominal
   // ReplanOnce profile again.
-  const bool recovery_replan = anchor_recovery_due && !plan_from_rest &&
-      !measured_state_goal_transition && !hot_goal_transition;
+  const bool recovery_replan = (anchor_recovery_due || command_lease_recovery_due) &&
+      !plan_from_rest && !measured_state_goal_transition && !hot_goal_transition;
   const bool plan_from_rest_with_transition = plan_from_rest ||
       measured_state_goal_transition || recovery_replan;
   const bool replan_for_new_goal = hot_goal_transition && !plan_from_rest_with_transition;
@@ -2071,7 +2075,7 @@ void NavigationRuntimeNode::runCycle() {
   if (renewal_decision.reason == PlannerRenewalReason::kRenewalDue) {
     ++optimizer_renewal_due_count_;
   }
-  const double recovery_scale = plan_from_rest
+  const double recovery_scale = plan_from_rest_with_transition
       ? plannerRecoveryVelocityScale(plan_from_rest_failure_budget_.failureCount())
       : 1.0;
   planner_->setRecoveryVelocityScale(recovery_scale);

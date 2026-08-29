@@ -13778,3 +13778,33 @@ release profiles must not use the former allowance.
   `SPEED_CAP_MPS=5 MAP_PROFILE=long_three_pillars make external-mode-check`
   plus `SPEED_CAP_MPS=5 MAP_PROFILE=long_three_pillars_multiwaypoint make
   external-mode-check`.
+
+### 2026-08-29 - Schedule recovery before the execution lease boundary
+
+- **Owner/status:** runtime planner supervisor, `PROVISIONAL`; requires
+  repeated map replay evidence after the final build manifest refresh.
+- **Scope:** a live command whose validity interval has less than one planner
+  period plus the configured solve deadline remaining now triggers the same
+  measured-state recovery transition. An expired interval is also a recovery
+  trigger while the command is still visible to the planner timer.
+- **Safety impact:** the predicate is scheduling-only. It never extends
+  `valid_until_ns`, replays a future sample, or bypasses execution-state,
+  world, identity, corridor, dynamic, flatness, or publication certificates.
+  If replacement planning cannot certify a candidate before the lease expires,
+  the existing fail-closed handover remains authoritative.
+- **False-accept/false-reject consequences:** this removes a liveness gap in
+  which renewal was deferred until a 0.5 s lease expired and then safety-stop
+  was forced. It does not accept a stale retained trajectory; lease expiry
+  continues to invalidate that trajectory.
+- **Runtime cost and evidence:** one checked integer timestamp comparison and
+  one bounded scheduler decision per planner tick. The focused FSM regression
+  covers the exact, below-boundary, expired, and unavailable cases. The first
+  5 m/s three-column run before this checkpoint still ended BLOCKED, so no
+  mission-complete claim is made here.
+- **Removal/review condition:** keep until lease renewal is represented by a
+  typed supervisor state and repeated three-column/hardest-map runs show no
+  lease-driven handovers, while preserving bounded latency and safety stops.
+- **Verification:** `./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no`, `make build`, `make test`, and repeated 5 m/s SITL runs
+  for `long_three_pillars` and
+  `long_three_pillars_multiwaypoint`.

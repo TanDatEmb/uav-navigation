@@ -47,6 +47,17 @@ TEST(PlannerFsm, StartsAnchorRecoveryBeforeExecutionLeaseIsExhausted) {
       std::numeric_limits<double>::quiet_NaN(), 0.75));
 }
 
+TEST(PlannerFsm, StartsRecoveryBeforeCommandLeaseExpires) {
+  EXPECT_FALSE(commandLeaseRenewalDue(true, 10'000'000'000LL,
+                                      10'500'000'000LL, 0.49));
+  EXPECT_TRUE(commandLeaseRenewalDue(true, 10'000'000'000LL,
+                                     10'500'000'000LL, 0.50));
+  EXPECT_TRUE(commandLeaseRenewalDue(true, 10'600'000'000LL,
+                                     10'500'000'000LL, 0.20));
+  EXPECT_FALSE(commandLeaseRenewalDue(false, 10'000'000'000LL,
+                                      10'100'000'000LL, 0.20));
+}
+
 TEST(PlannerFsm, UsesBoundedSlowerVelocityEnvelopeAfterRestFailures) {
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(0U), 1.0);
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(1U), 0.75);
