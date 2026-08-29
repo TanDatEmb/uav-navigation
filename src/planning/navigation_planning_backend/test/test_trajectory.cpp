@@ -860,6 +860,9 @@ TEST(PlannerTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
   EXPECT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
       hover, config, &hover_report));
   EXPECT_NEAR(hover_report.minimum_thrust_n, 9.81, 1.0e-9);
+  const auto over_budget_report = traj_opt::evaluateTrajectoryDynamics(
+      hover, config, 1.0e-300);
+  EXPECT_FALSE(over_budget_report.finite);
 
   // For this representable duration, duration * intervals / intervals rounds
   // one ulp above duration. The hard gate must sample the exact endpoint.

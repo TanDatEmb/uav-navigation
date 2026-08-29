@@ -1,5 +1,28 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Bound sampled dynamic-envelope evaluation
+
+- **Owner/status:** trajectory dynamic-envelope gate, `PROVISIONAL`; verified
+  by the focused trajectory test.
+- **Scope:** Convert the duration/sample-period ratio in long double, reject a
+  non-finite or over-budget interval count before converting to `size_t`, and
+  cap the sampled screening work at 1,000,000 intervals.
+- **Safety impact:** A malformed or adversarially tiny sampling period cannot
+  trigger an out-of-range conversion or an unbounded feasibility loop. This
+  remains a sampled screening gate and is not a continuous extrema certificate.
+- **False-accept/false-reject consequences:** Normal configured periods are
+  unchanged. Requests beyond the explicit budget reject the candidate and
+  require a separately reviewed sampling/resource policy.
+- **Runtime cost and evidence:** The check is constant-time; valid trajectories
+  retain the existing uniform and junction samples. Regression covers a
+  finite-duration trajectory with an unrepresentably fine period.
+- **Removal/review condition:** Keep until the dynamic certificate is replaced
+  by a bounded polynomial-extrema/interval method with an equivalent resource
+  contract.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.
+
 ## Purpose
 
 This file is the mandatory history for safety gates, runtime budgets, temporary

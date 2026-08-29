@@ -43,8 +43,23 @@ inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
         return report;
     }
 
+    // This is a sampled screening gate, so its work must be explicitly
+    // bounded before any floating-point-to-size conversion. A caller asking
+    // for a finer sampling interval than this budget gets a deterministic
+    // rejection instead of an overflowing conversion or loop.
+    constexpr std::size_t kMaximumSamples = 1'000'000U;
+    const long double sample_ratio =
+        static_cast<long double>(duration) /
+        static_cast<long double>(maximum_sample_period_s);
+    const long double interval_count = std::ceil(sample_ratio);
+    if (!std::isfinite(sample_ratio) || !std::isfinite(interval_count) ||
+        interval_count < 1.0L ||
+        interval_count > static_cast<long double>(kMaximumSamples)) {
+        report.finite = false;
+        return report;
+    }
     const std::size_t intervals = std::max<std::size_t>(
-            1U, static_cast<std::size_t>(std::ceil(duration / maximum_sample_period_s)));
+            1U, static_cast<std::size_t>(interval_count));
     flatness::FlatnessMap flatness = config.quadrotot_flatness;
     const auto evaluate_sample = [&](const double time) {
         if (!std::isfinite(time) || time < 0.0 || time > duration) {
