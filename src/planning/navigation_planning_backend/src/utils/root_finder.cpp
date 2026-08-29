@@ -1,5 +1,8 @@
 #include "utils/optimization/root_finder.h"
 
+#include <limits>
+#include <numeric>
+
 int math_utils::RootFinderPriv::polyMod(double *u, double *v, double *r, int lu, int lv) {
     int orderu = lu - 1;
     int orderv = lv - 1;
@@ -324,14 +327,24 @@ void math_utils::RootFinderPriv::polyDeri(double *coeffs, double *dcoeffs, int l
 template<typename F, typename DF>
 double math_utils::RootFinderPriv::safeNewton(const F &func, const DF &dfunc, const double &l, const double &h,
                                               const double &tol, const int &maxIts) {
+    if (!std::isfinite(l) || !std::isfinite(h) || !(l < h) ||
+        !std::isfinite(tol) || tol <= 0.0 || maxIts <= 0) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     double xh, xl;
     double fl = func(l);
     double fh = func(h);
+    if (!std::isfinite(fl) || !std::isfinite(fh)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     if (fl == 0.0) {
         return l;
     }
     if (fh == 0.0) {
         return h;
+    }
+    if ((fl < 0.0) == (fh < 0.0)) {
+        return std::numeric_limits<double>::quiet_NaN();
     }
     if (fl < 0.0) {
         xl = l;
@@ -341,15 +354,28 @@ double math_utils::RootFinderPriv::safeNewton(const F &func, const DF &dfunc, co
         xl = h;
     }
 
-    double rts = 0.5 * (xl + xh);
+    double rts = std::midpoint(xl, xh);
     double dxold = fabs(xh - xl);
     double dx = dxold;
     double f = func(rts);
     double df = dfunc(rts);
+    if (!std::isfinite(f) || !std::isfinite(df)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (f == 0.0) {
+        return rts;
+    }
     double temp;
     for (int j = 0; j < maxIts; j++) {
-        if ((((rts - xh) * df - f) * ((rts - xl) * df - f) > 0.0) ||
-            (fabs(2.0 * f) > fabs(dxold * df))) {
+        const double left_test = (rts - xh) * df - f;
+        const double right_test = (rts - xl) * df - f;
+        const bool use_bisection = !std::isfinite(left_test) ||
+            !std::isfinite(right_test) ||
+            left_test * right_test > 0.0 ||
+            !std::isfinite(dxold * df) ||
+            fabs(2.0 * f) > fabs(dxold * df) ||
+            df == 0.0;
+        if (use_bisection) {
             dxold = dx;
             dx = 0.5 * (xh - xl);
             rts = xl + dx;
@@ -359,10 +385,16 @@ double math_utils::RootFinderPriv::safeNewton(const F &func, const DF &dfunc, co
         } else {
             dxold = dx;
             dx = f / df;
+            if (!std::isfinite(dx)) {
+                dxold = dx;
+                dx = 0.5 * (xh - xl);
+                rts = xl + dx;
+            } else {
             temp = rts;
             rts -= dx;
             if (temp == rts) {
                 break;
+            }
             }
         }
 
@@ -372,6 +404,12 @@ double math_utils::RootFinderPriv::safeNewton(const F &func, const DF &dfunc, co
 
         f = func(rts);
         df = dfunc(rts);
+        if (!std::isfinite(f) || !std::isfinite(df)) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        if (f == 0.0) {
+            return rts;
+        }
         if (f < 0.0) {
             xl = rts;
         } else {
@@ -404,7 +442,8 @@ void math_utils::RootFinderPriv::recurIsolate(double l, double r, double fl, dou
         return;
     } else if (nrts == 1) {
         if (fl * fr < 0) {
-            rts.insert(shrinkInterval(sturmSeqs[0], szSeq[0], l, r, tol));
+            const double root = shrinkInterval(sturmSeqs[0], szSeq[0], l, r, tol);
+            if (std::isfinite(root)) rts.insert(root);
             return;
         } else {
             // Bisect when non of above works
@@ -413,7 +452,8 @@ void math_utils::RootFinderPriv::recurIsolate(double l, double r, double fl, dou
             for (int i = 0; i < maxDblIts; i++) {
                 // Calculate the root with even multiplicity
                 if (fl * fr < 0) {
-                    rts.insert(shrinkInterval(sturmSeqs[1], szSeq[1], l, r, tol));
+                    const double root = shrinkInterval(sturmSeqs[1], szSeq[1], l, r, tol);
+                    if (std::isfinite(root)) rts.insert(root);
                     return;
                 }
 
@@ -655,13 +695,26 @@ int math_utils::RootFinder::countRoots(const Eigen::VectorXd &coeffs, double l, 
     // A nonzero constant has no roots.  It must not enter the Sturm setup:
     // that sequence has order zero and the derivative initialization divides
     // by the order.
-    if (valid <= 1) {
-        return 0;
+    const int first_coefficient = originalSize - valid;
+    int effective_valid = valid;
+    int trailing_zero_count = 0;
+    while (effective_valid > 1 &&
+           fabs(coeffs(originalSize - trailing_zero_count - 1)) <= zeroTolerance) {
+        --effective_valid;
+        ++trailing_zero_count;
+    }
+    if (trailing_zero_count > 0 && l < 0.0 && r > 0.0) {
+        nRoots = 1;
+    }
+    if (effective_valid <= 1) {
+        return nRoots;
     }
 
-    if (valid > 0 && fabs(coeffs(originalSize - 1)) > zeroTolerance) {
-        Eigen::VectorXd monicCoeffs(valid);
-        monicCoeffs << 1.0, coeffs.segment(originalSize - valid + 1, valid - 1) / coeffs(originalSize - valid);
+    {
+        Eigen::VectorXd monicCoeffs(effective_valid);
+        monicCoeffs << 1.0,
+            coeffs.segment(first_coefficient + 1, effective_valid - 1) /
+                coeffs(first_coefficient);
 
         // Build the Sturm sequence
         int len = monicCoeffs.size();

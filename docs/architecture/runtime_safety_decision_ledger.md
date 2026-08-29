@@ -12514,6 +12514,27 @@ release profiles must not use the former allowance.
   && ./build/fast_lio_core/test_frame_conventions --gtest_color=no
   && ./build/fast_lio_core/test_scan_deskewer --gtest_color=no`.
 
+### 2026-08-29 - Fail closed on degenerate RootFinder arithmetic
+
+- **Owner/status:** Navigation RootFinder polynomial boundary, `PROVISIONAL`;
+  verified by the focused trajectory suite.
+- **Scope:** Root counting now removes trailing zero factors before Sturm setup
+  and counts an interior zero root once. Newton refinement validates its
+  bracket/evaluations, handles zero derivative by bisection, and never inserts
+  a non-finite refinement into the root set.
+- **Safety impact:** Repeated or zero roots cannot be lost or turn into NaN
+  extrema candidates that corrupt trajectory rate certificates.
+- **False-accept/false-reject consequences:** Distinct roots in the open
+  interval retain existing semantics; malformed/non-finite refinement fails
+  closed and may conservatively omit a candidate.
+- **Runtime cost and evidence:** Constant-time boundary checks plus existing
+  bounded bisection; `test_trajectory` covers linear and repeated zero roots.
+- **Removal/review condition:** Keep until the legacy raw-pointer solver is
+  replaced by a typed polynomial/root result API with residual certification.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_planning_backend --target test_trajectory
+  -j2 && ./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
+
 ### 2026-08-29 - Honor synchronized estimator propagation epoch
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,

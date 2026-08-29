@@ -569,6 +569,13 @@ TEST(PlannerTrajectory, RootFinderRejectsDegenerateNumericalInputs) {
       Eigen::VectorXd::Ones(2), 1.0, 0.0), -1);
   EXPECT_EQ(math_utils::RootFinder::countRoots(Eigen::VectorXd::Ones(1), 0.0, 1.0), 0);
 
+  Eigen::VectorXd linear_with_zero(2);
+  linear_with_zero << 1.0, 0.0;
+  EXPECT_EQ(math_utils::RootFinder::countRoots(linear_with_zero, -1.0, 1.0), 1);
+  Eigen::VectorXd repeated_zero(3);
+  repeated_zero << 1.0, 0.0, 0.0;
+  EXPECT_EQ(math_utils::RootFinder::countRoots(repeated_zero, -1.0, 1.0), 1);
+
   // x^6 + 1 has no real roots.  The non-isolation companion-matrix path
   // must reject both signs of the complex imaginary component.
   Eigen::VectorXd complex_only = Eigen::VectorXd::Zero(7);
