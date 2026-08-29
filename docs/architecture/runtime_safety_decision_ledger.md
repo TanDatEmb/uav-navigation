@@ -1,5 +1,28 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Fail closed at the L-BFGS numerical boundary
+
+- **Owner/status:** planning numerical optimization, `PROVISIONAL`; verified
+  by the focused trajectory test.
+- **Scope:** L-BFGS now rejects non-finite or invalid scalar parameters,
+  negative iteration budgets, null evaluation callbacks, non-finite initial or
+  callback values, gradient dimension mismatches, and non-finite/non-positive
+  dynamic step bounds before line search arithmetic.
+- **Safety impact:** malformed optimizer inputs cannot be interpreted as a
+  successful trajectory search and cannot produce non-finite search steps that
+  bypass later certificates.
+- **False-accept/false-reject consequences:** Invalid direct API calls return
+  an existing negative L-BFGS status. Valid finite optimization behavior is
+  unchanged.
+- **Runtime cost and evidence:** O(n) finite/dimension checks at initialization
+  and each callback boundary; regression covers NaN/Inf parameters, null and
+  malformed callbacks, and NaN step bounds.
+- **Removal/review condition:** Keep until the optimizer API exposes a typed
+  result and the remaining numerical helpers share the same contract.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.
+
 ### 2026-08-29 - Reject malformed safety-stop duration metadata
 
 - **Owner/status:** PX4 External Mode MissionController, `PROVISIONAL`; verified

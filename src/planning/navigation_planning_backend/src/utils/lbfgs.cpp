@@ -96,34 +96,42 @@ int math_utils::lbfgs::lbfgs_optimize(Eigen::VectorXd &x, double &f,
     if (m <= 0) {
         return LBFGSERR_INVALID_MEMSIZE;
     }
-    if (param.g_epsilon < 0.0) {
+    if (!std::isfinite(param.g_epsilon) || param.g_epsilon < 0.0) {
         return LBFGSERR_INVALID_GEPSILON;
     }
     if (param.past < 0) {
         return LBFGSERR_INVALID_TESTPERIOD;
     }
-    if (param.delta < 0.0) {
+    if (!std::isfinite(param.delta) || param.delta < 0.0) {
         return LBFGSERR_INVALID_DELTA;
     }
-    if (param.min_step < 0.0) {
+    if (!std::isfinite(param.min_step) || param.min_step < 0.0) {
         return LBFGSERR_INVALID_MINSTEP;
     }
-    if (param.max_step < param.min_step) {
+    if (!std::isfinite(param.max_step) || param.max_step <= 0.0 ||
+        param.max_step < param.min_step) {
         return LBFGSERR_INVALID_MAXSTEP;
     }
-    if (!(param.f_dec_coeff > 0.0 &&
+    if (!(std::isfinite(param.f_dec_coeff) && param.f_dec_coeff > 0.0 &&
           param.f_dec_coeff < 1.0)) {
         return LBFGSERR_INVALID_FDECCOEFF;
     }
-    if (!(param.s_curv_coeff < 1.0 &&
+    if (!(std::isfinite(param.s_curv_coeff) && param.s_curv_coeff < 1.0 &&
           param.s_curv_coeff > param.f_dec_coeff)) {
         return LBFGSERR_INVALID_SCURVCOEFF;
     }
-    if (!(param.machine_prec > 0.0)) {
+    if (!(std::isfinite(param.machine_prec) && param.machine_prec > 0.0)) {
         return LBFGSERR_INVALID_MACHINEPREC;
+    }
+    if (param.max_iterations < 0) {
+        return LBFGSERR_INVALIDPARAMETERS;
     }
     if (param.max_linesearch <= 0) {
         return LBFGSERR_INVALID_MAXLINESEARCH;
+    }
+    if (!(std::isfinite(param.cautious_factor) && param.cautious_factor > 0.0) ||
+        !x.allFinite() || proc_evaluate == nullptr) {
+        return LBFGSERR_INVALID_FUNCVAL;
     }
 
     /* Prepare intermediate variables. */
@@ -148,6 +156,9 @@ int math_utils::lbfgs::lbfgs_optimize(Eigen::VectorXd &x, double &f,
 
     /* Evaluate the function value and its gradient. */
     fx = cd.proc_evaluate(cd.instance, x, g);
+    if (!std::isfinite(fx) || g.size() != n || !g.allFinite()) {
+        return LBFGSERR_INVALID_FUNCVAL;
+    }
 
     /* Store the initial value of the cost function. */
     pf(0) = fx;
@@ -171,7 +182,11 @@ int math_utils::lbfgs::lbfgs_optimize(Eigen::VectorXd &x, double &f,
         /*
         Compute the initial step:
         */
-        step = 1.0 / d.norm();
+        const double direction_norm = d.norm();
+        if (!std::isfinite(direction_norm) || direction_norm <= 0.0) {
+            return LBFGSERR_INVALID_FUNCVAL;
+        }
+        step = 1.0 / direction_norm;
 
         k = 1;
         end = 0;
@@ -187,7 +202,13 @@ int math_utils::lbfgs::lbfgs_optimize(Eigen::VectorXd &x, double &f,
             step_max = param.max_step;
             if (cd.proc_stepbound) {
                 step_max = cd.proc_stepbound(cd.instance, xp, d);
+                if (!std::isfinite(step_max) || step_max <= 0.0) {
+                    return LBFGSERR_INVALID_MAXSTEP;
+                }
                 step_max = step_max < param.max_step ? step_max : param.max_step;
+            }
+            if (!std::isfinite(step_max) || step_max <= 0.0 || step_max < step_min) {
+                return LBFGSERR_INVALID_MAXSTEP;
             }
             step = step < step_max ? step : 0.5 * step_max;
 
@@ -342,7 +363,11 @@ int math_utils::lbfgs::line_search_lewisoverton(Eigen::VectorXd &x, double &f, E
     double mu = 0.0, nu = stpmax;
 
     /* Check the input parameters for errors. */
-    if (!(stp > 0.0)) {
+    if (!std::isfinite(f) || !std::isfinite(stp) || stp <= 0.0 ||
+        !std::isfinite(stpmin) || stpmin < 0.0 ||
+        !std::isfinite(stpmax) || stpmax <= 0.0 || stpmax < stpmin ||
+        s.size() != xp.size() || gp.size() != xp.size() ||
+        !s.allFinite() || !xp.allFinite() || !gp.allFinite()) {
         return LBFGSERR_INVALIDPARAMETERS;
     }
 
@@ -361,13 +386,16 @@ int math_utils::lbfgs::line_search_lewisoverton(Eigen::VectorXd &x, double &f, E
 
     while (true) {
         x = xp + stp * s;
+        if (!x.allFinite()) {
+            return LBFGSERR_INVALID_FUNCVAL;
+        }
 
         /* Evaluate the function and gradient values. */
         f = cd.proc_evaluate(cd.instance, x, g);
         ++count;
 
         /* Test for errors. */
-        if (std::isinf(f) || std::isnan(f)) {
+        if (!std::isfinite(f) || g.size() != x.size() || !g.allFinite()) {
             return LBFGSERR_INVALID_FUNCVAL;
         }
         /* Check the Armijo condition. */

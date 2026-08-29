@@ -36,6 +36,7 @@
 #include "utils/geometry/quadrotor_flatness.hpp"
 #include "utils/optimization/polynomial_interpolation.h"
 #include "utils/optimization/root_finder.h"
+#include "utils/optimization/lbfgs.h"
 
 namespace navigation_planning_backend {
 
@@ -2285,6 +2286,62 @@ TEST(PlannerTrajectory, QuickHullRejectsEmptyAndMalformedPublicInputs) {
                                            0.0, std::numeric_limits<double>::infinity(), 0.0,
                                            0.0, 0.0, 1.0};
   EXPECT_THROW(quick_hull.getConvexHullAsMesh(malformed_flat.data(), 4, false), std::invalid_argument);
+}
+
+TEST(PlannerTrajectory, LbfgsRejectsMalformedBoundaryInputs) {
+  using Lbfgs = math_utils::lbfgs;
+  const auto evaluate = +[](void *, const Eigen::VectorXd &variables,
+                            Eigen::VectorXd &gradient) {
+    gradient = 2.0 * variables;
+    return variables.squaredNorm();
+  };
+  const auto malformed_gradient = +[](void *, const Eigen::VectorXd &,
+                                      Eigen::VectorXd &gradient) {
+    gradient = Eigen::VectorXd::Zero(1);
+    return 0.0;
+  };
+  const auto malformed_step_bound = +[](void *, const Eigen::VectorXd &,
+                                        const Eigen::VectorXd &) {
+    return std::numeric_limits<double>::quiet_NaN();
+  };
+
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    auto parameters = Lbfgs::lbfgs_parameter_t{};
+    parameters.g_epsilon = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, evaluate, nullptr, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_GEPSILON);
+  }
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    auto parameters = Lbfgs::lbfgs_parameter_t{};
+    parameters.max_step = std::numeric_limits<double>::infinity();
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, evaluate, nullptr, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_MAXSTEP);
+  }
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    const auto parameters = Lbfgs::lbfgs_parameter_t{};
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, malformed_gradient, nullptr, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_FUNCVAL);
+  }
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    const auto parameters = Lbfgs::lbfgs_parameter_t{};
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, evaluate, malformed_step_bound, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_MAXSTEP);
+  }
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    const auto parameters = Lbfgs::lbfgs_parameter_t{};
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, nullptr, nullptr, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_FUNCVAL);
+  }
 }
 
 TEST(PlannerTrajectory, PolytopeResetClearsGeometryAndMetadata) {
