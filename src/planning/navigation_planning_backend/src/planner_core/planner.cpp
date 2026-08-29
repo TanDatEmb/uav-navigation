@@ -210,7 +210,9 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                                                     -35.0,
                                                     35.0);
 
-        const int neighbor_step = floor(cfg_.robot_r / cfg_.resolution);
+        const int neighbor_step = static_cast<int>(std::ceil(
+            static_cast<long double>(cfg_.robot_r) /
+            static_cast<long double>(cfg_.resolution)));
         astar_ptr_->setFineInfNeighbors(neighbor_step);
     }
 

@@ -680,6 +680,18 @@ TEST(PlannerProductConfig, RejectsMapBelowThePlannerSafetyEnvelope) {
   EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument);
 }
 
+TEST(PlannerProductConfig, RejectsUnboundedSafetyNeighbourGeneration) {
+  navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
+  navigation_world_model::WorldGeometry world_geometry;
+  world_geometry.evidence_resolution_m = 1.0e-300;
+  world_geometry.inflated_resolution_m = 1.0e-300;
+  world_geometry.occupied_inflation_radius_m = 1.0;
+  world_geometry.local_size_m = Eigen::Vector3d{110.0, 15.0, 6.0};
+  world_geometry.effective_virtual_ground_m = -10.0;
+  world_geometry.effective_virtual_ceiling_m = 10.0;
+  EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument);
+}
+
 TEST(PlannerProductConfig, DirectionalSupportUsesTheFirstAxisAlignedBoundary) {
   navigation_world_model::WorldGeometry world_geometry;
   world_geometry.local_center_m = Eigen::Vector3d::Zero();

@@ -1,5 +1,29 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Bound planner safety-neighbor generation
+
+- **Owner/status:** planner/world-geometry binding, `PROVISIONAL`; verified by
+  the planner configuration test.
+- **Scope:** Derive the safety-neighbor radius with the same ceiling rule used
+  by the bound grid, reject values above the A* supported radius (64 cells) or
+  the explicit 2,000,000-cell cubic work envelope, and pass that derived step
+  to A*.
+- **Safety impact:** Tiny world resolution or malformed geometry cannot cause
+  a wrapped radius, silently empty A* inflation neighbors, or unbounded
+  O(step^3) startup work.
+- **False-accept/false-reject consequences:** Existing normal configurations
+  keep their intended neighbor radius. Oversized envelopes fail binding and
+  require a smaller physical safety radius/grid or a separately reviewed A*
+  implementation.
+- **Runtime cost and evidence:** Validation is binding-time only; neighbor
+  enumeration remains unchanged for accepted configurations. Regression covers
+  an extreme finite resolution that would otherwise generate an unbounded list.
+- **Removal/review condition:** Keep until neighbor sets use a bounded checked
+  grid API with an explicit resource budget shared by planner and WorldModel.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_planner_config -j2 && ./build/navigation_planning_backend/test_planner_config
+  --gtest_color=no`.
+
 ### 2026-08-29 - Bound sampled dynamic-envelope evaluation
 
 - **Owner/status:** trajectory dynamic-envelope gate, `PROVISIONAL`; verified

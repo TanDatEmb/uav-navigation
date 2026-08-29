@@ -309,11 +309,21 @@ namespace navigation_planning_backend {
                     "planner trajectory sample period is not finite and positive");
             }
 
-            const double step_real = std::ceil(robot_r / resolution);
-            if (!std::isfinite(step_real) || step_real < 1.0 ||
-                step_real > static_cast<double>(std::numeric_limits<int>::max() - 1)) {
+            constexpr long double kMaximumNeighbourStep = 64.0L;
+            constexpr long double kMaximumNeighbourCells = 2'000'000.0L;
+            const long double step_real = std::ceil(
+                static_cast<long double>(robot_r) /
+                static_cast<long double>(resolution));
+            if (!std::isfinite(step_real) || step_real < 1.0L ||
+                step_real > kMaximumNeighbourStep) {
                 throw std::invalid_argument(
                     "planner safety envelope cannot be represented on the world grid");
+            }
+            const long double neighbour_side = 2.0L * step_real + 1.0L;
+            if (neighbour_side * neighbour_side * neighbour_side >
+                kMaximumNeighbourCells) {
+                throw std::invalid_argument(
+                    "planner safety-neighbor generation exceeds the bounded resource envelope");
             }
             const int step = static_cast<int>(step_real);
             seed_line_neighbour.clear();
