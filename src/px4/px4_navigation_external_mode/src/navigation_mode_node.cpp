@@ -1014,6 +1014,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     odometry = odometry_;
     odometry_receive_steady_ns = last_odometry_receive_steady_ns_;
   }
+  bool stationary_position_unrepresentable = false;
   const auto publishStationary = [&](const std::optional<Eigen::Vector3d>& position_enu) {
     px4_ros2::TrajectorySetpoint setpoint;
     if (!position_enu.has_value()) {
@@ -1022,6 +1023,8 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       if (const auto position_ned = checkedEnuToNed(*position_enu)) {
         setpoint.withPosition(*position_ned);
         setpoint.withAcceleration(Eigen::Vector3f::Zero());
+      } else {
+        stationary_position_unrepresentable = true;
       }
       setpoint.withVelocity(Eigen::Vector3f::Zero());
     }
@@ -1049,9 +1052,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     // the external velocity tracker the sole source of position correction;
     // use PX4's position controller for this short, latched terminal hold.
     px4_ros2::TrajectorySetpoint setpoint;
-    if (const auto position_ned = checkedEnuToNed(position_enu)) {
-      setpoint.withPosition(*position_ned);
-    }
+    const auto position_ned = checkedEnuToNed(position_enu);
+    if (!position_ned) return false;
+    setpoint.withPosition(*position_ned);
     setpoint.withVelocity(Eigen::Vector3f::Zero());
     if (odometry.has_value()) {
       const auto& q = odometry->pose.pose.orientation;
@@ -1069,6 +1072,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       }
     }
     trajectory_setpoint_->update(setpoint);
+    return true;
   };
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
@@ -1081,6 +1085,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     ++setpoint_update_count_;
   }
   logRuntimeMetrics(now);
+  bool terminal_stationary_setpoint = false;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (failure_reported_) {
@@ -1088,14 +1093,14 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       // executor performs the handover after a terminal navigation failure.
       publishStationary(safety_hold_position_);
       last_setpoint_time_ = now;
-      return;
+      terminal_stationary_setpoint = true;
     }
-    if (mission_terminal_) {
+    if (!terminal_stationary_setpoint && mission_terminal_) {
       publishStationary(completion_position_);
       last_setpoint_time_ = now;
-      return;
+      terminal_stationary_setpoint = true;
     }
-    if (handover_requested_) {
+    if (!terminal_stationary_setpoint && handover_requested_) {
       std::optional<Eigen::Vector3d> handover_position;
       if (safety_hold_position_.has_value()) {
         handover_position = safety_hold_position_;
@@ -1104,8 +1109,14 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       }
       publishStationary(handover_position);
       last_setpoint_time_ = now;
-      return;
+      terminal_stationary_setpoint = true;
     }
+  }
+  if (terminal_stationary_setpoint) {
+    if (stationary_position_unrepresentable) {
+      safetyStopNavigation("terminal hold position is not representable by PX4");
+    }
+    return;
   }
   const double since_activation_s = (now - activation_time_).seconds();
   if (mission_controller_ && mission_controller_->waitingForAirborne()) {
@@ -1136,7 +1147,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   }
   if (mission_controller_ && mission_controller_->holding()) {
     const auto waypoint = mission_controller_->activeWaypoint();
-    publishPositionHold(waypoint.position_enu);
+    if (!publishPositionHold(waypoint.position_enu)) {
+      safetyStopNavigation("mission hold position is not representable by PX4");
+    }
     return;
   }
 

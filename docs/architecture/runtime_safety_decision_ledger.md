@@ -11753,3 +11753,27 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && colcon build --packages-select navigation_planning_backend
   --symlink-install`; direct execution of all eight backend test binaries.
+
+### 2026-08-29 - Fail closed on unrepresentable PX4 hold positions
+
+- **Owner/status:** PX4 External Mode terminal, handover and mission-hold
+  setpoint boundary, `VERIFIED` by package build and focused tests.
+- **Scope:** Treat a finite ENU hold position that cannot be represented by the
+  PX4 float setpoint as a safety-stop condition in terminal/handover and normal
+  mission-hold paths. The stationary fallback is still used only while the
+  existing handover callback is being executed.
+- **Safety impact:** The mode cannot silently publish velocity-zero without a
+  bounded position reference after a representability failure; it latches the
+  existing safety-stop/handover path.
+- **False-accept/false-reject consequences:** Ordinary representable positions
+  are unchanged. An unrepresentable position may cause an earlier PX4 Hold
+  handover, which is fail-closed and preferable to an unbounded drift state.
+- **Runtime cost and evidence:** One existing checked conversion result is
+  propagated through each hold branch; package build and all three External
+  Mode tests pass.
+- **Removal/review condition:** Keep until PX4 setpoints expose a typed bounded
+  position contract instead of float conversion at this boundary.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select px4_navigation_external_mode
+  --symlink-install`; `colcon test --packages-select
+  px4_navigation_external_mode`; `colcon test-result --verbose`.
