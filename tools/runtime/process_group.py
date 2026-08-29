@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -239,6 +240,8 @@ class Session:
     def stop(self, grace_s: float = 4.0) -> list[str]:
         """Stop only registered process groups and return cleanup failures."""
         failures: list[str] = []
+        if not isinstance(grace_s, (int, float)) or isinstance(grace_s, bool) or not math.isfinite(grace_s) or grace_s < 0.0:
+            raise ValueError("cleanup grace period must be finite and non-negative")
         try:
             records = list(reversed(self.records()))
         except ValueError as error:
@@ -263,7 +266,7 @@ class Session:
             # A reused PID must never authorize killing a new process group.
             expected_ticks = record.get("start_ticks")
             actual_ticks = _start_ticks(pid)
-            if expected_ticks is not None and actual_ticks != expected_ticks:
+            if expected_ticks is None or actual_ticks is None or actual_ticks != expected_ticks:
                 failures.append(f"process identity changed for {record.get('role', pgid)}")
                 continue
             try:

@@ -11774,6 +11774,26 @@ release profiles must not use the former allowance.
   && colcon build --packages-select navigation_mapping --symlink-install`; direct
   execution of `test_mapping_world_model --gtest_color=no`.
 
+### 2026-08-29 - Harden runtime cleanup grace and process identity checks
+
+- **Owner/status:** runtime harness process ownership and cleanup boundary,
+  `VERIFIED` by the runtime contract suite.
+- **Scope:** Reject non-finite or negative cleanup grace values and treat either
+  missing expected start ticks or unreadable current process ticks as an
+  identity failure. The harness never signals a registered group when PID
+  identity cannot be established.
+- **Safety impact:** Invalid cleanup input cannot create unbounded/incorrect
+  waits, and a reused or unverifiable PID cannot be mistaken for the owned
+  process group.
+- **False-accept/false-reject consequences:** Normal registered processes with
+  matching `/proc` start ticks retain cleanup behavior. Environments that cannot
+  read process identity fail closed and report cleanup failure.
+- **Runtime cost and evidence:** One finite-domain check and one strict identity
+  comparison per registered process; `test_runtime_contract` passes 158/158.
+- **Removal/review condition:** Keep until process ownership is supplied by a
+  kernel-backed supervisor rather than a JSON registry.
+- **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract -q`.
+
 ### 2026-08-29 - Validate direct trajectory optimizer configuration boundaries
 
 - **Owner/status:** Trajectory optimizer configuration boundary, `VERIFIED`

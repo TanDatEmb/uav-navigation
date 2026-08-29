@@ -1139,6 +1139,13 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(failures)
             killpg.assert_not_called()
 
+    def test_stop_rejects_invalid_grace_period(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = process_group.Session(Path(temporary) / "session")
+            for grace in (float("nan"), float("inf"), -1.0):
+                with self.assertRaises(ValueError):
+                    session.stop(grace_s=grace)
+
     def test_rviz_command_uses_sim_clock_without_legacy_topic_remap(self) -> None:
         command = runner._rviz_command(use_sim_time=True)
         self.assertIn("--ros-args", command)
