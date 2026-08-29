@@ -534,6 +534,13 @@ static void truncateToSixDecimals(double &num) {
 }
 
 bool ExpTrajOpt::processCorridorWithGuideTraj() {
+    if (opt_vars.hPolytopes.size() < 2U ||
+        opt_vars.guide_path.size() < 2U ||
+        opt_vars.guide_path.size() != opt_vars.guide_t.size()) {
+        planner_context_->warn(
+                " -- [ExpOpt] corridor/guide input is empty or inconsistent");
+        return false;
+    }
     // * 1) allocate memory for vertex
     const int sizeCorridor = static_cast<int>(opt_vars.hPolytopes.size() - 1);
 
@@ -556,6 +563,11 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
 
             return false;
         }
+        if (curIV.cols() <= 0) {
+            planner_context_->warn(
+                    " -- [ExpOpt] corridor {} has no finite vertices", i);
+            return false;
+        }
         // * 2.3) Conver the vertex to the frame of the first point
         nv = curIV.cols();
         curIOB.resize(3, nv);
@@ -574,7 +586,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         Vec3f interior;
 
         const double dis = geometry_utils::findInteriorDist(curIH, interior) / 2;
-        if (dis < 0.0 || std::isinf(dis)) {
+        if (!std::isfinite(dis) || dis < 0.0) {
 
             cout << YELLOW << " -- [planner] in [ GcopterExpS4::processCorridor]: Failed findInteriorDist Vs." <<
                  RESET << endl;
@@ -714,6 +726,10 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
                        opt_vars.hPolytopes.size() - 1);
         return false;
     }
+    if (curIV.cols() <= 0) {
+        planner_context_->warn(" -- [ExpOpt] final corridor has no finite vertices");
+        return false;
+    }
     nv = curIV.cols();
     curIOB.resize(3, nv);
     curIOB.col(0) = curIV.col(0);
@@ -723,6 +739,11 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
 }
 
 bool ExpTrajOpt::setupProblemAndCheck() {
+    if (opt_vars.hPolytopes.size() < 2U ||
+        opt_vars.hPolytopes.size() >
+            static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        return false;
+    }
     // init internal variables size;
     opt_vars.piece_num = static_cast<int>(opt_vars.hPolytopes.size());
     opt_vars.times.resize(opt_vars.piece_num);
@@ -753,8 +774,16 @@ bool ExpTrajOpt::setupProblemAndCheck() {
 
     const Mat3Df deltas = opt_vars.init_path.rightCols(opt_vars.piece_num)
                           - opt_vars.init_path.leftCols(opt_vars.piece_num);
-    opt_vars.pieceIdx = (deltas.colwise().norm() / INFINITY).cast<int>().transpose();
-    opt_vars.pieceIdx.array() += 1;
+    if (!deltas.allFinite()) {
+        cout << YELLOW << " -- [ExpOpt] Initial path contains non-finite edge." << RESET << endl;
+        return false;
+    }
+    // CorridorGenerator already subdivides every collision-certified edge to
+    // cfg_.corridor_segment_max_length_m. Keep one MINCO piece per certified
+    // cell explicitly; the old division by INFINITY was an opaque placeholder
+    // that silently collapsed all finite distances to zero and made malformed
+    // floating-point inputs reach an integer cast.
+    opt_vars.pieceIdx = VecDi::Ones(opt_vars.piece_num);
 
     opt_vars.temporalDim = opt_vars.piece_num;
     opt_vars.spatialDim = 0;
@@ -833,6 +862,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     resetDiagnostics();
     diagnostics_.valid = true;
 
+    if (!std::isfinite(relCostTol) || relCostTol <= 0.0 ||
+        opt_vars.times.size() <= 0) {
+        planner_context_->warn(
+                " -- [ExpOpt] invalid relative cost tolerance or empty durations");
+        traj.clear();
+        return INFINITY;
+    }
+
     /* 1) allocate vector for optimization varibles */
     VecDf x(opt_vars.temporalDim + opt_vars.spatialDim);
     /*    creat map for the opt_var vector */
@@ -856,7 +893,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             std::numeric_limits<double>::quiet_NaN();
 
     /* 2) check the initial value of the optimization varibles */
-    if (opt_vars.times.minCoeff() < 1e-3) {
+    if (!opt_vars.times.allFinite() || opt_vars.times.minCoeff() < 1e-3) {
         cout << YELLOW << " -- [TrajOpt] Error, the init times have zero, force return." << RESET << endl;
         cout << " -- Head PVAJ: " << endl;
         cout << opt_vars.headPVAJ << endl;

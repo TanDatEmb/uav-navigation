@@ -10924,6 +10924,32 @@ release profiles must not use the former allowance.
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
 
+### 2026-08-29 - Make nominal corridor piece allocation explicit
+
+- **Owner/status:** SUPER nominal optimizer corridor initialization,
+  `VERIFIED` by the focused planning trajectory suite.
+- **Scope:** Reject empty or inconsistent corridor/guide inputs before size
+  arithmetic, reject empty vertex enumerations, validate finite initial edges,
+  and use one MINCO piece per already subdivision-bounded corridor cell.
+- **Safety impact:** Removes the `/ INFINITY` placeholder and its undefined
+  floating-to-integer behavior. A non-finite or structurally empty corridor
+  now fails closed instead of reaching Eigen indexing or under-allocated
+  corridor constraints.
+- **False-accept/false-reject consequences:** The optimizer no longer invents
+  an opaque distance subdivision; CorridorGenerator remains the authoritative
+  owner of the configured maximum certified edge length. Valid corridor cells
+  retain one piece each, while malformed inputs are rejected.
+- **Runtime cost and evidence:** Constant-time shape/finite checks and no new
+  per-solve search. `test_trajectory` passes 104/104, including existing
+  sparse-guide and corridor-seed regressions.
+- **Removal/review condition:** Revisit piece subdivision only with a named,
+  validated spatial-resolution policy and matching corridor-index contract.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && CPATH=/home/letandat/Dev/uav-navigation/install/navigation_common/include:${CPATH:-}
+  cmake --build build/navigation_planning_backend --target test_trajectory -j2
+  && CPATH=/home/letandat/Dev/uav-navigation/install/navigation_common/include:${CPATH:-}
+  ./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
+
 ### 2026-08-29 - Bound propagated-odometry publication and correction ingress
 
 - **Owner/status:** FAST-LIO propagated-odometry worker, `VERIFIED` by the

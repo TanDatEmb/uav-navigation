@@ -218,7 +218,7 @@ namespace traj_opt {
             double first_nonfinite_cost{std::numeric_limits<double>::quiet_NaN()};
             double first_nonfinite_gradient_norm{
                 std::numeric_limits<double>::quiet_NaN()};
-        } opt_vars;
+        } opt_vars{};
 
         static double costFunctional(void *ptr,
                                      const VecDf &x,
