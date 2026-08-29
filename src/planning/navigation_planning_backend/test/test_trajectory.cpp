@@ -38,6 +38,7 @@
 #include "utils/optimization/polynomial_interpolation.h"
 #include "utils/optimization/root_finder.h"
 #include "utils/optimization/lbfgs.h"
+#include "utils/optimization/sdlp.h"
 
 namespace navigation_planning_backend {
 
@@ -2381,6 +2382,35 @@ TEST(PlannerTrajectory, LbfgsRejectsMalformedBoundaryInputs) {
     EXPECT_DOUBLE_EQ(f, 2.0);
     EXPECT_EQ(callback_count, 2);
   }
+}
+
+TEST(PlannerTrajectory, SdlpRejectsMalformedConstraintsAndNormalizesHugeInputs) {
+  Eigen::Matrix<double, 4, 1> objective =
+      Eigen::Matrix<double, 4, 1>::Ones();
+  Eigen::Matrix<double, -1, 4> planes(1, 4);
+  Eigen::Matrix<double, -1, 1> bounds(1);
+  Eigen::Matrix<double, 4, 1> solution;
+
+  planes.setZero();
+  bounds.setZero();
+  EXPECT_TRUE(std::isinf(math_utils::sdlp::linprog<4>(
+      objective, planes, bounds, solution)));
+  EXPECT_FALSE(solution.allFinite());
+
+  Eigen::Matrix<double, -1, 1> mismatched_bounds(0);
+  EXPECT_TRUE(std::isinf(math_utils::sdlp::linprog<4>(
+      objective, planes, mismatched_bounds, solution)));
+
+  objective(0) = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_TRUE(std::isinf(math_utils::sdlp::linprog<4>(
+      objective, planes, bounds, solution)));
+
+  const double huge[2] = {std::numeric_limits<double>::max(),
+                          -std::numeric_limits<double>::max()};
+  double normalized[2] = {0.0, 0.0};
+  EXPECT_FALSE(math_utils::sdlp::unit2(huge, normalized));
+  EXPECT_TRUE(std::isfinite(normalized[0]));
+  EXPECT_TRUE(std::isfinite(normalized[1]));
 }
 
 TEST(PlannerTrajectory, PolytopeResetClearsGeometryAndMetadata) {

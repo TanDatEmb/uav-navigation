@@ -25,6 +25,30 @@
   --gtest_filter=PlannerTrajectory.BackupOptimizerRejectsMalformedPublicBoundaryInputs
   --gtest_color=no`.
 
+### 2026-08-29 - Harden SDLP numerical boundaries
+
+- **Owner/status:** planning geometry LP solver, `PROVISIONAL`; verified by the
+  focused trajectory regression.
+- **Scope:** SDLP now rejects empty/shape-mismatched/non-finite constraints,
+  zero homogeneous planes, and oversized work dimensions; homogeneous plane
+  normalization and unit-vector normalization use scale-safe arithmetic, and
+  permutation state is local to each call.
+- **Safety impact:** malformed corridor/MVIE constraints cannot be normalized
+  into NaN or race through shared RNG state. Invalid solver calls return a
+  non-finite failure result and a non-finite solution rather than a usable point.
+- **False-accept/false-reject consequences:** Valid finite constraints retain
+  the existing solver semantics. Degenerate constraints are rejected instead
+  of being interpreted as feasible geometry.
+- **Runtime cost and evidence:** O(rows * dimension) validation plus local RNG
+  state; regression covers mismatch, zero plane, NaN objective, and DBL_MAX
+  vector normalization.
+- **Removal/review condition:** Keep until the LP API exposes a typed status and
+  checked workspace allocation contract.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_filter=PlannerTrajectory.SdlpRejectsMalformedConstraintsAndNormalizesHugeInputs
+  --gtest_color=no`.
+
 ### 2026-08-29 - Make sensing-horizon FOV cuts transactional
 
 - **Owner/status:** planning FOV corridor boundary, `PROVISIONAL`; verified by

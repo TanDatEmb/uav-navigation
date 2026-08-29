@@ -1,5 +1,9 @@
 #include "utils/optimization/sdlp.h"
 
+#include <algorithm>
+#include <climits>
+#include <limits>
+
 using namespace math_utils;
 using namespace math_utils::sdlp;
 double sdlp::dot2(const double *a, const double *b) {
@@ -11,28 +15,41 @@ double sdlp::cross2(const double *a, const double *b) {
 }
 
 bool sdlp::unit2(const double *a, double *b) {
-    const double mag = std::sqrt(a[0] * a[0] +
-                                 a[1] * a[1]);
-    if (mag < 2.0 * eps) {
+    if (a == nullptr || b == nullptr) return true;
+    const double scale = std::max(std::abs(a[0]), std::abs(a[1]));
+    if (!std::isfinite(scale) || scale <= 0.0) {
         return true;
     }
-    b[0] = a[0] / mag;
-    b[1] = a[1] / mag;
+    const double scaled_x = a[0] / scale;
+    const double scaled_y = a[1] / scale;
+    const double scaled_norm = std::hypot(scaled_x, scaled_y);
+    if (!std::isfinite(scaled_norm) || scaled_norm < 2.0 * eps) return true;
+    b[0] = scaled_x / scaled_norm;
+    b[1] = scaled_y / scaled_norm;
     return false;
 }
 
 template<int d>
 bool sdlp::unit(double *a) {
-    double mag = 0.0;
+    if (a == nullptr) return true;
+    double scale = 0.0;
     for (int i = 0; i <= d; i++) {
-        mag += a[i] * a[i];
+        if (!std::isfinite(a[i])) return true;
+        scale = std::max(scale, std::abs(a[i]));
     }
-    if (mag < (d + 1) * eps * eps) {
+    if (scale <= 0.0 || !std::isfinite(scale)) return true;
+    double scaled_norm_squared = 0.0;
+    for (int i = 0; i <= d; i++) {
+        const double scaled = a[i] / scale;
+        scaled_norm_squared += scaled * scaled;
+    }
+    const double scaled_norm = std::sqrt(scaled_norm_squared);
+    if (!std::isfinite(scaled_norm) ||
+        scaled_norm < std::sqrt(static_cast<double>(d + 1)) * eps) {
         return true;
     }
-    mag = 1.0 / std::sqrt(mag);
     for (int i = 0; i <= d; i++) {
-        a[i] *= mag;
+        a[i] = (a[i] / scale) / scaled_norm;
     }
     return false;
 }
@@ -441,10 +458,11 @@ sdlp::linfracprog<1>(const double *halves, const int max_size, const int m, cons
 }
 
 void sdlp::rand_permutation(const int n, int *p) {
+    if (n <= 0 || p == nullptr) return;
     typedef std::uniform_int_distribution<int> rand_int;
     typedef rand_int::param_type rand_range;
-    static std::mt19937_64 gen;
-    static rand_int rdi(0, 1);
+    std::mt19937_64 gen;
+    rand_int rdi;
     int j, k;
     for (int i = 0; i < n; i++) {
         p[i] = i;
@@ -461,8 +479,23 @@ void sdlp::rand_permutation(const int n, int *p) {
 template<int d>
 double sdlp::linprog(const Eigen::Matrix<double, d, 1> &c, const Eigen::Matrix<double, -1, d> &A,
                      const Eigen::Matrix<double, -1, 1> &b, Eigen::Matrix<double, d, 1> &x) {
-    int m = b.size() + 1;
-    x.setZero();
+    constexpr Eigen::Index kMaximumConstraints = 1000000;
+    x.setConstant(std::numeric_limits<double>::quiet_NaN());
+    if (A.rows() <= 0 || A.rows() != b.size() || A.cols() != d ||
+        A.rows() > kMaximumConstraints || !c.allFinite() || !A.allFinite() ||
+        !b.allFinite()) {
+        return INFINITY;
+    }
+    for (Eigen::Index row = 0; row < A.rows(); ++row) {
+        double scale = std::abs(b(row));
+        for (int column = 0; column < d; ++column) {
+            scale = std::max(scale, std::abs(A(row, column)));
+        }
+        if (!std::isfinite(scale) || scale <= 0.0) return INFINITY;
+    }
+
+    if (A.rows() > static_cast<Eigen::Index>(INT_MAX - 1)) return INFINITY;
+    const int m = static_cast<int>(A.rows()) + 1;
     if (m <= 1) {
         return c.cwiseAbs().maxCoeff() > 0.0 ? -INFINITY : 0.0;
     }
@@ -475,14 +508,25 @@ double sdlp::linprog(const Eigen::Matrix<double, d, 1> &c, const Eigen::Matrix<d
     Eigen::Matrix<double, d + 1, 1> d_vec;
     Eigen::Matrix<double, d + 1, 1> opt;
     Eigen::Matrix<double, d + 1, -1, Eigen::ColMajor> halves(d + 1, m);
-    Eigen::VectorXd work((m + 3) * (d + 2) * (d - 1) / 2);
+    const std::size_t work_size =
+        (static_cast<std::size_t>(m) + 3U) *
+        static_cast<std::size_t>(d + 2) *
+        static_cast<std::size_t>(d - 1) / 2U;
+    if (work_size > static_cast<std::size_t>(std::numeric_limits<Eigen::Index>::max())) {
+        return INFINITY;
+    }
+    Eigen::VectorXd work(static_cast<Eigen::Index>(work_size));
 
     halves.col(0).setZero();
     halves(d, 0) = 1.0;
     halves.topRightCorner(d, m - 1) = -A.transpose();
     halves.bottomRightCorner(1, m - 1) = b.transpose();
-    /* normalize all halves as required in linfracprog */
-    halves.colwise().normalize();
+    /* Normalize each homogeneous half-space without norm overflow. */
+    for (Eigen::Index column = 0; column < halves.cols(); ++column) {
+        const double scale = halves.col(column).cwiseAbs().maxCoeff();
+        if (!std::isfinite(scale) || scale <= 0.0) return INFINITY;
+        halves.col(column) /= scale;
+    }
     n_vec.head(d) = c;
     n_vec(d) = 0.0;
     d_vec.setZero();
@@ -521,6 +565,8 @@ double sdlp::linprog(const Eigen::Matrix<double, d, 1> &c, const Eigen::Matrix<d
             minimum = -INFINITY;
         }
     }
+
+    if (!x.allFinite() && std::isfinite(minimum)) return INFINITY;
 
     return minimum;
 }
