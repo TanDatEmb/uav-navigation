@@ -45,7 +45,8 @@ void BaseLinkStateConverter::validateBaseToImu(
   }
   if (!base_to_imu.allFinite() ||
       !base_to_imu.rotation().coeffs().allFinite() ||
-      base_to_imu.rotation().norm() < 1e-12) {
+      !std::isfinite(base_to_imu.rotation().squaredNorm()) ||
+      base_to_imu.rotation().squaredNorm() <= 1e-24) {
     throw std::invalid_argument(
         "BaseLinkStateConverter received a non-finite or degenerate static transform");
   }
@@ -91,7 +92,8 @@ Result<RigidBodyState> BaseLinkStateConverter::convert(
   output.linear_velocity_body_m_s = R_odom_base.transpose() * velocity_odom_base;
   output.angular_velocity_body_rad_s = omega_base;
   if (!output.allFinite() ||
-      std::abs(output.orientation_reference_body.norm() - 1.0) > 1e-12) {
+      !std::isfinite(output.orientation_reference_body.squaredNorm()) ||
+      std::abs(output.orientation_reference_body.squaredNorm() - 1.0) > 1e-12) {
     return invalidArgument("Base-link state conversion produced an invalid state");
   }
   return output;

@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Geometry>
+#include <limits>
 #include <numbers>
 
 #include "fast_lio_core/geometry/frame_ids.hpp"
 #include "fast_lio_core/geometry/rigid_transform.hpp"
+#include "fast_lio_core/navigation/rigid_body_state.hpp"
 
 namespace uav::nav::lio {
 namespace {
@@ -41,6 +43,18 @@ TEST(RigidTransformTest, RejectsInvalidCompositionDirection) {
   const auto result = T_odom_imu.compose(T_base_lidar);
   ASSERT_FALSE(result.ok());
   EXPECT_EQ(result.status().code(), StatusCode::kFrameMismatch);
+}
+
+TEST(RigidTransformTest, RejectsQuaternionWhoseSquaredNormOverflows) {
+  const double huge = std::numeric_limits<double>::max();
+  const Eigen::Quaterniond malformed(huge, huge, huge, huge);
+  const auto result = RigidTransform::Create(lioOdomFrame(), imuFrame(), malformed,
+                                             Eigen::Vector3d::Zero());
+  EXPECT_FALSE(result.ok());
+
+  RigidBodyState state;
+  state.orientation_reference_body = malformed;
+  EXPECT_FALSE(state.allFinite());
 }
 
 }  // namespace

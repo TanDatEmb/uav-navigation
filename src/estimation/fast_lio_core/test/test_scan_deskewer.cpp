@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Geometry>
+#include <limits>
 #include <numbers>
 
 #include "fast_lio_core/deskew/scan_deskewer.hpp"
+#include "fast_lio_core/estimation/imu_trajectory.hpp"
 #include "fast_lio_core/geometry/frame_ids.hpp"
 
 namespace uav::nav::lio {
@@ -12,7 +14,7 @@ namespace {
 LidarScan simultaneousScan() {
   LidarScan scan;
   scan.start_time = Timestamp(100, ClockDomain::kSimulationTime);
-  scan.end_time = Timestamp(100, ClockDomain::kSimulationTime);
+  scan.end_time = Timestamp(101, ClockDomain::kSimulationTime);
   scan.has_per_point_time = false;
   scan.points = {LidarPoint{Eigen::Vector3f(1.0F, 2.0F, 3.0F), 0, 1, 2, 3},
                  LidarPoint{Eigen::Vector3f(4.0F, 5.0F, 6.0F), 0, 4, 5, 6}};
@@ -37,23 +39,32 @@ TEST(ScanDeskewerTest, SimModeExplicitlyBypassesWithoutFakeTime) {
   }
 }
 
+TEST(ScanDeskewerTest, RejectsTrajectoryStateWhoseQuaternionNormOverflows) {
+  ImuTrajectory trajectory;
+  const double huge = std::numeric_limits<double>::max();
+  const Status status = trajectory.addState(ImuTrajectoryState{
+      Timestamp(1, ClockDomain::kSensorTime), Eigen::Quaterniond(huge, huge, huge, huge),
+      Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()});
+  EXPECT_EQ(status.code(), StatusCode::kNumericalFailure);
+}
+
 TEST(ScanDeskewerTest, RealPerPointTranslationAlignsStaticWorldPoint) {
   ImuTrajectory trajectory;
   ASSERT_TRUE(trajectory
                   .addState(ImuTrajectoryState{
-                      Timestamp(0, ClockDomain::kSensorTime), Eigen::Quaterniond::Identity(),
+                      Timestamp(1, ClockDomain::kSensorTime), Eigen::Quaterniond::Identity(),
                       Eigen::Vector3d(0.0, 0.0, 0.0), Eigen::Vector3d(1.0, 0.0, 0.0)})
                   .ok());
   ASSERT_TRUE(trajectory
-                  .addState(ImuTrajectoryState{Timestamp(1'000'000'000, ClockDomain::kSensorTime),
+                  .addState(ImuTrajectoryState{Timestamp(1'000'000'001, ClockDomain::kSensorTime),
                                                Eigen::Quaterniond::Identity(),
                                                Eigen::Vector3d(1.0, 0.0, 0.0),
                                                Eigen::Vector3d(1.0, 0.0, 0.0)})
                   .ok());
 
   LidarScan scan;
-  scan.start_time = Timestamp(0, ClockDomain::kSensorTime);
-  scan.end_time = Timestamp(1'000'000'000, ClockDomain::kSensorTime);
+  scan.start_time = Timestamp(1, ClockDomain::kSensorTime);
+  scan.end_time = Timestamp(1'000'000'001, ClockDomain::kSensorTime);
   scan.has_per_point_time = true;
   // A static world point at x=10 is observed at x=10 at scan start and x=9
   // at scan end while the sensor translates +1 m.
@@ -75,20 +86,20 @@ TEST(ScanDeskewerTest, RealPerPointTranslationAlignsStaticWorldPoint) {
 TEST(ScanDeskewerTest, RealPerPointRotationAlignsStaticWorldPoint) {
   ImuTrajectory trajectory;
   ASSERT_TRUE(trajectory
-                  .addState(ImuTrajectoryState{Timestamp(0, ClockDomain::kSensorTime),
+                  .addState(ImuTrajectoryState{Timestamp(1, ClockDomain::kSensorTime),
                                                Eigen::Quaterniond::Identity(),
                                                Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()})
                   .ok());
   ASSERT_TRUE(
       trajectory
-          .addState(ImuTrajectoryState{Timestamp(1'000, ClockDomain::kSensorTime),
+          .addState(ImuTrajectoryState{Timestamp(1'001, ClockDomain::kSensorTime),
                                        Eigen::Quaterniond(Eigen::AngleAxisd(
                                            std::numbers::pi / 2.0, Eigen::Vector3d::UnitZ())),
                                        Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()})
           .ok());
   LidarScan scan;
-  scan.start_time = Timestamp(0, ClockDomain::kSensorTime);
-  scan.end_time = Timestamp(1'000, ClockDomain::kSensorTime);
+  scan.start_time = Timestamp(1, ClockDomain::kSensorTime);
+  scan.end_time = Timestamp(1'001, ClockDomain::kSensorTime);
   scan.has_per_point_time = true;
   // World point (1,0,0) appears as +x initially and -y after +90 deg yaw.
   scan.points = {LidarPoint{Eigen::Vector3f::UnitX(), 0, 0, 0, 0},

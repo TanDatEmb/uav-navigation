@@ -72,12 +72,12 @@ bool repairOrReject(Matrix& covariance, bool& repaired,
 
 template <typename Matrix>
 bool validateOutput(Matrix& covariance, bool& repaired, bool& nonfinite,
-                    bool& non_psd) {
+                    bool& asymmetry, bool& non_psd) {
   if (!covariance.allFinite()) {
     nonfinite = true;
     return false;
   }
-  return repairOrReject(covariance, repaired, non_psd, non_psd);
+  return repairOrReject(covariance, repaired, asymmetry, non_psd);
 }
 
 }  // namespace
@@ -95,7 +95,8 @@ void BaseLinkCovarianceProjector::validateBaseToImu(
   if (base_to_imu.targetFrame() != baseFrame() ||
       base_to_imu.sourceFrame() != imuFrame() || !base_to_imu.allFinite() ||
       !base_to_imu.rotation().coeffs().allFinite() ||
-      base_to_imu.rotation().norm() < 1e-12) {
+      !std::isfinite(base_to_imu.rotation().squaredNorm()) ||
+      base_to_imu.rotation().squaredNorm() <= 1e-24) {
     throw std::invalid_argument(
         "BaseLinkCovarianceProjector requires finite ^base_link T_livox_imu_frame");
   }
@@ -184,10 +185,11 @@ Result<BaseLinkNavigationCovariance> BaseLinkCovarianceProjector::project(
   bool twist_repaired = false;
   const bool pose_valid = validateOutput(
       result.pose_covariance_odom, pose_repaired, report.output_pose_nonfinite,
-      report.output_pose_non_psd);
+      report.output_pose_asymmetry, report.output_pose_non_psd);
   const bool twist_valid = validateOutput(
       result.twist_covariance_base, twist_repaired,
-      report.output_twist_nonfinite, report.output_twist_non_psd);
+      report.output_twist_nonfinite, report.output_twist_asymmetry,
+      report.output_twist_non_psd);
   if (!pose_valid || !twist_valid) {
     return numericalFailure("Projected base-link covariance is invalid");
   }

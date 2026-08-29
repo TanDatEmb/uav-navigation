@@ -147,10 +147,20 @@ Result<KinematicStateEstimate> AngularVelocityResolver::resolve(
   // Compute integer deltas before converting to floating point.  This keeps
   // nanosecond epochs out of double precision and only converts the bounded
   // bracket ratio.
-  const long double numerator = static_cast<long double>(
-      estimate.time.nanoseconds() - before.time.nanoseconds());
-  const long double denominator = static_cast<long double>(
-      after.time.nanoseconds() - before.time.nanoseconds());
+  const auto numerator_result = checkedDifference(estimate.time, before.time);
+  const auto denominator_result = checkedDifference(after.time, before.time);
+  if (!numerator_result.ok()) {
+    return failure(numerator_result.status().code(),
+                   "IMU interpolation numerator overflows", diagnostics);
+  }
+  if (!denominator_result.ok()) {
+    return failure(denominator_result.status().code(),
+                   "IMU interpolation denominator overflows", diagnostics);
+  }
+  const long double numerator =
+      static_cast<long double>(numerator_result.value().nanoseconds());
+  const long double denominator =
+      static_cast<long double>(denominator_result.value().nanoseconds());
   const long double alpha = numerator / denominator;
   if (!std::isfinite(alpha) || alpha < 0.0L || alpha > 1.0L) {
     return failure(StatusCode::kNumericalFailure,

@@ -25,7 +25,7 @@ TEST(AngularVelocityResolverTest, ExactSampleSubtractsBiasAtSameEpoch) {
   AngularVelocityDiagnostics diagnostics;
   const auto resolved = AngularVelocityResolver::resolve(
       estimate(10, {0.1, 0.2, 0.3}),
-      std::vector<ImuSample>{sample(0, {0.0, 0.0, 0.0}),
+      std::vector<ImuSample>{sample(1, {0.0, 0.0, 0.0}),
                              sample(10, {1.0, 2.0, 3.0})},
       &diagnostics);
   ASSERT_TRUE(resolved.ok()) << resolved.status().message();
@@ -62,7 +62,7 @@ TEST(AngularVelocityResolverTest, RejectsDuplicateAndNonFiniteSamples) {
   AngularVelocityDiagnostics diagnostics;
   const auto duplicate = AngularVelocityResolver::resolve(
       estimate(10),
-      std::vector<ImuSample>{sample(0, Eigen::Vector3d::Zero()),
+      std::vector<ImuSample>{sample(1, Eigen::Vector3d::Zero()),
                              sample(10, Eigen::Vector3d::Ones()),
                              sample(10, Eigen::Vector3d::Ones())},
       &diagnostics);

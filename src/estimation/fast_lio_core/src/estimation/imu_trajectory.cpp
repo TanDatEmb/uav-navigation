@@ -1,6 +1,7 @@
 #include "fast_lio_core/estimation/imu_trajectory.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 #include "fast_lio_core/geometry/pose_interpolator.hpp"
@@ -9,7 +10,9 @@ namespace uav::nav::lio {
 
 bool ImuTrajectoryState::allFinite() const noexcept {
   return orientation_odom_imu.coeffs().allFinite() && position_odom_imu_m.allFinite() &&
-         velocity_odom_imu_m_s.allFinite() && orientation_odom_imu.norm() > 1e-12;
+         velocity_odom_imu_m_s.allFinite() &&
+         std::isfinite(orientation_odom_imu.squaredNorm()) &&
+         orientation_odom_imu.squaredNorm() > 1e-24;
 }
 
 ImuTrajectory::ImuTrajectory(FrameId odom_frame, FrameId imu_frame)
@@ -61,8 +64,23 @@ Result<ImuTrajectoryState> ImuTrajectory::interpolate(const Timestamp& time) con
     return Status(StatusCode::kOutOfRange, "Trajectory query is before the first state");
   }
   const auto lower = std::prev(upper);
-  const double alpha = static_cast<double>(time.nanoseconds() - lower->time.nanoseconds()) /
-                       static_cast<double>(upper->time.nanoseconds() - lower->time.nanoseconds());
+  const auto numerator = checkedDifference(time, lower->time);
+  const auto denominator = checkedDifference(upper->time, lower->time);
+  if (!numerator.ok()) {
+    return numerator.status();
+  }
+  if (!denominator.ok() || denominator.value().nanoseconds() <= 0) {
+    return denominator.ok()
+               ? Status(StatusCode::kTimestampRegression,
+                        "IMU trajectory interpolation interval is not positive")
+               : denominator.status();
+  }
+  const double alpha = static_cast<double>(numerator.value().nanoseconds()) /
+                       static_cast<double>(denominator.value().nanoseconds());
+  if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
+    return Status(StatusCode::kNumericalFailure,
+                  "IMU trajectory interpolation ratio is not finite");
+  }
   ImuTrajectoryState output;
   output.time = time;
   output.orientation_odom_imu =

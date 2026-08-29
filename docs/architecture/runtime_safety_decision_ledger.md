@@ -10924,6 +10924,32 @@ release profiles must not use the former allowance.
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
 
+### 2026-08-29 - Harden Fast-LIO quaternion and timestamp interpolation boundaries
+
+- **Owner/status:** Fast-LIO rigid state, transform, trajectory and angular
+  velocity interpolation APIs, `VERIFIED` by focused core tests.
+- **Scope:** Check quaternion squared norms for finite, non-degenerate values
+  before normalization, preserve covariance diagnostic distinction between
+  output asymmetry and non-PSD failure, and replace raw timestamp subtraction
+  in interpolation ratios with checked differences.
+- **Safety impact:** Extreme finite quaternion coefficients can no longer
+  normalize into invalid rotations, and timestamp brackets spanning an
+  unrepresentable int64 interval now fail closed instead of invoking signed
+  overflow before state/pose output.
+- **False-accept/false-reject consequences:** Malformed transforms/states and
+  unrepresentable interpolation brackets are rejected. Ordinary normalized
+  rotations and representable timestamp brackets retain their behavior.
+- **Runtime cost and evidence:** A constant number of finite squared-norm
+  checks and one checked subtraction per interpolation. Focused rigid-transform,
+  pose-interpolator, scan-deskewer and angular-velocity tests cover the new
+  boundaries; no flight threshold or fallback was changed.
+- **Removal/review condition:** Keep until all public estimator state and time
+  APIs use shared validated quaternion/timestamp value types.
+- **Verification:** `cmake --build build/fast_lio_core --target
+  test_rigid_transform test_pose_interpolator test_scan_deskewer
+  test_angular_velocity_resolver -j2` and the four corresponding test
+  executables with `--gtest_color=no`.
+
 ### 2026-08-29 - Fail closed on PX4 odometry buffer boundaries
 
 - **Owner/status:** PX4 odometry ring buffer and timestamp validator,

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <Eigen/Geometry>
+#include <limits>
 #include <numbers>
 
 #include "fast_lio_core/geometry/frame_ids.hpp"
@@ -50,6 +51,19 @@ TEST(PoseInterpolatorTest, RejectsDifferentPoseDirections) {
       PoseInterpolator::interpolate(lower, upper, Timestamp(50, ClockDomain::kSensorTime));
   ASSERT_FALSE(result.ok());
   EXPECT_EQ(result.status().code(), StatusCode::kFrameMismatch);
+}
+
+TEST(PoseInterpolatorTest, RejectsTimestampBracketWhoseDifferenceOverflows) {
+  const PoseStamped lower{Timestamp(std::numeric_limits<std::int64_t>::min(),
+                                    ClockDomain::kSensorTime),
+                          RigidTransform::Identity(imuFrame())};
+  const PoseStamped upper{Timestamp(std::numeric_limits<std::int64_t>::max(),
+                                    ClockDomain::kSensorTime),
+                          RigidTransform::Identity(imuFrame())};
+  const auto result =
+      PoseInterpolator::interpolate(lower, upper, Timestamp(0, ClockDomain::kSensorTime));
+  EXPECT_FALSE(result.ok());
+  EXPECT_EQ(result.status().code(), StatusCode::kOutOfRange);
 }
 
 }  // namespace

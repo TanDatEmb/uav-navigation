@@ -2,6 +2,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <cmath>
 #include <optional>
 
 #include "fast_lio_core/geometry/frame.hpp"
@@ -39,7 +40,8 @@ struct RigidBodyState {
   [[nodiscard]] bool allFinite() const noexcept {
     return position_reference_body_m.allFinite() &&
            orientation_reference_body.coeffs().allFinite() &&
-           orientation_reference_body.norm() > 1e-12 &&
+           std::isfinite(orientation_reference_body.squaredNorm()) &&
+           orientation_reference_body.squaredNorm() > 1e-24 &&
            linear_velocity_reference_body_m_s.allFinite() &&
            linear_velocity_body_m_s.allFinite() &&
            (!angular_velocity_body_rad_s.has_value() ||

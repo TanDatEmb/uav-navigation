@@ -21,7 +21,8 @@ namespace {
   if (!quaternionFinite(q_target_source) || !t_target_source.allFinite()) {
     return Status(StatusCode::kInvalidArgument, "RigidTransform coefficients must be finite");
   }
-  if (q_target_source.norm() < 1e-12) {
+  if (!std::isfinite(q_target_source.squaredNorm()) ||
+      q_target_source.squaredNorm() <= 1e-24) {
     return Status(StatusCode::kInvalidArgument,
                   "RigidTransform quaternion must have non-zero norm");
   }
@@ -69,7 +70,9 @@ const Eigen::Quaterniond& RigidTransform::rotation() const noexcept { return q_t
 const Eigen::Vector3d& RigidTransform::translation() const noexcept { return t_target_source_; }
 
 bool RigidTransform::allFinite() const noexcept {
-  return quaternionFinite(q_target_source_) && t_target_source_.allFinite();
+  return quaternionFinite(q_target_source_) &&
+         std::isfinite(q_target_source_.squaredNorm()) &&
+         q_target_source_.squaredNorm() > 1e-24 && t_target_source_.allFinite();
 }
 
 RigidTransform RigidTransform::inverse() const {

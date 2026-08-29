@@ -1,5 +1,9 @@
 #include "fast_lio_core/geometry/pose_interpolator.hpp"
 
+#include <cmath>
+
+#include "fast_lio_core/time/timestamp.hpp"
+
 namespace uav::nav::lio {
 
 Result<RigidTransform> PoseInterpolator::interpolate(const PoseStamped& lower,
@@ -30,8 +34,20 @@ Result<RigidTransform> PoseInterpolator::interpolate(const PoseStamped& lower,
     return lower.pose;
   }
 
-  const double alpha =
-      static_cast<double>(query_ns - lower_ns) / static_cast<double>(upper_ns - lower_ns);
+  const auto numerator = checkedDifference(query_time, lower.time);
+  const auto denominator = checkedDifference(upper.time, lower.time);
+  if (!numerator.ok()) {
+    return numerator.status();
+  }
+  if (!denominator.ok()) {
+    return denominator.status();
+  }
+  const double alpha = static_cast<double>(numerator.value().nanoseconds()) /
+                       static_cast<double>(denominator.value().nanoseconds());
+  if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
+    return Status(StatusCode::kNumericalFailure,
+                  "Pose interpolation ratio is not finite");
+  }
   Eigen::Quaterniond rotation = lower.pose.rotation().slerp(alpha, upper.pose.rotation());
   rotation.normalize();
   const Eigen::Vector3d translation =
