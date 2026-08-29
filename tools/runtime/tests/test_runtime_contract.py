@@ -905,6 +905,82 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertAlmostEqual(active_p95 or 0.0, 0.0)
             self.assertEqual(active_count, 1)
 
+    def test_mission_acceptance_starts_after_allowed_initial_pass_through(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            mission_file = session / "mission.yaml"
+            mission_file.write_text(
+                "mission:\n"
+                "  waypoints:\n"
+                "    - position: [-3.0, 4.5, 3.0]\n"
+                "    - position: [4.0, 4.5, 3.0]\n",
+                encoding="utf-8",
+            )
+            (session / "scenario_config.yaml").write_text(
+                yaml.safe_dump({
+                    "scenario": {
+                        "execution": "mission",
+                        "mission_waypoint_count": 2,
+                        "allow_initial_pass_through_skip": True,
+                        "mission_file": str(mission_file),
+                    }
+                }),
+                encoding="utf-8",
+            )
+            (session / "scenario.json").write_text(
+                json.dumps({
+                    "outcome": "COMPLETE",
+                    "mission_complete_observed": True,
+                    "waypoint_acceptance_events": [{
+                        "waypoint_accepted": True,
+                        "accepted_waypoint_index": 1,
+                    }],
+                }) + "\n",
+                encoding="utf-8",
+            )
+            (session / "scenario.jsonl").write_text(
+                json.dumps({
+                    "kind": "waypoint_accepted",
+                    "sim_time_ns": 21,
+                    "payload": {
+                        "waypoint_accepted": True,
+                        "accepted_waypoint_index": 1,
+                    },
+                }) + "\n",
+                encoding="utf-8",
+            )
+            rows = [
+                {"kind": "sample", "stream": "ground_truth_odometry", "timestamp_ns": index,
+                 "payload": {"position": [0.0, 0.0, 0.0]}}
+                for index in range(1, 21)
+            ]
+            rows.append(
+                {"kind": "sample", "stream": "ground_truth_odometry", "timestamp_ns": 21,
+                 "payload": {"position": [-2.0, 4.5, 3.0]}}
+            )
+            (session / "samples.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            acceptance = report._mission_acceptance(
+                session, {}, {
+                    "expected_outcome": "complete",
+                    "outcome": "COMPLETE",
+                    "mission_complete_observed": True,
+                    "mission_waypoint_count": 2,
+                    "waypoint_acceptance_events": [{
+                        "waypoint_accepted": True,
+                        "accepted_waypoint_index": 1,
+                    }],
+                },
+                session,
+            )
+
+        self.assertTrue(acceptance["waypoint_acceptance_complete"])
+        self.assertAlmostEqual(acceptance["cross_track_error_p95_m"] or 0.0, 0.0)
+        self.assertEqual(acceptance["cross_track_sample_count"], 1)
+
     def test_long_three_pillars_speed_is_an_additive_two_waypoint_speed_benchmark(self) -> None:
         descriptor = runner._map_registry()["long_three_pillars_speed"]
         self.assertEqual(

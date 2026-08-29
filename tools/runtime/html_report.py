@@ -153,7 +153,7 @@ def _acceptance_summary(
         "waypoint_acceptance_events": events if events_available else None,
         "waypoint_acceptance_indices": accepted_indices,
         "waypoint_acceptance_complete": acceptance_complete,
-        "expected_waypoint_indices": expected_indices,
+        "expected_waypoint_indices": expected_acceptance,
         "initial_pass_through_skip_allowed": allow_initial_skip,
         "cross_track_p95_m": cross_track_p95,
         "max_cross_track_p95_m": threshold,

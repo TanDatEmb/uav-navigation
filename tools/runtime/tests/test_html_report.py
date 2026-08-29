@@ -25,11 +25,40 @@ from flight_review_report import (
     line_chart,
     map_svg,
 )
-from html_report import _planning_continuity, _runtime_observability, _safety_timeline, _samples, _trajectory_smoothness
+from html_report import (
+    _acceptance_summary,
+    _planning_continuity,
+    _runtime_observability,
+    _safety_timeline,
+    _samples,
+    _trajectory_smoothness,
+)
 import report
 
 
 class HtmlReportSmoothnessTest(unittest.TestCase):
+    def test_acceptance_view_reports_policy_adjusted_expected_indices(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            (session / "scenario_config.yaml").write_text(
+                "scenario:\n  allow_initial_pass_through_skip: true\n",
+                encoding="utf-8",
+            )
+            acceptance = _acceptance_summary(
+                session,
+                {
+                    "waypoint_acceptance_events": [{
+                        "waypoint_accepted": True,
+                        "accepted_waypoint_index": 1,
+                    }],
+                },
+                2,
+                0.0,
+            )
+
+        self.assertEqual(acceptance["expected_waypoint_indices"], [1])
+        self.assertTrue(acceptance["waypoint_acceptance_complete"])
+
     def test_samples_skips_valid_json_scalars(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "samples.jsonl"

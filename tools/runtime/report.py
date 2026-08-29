@@ -403,6 +403,11 @@ def _mission_acceptance(
     # first acceptance event while retaining the normal gate and fail-closed
     # behaviour when no such event exists.
     first_acceptance_sim_time_ns: int | None = None
+    first_expected_acceptance_index = (
+        expected_indices[1]
+        if allow_initial_skip and expected_indices
+        else expected_indices[0] if expected_indices else None
+    )
     for event in _scenario_events(session / "scenario.jsonl"):
         if event.get("kind") != "waypoint_accepted":
             continue
@@ -414,7 +419,8 @@ def _mission_acceptance(
             sim_time_ns = int(event.get("sim_time_ns"))
         except (TypeError, ValueError):
             continue
-        if accepted_index == 0 and sim_time_ns >= 0:
+        if (first_expected_acceptance_index is not None and
+                accepted_index == first_expected_acceptance_index and sim_time_ns >= 0):
             first_acceptance_sim_time_ns = sim_time_ns
             break
     cross_track_p95, sample_count = _mission_cross_track_p95(
