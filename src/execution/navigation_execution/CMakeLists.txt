@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(ament_cmake REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+find_package(navigation_common REQUIRED)
 find_package(navigation_planning REQUIRED)
 find_package(navigation_world_model REQUIRED)
 
@@ -19,6 +21,7 @@ target_include_directories(${PROJECT_NAME} INTERFACE
   $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(${PROJECT_NAME} INTERFACE
+  navigation_common::navigation_common
   navigation_planning::navigation_planning
   navigation_world_model::navigation_world_model
 )
@@ -26,7 +29,7 @@ target_link_libraries(${PROJECT_NAME} INTERFACE
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME}Targets)
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_dependencies(navigation_planning navigation_world_model)
+ament_export_dependencies(builtin_interfaces navigation_common navigation_planning navigation_world_model)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -40,7 +43,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_committed_bundle_store test/test_committed_bundle_store.cpp)
   target_compile_features(test_committed_bundle_store PRIVATE cxx_std_20)
   target_link_libraries(test_committed_bundle_store ${PROJECT_NAME})
-  ament_target_dependencies(test_committed_bundle_store navigation_planning navigation_world_model)
+  ament_target_dependencies(test_committed_bundle_store
+    builtin_interfaces navigation_common navigation_planning navigation_world_model)
 endif()
 
 ament_package()

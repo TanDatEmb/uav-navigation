@@ -27,10 +27,12 @@ class ExecutionStateStore final {
     return true;
   }
 
-  void resetForLocalizationEpoch(std::uint64_t localization_epoch) noexcept {
+  bool resetForLocalizationEpoch(std::uint64_t localization_epoch) noexcept {
+    if (localization_epoch == 0U) return false;
     std::lock_guard lock(mutex_);
     active_epoch_ = localization_epoch;
     state_.reset();
+    return true;
   }
 
   [[nodiscard]] std::shared_ptr<const ExecutionStateLease> load() const noexcept {

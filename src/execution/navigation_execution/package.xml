@@ -6,6 +6,8 @@
   <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>builtin_interfaces</depend>
+  <depend>navigation_common</depend>
   <depend>navigation_planning</depend>
   <depend>navigation_world_model</depend>
   <test_depend>ament_cmake_gtest</test_depend>

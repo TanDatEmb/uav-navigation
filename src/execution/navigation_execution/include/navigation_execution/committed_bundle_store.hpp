@@ -8,6 +8,7 @@
 #include <optional>
 #include <limits>
 
+#include <navigation_common/time.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 
@@ -114,15 +115,12 @@ class CommittedBundleStore final {
         // candidate validation in the caller.
         auto renewed_until_ns = refreshed_valid_until_ns;
         if (recertified->hasDeclaredEndpointMetadata()) {
-          const double end_wall_time_s = recertified->start_wall_time_s +
-              recertified->duration_s;
-          if (!std::isfinite(end_wall_time_s) || end_wall_time_s <= 0.0 ||
-              end_wall_time_s > static_cast<double>(
-                  std::numeric_limits<std::int64_t>::max()) * 1.0e-9) {
+          const auto endpoint_ns = navigation_common::secondsSumToNanoseconds(
+              recertified->start_wall_time_s, recertified->duration_s);
+          if (!endpoint_ns || *endpoint_ns <= 0) {
             return false;
           }
-          const auto endpoint_ns = static_cast<std::int64_t>(end_wall_time_s * 1.0e9);
-          renewed_until_ns = std::min(renewed_until_ns, endpoint_ns);
+          renewed_until_ns = std::min(renewed_until_ns, *endpoint_ns);
         }
         recertified->valid_until_ns = renewed_until_ns;
       }

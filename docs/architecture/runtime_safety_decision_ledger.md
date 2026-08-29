@@ -10946,6 +10946,29 @@ release profiles must not use the former allowance.
   ./build/px4_navigation_external_mode/test_tracking_envelope
   --gtest_color=no`.
 
+### 2026-08-29 - Close execution epoch and endpoint conversion boundaries
+
+- **Owner/status:** Navigation execution stores, `VERIFIED` by the focused
+  execution-state and committed-bundle tests.
+- **Scope:** Use the shared checked seconds-sum conversion when recertifying a
+  retained bundle endpoint, and reject localization-epoch zero in execution
+  state reset instead of treating it as a wildcard.
+- **Safety impact:** Endpoint metadata cannot reach an out-of-range
+  floating-to-integer conversion, and a reset cannot silently accept state from
+  any localization epoch. No freshness, lease, trajectory, or tracking limit
+  changed.
+- **False-accept/false-reject consequences:** Ordinary representable endpoints
+  and nonzero resets are unchanged. Overflowed endpoint metadata and epoch-zero
+  resets fail closed.
+- **Runtime cost and evidence:** One bounded long-double conversion per
+  recertification and one constant-time reset-domain check; regression covers
+  wildcard reset and store lifecycle.
+- **Removal/review condition:** Keep until execution timestamps and epochs are
+  carried only by validated typed contracts.
+- **Verification:** `cmake --build build/navigation_execution --target
+  test_committed_bundle_store -j2 &&
+  ./build/navigation_execution/test_committed_bundle_store --gtest_color=no`.
+
 ### 2026-08-29 - Synchronize Fast-LIO public frame generation and transform publication
 
 - **Owner/status:** Fast-LIO ROS public-frame generation and TF publisher,

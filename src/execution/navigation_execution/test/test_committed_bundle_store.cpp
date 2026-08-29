@@ -281,4 +281,20 @@ TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {
   EXPECT_EQ(store.load()->ingress_sequence, 2U);
 }
 
+TEST(ExecutionStateStore, RejectsWildcardResetEpoch) {
+  navigation_execution::ExecutionStateStore store;
+  EXPECT_FALSE(store.resetForLocalizationEpoch(0));
+
+  navigation_planning::KinematicState state;
+  state.source_stamp_ns = 10;
+  state.receive_stamp_ns = 20;
+  state.localization_epoch = 4;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+  ASSERT_TRUE(store.publish(state));
+  EXPECT_TRUE(store.load());
+  EXPECT_TRUE(store.resetForLocalizationEpoch(5));
+  EXPECT_FALSE(store.load());
+}
+
 }  // namespace
