@@ -95,6 +95,8 @@ class ImuStatePropagator {
   [[nodiscard]] ImuRecordResult restartContinuity(const ImuSample& sample);
   [[nodiscard]] Status bracketHistory(const Timestamp& boundary,
                                       std::size_t& first_index) const;
+  // Pruning is fail-closed if the typed timestamp subtraction cannot be
+  // represented; callers retain the existing estimator error state.
   void pruneHistory();
   void setFailure(const Status& failure);
 
