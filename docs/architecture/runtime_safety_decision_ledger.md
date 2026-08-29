@@ -12446,9 +12446,10 @@ release profiles must not use the former allowance.
 
 - **Owner/status:** FAST-LIO `MeasurementGroup` to pipeline boundary,
   `PROVISIONAL`, verified by the focused pipeline regression suite.
-- **Scope:** `FastLioPipeline::processInternal()` now validates the scan and
-  checked timestamp intervals before retaining IMU samples or changing
-  estimator state. A first group without a configured prior starts at
+- **Scope:** `FastLioPipeline::processInternal()` now validates the scan, every
+  direct-group IMU sample, and their checked timestamp intervals before
+  retaining IMU samples or changing estimator state. A first group without a
+  configured prior starts at
   `MeasurementGroup::propagation_start_time`; later groups must match the
   current estimator state epoch. Scan-duration diagnostics use checked
   timestamp subtraction.

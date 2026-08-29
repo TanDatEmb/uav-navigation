@@ -321,6 +321,27 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
     recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
     return finalizeResult(std::move(result));
   }
+  std::optional<Timestamp> previous_imu_time;
+  for (const ImuSample& sample : group.imu_samples) {
+    const Status sample_status = sample.validate();
+    if (!sample_status.ok()) {
+      result.rejection_reason = sample_status.message();
+      diagnostics_.synchronization.sync_rejection_reason = result.rejection_reason;
+      diagnostics_.reason = result.rejection_reason;
+      recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
+      return finalizeResult(std::move(result));
+    }
+    if (!sample.time.sameClockDomain(group.scan.start_time) ||
+        (previous_imu_time.has_value() &&
+         sample.time.nanoseconds() <= previous_imu_time->nanoseconds())) {
+      result.rejection_reason = "INVALID_IMU_TIME_SEQUENCE";
+      diagnostics_.synchronization.sync_rejection_reason = result.rejection_reason;
+      diagnostics_.reason = result.rejection_reason;
+      recordUncorrectedUpdate(LidarUpdateFailureClass::kSynchronization);
+      return finalizeResult(std::move(result));
+    }
+    previous_imu_time = sample.time;
+  }
   // Direct callers provide the synchronized IMU group without going through
   // pushImu(). Retain the same bounded history used by the ROS ingress so a
   // prior or a rebased state can be propagated from its exact epoch. The
