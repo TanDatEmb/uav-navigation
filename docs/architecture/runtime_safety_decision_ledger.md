@@ -10951,6 +10951,32 @@ release profiles must not use the former allowance.
   && CPATH=/home/letandat/Dev/uav-navigation/install/navigation_common/include:${CPATH:-}
   ./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
 
+### 2026-08-29 - Fail closed on invalid Ellipsoid geometry
+
+- **Owner/status:** SUPER corridor/CIRI Ellipsoid utility, `VERIFIED` by the
+  focused planning trajectory suite.
+- **Scope:** Validate positive finite shape/radii, finite center and orthogonal
+  frame at construction; reject invalid/empty point sets; check finite
+  intermediate distances; and report the original source index for the
+  nearest accepted point.
+- **Safety impact:** Default, singular, NaN and degenerate ellipsoids no longer
+  act as live geometry. Empty inputs no longer reach `minCoeff()` and cannot
+  fabricate a nearest point or an inside result.
+- **False-accept/false-reject consequences:** Invalid ellipsoid data and
+  malformed query points fail closed; valid CIRI/MVIE ellipsoids and finite
+  point sets retain their existing geometry.
+- **Runtime cost and evidence:** Construction adds bounded 3x3 eigensolver and
+  frame checks; query checks are linear in the supplied point count. Focused
+  `test_trajectory` passes 107/107, including empty/invalid and source-index
+  regressions.
+- **Removal/review condition:** Keep until Ellipsoid is replaced by a typed
+  validated geometry object with explicit query status.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && CPATH=/home/letandat/Dev/uav-navigation/install/navigation_common/include:${CPATH:-}
+  cmake --build build/navigation_planning_backend --target test_trajectory -j2
+  && CPATH=/home/letandat/Dev/uav-navigation/install/navigation_common/include:${CPATH:-}
+  ./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
+
 ### 2026-08-29 - Make Polytope geometry boundaries fail closed
 
 - **Owner/status:** SUPER corridor geometry utility, `VERIFIED` by the focused

@@ -2246,6 +2246,34 @@ TEST(PlannerTrajectory, PolytopeResetClearsGeometryAndMetadata) {
   EXPECT_FALSE(polytope.PointIsInside(navigation_math::Vec3f::Zero()));
 }
 
+TEST(PlannerTrajectory, EllipsoidBoundariesFailClosedAndPreserveSourceIds) {
+  geometry_utils::Ellipsoid empty;
+  EXPECT_TRUE(empty.empty());
+  EXPECT_FALSE(empty.inside(navigation_math::Vec3f::Zero()));
+  EXPECT_EQ(empty.nearestPointId(Eigen::Matrix3Xd(3, 0)), -1);
+  int point_id = 42;
+  EXPECT_TRUE(std::isnan(empty.nearestPointDis(Eigen::Matrix3Xd(3, 0), point_id)));
+  EXPECT_EQ(point_id, -1);
+
+  geometry_utils::Ellipsoid invalid(
+      navigation_math::Mat3f::Zero(), navigation_math::Vec3f::Zero());
+  EXPECT_TRUE(invalid.empty());
+
+  const geometry_utils::Ellipsoid sphere(
+      navigation_math::Mat3f::Identity(), navigation_math::Vec3f::Ones(),
+      navigation_math::Vec3f::Zero());
+  EXPECT_FALSE(sphere.empty());
+  Eigen::Matrix3Xd points(3, 3);
+  points << 2.0, 0.0, 0.5,
+            0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0;
+  navigation_math::Mat3Df inside_points;
+  int nearest_inside_id = -1;
+  ASSERT_TRUE(sphere.pointsInside(points, inside_points, nearest_inside_id));
+  EXPECT_EQ(nearest_inside_id, 1);
+  EXPECT_EQ(inside_points.cols(), 2);
+}
+
 TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
   auto world = std::make_shared<SweepWorld>();
   navigation_planner_context::PlannerRuntimeContext::Ptr context =

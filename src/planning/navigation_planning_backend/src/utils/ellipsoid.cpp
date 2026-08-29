@@ -6,15 +6,64 @@
 
 #include <data_structure/base/ellipsoid.h>
 
+#include <Eigen/Eigenvalues>
+
+#include <algorithm>
+#include <limits>
+
 using namespace geometry_utils;
+
+namespace {
+
+constexpr float kMinimumAxis = 1.0e-7F;
+
+bool validShape(const Mat3f& shape, const Vec3f& center) {
+    if (!shape.allFinite() || !center.allFinite() ||
+        !std::isfinite(shape.cwiseAbs().maxCoeff())) {
+        return false;
+    }
+    const Eigen::SelfAdjointEigenSolver<Mat3f> solver(
+        0.5 * (shape + shape.transpose()));
+    if (solver.info() != Eigen::Success || !solver.eigenvalues().allFinite() ||
+        (solver.eigenvalues().array() <= kMinimumAxis).any()) {
+        return false;
+    }
+    return (shape - shape.transpose()).cwiseAbs().maxCoeff() <= 1.0e-5F;
+}
+
+bool validFrame(const Mat3f& rotation, const Vec3f& radii,
+                const Vec3f& center) {
+    if (!rotation.allFinite() || !radii.allFinite() || !center.allFinite() ||
+        (radii.array() <= kMinimumAxis).any()) {
+        return false;
+    }
+    const Mat3f orthogonality = rotation.transpose() * rotation;
+    return orthogonality.allFinite() &&
+           (orthogonality - Mat3f::Identity()).cwiseAbs().maxCoeff() <=
+               1.0e-4F && std::isfinite(rotation.determinant()) &&
+           std::abs(rotation.determinant()) > 1.0e-4F;
+}
+
+Vec3f invalidPoint() {
+    return Vec3f::Constant(std::numeric_limits<double>::quiet_NaN());
+}
+
+}  // namespace
 
 bool Ellipsoid::empty() const {
     return undefined;
 }
 
 Ellipsoid::Ellipsoid(const Mat3f &C, const Vec3f &d) : C_(C), d_(d) {
-    undefined = false;
+    if (!validShape(C_, d_)) {
+        undefined = true;
+        return;
+    }
     C_inv_ = C_.inverse();
+    if (!C_inv_.allFinite()) {
+        undefined = true;
+        return;
+    }
 
     Eigen::JacobiSVD<Eigen::Matrix3d, Eigen::FullPivHouseholderQRPreconditioner> svd(C_, Eigen::ComputeFullU);
     Eigen::Matrix3d U = svd.matrixU();
@@ -30,16 +79,25 @@ Ellipsoid::Ellipsoid(const Mat3f &C, const Vec3f &d) : C_(C), d_(d) {
         R_ = U;
         r_ = S;
     }
+    undefined = !validFrame(R_, r_, d_);
 }
 
 Ellipsoid::Ellipsoid(const Mat3f &R, const Vec3f &r, const Vec3f &d)
         : R_(R), r_(r), d_(d) {
-    undefined = false;
+    if (!validFrame(R_, r_, d_)) {
+        undefined = true;
+        return;
+    }
     C_ = R_ * r_.asDiagonal() * R_.transpose();
     C_inv_ = C_.inverse();
+    undefined = !C_.allFinite() || !C_inv_.allFinite();
 }
 
 double Ellipsoid::pointDistaceToEllipsoid(const Vec3f &pt, Vec3f &closest_pt_on_ellip) const {
+    if (empty() || !pt.allFinite()) {
+        closest_pt_on_ellip = invalidPoint();
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     /// step one: transform the point to the ellipsoid frame
     Vec3f pt_ellip_frame = R_.transpose() * (pt - d_);
     double dist = geometry_utils::DistancePointEllipsoid(r_(0), r_(1), r_(2),
@@ -51,25 +109,38 @@ double Ellipsoid::pointDistaceToEllipsoid(const Vec3f &pt, Vec3f &closest_pt_on_
                                                          closest_pt_on_ellip.z());
     /// step two: transform the closest point back to the world frame
     closest_pt_on_ellip = R_ * closest_pt_on_ellip + d_;
+    if (!std::isfinite(dist) || !closest_pt_on_ellip.allFinite()) {
+        closest_pt_on_ellip = invalidPoint();
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     return dist;
 }
 
 int Ellipsoid::nearestPointId(const Eigen::Matrix3Xd &pc) const {
+    if (empty() || pc.cols() <= 0 || !pc.allFinite()) return -1;
     Eigen::VectorXd dists = (C_inv_ * (pc.colwise() - d_)).colwise().norm();
-    int np_id;
+    if (!dists.allFinite()) return -1;
+    int np_id = -1;
     dists.minCoeff(&np_id);
     return np_id;
 }
 
 Vec3f Ellipsoid::nearestPoint(const Eigen::Matrix3Xd &pc) const {
+    if (empty() || pc.cols() <= 0 || !pc.allFinite()) return invalidPoint();
     Eigen::VectorXd dists = (C_inv_ * (pc.colwise() - d_)).colwise().norm();
-    int np_id;
+    if (!dists.allFinite()) return invalidPoint();
+    int np_id = -1;
     dists.minCoeff(&np_id);
     return pc.col(np_id);
 }
 
 double Ellipsoid::nearestPointDis(const Eigen::Matrix3Xd &pc, int &np_id) const {
+    np_id = -1;
+    if (empty() || pc.cols() <= 0 || !pc.allFinite()) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     Eigen::VectorXd dists = (C_inv_ * (pc.colwise() - d_)).colwise().norm();
+    if (!dists.allFinite()) return std::numeric_limits<double>::quiet_NaN();
     double np_dist = dists.minCoeff(&np_id);
     return np_dist;
 }
@@ -144,10 +215,16 @@ Eigen::VectorXd Ellipsoid::dist(const Eigen::Matrix3Xd &pc_w) const {
 }
 
 bool Ellipsoid::noPointsInside(vec_Vec3f &pc, const Eigen::Matrix3d &R, const Vec3f &r, const Vec3f &p) const {
+    if (!R.allFinite() || !r.allFinite() || !p.allFinite() ||
+        (r.array() <= kMinimumAxis).any()) {
+        return false;
+    }
     Eigen::Matrix3d C_inv;
     C_inv = r.cwiseInverse().asDiagonal() * R.transpose();
     for (auto pt_w: pc) {
+        if (!pt_w.allFinite()) return false;
         double d = (C_inv * (pt_w - p)).norm();
+        if (!std::isfinite(d)) return false;
         if (d <= 1) {
             return false;
         }
@@ -156,17 +233,20 @@ bool Ellipsoid::noPointsInside(vec_Vec3f &pc, const Eigen::Matrix3d &R, const Ve
 }
 
 bool Ellipsoid::pointsInside(const Eigen::Matrix3Xd &pc, Mat3Df &out, int &min_pt_id) const {
+    out.resize(3, 0);
+    min_pt_id = -1;
+    if (empty() || pc.cols() <= 0 || !pc.allFinite()) return false;
     Eigen::VectorXd vec = (C_inv_ * (pc.colwise() - d_)).colwise().norm();
+    if (!vec.allFinite()) return false;
     vec_E<Vec3f> pts;
     pts.reserve(pc.cols());
     int cnt = 0;
-    min_pt_id = 0;
     double min_dis = std::numeric_limits<double>::max();
     for (long int i = 0; i < vec.size(); i++) {
         if (vec(i) <= 1) {
             pts.push_back(pc.col(i));
             if (vec(i) <= min_dis) {
-                min_pt_id = cnt;
+                min_pt_id = static_cast<int>(i);
                 min_dis = vec(i);
             }
             cnt++;
@@ -181,6 +261,6 @@ bool Ellipsoid::pointsInside(const Eigen::Matrix3Xd &pc, Mat3Df &out, int &min_p
 }
 
 bool Ellipsoid::inside(const Vec3f &pt) const {
+    if (empty() || !pt.allFinite()) return false;
     return dist(pt) <= 1;
 }
-
