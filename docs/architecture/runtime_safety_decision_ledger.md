@@ -10944,6 +10944,30 @@ release profiles must not use the former allowance.
   test_typed_interfaces -j2 && ./build/navigation_contracts/test_typed_interfaces
   --gtest_color=no`.
 
+### 2026-08-29 - Make Trajectory certificates and extraction alias-safe
+
+- **Owner/status:** Planning trajectory utility and dynamic certificate
+  boundary, `VERIFIED` by the focused trajectory suite.
+- **Scope:** Propagate non-finite or negative piece-rate extrema instead of
+  masking them with later pieces, reject empty/invalid rate checks, snapshot
+  self-aliasing append/extraction inputs, and preserve source data while
+  extracting into an aliased output.
+- **Safety impact:** A malformed piece can no longer be certified because a
+  later valid piece overwrote a sentinel; public aliasing cannot destroy the
+  source trajectory before validation. Ordinary trajectory and certificate
+  behavior is unchanged.
+- **False-accept/false-reject consequences:** Empty trajectories and invalid
+  thresholds are rejected; `append(self)` retains its established logical
+  doubling behavior through a safe temporary copy.
+- **Runtime cost and evidence:** One finite check per piece and a temporary
+  copy only for explicit self-alias calls. Regression covers mixed malformed
+  pieces, empty checks, self-append and both partial extraction APIs.
+- **Removal/review condition:** Keep until trajectory APIs use immutable
+  snapshots and an explicit checked certificate result type.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.
+
 ### 2026-08-29 - Rejected experiment: independently retime outgoing lookahead
 
 - **Owner/status:** Planner guide timing, `REJECTED` and reverted by

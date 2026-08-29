@@ -10,6 +10,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 using namespace geometry_utils;
 using namespace navigation_math;
@@ -168,6 +169,11 @@ void Trajectory::emplace_back(const double &dur,
 }
 
 void Trajectory::append(const Trajectory &traj) {
+    if (this == &traj) {
+        const Trajectory snapshot = traj;
+        append(snapshot);
+        return;
+    }
     if (traj.pieces.size() > pieces.max_size() - pieces.size()) {
         throw std::length_error("appended trajectory is too large");
     }
@@ -301,6 +307,12 @@ Eigen::Vector3d Trajectory::getJuncAcc(int juncIdx) const {
 
 bool Trajectory::getPartialTrajectoryByID(const int &start_id, const int &end_id,
                                           Trajectory &out_traj) const {
+    if (&out_traj == this) {
+        Trajectory snapshot;
+        const bool success = getPartialTrajectoryByID(start_id, end_id, snapshot);
+        if (success) out_traj = std::move(snapshot);
+        return success;
+    }
     out_traj.clear();
     const int piece_count = getPieceNum();
     int end_id_ = end_id;
@@ -334,6 +346,12 @@ bool Trajectory::getPartialTrajectoryByID(const int &start_id, const int &end_id
 
 bool Trajectory::getPartialTrajectoryByTime(const double &start_TT, const double &end_TT,
                                             Trajectory &out_traj) const {
+    if (&out_traj == this) {
+        Trajectory snapshot;
+        const bool success = getPartialTrajectoryByTime(start_TT, end_TT, snapshot);
+        if (success) out_traj = std::move(snapshot);
+        return success;
+    }
     const double total_dur = getTotalDuration();
     out_traj.clear();
     if (!std::isfinite(total_dur) || total_dur <= 0.0 ||
@@ -454,6 +472,9 @@ double Trajectory::getMaxVelRate() const {
     double tempNorm;
     for (int i = 0; i < N; i++) {
         tempNorm = pieces[i].getMaxVelRate();
+        if (!std::isfinite(tempNorm) || tempNorm < 0.0) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
         maxVelRate = maxVelRate < tempNorm ? tempNorm : maxVelRate;
     }
     return maxVelRate;
@@ -465,6 +486,9 @@ double Trajectory::getMaxAccRate() const {
     double tempNorm;
     for (int i = 0; i < N; i++) {
         tempNorm = pieces[i].getMaxAccRate();
+        if (!std::isfinite(tempNorm) || tempNorm < 0.0) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
         maxAccRate = maxAccRate < tempNorm ? tempNorm : maxAccRate;
     }
     return maxAccRate;
@@ -473,12 +497,17 @@ double Trajectory::getMaxAccRate() const {
 double Trajectory::getMaxJerRate() const {
     double maxJerRate = -INFINITY;
     for (const auto& piece : pieces) {
-        maxJerRate = std::max(maxJerRate, piece.getMaxJerRate());
+        const double jerk_rate = piece.getMaxJerRate();
+        if (!std::isfinite(jerk_rate) || jerk_rate < 0.0) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        maxJerRate = std::max(maxJerRate, jerk_rate);
     }
     return maxJerRate;
 }
 
 bool Trajectory::checkMaxVelRate(const double &maxVelRate) const {
+    if (pieces.empty() || !std::isfinite(maxVelRate) || maxVelRate < 0.0) return false;
     int N = getPieceNum();
     bool feasible = true;
     for (int i = 0; i < N && feasible; i++) {
@@ -488,6 +517,7 @@ bool Trajectory::checkMaxVelRate(const double &maxVelRate) const {
 }
 
 bool Trajectory::checkMaxAccRate(const double &maxAccRate) const {
+    if (pieces.empty() || !std::isfinite(maxAccRate) || maxAccRate < 0.0) return false;
     int N = getPieceNum();
     bool feasible = true;
     for (int i = 0; i < N && feasible; i++) {

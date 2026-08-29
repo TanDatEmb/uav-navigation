@@ -493,6 +493,30 @@ TEST(PlannerTrajectory, PieceRejectsMalformedAndLowDegreeRateInputs) {
   EXPECT_FALSE(constant_piece.checkMaxAccRate(-1.0));
 }
 
+TEST(PlannerTrajectory, TrajectoryRateCertificatesFailClosedAndSupportAliasing) {
+  const Eigen::MatrixXd valid_coefficients = Eigen::MatrixXd::Zero(3, 1);
+  const geometry_utils::Piece valid_piece(1.0, valid_coefficients);
+  const geometry_utils::Piece malformed_piece(1.0, Eigen::MatrixXd::Zero(2, 6));
+  geometry_utils::Trajectory mixed;
+  mixed.emplace_back(malformed_piece);
+  mixed.emplace_back(valid_piece);
+  EXPECT_FALSE(std::isfinite(mixed.getMaxVelRate()));
+  EXPECT_FALSE(std::isfinite(mixed.getMaxAccRate()));
+  EXPECT_FALSE(std::isfinite(mixed.getMaxJerRate()));
+
+  geometry_utils::Trajectory empty;
+  EXPECT_FALSE(empty.checkMaxVelRate(1.0));
+  EXPECT_FALSE(empty.checkMaxAccRate(1.0));
+
+  geometry_utils::Trajectory aliased({1.0}, {valid_coefficients});
+  aliased.append(aliased);
+  EXPECT_EQ(aliased.size(), 2U);
+  EXPECT_TRUE(aliased.getPartialTrajectoryByID(0, -1, aliased));
+  EXPECT_EQ(aliased.size(), 2U);
+  EXPECT_TRUE(aliased.getPartialTrajectoryByTime(0.0, 0.5, aliased));
+  EXPECT_EQ(aliased.size(), 1U);
+}
+
 TEST(PlannerTrajectory, PieceRateCertificateBoundsRootSearchAtInitialBoundary) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
   coefficients(0, 0) = 0.5;
