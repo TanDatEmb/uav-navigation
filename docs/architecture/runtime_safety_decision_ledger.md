@@ -1,5 +1,50 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-29 - Continue certified planning through recoverable execution/planner misses
+
+- **Owner/status:** runtime planner-recovery supervisor and planning backend,
+  `PROVISIONAL`; this changes recovery behavior and requires repeated map/SITL
+  evidence before being promoted.
+- **Scope:** A MAIN command whose measured execution anchor reaches 50% of the
+  existing 0.75 m tracking envelope now schedules a measured-state `ReplanOnce`
+  before the External Mode rejection boundary. A rest-to-rest solve that fails
+  retains the existing failure budget but retries with a conservative velocity
+  envelope of 1.0, 0.75, then 0.50 of the configured velocity (later retries
+  are capped at 0.35). Acceleration, jerk, geometry, world freshness, command
+  identity, and execution-store certificates are unchanged and remain hard
+  gates. Recovery is not an unconditional retry: the existing bounded failure
+  window still transitions to fail-closed PX4 handover.
+- **Safety impact:** A transient high-jerk/short-horizon solve failure or
+  growing command-anchor error can be recovered while the vehicle is still
+  executing a certified command. Lower speed can make the same physical jerk
+  and acceleration limits feasible around corners. No invalid or uncertified
+  trajectory is exposed; if the replacement fails or the retained command
+  becomes unusable, the existing emergency/hold/handover path remains
+  authoritative.
+- **False-accept/false-reject consequences:** The new trigger may consume
+  planner CPU earlier and may reject a slower candidate if it cannot pass the
+  unchanged certificate. It must not accept a command above configured
+  V/A/J, outside the immutable world, or with stale identity/freshness. A
+  genuine no-path/tight-corner episode remains bounded by
+  `max_plan_from_rest_failures` and
+  `plan_from_rest_failure_confirmation_s`.
+- **Runtime cost and evidence:** One finite anchor-error comparison per
+  planner cycle; recovery solves use the existing solve deadline and command
+  lease. Required verification is the focused planner-FSM suite, a clean
+  Release build, then repeated 3-column and hardest-map 5 m/s runs with
+  report provenance, command/replan counts, anchor margin, V/A/J certificates,
+  clearance, waypoint completion, and PX4 handover outcome. A single BLOCKED
+  or interrupted run is not acceptance evidence.
+- **Removal/review condition:** Revisit after repeated representative maps
+  show no unnecessary handovers, bounded planner latency, and stable waypoint/
+  altitude/speed recovery. Revert this behavior if any run exposes a command
+  without a fresh measured-state anchor or unchanged certificate.
+- **Verification:** `./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no`; `cmake --build build/navigation_planning_backend
+  --target navigation_planning_backend -j2`; `cmake --build
+  build/navigation_runtime --target navigation_runtime_core test_planner_fsm
+  -j2`; followed by the declared 5 m/s map matrix and artifact review.
+
 ### 2026-08-29 - Make dataset shadow evidence identity-safe and runnable
 
 - **Owner/status:** dataset shadow-planning harness, `PROVISIONAL`; verified by

@@ -80,6 +80,8 @@ namespace navigation_planning_backend {
         bool robot_jerk_estimated_{false};
         bool solve_acceleration_estimated_{false};
         bool solve_jerk_estimated_{false};
+        double nominal_exp_max_velocity_mps_{0.0};
+        double nominal_backup_max_velocity_mps_{0.0};
 
         std::mutex drone_state_mutex_;
         mutable std::mutex replan_lock_;
@@ -477,6 +479,9 @@ namespace navigation_planning_backend {
 
     public:
         bool setState(const navigation_planning::KinematicState &state);
+        // Planning-thread-only recovery envelope. A value below one is a
+        // conservative speed request, never a relaxation of V/A/J limits.
+        void setRecoveryVelocityScale(double scale) noexcept;
 
         bool isEasyGoal(const Vec3f &goal_position);
 

@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 
 #include <traj_opt/config.hpp>
@@ -154,6 +155,14 @@ namespace traj_opt {
                             std::int64_t steady_deadline_ns) noexcept {
             opt_vars.solve_cancelled = solve_cancelled;
             opt_vars.steady_deadline_ns = steady_deadline_ns;
+        }
+
+        // Planning-thread-only recovery envelope; physical acceleration and
+        // jerk limits remain unchanged.
+        void setMaximumVelocity(double maximum_velocity_mps) noexcept {
+            if (std::isfinite(maximum_velocity_mps) && maximum_velocity_mps > 0.0) {
+                cfg_.max_vel = maximum_velocity_mps;
+            }
         }
 
         typedef std::shared_ptr<BackupTrajOpt> Ptr;

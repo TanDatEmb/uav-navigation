@@ -33,6 +33,28 @@ TEST(PlannerFsm, DefersOptimizerWhileCertifiedMainHasRenewalMargin) {
   EXPECT_NEAR(decision.required_lead_time_s, 0.58, 1.0e-15);
 }
 
+TEST(PlannerFsm, StartsAnchorRecoveryBeforeExecutionLeaseIsExhausted) {
+  EXPECT_FALSE(commandAnchorRecoveryDue(
+      false, navigation_planning::CandidateRole::kMain, 0.6, 0.75));
+  EXPECT_FALSE(commandAnchorRecoveryDue(
+      true, navigation_planning::CandidateRole::kBackup, 0.6, 0.75));
+  EXPECT_TRUE(commandAnchorRecoveryDue(
+      true, navigation_planning::CandidateRole::kMain, 0.375, 0.75));
+  EXPECT_TRUE(commandAnchorRecoveryDue(
+      true, navigation_planning::CandidateRole::kMain, 0.6, 0.75));
+  EXPECT_FALSE(commandAnchorRecoveryDue(
+      true, navigation_planning::CandidateRole::kMain,
+      std::numeric_limits<double>::quiet_NaN(), 0.75));
+}
+
+TEST(PlannerFsm, UsesBoundedSlowerVelocityEnvelopeAfterRestFailures) {
+  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(0U), 1.0);
+  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(1U), 0.75);
+  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(2U), 0.50);
+  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(3U), 0.35);
+  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(100U), 0.35);
+}
+
 TEST(PlannerFsm, RenewsBeforeMainCanReachBackupDuringSchedulingAndSolve) {
   const auto before_boundary = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,

@@ -278,6 +278,15 @@ namespace traj_opt {
             opt_vars.steady_deadline_ns = steady_deadline_ns;
         }
 
+        // Planning-thread-only recovery envelope. This lowers the velocity
+        // bound while leaving acceleration, jerk and all hard certificates
+        // unchanged.
+        void setMaximumVelocity(double maximum_velocity_mps) noexcept {
+            if (std::isfinite(maximum_velocity_mps) && maximum_velocity_mps > 0.0) {
+                cfg_.max_vel = maximum_velocity_mps;
+            }
+        }
+
         void resetDiagnostics() noexcept { diagnostics_ = ExpOptimizationDiagnostics{}; }
 
         ExpOptimizationDiagnostics diagnostics() const noexcept { return diagnostics_; }

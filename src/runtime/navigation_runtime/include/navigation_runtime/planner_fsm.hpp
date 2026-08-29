@@ -111,6 +111,39 @@ struct PlannerRenewalDecision {
   double required_lead_time_s{std::numeric_limits<double>::quiet_NaN()};
 };
 
+// Start a replacement solve before the execution-anchor lease is exhausted.
+// This is a recovery trigger only: the replacement still has to pass the
+// normal world, geometry, dynamics, and command-identity certificates.
+inline bool commandAnchorRecoveryDue(
+    bool command_available, navigation_planning::CandidateRole command_role,
+    double command_anchor_error_m, double maximum_anchor_error_m) noexcept {
+  if (!command_available ||
+      command_role != navigation_planning::CandidateRole::kMain ||
+      !std::isfinite(command_anchor_error_m) ||
+      !std::isfinite(maximum_anchor_error_m) || maximum_anchor_error_m <= 0.0) {
+    return false;
+  }
+  return command_anchor_error_m >= 0.5 * maximum_anchor_error_m;
+}
+
+// A failed rest-to-rest solve is retried with a slower velocity envelope.
+// This never relaxes physical limits; it gives the same jerk/acceleration
+// certificate more time to satisfy tight geometry. The failure budget remains
+// the authority for terminal handover.
+inline double plannerRecoveryVelocityScale(
+    const std::uint32_t failure_count) noexcept {
+  switch (failure_count) {
+    case 0U:
+      return 1.0;
+    case 1U:
+      return 0.75;
+    case 2U:
+      return 0.50;
+    default:
+      return 0.35;
+  }
+}
+
 // World recertification and command sampling remain active independently of
 // this gate. The expensive optimizer is deferred only while the exact MAIN
 // bundle still has enough certified time before its declared BACKUP switch (or

@@ -48,6 +48,7 @@ class PlannerFacade final {
   void setPassThroughNextTarget(
       const std::optional<Eigen::Vector3d>& next_target) noexcept;
   bool setState(const navigation_planning::KinematicState& state);
+  void setRecoveryVelocityScale(double scale) noexcept;
 
   [[nodiscard]] navigation_planning::PlannerStatus planFromRest(
       const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);

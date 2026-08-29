@@ -60,6 +60,25 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         return fallback;
     }
 
+    void Planner::setRecoveryVelocityScale(const double scale) noexcept {
+        const double bounded_scale =
+            std::isfinite(scale) && scale > 0.0 && scale <= 1.0 ? scale : 1.0;
+        const double exp_limit = nominal_exp_max_velocity_mps_ * bounded_scale;
+        const double backup_limit = nominal_backup_max_velocity_mps_ * bounded_scale;
+        if (!std::isfinite(exp_limit) || exp_limit <= 0.0 ||
+            !std::isfinite(backup_limit) || backup_limit <= 0.0) {
+            cfg_.exp_traj_cfg.max_vel = nominal_exp_max_velocity_mps_;
+            cfg_.back_traj_cfg.max_vel = nominal_backup_max_velocity_mps_;
+            exp_traj_opt_->setMaximumVelocity(nominal_exp_max_velocity_mps_);
+            back_traj_opt_->setMaximumVelocity(nominal_backup_max_velocity_mps_);
+            return;
+        }
+        cfg_.exp_traj_cfg.max_vel = exp_limit;
+        cfg_.back_traj_cfg.max_vel = backup_limit;
+        exp_traj_opt_->setMaximumVelocity(exp_limit);
+        back_traj_opt_->setMaximumVelocity(backup_limit);
+    }
+
     Vec3f Planner::resolveGoalForPlanning(const Vec3f& requested_goal) {
         requested_goal_p_ = requested_goal;
         planning_goal_p_ = requested_goal;
@@ -180,6 +199,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         planner_context_->setVisualizationEn(cfg_.visualization_en);
         exp_traj_opt_ = std::make_shared<traj_opt::ExpTrajOpt>(cfg_.exp_traj_cfg, planner_context_);
         back_traj_opt_ = std::make_shared<traj_opt::BackupTrajOpt>(cfg_.back_traj_cfg, planner_context_);
+        nominal_exp_max_velocity_mps_ = cfg_.exp_traj_cfg.max_vel;
+        nominal_backup_max_velocity_mps_ = cfg_.back_traj_cfg.max_vel;
         yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(
             cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
         const double occupied_inflation_radius = world_geometry.occupied_inflation_radius_m;

@@ -2014,8 +2014,18 @@ void NavigationRuntimeNode::runCycle() {
                         : std::numeric_limits<double>::quiet_NaN(),
       planning_interval_s, transition_anchor_error_m,
       navigation_contracts::kCommandAnchorErrorLimitM);
+  const auto transition_role = transition_sample
+      ? transition_sample->role
+      : transition_bundle ? transition_bundle->role
+                          : navigation_planning::CandidateRole::kEmergency;
+  const bool anchor_recovery_due = commandAnchorRecoveryDue(
+      planner_command_available_.load(std::memory_order_acquire), transition_role,
+      transition_anchor_error_m,
+      navigation_contracts::kCommandAnchorErrorLimitM);
   const bool plan_from_rest_with_transition = plan_from_rest || measured_state_goal_transition;
   const bool replan_for_new_goal = hot_goal_transition && !plan_from_rest_with_transition;
+  const bool recovery_replan = anchor_recovery_due &&
+      !plan_from_rest_with_transition && !replan_for_new_goal;
   if (new_goal) {
     // MissionController has invalidated the previous waypoint already. Do
     // not publish that waypoint while PlanFromRest runs.
@@ -2030,7 +2040,8 @@ void NavigationRuntimeNode::runCycle() {
     skip_replan_once_ = false;
     return;
   }
-  const bool forced_transition = plan_from_rest_with_transition || replan_for_new_goal;
+  const bool forced_transition = plan_from_rest_with_transition || replan_for_new_goal ||
+      recovery_replan;
   const auto renewal_decision = classifyPlannerRenewal(
       forced_transition,
       planner_command_available_.load(std::memory_order_acquire),
@@ -2052,6 +2063,10 @@ void NavigationRuntimeNode::runCycle() {
   if (renewal_decision.reason == PlannerRenewalReason::kRenewalDue) {
     ++optimizer_renewal_due_count_;
   }
+  const double recovery_scale = plan_from_rest
+      ? plannerRecoveryVelocityScale(plan_from_rest_failure_budget_.failureCount())
+      : 1.0;
+  planner_->setRecoveryVelocityScale(recovery_scale);
   navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
   const auto solve_generation_value = advanceMonotonicId(planner_solve_generation_);
   if (!solve_generation_value) {

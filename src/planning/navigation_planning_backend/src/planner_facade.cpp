@@ -264,6 +264,10 @@ bool PlannerFacade::setState(const navigation_planning::KinematicState& state) {
   return impl_->planner->setState(state);
 }
 
+void PlannerFacade::setRecoveryVelocityScale(const double scale) noexcept {
+  if (impl_ && impl_->planner) impl_->planner->setRecoveryVelocityScale(scale);
+}
+
 navigation_planning::PlannerStatus PlannerFacade::planFromRest(
     const Eigen::Vector3d& target_world, const double target_yaw_rad, const bool new_goal) {
   const Vec3f target = target_world;
