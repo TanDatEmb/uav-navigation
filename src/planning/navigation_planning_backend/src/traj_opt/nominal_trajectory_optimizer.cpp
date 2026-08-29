@@ -1546,8 +1546,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                         duration_reserve_scale);
                 continue;
             }
-            opt_vars.duration_lower_bound = reserved_duration_s;
-            gcopter::backwardMapTToTau(free_duration_seed_s, tau);
+            // This branch accepts the already-certified deterministic guide
+            // directly; the requested reserve is therefore the complete
+            // duration, not an additional lower bound plus another reserve.
+            opt_vars.duration_lower_bound.resize(0);
+            gcopter::backwardMapTToTau(reserved_duration_s, tau);
             if (!x.allFinite()) continue;
             rebuild_candidate();
             update_dynamic_extrema();
@@ -1650,8 +1653,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             break;
         }
         opt_vars.duration_lower_bound = reserved_duration_s;
-        const VecDf free_duration_seed_s = nominal_duration_s *
-                (duration_reserve_scale - 1.0);
+        // forwardMapTauToT() returns free duration and the objective adds the
+        // lower bound.  Seed only a tiny positive slack so the actual initial
+        // duration remains the requested reserve instead of adding the
+        // reserve a second time.
+        const VecDf free_duration_seed_s = nominal_duration_s.unaryExpr(
+                [](const double duration_s) {
+                    return std::max(1.0e-9, duration_s * 1.0e-6);
+                });
         if (!free_duration_seed_s.allFinite() || free_duration_seed_s.size() == 0 ||
             free_duration_seed_s.minCoeff() <= 0.0) {
             diagnostics_.retry_stop_reason = 1;

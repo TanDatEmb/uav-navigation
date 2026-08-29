@@ -48,6 +48,7 @@ enum class ResetObservationStatus : std::uint8_t {
   kCounterDiscontinuity,
   kInvalidResetRotation,
   kProbableSourceRestart,
+  kGenerationExhausted,
 };
 
 [[nodiscard]] const char* toString(ResetObservationStatus status) noexcept;

@@ -4,9 +4,25 @@
 
 #include "px4_odometry_bridge/frame_converter.hpp"
 
+#include <limits>
+
 namespace px4_odometry_bridge {
 
 namespace {
+
+bool knownPoseFrame(const PoseFrame frame) {
+  return frame == PoseFrame::kNed || frame == PoseFrame::kFrd;
+}
+
+bool knownVelocityFrame(const VelocityFrame frame) {
+  return frame == VelocityFrame::kNed || frame == VelocityFrame::kFrd ||
+         frame == VelocityFrame::kBodyFrd;
+}
+
+bool knownWorldConvention(const WorldConvention convention) {
+  return convention == WorldConvention::kRosEnu ||
+         convention == WorldConvention::kPx4FrdLocal;
+}
 
 Eigen::Vector3d rotateDiagonalVariance(const Eigen::Matrix3d &rotation,
                                        const Eigen::Vector3d &variance) {
@@ -32,6 +48,7 @@ const char* toString(const ResetObservationStatus status) noexcept {
     case ResetObservationStatus::kCounterDiscontinuity: return "counter_discontinuity";
     case ResetObservationStatus::kInvalidResetRotation: return "invalid_reset_rotation";
     case ResetObservationStatus::kProbableSourceRestart: return "probable_source_restart";
+    case ResetObservationStatus::kGenerationExhausted: return "generation_exhausted";
   }
   return "unknown";
 }
@@ -39,6 +56,32 @@ const char* toString(const ResetObservationStatus status) noexcept {
 ResetObservation ResetCompensator::observe(
     ConvertedOdometry sample, DetailedResetMetadata metadata) {
   ResetObservation result;
+  const double orientation_norm_squared = sample.orientation.squaredNorm();
+  const auto valid_variance = [](const Eigen::Vector3d& value, const bool available) {
+    return value.allFinite() && (!available || (value.array() >= 0.0).all());
+  };
+  if (sample.timestamp_ns <= 0 || sample.frame_generation == 0U ||
+      !knownPoseFrame(sample.source_pose_frame) ||
+      !knownVelocityFrame(sample.source_velocity_frame) ||
+      !knownWorldConvention(sample.world_convention) ||
+      !sample.position.allFinite() || !sample.velocity_world.allFinite() ||
+      !sample.velocity_body.allFinite() || !sample.angular_velocity_body.allFinite() ||
+      !sample.orientation.coeffs().allFinite() ||
+      !std::isfinite(orientation_norm_squared) ||
+      std::abs(orientation_norm_squared - 1.0) > 1.0e-6 ||
+      !valid_variance(sample.position_variance, sample.position_covariance_available) ||
+      !valid_variance(sample.velocity_variance, sample.velocity_covariance_available) ||
+      !valid_variance(sample.orientation_variance, sample.orientation_covariance_available)) {
+    result.status = ResetObservationStatus::kInvalidMetadata;
+    result.reset_generation = reset_generation_;
+    return result;
+  }
+  if (metadata.matched_odometry_timestamp_ns != 0 &&
+      metadata.matched_odometry_timestamp_ns != sample.timestamp_ns) {
+    result.status = ResetObservationStatus::kInvalidMetadata;
+    result.reset_generation = reset_generation_;
+    return result;
+  }
   if (!initialized_) {
     initialized_ = true;
     last_counter_ = sample.reset_counter;
@@ -62,6 +105,11 @@ ResetObservation ResetCompensator::observe(
         result.reset_generation = reset_generation_;
         return result;
       }
+      if (reset_generation_ == std::numeric_limits<std::uint64_t>::max()) {
+        result.status = ResetObservationStatus::kGenerationExhausted;
+        result.reset_generation = reset_generation_;
+        return result;
+      }
       if (!last_output_.has_value() || metadata.timestamp_ns <= 0 ||
           ((metadata.position_xy_reset || metadata.position_z_reset) &&
            !metadata.position_delta_source.allFinite()) ||
@@ -78,7 +126,7 @@ ResetObservation ResetCompensator::observe(
         const double attitude_norm_squared = metadata.attitude_delta.squaredNorm();
         if (!metadata.attitude_delta.coeffs().allFinite() ||
             !std::isfinite(attitude_norm_squared) ||
-            attitude_norm_squared < 1.0e-18) {
+            std::abs(attitude_norm_squared - 1.0) > 1.0e-6) {
           result.status = ResetObservationStatus::kInvalidResetRotation;
           result.reset_generation = reset_generation_;
           return result;

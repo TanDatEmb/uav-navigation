@@ -10996,6 +10996,56 @@ release profiles must not use the former allowance.
   test_imu_initializer test_ikfom_estimator -j2`, followed by both focused
   executables with `--gtest_color=no`.
 
+### 2026-08-29 - Correct duration-reserve parameterization
+
+- **Owner/status:** SUPER EXP deterministic stretch and bounded feasibility
+  retry, `VERIFIED` by planner duration-parameterization tests.
+- **Scope:** Make a bounded deterministic stretch map the requested reserve to
+  the complete free duration, and seed feasibility retry with a tiny positive
+  free slack above its explicit lower bound. This removes the previous
+  `T_lower + (scale - 1)T` double-reserve construction.
+- **Safety impact:** The hard corridor, dynamic, flatness, world and execution
+  certificates are unchanged; only the initial duration presented to the
+  existing bounded retry/guide path is corrected. The planner no longer
+  starts from a command up to `(2*scale-1)` times the nominal duration.
+- **False-accept/false-reject consequences:** Commands may start at the
+  intended reserve duration rather than an unnecessarily longer one. No
+  candidate is accepted without the existing hard certificates, and failed
+  candidates still fail closed.
+- **Runtime cost and evidence:** No additional solve iteration; one bounded
+  unary duration transform. The duration suite covers scales 1.05, 1.5, 2.0
+  and 4.0; no SITL threshold was tuned.
+- **Removal/review condition:** Keep until duration parameterization is a
+  typed target-duration contract and retry diagnostics report actual and free
+  components separately.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_planner_config -j2 && ./build/navigation_planning_backend/test_planner_config
+  --gtest_color=no`.
+
+### 2026-08-29 - Validate PX4 reset-compensator public samples
+
+- **Owner/status:** PX4 odometry reset compensator ingress and reset-generation
+  boundary, `VERIFIED` by the bridge suite.
+- **Scope:** Validate converted timestamp/frame/generation/vector/quaternion/
+  covariance fields before continuity state mutation, validate optional
+  odometry association identity, reject non-unit reset quaternions, and stop
+  reset-generation increment before uint64 exhaustion.
+- **Safety impact:** Direct malformed bridge callers can no longer seed NaN
+  continuity transforms or invalid frame data; reset-generation identity cannot
+  wrap after the final representable transition.
+- **False-accept/false-reject consequences:** Invalid converted samples and
+  mismatched optional associations are suppressed as invalid metadata. Normal
+  converter output, counter wrap at the PX4 uint8 source boundary, and valid
+  reset compensation are unchanged.
+- **Runtime cost and evidence:** Constant-time finite/domain checks per sample
+  and no additional map/planner work. `test_px4_odometry_bridge` passes 40/40,
+  including malformed quaternion ingress.
+- **Removal/review condition:** Keep until converted odometry is an immutable
+  validated type and reset generation is owned by one checked monotonic source.
+- **Verification:** `cmake --build build/px4_odometry_bridge --target
+  test_px4_odometry_bridge -j2 &&
+  ./build/px4_odometry_bridge/test_px4_odometry_bridge --gtest_color=no`.
+
 ### 2026-08-29 - Harden Fast-LIO quaternion and timestamp interpolation boundaries
 
 - **Owner/status:** Fast-LIO rigid state, transform, trajectory and angular

@@ -20,6 +20,9 @@ struct SuffixedTopicMessage { static constexpr std::uint32_t MESSAGE_VERSION = 2
 px4_odometry_bridge::ConvertedOdometry sample(std::int64_t time) {
   px4_odometry_bridge::ConvertedOdometry value;
   value.timestamp_ns = time;
+  value.source_pose_frame = px4_odometry_bridge::PoseFrame::kNed;
+  value.source_velocity_frame = px4_odometry_bridge::VelocityFrame::kBodyFrd;
+  value.world_convention = px4_odometry_bridge::WorldConvention::kRosEnu;
   value.position.x() = static_cast<double>(time) * 1e-9;
   value.velocity_world.x() = 1.0;
   value.velocity_body.x() = 1.0;
@@ -560,6 +563,15 @@ TEST(Px4ResetCompensator, RejectsOverflowingAttitudeResetQuaternion) {
   metadata.attitude_delta.coeffs().setConstant(std::numeric_limits<double>::max());
   const auto result = compensator.observe(reset, metadata);
   EXPECT_EQ(result.status, px4_odometry_bridge::ResetObservationStatus::kInvalidResetRotation);
+}
+
+TEST(Px4ResetCompensator, RejectsMalformedConvertedOdometryAtIngress) {
+  px4_odometry_bridge::ResetCompensator compensator;
+  auto malformed = sample(1'000'000'000);
+  malformed.orientation.coeffs().setConstant(std::numeric_limits<double>::max());
+  const auto result = compensator.observe(malformed);
+  EXPECT_FALSE(result.has_value());
+  EXPECT_EQ(result.status, px4_odometry_bridge::ResetObservationStatus::kInvalidMetadata);
 }
 
 TEST(Px4RingBuffer, RequiresStableSamplesAfterGenerationChange) {

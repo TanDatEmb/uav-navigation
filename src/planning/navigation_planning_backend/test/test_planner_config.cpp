@@ -245,6 +245,26 @@ TEST(PlannerDurationParameterization, RoundTripsFreeDurationSeed) {
   EXPECT_TRUE(reconstructed_free_duration_s.isApprox(free_duration_s, 1.0e-12));
 }
 
+TEST(PlannerDurationParameterization, ReserveScaleIsNotAddedTwice) {
+  navigation_math::VecDf nominal_duration_s(3);
+  nominal_duration_s << 0.5, 1.0, 2.0;
+  for (const double scale : {1.05, 1.5, 2.0, 4.0}) {
+    const navigation_math::VecDf target_duration_s = nominal_duration_s * scale;
+    navigation_math::VecDf tau_storage(3);
+    using MappedVector = Eigen::Map<Eigen::VectorXd>;
+    MappedVector tau(tau_storage.data(), 3);
+    optimization_utils::Gcopter<MappedVector>::backwardMapTToTau(
+        target_duration_s, tau);
+    navigation_math::VecDf reconstructed_free_duration_s;
+    optimization_utils::Gcopter<MappedVector>::forwardMapTauToT(
+        tau, reconstructed_free_duration_s);
+    ASSERT_TRUE(reconstructed_free_duration_s.allFinite());
+    EXPECT_TRUE(reconstructed_free_duration_s.isApprox(target_duration_s, 1.0e-12));
+    EXPECT_TRUE(reconstructed_free_duration_s.isApprox(nominal_duration_s * scale,
+                                                       1.0e-12));
+  }
+}
+
 TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
   EXPECT_EQ(planner.exp_traj_cfg.pos_constraint_type, traj_opt::CORRIDOR);
