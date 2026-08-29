@@ -1308,6 +1308,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("PropagatedOdometry", helper_source)
         self.assertIn("on_propagated_odometry", helper_source)
         self.assertIn("message.odometry", helper_source)
+        self.assertIn('route.waypoint_ids.append("shadow_target")', helper_source)
         self.assertIn(
             "if not command_matches_shadow_goal(\n            message, goal_message, goal_localization_epoch\n        ):",
             helper_source,

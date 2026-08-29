@@ -8,7 +8,9 @@
   do not match the active synthetic goal's mission, waypoint, request,
   localization epoch, and nonzero goal epoch. Synthetic teardown no longer
   references an out-of-scope callback variable and safely no-ops when its local
-  goal/odometry is absent.
+  goal/odometry is absent. The synthetic goal now also carries a complete
+  one-waypoint route mirror, so the runtime route decoder receives the same
+  immutable-route contract as the External Mode scenario.
 - **Safety impact:** Foreign commands cannot create false planner evidence, and
   a replay failure is reported as a harness failure rather than aborting from a
   callback-name error. This helper remains benchmark-only and never executes a
@@ -17,7 +19,8 @@
   existing evidence semantics. Foreign or malformed commands are excluded and
   leave the shadow result fail-closed.
 - **Runtime cost and evidence:** One constant-time identity comparison per
-  command; `python3 -m py_compile tools/runtime/dataset_shadow_planning.py` and
+  command and one bounded route fixture per replay; `python3 -m py_compile
+  tools/runtime/dataset_shadow_planning.py` and
   the focused runtime-contract test are required, followed by a prepared-bag
   replay.
 - **Removal/review condition:** Keep until shadow events are consumed through a

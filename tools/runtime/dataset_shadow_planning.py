@@ -252,6 +252,25 @@ def main() -> int:
                 goal_message.acceptance_radius_m = 0.20
                 goal_message.behavior = NavigationGoal.BEHAVIOR_STOP
                 goal_message.has_next_target = False
+                route = goal_message.route
+                route.mission_id = goal_message.mission_id
+                route.frame_id = goal_message.header.frame_id
+                route.route_revision = 1
+                route.request_id = goal_message.request_id
+                route.active_waypoint_index = goal_message.waypoint_index
+                route.waypoint_positions.append(goal_message.target)
+                route.waypoint_ids.append("shadow_target")
+                route.waypoint_acceptance_radii_m.append(
+                    goal_message.acceptance_radius_m
+                )
+                route.waypoint_behaviors.append(
+                    NavigationGoal.BEHAVIOR_STOP
+                )
+                route.measured_progress_valid = True
+                route.measured_segment_index = 0
+                route.measured_progress_arc_m = 0.0
+                route.measured_projection_arc_m = 0.0
+                route.measured_lateral_error_m = 0.0
                 goal_publisher.publish(goal_message)
                 last_goal_publish_wall = time.monotonic()
                 result.update(
