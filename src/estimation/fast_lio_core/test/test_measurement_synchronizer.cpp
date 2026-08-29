@@ -44,6 +44,11 @@ TEST(MeasurementSynchronizerTest, IncludesBothImuBrackets) {
   EXPECT_EQ(buffer.imuSize(), 3U);
 }
 
+TEST(MeasurementSynchronizerTest, RejectsDisabledImuGapGate) {
+  EXPECT_THROW(
+      { MeasurementSynchronizer synchronizer({0}); }, std::invalid_argument);
+}
+
 TEST(MeasurementSynchronizerTest, IncludesInterScanPropagationInterval) {
   MeasurementBuffer buffer;
   ASSERT_TRUE(buffer.pushLidar(syncScan(100, 200)).ok());
@@ -217,7 +222,7 @@ TEST(ProcessingStatisticsTest, ProcessingRatiosAreSeparatedByStage) {
 
 TEST(MeasurementSynchronizerTest, DelayedProcessingWithCompleteQueueDoesNotLoseImu) {
   MeasurementBuffer buffer;
-  for (std::int64_t time = 0; time <= 250'000'000; time += 5'780'000) {
+  for (std::int64_t time = 1; time <= 250'000'000; time += 5'780'000) {
     ASSERT_TRUE(buffer.pushImu(syncImu(time)).ok());
   }
   ASSERT_TRUE(buffer.pushLidar(syncScan(100'000'000, 132'635'000)).ok());

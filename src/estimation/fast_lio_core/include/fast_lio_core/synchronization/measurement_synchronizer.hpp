@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 
 #include "fast_lio_core/common/result.hpp"
 #include "fast_lio_core/sensor/measurement_group.hpp"
@@ -62,7 +63,12 @@ struct SynchronizationResult {
 
 class MeasurementSynchronizer {
  public:
-  explicit MeasurementSynchronizer(MeasurementSynchronizerConfig config = {});
+  explicit MeasurementSynchronizer(MeasurementSynchronizerConfig config = {})
+      : config_(config) {
+    if (config_.maximum_imu_gap_ns <= 0) {
+      throw std::invalid_argument("maximum IMU gap must be positive");
+    }
+  }
 
   // A successful empty optional means more data is required. An error means
   // the front scan was permanently invalid and has been removed.

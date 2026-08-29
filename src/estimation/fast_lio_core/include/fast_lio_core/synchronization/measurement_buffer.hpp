@@ -4,6 +4,7 @@
 #include <deque>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 
 #include "fast_lio_core/common/status.hpp"
 #include "fast_lio_core/sensor/imu_sample.hpp"

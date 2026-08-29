@@ -33,6 +33,17 @@ TEST(MeasurementBufferTest, AcceptsOrderedStreams) {
   EXPECT_EQ(buffer.stats().accepted_imu_samples, 1U);
 }
 
+TEST(MeasurementBufferTest, RejectsInvalidCapacityAndEpoch) {
+  MeasurementBufferConfig config;
+  config.maximum_lidar_scans = 0;
+  EXPECT_THROW(
+      { MeasurementBuffer buffer(config); }, std::invalid_argument);
+
+  MeasurementBuffer buffer;
+  EXPECT_EQ(buffer.pushImu(makeImu(0)).code(), StatusCode::kInvalidArgument);
+  EXPECT_EQ(buffer.pushLidar(makeScan(0, 20)).code(), StatusCode::kInvalidArgument);
+}
+
 TEST(MeasurementBufferTest, RejectsTimestampRegression) {
   MeasurementBuffer buffer;
   ASSERT_TRUE(buffer.pushImu(makeImu(100)).ok());

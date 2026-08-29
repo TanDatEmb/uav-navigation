@@ -8,9 +8,6 @@
 
 namespace uav::nav::lio {
 
-MeasurementSynchronizer::MeasurementSynchronizer(MeasurementSynchronizerConfig config)
-    : config_(config) {}
-
 Result<SynchronizationResult> MeasurementSynchronizer::synchronizeNext(
     MeasurementBuffer& buffer) {
   std::scoped_lock lock(buffer.mutex_);
@@ -105,7 +102,7 @@ Result<SynchronizationResult> MeasurementSynchronizer::synchronizeNext(
       maximum_gap_current_ns = current->time.nanoseconds();
     }
   }
-  if (config_.maximum_imu_gap_ns > 0 && maximum_gap_ns > config_.maximum_imu_gap_ns) {
+  if (maximum_gap_ns > config_.maximum_imu_gap_ns) {
     const Timestamp scan_start = scan.start_time;
     const Timestamp scan_end = scan.end_time;
     const Timestamp gap_begin(maximum_gap_previous_ns,

@@ -6,11 +6,14 @@
 namespace uav::nav::lio {
 
 Status LidarScan::validate() const {
+  if (start_time.nanoseconds() <= 0 || end_time.nanoseconds() <= 0) {
+    return Status(StatusCode::kInvalidArgument, "LiDAR scan timestamps must be positive");
+  }
   const auto scan_duration = checkedDifference(end_time, start_time);
   if (!scan_duration.ok()) {
     return scan_duration.status();
   }
-  if (scan_duration.value().nanoseconds() < 0) {
+  if (scan_duration.value().nanoseconds() <= 0) {
     return Status(StatusCode::kTimestampRegression, "LiDAR scan end precedes scan start");
   }
   if (points.empty()) {

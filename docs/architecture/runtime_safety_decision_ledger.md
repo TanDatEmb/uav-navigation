@@ -10968,6 +10968,27 @@ release profiles must not use the former allowance.
   test_parameter_loader -j2 && ./build/fast_lio_ros/test_parameter_loader
   --gtest_color=no`.
 
+### 2026-08-29 - Enforce positive Fast-LIO sensor and synchronizer domains
+
+- **Owner/status:** Fast-LIO core sensor ingress, measurement buffer and
+  synchronizer, `VERIFIED` by focused buffer/synchronizer tests.
+- **Scope:** Require positive IMU/scan epochs and nonzero scan intervals,
+  reject zero-capacity measurement buffers, and reject a non-positive IMU-gap
+  configuration instead of silently disabling the gap gate.
+- **Safety impact:** Direct core callers cannot inject invalid epochs or a
+  zero-duration scan into synchronization; configuration cannot make missing
+  IMU coverage appear acceptable or trigger empty-buffer behavior.
+- **False-accept/false-reject consequences:** Normal positive sensor streams
+  and configured positive gap thresholds are unchanged. Legacy fixtures or
+  callers using epoch zero or zero-duration scans are rejected explicitly.
+- **Runtime cost and evidence:** Constant-time domain checks at ingress and
+  construction. Measurement buffer passes 6/6 and synchronizer passes 13/13.
+- **Removal/review condition:** Keep until Timestamp carries an explicit
+  validated epoch policy and synchronizer configs are typed durations.
+- **Verification:** `cmake --build build/fast_lio_core --target
+  test_measurement_buffer test_measurement_synchronizer -j2` followed by both
+  focused test binaries with `--gtest_color=no`.
+
 ### 2026-08-29 - Harden runtime harness ownership and evidence parsing
 
 - **Owner/status:** Runtime process harness, shell environment and report

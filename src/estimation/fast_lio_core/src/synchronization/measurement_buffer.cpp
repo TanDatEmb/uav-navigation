@@ -1,6 +1,7 @@
 #include "fast_lio_core/synchronization/measurement_buffer.hpp"
 
 #include <algorithm>
+#include <stdexcept>
 #include <utility>
 
 namespace uav::nav::lio {
@@ -27,7 +28,11 @@ MeasurementBuffer::MeasurementBuffer(MeasurementBufferConfig config)
     : config_(config),
       lidar_start_validator_(validatorConfig(config)),
       lidar_end_validator_(validatorConfig(config)),
-      imu_validator_(validatorConfig(config)) {}
+      imu_validator_(validatorConfig(config)) {
+  if (config_.maximum_lidar_scans == 0U || config_.maximum_imu_samples == 0U) {
+    throw std::invalid_argument("measurement buffer capacities must be positive");
+  }
+}
 
 Status MeasurementBuffer::pushLidar(LidarScan scan) {
   const Status scan_status = scan.validate();
