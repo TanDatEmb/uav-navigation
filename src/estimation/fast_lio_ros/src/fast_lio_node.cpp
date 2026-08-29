@@ -117,7 +117,7 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
       livox_custom_adapter_(
           parameters_.lidar_input_frame,
           parseClockDomain(parameters_.input_clock_domain),
-          livoxTimestampPolicy(parameters_)),
+          livoxTimestampPolicy(parameters_), pointTimeConfig(parameters_)),
       // The seed is monotonic for the host process lifetime, so a restarted
       // estimator gets a generation greater than the runtime's previous
       // epoch even when its source timestamp clock restarts at zero.
@@ -355,7 +355,11 @@ void FastLioNode::onVisibilityCloud(
         parameters_.lidar_frame.c_str());
     return;
   }
-  output_publisher_.setVisibilityCloud(message);
+  if (!output_publisher_.setVisibilityCloud(message)) {
+    RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "discarding visibility cloud with invalid or oversized layout");
+  }
 }
 
 void FastLioNode::onInitialStatePrior(
@@ -510,16 +514,17 @@ bool FastLioNode::enqueue(InputMeasurement measurement) {
       const auto time_ns = std::get<ImuSample>(measurement).time.nanoseconds();
       runtime_diagnostics_.latest_received_time_ns =
           std::max(runtime_diagnostics_.latest_received_time_ns, time_ns);
-      if (previous_ros_imu_ns_ >= 0) {
-        const auto gap_ns = time_ns - previous_ros_imu_ns_;
-        if (gap_ns <= 0) {
+      if (previous_ros_imu_ns_ > 0) {
+        const auto gap_ns = navigation_common::checkedDifference(
+            time_ns, previous_ros_imu_ns_);
+        if (!gap_ns || *gap_ns <= 0) {
           ++ingress_diagnostics_.timestamp_regression_count;
         } else {
           ingress_diagnostics_.ros_maximum_imu_gap_ns =
-              std::max(ingress_diagnostics_.ros_maximum_imu_gap_ns, gap_ns);
+              std::max(ingress_diagnostics_.ros_maximum_imu_gap_ns, *gap_ns);
         }
       }
-      previous_ros_imu_ns_ = time_ns;
+      previous_ros_imu_ns_ = std::max(previous_ros_imu_ns_, time_ns);
     } else {
       ++ingress_diagnostics_.ros_received_lidar_count;
       ++runtime_diagnostics_.received_lidar_count;
@@ -678,13 +683,20 @@ void FastLioNode::processingLoop() {
       runtime_diagnostics_.latest_processed_time_ns =
           std::max(runtime_diagnostics_.latest_processed_time_ns,
                    measurement_time_ns);
-      runtime_diagnostics_.processing_lag_ns = std::max<std::int64_t>(
-          0, runtime_diagnostics_.latest_received_time_ns -
-                 runtime_diagnostics_.latest_processed_time_ns);
-      runtime_diagnostics_.processing_lag_exceeded =
-          runtime_diagnostics_.processing_lag_exceeded ||
-          runtime_diagnostics_.processing_lag_ns >
-              maximum_processing_lag_ns_;
+      const auto processing_lag = navigation_common::checkedDifference(
+          runtime_diagnostics_.latest_received_time_ns,
+          runtime_diagnostics_.latest_processed_time_ns);
+      if (!processing_lag) {
+        runtime_diagnostics_.processing_lag_ns =
+            std::numeric_limits<std::int64_t>::max();
+        runtime_diagnostics_.processing_lag_exceeded = true;
+      } else {
+        runtime_diagnostics_.processing_lag_ns = std::max<std::int64_t>(
+            0, *processing_lag);
+        runtime_diagnostics_.processing_lag_exceeded =
+            runtime_diagnostics_.processing_lag_exceeded ||
+            runtime_diagnostics_.processing_lag_ns > maximum_processing_lag_ns_;
+      }
       ++runtime_diagnostics_.worker_heartbeat;
       runtime_diagnostics_.worker_last_progress_wall_time_ns =
           std::chrono::duration_cast<std::chrono::nanoseconds>(

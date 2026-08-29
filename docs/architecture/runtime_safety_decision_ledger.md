@@ -13162,3 +13162,139 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
+
+### 2026-08-29 - Preserve nearest-neighbor completeness in ikd-Tree
+
+- **Owner/status:** ikd-Tree vendor integration, `PROVISIONAL`; brute-force
+  nearest-neighbor regression required.
+- **Scope:** The KD-tree search now descends when either child lower bound can
+  improve the current worst candidate. The previous conjunction could skip a
+  closer child whenever its sibling was farther away.
+- **Safety impact:** Registration no longer receives an incomplete nearest
+  neighbor set from this pruning error. No map, residual, or estimator gate is
+  relaxed; the patch is limited to restoring the nearest-neighbor invariant.
+- **False-accept/false-reject consequences:** Valid nearest-neighbor results
+  are preserved; malformed or empty inputs retain their existing rejection
+  behavior. Search work may increase for trees where only one child is useful.
+- **Runtime cost and evidence:** The decision remains a constant-time bound
+  comparison at each visited node. The vendor smoke test must compare returned
+  distances with a deterministic brute-force reference.
+- **Removal/review condition:** Revisit only when the pinned upstream version
+  provides the same one-child lower-bound invariant or the registration owner
+  replaces the vendor tree.
+- **Verification:** `cmake --build build/ikd_tree_vendor --target
+  test_ikd_tree_upstream_smoke -j2 &&
+  ./build/ikd_tree_vendor/test_ikd_tree_upstream_smoke --gtest_color=no`.
+
+### 2026-08-29 - Fail closed on continuity gaps and clock regressions
+
+- **Owner/status:** PX4 external-odometry bridge and mode metrics boundary,
+  `PROVISIONAL`; focused gate/continuity regression required.
+- **Scope:** A continuity observation after a gap larger than the configured
+  maximum remains untrusted, and the external-odometry publication gate now
+  requires trusted continuity before publishing. Runtime metrics use checked
+  timestamp difference and retain the previous high-water timestamp when the
+  clock regresses.
+- **Safety impact:** An arbitrary pose/orientation jump immediately following a
+  long source gap cannot be rebaselined and published as trusted odometry.
+  Clock rollback cannot cause timestamp arithmetic overflow or alter the log
+  throttle state. No recovery or freshness gate is relaxed.
+- **False-accept/false-reject consequences:** The first sample after a long
+  gap is suppressed until a subsequent sample establishes a fresh baseline;
+  normal continuous samples are unchanged. A regressed metrics clock only
+  suppresses that log cycle.
+- **Runtime cost and evidence:** One checked subtraction and one boolean gate
+  per odometry sample, plus a bounded policy helper for metrics. Regression
+  coverage includes long-gap trust and int64 clock rollback.
+- **Removal/review condition:** Keep until repeated source-gap evidence proves
+  an explicit bounded rebaseline protocol with no false acceptance.
+- **Verification:** PX4 bridge and external-mode focused tests, plus the node
+  target build, must pass before promotion.
+
+### 2026-08-29 - Apply canonical timing/resource limits to Livox ingress
+
+- **Owner/status:** FAST-LIO ROS sensor ingress, `PROVISIONAL`; adapter
+  regression required.
+- **Scope:** Livox CustomMsg now receives the canonical point-time limits,
+  validates header-to-timebase offset for both timestamp policies, rejects
+  payloads above the shared two-million-point cap, and enforces maximum scan
+  duration before reserving/copying the payload into core types.
+- **Safety impact:** A malformed or oversized Livox message cannot bypass the
+  timing contract or force unbounded ingress allocation. This is fail-closed
+  input validation; no accepted timing window is enlarged.
+- **False-accept/false-reject consequences:** Existing valid Livox messages
+  within configured duration/offset limits are unchanged. Messages outside
+  those limits are rejected at the ROS boundary.
+- **Runtime cost and evidence:** Validation is bounded before payload copy;
+  normal conversion retains its existing per-point work. Focused tests cover
+  duration, header offset, and oversized payload rejection.
+- **Removal/review condition:** Keep until all LiDAR ingress paths share a
+  typed timing/resource contract and recorded-data load evidence is complete.
+- **Verification:** `cmake --build build/fast_lio_ros --target
+  test_ros_livox_custom_adapter -j2 &&
+  ./build/fast_lio_ros/test_ros_livox_custom_adapter --gtest_color=no`.
+
+### 2026-08-29 - Bound visibility-cloud retention and endian handling
+
+- **Owner/status:** FAST-LIO ROS visibility ingress, `PROVISIONAL`; focused
+  publisher/ingress coverage required.
+- **Scope:** Visibility PointCloud2 messages are rejected before retention
+  unless their dimensions, row storage, XYZ fields, endian mode, and point
+  count are representable and within the existing 262144-point processing
+  budget. Free-space conversion applies the same validation before reading
+  native floats.
+- **Safety impact:** A large or big-endian visibility payload cannot occupy the
+  retained history or be decoded as incorrectly located free-space evidence.
+  The existing output cap and fail-closed empty-cloud behavior remain intact.
+- **False-accept/false-reject consequences:** Valid little-endian clouds with
+  valid XYZ fields retain their existing behavior. Oversized, malformed, or
+  unsupported-endian clouds are dropped at ingress.
+- **Runtime cost and evidence:** Constant-size layout/field validation occurs
+  before the shared-pointer enters the 16-message history; focused publisher
+  tests remain required.
+- **Removal/review condition:** Keep until visibility uses a validated compact
+  message type or an equivalent bounded transport contract.
+- **Verification:** `cmake --build build/fast_lio_ros --target fast_lio_node
+  -j2` plus a focused visibility-cloud regression.
+
+### 2026-08-29 - Use source time for LIO diagnostic freshness
+
+- **Owner/status:** PX4 external-odometry diagnostic freshness boundary,
+  `PROVISIONAL`; bridge replay evidence required.
+- **Scope:** A diagnostic heartbeat is fresh only according to its checked,
+  positive producer timestamp. Receipt time is no longer substituted for the
+  source timestamp, so a delayed old message cannot extend LIO validity.
+- **Safety impact:** Transport delay or executor backlog cannot mask stale LIO
+  state and reopen external-odometry publication. Timestamp regression and
+  clock-domain failures remain fail-closed.
+- **False-accept/false-reject consequences:** Ordered source-time heartbeats
+  within the configured age retain behavior. A heartbeat delivered after its
+  source-time freshness window closes the gate until a current heartbeat
+  arrives.
+- **Runtime cost and evidence:** One checked timestamp delta per gate query;
+  no planner or PX4 threshold is changed.
+- **Removal/review condition:** Keep until the diagnostic message carries an
+  authenticated producer sequence and explicit source/arrival clock contract.
+- **Verification:** PX4 bridge focused tests followed by repeated SITL/replay
+  correlation of diagnostic source stamps and gate state.
+
+### 2026-08-29 - Protect FAST-LIO telemetry timestamp arithmetic
+
+- **Owner/status:** FAST-LIO ROS ingress/worker diagnostics, `PROVISIONAL`;
+  focused runtime regression required.
+- **Scope:** IMU ingress gap and processing-lag telemetry use checked signed
+  timestamp differences; the IMU high-water baseline is retained across
+  regressions rather than overwritten by an older sample.
+- **Safety impact:** Malformed/extreme timestamps cannot invoke signed
+  overflow or erase evidence of repeated regressions. An unrepresentable
+  processing lag is recorded as exceeded instead of being treated as zero.
+- **False-accept/false-reject consequences:** Normal ordered timestamps are
+  unchanged. Invalid or regressed telemetry is counted/suppresses optimistic
+  lag status and does not alter estimator acceptance gates.
+- **Runtime cost and evidence:** One checked difference per relevant diagnostic
+  update and one high-water comparison; node build and adapter tests are the
+  required source-level evidence.
+- **Removal/review condition:** Keep until all runtime telemetry uses a common
+  checked timestamp value type.
+- **Verification:** `cmake --build build/fast_lio_ros --target fast_lio_node
+  -j2` plus runtime ingress/diagnostic tests.

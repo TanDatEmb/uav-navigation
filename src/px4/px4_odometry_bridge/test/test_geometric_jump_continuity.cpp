@@ -146,6 +146,7 @@ TEST(GeometricJumpContinuityTest, RejectsInvalidConfigAndExtremeTimestampDelta) 
       second, true, true, 1U, config, state);
   EXPECT_FALSE(result.evaluated);
   EXPECT_EQ(result.reason, GeometricJumpContinuityReason::kDtTooLarge);
+  EXPECT_FALSE(state.continuity_trusted);
 
   config.maximum_expected_speed_mps = -1.0;
   const auto invalid = observe_geometric_jump_continuity(

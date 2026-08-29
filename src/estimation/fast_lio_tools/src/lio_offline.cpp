@@ -66,7 +66,7 @@ int run(const std::filesystem::path& bag_path,
   RosImuAdapter imu_adapter(profile.imu_input_frame, profile.clock_domain);
   RosLivoxCustomAdapter livox_adapter(
       profile.lidar_input_frame, profile.clock_domain,
-      profile.timestamp_policy);
+      profile.timestamp_policy, profile.point_time);
   RosLidarAdapter pointcloud_adapter(
       profile.lidar_input_frame,
       profile.lidar_timing_mode == "per_point" ? LidarTimingMode::kPerPoint

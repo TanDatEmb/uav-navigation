@@ -13,6 +13,7 @@ struct ExternalOdometryGateInput {
   bool lio_valid{false};
   bool lio_fresh{false};
   bool frame_valid{false};
+  bool geometric_continuity_trusted{false};
   bool geometric_jump_latched{false};
 };
 
@@ -25,6 +26,7 @@ struct ExternalOdometryGateResult {
   bool lio_valid{false};
   bool lio_fresh{false};
   bool frame_valid{false};
+  bool geometric_continuity_trusted{false};
   bool geometric_jump_latched{false};
   bool publisher_ready{false};
   bool publication_ready{false};

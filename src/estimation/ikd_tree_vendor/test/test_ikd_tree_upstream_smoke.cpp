@@ -2,6 +2,7 @@
 
 #include <ikd_Tree.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -163,6 +164,51 @@ TEST(IkdTreeUpstreamSmoke, SynchronousModeHandlesTwoHundredThousandPoints) {
   tree->Nearest_Search(ikdTree_PointType{10.0F, 2.0F, 0.0F}, 5, neighbors,
                        squared_distances, 1.0);
   EXPECT_EQ(neighbors.size(), 5U);
+}
+
+TEST(IkdTreeUpstreamSmoke, NearestSearchMatchesBruteForceWhenOneChildCanImprove) {
+  auto tree = std::make_unique<KD_TREE<ikdTree_PointType>>(
+      0.3F, 0.6F, 0.05F, false);
+  KD_TREE<ikdTree_PointType>::PointVector points;
+  for (int x = -12; x <= 12; ++x) {
+    for (int y = -8; y <= 8; ++y) {
+      for (int z = -2; z <= 2; ++z) {
+        points.emplace_back(static_cast<float>(x) * 1.7F,
+                            static_cast<float>(y) * 1.3F,
+                            static_cast<float>(z) * 2.1F);
+      }
+    }
+  }
+  tree->Build(points);
+
+  std::mt19937 generator(0x1AD5EEDU);
+  std::uniform_real_distribution<float> coordinate(-25.0F, 25.0F);
+  for (int query_index = 0; query_index < 200; ++query_index) {
+    const ikdTree_PointType query{coordinate(generator), coordinate(generator),
+                                   coordinate(generator)};
+    KD_TREE<ikdTree_PointType>::PointVector neighbors;
+    std::vector<float> squared_distances;
+    tree->Nearest_Search(query, kFixedNeighborCount, neighbors,
+                         squared_distances, 10000.0);
+
+    std::vector<float> expected;
+    expected.reserve(points.size());
+    for (const auto& point : points) {
+      const float dx = point.x - query.x;
+      const float dy = point.y - query.y;
+      const float dz = point.z - query.z;
+      expected.push_back(dx * dx + dy * dy + dz * dz);
+    }
+    std::sort(expected.begin(), expected.end());
+    std::sort(squared_distances.begin(), squared_distances.end());
+    ASSERT_EQ(squared_distances.size(),
+              static_cast<std::size_t>(kFixedNeighborCount));
+    for (int neighbor = 0; neighbor < kFixedNeighborCount; ++neighbor) {
+      EXPECT_NEAR(squared_distances[static_cast<std::size_t>(neighbor)],
+                  expected[static_cast<std::size_t>(neighbor)], 1e-3F)
+          << "query=" << query_index << " neighbor=" << neighbor;
+    }
+  }
 }
 
 TEST(IkdTreeUpstreamSmoke, RepeatedSynchronousConstructionAndDestruction) {

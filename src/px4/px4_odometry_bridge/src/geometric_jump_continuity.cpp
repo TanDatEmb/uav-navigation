@@ -130,7 +130,7 @@ GeometricJumpContinuityObservation observe_geometric_jump_continuity(
   if (observation.dt_s > config.maximum_continuity_dt_s) {
     observation = reseed(current, generation_valid, generation,
                          GeometricJumpContinuityReason::kDtTooLarge,
-                         true, state);
+                         false, state);
     observation.dt_s = static_cast<double>(*dt) * 1e-9;
     return observation;
   }

@@ -28,6 +28,8 @@ struct PointTimeConfig {
   std::size_t minimum_points_after_overlap_trim{1};
 };
 
+inline constexpr std::size_t kMaximumLidarPointCount = 2'000'000U;
+
 struct PointTimeNormalizationStatistics {
   std::size_t input_point_count{0};
   std::size_t emitted_point_count{0};

@@ -13,17 +13,21 @@ ExternalOdometryGateResult evaluate_external_odometry_gate(
   result.lio_valid = input.lio_valid;
   result.lio_fresh = input.lio_fresh;
   result.frame_valid = input.frame_valid;
+  result.geometric_continuity_trusted = input.geometric_continuity_trusted;
   result.geometric_jump_latched = input.geometric_jump_latched;
   result.publisher_ready = result.node_ready && result.transport_ready;
   result.publication_ready =
       result.publisher_ready && result.timestamp_ready &&
       result.covariance_ready && result.lio_valid &&
       result.public_frame_generation_valid && result.lio_fresh && result.frame_valid &&
+      result.geometric_continuity_trusted &&
       !result.geometric_jump_latched;
   if (result.publication_ready) {
     result.reason = "READY";
   } else if (result.geometric_jump_latched) {
     result.reason = "GEOMETRIC_JUMP_LATCHED";
+  } else if (!result.geometric_continuity_trusted) {
+    result.reason = "GEOMETRIC_CONTINUITY_UNTRUSTED";
   } else if (!result.lio_valid) {
     result.reason = "LIO_INVALID";
   } else if (!result.public_frame_generation_valid) {

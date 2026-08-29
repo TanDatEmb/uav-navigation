@@ -1,10 +1,13 @@
 #include "fast_lio_ros/ros_livox_custom_adapter.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <utility>
+
+#include <navigation_common/time.hpp>
 
 #include "fast_lio_ros/ros_time_converter.hpp"
 
@@ -33,12 +36,15 @@ bool validTimestampPolicy(const LivoxTimestampPolicy policy) {
 
 RosLivoxCustomAdapter::RosLivoxCustomAdapter(
     std::string expected_frame, ClockDomain clock_domain,
-    LivoxTimestampPolicy timestamp_policy)
+    LivoxTimestampPolicy timestamp_policy, PointTimeConfig point_time)
     : expected_frame_(std::move(expected_frame)),
       clock_domain_(clock_domain),
-      timestamp_policy_(timestamp_policy) {
+      timestamp_policy_(timestamp_policy),
+      point_time_(std::move(point_time)) {
   if (expected_frame_.empty() || !validClockDomain(clock_domain_) ||
-      !validTimestampPolicy(timestamp_policy_)) {
+      !validTimestampPolicy(timestamp_policy_) ||
+      point_time_.maximum_scan_duration_ns <= 0 ||
+      point_time_.maximum_header_offset_ns < 0) {
     throw std::invalid_argument("invalid Livox CustomMsg adapter configuration");
   }
 }
@@ -56,6 +62,10 @@ LidarScan RosLivoxCustomAdapter::convert(
   if (message.points.empty()) {
     throw std::invalid_argument("Livox CustomMsg contains no points");
   }
+  if (message.points.size() > kMaximumLidarPointCount) {
+    throw std::invalid_argument(
+        "Livox CustomMsg point count is outside the supported bound");
+  }
   if (message.timebase >
       static_cast<std::uint64_t>(
           std::numeric_limits<std::int64_t>::max())) {
@@ -66,6 +76,14 @@ LidarScan RosLivoxCustomAdapter::convert(
   const Timestamp header_time =
       RosTimeConverter::fromRos(message.header.stamp, clock_domain_);
   const auto timebase_ns = static_cast<std::int64_t>(message.timebase);
+  const auto header_offset_ns = navigation_common::checkedDifference(
+      header_time.nanoseconds(), timebase_ns);
+  if (!header_offset_ns ||
+      std::abs(static_cast<long double>(*header_offset_ns)) >
+          static_cast<long double>(point_time_.maximum_header_offset_ns)) {
+    throw std::invalid_argument(
+        "Livox CustomMsg header.stamp exceeds configured timebase offset");
+  }
   if (timestamp_policy_ ==
           LivoxTimestampPolicy::kRequireHeaderMatchesTimebase &&
       header_time.nanoseconds() != timebase_ns) {
@@ -93,6 +111,10 @@ LidarScan RosLivoxCustomAdapter::convert(
     maximum_offset_time_ns =
         std::max(maximum_offset_time_ns, point.offset_time);
     scan.points.push_back(converted);
+  }
+  if (static_cast<std::int64_t>(maximum_offset_time_ns) >
+      point_time_.maximum_scan_duration_ns) {
+    throw std::invalid_argument("Livox CustomMsg scan duration exceeds configured limit");
   }
   const auto end_time =
       checkedAdd(scan.start_time, Duration(maximum_offset_time_ns));

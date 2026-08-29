@@ -22,6 +22,11 @@ The pinned upstream source has the following project-owned hardening patches:
 - Rebuilding or destroying a tree releases the separately allocated static-root
   sentinel after detaching its already-released child tree.
 
+- The nearest-neighbor search recurses when at least one child bounding box is
+  closer than the current worst candidate. The upstream conjunction could skip
+  the closer child whenever its sibling was farther away, producing incomplete
+  k-nearest results.
+
 Root cause addressed by these source changes: the synchronous root test was
 performed after deleting/rebuilding the old root, so pointer identity could no
 longer reliably identify a root replacement. The asynchronous replacement also

@@ -115,8 +115,8 @@ LidarScan RosLidarAdapter::convert(const sensor_msgs::msg::PointCloud2& message)
   }
   const auto point_count_64 = static_cast<std::uint64_t>(message.width) *
                               static_cast<std::uint64_t>(message.height);
-  constexpr std::uint64_t kMaximumPointCount = 2'000'000U;
-  if (point_count_64 == 0U || point_count_64 > kMaximumPointCount) {
+  if (point_count_64 == 0U ||
+      point_count_64 > kMaximumLidarPointCount) {
     throw std::invalid_argument("PointCloud2 point count is outside the supported bound");
   }
   const auto point_count = static_cast<std::size_t>(point_count_64);

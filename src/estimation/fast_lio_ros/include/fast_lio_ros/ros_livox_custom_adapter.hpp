@@ -5,6 +5,7 @@
 #include <string>
 
 #include "fast_lio_core/sensor/lidar_scan.hpp"
+#include "fast_lio_ros/ros_lidar_adapter.hpp"
 
 namespace uav::nav::lio {
 
@@ -22,7 +23,8 @@ class RosLivoxCustomAdapter {
   RosLivoxCustomAdapter(
       std::string expected_frame, ClockDomain clock_domain,
       LivoxTimestampPolicy timestamp_policy =
-          LivoxTimestampPolicy::kRequireHeaderMatchesTimebase);
+          LivoxTimestampPolicy::kRequireHeaderMatchesTimebase,
+      PointTimeConfig point_time = {});
 
   [[nodiscard]] LidarScan convert(
       const livox_ros_driver2::msg::CustomMsg& message) const;
@@ -31,6 +33,7 @@ class RosLivoxCustomAdapter {
   std::string expected_frame_;
   ClockDomain clock_domain_;
   LivoxTimestampPolicy timestamp_policy_;
+  PointTimeConfig point_time_;
 };
 
 }  // namespace uav::nav::lio

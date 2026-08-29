@@ -31,7 +31,8 @@ class RosOutputPublisher {
                      std::shared_ptr<LioPublicFrameGeneration>
                          public_frame_generation);
   void setBaseLinkConverter(std::shared_ptr<const BaseLinkStateConverter> converter);
-  void setVisibilityCloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud);
+  [[nodiscard]] bool setVisibilityCloud(
+      sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud);
   [[nodiscard]] std::shared_ptr<CovarianceProjectionRuntime>
   covarianceProjectionRuntime() const noexcept {
     return covariance_runtime_;

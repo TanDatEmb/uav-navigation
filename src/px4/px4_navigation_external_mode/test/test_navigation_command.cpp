@@ -8,6 +8,16 @@
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
 #include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
+#include "px4_navigation_external_mode/runtime_metrics_policy.hpp"
+
+TEST(RuntimeMetricsPolicy, RejectsClockRegressionWithoutOverflow) {
+  EXPECT_FALSE(px4_navigation_external_mode::runtimeMetricsLogDue(
+      std::numeric_limits<std::int64_t>::max(), 1));
+  EXPECT_FALSE(px4_navigation_external_mode::runtimeMetricsLogDue(
+      2'000'000'000LL, 1'000'000'000LL));
+  EXPECT_TRUE(px4_navigation_external_mode::runtimeMetricsLogDue(
+      1'000'000'000LL, 2'000'000'000LL));
+}
 
 TEST(NavigationCommandContract, StaleOdometryPrecedesDuplicateMessageRejection) {
   navigation_contracts::ExecutionStateFreshness stale;

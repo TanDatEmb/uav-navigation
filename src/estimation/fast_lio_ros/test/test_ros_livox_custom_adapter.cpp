@@ -93,4 +93,38 @@ TEST(RosLivoxCustomAdapterTest, RejectsInvalidAdapterConfiguration) {
                std::invalid_argument);
 }
 
+TEST(RosLivoxCustomAdapterTest, EnforcesSharedScanDurationLimit) {
+  PointTimeConfig point_time;
+  point_time.maximum_scan_duration_ns = 100U;
+  EXPECT_THROW(
+      RosLivoxCustomAdapter("livox_frame", ClockDomain::kSensorTime,
+                            LivoxTimestampPolicy::kTimebaseAuthoritative,
+                            point_time)
+          .convert(validMessage()),
+      std::invalid_argument);
+}
+
+TEST(RosLivoxCustomAdapterTest, EnforcesHeaderOffsetForAuthoritativeTimebase) {
+  auto message = validMessage();
+  message.header.stamp.nanosec = 300'000'000U;
+  PointTimeConfig point_time;
+  point_time.maximum_header_offset_ns = 100'000'000;
+  EXPECT_THROW(
+      RosLivoxCustomAdapter("livox_frame", ClockDomain::kSensorTime,
+                            LivoxTimestampPolicy::kTimebaseAuthoritative,
+                            point_time)
+          .convert(message),
+      std::invalid_argument);
+}
+
+TEST(RosLivoxCustomAdapterTest, RejectsOversizedPointPayloadBeforeReserve) {
+  auto message = validMessage();
+  message.point_num = 2'000'001U;
+  message.points.resize(2'000'001U);
+  EXPECT_THROW(
+      RosLivoxCustomAdapter("livox_frame", ClockDomain::kSensorTime)
+          .convert(message),
+      std::invalid_argument);
+}
+
 }  // namespace uav::nav::lio

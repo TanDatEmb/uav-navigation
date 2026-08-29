@@ -18,6 +18,48 @@
 namespace uav::nav::lio {
 namespace {
 
+constexpr std::size_t kMaximumVisibilityCloudPoints = 262144U;
+
+bool boundedVisibilityCloud(const sensor_msgs::msg::PointCloud2& cloud) {
+  if (cloud.is_bigendian || cloud.width == 0U || cloud.height == 0U ||
+      cloud.point_step < sizeof(float) * 3U) {
+    return false;
+  }
+  const auto point_count = static_cast<std::uint64_t>(cloud.width) *
+                           static_cast<std::uint64_t>(cloud.height);
+  const auto row_bytes = static_cast<std::uint64_t>(cloud.point_step) *
+                         static_cast<std::uint64_t>(cloud.width);
+  const auto storage_bytes = static_cast<std::uint64_t>(cloud.row_step) *
+                             static_cast<std::uint64_t>(cloud.height);
+  if (point_count > kMaximumVisibilityCloudPoints ||
+      static_cast<std::uint64_t>(cloud.row_step) < row_bytes ||
+      storage_bytes > cloud.data.size()) {
+    return false;
+  }
+  bool x_found = false;
+  bool y_found = false;
+  bool z_found = false;
+  for (const auto& field : cloud.fields) {
+    if (field.name == "x") {
+      x_found = field.datatype == sensor_msgs::msg::PointField::FLOAT32 &&
+                field.count == 1U &&
+                static_cast<std::size_t>(field.offset) + sizeof(float) <=
+                    cloud.point_step;
+    } else if (field.name == "y") {
+      y_found = field.datatype == sensor_msgs::msg::PointField::FLOAT32 &&
+                field.count == 1U &&
+                static_cast<std::size_t>(field.offset) + sizeof(float) <=
+                    cloud.point_step;
+    } else if (field.name == "z") {
+      z_found = field.datatype == sensor_msgs::msg::PointField::FLOAT32 &&
+                field.count == 1U &&
+                static_cast<std::size_t>(field.offset) + sizeof(float) <=
+                    cloud.point_step;
+    }
+  }
+  return x_found && y_found && z_found;
+}
+
 diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
   diagnostic_msgs::msg::KeyValue result;
   result.key = std::move(key);
@@ -59,15 +101,16 @@ void RosOutputPublisher::setBaseLinkConverter(
   base_link_converter_ = std::move(converter);
 }
 
-void RosOutputPublisher::setVisibilityCloud(
+bool RosOutputPublisher::setVisibilityCloud(
     sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud) {
-  if (!cloud) return;
+  if (!cloud || !boundedVisibilityCloud(*cloud)) return false;
   std::lock_guard lock(visibility_cloud_mutex_);
   visibility_clouds_.push_back(std::move(cloud));
   constexpr std::size_t kVisibilityCloudHistory = 16U;
   while (visibility_clouds_.size() > kVisibilityCloudHistory) {
     visibility_clouds_.pop_front();
   }
+  return true;
 }
 
 sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeCloud(
@@ -121,6 +164,7 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
   if (cloud.header.frame_id != parameters_.lidar_frame ||
       cloud.header.stamp != stamp || cloud.height == 0U ||
       cloud.width == 0U || cloud.point_step < sizeof(float) * 3U ||
+      !boundedVisibilityCloud(cloud) ||
       static_cast<std::size_t>(cloud.row_step) <
           static_cast<std::size_t>(cloud.point_step) * cloud.width ||
       cloud.data.size() <
@@ -148,10 +192,7 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
       z_found = field.datatype == sensor_msgs::msg::PointField::FLOAT32;
     }
   }
-  if (!x_found || !y_found || !z_found ||
-      static_cast<std::size_t>(x_offset) + sizeof(float) > cloud.point_step ||
-      static_cast<std::size_t>(y_offset) + sizeof(float) > cloud.point_step ||
-      static_cast<std::size_t>(z_offset) + sizeof(float) > cloud.point_step) {
+  if (!x_found || !y_found || !z_found) {
     return makeCloud(endpoints, stamp);
   }
 

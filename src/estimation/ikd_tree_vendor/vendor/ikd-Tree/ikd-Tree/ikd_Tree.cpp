@@ -967,7 +967,8 @@ void KD_TREE<PointType>::Search(KD_TREE_NODE * root, int k_nearest, PointType po
     int cur_search_counter;
     float dist_left_node = calc_box_dist(root->left_son_ptr, point);
     float dist_right_node = calc_box_dist(root->right_son_ptr, point);
-    if (q.size()< k_nearest || dist_left_node < q.top().dist && dist_right_node < q.top().dist){
+    if (q.size() < k_nearest || dist_left_node < q.top().dist ||
+        dist_right_node < q.top().dist){
         if (dist_left_node <= dist_right_node) {
             if (Rebuild_Ptr == nullptr || *Rebuild_Ptr != root->left_son_ptr){
                 Search(root->left_son_ptr, k_nearest, point, q, max_dist);                       

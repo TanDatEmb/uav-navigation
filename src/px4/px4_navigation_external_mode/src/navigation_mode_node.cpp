@@ -22,6 +22,7 @@
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
 #include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
+#include "px4_navigation_external_mode/runtime_metrics_policy.hpp"
 
 namespace px4_navigation_external_mode {
 namespace {
@@ -931,7 +932,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
   std::uint64_t forward_guard_count;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    if (last_metrics_log_ns_ > 0 && now_ns - last_metrics_log_ns_ < 1'000'000'000LL) {
+    if (!runtimeMetricsLogDue(last_metrics_log_ns_, now_ns)) {
       return;
     }
     last_metrics_log_ns_ = now_ns;

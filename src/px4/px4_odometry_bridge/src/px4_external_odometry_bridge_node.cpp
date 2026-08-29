@@ -154,7 +154,6 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   }
 
   void on_lio_diagnostics(const diagnostic_msgs::msg::DiagnosticArray& message) {
-    const auto now_ns = now().nanoseconds();
     for (const auto& status : message.status) {
       if (status.name == "fast_lio/estimator") {
         const auto diagnostic_stamp = navigation_common::rosTimeToNanoseconds(
@@ -199,19 +198,18 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
                                  });
         lio_covariance_valid_ = value_is_true(status, "pose_covariance_available") &&
                                 value_is_true(status, "twist_covariance_available");
-        last_lio_diagnostics_ns_ = now_ns;
+        last_lio_diagnostics_ns_ = *diagnostic_stamp;
       }
     }
   }
 
   bool lio_diagnostics_fresh(std::int64_t now_ns) const {
-    // The propagated odometry callback is the authoritative high-rate
-    // freshness signal.  Its diagnostic heartbeat is intentionally slower
-    // and may be delivered late while the executor is busy with a motion
-    // transition; requiring both clocks here can close an otherwise healthy
-    // external-odometry stream for a full heartbeat interval.
-    return last_lio_diagnostics_ns_ > 0 && now_ns >= last_lio_diagnostics_ns_ &&
-           now_ns - last_lio_diagnostics_ns_ <= diagnostics_max_age_ns_;
+    // Heartbeat liveness is based on the producer's source timestamp, not
+    // callback arrival time. A delayed old heartbeat must not reopen the gate.
+    if (last_lio_diagnostics_ns_ <= 0 || now_ns <= 0) return false;
+    const auto age = navigation_common::checkedDifference(
+        now_ns, last_lio_diagnostics_ns_);
+    return age.has_value() && *age >= 0 && *age <= diagnostics_max_age_ns_;
   }
 
   void on_lio(const navigation_contracts::msg::PropagatedOdometry& message) {
@@ -323,6 +321,8 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     gate_input.lio_valid = lio_valid_;
     gate_input.lio_fresh = lio_fresh;
     gate_input.frame_valid = frame->frame_valid;
+    gate_input.geometric_continuity_trusted =
+        jump_continuity_state_.continuity_trusted;
     gate_input.geometric_jump_latched = jump_latch_.latched();
     const auto previous_gate_reason = last_gate_.reason;
     last_gate_ = evaluate_external_odometry_gate(gate_input);
