@@ -10951,6 +10951,32 @@ release profiles must not use the former allowance.
   && CPATH=/home/letandat/Dev/uav-navigation/install/navigation_common/include:${CPATH:-}
   ./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
 
+### 2026-08-29 - Make Polytope geometry boundaries fail closed
+
+- **Owner/status:** SUPER corridor geometry utility, `VERIFIED` by the focused
+  planning trajectory suite.
+- **Scope:** Validate plane shape, finite coefficients and nonzero normals at
+  construction/update; reject malformed point/margin inputs; make failed
+  intersections return an undefined/NaN-result object; and reset all cached
+  geometry and metadata together.
+- **Safety impact:** Empty, NaN, or degenerate half-spaces can no longer make
+  `PointIsInside()` return true through `maxCoeff()` comparison behavior.
+  Reused polytopes cannot retain stale seed/free-space metadata after reset.
+- **False-accept/false-reject consequences:** Invalid geometry is rejected;
+  valid corridor planes and nonnegative margins keep existing semantics. A
+  failed `CrossCenter()` is now represented by non-finite output rather than a
+  magic coordinate that could be mistaken for geometry.
+- **Runtime cost and evidence:** Plane validation is linear in plane count at
+  construction and point checks; focused `test_trajectory` regressions cover
+  malformed planes, malformed points/margins and reset state.
+- **Removal/review condition:** Keep until corridor geometry is represented by
+  an immutable validated half-space type with explicit intersection status.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && CPATH=/home/letandat/Dev/uav-navigation/install/navigation_common/include:${CPATH:-}
+  cmake --build build/navigation_planning_backend --target test_trajectory -j2
+  && CPATH=/home/letandat/Dev/uav-navigation/install/navigation_common/include:${CPATH:-}
+  ./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
+
 ### 2026-08-29 - Bound propagated-odometry publication and correction ingress
 
 - **Owner/status:** FAST-LIO propagated-odometry worker, `VERIFIED` by the

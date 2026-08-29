@@ -67,7 +67,7 @@ namespace geometry_utils {
 
         Vec3f CrossCenter(const Polytope &b) const ;
 
-        bool HaveOverlapWith(Polytope cmp, double eps = 1e-6);
+        bool HaveOverlapWith(const Polytope& cmp, double eps = 1e-6) const;
 
         MatD4f GetPlanes() const;
 

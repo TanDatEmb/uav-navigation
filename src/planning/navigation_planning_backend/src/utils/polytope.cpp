@@ -11,10 +11,25 @@ using namespace geometry_utils;
 using namespace color_text;
 using namespace std;
 
+namespace {
+
+bool validPlanes(const MatD4f& planes) {
+    if (planes.rows() <= 0 || planes.cols() != 4 || !planes.allFinite()) {
+        return false;
+    }
+    for (Eigen::Index row = 0; row < planes.rows(); ++row) {
+        const double normal_norm = planes.block<1, 3>(row, 0).norm();
+        if (!std::isfinite(normal_norm) || normal_norm <= 1.0e-12) {
+            return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
 
 Polytope::Polytope(MatD4f _planes) {
-    planes = _planes;
-    undefined = false;
+    SetPlanes(std::move(_planes));
 }
 
 bool Polytope::empty() const {
@@ -26,6 +41,13 @@ bool Polytope::HaveSeedLine() const  {
 }
 
 void Polytope::SetSeedLine(const std::pair<Vec3f, Vec3f> &_seed_line, double r) {
+    if (!_seed_line.first.allFinite() || !_seed_line.second.allFinite() ||
+        !std::isfinite(r) || r < 0.0) {
+        have_seed_line = false;
+        seed_line = {};
+        robot_r = std::numeric_limits<double>::quiet_NaN();
+        return;
+    }
     robot_r = r;
     seed_line = _seed_line;
     have_seed_line = true;
@@ -39,13 +61,19 @@ int Polytope::SurfNum() const {
 }
 
 Vec3f Polytope::CrossCenter(const Polytope &b) const {
+    if (empty() || b.empty()) {
+        return Vec3f::Constant(std::numeric_limits<float>::quiet_NaN());
+    }
     MatD4f curIH;
     curIH.resize(this->SurfNum() + b.SurfNum(), 4);
     curIH << this->planes, b.GetPlanes();
     Mat3Df curIV; // 走廊的顶点
     if (!geometry_utils::enumerateVs(curIH, curIV)) {
         printf(" -- [processCorridor] Failed to get Overlap enumerateVs .\n");
-        return Vec3f(-999, -999, -999);
+        return Vec3f::Constant(std::numeric_limits<float>::quiet_NaN());
+    }
+    if (curIV.cols() <= 0 || !curIV.allFinite()) {
+        return Vec3f::Constant(std::numeric_limits<float>::quiet_NaN());
     }
     double x = (curIV.row(0).maxCoeff() + curIV.row(0).minCoeff()) * 0.5;
     double y = (curIV.row(1).maxCoeff() + curIV.row(1).minCoeff()) * 0.5;
@@ -55,6 +83,9 @@ Vec3f Polytope::CrossCenter(const Polytope &b) const {
 
 
 Polytope Polytope::CrossWith(const Polytope &b) const {
+    if (empty() || b.empty()) {
+        return Polytope{};
+    }
     MatD4f curIH;
     curIH.resize(this->SurfNum() + b.SurfNum(), 4);
     curIH << this->planes, b.GetPlanes();
@@ -63,7 +94,10 @@ Polytope Polytope::CrossWith(const Polytope &b) const {
     return out;
 }
 
-bool Polytope::HaveOverlapWith(Polytope cmp, double eps) {
+bool Polytope::HaveOverlapWith(const Polytope& cmp, double eps) const {
+    if (empty() || cmp.empty() || !std::isfinite(eps) || eps < 0.0) {
+        return false;
+    }
     return geometry_utils::overlap(this->planes, cmp.GetPlanes(), eps);
 }
 
@@ -75,7 +109,14 @@ MatD4f Polytope::GetPlanes() const {
 void Polytope::Reset() {
     undefined = true;
     is_known_free = false;
+    planes.resize(0, 0);
     have_seed_line = false;
+    seed_line = {};
+    robot_r = std::numeric_limits<double>::quiet_NaN();
+    overlap_depth_with_last_one = 0.0;
+    interior_pt_with_last_one.setConstant(
+        std::numeric_limits<float>::quiet_NaN());
+    ellipsoid_ = Ellipsoid{};
     route_boundary_gate_ = false;
     route_boundary_point_.setConstant(
         std::numeric_limits<float>::quiet_NaN());
@@ -94,7 +135,11 @@ void Polytope::SetKnownFree(bool is_free) {
 }
 
 void Polytope::SetPlanes(MatD4f _planes) {
-    planes = _planes;
+    Reset();
+    if (!validPlanes(_planes)) {
+        return;
+    }
+    planes = std::move(_planes);
     undefined = false;
 }
 
@@ -103,16 +148,15 @@ void Polytope::SetEllipsoid(const Ellipsoid &ellip) {
 }
 
 bool Polytope::PointIsInside(const Vec3f &pt, const double & margin) const {
-    if (undefined) {
+    if (undefined || !validPlanes(planes) || !pt.allFinite() ||
+        !std::isfinite(margin) || margin < 0.0) {
         return false;
-    }
-    if (planes.rows() == 0 || isnan(planes.sum())) {
-        std::cout << YELLOW << "ill polytope, force return." << RESET << std::endl;
     }
     Eigen::Vector4d pt_e;
     pt_e.head(3) = pt;
     pt_e(3) = 1;
-    if ((planes * pt_e).maxCoeff() > margin) {
+    const Eigen::VectorXd plane_values = planes * pt_e;
+    if (!plane_values.allFinite() || plane_values.maxCoeff() > margin) {
         return false;
     }
     return true;

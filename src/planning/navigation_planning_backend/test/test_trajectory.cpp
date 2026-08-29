@@ -2199,6 +2199,53 @@ TEST(PlannerTrajectory, SparseGuideSubdivisionRejectsInvalidInputs) {
       3.0, subdivided));
 }
 
+TEST(PlannerTrajectory, PolytopeRejectsMalformedPlanesAndPoints) {
+  using geometry_utils::Polytope;
+  Polytope malformed_shape(navigation_math::MatD4f::Zero(1, 3));
+  EXPECT_TRUE(malformed_shape.empty());
+  EXPECT_FALSE(malformed_shape.PointIsInside(navigation_math::Vec3f::Zero()));
+
+  navigation_math::MatD4f malformed_values = navigation_math::MatD4f::Zero(1, 4);
+  malformed_values(0, 0) = std::numeric_limits<double>::quiet_NaN();
+  Polytope malformed_nan(malformed_values);
+  EXPECT_TRUE(malformed_nan.empty());
+
+  navigation_math::MatD4f box_planes(6, 4);
+  box_planes <<
+      1.0, 0.0, 0.0, -1.0,
+      -1.0, 0.0, 0.0, -1.0,
+      0.0, 1.0, 0.0, -1.0,
+      0.0, -1.0, 0.0, -1.0,
+      0.0, 0.0, 1.0, -1.0,
+      0.0, 0.0, -1.0, -1.0;
+  const Polytope valid(box_planes);
+  EXPECT_TRUE(valid.PointIsInside(navigation_math::Vec3f::Zero()));
+  EXPECT_FALSE(valid.PointIsInside(
+      navigation_math::Vec3f::Constant(std::numeric_limits<float>::quiet_NaN())));
+  EXPECT_FALSE(valid.PointIsInside(navigation_math::Vec3f::Zero(), -1.0));
+}
+
+TEST(PlannerTrajectory, PolytopeResetClearsGeometryAndMetadata) {
+  using geometry_utils::Polytope;
+  navigation_math::MatD4f box_planes(6, 4);
+  box_planes <<
+      1.0, 0.0, 0.0, -1.0,
+      -1.0, 0.0, 0.0, -1.0,
+      0.0, 1.0, 0.0, -1.0,
+      0.0, -1.0, 0.0, -1.0,
+      0.0, 0.0, 1.0, -1.0,
+      0.0, 0.0, -1.0, -1.0;
+  auto polytope = Polytope(box_planes);
+  polytope.SetKnownFree(true);
+  polytope.SetSeedLine({navigation_math::Vec3f::Zero(),
+                        navigation_math::Vec3f::UnitX()}, 0.5);
+  polytope.Reset();
+  EXPECT_TRUE(polytope.empty());
+  EXPECT_FALSE(polytope.IsKnownFree());
+  EXPECT_FALSE(polytope.HaveSeedLine());
+  EXPECT_FALSE(polytope.PointIsInside(navigation_math::Vec3f::Zero()));
+}
+
 TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
   auto world = std::make_shared<SweepWorld>();
   navigation_planner_context::PlannerRuntimeContext::Ptr context =
