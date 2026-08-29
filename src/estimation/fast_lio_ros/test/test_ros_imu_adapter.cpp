@@ -28,4 +28,10 @@ TEST(RosImuAdapterTest, RejectsUnexpectedFrame) {
   EXPECT_THROW(RosImuAdapter{"livox_imu_frame"}.convert(message), std::invalid_argument);
 }
 
+TEST(RosImuAdapterTest, RejectsInvalidConfiguration) {
+  EXPECT_THROW((RosImuAdapter{"", ClockDomain::kRosTime}), std::invalid_argument);
+  EXPECT_THROW((RosImuAdapter{"livox_imu_frame", static_cast<ClockDomain>(255)}),
+               std::invalid_argument);
+}
+
 }  // namespace uav::nav::lio

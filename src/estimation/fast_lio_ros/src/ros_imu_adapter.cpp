@@ -12,7 +12,14 @@ namespace uav::nav::lio {
 RosImuAdapter::RosImuAdapter(std::string expected_frame,
                              ClockDomain clock_domain)
     : expected_frame_(std::move(expected_frame)),
-      clock_domain_(clock_domain) {}
+      clock_domain_(clock_domain) {
+  if (expected_frame_.empty()) {
+    throw std::invalid_argument("IMU expected frame must not be empty");
+  }
+  if (toString(clock_domain_) == "unknown") {
+    throw std::invalid_argument("IMU clock domain is invalid");
+  }
+}
 
 ImuSample RosImuAdapter::convert(const sensor_msgs::msg::Imu& message) const {
   if (message.header.frame_id != expected_frame_) {

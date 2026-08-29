@@ -12320,3 +12320,22 @@ release profiles must not use the former allowance.
   && cmake --build build/px4_odometry_bridge --target test_px4_odometry_bridge
   -j2`; frame-policy focused tests; `cmake --build build/fast_lio_ros --target
   fast_lio_ros -j2`.
+
+### 2026-08-29 - Validate IMU adapter frame and clock domain
+
+- **Owner/status:** FAST-LIO ROS IMU ingress boundary, `VERIFIED` by the
+  focused adapter test.
+- **Scope:** The direct `RosImuAdapter` constructor now rejects an empty
+  expected frame and an unknown `ClockDomain`, matching the validation already
+  enforced by the other sensor adapters.
+- **Safety impact:** Malformed direct configuration cannot silently stamp IMU
+  data into an unintended frame or clock domain.
+- **False-accept/false-reject consequences:** Valid configured frames/domains
+  are unchanged; invalid direct construction fails before ingestion.
+- **Runtime cost and evidence:** Two constructor checks only;
+  `test_ros_imu_adapter` passes 3/3.
+- **Removal/review condition:** Keep until all sensor ingress uses typed,
+  validated adapter configuration objects.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/fast_lio_ros --target test_ros_imu_adapter -j2`;
+  focused test binary.
