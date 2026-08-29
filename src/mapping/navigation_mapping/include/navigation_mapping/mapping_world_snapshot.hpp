@@ -244,7 +244,21 @@ class MappingWorldSnapshot final
     const double resolution = layer == navigation_world_model::GridLayer::kInflated
                                   ? grid.inflated.layout.resolution_m
                                   : grid.base_layout.resolution_m;
-    return (index.cast<double>() + navigation_world_model::Point3::Constant(0.5)) * resolution;
+    if (!std::isfinite(resolution) || resolution <= 0.0) {
+      return navigation_world_model::Point3::Zero();
+    }
+    navigation_world_model::Point3 result;
+    for (int axis = 0; axis < 3; ++axis) {
+      const long double cell_center = static_cast<long double>(index(axis)) + 0.5L;
+      const long double position = cell_center * static_cast<long double>(resolution);
+      if (!std::isfinite(position) ||
+          position < static_cast<long double>(std::numeric_limits<double>::lowest()) ||
+          position > static_cast<long double>(std::numeric_limits<double>::max())) {
+        return navigation_world_model::Point3::Zero();
+      }
+      result(axis) = static_cast<double>(position);
+    }
+    return result;
   }
 
   [[nodiscard]] std::optional<navigation_world_model::Point3> nearestNotOccupied(

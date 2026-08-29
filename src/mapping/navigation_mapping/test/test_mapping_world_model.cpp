@@ -232,6 +232,38 @@ TEST_F(MappingWorldModelTest, ClassificationAndIndexConversionMatchBackend) {
   EXPECT_FALSE(view->contains(nan_point));
 }
 
+TEST(MappingWorldSnapshot, IndexConversionRejectsNonRepresentableProduct) {
+  navigation_mapping::PlanningGrid grid;
+  const double limit = std::numeric_limits<double>::max();
+  const auto layout = [limit] {
+    return navigation_mapping::PlanningGridLayout{
+        limit,
+        navigation_world_model::GridIndex3::Constant(std::numeric_limits<int>::max()),
+        navigation_world_model::GridIndex3::Ones(),
+        navigation_world_model::Point3::Zero(),
+        navigation_world_model::Point3::Ones(),
+    };
+  };
+  grid.base_layout = layout();
+  grid.inflated.layout = layout();
+  grid.base_state = {static_cast<std::uint8_t>(navigation_world_model::CellState::kKnownFree)};
+  grid.inflated.occupied = {0U};
+  grid.nearest_offsets = std::make_shared<
+      std::vector<navigation_world_model::GridIndex3>>();
+  grid.virtual_ground_m = -1.0;
+  grid.virtual_ceiling_m = 1.0;
+  grid.inflated_virtual_ground_m = -1.0;
+  grid.inflated_virtual_ceiling_m = 1.0;
+
+  navigation_mapping::MappingWorldSnapshot snapshot(
+      std::move(grid), navigation_world_model::WorldSnapshotIdentity{1, 1, 1, 1});
+  EXPECT_EQ(snapshot.indexToPosition(
+                navigation_world_model::GridIndex3::Constant(std::numeric_limits<int>::max()),
+                navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::Point3::Zero());
+}
+
+
 TEST_F(MappingWorldModelTest, SegmentAndBoxQueriesPreserveBackendSemantics) {
   const auto center = view->geometry().local_center_m;
   const Eigen::Vector3d end = center + Eigen::Vector3d{0.3, 0.2, 0.1};

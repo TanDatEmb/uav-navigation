@@ -86,13 +86,14 @@ class MappingWorldModelView final : public navigation_world_model::WorldModelVie
       for (int axis = 0; axis < 3; ++axis) {
         const std::int64_t minimum = static_cast<std::int64_t>(center_index(axis)) -
             static_cast<std::int64_t>(count(axis) / 2);
+        const std::int64_t maximum = minimum + static_cast<std::int64_t>(count(axis)) - 1;
         if (minimum < static_cast<std::int64_t>(std::numeric_limits<int>::min()) ||
-            minimum > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
+            maximum > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
           return navigation_world_model::GridBounds{};
         }
+        bounds.global_min_index(axis) = static_cast<int>(minimum);
       }
       bounds.dimensions = count;
-      bounds.global_min_index = center_index - count / 2;
       return bounds;
     };
     return {

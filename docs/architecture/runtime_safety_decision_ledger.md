@@ -12791,3 +12791,28 @@ release profiles must not use the former allowance.
   test_planner_config test_planner_facade -j2 &&
   ./build/navigation_planning_backend/test_planner_config --gtest_color=no &&
   ./build/navigation_planning_backend/test_planner_facade --gtest_color=no`.
+
+### 2026-08-29 - Bound snapshot index-to-position conversion
+
+- **Owner/status:** Immutable mapping snapshot and live-view geometry boundary,
+  `PROVISIONAL`; focused snapshot/world-model tests verified.
+- **Scope:** Grid index to metric position conversion now computes the cell
+  center in a wide type and rejects non-representable results. The live-view
+  bounds adapter also checks both ends of each derived integer span before
+  narrowing the minimum index.
+- **Safety impact:** Extreme but finite index/resolution combinations cannot
+  silently become non-finite planning points or wrapped local bounds.
+- **False-accept/false-reject consequences:** Normal map geometry is unchanged.
+  An unrepresentable query returns the existing zero/fail-closed sentinel and
+  is rejected by downstream containment/traversability checks.
+- **Runtime cost and evidence:** Three bounded scalar checks per conversion;
+  `test_mapping_world_model` covers the non-representable product regression.
+  The pre-existing `StationaryAxisDoesNotCreateSpuriousDdaTie` fixture currently
+  fails independently because its occupied cell is on a genuine XY corner;
+  that test remains unchanged and is not claimed green by this checkpoint.
+- **Removal/review condition:** Keep until all public grid conversions return a
+  typed checked result instead of a sentinel `Point3`.
+- **Verification:** `cmake --build build/navigation_mapping --target
+  test_mapping_world_model -j2 && ./build/navigation_mapping/test_mapping_world_model
+  --gtest_filter=MappingWorldSnapshot.IndexConversionRejectsNonRepresentableProduct
+  --gtest_color=no`.
