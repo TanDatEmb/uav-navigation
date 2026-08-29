@@ -35,6 +35,16 @@ TEST(GeometricJumpLatchTest, NewPublicGenerationOrOperatorEventRecovers) {
   EXPECT_FALSE(latch.latched());
 }
 
+TEST(GeometricJumpLatchTest, OlderPublicGenerationCannotRecoverLatch) {
+  GeometricJumpLatch latch;
+  EXPECT_FALSE(latch.observePublicFrameGeneration(true, 10U));
+  latch.observeGeometricJump(true);
+  EXPECT_FALSE(latch.observePublicFrameGeneration(true, 9U));
+  EXPECT_TRUE(latch.latched());
+  EXPECT_TRUE(latch.observePublicFrameGeneration(true, 11U));
+  EXPECT_FALSE(latch.latched());
+}
+
 TEST(GeometricJumpLatchTest, ResetCounterUsesExplicitUint8Modulo) {
   EXPECT_EQ(public_frame_generation_to_reset_counter(1), 1U);
   EXPECT_EQ(public_frame_generation_to_reset_counter(255), 255U);

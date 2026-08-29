@@ -156,6 +156,18 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
     const auto now_ns = now().nanoseconds();
     for (const auto& status : message.status) {
       if (status.name == "fast_lio/estimator") {
+        const auto diagnostic_stamp = navigation_common::rosTimeToNanoseconds(
+            message.header.stamp);
+        if (!diagnostic_stamp || *diagnostic_stamp <= 0 ||
+            (last_lio_diagnostics_stamp_ns_ != 0 &&
+             *diagnostic_stamp <= last_lio_diagnostics_stamp_ns_)) {
+          // Diagnostics are a state stream. A delayed or malformed heartbeat
+          // must not move the public generation backwards or reopen a latch.
+          lio_valid_ = false;
+          lio_covariance_valid_ = false;
+          return;
+        }
+        last_lio_diagnostics_stamp_ns_ = *diagnostic_stamp;
         const auto generation = value_uint(status, "lio_public_frame_generation");
         const bool generation_valid = value_is_true(status, "lio_public_frame_generation_valid");
         const bool previous_latched = jump_latch_.latched();
@@ -388,6 +400,7 @@ class Px4ExternalOdometryBridgeNode final : public rclcpp::Node {
   std::uint64_t last_lio_epoch_{0};
   std::uint64_t last_lio_sequence_{0};
   std::int64_t last_lio_diagnostics_ns_{0};
+  std::int64_t last_lio_diagnostics_stamp_ns_{0};
   bool node_ready_{false};
   bool lio_valid_{false};
   bool lio_covariance_valid_{false};

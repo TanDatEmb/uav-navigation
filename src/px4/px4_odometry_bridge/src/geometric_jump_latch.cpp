@@ -13,15 +13,18 @@ bool GeometricJumpLatch::observeGeometricJump(const bool jump) {
 
 bool GeometricJumpLatch::observePublicFrameGeneration(
     const bool valid, const std::uint64_t generation) {
-  const bool changed = generation_known_ && valid && generation != last_generation_;
-  if (valid && generation != 0) {
+  if (!valid || generation == 0U) return false;
+  if (!generation_known_) {
     generation_known_ = true;
     last_generation_ = generation;
+    return false;
   }
-  if (changed) {
-    latched_ = false;
-  }
-  return changed;
+  // A delayed diagnostic must never be interpreted as a recovery event. Keep
+  // the latch set until a strictly newer producer generation arrives.
+  if (generation <= last_generation_) return false;
+  last_generation_ = generation;
+  latched_ = false;
+  return true;
 }
 
 bool GeometricJumpLatch::observeOperatorReset(const bool requested,

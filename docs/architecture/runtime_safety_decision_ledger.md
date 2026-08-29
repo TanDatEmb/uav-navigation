@@ -12029,3 +12029,26 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_mapping
   --target test_mapping_world_model -j2`; `./build/navigation_mapping/test_mapping_world_model
   --gtest_color=no`.
+
+### 2026-08-29 - Reject stale PX4 LIO recovery diagnostics
+
+- **Owner/status:** PX4 external-odometry continuity gate, `VERIFIED` by the
+  geometric-jump latch focused test and bridge-core build.
+- **Scope:** A public-frame generation now clears the geometric-jump latch only
+  when it is strictly newer than the last accepted generation. The external
+  bridge also rejects malformed or out-of-order diagnostic heartbeat stamps
+  before applying generation/health state.
+- **Safety impact:** Delayed diagnostics cannot roll continuity state backwards
+  and accidentally reopen PX4 publication after a geometric discontinuity.
+- **False-accept/false-reject consequences:** Ordered, positive diagnostic
+  heartbeats and strictly newer generations retain recovery behavior. A missing
+  or reordered heartbeat closes the health gate until a fresh ordered heartbeat
+  arrives.
+- **Runtime cost and evidence:** One monotonic comparison and one checked ROS
+  timestamp conversion per diagnostic heartbeat; `test_geometric_jump_latch`
+  passes 5/5.
+- **Removal/review condition:** Keep until diagnostics carry a typed,
+  authenticated producer sequence/epoch contract shared with odometry.
+- **Verification:** `cmake --build build/px4_odometry_bridge
+  --target test_geometric_jump_latch -j2`; `./build/px4_odometry_bridge/test_geometric_jump_latch
+  --gtest_color=no`.
