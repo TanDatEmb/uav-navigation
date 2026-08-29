@@ -34,6 +34,8 @@
 #include <Eigen/Eigen>
 
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 
 namespace flatness
 {
@@ -47,6 +49,14 @@ namespace flatness
                           const double &parasitic_drag_coeff,
                           const double &speed_smooth_factor)
         {
+            if (!std::isfinite(vehicle_mass) || vehicle_mass <= 0.0 ||
+                !std::isfinite(gravitational_acceleration) || gravitational_acceleration <= 0.0 ||
+                !std::isfinite(horitonral_drag_coeff) || horitonral_drag_coeff < 0.0 ||
+                !std::isfinite(vertical_drag_coeff) || vertical_drag_coeff < 0.0 ||
+                !std::isfinite(parasitic_drag_coeff) || parasitic_drag_coeff < 0.0 ||
+                !std::isfinite(speed_smooth_factor) || speed_smooth_factor <= 0.0) {
+                throw std::invalid_argument("invalid quadrotor flatness parameters");
+            }
             mass = vehicle_mass;
             grav = gravitational_acceleration;
             dh = horitonral_drag_coeff;
@@ -65,6 +75,25 @@ namespace flatness
                             Eigen::Vector4d &quat,
                             Eigen::Vector3d &omg)
         {
+            const auto fail = [&]() {
+                const double nan = std::numeric_limits<double>::quiet_NaN();
+                thr = nan;
+                quat.setConstant(nan);
+                omg.setConstant(nan);
+            };
+            const double velocity_scale = vel.cwiseAbs().maxCoeff();
+            const double acceleration_scale = acc.cwiseAbs().maxCoeff();
+            const double jerk_scale = jer.cwiseAbs().maxCoeff();
+            if (!std::isfinite(mass) || mass <= 0.0 || !std::isfinite(grav) || grav <= 0.0 ||
+                !std::isfinite(dh) || dh < 0.0 || !std::isfinite(dv) || dv < 0.0 ||
+                !std::isfinite(cp) || cp < 0.0 || !std::isfinite(veps) || veps <= 0.0 ||
+                !vel.allFinite() || !acc.allFinite() || !jer.allFinite() ||
+                !std::isfinite(psi) || !std::isfinite(dpsi) ||
+                !std::isfinite(velocity_scale) || !std::isfinite(acceleration_scale) ||
+                !std::isfinite(jerk_scale)) {
+                fail();
+                return;
+            }
             double w0, w1, w2, dw0, dw1, dw2;
 
             v0 = vel(0);
@@ -90,6 +119,10 @@ namespace flatness
             zu02 = zu0 * zu2;
             zu_sqr_norm = zu_sqr0 + zu_sqr1 + zu_sqr2;
             zu_norm = sqrt(zu_sqr_norm);
+            if (!std::isfinite(zu_sqr_norm) || !std::isfinite(zu_norm) || zu_norm <= 1.0e-12) {
+                fail();
+                return;
+            }
             z0 = zu0 / zu_norm;
             z1 = zu1 / zu_norm;
             z2 = zu2 / zu_norm;
@@ -135,6 +168,10 @@ namespace flatness
                      (z0 * c_psi + z1 * s_psi) * omg_term;
             omg(2) = (z1 * dz0 - z0 * dz1) / omg_den + dpsi;
 
+            if (!std::isfinite(thr) || !quat.allFinite() || !omg.allFinite()) {
+                fail();
+            }
+
             return;
         }
 
@@ -156,7 +193,7 @@ namespace flatness
             double z0b, z1b, z2b, dz0b, dz1b, dz2b;
             double v_sqr_normb, cp_termb, w_termb;
             double zu_sqr_normb, zu_normb, zu0b, zu1b, zu2b;
-            double zu_sqr0b, zu_sqr1b, zu_sqr2b, zu01b, zu12b, zu02b;
+            double zu_sqr0b = 0.0, zu_sqr1b = 0.0, zu_sqr2b, zu01b, zu12b, zu02b;
             double ng00b, ng01b, ng02b, ng11b, ng12b, ng22b, ng_denb;
             double dz_term0b, dz_term1b, dz_term2b, f_term0b, f_term1b, f_term2b;
             double tilt_denb, tilt0b, tilt1b, tilt2b, head0b, head3b;
@@ -268,7 +305,7 @@ namespace flatness
         }
 
     private:
-        double mass, grav, dh, dv, cp, veps;
+        double mass{1.0}, grav{9.81}, dh{0.0}, dv{0.0}, cp{0.0}, veps{1.0e-4};
 
         double v0, v1, v2, a0, a1, a2, v_dot_a;
         double z0, z1, z2, dz0, dz1, dz2;

@@ -11056,3 +11056,28 @@ release profiles must not use the former allowance.
 - **Verification:** `cmake --build build/navigation_planning_backend --target
   test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
   --gtest_color=no`.
+
+### 2026-08-29 - Harden flatness lifecycle and independent penalties
+
+- **Owner/status:** Planner flatness mapping and nominal/backup objective
+  boundary, `VERIFIED` by trajectory regression tests.
+- **Scope:** Initialize FlatnessMap primitives with deterministic safe values,
+  validate reset/forward inputs and non-representable intermediate results,
+  initialize backward accumulators, and evaluate angular-rate and thrust
+  penalties independently when either configured weight is enabled.
+- **Safety impact:** Prevents undefined gradients and NaN/Inf actuator outputs;
+  requested single-component feasibility penalties are no longer silently
+  disabled. No velocity, jerk, acceptance, map or planner deadline threshold
+  is changed.
+- **False-accept/false-reject consequences:** Valid configurations retain the
+  same flatness equations. Invalid configurations fail at reset or produce a
+  non-finite result that is rejected by existing feasibility gates; no invalid
+  trajectory is made executable.
+- **Runtime cost and evidence:** Constant-time finite checks per forward call
+  and no additional samples. Regression covers default lifecycle and invalid
+  parameter reset; trajectory suite validates optimizer paths.
+- **Removal/review condition:** Keep until flatness is replaced by a typed
+  dynamics model with explicit initialization and finite output guarantees.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2 && ./build/navigation_planning_backend/test_trajectory
+  --gtest_color=no`.

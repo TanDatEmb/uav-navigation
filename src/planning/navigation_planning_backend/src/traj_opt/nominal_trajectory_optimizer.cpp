@@ -284,7 +284,7 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
                     totalGradAcc{0.0, 0.0, 0.0}, totalGradJer{0.0, 0.0, 0.0};
 
             /* 2.6  For omg amd thr cost  */
-            if (weightOmg > 0 && weightAccThr > 0) {
+            if (weightOmg > 0 || weightAccThr > 0) {
                 double thr;
                 Vec4f quat;
                 Vec3f omg;

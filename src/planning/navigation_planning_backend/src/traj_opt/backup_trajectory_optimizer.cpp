@@ -189,18 +189,20 @@ void BackupTrajOpt::constraintsFunctional(const Eigen::VectorXd &T,
                 jerk_penalty_log += weightJer * violaJerPena;
             }
 
-            if (weightOmg > 0 && weightAccThr > 0) {
+            if (weightOmg > 0 || weightAccThr > 0) {
                 flatMap.forward(vel, acc, jer, 0.0, 0.0, thr, quat, omg);
                 violaOmg = omg.squaredNorm() - omgmaxSqr;
                 violaThrust = (thr - thrustMean) * (thr - thrustMean) - thrustSqrRadi;
 
-                if (gcopter::smoothedL1(violaOmg, smoothFactor, violaOmgPena, violaOmgPenaD)) {
+                if (weightOmg > 0 &&
+                    gcopter::smoothedL1(violaOmg, smoothFactor, violaOmgPena, violaOmgPenaD)) {
                     gradOmg += weightOmg * violaOmgPenaD * 2.0 * omg;
                     pena += weightOmg * violaOmgPena;
                     angular_rate_penalty_log += weightOmg * violaOmgPena;
                 }
 
-                if (gcopter::smoothedL1(violaThrust, smoothFactor, violaThrustPena, violaThrustPenaD)) {
+                if (weightAccThr > 0 &&
+                    gcopter::smoothedL1(violaThrust, smoothFactor, violaThrustPena, violaThrustPenaD)) {
                     gradThr += weightAccThr * violaThrustPenaD * 2.0 * (thr - thrustMean);
                     pena += weightAccThr * violaThrustPena;
                     thrust_penalty_log += weightAccThr * violaThrustPena;

@@ -31,6 +31,7 @@
 #include "traj_opt/yaw_traj_opt.h"
 #include "data_structure/base/polytope.h"
 #include "utils/geometry/geometry_utils.h"
+#include "utils/geometry/quadrotor_flatness.hpp"
 #include "utils/optimization/polynomial_interpolation.h"
 #include "utils/optimization/root_finder.h"
 
@@ -568,6 +569,19 @@ TEST(PlannerTrajectory, FovPlanesHaveNoUninitializedRowsAndAnglesArePerInstance)
   ASSERT_TRUE(narrow_planes.allFinite());
   ASSERT_TRUE(wide_planes.allFinite());
   EXPECT_GT((narrow_planes - wide_planes).norm(), 1.0e-3);
+}
+
+TEST(PlannerTrajectory, FlatnessMapHasSafeDefaultsAndRejectsInvalidReset) {
+  flatness::FlatnessMap map;
+  double thrust = 0.0;
+  Eigen::Vector4d quaternion;
+  Eigen::Vector3d angular_rate;
+  map.forward(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+              Eigen::Vector3d::Zero(), 0.0, 0.0, thrust, quaternion, angular_rate);
+  EXPECT_TRUE(std::isfinite(thrust));
+  EXPECT_TRUE(quaternion.allFinite());
+  EXPECT_TRUE(angular_rate.allFinite());
+  EXPECT_THROW(map.reset(0.0, 9.81, 0.0, 0.0, 0.0, 1.0e-4), std::invalid_argument);
 }
 
 TEST(PlannerTrajectory, PartialTrajectoryByIdAcceptsExclusiveEndSentinel) {
