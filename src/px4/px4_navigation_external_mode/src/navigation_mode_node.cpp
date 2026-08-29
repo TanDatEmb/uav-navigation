@@ -1309,7 +1309,10 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     }
     if (command.status ==
         navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED) {
-      publishPositionHold(position_enu);
+      if (!publishPositionHold(position_enu)) {
+        safetyStopNavigation("completed command position is not representable by PX4");
+        return;
+      }
       if ((command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP ||
            command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN) &&
           !terminal_hold_inside_acceptance && !mission_terminal_) {

@@ -12115,6 +12115,25 @@ release profiles must not use the former allowance.
   && cmake --build build/navigation_planning_backend --target test_trajectory
   -j2`; `./build/navigation_planning_backend/test_trajectory --gtest_color=no`.
 
+### 2026-08-29 - Fail closed on completed-command hold conversion
+
+- **Owner/status:** PX4 External Mode completed-command setpoint boundary,
+  `VERIFIED` by package build and focused External Mode tests.
+- **Scope:** The COMPLETED command path now checks the boolean result of the
+  position-hold publisher and invokes the existing safety-stop path when the
+  endpoint cannot be represented by the PX4 setpoint type.
+- **Safety impact:** A terminal command can no longer be treated as held while
+  no position setpoint was published because a finite double overflowed float.
+- **False-accept/false-reject consequences:** Representable terminal holds are
+  unchanged. An unrepresentable endpoint causes an earlier fail-closed stop.
+- **Runtime cost and evidence:** One existing conversion result is checked;
+  no new planner/control loop is added.
+- **Removal/review condition:** Keep until the PX4 setpoint API accepts a
+  validated position type without a lossy conversion.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select px4_navigation_external_mode
+  --symlink-install`; focused External Mode test suite.
+
 ### 2026-08-29 - Prevent Fast-LIO continuity-epoch exhaustion
 
 - **Owner/status:** Fast-LIO propagated IMU continuity boundary, `VERIFIED`
