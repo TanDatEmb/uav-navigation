@@ -9,6 +9,7 @@
 
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/planner_status.hpp>
+#include "navigation_runtime/execution_recovery_state.hpp"
 
 namespace navigation_runtime {
 
@@ -41,44 +42,15 @@ inline bool clearHotGoalTransitionAfterCommit(
 // endpoint. The remaining-time rule also covers an expired command when the
 // identity is not available; its interval is supplied by the runtime timer
 // rather than introduced as a second safety threshold.
-inline bool hotRetargetNeedsMeasuredStatePlan(
+inline bool hotRetargetUsesCommittedFutureState(
     bool hot_goal_transition, bool command_available,
-    bool goal_identity_changed,
-    double command_elapsed_s, double command_duration_s,
-    double planning_interval_s, double command_anchor_error_m,
-    double maximum_anchor_error_m) noexcept {
-  if (!hot_goal_transition || !command_available) {
-    return false;
-  }
-  // A hot stitch that already violates the shared execution-anchor envelope
-  // can only produce a candidate that the atomic commit boundary must reject,
-  // or a reverse connector back to historical command state. Rebase the new
-  // route from measured PVA before solving instead.
-  if (std::isfinite(command_anchor_error_m) &&
-      std::isfinite(maximum_anchor_error_m) &&
-      maximum_anchor_error_m >= 0.0 &&
-      command_anchor_error_m > maximum_anchor_error_m) {
-    return true;
-  }
-  // A measured pass-through acceptance is the route-boundary proof. Keep the
-  // existing nominal command as the hot-replan history while it still has
-  // time remaining; forcing PlanFromRest here discards the very velocity
-  // continuity that pass-through semantics are intended to preserve. The
-  // caller still rebases when the retained command is at its lease boundary.
-  (void)goal_identity_changed;
-  if (!std::isfinite(command_elapsed_s) || command_elapsed_s < 0.0) {
-    return true;
-  }
-  if (!std::isfinite(command_duration_s) ||
-      !std::isfinite(planning_interval_s) || planning_interval_s <= 0.0 ||
-      command_duration_s <= 0.0) {
-    return false;
-  }
-  const double remaining_s = command_duration_s - command_elapsed_s;
-  // The command clock is reconstructed from nanosecond timestamps and stored
-  // in seconds for the backend, so an exact one-interval boundary can differ
-  // by a few representable floating-point units.
-  return remaining_s <= planning_interval_s + 1.0e-9;
+    navigation_planning::CandidateRole command_role,
+    double command_anchor_error_m, double maximum_anchor_error_m) noexcept {
+  return hot_goal_transition && command_available &&
+         command_role == navigation_planning::CandidateRole::kMain &&
+         std::isfinite(command_anchor_error_m) &&
+         std::isfinite(maximum_anchor_error_m) && maximum_anchor_error_m > 0.0 &&
+         command_anchor_error_m <= maximum_anchor_error_m;
 }
 
 enum class PlannerResultDisposition {
@@ -233,11 +205,13 @@ inline RetainedValidationTransition retainedValidationTransition(bool usable) no
 inline bool measuredStateEmergencyMayReplaceCommittedCommand(
     bool validate_without_new_commit, bool committed_suffix_usable,
     bool fresh_vehicle_state, bool committed_command_available,
-    bool command_anchor_valid,
+    bool command_anchor_valid, bool tracking_certificate_exceeded,
+    ExecutionRecoveryState recovery_state,
     navigation_planning::CandidateRole committed_role) noexcept {
   return !validate_without_new_commit && !committed_suffix_usable &&
          fresh_vehicle_state && committed_command_available &&
-         command_anchor_valid &&
+         command_anchor_valid && tracking_certificate_exceeded &&
+         recovery_state == ExecutionRecoveryState::kTrackMain &&
          committed_role != navigation_planning::CandidateRole::kEmergency;
 }
 

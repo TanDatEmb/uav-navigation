@@ -440,9 +440,9 @@ namespace navigation_planning_backend {
         // Last-resort planner-owned braking bundle.  This is intentionally not
         // a main-only adapter trajectory: it is committed as BACKUP only
         // after dynamic and inflated-map gates pass.
-        bool commitEmergencyBrake(const StatePVAJ &measured_state,
-                                  double measured_yaw,
-                                  double measured_yaw_dot,
+        bool commitEmergencyBrake(const StatePVAJ &initial_command_state,
+                                  double initial_command_yaw,
+                                  double initial_command_yaw_dot,
                                   double start_WT);
 
         void getModuleTimeConsuming(vector<double> &time);

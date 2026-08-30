@@ -120,6 +120,24 @@ TEST(PlannerFsm, NoNeedWithoutCommittedCommandFailsClosed) {
             PlannerResultDisposition::FailClosed);
 }
 
+TEST(PlannerFsm, StoppedRecoveryFailureRemainsRetryableWithoutCommand) {
+  EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFailed,
+                                  true, false, false),
+            PlannerResultDisposition::RetryFromRest);
+  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(1U), 0.75);
+  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(2U), 0.50);
+}
+
+TEST(PlannerFsm, LeaseRenewalIsAContinuousReplanTrigger) {
+  EXPECT_TRUE(commandLeaseRenewalDue(true, 1'000'000'000LL,
+                                    1'350'000'000LL, 0.38));
+  EXPECT_FALSE(commandAnchorRecoveryDue(
+      true, navigation_planning::CandidateRole::kMain, 0.1, 0.75));
+  EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFailed,
+                                  false, true, false),
+            PlannerResultDisposition::RetainCommittedCommand);
+}
+
 TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
   EXPECT_EQ(retainedValidationTransition(true),
             RetainedValidationTransition::PreserveExistingState);
@@ -129,17 +147,54 @@ TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
 
 TEST(PlannerFsm, EmergencyBrakeCannotBeRearmedFromADriftingEmergency) {
   EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
-      false, false, true, true, true,
+      false, false, true, true, true, true,
+      ExecutionRecoveryState::kTrackMain,
       navigation_planning::CandidateRole::kMain));
-  EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
-      false, false, true, true, true,
+  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, false, true, true, true, false,
+      ExecutionRecoveryState::kTrackMain,
       navigation_planning::CandidateRole::kBackup));
   EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
-      false, false, true, true, true,
+      false, false, true, true, true, true,
+      ExecutionRecoveryState::kEmergencyBrake,
       navigation_planning::CandidateRole::kEmergency));
   EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
-      false, true, true, true, true,
+      false, true, true, true, true, true,
+      ExecutionRecoveryState::kTrackMain,
       navigation_planning::CandidateRole::kMain));
+  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, false, true, true, true, false,
+      ExecutionRecoveryState::kTrackMain,
+      navigation_planning::CandidateRole::kMain));
+}
+
+TEST(PlannerFsm, BackupAndEmergencyAreOneWayUntilCertifiedStop) {
+  EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kTrackBackup));
+  EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kEmergencyBrake));
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kTrackBackup,
+                ExecutionRecoveryEvent::kMainCommitted),
+            ExecutionRecoveryState::kTrackBackup);
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kEmergencyBrake,
+                ExecutionRecoveryEvent::kEmergencyCommitted),
+            ExecutionRecoveryState::kEmergencyBrake);
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kEmergencyBrake,
+                ExecutionRecoveryEvent::kCertifiedStopObserved),
+            ExecutionRecoveryState::kStoppedRecovery);
+  EXPECT_TRUE(nominalPlanningAllowed(ExecutionRecoveryState::kStoppedRecovery));
+}
+
+TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kTrackMain,
+                ExecutionRecoveryEvent::kEmergencyCertificationFailed),
+            ExecutionRecoveryState::kPx4Hold);
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kStoppedRecovery,
+                ExecutionRecoveryEvent::kRecoveryTimedOut),
+            ExecutionRecoveryState::kPx4Hold);
 }
 
 TEST(PlannerFsm, PreservesObservedTerminalHoldAcrossRestRetry) {
@@ -423,32 +478,17 @@ TEST(PlannerFsm, PassThroughHotRetargetsFromCertifiedFiniteCommand) {
   EXPECT_TRUE(canHotRetargetAtWaypointTransition(false, true, true, false, true));
 }
 
-TEST(PlannerFsm, RebasesHotRetargetWhenThePreviousCommandIsAtItsBoundary) {
-  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(
-      true, true, false, 1.0, 1.1, 0.1, 0.2, 0.75));
-  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(
-      true, true, false, 1.2, 1.1, 0.1, 0.2, 0.75));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
-      true, true, true, 0.8, 1.1, 0.1, 0.2, 0.75));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
-      true, true, false, 0.8, 1.1, 0.1, 0.2, 0.75));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
-      false, true, true, 1.2, 1.1, 0.1, 0.2, 0.75));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
-      true, false, true, 1.2, 1.1, 0.1, 0.2, 0.75));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
-      true, true, false, 1.2, 1.1, 0.0, 0.2, 0.75));
-  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(
-      true, true, false, -0.1, 1.1, 0.1, 0.2, 0.75));
-}
-
-TEST(PlannerFsm, RebasesDivergedHotRetargetBeforeAtomicCommit) {
-  EXPECT_TRUE(hotRetargetNeedsMeasuredStatePlan(
-      true, true, true, 0.2, 2.0, 0.1, 0.751, 0.75));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
-      true, true, true, 0.2, 2.0, 0.1, 0.75, 0.75));
-  EXPECT_FALSE(hotRetargetNeedsMeasuredStatePlan(
-      false, true, true, 0.2, 2.0, 0.1, 2.0, 0.75));
+TEST(PlannerFsm, HotRetargetUsesOnlyCertifiedFutureMainState) {
+  EXPECT_TRUE(hotRetargetUsesCommittedFutureState(
+      true, true, navigation_planning::CandidateRole::kMain, 0.75, 0.75));
+  EXPECT_FALSE(hotRetargetUsesCommittedFutureState(
+      true, true, navigation_planning::CandidateRole::kMain, 0.751, 0.75));
+  EXPECT_FALSE(hotRetargetUsesCommittedFutureState(
+      true, true, navigation_planning::CandidateRole::kBackup, 0.2, 0.75));
+  EXPECT_FALSE(hotRetargetUsesCommittedFutureState(
+      true, false, navigation_planning::CandidateRole::kMain, 0.2, 0.75));
+  EXPECT_FALSE(hotRetargetUsesCommittedFutureState(
+      false, true, navigation_planning::CandidateRole::kMain, 0.2, 0.75));
 }
 
 TEST(PlannerFsm, AcceptsSafetySuffixWhenVehicleIsAlreadyOnBackup) {

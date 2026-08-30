@@ -1,5 +1,34 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Make moving recovery future-state-only and one-way
+
+- **Owner/status:** runtime recovery FSM and planner hot-splice boundary,
+  `IMPLEMENTED`; staged-tree Release package builds and 52/52 planner-config,
+  42/42 FSM, and 6/6 shutdown tests are green.
+- **Scope:** Public recovery state is `INITIAL_HOLD`, `TRACK_MAIN`,
+  `TRACK_BACKUP`, `EMERGENCY_BRAKE`, `STOPPED_RECOVERY`, or `PX4_HOLD`.
+  Moving renewal and hot retargeting use only a committed future PVAJ anchor.
+  A tracking-certificate exceedance may create exactly one brake from fresh
+  propagated measured PVAJ; certification or commit failure enters PX4 Hold.
+  BACKUP/emergency reject nominal replacement until their declared trajectory
+  has ended and fresh measured speed is at most `0.15 m/s`.
+- **Safety impact:** A measured-state nominal `ReplanOnce`, reverse connector,
+  repeated emergency rearm, or late nominal worker result cannot reset a moving
+  safety trajectory. The one measured-state exception is an explicit,
+  independently certified emergency brake. Existing V/A/J, flatness, world,
+  tracking, known-free, and freshness gates are unchanged.
+- **False-accept/false-reject consequences:** Missing/non-finite stop evidence,
+  a brake certificate failure, an invalidated moving-world certificate, or a
+  queued nominal result during BACKUP/emergency is rejected conservatively.
+- **Runtime cost and evidence:** State transitions are constant-time atomic
+  operations. Runtime diagnostics expose the public state value.
+- **Removal/review condition:** Keep the one-way transition contract. Revisit
+  only with repeated command-to-PX4 tracking evidence; do not add brake-to-main
+  recovery before a certified stop.
+- **Verification:** `./build/navigation_planning_backend/test_planner_config
+  --gtest_color=no`; `./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no`; `python3 tools/runtime/build.py --mode release build`.
+
 ### 2026-08-30 - Preserve a certified nominal seed across refinement cancellation
 
 - **Owner/status:** nominal trajectory optimization and solve-budget contract,

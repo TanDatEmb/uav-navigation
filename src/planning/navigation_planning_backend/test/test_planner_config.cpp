@@ -197,14 +197,14 @@ TEST(BoundaryVelocityRecovery, RejectsWorseningOrLateOverspeed) {
   EXPECT_FALSE(late.satisfied);
 }
 
-TEST(HotReplanTrackingRecovery, NeverBuildsAReverseConnectorToMeasuredHistory) {
+TEST(HotReplanTrackingRecovery, NeverPublishesDiscontinuousMeasuredRebase) {
   using navigation_planning_backend::HotReplanTrackingRecovery;
   using navigation_planning_backend::classifyHotReplanTrackingRecovery;
 
   EXPECT_EQ(classifyHotReplanTrackingRecovery(false, true),
             HotReplanTrackingRecovery::kContinueHotStitch);
   EXPECT_EQ(classifyHotReplanTrackingRecovery(true, true),
-            HotReplanTrackingRecovery::kRebaseCurrentSolveOnMeasuredState);
+            HotReplanTrackingRecovery::kRetainCommittedCommand);
   EXPECT_EQ(classifyHotReplanTrackingRecovery(true, false),
             HotReplanTrackingRecovery::kFailClosed);
 }

@@ -63,7 +63,7 @@ class PlannerFacade final {
       std::int64_t valid_until_ns) const;
 
   [[nodiscard]] bool commitEmergencyBrake(
-      const navigation_planning::TrajectoryPoint& measured_command,
+      const navigation_planning::TrajectoryPoint& initial_command,
       double start_wall_time_s);
 
   [[nodiscard]] navigation_planning::CommittedTrajectorySnapshot committedSnapshot() const;

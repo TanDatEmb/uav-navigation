@@ -1058,29 +1058,22 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             valid_from_ns, valid_until_ns);
     }
 
-    bool Planner::commitEmergencyBrake(const StatePVAJ &measured_state,
-                                            const double measured_yaw,
-                                            const double measured_yaw_dot,
+    bool Planner::commitEmergencyBrake(const StatePVAJ &initial_command_state,
+                                            const double initial_command_yaw,
+                                            const double initial_command_yaw_dot,
                                             const double start_WT) {
-        if (!measured_state.allFinite() || !std::isfinite(measured_yaw) ||
-            !std::isfinite(measured_yaw_dot) || !std::isfinite(start_WT)) {
+        if (!initial_command_state.allFinite() ||
+            !std::isfinite(initial_command_yaw) ||
+            !std::isfinite(initial_command_yaw_dot) || !std::isfinite(start_WT)) {
             planner_context_->error(" -- [planner] emergency brake rejected: non-finite initial state");
             return false;
         }
 
-        StatePVAJ bounded_state = measured_state;
-        const auto clamp_state_column = [&bounded_state](const int column,
-                                                        const double limit) {
-            const double magnitude = bounded_state.col(column).norm();
-            if (std::isfinite(magnitude) && magnitude > limit) {
-                bounded_state.col(column) *= limit / magnitude;
-            }
-        };
-        // Position and velocity are measured and must remain continuous at the
-        // handover. Only the unmeasured command-boundary acceleration and jerk
-        // may be saturated to the mission envelope.
-        clamp_state_column(2, cfg_.back_traj_cfg.max_acc);
-        clamp_state_column(3, cfg_.back_traj_cfg.max_jerk);
+        StatePVAJ bounded_state = initial_command_state;
+        // Preserve the complete live command boundary at handover. Do not
+        // clamp acceleration or jerk here: saturation would itself create the
+        // discontinuity this emergency transition is meant to eliminate. The
+        // seed and final flatness certificates reject an infeasible boundary.
 
         const auto seed = makeBackupBrakingSeed(
                 0.0, bounded_state,
@@ -1101,8 +1094,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         position_trajectory.start_WT = start_WT;
 
         StatePVAJ yaw_state = StatePVAJ::Zero();
-        yaw_state(0, 0) = measured_yaw;
-        yaw_state(0, 1) = measured_yaw_dot;
+        yaw_state(0, 0) = initial_command_yaw;
+        yaw_state(0, 1) = initial_command_yaw_dot;
         Trajectory yaw_trajectory;
         yaw_trajectory.emplace_back(
                 minimumSnapStopPiece(yaw_state, seed.duration_s));
@@ -1125,7 +1118,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     bounded_state.col(1).transpose(),
                     bounded_state.col(2).transpose(),
                     bounded_state.col(3).transpose(),
-                    measured_yaw, measured_yaw_dot);
+                    initial_command_yaw, initial_command_yaw_dot);
             return false;
         }
 
@@ -1136,7 +1129,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             return false;
         }
         planner_context_->warn(
-                " -- [planner] committed measured-state emergency brake: "
+                " -- [planner] committed command-continuous emergency brake: "
                 "initial_speed={} speed_limit={} initial_overspeed={} duration={} distance={} "
                 "peak_vel={} peak_acc={} peak_jerk={}",
                 seed.initial_velocity_mps, cfg_.back_traj_cfg.max_vel,
@@ -1193,14 +1186,12 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
 
         // A hot replan normally preserves a short prefix of the currently
         // committed command so PVAJ remains continuous.  That prefix is not
-        // authoritative when the vehicle has fallen behind it: stitching it
-        // again would keep reproducing the same command-ahead error until the
-        // PX4 boundary rejects the bundle. Rebase this same solve on the fresh
-        // measured propagated state once the existing tracking-error budget is
-        // exceeded. The previous immutable command remains exposed until the
-        // replacement passes the normal atomic commit boundary. This is a
-        // planner-side recovery, not a relaxation of the command-anchor safety
-        // gate.
+        // authoritative when the vehicle has fallen behind it.  A measured
+        // P/V rebase with estimated A/J reset to zero is not a continuous hot
+        // splice either, so this solve must not publish such a replacement.
+        // Retain the previous immutable command while its normal runtime
+        // certificates remain valid; the bounded anchor-recovery supervisor
+        // owns any explicit measured-state transition.
         if (!last_exp_traj_info.empty()) {
             const auto committed = cmd_traj_info_.snapshot();
             const double committed_start_WT = committed.position.start_WT;
@@ -1275,7 +1266,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                     return FAILED;
                 }
                 planner_context_->warn(
-                        " -- [planner] rebasing hot solve on fresh measured PVAJ: "
+                        " -- [planner] hot splice outside compatibility envelope; "
+                        "retaining certified command for bounded runtime recovery: "
                         "position_error={} future_position_error={} "
                         "future_velocity_error={} yaw_error={} position_budget={} "
                         "future_position_allowance={} future_velocity_allowance={} "
@@ -1286,8 +1278,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
                         splice_compatibility.future_position_allowance_m,
                         splice_compatibility.future_velocity_allowance_mps,
                         cfg_.yaw_tracking_error_budget_rad);
-                last_exp_traj_info.setEmpty();
-                local_start_p_ = solve_state_.p;
+                return FAILED;
             }
         }
 

@@ -26,6 +26,7 @@
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/observation_accounting.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/execution_recovery_state.hpp"
 #include "navigation_runtime/planning_worker.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
@@ -283,6 +284,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_bool planner_command_available_{false};
   std::atomic_bool planner_failure_latched_{false};
   std::atomic_bool safety_suffix_active_{false};
+  std::atomic<ExecutionRecoveryState> execution_recovery_state_{
+      ExecutionRecoveryState::kInitialHold};
   std::atomic_uint64_t planner_solve_generation_{0U};
   std::atomic_uint64_t active_planner_solve_generation_{0U};
   std::atomic_uint64_t timed_out_planner_solve_generation_{0U};
