@@ -30,7 +30,7 @@ TEST(PlannerFsm, DefersOptimizerWhileCertifiedMainHasRenewalMargin) {
   EXPECT_FALSE(decision.run_optimizer);
   EXPECT_EQ(decision.reason, PlannerRenewalReason::kRetainCertifiedMain);
   EXPECT_DOUBLE_EQ(decision.remaining_main_horizon_s, 3.0);
-  EXPECT_NEAR(decision.required_lead_time_s, 0.58, 1.0e-15);
+  EXPECT_NEAR(decision.required_lead_time_s, 0.80, 1.0e-15);
 }
 
 TEST(PlannerFsm, StartsAnchorRecoveryBeforeExecutionLeaseIsExhausted) {
@@ -69,12 +69,12 @@ TEST(PlannerFsm, UsesBoundedSlowerVelocityEnvelopeAfterRestFailures) {
 TEST(PlannerFsm, RenewsBeforeMainCanReachBackupDuringSchedulingAndSolve) {
   const auto before_boundary = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 3.41, 4.0, 0.18, 0.2, 0.2);
+      true, 3.19, 4.0, 0.18, 0.2, 0.2);
   EXPECT_FALSE(before_boundary.run_optimizer);
 
   const auto at_boundary = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 3.42, 4.0, 0.18, 0.2, 0.2);
+      true, 3.20, 4.0, 0.18, 0.2, 0.2);
   EXPECT_TRUE(at_boundary.run_optimizer);
   EXPECT_EQ(at_boundary.reason, PlannerRenewalReason::kRenewalDue);
 }

@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_planning/candidate_admission.hpp>
 #include <navigation_planning/kinematic_state.hpp>
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/planning_request.hpp>
@@ -89,6 +90,46 @@ TEST(PlanningCandidate, AllowsDeclaredMainToBackupRoleSchedule) {
 
   candidate.backup_available = false;
   EXPECT_FALSE(candidate.sample(175).has_value());
+}
+
+TEST(PlanningCandidate, AdmissionRequiresEightHundredMillisecondsOfMain) {
+  auto candidate = validCandidate();
+  candidate.start_wall_time_s = 10.0;
+  candidate.duration_s = 2.0;
+  candidate.backup_start_time_s = 1.0;
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.certificates.terminal_stop = false;
+  candidate.role_schedule = {
+      {0.0, 1.0, navigation_planning::CandidateRole::kMain},
+      {1.0, 2.0, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.trajectory_time_s = static_cast<double>(stamp) * 1.0e-9 - 10.0;
+    point.role = point.trajectory_time_s < 1.0
+        ? navigation_planning::CandidateRole::kMain
+        : navigation_planning::CandidateRole::kBackup;
+    return true;
+  };
+  EXPECT_TRUE(navigation_planning::candidateHasRequiredMainReserve(
+      candidate, 10.20));
+  EXPECT_FALSE(navigation_planning::candidateHasRequiredMainReserve(
+      candidate, 10.200000002));
+}
+
+TEST(PlanningCandidate, CertifiedTerminalStopIsReserveExempt) {
+  auto candidate = validCandidate();
+  ASSERT_TRUE(navigation_planning::certifiedTerminalStopAtEndpoint(candidate));
+  EXPECT_TRUE(navigation_planning::candidateHasRequiredMainReserve(
+      candidate, 100.0));
+  candidate.evaluator = [](std::int64_t,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.velocity_world.x() = 0.01;
+    point.trajectory_time_s = 1.0e-7;
+    return true;
+  };
+  EXPECT_FALSE(navigation_planning::candidateHasRequiredMainReserve(
+      candidate, 100.0));
 }
 
 TEST(PlanningOutcome, SuccessRequiresCandidateAndFailureDoesNotCarryOne) {

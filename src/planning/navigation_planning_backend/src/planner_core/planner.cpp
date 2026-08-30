@@ -11,12 +11,14 @@
 #include <planner_core/guide_vertical_envelope.hpp>
 #include <planner_core/absolute_deadline.hpp>
 #include <planner_core/backup_braking.hpp>
+#include <planner_core/evidence_speed_governor.hpp>
 #include <planner_core/command_time.hpp>
 #include <planner_core/guide_endpoint.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/replan_contract.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
 #include <navigation_world_model/goal_contract.hpp>
+#include <navigation_planning/planning_timing.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
 #include <memory>
@@ -41,6 +43,26 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
     }
     output << ']';
     return output.str();
+}
+
+double knownFreeGuideSupport(
+        const navigation_world_model::WorldModelView& world,
+        const vec_Vec3f& guide) {
+    if (guide.size() < 2U) return 0.0;
+    double support_m = 0.0;
+    for (std::size_t index = 1; index < guide.size(); ++index) {
+        const Eigen::Vector3d begin = guide[index - 1U].cast<double>();
+        const Eigen::Vector3d end = guide[index].cast<double>();
+        const double segment_m = (end - begin).norm();
+        if (!std::isfinite(segment_m) || segment_m <= 1.0e-9 ||
+            !world.isSegmentTraversable(
+                begin, end, navigation_world_model::GridLayer::kInflated,
+                navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+            break;
+        }
+        support_m += segment_m;
+    }
+    return support_m;
 }
 
 }  // namespace
@@ -1951,6 +1973,28 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
 
         time_consuming_[EPX_TRAJ_FRONTEND] = t_exp_frontend.stop();
 
+        const Eigen::Vector3d guide_direction =
+            (guide_path.back() - guide_path.front()).cast<double>();
+        const auto directional_support =
+            navigation_world_model::directionalSupportToLocalBoundary(
+                guide_path.front().cast<double>(), guide_direction,
+                map_ptr_->geometry());
+        const double route_support_m = geometry_utils::computePathLength(guide_path);
+        const double known_free_support_m = knownFreeGuideSupport(*map_ptr_, guide_path);
+        const auto governed_speed = evidenceAwareSpeedLimit(
+            cfg_.exp_traj_cfg.max_vel,
+            cfg_.back_traj_cfg.max_acc, cfg_.back_traj_cfg.max_jerk,
+            {navigation_planning::PlanningTimingContract::kLocalWindowM,
+             directional_support.value_or(0.0), route_support_m,
+             known_free_support_m});
+        if (!governed_speed.sufficient || governed_speed.speed_mps <= 0.0) {
+            planner_context_->warn(
+                " -- [planner] MAIN rejected: insufficient braking evidence "
+                "local=20.000 directional={:.3f} route={:.3f} known_free={:.3f}",
+                directional_support.value_or(0.0), route_support_m,
+                known_free_support_m);
+            return FAILED;
+        }
 
         pos_fina_state.setZero();
         pos_fina_state.col(0) = guide_path.back();
@@ -1965,7 +2009,8 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             // next leg, which otherwise amplifies hard-gate churn at a
             // pass-through waypoint.
             double terminal_velocity_cap =
-                    cfg_.exp_traj_cfg.max_vel *
+                    std::min(cfg_.exp_traj_cfg.max_vel,
+                             governed_speed.speed_mps) *
                     cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
             if (route_window_endpoint) {
                 const double fillet_radius_m =
@@ -2128,13 +2173,29 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         TimeConsuming t_exp_opt("t_exp_opt", false);
         auto original_sfc = sfc;
         solve_stage_.store(4);
+        const auto committed_before_refinement = cmd_traj_info_.snapshot();
+        const double remaining_main_before_refinement_s =
+            committed_before_refinement.empty
+                ? std::numeric_limits<double>::infinity()
+                : committed_before_refinement.position.start_WT +
+                      committed_before_refinement.backup_start_tt -
+                      planner_context_->getSimTime();
+        const bool urgent_baseline =
+            std::isfinite(remaining_main_before_refinement_s) &&
+            remaining_main_before_refinement_s <=
+                navigation_planning::PlanningTimingContract::
+                    kUrgentBaselineThresholdS;
+        const auto refinement_deadline_ns = urgent_baseline
+            ? std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::steady_clock::now().time_since_epoch()).count()
+            : solve_deadline.refinementDeadlineNanoseconds(
+                  cfg_.finalization_reserve_s);
         exp_traj_opt_->setSolveBudget(
-                &solve_cancelled_, solve_deadline.refinementDeadlineNanoseconds(
-                    cfg_.finalization_reserve_s));
+                &solve_cancelled_, refinement_deadline_ns);
         const auto nominal_result = exp_traj_opt_->solve(
                 pos_init_state, pos_fina_state, guide_path, guide_stamp,
                 sfc, out_traj,
-                solve_deadline.conservativeRemaining(
+                urgent_baseline || solve_deadline.conservativeRemaining(
                     planner_context_->getSimTime()) <= cfg_.finalization_reserve_s);
         temp_ret = nominal_result.candidateAvailable();
         time_consuming_[EXP_TRAJ_OPT] = t_exp_opt.stop();

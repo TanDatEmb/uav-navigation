@@ -9,6 +9,7 @@
 #include <planner_core/boundary_velocity_recovery.hpp>
 #include <planner_core/hot_replan_recovery.hpp>
 #include <planner_core/config.hpp>
+#include <planner_core/evidence_speed_governor.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/guide_vertical_envelope.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
@@ -734,6 +735,23 @@ TEST(PlannerProductConfig, DirectionalSupportUsesTheFirstAxisAlignedBoundary) {
       std::numeric_limits<double>::max());
   EXPECT_FALSE(navigation_world_model::directionalSupportToLocalBoundary(
       Eigen::Vector3d::Zero(), Eigen::Vector3d::UnitX(), world_geometry));
+}
+
+TEST(PlannerSpeedGovernor, UsesWeakestEvidenceAndBoundedBisection) {
+  const auto limited = navigation_planning_backend::evidenceAwareSpeedLimit(
+      8.0, 4.0, 12.0, {20.0, 7.5, 12.0, 5.0});
+  ASSERT_TRUE(limited.sufficient);
+  EXPECT_DOUBLE_EQ(limited.support_m, 5.0);
+  EXPECT_GT(limited.speed_mps, 0.0);
+  EXPECT_LE(navigation_planning_backend::jerkLimitedStopDistance(
+                limited.speed_mps, 4.0, 12.0),
+            5.0 + 1.0e-9);
+  EXPECT_LT(8.0 - limited.speed_mps, 8.0);
+
+  const auto missing = navigation_planning_backend::evidenceAwareSpeedLimit(
+      8.0, 4.0, 12.0, {20.0, 7.5, 0.0, 5.0});
+  EXPECT_FALSE(missing.sufficient);
+  EXPECT_DOUBLE_EQ(missing.speed_mps, 0.0);
 }
 
 TEST(PlannerCorridorPlanes, NormalizesFinitePlanesAndRejectsMalformedNormals) {

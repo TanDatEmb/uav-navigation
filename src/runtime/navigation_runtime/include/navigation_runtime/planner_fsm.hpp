@@ -9,6 +9,7 @@
 
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/planner_status.hpp>
+#include <navigation_planning/planning_timing.hpp>
 #include "navigation_runtime/execution_recovery_state.hpp"
 
 namespace navigation_runtime {
@@ -164,8 +165,10 @@ inline PlannerRenewalDecision classifyPlannerRenewal(
 
   const long double lead_time =
       static_cast<long double>(solve_deadline_s) +
-      static_cast<long double>(replan_forward_s) +
-      static_cast<long double>(scheduling_interval_s);
+      2.0L * static_cast<long double>(replan_forward_s) +
+      static_cast<long double>(scheduling_interval_s) +
+      static_cast<long double>(
+          navigation_planning::PlanningTimingContract::kCommitGuardS);
   const long double remaining =
       static_cast<long double>(backup_start_s) -
       static_cast<long double>(command_elapsed_s);

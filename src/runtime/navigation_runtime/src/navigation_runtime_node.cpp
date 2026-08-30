@@ -15,6 +15,8 @@
 #include <navigation_common/time.hpp>
 #include <navigation_world_model/goal_contract.hpp>
 #include <navigation_planning_backend/planner_facade.hpp>
+#include <navigation_planning/candidate_admission.hpp>
+#include <navigation_planning/planning_timing.hpp>
 #include <navigation_mission/route_progress.hpp>
 
 #include <algorithm>
@@ -1595,6 +1597,19 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   }
   const auto candidate_ptr = std::make_shared<const navigation_planning::CandidateBundle>(
       *candidate);
+  if (!navigation_planning::candidateHasRequiredMainReserve(
+          *candidate_ptr, now().seconds())) {
+    planner_->discardCommandCandidate();
+    RCLCPP_WARN(
+        get_logger(),
+        "execution boundary rejected candidate with insufficient MAIN reserve: "
+        "kind=%d remaining=%.3f required=%.3f",
+        static_cast<int>(candidate_ptr->kind),
+        navigation_planning::remainingMainHorizonAtCommit(
+            *candidate_ptr, now().seconds()),
+        navigation_planning::PlanningTimingContract::kMinimumMainReserveS);
+    return false;
+  }
   // A solve can finish after the state that seeded it has been replaced. Do
   // not admit a candidate whose first executable sample is detached from the
   // latest propagated vehicle state. This reuses the same product geometric

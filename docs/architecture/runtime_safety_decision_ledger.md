@@ -1,5 +1,36 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Require 800 ms MAIN reserve and evidence-bounded speed
+
+- **Owner/status:** candidate admission, renewal timing, and planner speed
+  authority, `IMPLEMENTED`; focused contract/config/FSM tests and a three-package
+  Release build are green; repeated flight qualification remains pending.
+- **Scope:** The locked renewal/admission reserve is
+  `0.18 + 0.40 + 0.20 + 0.02 = 0.80 s`. MAIN+BACKUP candidates are measured at
+  atomic admission against their BACKUP role boundary. A terminal STOP is
+  exempt only with its terminal certificate and finite endpoint V/A/J at rest.
+  Remaining MAIN at or below `1.0 s` suppresses optional nominal refinement.
+  The speed governor inverts the existing jerk-limited stopping helper with at
+  most 32 bisection iterations and `1e-3 m/s` resolution over the weakest of
+  local-window, directional-map, route, and known-free guide support.
+- **Safety impact:** A short-lived MAIN or a positive speed unsupported by a
+  complete braking envelope cannot enter the execution store. No V/A/J,
+  thrust, body-rate, tracking, known-free, or freshness threshold is relaxed.
+- **False-accept/false-reject consequences:** Missing support, zero governed
+  speed, stale-at-commit reserve, or an uncertified moving terminal endpoint is
+  rejected. Conservative known-free evidence may lower terminal speed or reject
+  a route that a later map revision could support.
+- **Runtime cost and evidence:** Admission is constant-time plus one terminal
+  sample. Speed inversion is bounded to 32 iterations and reuses the BACKUP
+  stop-distance model. Release builds passed for planning contracts, backend,
+  and runtime; 12/12 contracts, 53/53 config, and 42/42 FSM tests are green.
+- **Removal/review condition:** Keep the 800 ms minimum. Change it only by
+  changing the explicit timing contract, not through flight-tuned slack.
+- **Verification:** `python3 tools/runtime/build.py --mode release build
+  --packages navigation_planning navigation_planning_backend navigation_runtime`;
+  focused `test_planning_contracts`, `test_planner_config`, and
+  `test_planner_fsm` binaries.
+
 ### 2026-08-30 - Make moving recovery future-state-only and one-way
 
 - **Owner/status:** runtime recovery FSM and planner hot-splice boundary,
