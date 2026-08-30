@@ -6,6 +6,8 @@
 #include <navigation_mapping/mapping_actor.hpp>
 
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/planning_supervisor.hpp"
+#include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include <navigation_execution/timestamp_freshness.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
@@ -535,6 +537,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         mission_limits->max_acceleration_mps2,
         mission_limits->max_jerk_mps3);
   }
+  // Dynamics are immutable after construction. This process-local identity is
+  // sufficient for request supersession and is never used as a certificate.
+  dynamics_hash_ = static_cast<std::uint64_t>(std::hash<std::string>{}(
+      planner_config_path_ + "\n" + mission_file));
+  if (dynamics_hash_ == 0U) dynamics_hash_ = 1U;
   const auto ros_clock = get_clock();
   auto mapping_actor = std::make_shared<navigation_mapping::MappingActor>(
       planner_config_path_, [ros_clock] { return ros_clock->now().seconds(); },
@@ -934,9 +941,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         diagnostics.status.push_back(std::move(status));
         publisher->publish(diagnostics);
       });
-  planner_ = std::make_unique<navigation_planning_backend::PlannerFacade>(
+  auto planner = std::make_unique<navigation_planning_backend::PlannerFacade>(
       planner_config_path_, world_snapshot_store_.load().view, mission_limits,
       world_snapshot_store_, [this]() { return now().seconds(); });
+  planner_ = planner.get();
   const double planner_period_s = 1.0 / planner_rate_hz_;
   const double solve_deadline_s = planner_->solveDeadlineSeconds();
   if (!std::isfinite(solve_deadline_s) || solve_deadline_s <= 0.0 ||
@@ -945,9 +953,23 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         "navigation_runtime.planner_rate_hz must leave a complete timer period "
         "for planner.solve_deadline_s");
   }
+  planning_worker_ = std::make_unique<
+      PlanningWorker<navigation_planning_backend::PlannerFacade>>(
+      std::move(planner), [this](std::exception_ptr failure) {
+        planner_failure_latched_.store(true, std::memory_order_release);
+        planner_command_available_.store(false, std::memory_order_release);
+        try {
+          if (failure) std::rethrow_exception(failure);
+        } catch (const std::exception& error) {
+          RCLCPP_ERROR(get_logger(), "planning worker failed: %s", error.what());
+        } catch (...) {
+          RCLCPP_ERROR(get_logger(), "planning worker failed with unknown exception");
+        }
+      });
   mapping_worker_->setStrictlyIncreasingOrderKey(
       [](const navigation_mapping::MappingObservation& observation) { return observation.stamp_ns; });
   mapping_worker_->start();
+  planning_worker_->start();
 
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
   propagated_state_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
@@ -978,15 +1000,16 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       command_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
   end_to_end_samples_ms_.reserve(256);
 
-  // The planner's mutable solve state is not re-entrant. A long optimization
-  // must never overlap the next timer tick; only the read-only command sampler
-  // is allowed to run concurrently.
+  // The timer is a non-blocking scheduler. Mutable solve execution is owned by
+  // the bounded planning worker; command sampling reads only the immutable
+  // committed bundle store.
   planning_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
   command_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
   planning_period_us_ =
       std::chrono::duration_cast<std::chrono::microseconds>(*planning_period).count();
   planning_timer_ = create_wall_timer(
-      *planning_period, std::bind(&NavigationRuntimeNode::runCycle, this), planning_callback_group_);
+      *planning_period, std::bind(&NavigationRuntimeNode::schedulePlanningCycle, this),
+      planning_callback_group_);
   command_timer_ = create_wall_timer(
       *command_period, std::bind(&NavigationRuntimeNode::publishCommand, this),
       command_callback_group_);
@@ -1002,7 +1025,8 @@ NavigationRuntimeNode::~NavigationRuntimeNode() {
   accepting_observations_.store(false);
   if (planning_timer_) planning_timer_->cancel();
   if (command_timer_) command_timer_->cancel();
-  if (planner_) planner_->cancelActiveSolve();
+  if (planning_worker_) planning_worker_->shutdown();
+  planner_ = nullptr;
   registered_scan_subscription_.reset();
   estimator_health_subscription_.reset();
   propagated_odometry_subscription_.reset();
@@ -1076,7 +1100,7 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
   // Match the goal transition ordering: cancel the solve before changing the
   // epoch exposed to the planning callback, drain the mapping barrier, then
   // clear command exposure under the execution transition lock.
-  planner_->cancelActiveSolve();
+  if (planning_worker_) planning_worker_->cancelActive();
   if (mapping_worker_) mapping_worker_->reset();
   active_localization_epoch_.store(localization_epoch, std::memory_order_release);
   last_propagated_state_stamp_ns_.store(0, std::memory_order_release);
@@ -1314,7 +1338,7 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
   const bool route_mirrors_valid =
       route.has_value() && routeSnapshotMatchesGoalMirrors(*route, *message);
   if (!route.has_value() || !route_mirrors_valid) {
-    planner_->cancelActiveSolve();
+    if (planning_worker_) planning_worker_->cancelActive();
     command_bundle_store_.invalidate();
     planner_command_available_.store(false);
     planner_failure_latched_.store(true);
@@ -1368,7 +1392,7 @@ void NavigationRuntimeNode::onGoal(const navigation_contracts::msg::NavigationGo
     // candidate after this callback has invalidated it. A hot-retarget may keep
     // the current bundle only until a newer world identity invalidates it; the
     // execution store never relabels a stale-world certificate as current.
-    planner_->cancelActiveSolve();
+    if (planning_worker_) planning_worker_->cancelActive();
     const auto next_goal_epoch = advanceMonotonicId(active_goal_epoch_);
     if (!next_goal_epoch) {
       command_bundle_store_.invalidate();
@@ -1460,7 +1484,7 @@ void NavigationRuntimeNode::onModeStatus(
               "mission=%s waypoint=%u request=%lu",
               message->state, message->reason, message->mission_id.c_str(),
               message->waypoint_index, static_cast<unsigned long>(message->request_id));
-  planner_->cancelActiveSolve();
+  if (planning_worker_) planning_worker_->cancelActive();
   const auto next_goal_epoch = advanceMonotonicId(active_goal_epoch_);
   if (next_goal_epoch) {
     (void)command_bundle_store_.setActiveGoalEpoch(*next_goal_epoch, false);
@@ -1492,9 +1516,42 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     const navigation_contracts::msg::NavigationGoal& goal,
     const std::uint64_t goal_epoch,
     const std::uint64_t localization_epoch,
-    const std::int64_t now_ns) {
+    const std::int64_t now_ns,
+    const PlanningKey& scheduled_key) {
   if (now_ns <= 0 || goal_epoch == 0U || localization_epoch == 0U ||
       goal.request_id == 0U) {
+    return false;
+  }
+  const auto latest_bundle_before_commit = command_bundle_store_.load();
+  const auto latest_world_before_commit = world_snapshot_store_.load();
+  const auto latest_bundle_generation = latest_bundle_before_commit
+      ? latest_bundle_before_commit->bundle_generation
+      : 0U;
+  bool route_identity_current = false;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    route_identity_current = active_goal_ &&
+        active_goal_->request_id == scheduled_key.request_id &&
+        active_goal_->route.route_revision == scheduled_key.route_revision;
+  }
+  if (!scheduled_key.valid() || !route_identity_current ||
+      scheduled_key.localization_epoch != localization_epoch ||
+      scheduled_key.goal_epoch != goal_epoch ||
+      scheduled_key.request_id != goal.request_id ||
+      active_localization_epoch_.load(std::memory_order_acquire) != localization_epoch ||
+      active_goal_epoch_.load(std::memory_order_acquire) != goal_epoch ||
+      latest_bundle_generation != scheduled_key.committed_bundle_generation ||
+      !latest_world_before_commit ||
+      latest_world_before_commit.identity.generation !=
+          scheduled_key.pinned_world_generation) {
+    planner_->discardCommandCandidate();
+    RCLCPP_WARN(get_logger(),
+                "execution boundary rejected stale planning result request=%lu "
+                "route_revision=%lu committed_generation=%lu world_generation=%lu",
+                static_cast<unsigned long>(scheduled_key.request_id),
+                static_cast<unsigned long>(scheduled_key.route_revision),
+                static_cast<unsigned long>(scheduled_key.committed_bundle_generation),
+                static_cast<unsigned long>(scheduled_key.pinned_world_generation));
     return false;
   }
   const auto maximum_age_ns = data_freshness_window_ns_;
@@ -1640,7 +1697,76 @@ void NavigationRuntimeNode::suspendCommandForWorldFreshness() {
   command_goal_epoch_.store(0U, std::memory_order_release);
 }
 
-void NavigationRuntimeNode::runCycle() {
+std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
+  std::optional<navigation_contracts::msg::NavigationGoal> goal;
+  bool safety_renewal = false;
+  std::uint32_t recovery_level = 0U;
+  std::uint64_t goal_epoch = 0U;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    goal = active_goal_;
+    safety_renewal = restart_from_rest_ ||
+        safety_suffix_active_.load(std::memory_order_acquire);
+    recovery_level = plan_from_rest_failure_budget_.failureCount();
+    goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
+  }
+  const auto execution = execution_state_store_.load();
+  const auto world = world_snapshot_store_.load();
+  if (!goal || !execution || !world || goal_epoch == 0U ||
+      goal->route.route_revision == 0U) {
+    return std::nullopt;
+  }
+  const auto bundle = command_bundle_store_.load();
+  PlanningKey key;
+  key.localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+  key.goal_epoch = goal_epoch;
+  key.request_id = goal->request_id;
+  key.route_revision = goal->route.route_revision;
+  key.committed_bundle_generation = bundle ? bundle->bundle_generation : 0U;
+  key.pinned_world_generation = world.identity.generation;
+  key.pinned_world_revision = world.identity.revision;
+  key.start_mode = bundle && planner_command_available_.load(std::memory_order_acquire) &&
+          !safety_renewal
+      ? PlanningStartMode::kCommittedFutureState
+      : PlanningStartMode::kStoppedMeasuredState;
+  key.anchor_stamp_ns = execution->state.source_stamp_ns;
+  key.dynamics_hash = dynamics_hash_;
+  key.recovery_level = recovery_level;
+  if (!key.valid() || execution->state.localization_epoch != key.localization_epoch ||
+      world.identity.localization_epoch != key.localization_epoch) {
+    return std::nullopt;
+  }
+  return key;
+}
+
+void NavigationRuntimeNode::schedulePlanningCycle() {
+  if (!accepting_observations_.load(std::memory_order_acquire) || !planning_worker_) return;
+  const auto key = currentPlanningKey();
+  if (!key) return;
+  bool goal_transition = false;
+  bool safety_renewal = false;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    goal_transition = new_goal_ || hot_goal_transition_;
+    safety_renewal = restart_from_rest_ ||
+        safety_suffix_active_.load(std::memory_order_acquire);
+  }
+  const auto priority = PlanningSupervisor::classifyPriority(
+      false, false, goal_transition, safety_renewal);
+  (void)planning_worker_->submit(
+      *key, priority,
+      [this, scheduled_key = *key](
+          navigation_planning_backend::PlannerFacade&, std::stop_token stop) {
+        if (stop.stop_requested()) return;
+        const auto current = currentPlanningKey();
+        if (!current || !PlanningSupervisor::resultStillCurrent(scheduled_key, *current)) {
+          return;
+        }
+        runCycle(scheduled_key);
+      });
+}
+
+void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   const auto cycle_started = std::chrono::steady_clock::now();
   const auto cycle_started_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
       cycle_started.time_since_epoch()).count();
@@ -2404,7 +2530,7 @@ void NavigationRuntimeNode::runCycle() {
     }
     if (emergency_brake_committed &&
         !commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
-                                now().nanoseconds())) {
+                                now().nanoseconds(), scheduled_key)) {
       emergency_brake_committed = false;
       use_safety_suffix = false;
       RCLCPP_ERROR(get_logger(),
@@ -2522,7 +2648,7 @@ void NavigationRuntimeNode::runCycle() {
       terminal_bundle_generation_.store(0U);
     }
     if (!commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
-                                now().nanoseconds())) {
+                                now().nanoseconds(), scheduled_key)) {
       std::lock_guard<std::mutex> command_lock(
           command_execution_lease_failure_latch_.transitionMutex());
       planner_command_available_.store(false);
@@ -3125,7 +3251,7 @@ void NavigationRuntimeNode::publishCommand() {
       : navigation_execution::TimestampFreshness::INVALID;
   if (world_freshness != navigation_execution::TimestampFreshness::VALID) {
     ++world_snapshot_freshness_rejection_count_;
-    planner_->cancelActiveSolve();
+    if (planning_worker_) planning_worker_->cancelActive();
     // No command is published from this callback. A later fresh snapshot may
     // resume only this exact bundle after successful world recertification.
     suspendCommandForWorldFreshness();
@@ -3141,7 +3267,7 @@ void NavigationRuntimeNode::publishCommand() {
       const std::uint64_t previous_timeout =
           timed_out_planner_solve_generation_.exchange(active_solve);
       if (previous_timeout != active_solve) {
-        planner_->cancelActiveSolve();
+        if (planning_worker_) planning_worker_->cancelActive();
         const int timeout_stage = planner_->solveStage();
         const std::size_t timeout_point_count = planner_->solvePointCount();
         {
@@ -3235,7 +3361,7 @@ void NavigationRuntimeNode::publishCommand() {
       safety_suffix_active = false;
       if (first_failure) {
         command_lock.unlock();
-        planner_->cancelActiveSolve();
+        if (planning_worker_) planning_worker_->cancelActive();
         RCLCPP_ERROR(
             get_logger(),
             "planner backend execution-state lease failed reason=%s source_age_ms=%.3f "

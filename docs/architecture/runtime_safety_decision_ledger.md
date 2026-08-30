@@ -1,5 +1,35 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Isolate planner solves behind a bounded worker
+
+- **Owner/status:** runtime planning ownership and request supervisor,
+  `IMPLEMENTED`; Release build and focused worker/runtime tests are green,
+  while cancellation and overload qualification remains pending.
+- **Scope:** One `PlanningWorker` uniquely owns the planner backend and executes
+  at most one solve with one latest pending request. Exact duplicates are
+  discarded; route, goal, localization, dynamics, world generation, recovery,
+  and committed-generation changes supersede the active solve, while a map
+  revision or newer state anchor is left for commit-time recertification.
+- **Safety impact:** Planner timer callbacks can no longer overlap mutable
+  solves or accumulate an unbounded queue. Results are rejected before atomic
+  commit when goal, route, localization, committed bundle, or world generation
+  ownership has advanced. No motion, map, tracking, or freshness gate changes.
+- **False-accept/false-reject consequences:** A lower-priority request may be
+  conservatively rejected while safety work is active. A revision-only result
+  may proceed only through the existing immutable-world commit authorization;
+  it does not inherit a newer certificate automatically.
+- **Runtime cost and evidence:** Submission and coalescing are constant-time;
+  the worker holds one active and one pending closure. The 23-package Release
+  build passed, as did 7/7 planning-worker, 6/6 runtime-shutdown, and 39/39
+  planner-FSM tests.
+- **Removal/review condition:** Keep the bounded single-owner topology. Remove
+  the temporary legacy read/certificate handle after map recertification moves
+  fully behind the same owner boundary.
+- **Verification:** `python3 tools/runtime/build.py --mode release build`;
+  `./build/navigation_runtime/test_planning_worker --gtest_color=no`;
+  `./build/navigation_runtime/test_navigation_runtime_shutdown --gtest_color=no`;
+  `./build/navigation_runtime/test_planner_fsm --gtest_color=no`.
+
 ### 2026-08-30 - Make the executable candidate a typed complete bundle
 
 - **Owner/status:** planning contracts, planner adapter, and execution bundle

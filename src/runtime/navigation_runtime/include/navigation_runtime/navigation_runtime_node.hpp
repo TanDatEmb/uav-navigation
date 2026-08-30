@@ -26,6 +26,7 @@
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/observation_accounting.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/planning_worker.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
 #include <navigation_execution/committed_bundle_store.hpp>
@@ -178,12 +179,15 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   void onGoal(const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message);
   void onModeStatus(
       const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message);
-  void runCycle();
+  void schedulePlanningCycle();
+  void runCycle(const PlanningKey& scheduled_key);
+  [[nodiscard]] std::optional<PlanningKey> currentPlanningKey();
   void publishCommand();
   bool commitPlannerCandidate(const navigation_contracts::msg::NavigationGoal& goal,
                              std::uint64_t goal_epoch,
                              std::uint64_t localization_epoch,
-                             std::int64_t now_ns);
+                             std::int64_t now_ns,
+                             const PlanningKey& scheduled_key);
   void suspendCommandForWorldFreshness();
   void resetForLocalizationEpochLocked(std::uint64_t localization_epoch);
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
@@ -209,6 +213,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::int64_t planner_watchdog_timeout_ns_{1'000'000'000};
   double plan_from_rest_failure_confirmation_s_{0.5};
   std::uint32_t max_plan_from_rest_failures_{3U};
+  std::uint64_t dynamics_hash_{1U};
 
   rclcpp::Subscription<navigation_contracts::msg::RegisteredScan>::SharedPtr
       registered_scan_subscription_;
@@ -315,7 +320,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;
   std::shared_ptr<MappingLifecycleObserver> mapping_lifecycle_observer_;
   std::unique_ptr<navigation_mapping::MappingWorker<navigation_mapping::MappingObservation>> mapping_worker_;
-  std::unique_ptr<navigation_planning_backend::PlannerFacade> planner_;
+  navigation_planning_backend::PlannerFacade* planner_{nullptr};
+  std::unique_ptr<PlanningWorker<navigation_planning_backend::PlannerFacade>> planning_worker_;
 };
 
 }  // namespace navigation_runtime
