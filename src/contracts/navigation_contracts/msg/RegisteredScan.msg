@@ -23,3 +23,11 @@ sensor_msgs/PointCloud2 points
 # free_space_endpoints.header.frame_id must equal header.stamp and
 # header.frame_id respectively.
 sensor_msgs/PointCloud2 free_space_endpoints
+
+# Explicit visibility provenance. Presence distinguishes a valid observation
+# with zero no-return rays from a missing association; neither authorizes free
+# space without explicit endpoints.
+bool visibility_observation_present
+uint32 visibility_source_ray_count
+uint32 visibility_no_return_count
+int64 visibility_stamp_skew_ns

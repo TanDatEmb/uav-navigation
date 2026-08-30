@@ -434,6 +434,7 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         if (!start_ns || !end_ns || *end_ns < *start_ns) return std::nullopt;
 
         navigation_planning::CandidateBundle candidate;
+        candidate.pinned_world_identity = certificate.pinned_world;
         candidate.world_identity = certificate.validated_world;
         candidate.localization_epoch = localization_epoch;
         candidate.goal_epoch = goal_epoch;
@@ -449,9 +450,33 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         candidate.backup_available = command.backup_suffix_available;
         const bool emergency_candidate =
             command.backup_disposition == BackupDisposition::EMERGENCY;
+        candidate.kind = emergency_candidate
+            ? navigation_planning::CandidateBundleKind::kEmergencyBrake
+            : command.backup_suffix_available
+                ? navigation_planning::CandidateBundleKind::kMainWithBackup
+                : navigation_planning::CandidateBundleKind::kTerminalStop;
+        candidate.source = emergency_candidate
+            ? navigation_planning::CandidateSource::kEmergency
+            : navigation_planning::CandidateSource::kRefined;
+        candidate.certificates.dynamics = true;
+        candidate.certificates.flatness = true;
+        candidate.certificates.world = true;
+        candidate.certificates.terminal_stop =
+            candidate.kind == navigation_planning::CandidateBundleKind::kTerminalStop;
+        candidate.protected_region = certificate.protected_region;
         candidate.role = emergency_candidate
             ? navigation_planning::CandidateRole::kEmergency
             : navigation_planning::CandidateRole::kMain;
+        candidate.role_schedule.reserve(command.roles.size());
+        for (const auto& interval : command.roles) {
+            candidate.role_schedule.push_back({
+                interval.begin_tt, interval.end_tt,
+                emergency_candidate
+                    ? navigation_planning::CandidateRole::kEmergency
+                    : interval.role == CandidateTrajectoryRole::BACKUP
+                        ? navigation_planning::CandidateRole::kBackup
+                        : navigation_planning::CandidateRole::kMain});
+        }
         candidate.valid_from_ns = std::max(valid_from_ns, *start_ns);
         candidate.valid_until_ns = std::min(valid_until_ns, *end_ns);
         if (candidate.valid_until_ns < candidate.valid_from_ns) return std::nullopt;
@@ -483,7 +508,10 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
             if (emergency_candidate) return true;
             for (const auto& interval : roles) {
                 if (command_time.trajectory_time_s >= interval.begin_tt &&
-                    command_time.trajectory_time_s <= interval.end_tt &&
+                    (command_time.trajectory_time_s < interval.end_tt ||
+                     (std::abs(command_time.trajectory_time_s -
+                               position.getTotalDuration()) <= 1.0e-9 &&
+                      std::abs(interval.end_tt - position.getTotalDuration()) <= 1.0e-9)) &&
                     interval.role == CandidateTrajectoryRole::BACKUP) {
                     point.role = navigation_planning::CandidateRole::kBackup;
                     break;

@@ -14,14 +14,25 @@ navigation_planning::CandidateBundle candidateFor(
   candidate.world_identity.generation = 4;
   candidate.world_identity.revision = revision;
   candidate.world_identity.observation_stamp_ns = static_cast<std::int64_t>(revision);
+  candidate.pinned_world_identity = candidate.world_identity;
   candidate.localization_epoch = 3;
   candidate.goal_epoch = goal_epoch;
   candidate.request_id = goal_epoch + 10;
   candidate.bundle_generation = goal_epoch + 20;
   candidate.valid_from_ns = 1;
   candidate.valid_until_ns = 100;
+  candidate.start_wall_time_s = 1.0e-9;
+  candidate.duration_s = 399.0e-9;
+  candidate.backup_start_time_s = 0.0;
+  candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  candidate.certificates = {true, true, true, true};
+  candidate.protected_region.minimum = Eigen::Vector3d::Zero();
+  candidate.protected_region.maximum = Eigen::Vector3d::Ones();
+  candidate.role_schedule = {
+      {0.0, 399.0e-9, navigation_planning::CandidateRole::kMain}};
   candidate.evaluator = [](std::int64_t stamp, navigation_planning::TrajectoryPoint& point) {
     point.position_world.x() = static_cast<double>(stamp);
+    point.trajectory_time_s = static_cast<double>(stamp - 1) * 1.0e-9;
     return true;
   };
   return candidate;
@@ -159,6 +170,41 @@ TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
   ASSERT_TRUE(expired.bundle);
   EXPECT_FALSE(expired.awaiting_activation);
   EXPECT_EQ(evaluations, 1U);
+}
+
+TEST(CommandSampler, SamplesDeclaredMainToBackupBundleAcrossRoleBoundary) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = candidateFor(7, 1);
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.backup_start_time_s = 49.0e-9;
+  candidate.role_schedule = {
+      {0.0, 49.0e-9, navigation_planning::CandidateRole::kMain},
+      {49.0e-9, 399.0e-9, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.position_world.x() = static_cast<double>(stamp);
+    point.role = stamp < 50
+                     ? navigation_planning::CandidateRole::kMain
+                     : navigation_planning::CandidateRole::kBackup;
+    point.trajectory_time_s = static_cast<double>(stamp - 1) * 1.0e-9;
+    return true;
+  };
+  auto committed =
+      std::make_shared<const navigation_planning::CandidateBundle>(candidate);
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, committed),
+            navigation_execution::CommitDecision::kCommitted);
+
+  navigation_execution::CommandSampler sampler(store);
+  const auto main = sampler.sample(49, 7);
+  ASSERT_TRUE(static_cast<bool>(main));
+  EXPECT_EQ(main.point->role, navigation_planning::CandidateRole::kMain);
+  const auto backup = sampler.sample(50, 7);
+  ASSERT_TRUE(static_cast<bool>(backup));
+  EXPECT_EQ(backup.point->role, navigation_planning::CandidateRole::kBackup);
 }
 
 TEST(CommittedBundleStore, ExposureRejectsBundleInvalidatedAfterSampling) {

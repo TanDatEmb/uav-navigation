@@ -1135,14 +1135,21 @@ void NavigationRuntimeNode::onRegisteredScan(
   const auto& free_space = message->free_space_endpoints;
   const bool has_free_space_payload =
       free_space.width != 0U || free_space.height != 0U || !free_space.data.empty();
+  const bool visibility_contract_valid = message->visibility_observation_present
+      ? message->visibility_no_return_count ==
+            free_space.width * free_space.height
+      : !has_free_space_payload && message->visibility_source_ray_count == 0U &&
+            message->visibility_no_return_count == 0U &&
+            message->visibility_stamp_skew_ns == 0;
   if (!accepting_observations_.load(std::memory_order_acquire) ||
       message->localization_epoch == 0U ||
       message->scan_sequence == 0U ||
       message->header.frame_id != planning_frame_ ||
       message->points.header.frame_id != message->header.frame_id ||
+      !visibility_contract_valid ||
       navigation_common::rosTimeToNanoseconds(message->points.header.stamp).value_or(0) !=
           observation_stamp_ns ||
-      (has_free_space_payload &&
+      (message->visibility_observation_present &&
        (free_space.header.frame_id != message->header.frame_id ||
         navigation_common::rosTimeToNanoseconds(free_space.header.stamp).value_or(0) !=
             observation_stamp_ns)) ||

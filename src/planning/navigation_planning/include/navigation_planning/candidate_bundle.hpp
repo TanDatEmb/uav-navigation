@@ -5,6 +5,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <vector>
 
 #include <Eigen/Core>
 
@@ -14,6 +15,55 @@
 namespace navigation_planning {
 
 enum class CandidateRole : std::uint8_t { kMain, kBackup, kEmergency };
+
+enum class CandidateBundleKind : std::uint8_t {
+  kMainWithBackup,
+  kTerminalStop,
+  kBackupOnly,
+  kEmergencyBrake,
+};
+
+enum class CandidateSource : std::uint8_t {
+  kDeterministicBaseline,
+  kRefined,
+  kRetained,
+  kEmergency,
+};
+
+struct CandidateRoleInterval {
+  double begin_time_s{0.0};
+  double end_time_s{0.0};
+  CandidateRole role{CandidateRole::kMain};
+};
+
+struct CompleteBundleCertificates {
+  bool dynamics{false};
+  bool flatness{false};
+  bool world{false};
+  bool terminal_stop{false};
+
+  [[nodiscard]] bool completeFor(CandidateBundleKind kind) const noexcept {
+    if (!dynamics || !flatness || !world) return false;
+    return kind != CandidateBundleKind::kTerminalStop || terminal_stop;
+  }
+};
+
+struct CompleteCandidateQuality {
+  double remaining_main_horizon_s{std::numeric_limits<double>::quiet_NaN()};
+  double minimum_clearance_m{std::numeric_limits<double>::quiet_NaN()};
+  double maximum_dynamic_utilization{std::numeric_limits<double>::quiet_NaN()};
+  double route_progress_m{std::numeric_limits<double>::quiet_NaN()};
+  double objective_cost{std::numeric_limits<double>::quiet_NaN()};
+
+  [[nodiscard]] bool finite() const noexcept {
+    return std::isfinite(remaining_main_horizon_s) &&
+           std::isfinite(minimum_clearance_m) && minimum_clearance_m >= 0.0 &&
+           std::isfinite(maximum_dynamic_utilization) &&
+           maximum_dynamic_utilization >= 0.0 &&
+           std::isfinite(route_progress_m) && route_progress_m >= 0.0 &&
+           std::isfinite(objective_cost);
+  }
+};
 
 [[nodiscard]] constexpr bool candidateRoleValid(CandidateRole role) noexcept {
   return role == CandidateRole::kMain || role == CandidateRole::kBackup ||
@@ -43,6 +93,7 @@ struct TrajectoryPoint {
 // product-owned callable supplied by a planner implementation and is never
 // invoked while a world or commit mutex is held.
 struct CandidateBundle {
+  navigation_world_model::WorldSnapshotIdentity pinned_world_identity;
   navigation_world_model::WorldSnapshotIdentity world_identity;
   std::uint64_t localization_epoch{0};
   std::uint64_t goal_epoch{0};
@@ -57,13 +108,81 @@ struct CandidateBundle {
   double duration_s{std::numeric_limits<double>::quiet_NaN()};
   double backup_start_time_s{std::numeric_limits<double>::quiet_NaN()};
   bool backup_available{false};
+  CandidateBundleKind kind{CandidateBundleKind::kTerminalStop};
+  CandidateSource source{CandidateSource::kDeterministicBaseline};
+  CompleteBundleCertificates certificates{};
+  navigation_world_model::AxisAlignedBox protected_region{};
+  std::vector<CandidateRoleInterval> role_schedule{};
+  std::optional<CompleteCandidateQuality> quality{};
   std::function<bool(std::int64_t, TrajectoryPoint&)> evaluator;
 
+  [[nodiscard]] bool roleScheduleValid() const noexcept {
+    if (!std::isfinite(duration_s) || duration_s < 0.0 || role_schedule.empty()) {
+      return false;
+    }
+    double cursor = 0.0;
+    for (const auto& interval : role_schedule) {
+      if (!std::isfinite(interval.begin_time_s) ||
+          !std::isfinite(interval.end_time_s) ||
+          std::abs(interval.begin_time_s - cursor) > 1.0e-6 ||
+          interval.end_time_s <= interval.begin_time_s ||
+          interval.end_time_s > duration_s + 1.0e-6 ||
+          !candidateRoleValid(interval.role)) {
+        return false;
+      }
+      cursor = interval.end_time_s;
+    }
+    return std::abs(cursor - duration_s) <= 1.0e-6;
+  }
+
+  [[nodiscard]] std::optional<CandidateRole> scheduledRole(
+      double trajectory_time_s) const noexcept {
+    if (!roleScheduleValid() || !std::isfinite(trajectory_time_s) ||
+        trajectory_time_s < 0.0 || trajectory_time_s > duration_s + 1.0e-9) {
+      return std::nullopt;
+    }
+    for (const auto& interval : role_schedule) {
+      if (trajectory_time_s >= interval.begin_time_s &&
+          (trajectory_time_s < interval.end_time_s ||
+           std::abs(trajectory_time_s - duration_s) <= 1.0e-9)) {
+        return interval.role;
+      }
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] bool sampledRoleAllowed(CandidateRole sampled_role) const noexcept {
+    if (!candidateRoleValid(sampled_role)) return false;
+    if (role == CandidateRole::kEmergency) {
+      return sampled_role == CandidateRole::kEmergency;
+    }
+    if (role == CandidateRole::kBackup) {
+      return sampled_role == CandidateRole::kBackup;
+    }
+    return sampled_role == CandidateRole::kMain ||
+           (backup_available && sampled_role == CandidateRole::kBackup);
+  }
+
   [[nodiscard]] bool valid() const noexcept {
+    const bool kind_contract =
+        (kind == CandidateBundleKind::kMainWithBackup &&
+         role == CandidateRole::kMain && backup_available) ||
+        (kind == CandidateBundleKind::kTerminalStop &&
+         role == CandidateRole::kMain && !backup_available) ||
+        (kind == CandidateBundleKind::kBackupOnly &&
+         role == CandidateRole::kBackup) ||
+        (kind == CandidateBundleKind::kEmergencyBrake &&
+         role == CandidateRole::kEmergency);
     return localization_epoch != 0 && goal_epoch != 0 && request_id != 0 &&
            bundle_generation != 0 && valid_from_ns > 0 &&
            valid_until_ns >= valid_from_ns && static_cast<bool>(evaluator) &&
-           candidateRoleValid(role) &&
+           candidateRoleValid(role) && kind_contract &&
+           certificates.completeFor(kind) && protected_region.valid() &&
+           roleScheduleValid() && (!quality || quality->finite()) &&
+           pinned_world_identity.localization_epoch == localization_epoch &&
+           pinned_world_identity.generation != 0 &&
+           pinned_world_identity.revision != 0 &&
+           pinned_world_identity.observation_stamp_ns > 0 &&
            world_identity.localization_epoch == localization_epoch &&
            world_identity.generation != 0 && world_identity.revision != 0 &&
            world_identity.observation_stamp_ns > 0;
@@ -92,9 +211,12 @@ struct CandidateBundle {
     }
     TrajectoryPoint point;
     point.role = role;
-    if (!evaluator(stamp_ns, point) || !point.finite() || point.role != role) {
+    if (!evaluator(stamp_ns, point) || !point.finite() ||
+        !sampledRoleAllowed(point.role)) {
       return std::nullopt;
     }
+    const auto scheduled = scheduledRole(point.trajectory_time_s);
+    if (!scheduled || *scheduled != point.role) return std::nullopt;
     return point;
   }
 
@@ -111,9 +233,12 @@ struct CandidateBundle {
     }
     TrajectoryPoint point;
     point.role = role;
-    if (!evaluator(*end_stamp_ns, point) || !point.finite() || point.role != role) {
+    if (!evaluator(*end_stamp_ns, point) || !point.finite() ||
+        !sampledRoleAllowed(point.role)) {
       return std::nullopt;
     }
+    const auto scheduled = scheduledRole(duration_s);
+    if (!scheduled || *scheduled != point.role) return std::nullopt;
     // The evaluator's runtime completion predicate is intentionally strict
     // (it marks a sample finished only after the declared end). This API is
     // explicitly the declared endpoint, so normalize its lifecycle flag for

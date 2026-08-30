@@ -242,6 +242,7 @@ TEST(PlannerFsm, SamplesDeclaredTerminalCandidateBeyondExecutionLease) {
   candidate.world_identity.generation = 1U;
   candidate.world_identity.revision = 1U;
   candidate.world_identity.observation_stamp_ns = 10000000000LL;
+  candidate.pinned_world_identity = candidate.world_identity;
   candidate.localization_epoch = 1U;
   candidate.goal_epoch = 1U;
   candidate.request_id = 1U;
@@ -251,6 +252,12 @@ TEST(PlannerFsm, SamplesDeclaredTerminalCandidateBeyondExecutionLease) {
   candidate.backup_start_time_s = 0.0;
   candidate.valid_from_ns = 10000000000LL;
   candidate.valid_until_ns = 10500000000LL;
+  candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  candidate.certificates = {true, true, true, true};
+  candidate.protected_region.minimum = Eigen::Vector3d::Zero();
+  candidate.protected_region.maximum = Eigen::Vector3d::Ones();
+  candidate.role_schedule = {
+      {0.0, 1.0, navigation_planning::CandidateRole::kMain}};
   candidate.evaluator = [](const std::int64_t stamp_ns,
                            navigation_planning::TrajectoryPoint& point) {
     point.position_world = Eigen::Vector3d{7.0, 0.0, 3.0};
@@ -271,6 +278,7 @@ TEST(PlannerFsm, SamplesDeclaredTerminalMainOnlyCandidateWithoutBackupMetadata) 
   candidate.world_identity.generation = 1U;
   candidate.world_identity.revision = 1U;
   candidate.world_identity.observation_stamp_ns = 10000000000LL;
+  candidate.pinned_world_identity = candidate.world_identity;
   candidate.localization_epoch = 1U;
   candidate.goal_epoch = 1U;
   candidate.request_id = 1U;
@@ -279,6 +287,12 @@ TEST(PlannerFsm, SamplesDeclaredTerminalMainOnlyCandidateWithoutBackupMetadata) 
   candidate.duration_s = 1.0;
   candidate.valid_from_ns = 10000000000LL;
   candidate.valid_until_ns = 10500000000LL;
+  candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  candidate.certificates = {true, true, true, true};
+  candidate.protected_region.minimum = Eigen::Vector3d::Zero();
+  candidate.protected_region.maximum = Eigen::Vector3d::Ones();
+  candidate.role_schedule = {
+      {0.0, 1.0, navigation_planning::CandidateRole::kMain}};
   candidate.evaluator = [](const std::int64_t,
                            navigation_planning::TrajectoryPoint& point) {
     point.position_world = Eigen::Vector3d{7.0, 0.0, 3.0};

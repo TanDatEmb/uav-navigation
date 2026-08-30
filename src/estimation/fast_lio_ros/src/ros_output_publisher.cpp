@@ -428,6 +428,13 @@ void RosOutputPublisher::publish(const ProcessResult& result,
     if (matching_visibility_cloud) {
       observation.free_space_endpoints = makeFreeSpaceCloud(
           *matching_visibility_cloud, *corrected_odometry, stamp);
+      observation.visibility_observation_present = true;
+      observation.visibility_source_ray_count =
+          matching_visibility_cloud->width * matching_visibility_cloud->height;
+      observation.visibility_no_return_count =
+          observation.free_space_endpoints.width *
+          observation.free_space_endpoints.height;
+      observation.visibility_stamp_skew_ns = 0;
     }
     registered_scan_->publish(std::move(observation));
   }

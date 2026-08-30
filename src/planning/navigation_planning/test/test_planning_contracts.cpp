@@ -17,14 +17,26 @@ navigation_planning::CandidateBundle validCandidate() {
   candidate.world_identity.generation = 2;
   candidate.world_identity.revision = 8;
   candidate.world_identity.observation_stamp_ns = 100;
+  candidate.pinned_world_identity = candidate.world_identity;
   candidate.localization_epoch = 4;
   candidate.goal_epoch = 7;
   candidate.request_id = 9;
   candidate.bundle_generation = 11;
   candidate.valid_from_ns = 100;
   candidate.valid_until_ns = 200;
-  candidate.evaluator = [](std::int64_t, navigation_planning::TrajectoryPoint& point) {
+  candidate.start_wall_time_s = 1.0e-7;
+  candidate.duration_s = 1.0e-7;
+  candidate.backup_start_time_s = 0.0;
+  candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  candidate.certificates = {true, true, true, true};
+  candidate.protected_region.minimum = Eigen::Vector3d::Zero();
+  candidate.protected_region.maximum = Eigen::Vector3d::Ones();
+  candidate.role_schedule = {{0.0, 1.0e-7,
+                              navigation_planning::CandidateRole::kMain}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
     point.position_world.x() = 1.0;
+    point.trajectory_time_s = static_cast<double>(stamp - 100) * 1.0e-9;
     return true;
   };
   return candidate;
@@ -51,19 +63,67 @@ TEST(PlanningCandidate, RejectsEvaluatorRoleMutationAndUnknownRole) {
   EXPECT_FALSE(candidate.valid());
 }
 
+TEST(PlanningCandidate, AllowsDeclaredMainToBackupRoleSchedule) {
+  auto candidate = validCandidate();
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.backup_start_time_s = 7.5e-8;
+  candidate.role_schedule = {
+      {0.0, 7.5e-8, navigation_planning::CandidateRole::kMain},
+      {7.5e-8, 1.0e-7, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.role = stamp < 175
+                     ? navigation_planning::CandidateRole::kMain
+                     : navigation_planning::CandidateRole::kBackup;
+    point.trajectory_time_s = static_cast<double>(stamp - 100) * 1.0e-9;
+    return true;
+  };
+
+  const auto main = candidate.sample(150);
+  ASSERT_TRUE(main.has_value());
+  EXPECT_EQ(main->role, navigation_planning::CandidateRole::kMain);
+  const auto backup = candidate.sample(175);
+  ASSERT_TRUE(backup.has_value());
+  EXPECT_EQ(backup->role, navigation_planning::CandidateRole::kBackup);
+
+  candidate.backup_available = false;
+  EXPECT_FALSE(candidate.sample(175).has_value());
+}
+
 TEST(PlanningOutcome, SuccessRequiresCandidateAndFailureDoesNotCarryOne) {
   navigation_planning::PlanningOutcome success;
-  success.status = navigation_planning::PlanningStatus::kSuccess;
+  success.outcome = navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle;
+  success.failure_stage = navigation_planning::PlanningFailureStage::kNone;
+  success.failure_reason = navigation_planning::PlanningFailureReason::kNone;
   success.candidate = validCandidate();
   EXPECT_TRUE(success.valid());
 
   navigation_planning::PlanningOutcome failure;
-  failure.status = navigation_planning::PlanningStatus::kDeadline;
+  failure.outcome = navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+  failure.failure_stage = navigation_planning::PlanningFailureStage::kDeadline;
+  failure.failure_reason =
+      navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline;
   EXPECT_TRUE(failure.valid());
   failure.candidate = validCandidate();
   EXPECT_FALSE(failure.valid());
-  failure.status = static_cast<navigation_planning::PlanningStatus>(255U);
-  EXPECT_FALSE(failure.valid());
+}
+
+TEST(PlanningRequest, KeyPinsEveryMutableIdentityAndStartMode) {
+  navigation_planning::PlanningKey key;
+  key.localization_epoch = 3;
+  key.goal_epoch = 4;
+  key.request_id = 5;
+  key.route_revision = 6;
+  key.committed_bundle_generation = 7;
+  key.pinned_world_generation = 8;
+  key.pinned_world_revision = 9;
+  key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
+  key.anchor_stamp_ns = 10;
+  key.dynamics_hash = 11;
+  EXPECT_TRUE(key.valid());
+  key.anchor_stamp_ns = 0;
+  EXPECT_FALSE(key.valid());
 }
 
 TEST(PlanningBudget, UsesSteadyClockAndCancellation) {

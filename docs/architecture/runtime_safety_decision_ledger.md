@@ -1,5 +1,33 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Make the executable candidate a typed complete bundle
+
+- **Owner/status:** planning contracts, planner adapter, and execution bundle
+  store, `IMPLEMENTED`; focused contract tests and a Release build are green,
+  while end-to-end qualification remains pending.
+- **Scope:** Every exposed candidate now declares a typed bundle kind, an
+  immutable complete role schedule, pinned and validated world identities, a
+  protected swept region, and explicit dynamics, flatness, world, and terminal
+  certificates. `RegisteredScan` separately declares missing versus valid-empty
+  visibility evidence. Backend result codes remain behind the planning adapter.
+- **Safety impact:** A boolean backup hint or evaluator role mutation can no
+  longer masquerade as a complete executable result. Missing certificate,
+  provenance, schedule, or visibility-presence data is rejected fail-closed;
+  no dynamics, map, tracking, or freshness limit is relaxed.
+- **False-accept/false-reject consequences:** Legacy or partially populated
+  candidates are rejected until their producer supplies the complete contract.
+  Exact role-boundary sampling uses a half-open schedule with the declared
+  terminal endpoint included in the final interval.
+- **Runtime cost and evidence:** Candidate admission and sampling scan a small
+  bounded role schedule. The 23-package Release build passed, along with 10/10
+  planning-contract, 14/14 execution-store, and 39/39 planner-FSM tests.
+- **Removal/review condition:** Keep until all transports use an equivalent
+  schema-versioned complete-bundle contract; do not revert to role booleans.
+- **Verification:** `python3 tools/runtime/build.py --mode release build`;
+  `./build/navigation_planning/test_planning_contracts --gtest_color=no`;
+  `./build/navigation_execution/test_committed_bundle_store --gtest_color=no`;
+  `./build/navigation_runtime/test_planner_fsm --gtest_color=no`.
+
 ### 2026-08-29 - Continue certified planning through recoverable execution/planner misses
 
 - **Owner/status:** runtime planner-recovery supervisor and planning backend,
