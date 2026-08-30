@@ -219,6 +219,19 @@ TEST(PlannerFsm, RejectsFinitePassThroughWithoutOutgoingRouteLeg) {
   EXPECT_FALSE(waypointBehaviorContractValid(true, false));
 }
 
+TEST(PlannerFsm, FiveSecondTimeoutExistsOnlyWhileStationary) {
+  EXPECT_TRUE(stoppedPlanningTimeoutMayFailClosed(
+      ExecutionRecoveryState::kInitialHold, true, 5.0, 5.0));
+  EXPECT_TRUE(stoppedPlanningTimeoutMayFailClosed(
+      ExecutionRecoveryState::kStoppedRecovery, true, 5.1, 5.0));
+  EXPECT_FALSE(stoppedPlanningTimeoutMayFailClosed(
+      ExecutionRecoveryState::kTrackMain, true, 10.0, 5.0));
+  EXPECT_FALSE(stoppedPlanningTimeoutMayFailClosed(
+      ExecutionRecoveryState::kStoppedRecovery, false, 10.0, 5.0));
+  EXPECT_FALSE(stoppedPlanningTimeoutMayFailClosed(
+      ExecutionRecoveryState::kStoppedRecovery, true, 4.999, 5.0));
+}
+
 TEST(PlannerFsm, CertifiesMissedTerminalTickOnlyAtKnownFreeGoalEndpoint) {
   EXPECT_TRUE(terminalEndpointHoldIsCertified(true, true, true));
   EXPECT_FALSE(terminalEndpointHoldIsCertified(false, true, true));

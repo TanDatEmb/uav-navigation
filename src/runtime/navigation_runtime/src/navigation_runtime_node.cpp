@@ -456,10 +456,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.mapping_snapshot_publication_period_s", 0.10);
   data_freshness_window_s_ = declare_parameter(
       "navigation_runtime.data_freshness_window_s", 0.5);
+  command_stream_timeout_s_ = declare_parameter(
+      "navigation_runtime.command_stream_timeout_s", 0.10);
   planner_watchdog_timeout_s_ = declare_parameter(
       "navigation_runtime.planner_watchdog_timeout_s", 1.0);
-  plan_from_rest_failure_confirmation_s_ = declare_parameter(
-      "navigation_runtime.plan_from_rest_failure_confirmation_s", 0.5);
+  stopped_recovery_timeout_s_ = declare_parameter(
+      "navigation_runtime.stopped_recovery_timeout_s", 5.0);
   const auto max_plan_from_rest_failures = declare_parameter(
       "navigation_runtime.max_plan_from_rest_failures", std::int64_t{3});
   planner_config_path_ = declare_parameter("navigation_runtime.config_path", std::string{});
@@ -482,8 +484,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         "hardware planner backend runtime is blocked until an immutable sensor-visibility "
         "certificate and its runtime verifier are implemented");
   }
-  if (!std::isfinite(planner_rate_hz_) || planner_rate_hz_ <= 0.0) {
-    throw std::invalid_argument("navigation_runtime.planner_rate_hz must be positive");
+  if (!std::isfinite(planner_rate_hz_) ||
+      std::abs(planner_rate_hz_ - 5.0) > 1.0e-9) {
+    throw std::invalid_argument("navigation_runtime.planner_rate_hz must equal 5 Hz");
   }
   const auto planning_period = ratePeriodNanoseconds(planner_rate_hz_);
   const auto command_period = ratePeriodNanoseconds(command_rate_hz_);
@@ -496,9 +499,16 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       !std::isfinite(mapping_snapshot_publication_period_s_) ||
       mapping_snapshot_publication_period_s_ <= 0.0 ||
       !std::isfinite(data_freshness_window_s_) || data_freshness_window_s_ <= 0.0 ||
+      !std::isfinite(command_stream_timeout_s_) ||
+      std::abs(command_stream_timeout_s_ -
+               navigation_planning::PlanningTimingContract::kCommandStreamTimeoutS) > 1.0e-9 ||
       !std::isfinite(planner_watchdog_timeout_s_) || planner_watchdog_timeout_s_ <= 0.0 ||
-      !std::isfinite(plan_from_rest_failure_confirmation_s_) ||
-      plan_from_rest_failure_confirmation_s_ <= 0.0) {
+      !std::isfinite(stopped_recovery_timeout_s_) ||
+      std::abs(stopped_recovery_timeout_s_ -
+               navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS) > 1.0e-9 ||
+      std::abs(command_rate_hz_ - 50.0) > 1.0e-9 ||
+      std::abs(mapping_snapshot_publication_period_s_ -
+               navigation_planning::PlanningTimingContract::kSnapshotPeriodS) > 1.0e-9) {
     throw std::invalid_argument(
         "planner backend timing and safety parameters must be positive");
   }
@@ -512,12 +522,16 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       navigation_common::secondsToNanoseconds(data_freshness_window_s_);
   const auto planner_watchdog_timeout_ns =
       navigation_common::secondsToNanoseconds(planner_watchdog_timeout_s_);
+  const auto command_stream_timeout_ns =
+      navigation_common::secondsToNanoseconds(command_stream_timeout_s_);
   if (!data_freshness_window_ns || *data_freshness_window_ns <= 0 ||
-      !planner_watchdog_timeout_ns || *planner_watchdog_timeout_ns <= 0) {
+      !planner_watchdog_timeout_ns || *planner_watchdog_timeout_ns <= 0 ||
+      !command_stream_timeout_ns || *command_stream_timeout_ns <= 0) {
     throw std::invalid_argument(
         "navigation_runtime timing values are too small or large for nanosecond precision");
   }
   data_freshness_window_ns_ = *data_freshness_window_ns;
+  command_stream_timeout_ns_ = *command_stream_timeout_ns;
   planner_watchdog_timeout_ns_ = *planner_watchdog_timeout_ns;
   if (body_frame_id_.empty()) {
     throw std::invalid_argument("navigation_runtime.body_frame_id must not be empty");
@@ -1060,10 +1074,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       command_callback_group_);
   RCLCPP_INFO(get_logger(),
               "planner backend runtime ready: registered_scan=%s propagated_odom=%s goal=%s "
-              "output=%s planner=%.1fHz command=%.1fHz",
+              "output=%s planner=%.1fHz command=%.1fHz snapshot=%.2fs "
+              "planning_input_source_receive=%.2fs command_stream=%.2fs "
+              "stopped_recovery=%.1fs",
               registered_scan_topic_.c_str(),
               propagated_odometry_topic_.c_str(), goal_topic_.c_str(),
-              command_topic_.c_str(), planner_rate_hz_, command_rate_hz_);
+              command_topic_.c_str(), planner_rate_hz_, command_rate_hz_,
+              mapping_snapshot_publication_period_s_, data_freshness_window_s_,
+              command_stream_timeout_s_, stopped_recovery_timeout_s_);
 }
 
 NavigationRuntimeNode::~NavigationRuntimeNode() {
@@ -2052,6 +2070,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     execution_recovery_state_.store(recovery_state, std::memory_order_release);
   } else if (recovery_state == ExecutionRecoveryState::kStoppedRecovery &&
              (!std::isfinite(measured_speed_mps) || measured_speed_mps > 0.15)) {
+    {
+      std::lock_guard<std::mutex> lock(input_mutex_);
+      plan_from_rest_failure_budget_.reset();
+      plan_from_rest_first_failure_steady_ns_ = 0;
+    }
     execution_recovery_state_.store(
         transitionExecutionRecovery(
             recovery_state, ExecutionRecoveryEvent::kMotionObserved),
@@ -2415,12 +2438,17 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         if (plan_from_rest_first_failure_steady_ns_ == 0) {
           plan_from_rest_first_failure_steady_ns_ = failure_now_ns;
         }
-        const bool count_exhausted = plan_from_rest_failure_budget_.recordFailure();
+        plan_from_rest_failure_budget_.recordFailure();
         const double failure_window_s = static_cast<double>(
             static_cast<long double>(failure_now_ns) -
             static_cast<long double>(plan_from_rest_first_failure_steady_ns_)) * 1.0e-9;
-        failure_budget_exhausted = count_exhausted &&
-            failure_window_s >= plan_from_rest_failure_confirmation_s_;
+        const auto timeout_state = execution_recovery_state_.load(
+            std::memory_order_acquire);
+        failure_budget_exhausted = stoppedPlanningTimeoutMayFailClosed(
+            timeout_state,
+            std::isfinite(measured_speed_mps) && measured_speed_mps <=
+                navigation_planning::PlanningTimingContract::kStationarySpeedMps,
+            failure_window_s, stopped_recovery_timeout_s_);
         failure_count = plan_from_rest_failure_budget_.failureCount();
       }
     }
@@ -3671,9 +3699,9 @@ void NavigationRuntimeNode::publishCommand() {
       : builtin_interfaces::msg::Time{};
   const auto command_time_ns = command_ros_time.nanoseconds();
   const auto valid_until_ns = command_time_ns >
-          std::numeric_limits<std::int64_t>::max() - data_freshness_window_ns_
+          std::numeric_limits<std::int64_t>::max() - command_stream_timeout_ns_
       ? std::numeric_limits<std::int64_t>::max()
-      : command_time_ns + data_freshness_window_ns_;
+      : command_time_ns + command_stream_timeout_ns_;
   command.valid_until = navigation_common::nanosecondsToRosTime(valid_until_ns).value_or(
       builtin_interfaces::msg::Time{});
   const bool main_trajectory_rejected = planner_failed && !on_backup_traj;

@@ -1,5 +1,35 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Separate moving command loss from stopped recovery
+
+- **Owner/status:** runtime command publication and PX4 External Mode freshness
+  gates, `IMPLEMENTED`; Release builds passed for planning contracts, runtime,
+  and External Mode; focused suites are green.
+- **Scope:** Planner scheduling is locked to 5 Hz, command publication to 50 Hz,
+  and snapshot publication to 0.10 s. Each published command sample has an
+  independent 0.10 s validity lease; External Mode checks both source and
+  receive age at 0.10 s. Its propagated state/health age is 0.20 s. Initial
+  acquisition and stopped recovery each have a 5 s timeout. The runtime's
+  rest-planning failure countdown can fail closed only in `INITIAL_HOLD` or
+  `STOPPED_RECOVERY` while measured speed is at most 0.15 m/s, and motion resets
+  that countdown.
+- **Safety impact:** A candidate or world recertification lease cannot extend a
+  missing moving command stream. Callback starvation therefore reaches PX4
+  Hold after 0.10 s rather than being hidden by a multi-second recovery wait.
+  The 5 s allowance exists only while stationary.
+- **False-accept/false-reject consequences:** A command gap, stale command
+  source stamp, or stale propagated state is rejected at its own owner boundary.
+  Startup rejects timing overrides that drift from the locked contract.
+- **Runtime cost and evidence:** Constant-time age comparisons only. Release
+  builds passed for three affected packages; runtime FSM 44/44, shutdown 6/6,
+  External Mode command 16/16, trajectory 21/21, and mission 37/37 tests pass.
+- **Removal/review condition:** Do not increase moving command or External Mode
+  state age to compensate for callback starvation. Fix scheduling/ownership
+  and retain the fail-closed bounds.
+- **Verification:** `python3 tools/runtime/build.py --mode release build
+  --packages navigation_planning navigation_runtime
+  px4_navigation_external_mode`; focused runtime and External Mode binaries.
+
 ### 2026-08-30 - Bind terminal state to waypoint behavior
 
 - **Owner/status:** mission route contract and planner terminal-boundary

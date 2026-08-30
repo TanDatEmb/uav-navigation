@@ -248,6 +248,15 @@ inline bool waypointBehaviorContractValid(
   return !pass_through_waypoint || has_next_waypoint;
 }
 
+inline bool stoppedPlanningTimeoutMayFailClosed(
+    ExecutionRecoveryState state, bool stationary,
+    double elapsed_s, double timeout_s) noexcept {
+  const bool stopped_state = state == ExecutionRecoveryState::kInitialHold ||
+                             state == ExecutionRecoveryState::kStoppedRecovery;
+  return stopped_state && stationary && std::isfinite(elapsed_s) &&
+         std::isfinite(timeout_s) && timeout_s > 0.0 && elapsed_s >= timeout_s;
+}
+
 // The publisher can miss the single wall-clock tick at which a finite bundle
 // returns its finished sample.  It may still publish that exact declared
 // endpoint after the execution interval, but only when the endpoint is a

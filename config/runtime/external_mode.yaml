@@ -5,12 +5,11 @@ px4_navigation_external_mode:
       state_topic: /lio/odometry_propagated
       planning_frame: lio_odom
       mission_complete_topic: /navigation/mission_complete
-      trajectory_stale_after_s: 0.75
-      # The SITL LIO/external-odometry stream has measured nominal gaps up to
-      # 0.82 s under mapping load; keep a finite fail-closed margin above that.
-      state_stale_after_s: 1.0
-      trajectory_wait_timeout_s: 2.0
+      trajectory_stale_after_s: 0.10
+      state_stale_after_s: 0.20
+      # This wait exists only before the first command while stationary.
+      trajectory_wait_timeout_s: 5.0
       # A completed local safety suffix may race the next runtime planner
       # publication by one executor tick. During this bounded window PX4 holds
       # the exact endpoint; expiry still hands over fail-closed.
-      planner_recovery_wait_timeout_s: 0.5
+      planner_recovery_wait_timeout_s: 5.0

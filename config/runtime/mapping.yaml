@@ -19,6 +19,9 @@ navigation_runtime_node:
       # ~10 Hz sensor stream and remains below the 0.50 s freshness window.
       mapping_snapshot_publication_period_s: 0.10
       data_freshness_window_s: 0.5
+      # A candidate/world lease never substitutes for the high-rate command
+      # stream. Missing moving commands fail closed after five command periods.
+      command_stream_timeout_s: 0.10
       planner_watchdog_timeout_s: 1.0
-      plan_from_rest_failure_confirmation_s: 0.5
+      stopped_recovery_timeout_s: 5.0
       max_plan_from_rest_failures: 3

@@ -11,8 +11,11 @@ struct PlanningTimingContract final {
       kSolveDeadlineS + kStitchDurationS + kPlannerPeriodS + kCommitGuardS;
   static constexpr double kUrgentBaselineThresholdS = 1.0;
   static constexpr double kCommandPeriodS = 0.02;
+  static constexpr double kCommandStreamTimeoutS = 0.10;
+  static constexpr double kExternalModeStateAgeS = 0.20;
   static constexpr double kSnapshotPeriodS = 0.10;
   static constexpr double kLocalWindowM = 20.0;
+  static constexpr double kInitialHoldTimeoutS = 5.0;
   static constexpr double kStoppedRecoveryTimeoutS = 5.0;
   static constexpr double kStationarySpeedMps = 0.15;
 };

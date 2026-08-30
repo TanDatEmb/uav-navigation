@@ -73,10 +73,10 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::string goal_topic_;
   std::string planning_frame_;
   std::string body_frame_;
-  double stale_after_s_{0.5};
-  double state_stale_after_s_{0.5};
-  double trajectory_wait_timeout_s_{2.0};
-  double planner_recovery_wait_timeout_s_{0.5};
+  double stale_after_s_{0.10};
+  double state_stale_after_s_{0.20};
+  double trajectory_wait_timeout_s_{5.0};
+  double planner_recovery_wait_timeout_s_{5.0};
   std::int64_t stale_after_ns_{0};
   std::int64_t state_stale_after_ns_{0};
   std::int64_t planner_recovery_wait_timeout_ns_{0};

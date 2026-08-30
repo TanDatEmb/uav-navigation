@@ -217,9 +217,11 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   double mapping_snapshot_publication_period_s_{0.10};
   double data_freshness_window_s_{0.5};
   std::int64_t data_freshness_window_ns_{500'000'000};
+  double command_stream_timeout_s_{0.10};
+  std::int64_t command_stream_timeout_ns_{100'000'000};
   double planner_watchdog_timeout_s_{1.0};
   std::int64_t planner_watchdog_timeout_ns_{1'000'000'000};
-  double plan_from_rest_failure_confirmation_s_{0.5};
+  double stopped_recovery_timeout_s_{5.0};
   std::uint32_t max_plan_from_rest_failures_{3U};
   std::uint64_t dynamics_hash_{1U};
 

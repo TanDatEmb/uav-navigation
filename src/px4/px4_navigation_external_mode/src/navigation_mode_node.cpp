@@ -70,13 +70,13 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       body_frame_(node.declare_parameter<std::string>(
           "navigation.body_frame", "base_link")),
       stale_after_s_(node.declare_parameter<double>(
-          "navigation.trajectory_stale_after_s", 0.75)),
+          "navigation.trajectory_stale_after_s", 0.10)),
       state_stale_after_s_(node.declare_parameter<double>(
-          "navigation.state_stale_after_s", 0.5)),
+          "navigation.state_stale_after_s", 0.20)),
       trajectory_wait_timeout_s_(node.declare_parameter<double>(
-          "navigation.trajectory_wait_timeout_s", 2.0)),
+          "navigation.trajectory_wait_timeout_s", 5.0)),
       planner_recovery_wait_timeout_s_(node.declare_parameter<double>(
-          "navigation.planner_recovery_wait_timeout_s", 0.5)) {
+          "navigation.planner_recovery_wait_timeout_s", 5.0)) {
   const auto stale_after_ns = navigation_common::secondsToNanoseconds(stale_after_s_);
   const auto state_stale_after_ns = navigation_common::secondsToNanoseconds(state_stale_after_s_);
   const auto planner_recovery_wait_timeout_ns =
@@ -88,6 +88,10 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       !std::isfinite(trajectory_wait_timeout_s_) || trajectory_wait_timeout_s_ <= 0.0 ||
       !std::isfinite(planner_recovery_wait_timeout_s_) ||
       planner_recovery_wait_timeout_s_ <= 0.0 ||
+      std::abs(stale_after_s_ - 0.10) > 1.0e-9 ||
+      std::abs(state_stale_after_s_ - 0.20) > 1.0e-9 ||
+      std::abs(trajectory_wait_timeout_s_ - 5.0) > 1.0e-9 ||
+      std::abs(planner_recovery_wait_timeout_s_ - 5.0) > 1.0e-9 ||
       planner_recovery_wait_timeout_s_ > trajectory_wait_timeout_s_ || !stale_after_ns ||
       !state_stale_after_ns || !planner_recovery_wait_timeout_ns || *stale_after_ns <= 0 ||
       *state_stale_after_ns <= 0 || *planner_recovery_wait_timeout_ns <= 0) {
@@ -96,6 +100,11 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
   stale_after_ns_ = *stale_after_ns;
   state_stale_after_ns_ = *state_stale_after_ns;
   planner_recovery_wait_timeout_ns_ = *planner_recovery_wait_timeout_ns;
+  RCLCPP_INFO(node.get_logger(),
+              "External Mode timing contract: command_stream=%.2fs state_age=%.2fs "
+              "initial_hold=%.1fs stopped_recovery=%.1fs",
+              stale_after_s_, state_stale_after_s_, trajectory_wait_timeout_s_,
+              planner_recovery_wait_timeout_s_);
   navigation_command_subscription_ = node.create_subscription<
       navigation_contracts::msg::NavigationCommand>(
       navigation_command_topic_, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable(),
