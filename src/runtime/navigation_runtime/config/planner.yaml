@@ -2,7 +2,6 @@ planner:
   visualization_en: false
   use_fov_cut: false
   print_log: false
-  goal_vel_en: false
   # A strict backup stop keeps the measured handover PVAJ but biases its free
   # terminal position toward the active waypoint altitude. The candidate is
   # used only when its exact dynamic and KNOWN_FREE certificates still pass.
@@ -47,7 +46,7 @@ planner:
   # The route horizon includes a bounded pass-through look-ahead segment, not
   # only the active waypoint. This preserves geometric room for PX4-style
   # continuous handoff while remaining bounded by the rolling map extent.
-  planning_horizon_m: 45.0
+  local_window_m: 20.0
   # planner backend convention: a non-positive value disables the explicit sensing
   # horizon/FOV cut. Backup visibility is still bounded by the safe corridor
   # limit below and checked against known-free map evidence.

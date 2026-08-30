@@ -212,6 +212,13 @@ TEST(PlannerFsm, ContinuesOnlyCompletedPassThroughGoalEndpoints) {
   EXPECT_FALSE(completedPassThroughRequiresContinuation(true, true, false));
 }
 
+TEST(PlannerFsm, RejectsFinitePassThroughWithoutOutgoingRouteLeg) {
+  EXPECT_TRUE(waypointBehaviorContractValid(false, false));
+  EXPECT_TRUE(waypointBehaviorContractValid(false, true));
+  EXPECT_TRUE(waypointBehaviorContractValid(true, true));
+  EXPECT_FALSE(waypointBehaviorContractValid(true, false));
+}
+
 TEST(PlannerFsm, CertifiesMissedTerminalTickOnlyAtKnownFreeGoalEndpoint) {
   EXPECT_TRUE(terminalEndpointHoldIsCertified(true, true, true));
   EXPECT_FALSE(terminalEndpointHoldIsCertified(false, true, true));

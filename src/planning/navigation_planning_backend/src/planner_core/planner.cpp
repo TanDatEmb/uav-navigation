@@ -1188,7 +1188,7 @@ double knownFreeGuideSupport(
         // the guide_stamp saves a TT
         vector<double> guide_stamp;
         double guide_path_end_vel{0.0};
-        int reserve_size = cfg_.planning_horizon_m / cfg_.resolution * 1.2;
+        int reserve_size = cfg_.local_window_m / cfg_.resolution * 1.2;
         guide_path.reserve(reserve_size);
         guide_stamp.reserve(reserve_size);
         latest_guide_path_length_m_ = std::numeric_limits<double>::quiet_NaN();
@@ -1480,7 +1480,7 @@ double knownFreeGuideSupport(
         ///=================The Second Part of Guide Path ================================================
 
         double guide_path_length = geometry_utils::computePathLength(guide_path);
-        double temp_horizon = cfg_.planning_horizon_m - guide_path_length;
+        double temp_horizon = cfg_.local_window_m - guide_path_length;
 
         vector<int> path_passed_waypoint_id;
         vec_Vec3f inside_poly_goals;
@@ -1673,7 +1673,7 @@ double knownFreeGuideSupport(
             const Eigen::Vector3d next_target = *pass_through_next_target_;
             const double outgoing_distance = (next_target - current_endpoint).norm();
             const double guide_length = geometry_utils::computePathLength(guide_path);
-            const double remaining_horizon = cfg_.planning_horizon_m - guide_length;
+            const double remaining_horizon = cfg_.local_window_m - guide_length;
             Eigen::Vector3d incoming_tangent = Eigen::Vector3d::Zero();
             for (std::size_t index = guide_path.size(); index > 1U; --index) {
                 const Eigen::Vector3d delta =
@@ -1998,9 +1998,6 @@ double knownFreeGuideSupport(
 
         pos_fina_state.setZero();
         pos_fina_state.col(0) = guide_path.back();
-        if (cfg_.goal_vel_en && (gi_.goal_p - solve_state_.p).norm() > cfg_.planning_horizon_m / 2) {
-            pos_fina_state.col(1) = (gi_.goal_p - solve_state_.p).normalized() * cfg_.exp_traj_cfg.max_vel / 2;
-        }
         if (connected_goal && pass_through_next_target_.has_value()) {
             // Keep the outgoing tangent just inside the optimizer's declared
             // interior search target. The mission/product V/A/J limits below

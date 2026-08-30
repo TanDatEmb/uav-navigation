@@ -240,6 +240,14 @@ inline bool completedPassThroughRequiresContinuation(
   return trajectory_completed && endpoint_reaches_goal && pass_through_waypoint;
 }
 
+// A finite PASS_THROUGH waypoint is meaningful only when the immutable route
+// contains an outgoing leg. Treating a missing continuation as STOP silently
+// changes mission behavior and can commit a zero-velocity terminal state.
+inline bool waypointBehaviorContractValid(
+    bool pass_through_waypoint, bool has_next_waypoint) noexcept {
+  return !pass_through_waypoint || has_next_waypoint;
+}
+
 // The publisher can miss the single wall-clock tick at which a finite bundle
 // returns its finished sample.  It may still publish that exact declared
 // endpoint after the execution interval, but only when the endpoint is a

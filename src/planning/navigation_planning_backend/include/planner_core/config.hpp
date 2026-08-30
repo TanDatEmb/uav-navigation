@@ -37,7 +37,6 @@ namespace navigation_planning_backend {
         bool visualization_en{true};
         bool use_fov_cut{false};
         bool print_log{false};
-        bool goal_vel_en{false};
         bool preserve_backup_altitude{true};
         navigation_world_model::UnknownPolicy unknown_space_policy{
             navigation_world_model::UnknownPolicy::kRequireKnownFree};
@@ -45,7 +44,7 @@ namespace navigation_planning_backend {
         // Bound to the immutable world model after YAML loading. Map
         // resolution has one owner: the world-model snapshot.
         double resolution{0.0};
-        double planning_horizon_m{0.0};
+        double local_window_m{0.0};
         double receding_distance_m{0.0};
         double visibility_horizon_cap_m{0.0};
         double visibility_horizon_floor_m{0.0};
@@ -113,7 +112,12 @@ namespace navigation_planning_backend {
             }
             loader.LoadParam("planner/print_log", print_log, false);
             loader.LoadParam("planner/visualization_en", visualization_en, false);
-            loader.LoadParam("planner/goal_vel_en", goal_vel_en, false);
+            const YAML::Node planner_node = loader.document()["planner"];
+            if (planner_node.IsDefined() &&
+                planner_node["goal_vel_en"].IsDefined()) {
+                throw std::invalid_argument(
+                    "planner/goal_vel_en was removed; terminal state is owned by waypoint behavior");
+            }
             loader.LoadParam("planner/preserve_backup_altitude",
                              preserve_backup_altitude, true);
             loader.LoadParam("planner/use_fov_cut", use_fov_cut, false);
@@ -141,7 +145,27 @@ namespace navigation_planning_backend {
             loader.LoadParam("planner/corridor_bound_distance_m", corridor_bound_distance_m, 3.0);
             loader.LoadParam("planner/corridor_segment_max_length_m",
                              corridor_segment_max_length_m, 3.0);
-            loader.LoadParam("planner/planning_horizon_m", planning_horizon_m, 10.0);
+            const bool has_local_window = loader.LoadParam(
+                "planner/local_window_m", local_window_m, 20.0);
+            double legacy_planning_horizon_m = 0.0;
+            const bool has_legacy_planning_horizon = loader.LoadParam(
+                "planner/planning_horizon_m", legacy_planning_horizon_m, 0.0);
+            if (has_local_window && has_legacy_planning_horizon) {
+                throw std::invalid_argument(
+                    "planner/planning_horizon_m is not accepted when planner/local_window_m is present");
+            }
+            if (!has_local_window) {
+                if (!has_legacy_planning_horizon ||
+                    !std::isfinite(legacy_planning_horizon_m) ||
+                    std::abs(legacy_planning_horizon_m - 20.0) > 1.0e-9) {
+                    throw std::invalid_argument(
+                        "planner/local_window_m is required; legacy planning_horizon_m is accepted only at 20.0");
+                }
+                local_window_m = legacy_planning_horizon_m;
+                std::cerr
+                    << "DEPRECATED planner/planning_horizon_m=20.0; use planner/local_window_m"
+                    << std::endl;
+            }
             loader.LoadParam("planner/receding_distance_m", receding_distance_m, 5.0);
             loader.LoadParam("planner/vehicle_radius_m", vehicle_radius_m, 0.35);
             loader.LoadParam("planner/tracking_error_budget_m", tracking_error_budget_m, 0.25);
@@ -224,9 +248,10 @@ namespace navigation_planning_backend {
                     "navigation planner deadlines require 0 < A* attempt <= A* total < solve <= "
                     "replan_forward_dt_s and 0.04 <= finalization reserve < solve");
             }
-            if (!std::isfinite(planning_horizon_m) || planning_horizon_m <= 0.0 ||
+            if (!std::isfinite(local_window_m) ||
+                std::abs(local_window_m - 20.0) > 1.0e-9 ||
                 !std::isfinite(receding_distance_m) || receding_distance_m <= 0.0 ||
-                receding_distance_m >= planning_horizon_m ||
+                receding_distance_m >= local_window_m ||
                 !std::isfinite(corridor_bound_distance_m) || corridor_bound_distance_m <= 0.0 ||
                 !std::isfinite(corridor_segment_max_length_m) ||
                 corridor_segment_max_length_m <= 0.0 ||
@@ -239,7 +264,7 @@ namespace navigation_planning_backend {
                 yaw_tracking_error_budget_rad <= 0.0 ||
                 yaw_tracking_error_budget_rad > M_PI) {
                 throw std::invalid_argument(
-                    "planner geometric horizon, corridor, IRIS, and yaw parameters are invalid");
+                    "planner local window must equal 20 m; corridor, IRIS, and yaw parameters must be valid");
             }
             if (!std::isfinite(exp_traj_cfg.max_vel) || exp_traj_cfg.max_vel <= 0.0 ||
                 !std::isfinite(exp_traj_cfg.max_acc) || exp_traj_cfg.max_acc <= 0.0 ||

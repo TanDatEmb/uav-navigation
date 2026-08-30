@@ -1,5 +1,36 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Bind terminal state to waypoint behavior
+
+- **Owner/status:** mission route contract and planner terminal-boundary
+  construction, `IMPLEMENTED`; Release planning backend/runtime builds and
+  53/53 config plus 43/43 FSM tests are green.
+- **Scope:** STOP retains zero terminal V/A/J; PASS_THROUGH requires an outgoing
+  route leg and uses the certified outgoing-tangent path; a local frontier uses
+  its guide tangent. A finite PASS_THROUGH route endpoint without continuation
+  is rejected instead of being reinterpreted as STOP. The generic
+  `goal_vel_en` path is removed and its presence is a startup error. The local
+  planning window has one authority, `local_window_m=20.0`; legacy
+  `planning_horizon_m` is accepted only when the new field is absent and its
+  value is exactly 20.0, with a deprecation diagnostic.
+- **Safety impact:** Terminal motion can no longer be enabled independently of
+  waypoint behavior, and a malformed finite pass-through route cannot create
+  an implicit terminal hold. V/A/J, thrust, body-rate, tracking, known-free,
+  freshness, and ROG occupancy probabilities are unchanged.
+- **False-accept/false-reject consequences:** Ambiguous new/legacy window keys,
+  non-20 m legacy values, removed `goal_vel_en`, and pass-through endpoints
+  without a next waypoint fail startup or route admission. Correct STOP,
+  PASS_THROUGH, and frontier cases retain their prior certified paths.
+- **Runtime cost and evidence:** Validation is constant-time at startup/route
+  decode. Both affected packages built in Release; the focused config and FSM
+  suites passed 53/53 and 43/43.
+- **Removal/review condition:** Keep waypoint behavior as the sole terminal
+  state authority. Add a new behavior explicitly rather than restoring a
+  generic velocity switch.
+- **Verification:** `python3 tools/runtime/build.py --mode release build
+  --packages navigation_planning_backend navigation_runtime`; focused
+  `test_planner_config` and `test_planner_fsm` binaries.
+
 ### 2026-08-30 - Make free-space association single-consume and mapping decode worker-owned
 
 - **Owner/status:** simulator visibility bridge, FAST-LIO output adapter, and

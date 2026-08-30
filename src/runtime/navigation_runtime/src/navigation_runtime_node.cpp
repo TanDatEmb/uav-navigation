@@ -132,6 +132,13 @@ std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
             : navigation_mission::MissionWaypoint::Behavior::PassThrough;
     mission.waypoints.push_back(std::move(waypoint));
   }
+  const bool active_pass_through =
+      mission.waypoints[source.active_waypoint_index].behavior ==
+      navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  if (!waypointBehaviorContractValid(
+          active_pass_through, source.active_waypoint_index + 1U < count)) {
+    return std::nullopt;
+  }
 
   navigation_mission::RouteProgress route(mission);
   navigation_mission::ImmutableRouteSnapshot snapshot;

@@ -349,6 +349,7 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_LT(planner.astar_total_time_limit_s, planner.solve_deadline_s);
   EXPECT_LE(planner.solve_deadline_s, planner.replan_forward_dt_s);
   EXPECT_DOUBLE_EQ(planner.finalization_reserve_s, 0.04);
+  EXPECT_DOUBLE_EQ(planner.local_window_m, 20.0);
   EXPECT_LT(planner.finalization_reserve_s, planner.solve_deadline_s);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.corridor_plane_tolerance_m, 0.01);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_lateral_weight, 1.0);
