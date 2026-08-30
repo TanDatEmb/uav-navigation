@@ -148,10 +148,14 @@ TEST(CorridorBezierSeed, ShortOffsetPiecePreservesPvajWithinEvaluationRoundoff) 
     EXPECT_NEAR((piece.getPos(0.18 * u) - de_casteljau[0]).norm(),
                 0.0, 1.0e-9);
   }
-  const auto initial_residual =
-      (navigation_planning_backend::pieceState(piece, 0.0) - initial).cwiseAbs();
-  const auto terminal_residual =
-      (navigation_planning_backend::pieceState(piece, 0.18) - terminal).cwiseAbs();
+  const navigation_math::StatePVAJ initial_residual =
+      (navigation_planning_backend::pieceState(piece, 0.0) - initial)
+          .cwiseAbs()
+          .eval();
+  const navigation_math::StatePVAJ terminal_residual =
+      (navigation_planning_backend::pieceState(piece, 0.18) - terminal)
+          .cwiseAbs()
+          .eval();
   EXPECT_TRUE((initial_residual.array() <=
                navigation_planning_backend::pieceStateRoundoffBound(
                    piece, 0.0).array()).all());

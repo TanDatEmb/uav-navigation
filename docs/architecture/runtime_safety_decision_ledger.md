@@ -1,5 +1,32 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Add planning-stability qualification artifacts
+
+- **Owner/status:** runtime report, validation guide, and qualification matrix,
+  `IMPLEMENTED`; focused report contract tests are green. The matrix itself is
+  not a flight PASS and still requires the declared repeated runs.
+- **Scope:** Every finalized report emits separate perception, planning, and
+  execution JSONL timelines and records their paths/counts in `report.json`.
+  The checked-in matrix locks deterministic 1/3/5 m/s repetitions, clutter
+  seeds, pass-through geometry, recorded-data input, characterization speeds,
+  and nine named fault cases with their minimum component/integration tests.
+  Runtime diagnostics now expose full XYZ guide bounds.
+- **Safety impact:** Evidence from different owners can no longer be merged
+  into one inferred chronology. Empty or absent evidence remains explicit;
+  matrix declaration and component tests do not certify flight behavior.
+- **False-accept/false-reject consequences:** A report can be complete with an
+  empty timeline, but such a timeline cannot satisfy qualification evidence.
+  6/8 m/s remain characterization and hardware qualification is excluded.
+- **Runtime cost and evidence:** Report finalization performs one bounded pass
+  over recorded monitor/scenario JSONL and writes three derived artifacts.
+  Focused matrix, timeline, normal-report, and report-fallback tests pass 4/4;
+  the complete runtime Python suite passes 204/204.
+- **Removal/review condition:** Keep timeline ownership explicit and extend the
+  schema when adding a new evidence producer. Never synthesize missing events.
+- **Verification:** `python3 -m unittest` for the four focused runtime-report
+  contract cases; `python3 -m unittest discover -s tools/runtime/tests -p
+  'test_*.py'`; followed by the final Release build.
+
 ### 2026-08-30 - Separate moving command loss from stopped recovery
 
 - **Owner/status:** runtime command publication and PX4 External Mode freshness
@@ -12402,6 +12429,37 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
   && colcon build --packages-select navigation_mapping --symlink-install`; direct
   execution of `test_mapping_world_model --gtest_color=no`.
+
+### 2026-08-30 - Make immutable segment clearance direction-independent and closed-boundary
+
+- **Owner/status:** immutable mapping segment and observed-occupancy tube
+  certificates, `VERIFIED` by focused Release and ASan world-model tests.
+- **Scope:** Active-axis DDA ties use a bounded 32-ULP comparison so opposite
+  traversal directions enumerate the same edge/corner-adjacent voxels.
+  Observed-occupancy export includes both cells containing the requested AABB
+  bounds instead of dropping one cell at each face.
+- **Safety impact:** A corner-touching occupied voxel and an observed occupied
+  point within the configured continuous clearance tube cannot be accepted due
+  solely to traversal direction or sub-voxel AABB placement. UNKNOWN,
+  OUT_OF_MAP, inflation radius, and the existing 1 cm clearance tolerance are
+  unchanged.
+- **False-accept/false-reject consequences:** The change removes two optimistic
+  boundary omissions. A conservative query may inspect one additional voxel
+  layer at each AABB face; any resulting rejection represents an observed
+  occupied cell adjacent to the certified tube rather than relaxed free-space
+  evidence.
+- **Runtime cost and evidence:** Constant-size tie arithmetic per DDA step and
+  at most one additional voxel layer per observed-point query face. Focused
+  regressions cover forward/reverse corner traversal, stationary-axis ties,
+  and an occupied point below the robot-radius clearance.
+- **Removal/review condition:** Replace only with an exact symmetric voxel
+  supercover and typed closed-AABB iterator proven equivalent under opposite
+  directions; do not reduce the tie window or reopen AABB faces from a single
+  runtime sample.
+- **Verification:** `python3 tools/runtime/build.py --mode asan build --packages
+  navigation_mapping`; `python3 tools/runtime/build.py --mode asan test
+  --packages navigation_mapping`; focused Release mapping tests and the full
+  product-owned package suite.
 
 ### 2026-08-29 - Harden runtime cleanup grace and process identity checks
 

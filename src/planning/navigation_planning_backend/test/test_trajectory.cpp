@@ -2307,7 +2307,10 @@ TEST(PlannerTrajectory, SparseGuideSubdivisionRejectsInvalidInputs) {
 
 TEST(PlannerTrajectory, PolytopeRejectsMalformedPlanesAndPoints) {
   using geometry_utils::Polytope;
-  Polytope malformed_shape(navigation_math::MatD4f::Zero(1, 3));
+  // MatD4f fixes the public plane width at four columns, so a wrong-width
+  // value is unrepresentable. Exercise the remaining malformed shape: no
+  // planes.
+  Polytope malformed_shape(navigation_math::MatD4f::Zero(0, 4));
   EXPECT_TRUE(malformed_shape.empty());
   EXPECT_FALSE(malformed_shape.PointIsInside(navigation_math::Vec3f::Zero()));
 

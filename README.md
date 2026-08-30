@@ -43,6 +43,9 @@ make clean
 Set `PX4_DIR` when the PX4 checkout is not at `$HOME/Dev/Autopilot`. The
 headless `sim-check` workflow is retained legacy offboard smoke coverage. The
 product acceptance path is `external-mode-check` or its GUI equivalent.
+`make sim` chỉ mở phiên PX4/Gazebo/RViz tương tác, không tự chạy mission
+External Mode. Để kiểm tra từng map, chạy `make build` trước rồi dùng
+`make external-mode-check` với các selector bên dưới.
 
 The product mission entrypoint is:
 
@@ -59,9 +62,10 @@ limits and waypoint behavior cannot diverge between the two sides.
 ## Scenario selection
 
 The canonical scene variables are `sanity_open`, `structured_obstacle`,
-`long_route`, `tunnel`, `clutter`, and `planner_negative`. `TEST_CASE` is one
-of `positive`, `degenerate`, `detour`, or `no_path`; `MOTION_PRESET` is one of
-`nominal`, `slow`, or `fast`.
+`long_route`, `tunnel`, `clutter`, `planner_negative`, and
+`navigation_generalization`. `TEST_CASE` is one of `positive`, `degenerate`,
+`detour`, `no_path`, or `comprehensive`; `MOTION_PRESET` is one of `nominal`,
+`slow`, or `fast`.
 
 ```bash
 MAP_SCENE=sanity_open make external-mode-check
@@ -69,6 +73,29 @@ MAP_SCENE=structured_obstacle TEST_CASE=detour make external-mode-check
 MAP_SCENE=long_route MOTION_PRESET=slow make external-mode-check
 MAP_SCENE=planner_negative TEST_CASE=no_path make external-mode-check
 ```
+
+Map sweep chạy tuần tự trong một workspace:
+
+```bash
+make build
+for scene in sanity_open structured_obstacle long_route tunnel clutter; do
+  MAP_SCENE="$scene" TEST_CASE=positive MOTION_PRESET=nominal \
+    SPEED_CAP_MPS=5 make external-mode-check
+done
+MAP_SCENE=planner_negative TEST_CASE=no_path make external-mode-check
+```
+
+Đây chỉ là screening sweep. Qualification bắt buộc tuân theo
+`config/runtime/planning_stability_qualification.yaml`: 10 run liên tiếp cho
+mỗi deterministic scene ở 1/3/5 m/s, ít nhất 30 clutter seed, toàn bộ góc
+pass-through và fault matrix. 6/8 m/s chỉ là characterization.
+
+Mỗi run ghi artifact vào `.artifacts/runtime/external-mode-check-*/`. Mission
+positive chỉ được coi là PASS khi đủ waypoint/mission, LIO, tracking,
+clearance, PX4 và cleanup gates; `no_path` phải fail-closed và không phải
+positive PASS. Với LIO, xem corrected và propagated thành hai stream riêng:
+đường corrected 10 Hz có thể nhìn răng cưa do sampling, không đủ để kết luận
+lỗi frame/odometry.
 
 `MAP_PROFILE` remains a compatibility alias for older profile names. A
 negative/no-path scenario is expected to fail closed; it is not a successful

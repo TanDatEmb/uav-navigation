@@ -3332,7 +3332,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                 "committed_q1=(%.2f,%.2f,%.2f) committed_mid=(%.2f,%.2f,%.2f) "
                 "committed_q3=(%.2f,%.2f,%.2f) committed_end=(%.2f,%.2f,%.2f) "
                 "main_end=(%.2f,%.2f,%.2f) backup_start=%.3f "
-                "guide_end=(%.2f,%.2f,%.2f) guide_z=[%.2f,%.2f] "
+                "guide_end=(%.2f,%.2f,%.2f) "
+                "guide_bounds=[(%.2f,%.2f,%.2f),(%.2f,%.2f,%.2f)] "
                 "committed_duration=%.3f",
                 static_cast<unsigned long>(cycle_count_),
                 static_cast<unsigned long>(command_publish_count_.load()),
@@ -3352,7 +3353,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                 committed_three_quarter.x(), committed_three_quarter.y(), committed_three_quarter.z(),
                 committed_end.x(), committed_end.y(), committed_end.z(),
                 main_end.x(), main_end.y(), main_end.z(), backup_start_s,
-                guide_end.x(), guide_end.y(), guide_end.z(), guide_min.z(), guide_max.z(),
+                guide_end.x(), guide_end.y(), guide_end.z(),
+                guide_min.x(), guide_min.y(), guide_min.z(),
+                guide_max.x(), guide_max.y(), guide_max.z(),
                 committed_duration);
     metrics_log_time_ = metrics_now;
   }

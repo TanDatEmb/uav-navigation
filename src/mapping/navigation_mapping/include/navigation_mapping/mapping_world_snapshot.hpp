@@ -365,7 +365,14 @@ class MappingWorldSnapshot final
         includeBoundaryScale(next_x);
         includeBoundaryScale(next_y);
         includeBoundaryScale(next_z);
-        const double tie_tolerance = std::numeric_limits<double>::epsilon() * boundary_scale;
+        // Opposite traversal directions can accumulate a few ulps of
+        // difference while computing the same geometric edge/corner. Keep the
+        // comparison conservative and direction-independent without allowing
+        // an inactive-axis sentinel to participate in the scale.
+        constexpr double kBoundaryTieUlps = 32.0;
+        const double tie_tolerance = kBoundaryTieUlps *
+                                     std::numeric_limits<double>::epsilon() *
+                                     boundary_scale;
         int tied_axes = 0;
         if (next_x != never && std::abs(next_x - first_boundary) <= tie_tolerance) tied_axes |= 1;
         if (next_y != never && std::abs(next_y - first_boundary) <= tie_tolerance) tied_axes |= 2;
@@ -436,12 +443,16 @@ class MappingWorldSnapshot final
     if ((box.maximum - box.minimum).minCoeff() <= 0.0) return points;
     const auto minimum = positionToIndex(box.minimum, navigation_world_model::GridLayer::kEvidence);
     const auto maximum = positionToIndex(box.maximum, navigation_world_model::GridLayer::kEvidence);
-    const auto x_begin = static_cast<std::int64_t>(minimum.x()) + 1;
-    const auto y_begin = static_cast<std::int64_t>(minimum.y()) + 1;
-    const auto z_begin = static_cast<std::int64_t>(minimum.z()) + 1;
-    const auto x_end = static_cast<std::int64_t>(maximum.x());
-    const auto y_end = static_cast<std::int64_t>(maximum.y());
-    const auto z_end = static_cast<std::int64_t>(maximum.z());
+    // Include both cells containing the requested bounds. Excluding either
+    // boundary can omit an occupied cell whose center is still inside the
+    // clearance query by less than one voxel, making a coarse inflated layer
+    // optimistically accept the segment.
+    const auto x_begin = static_cast<std::int64_t>(minimum.x());
+    const auto y_begin = static_cast<std::int64_t>(minimum.y());
+    const auto z_begin = static_cast<std::int64_t>(minimum.z());
+    const auto x_end = static_cast<std::int64_t>(maximum.x()) + 1;
+    const auto y_end = static_cast<std::int64_t>(maximum.y()) + 1;
+    const auto z_end = static_cast<std::int64_t>(maximum.z()) + 1;
     const auto x_count = static_cast<std::uint64_t>(
         std::max<std::int64_t>(0, x_end - x_begin));
     const auto y_count = static_cast<std::uint64_t>(

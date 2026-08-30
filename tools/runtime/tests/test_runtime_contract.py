@@ -67,6 +67,46 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_planning_stability_qualification_matrix_is_locked(self) -> None:
+        matrix = yaml.safe_load(
+            (ROOT / "config/runtime/planning_stability_qualification.yaml").read_text(
+                encoding="utf-8"
+            )
+        )["qualification"]
+        self.assertEqual(matrix["qualified_speed_mps"], [1.0, 3.0, 5.0])
+        self.assertEqual(matrix["characterization_speed_mps"], [6.0, 8.0])
+        self.assertEqual(matrix["deterministic"]["consecutive_runs_per_speed"], 10)
+        self.assertGreaterEqual(matrix["stochastic_clutter"]["minimum_seed_count"], 30)
+        self.assertEqual(matrix["pass_through"]["turn_angles_deg"], [0, 30, 45, 60, 90])
+        self.assertEqual(matrix["pass_through"]["waypoint_chain_length"], 9)
+        self.assertEqual(len(matrix["fault_matrix"]), 9)
+        self.assertEqual(
+            {item["layer"] for item in matrix["fault_matrix"]},
+            {"perception", "mapping", "planning", "runtime", "recovery",
+             "estimation", "handover"},
+        )
+
+    def test_report_writes_three_owner_separated_machine_timelines(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary)
+            (session / "samples.jsonl").write_text(
+                "\n".join((
+                    json.dumps({"kind": "sample", "stream": "lidar", "timestamp_ns": 10}),
+                    json.dumps({"kind": "sample", "stream": "vehicle_status", "timestamp_ns": 30}),
+                )) + "\n",
+                encoding="utf-8",
+            )
+            (session / "scenario.jsonl").write_text(
+                json.dumps({"kind": "navigation_command", "sim_time_ns": 20}) + "\n",
+                encoding="utf-8",
+            )
+            result = report._write_qualification_timelines(session)
+            self.assertEqual(result["perception"]["event_count"], 1)
+            self.assertEqual(result["planning"]["event_count"], 1)
+            self.assertEqual(result["execution"]["event_count"], 1)
+            for domain in ("perception", "planning", "execution"):
+                self.assertTrue((session / f"{domain}_timeline.jsonl").is_file())
+
     def test_canonical_python_rejects_virtualenv_and_non_system_interpreter(self) -> None:
         self.assertIsNone(
             runner.canonical_python_error("/usr/bin/python3", environment={})
@@ -449,7 +489,9 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertNotIn("corrected_odometry_topic", navigation)
         self.assertNotIn("odometry_topic", navigation)
         self.assertEqual(navigation["planner_watchdog_timeout_s"], 1.0)
-        self.assertEqual(navigation["mapping_snapshot_publication_period_s"], 0.2)
+        self.assertEqual(navigation["mapping_snapshot_publication_period_s"], 0.1)
+        self.assertEqual(navigation["command_stream_timeout_s"], 0.1)
+        self.assertEqual(navigation["stopped_recovery_timeout_s"], 5.0)
         self.assertNotIn("planner_solve_timeout_s", navigation)
         self.assertEqual(navigation["command_topic"], "/navigation/navigation_command")
         runtime_source = (
@@ -486,10 +528,11 @@ class RuntimeContractTest(unittest.TestCase):
         mapping_actor = (
             ROOT / "src/mapping/navigation_mapping/src/mapping_actor.cpp"
         ).read_text(encoding="utf-8")
+        run_cycle = "void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key)"
         cycle = source[
-            source.index("void NavigationRuntimeNode::runCycle()"):
-                       source.index("void NavigationRuntimeNode::publishCommand()")]
-        constructor = source[:source.index("void NavigationRuntimeNode::runCycle()")]
+            source.index(run_cycle):
+            source.index("void NavigationRuntimeNode::publishCommand()")]
+        constructor = source[:source.index(run_cycle)]
         self.assertIn("std::make_shared<navigation_mapping::MappingActor>", constructor)
         self.assertIn("const auto result = mapping_actor->process(observation);", constructor)
         self.assertIn("observation.corrected_odometry.pose.pose", mapping_actor)

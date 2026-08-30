@@ -370,11 +370,16 @@ TEST_F(MappingWorldModelTest, SegmentCertificateIsSymmetricAtVoxelCorners) {
   grid.unknown_inflation_enabled = false;
   grid.virtual_ground_ceiling_enabled = false;
 
-  const navigation_world_model::GridIndex3 start_index = grid.base_layout.global_min_index +
-      navigation_world_model::GridIndex3{4, 4, 4};
-  const auto side_obstacle_index = grid.base_layout.global_min_index +
-      navigation_world_model::GridIndex3{4, 5, 4};
-  const auto local = side_obstacle_index - grid.base_layout.global_min_index;
+  const navigation_world_model::GridIndex3 start_index =
+      (grid.base_layout.global_min_index +
+       navigation_world_model::GridIndex3{4, 4, 4})
+          .eval();
+  const navigation_world_model::GridIndex3 side_obstacle_index =
+      (grid.base_layout.global_min_index +
+       navigation_world_model::GridIndex3{4, 5, 4})
+          .eval();
+  const navigation_world_model::GridIndex3 local =
+      (side_obstacle_index - grid.base_layout.global_min_index).eval();
   const auto obstacle_offset =
       (static_cast<std::size_t>(local.x()) *
            static_cast<std::size_t>(grid.base_layout.dimensions.y()) +
@@ -387,7 +392,8 @@ TEST_F(MappingWorldModelTest, SegmentCertificateIsSymmetricAtVoxelCorners) {
 
   navigation_mapping::MappingWorldSnapshot snapshot(
       std::move(grid), navigation_world_model::WorldSnapshotIdentity{1, 1, 2, 123});
-  const auto end_index = start_index + navigation_world_model::GridIndex3{2, 2, 0};
+  const navigation_world_model::GridIndex3 end_index =
+      (start_index + navigation_world_model::GridIndex3{2, 2, 0}).eval();
   const auto start = snapshot.indexToPosition(
       start_index, navigation_world_model::GridLayer::kEvidence);
   const auto end = snapshot.indexToPosition(
@@ -411,12 +417,12 @@ TEST_F(MappingWorldModelTest, StationaryAxisDoesNotCreateSpuriousDdaTie) {
 
   const navigation_world_model::GridIndex3 global_min_index =
       grid.base_layout.global_min_index;
-  const navigation_world_model::GridIndex3 start_index = global_min_index +
-      navigation_world_model::GridIndex3{4, 4, 4};
-  const navigation_world_model::GridIndex3 spurious_diagonal = start_index +
-      navigation_world_model::GridIndex3{1, 1, 0};
+  const navigation_world_model::GridIndex3 start_index =
+      (global_min_index + navigation_world_model::GridIndex3{4, 4, 4}).eval();
+  const navigation_world_model::GridIndex3 spurious_diagonal =
+      (start_index + navigation_world_model::GridIndex3{1, 1, 0}).eval();
   const navigation_world_model::GridIndex3 local =
-      spurious_diagonal - global_min_index;
+      (spurious_diagonal - global_min_index).eval();
   const auto obstacle_offset =
       (static_cast<std::size_t>(local.x()) *
            static_cast<std::size_t>(grid.base_layout.dimensions.y()) +
@@ -429,7 +435,8 @@ TEST_F(MappingWorldModelTest, StationaryAxisDoesNotCreateSpuriousDdaTie) {
 
   navigation_mapping::MappingWorldSnapshot snapshot(
       std::move(grid), navigation_world_model::WorldSnapshotIdentity{1, 1, 2, 123});
-  const auto end_index = start_index + navigation_world_model::GridIndex3{4, 1, 0};
+  const navigation_world_model::GridIndex3 end_index =
+      (start_index + navigation_world_model::GridIndex3{4, 1, 0}).eval();
   EXPECT_TRUE(snapshot.isSegmentTraversable(
       snapshot.indexToPosition(start_index, navigation_world_model::GridLayer::kEvidence),
       snapshot.indexToPosition(end_index, navigation_world_model::GridLayer::kEvidence),
@@ -445,9 +452,12 @@ TEST_F(MappingWorldModelTest, InflatedSegmentRejectsObservedTubeBelowRobotRadius
   grid.unknown_inflation_enabled = false;
   grid.virtual_ground_ceiling_enabled = false;
 
-  const auto obstacle_index = grid.base_layout.global_min_index +
-      navigation_world_model::GridIndex3{4, 8, 4};
-  const auto local = obstacle_index - grid.base_layout.global_min_index;
+  const navigation_world_model::GridIndex3 obstacle_index =
+      (grid.base_layout.global_min_index +
+       navigation_world_model::GridIndex3{4, 8, 4})
+          .eval();
+  const navigation_world_model::GridIndex3 local =
+      (obstacle_index - grid.base_layout.global_min_index).eval();
   const auto obstacle_offset =
       (static_cast<std::size_t>(local.x()) *
            static_cast<std::size_t>(grid.base_layout.dimensions.y()) +
@@ -460,12 +470,17 @@ TEST_F(MappingWorldModelTest, InflatedSegmentRejectsObservedTubeBelowRobotRadius
 
   navigation_mapping::MappingWorldSnapshot obstacle_snapshot(
       std::move(grid), navigation_world_model::WorldSnapshotIdentity{1, 1, 2, 123});
+  // Keep the point strictly inside the 0.8 m robot-radius tube.  The former
+  // four-cell offset landed exactly on the radius and contradicted the shared
+  // 1 cm continuous-clearance tolerance used by the live planner contract.
+  const navigation_world_model::GridIndex3 start_index =
+      (obstacle_index + navigation_world_model::GridIndex3{-4, -3, 0}).eval();
+  const navigation_world_model::GridIndex3 end_index =
+      (obstacle_index + navigation_world_model::GridIndex3{4, -3, 0}).eval();
   const auto start = obstacle_snapshot.indexToPosition(
-      obstacle_index + navigation_world_model::GridIndex3{-4, -4, 0},
-      navigation_world_model::GridLayer::kEvidence);
+      start_index, navigation_world_model::GridLayer::kEvidence);
   const auto end = obstacle_snapshot.indexToPosition(
-      obstacle_index + navigation_world_model::GridIndex3{4, -4, 0},
-      navigation_world_model::GridLayer::kEvidence);
+      end_index, navigation_world_model::GridLayer::kEvidence);
 
   EXPECT_FALSE(obstacle_snapshot.isSegmentTraversable(
       start, end, navigation_world_model::GridLayer::kInflated,

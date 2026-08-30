@@ -463,6 +463,74 @@ def _samples(path: Path) -> list[dict[str, Any]]:
     return result
 
 
+_PERCEPTION_STREAMS = {
+    "imu", "lidar", "corrected_odometry", "propagated_odometry",
+    "diagnostics", "mapping_diagnostics", "tf", "tf_static",
+}
+_EXECUTION_STREAMS = {
+    "ground_truth_odometry", "external_odometry", "px4_odometry",
+    "vehicle_status", "local_position", "vehicle_attitude",
+    "estimator_status", "estimator_status_flags", "estimator_innovations",
+}
+
+
+def _qualification_timeline_domain(record: dict[str, Any]) -> str:
+    """Assign one evidence owner without inferring missing runtime state."""
+    stream = str(record.get("stream", "")).lower()
+    kind = str(record.get("kind", "")).lower()
+    if stream in _PERCEPTION_STREAMS or any(
+        token in kind for token in ("lidar", "mapping", "odometry", "estimator", "health")
+    ):
+        return "perception"
+    if stream in _EXECUTION_STREAMS or any(
+        token in kind for token in
+        ("setpoint", "vehicle", "px4", "mode_status", "mission", "waypoint", "handover")
+    ):
+        return "execution"
+    return "planning"
+
+
+def _qualification_event_time_ns(record: dict[str, Any]) -> int | None:
+    for key in ("sim_time_ns", "timestamp_ns", "arrival_wall_ns"):
+        value = record.get(key)
+        if isinstance(value, int) and value >= 0:
+            return value
+    payload = record.get("payload")
+    if isinstance(payload, dict):
+        for key in ("stamp_ns", "source_stamp_ns", "receive_stamp_ns"):
+            value = payload.get(key)
+            if isinstance(value, int) and value >= 0:
+                return value
+    return None
+
+
+def _write_qualification_timelines(session: Path) -> dict[str, Any]:
+    """Write three lossless, owner-separated JSONL evidence timelines."""
+    records: list[dict[str, Any]] = []
+    records.extend(_samples(session / "samples.jsonl"))
+    records.extend(_scenario_events(session / "scenario.jsonl"))
+    buckets: dict[str, list[dict[str, Any]]] = {
+        "perception": [], "planning": [], "execution": []
+    }
+    for sequence, record in enumerate(records):
+        domain = _qualification_timeline_domain(record)
+        buckets[domain].append({
+            "schema_version": 1,
+            "sequence": sequence,
+            "time_ns": _qualification_event_time_ns(record),
+            "record": record,
+        })
+    result: dict[str, Any] = {"schema_version": 1, "complete": True}
+    for domain, items in buckets.items():
+        name = f"{domain}_timeline.jsonl"
+        body = "".join(
+            json.dumps(item, sort_keys=True, allow_nan=False) + "\n" for item in items
+        )
+        (session / name).write_text(body, encoding="utf-8")
+        result[domain] = {"path": name, "event_count": len(items)}
+    return result
+
+
 def _scenario_events(path: Path) -> list[dict[str, Any]]:
     """Load compact scenario events without making malformed rows fatal."""
     result: list[dict[str, Any]] = []
@@ -2813,6 +2881,7 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
         raise ValueError(f"invalid runtime verdict: {report['verdict']}")
     report["session"] = str(session.resolve())
     report["schema_version"] = 1
+    report["qualification_timelines"] = _write_qualification_timelines(session)
     (session / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     # Keep the machine-readable report as the contract, and add a standalone
     # visualization artifact for SITL mission analysis. Every completed
@@ -2854,6 +2923,7 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
         session = session.resolve()
         session.mkdir(parents=True, exist_ok=True)
         error_text = f"{type(error).__name__}: {error}"
+        timelines = _write_qualification_timelines(session)
         fallback = {
             "workflow": workflow,
             "verdict": "FAIL",
@@ -2861,6 +2931,7 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
             "streams": {},
             "session": str(session),
             "schema_version": 1,
+            "qualification_timelines": timelines,
         }
         (session / "REPORT_BUILD_ERROR.txt").write_text(error_text + "\n", encoding="utf-8")
         (session / "report.json").write_text(
