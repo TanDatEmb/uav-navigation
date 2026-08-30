@@ -47,6 +47,25 @@ public:
                    steady_deadline_.time_since_epoch()).count();
     }
 
+    // Optional numerical refinement must stop early enough for yaw, backup,
+    // complete certificates and immutable staging to finish under the hard
+    // solve deadline. A reserve larger than the remaining budget simply makes
+    // the refinement deadline immediately expired; it never extends time.
+    [[nodiscard]] std::int64_t refinementDeadlineNanoseconds(
+            const double finalization_reserve_s) const noexcept {
+        if (!std::isfinite(finalization_reserve_s) ||
+            finalization_reserve_s < 0.0) {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
+        const auto reserve = std::chrono::duration_cast<
+            std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(finalization_reserve_s));
+        const auto refinement_deadline = steady_deadline_ - reserve;
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   refinement_deadline.time_since_epoch()).count();
+    }
+
 private:
     static double makeSimulationDeadline(const double start_time,
                                          const double budget_seconds) {

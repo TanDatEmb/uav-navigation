@@ -60,6 +60,7 @@ namespace navigation_planning_backend {
         double astar_search_time_limit_s{0.0};
         double astar_total_time_limit_s{0.0};
         double solve_deadline_s{0.0};
+        double finalization_reserve_s{0.04};
         double sample_traj_dt_s{0.0};
         double robot_r{0.0};
         double vehicle_radius_m{0.0};
@@ -135,6 +136,8 @@ namespace navigation_planning_backend {
                              2.0 * astar_search_time_limit_s);
             loader.LoadParam("planner/solve_deadline_s", solve_deadline_s,
                              0.9 * replan_forward_dt_s);
+            loader.LoadParam("planner/finalization_reserve_s",
+                             finalization_reserve_s, 0.04);
             loader.LoadParam("planner/corridor_bound_distance_m", corridor_bound_distance_m, 3.0);
             loader.LoadParam("planner/corridor_segment_max_length_m",
                              corridor_segment_max_length_m, 3.0);
@@ -212,11 +215,14 @@ namespace navigation_planning_backend {
                 !std::isfinite(astar_total_time_limit_s) ||
                 astar_total_time_limit_s < astar_search_time_limit_s ||
                 !std::isfinite(solve_deadline_s) || solve_deadline_s <= 0.0 ||
+                !std::isfinite(finalization_reserve_s) ||
+                finalization_reserve_s < 0.04 ||
+                finalization_reserve_s >= solve_deadline_s ||
                 astar_total_time_limit_s >= solve_deadline_s ||
                 solve_deadline_s > replan_forward_dt_s + 1.0e-9) {
                 throw std::invalid_argument(
                     "navigation planner deadlines require 0 < A* attempt <= A* total < solve <= "
-                    "replan_forward_dt_s");
+                    "replan_forward_dt_s and 0.04 <= finalization reserve < solve");
             }
             if (!std::isfinite(planning_horizon_m) || planning_horizon_m <= 0.0 ||
                 !std::isfinite(receding_distance_m) || receding_distance_m <= 0.0 ||

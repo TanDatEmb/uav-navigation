@@ -2138,13 +2138,14 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
         auto original_sfc = sfc;
         solve_stage_.store(4);
         exp_traj_opt_->setSolveBudget(
-                &solve_cancelled_, solve_deadline.steadyDeadlineNanoseconds());
-        temp_ret = exp_traj_opt_->optimize(pos_init_state,
-                                           pos_fina_state,
-                                           guide_path,
-                                           guide_stamp,
-                                           sfc,
-                                           out_traj);
+                &solve_cancelled_, solve_deadline.refinementDeadlineNanoseconds(
+                    cfg_.finalization_reserve_s));
+        const auto nominal_result = exp_traj_opt_->solve(
+                pos_init_state, pos_fina_state, guide_path, guide_stamp,
+                sfc, out_traj,
+                solve_deadline.conservativeRemaining(
+                    planner_context_->getSimTime()) <= cfg_.finalization_reserve_s);
+        temp_ret = nominal_result.candidateAvailable();
         time_consuming_[EXP_TRAJ_OPT] = t_exp_opt.stop();
         {
             VecDf init_ts;

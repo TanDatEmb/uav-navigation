@@ -1,5 +1,33 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Preserve a certified nominal seed across refinement cancellation
+
+- **Owner/status:** nominal trajectory optimization and solve-budget contract,
+  `IMPLEMENTED`; 117/117 trajectory and 52/52 planner-config tests are green;
+  the staged-tree Release package build is green.
+- **Scope:** The deterministic nominal candidate is independently certified
+  before optional LBFGS refinement. Refinement receives a steady-clock deadline
+  shortened by the locked `0.04 s` finalization reserve. Cancellation or deadline
+  after that certificate returns the immutable seed through a typed
+  `NominalSolveResult`; an absent/invalid seed remains a hard failure.
+- **Safety impact:** Cancellation can no longer erase a usable certified seed or
+  consume the time reserved for yaw, deterministic jerk-limited BACKUP, complete
+  certificates, and atomic staging. V/A/J, flatness, corridor, world, tracking,
+  known-free, and freshness gates are unchanged.
+- **False-accept/false-reject consequences:** A certified deterministic seed may
+  be selected instead of a higher-quality refined nominal when the bounded solve
+  is cancelled. A cancelled solve without that seed is rejected; numeric infinity
+  is not used as a candidate-state sentinel.
+- **Runtime cost and evidence:** No extra optimization pass is introduced. The
+  optional refinement budget is shortened by 40 ms so finalization stays inside
+  the existing 180 ms hard deadline.
+- **Removal/review condition:** Keep the typed result and fail-closed fallback.
+  Increase the reserve only to `max(0.04, measured_p99 + 0.005)` from SITL and
+  representative recorded-data distributions, never from one run.
+- **Verification:** `python3 tools/runtime/build.py --mode release build`;
+  `./build/navigation_planning_backend/test_trajectory --gtest_color=no`;
+  `./build/navigation_planning_backend/test_planner_config --gtest_color=no`.
+
 ### 2026-08-30 - Isolate planner solves behind a bounded worker
 
 - **Owner/status:** runtime planning ownership and request supervisor,

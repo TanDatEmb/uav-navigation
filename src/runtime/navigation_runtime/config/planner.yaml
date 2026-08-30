@@ -40,6 +40,10 @@ planner:
   replan_forward_dt_s: 0.2
   # One absolute budget spans A*, corridor, EXP, yaw and backup validation.
   solve_deadline_s: 0.18
+  # Stop optional nominal refinement early enough to construct and certify the
+  # complete yaw+BACKUP bundle. This is the locked initial value; increases
+  # require a measured p99 distribution, never a single run.
+  finalization_reserve_s: 0.04
   # The route horizon includes a bounded pass-through look-ahead segment, not
   # only the active waypoint. This preserves geometric room for PX4-style
   # continuous handoff while remaining bounded by the rolling map extent.

@@ -1962,6 +1962,10 @@ TEST(PlannerTrajectory, SearchFallbacksShareOneAbsoluteDeadline) {
       std::chrono::steady_clock::now().time_since_epoch()).count();
   EXPECT_GT(deadline.steadyDeadlineNanoseconds(), now_ns);
   EXPECT_FALSE(deadline.steadyExpired());
+  EXPECT_EQ(deadline.steadyDeadlineNanoseconds() -
+                deadline.refinementDeadlineNanoseconds(0.04),
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::duration<double>(0.04)).count());
   EXPECT_THROW((navigation_planning_backend::AbsoluteDeadline{0.0, 0.0}), std::invalid_argument);
   EXPECT_THROW((navigation_planning_backend::AbsoluteDeadline{0.0, -1.0}), std::invalid_argument);
   EXPECT_THROW((navigation_planning_backend::AbsoluteDeadline{0.0, std::numeric_limits<double>::quiet_NaN()}),
@@ -1977,6 +1981,25 @@ TEST(PlannerTrajectory, SearchFallbacksShareOneAbsoluteDeadline) {
   std::this_thread::sleep_for(std::chrono::milliseconds(3));
   EXPECT_TRUE(frozen_sim_time.steadyExpired());
   EXPECT_NEAR(frozen_sim_time.remaining(42.0), 0.001, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, CancelledRefinementRetainsCertifiedNominalSeed) {
+  traj_opt::ExpOptimizationDiagnostics diagnostics;
+  diagnostics.cancelled = true;
+  diagnostics.used_certified_seed = true;
+
+  const auto result = traj_opt::classifyNominalSolveResult(
+      true, diagnostics, true);
+  EXPECT_TRUE(result.candidateAvailable());
+  EXPECT_EQ(result.status, traj_opt::NominalSolveStatus::kCertifiedSeed);
+  EXPECT_TRUE(result.cancellation_observed);
+  EXPECT_TRUE(result.deadline_observed);
+
+  diagnostics.used_certified_seed = false;
+  const auto failed = traj_opt::classifyNominalSolveResult(
+      false, diagnostics, false);
+  EXPECT_FALSE(failed.candidateAvailable());
+  EXPECT_EQ(failed.status, traj_opt::NominalSolveStatus::kFailed);
 }
 
 TEST(PlannerTrajectory, ConnectedGoalIsResolvedBeforeCorridorConstruction) {

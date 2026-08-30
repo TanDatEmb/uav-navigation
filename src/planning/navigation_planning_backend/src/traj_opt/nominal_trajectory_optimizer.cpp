@@ -1179,10 +1179,31 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     int ret = run_lbfgs(false);
     if (ret == lbfgs::LBFGS_CANCELED) {
         diagnostics_.retry_stop_reason = 2;
+        if (deterministic_seed_certificate.valid &&
+            !deterministic_nominal_seed.empty()) {
+            traj = deterministic_nominal_seed;
+            diagnostics_.used_certified_seed = true;
+            diagnostics_.last_candidate_maximum_velocity_mps =
+                    deterministic_seed_certificate.maximum_velocity_mps;
+            diagnostics_.last_candidate_maximum_acceleration_mps2 =
+                    deterministic_seed_certificate.maximum_acceleration_mps2;
+            diagnostics_.last_candidate_maximum_jerk_mps3 =
+                    deterministic_seed_certificate.maximum_jerk_mps3;
+            diagnostics_.final_normalized_dynamic_violation = std::max({
+                    deterministic_seed_certificate.maximum_velocity_mps / cfg_.max_vel,
+                    deterministic_seed_certificate.maximum_acceleration_mps2 / cfg_.max_acc,
+                    deterministic_seed_certificate.maximum_jerk_mps3 / cfg_.max_jerk});
+            diagnostics_.final_duration_s = traj.getTotalDuration();
+            planner_context_->warn(
+                    " -- [ExpOpt] refinement cancelled after certified seed; "
+                    "returning immutable seed duration={}",
+                    diagnostics_.final_duration_s);
+            return 0.0;
+        }
         diagnostics_.final_normalized_dynamic_violation =
                 std::numeric_limits<double>::infinity();
         traj.clear();
-        return INFINITY;
+        return std::numeric_limits<double>::infinity();
     }
     // double dt = ttt.stop();
     const auto rebuild_candidate = [&]() {
@@ -1879,7 +1900,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
     // availability. If it terminates numerically or its final hard gates
     // reject the optimized iterate, copy only the immutable pre-LBFGS seed
     // that was independently certified before any optimizer mutation.
-    if (ret < 0 && !diagnostics_.cancelled) {
+    if (ret < 0) {
         const auto selection = navigation_planning_backend::selectNominalCandidate(
                 traj, false, deterministic_nominal_seed,
                 deterministic_seed_certificate, traj);
@@ -2196,6 +2217,16 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         }
     }
     return success;
+}
+
+NominalSolveResult ExpTrajOpt::solve(
+        const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
+        const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
+        PolytopeVec &sfcs, Trajectory &out_traj,
+        const bool deadline_observed) {
+    const bool success = optimize(
+        headPVAJ, tailPVAJ, guide_path, guide_t, sfcs, out_traj);
+    return classifyNominalSolveResult(success, diagnostics_, deadline_observed);
 }
 
 bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,

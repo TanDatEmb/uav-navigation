@@ -110,6 +110,37 @@ namespace traj_opt {
             std::numeric_limits<double>::quiet_NaN()};
     };
 
+    enum class NominalSolveStatus : std::uint8_t {
+        kRefined,
+        kCertifiedSeed,
+        kFailed,
+    };
+
+    struct NominalSolveResult {
+        NominalSolveStatus status{NominalSolveStatus::kFailed};
+        bool cancellation_observed{false};
+        bool deadline_observed{false};
+
+        [[nodiscard]] bool candidateAvailable() const noexcept {
+            return status == NominalSolveStatus::kRefined ||
+                   status == NominalSolveStatus::kCertifiedSeed;
+        }
+    };
+
+    [[nodiscard]] inline NominalSolveResult classifyNominalSolveResult(
+            bool optimizer_success,
+            const ExpOptimizationDiagnostics& diagnostics,
+            bool deadline_observed) noexcept {
+        NominalSolveResult result;
+        result.cancellation_observed = diagnostics.cancelled;
+        result.deadline_observed = deadline_observed;
+        if (!optimizer_success) return result;
+        result.status = diagnostics.used_certified_seed
+            ? NominalSolveStatus::kCertifiedSeed
+            : NominalSolveStatus::kRefined;
+        return result;
+    }
+
     // A zero nominal objective weight means "do not shape this quantity"
     // during ordinary optimization; it cannot mean "provide no gradient"
     // after the independent hard gate has already found that exact quantity
@@ -299,6 +330,12 @@ namespace traj_opt {
                       const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
                       PolytopeVec &sfcs,
                       Trajectory &out_traj);
+
+        NominalSolveResult solve(
+                      const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
+                      const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
+                      PolytopeVec &sfcs, Trajectory &out_traj,
+                      bool deadline_observed = false);
 
         void getInitValue(VecDf &ts, vec_Vec3f &ps) const {
             ts = opt_vars.init_ts;
