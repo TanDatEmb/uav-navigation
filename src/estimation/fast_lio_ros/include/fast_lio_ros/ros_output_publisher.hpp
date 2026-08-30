@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -123,6 +124,7 @@ class RosOutputPublisher {
   std::atomic_bool propagation_valid_{false};
   std::atomic<std::int64_t> last_propagated_state_stamp_ns_{0};
   mutable std::mutex visibility_cloud_mutex_;
+  std::condition_variable visibility_cloud_cv_;
   std::deque<sensor_msgs::msg::PointCloud2::ConstSharedPtr> visibility_clouds_;
   mutable std::mutex diagnostics_mutex_;
   std::optional<EstimatorHealthSnapshot> latest_diagnostic_health_;

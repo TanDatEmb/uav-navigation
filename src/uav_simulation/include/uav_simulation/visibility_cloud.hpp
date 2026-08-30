@@ -21,11 +21,12 @@ struct VisibilityCloud {
   std::int32_t stamp_sec{0};
   std::uint32_t stamp_nanosec{0U};
   std::vector<VisibilityEndpoint> endpoints;
+  std::uint32_t source_ray_count{0U};
 };
 
 // Converts only explicit no-return rays to endpoints. A malformed message,
-// incomplete 3D array or missing timestamp returns nullopt: the consumer must
-// then treat the update as having no visibility evidence.
+// incomplete 3D array or missing timestamp returns nullopt. A valid scan with
+// no explicit no-return ray returns a present cloud with zero endpoints.
 [[nodiscard]] std::optional<VisibilityCloud> makeVisibilityCloud(
     const gz::msgs::LaserScan& scan, std::string_view expected_frame,
     std::size_t maximum_endpoints = 4096U);

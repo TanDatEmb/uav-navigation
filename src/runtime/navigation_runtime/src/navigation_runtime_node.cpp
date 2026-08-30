@@ -446,7 +446,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   planner_rate_hz_ = declare_parameter("navigation_runtime.planner_rate_hz", 5.0);
   command_rate_hz_ = declare_parameter("navigation_runtime.command_rate_hz", 50.0);
   mapping_snapshot_publication_period_s_ = declare_parameter(
-      "navigation_runtime.mapping_snapshot_publication_period_s", 0.20);
+      "navigation_runtime.mapping_snapshot_publication_period_s", 0.10);
   data_freshness_window_s_ = declare_parameter(
       "navigation_runtime.data_freshness_window_s", 0.5);
   planner_watchdog_timeout_s_ = declare_parameter(
@@ -580,9 +580,39 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                           command_store = &command_bundle_store_,
                           ros_clock,
                           epoch_ready = &localization_epoch_ready_]
-      (navigation_mapping::MappingObservation&& observation) mutable {
+      (PendingRegisteredScan&& pending) mutable {
     const auto callback_started = std::chrono::steady_clock::now();
     try {
+      if (!pending.message) {
+        throw std::invalid_argument("mapping worker received a null RegisteredScan");
+      }
+      const auto decode_started = std::chrono::steady_clock::now();
+      auto decoded = std::make_unique<navigation_mapping::PointCloud>();
+      if (!decodeCloud(pending.message->points, *decoded)) {
+        throw std::invalid_argument("mapping worker could not decode registered points");
+      }
+      std::unique_ptr<navigation_mapping::PointCloud> decoded_free_space;
+      if (pending.message->visibility_observation_present) {
+        decoded_free_space = std::make_unique<navigation_mapping::PointCloud>();
+        if (!decodeCloud(
+                pending.message->free_space_endpoints,
+                *decoded_free_space, false)) {
+          throw std::invalid_argument("mapping worker could not decode visibility endpoints");
+        }
+      }
+      nav_msgs::msg::Odometry corrected;
+      corrected.header = pending.message->header;
+      corrected.child_frame_id = pending.message->body_frame_id;
+      corrected.pose = pending.message->corrected_pose;
+      navigation_mapping::MappingObservation observation{
+          std::move(decoded), std::move(corrected), pending.localization_epoch,
+          pending.scan_sequence, pending.stamp_ns,
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - decode_started).count(),
+          nullptr};
+      if (decoded_free_space) {
+        observation.free_space_endpoints = std::move(decoded_free_space);
+      }
       const auto result = mapping_actor->process(observation);
       if (lifecycle_observer) {
         lifecycle_observer->onMutableMapUpdated(observation.stamp_ns);
@@ -824,20 +854,24 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   auto validate_mapping = [ros_clock, telemetry = mapping_telemetry_,
                            active_epoch = &active_localization_epoch_,
                            maximum_age_ns = data_freshness_window_ns_](
-      const navigation_mapping::MappingObservation& observation) {
-    const auto& pose = observation.corrected_odometry.pose.pose;
+      const PendingRegisteredScan& pending) {
+    if (!pending.message) {
+      telemetry->recordDiscard(false, false, true);
+      return false;
+    }
+    const auto& pose = pending.message->corrected_pose.pose;
     const Eigen::Quaterniond q{
         pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
     const auto freshness = navigation_execution::classifyTimestampFreshness(
-        ros_clock->now().nanoseconds(), observation.stamp_ns, maximum_age_ns);
-    const bool invalid = !observation.cloud || observation.cloud->empty() ||
-                         observation.localization_epoch !=
+        ros_clock->now().nanoseconds(), pending.stamp_ns, maximum_age_ns);
+    const bool invalid = pending.message->points.width == 0U ||
+                         pending.localization_epoch !=
                              active_epoch->load(std::memory_order_acquire) ||
-                         observation.localization_epoch == 0U ||
-                         observation.stamp_ns <= 0 ||
+                         pending.localization_epoch == 0U ||
+                         pending.stamp_ns <= 0 ||
                          navigation_common::rosTimeToNanoseconds(
-                             observation.corrected_odometry.header.stamp).value_or(0) !=
-                             observation.stamp_ns ||
+                             pending.message->header.stamp).value_or(0) !=
+                             pending.stamp_ns ||
                          !std::isfinite(pose.position.x) ||
                          !std::isfinite(pose.position.y) ||
                          !std::isfinite(pose.position.z) || !q.coeffs().allFinite() ||
@@ -848,7 +882,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
     if (invalid || stale || future) telemetry->recordDiscard(stale, future, invalid);
     return !invalid && !stale && !future;
   };
-  mapping_worker_ = std::make_unique<navigation_mapping::MappingWorker<navigation_mapping::MappingObservation>>(
+  mapping_worker_ = std::make_unique<navigation_mapping::MappingWorker<PendingRegisteredScan>>(
       observation_accounting_, std::move(process_mapping),
       mappingFailStop, std::move(validate_mapping),
       [publisher = diagnostics_publisher_, ros_clock,
@@ -971,7 +1005,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         }
       });
   mapping_worker_->setStrictlyIncreasingOrderKey(
-      [](const navigation_mapping::MappingObservation& observation) { return observation.stamp_ns; });
+      [](const PendingRegisteredScan& pending) { return pending.stamp_ns; });
   mapping_worker_->start();
   planning_worker_->start();
 
@@ -1167,7 +1201,10 @@ void NavigationRuntimeNode::onRegisteredScan(
       free_space.width != 0U || free_space.height != 0U || !free_space.data.empty();
   const bool visibility_contract_valid = message->visibility_observation_present
       ? message->visibility_no_return_count ==
-            free_space.width * free_space.height
+            free_space.width * free_space.height &&
+            message->visibility_no_return_count <=
+                message->visibility_source_ray_count &&
+            message->visibility_stamp_skew_ns == 0
       : !has_free_space_payload && message->visibility_source_ray_count == 0U &&
             message->visibility_no_return_count == 0U &&
             message->visibility_stamp_skew_ns == 0;
@@ -1196,21 +1233,6 @@ void NavigationRuntimeNode::onRegisteredScan(
     observation_accounting_.recordRejectedBeforeInbox();
     return;
   }
-  const auto decode_started = std::chrono::steady_clock::now();
-  auto decoded = std::make_unique<navigation_mapping::PointCloud>();
-  if (!decodeCloud(message->points, *decoded)) {
-    observation_accounting_.recordRejectedBeforeInbox();
-    return;
-  }
-  std::unique_ptr<navigation_mapping::PointCloud> decoded_free_space;
-  if (has_free_space_payload) {
-    decoded_free_space = std::make_unique<navigation_mapping::PointCloud>();
-    if (!decodeCloud(free_space, *decoded_free_space, false)) {
-      observation_accounting_.recordRejectedBeforeInbox();
-      return;
-    }
-  }
-
   std::lock_guard<std::mutex> transition_lock(localization_transition_mutex_);
   const auto active_epoch = active_localization_epoch_.load(std::memory_order_acquire);
   if (message->localization_epoch < active_epoch) {
@@ -1230,23 +1252,10 @@ void NavigationRuntimeNode::onRegisteredScan(
   }
   last_registered_scan_epoch_.store(message->localization_epoch, std::memory_order_release);
   last_registered_scan_sequence_.store(message->scan_sequence, std::memory_order_release);
-  nav_msgs::msg::Odometry corrected;
-  corrected.header = message->header;
-  corrected.child_frame_id = message->body_frame_id;
-  corrected.pose = message->corrected_pose;
-  navigation_mapping::MappingObservation observation{
-      std::move(decoded), std::move(corrected), message->localization_epoch,
-      message->scan_sequence,
-      observation_stamp_ns,
-      std::chrono::duration_cast<std::chrono::microseconds>(
-          std::chrono::steady_clock::now() - decode_started)
-          .count(),
-      nullptr};
-  if (decoded_free_space) {
-    observation.free_space_endpoints = std::move(decoded_free_space);
-  }
   observation_accounting_.recordAcceptedToInbox();
-  (void)mapping_worker_->submitFromWaiting(std::move(observation));
+  (void)mapping_worker_->submitFromWaiting(PendingRegisteredScan{
+      message, observation_stamp_ns, message->localization_epoch,
+      message->scan_sequence});
 }
 
 void NavigationRuntimeNode::onEstimatorHealth(

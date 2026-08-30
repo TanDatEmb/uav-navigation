@@ -19,9 +19,23 @@ namespace uav::nav::lio {
 namespace {
 
 constexpr std::size_t kMaximumVisibilityCloudPoints = 262144U;
+constexpr std::size_t kVisibilityAssociationCapacity = 32U;
+constexpr std::int64_t kVisibilityAssociationMaximumAgeNs = 500'000'000LL;
+constexpr auto kVisibilityAssociationWait = std::chrono::milliseconds(10);
+
+std::optional<std::int64_t> stampNanoseconds(
+    const builtin_interfaces::msg::Time& stamp) noexcept {
+  if (stamp.sec < 0 || stamp.nanosec >= 1'000'000'000U) return std::nullopt;
+  constexpr std::int64_t kBillion = 1'000'000'000LL;
+  if (static_cast<std::int64_t>(stamp.sec) >
+      (std::numeric_limits<std::int64_t>::max() - stamp.nanosec) / kBillion) {
+    return std::nullopt;
+  }
+  return static_cast<std::int64_t>(stamp.sec) * kBillion + stamp.nanosec;
+}
 
 bool boundedVisibilityCloud(const sensor_msgs::msg::PointCloud2& cloud) {
-  if (cloud.is_bigendian || cloud.width == 0U || cloud.height == 0U ||
+  if (cloud.is_bigendian || cloud.height == 0U ||
       cloud.point_step < sizeof(float) * 3U) {
     return false;
   }
@@ -58,6 +72,18 @@ bool boundedVisibilityCloud(const sensor_msgs::msg::PointCloud2& cloud) {
     }
   }
   return x_found && y_found && z_found;
+}
+
+std::uint32_t visibilitySourceRayCount(
+    const sensor_msgs::msg::PointCloud2& cloud) noexcept {
+  const auto metadata = std::find_if(
+      cloud.fields.begin(), cloud.fields.end(), [](const auto& field) {
+        return field.name == "visibility_source_ray_count";
+      });
+  if (metadata != cloud.fields.end() && metadata->count >= cloud.width * cloud.height) {
+    return metadata->count;
+  }
+  return cloud.width * cloud.height;
 }
 
 diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
@@ -103,13 +129,42 @@ void RosOutputPublisher::setBaseLinkConverter(
 
 bool RosOutputPublisher::setVisibilityCloud(
     sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud) {
-  if (!cloud || !boundedVisibilityCloud(*cloud)) return false;
+  if (!cloud || !boundedVisibilityCloud(*cloud) ||
+      !stampNanoseconds(cloud->header.stamp)) return false;
+  const auto incoming_stamp_ns = *stampNanoseconds(cloud->header.stamp);
   std::lock_guard lock(visibility_cloud_mutex_);
-  visibility_clouds_.push_back(std::move(cloud));
-  constexpr std::size_t kVisibilityCloudHistory = 16U;
-  while (visibility_clouds_.size() > kVisibilityCloudHistory) {
+  if (std::any_of(visibility_clouds_.begin(), visibility_clouds_.end(),
+                  [&](const auto& queued) {
+                    return queued->header.stamp == cloud->header.stamp;
+                  })) {
+    return false;
+  }
+  const auto newest_stamp_ns = visibility_clouds_.empty()
+      ? incoming_stamp_ns
+      : stampNanoseconds(visibility_clouds_.back()->header.stamp).value_or(
+            incoming_stamp_ns);
+  if (incoming_stamp_ns < newest_stamp_ns -
+          kVisibilityAssociationMaximumAgeNs) {
+    return false;
+  }
+  const auto insertion = std::upper_bound(
+      visibility_clouds_.begin(), visibility_clouds_.end(), incoming_stamp_ns,
+      [](const std::int64_t stamp_ns, const auto& queued) {
+        return stamp_ns < stampNanoseconds(queued->header.stamp).value_or(0);
+      });
+  visibility_clouds_.insert(insertion, std::move(cloud));
+  const auto pruning_reference_ns = std::max(newest_stamp_ns, incoming_stamp_ns);
+  while (!visibility_clouds_.empty()) {
+    const auto oldest_stamp_ns = stampNanoseconds(
+        visibility_clouds_.front()->header.stamp).value_or(0);
+    if (visibility_clouds_.size() <= kVisibilityAssociationCapacity &&
+        pruning_reference_ns - oldest_stamp_ns <=
+            kVisibilityAssociationMaximumAgeNs) {
+      break;
+    }
     visibility_clouds_.pop_front();
   }
+  visibility_cloud_cv_.notify_all();
   return true;
 }
 
@@ -416,13 +471,19 @@ void RosOutputPublisher::publish(const ProcessResult& result,
     observation.points = std::move(registered_cloud);
     sensor_msgs::msg::PointCloud2::ConstSharedPtr matching_visibility_cloud;
     {
-      std::lock_guard lock(visibility_cloud_mutex_);
-      for (auto iterator = visibility_clouds_.rbegin();
-           iterator != visibility_clouds_.rend(); ++iterator) {
-        if ((*iterator)->header.stamp == stamp) {
-          matching_visibility_cloud = *iterator;
-          break;
-        }
+      std::unique_lock lock(visibility_cloud_mutex_);
+      const auto find_match = [&] {
+        return std::find_if(
+            visibility_clouds_.begin(), visibility_clouds_.end(),
+            [&](const auto& queued) { return queued->header.stamp == stamp; });
+      };
+      (void)visibility_cloud_cv_.wait_for(
+          lock, kVisibilityAssociationWait,
+          [&] { return find_match() != visibility_clouds_.end(); });
+      const auto match = find_match();
+      if (match != visibility_clouds_.end()) {
+        matching_visibility_cloud = *match;
+        visibility_clouds_.erase(match);
       }
     }
     if (matching_visibility_cloud) {
@@ -430,7 +491,7 @@ void RosOutputPublisher::publish(const ProcessResult& result,
           *matching_visibility_cloud, *corrected_odometry, stamp);
       observation.visibility_observation_present = true;
       observation.visibility_source_ray_count =
-          matching_visibility_cloud->width * matching_visibility_cloud->height;
+          visibilitySourceRayCount(*matching_visibility_cloud);
       observation.visibility_no_return_count =
           observation.free_space_endpoints.width *
           observation.free_space_endpoints.height;

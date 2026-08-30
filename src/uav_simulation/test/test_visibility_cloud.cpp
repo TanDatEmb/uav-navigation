@@ -57,7 +57,10 @@ TEST(VisibilityCloud, DoesNotTurnAllOccupiedScanIntoEvidence) {
   auto scan = makeScan();
   scan.mutable_ranges()->Clear();
   for (int index = 0; index < 4; ++index) scan.add_ranges(2.0);
-  EXPECT_FALSE(makeVisibilityCloud(scan, "livox_frame").has_value());
+  const auto result = makeVisibilityCloud(scan, "livox_frame");
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->source_ray_count, 4U);
+  EXPECT_TRUE(result->endpoints.empty());
 }
 
 }  // namespace uav::simulation

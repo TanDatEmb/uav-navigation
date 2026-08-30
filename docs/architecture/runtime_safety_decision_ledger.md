@@ -1,5 +1,37 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-30 - Make free-space association single-consume and mapping decode worker-owned
+
+- **Owner/status:** simulator visibility bridge, FAST-LIO output adapter, and
+  runtime mapping worker, `IMPLEMENTED`; focused simulator/mapping/shutdown
+  tests and Release builds are green; recorded-data latency evidence is pending.
+- **Scope:** Visibility observations are associated by exact stamp, reject
+  duplicates, retain at most 32 entries and 0.5 s, wait at most 10 ms in the
+  output adapter outside the estimator core, and are erased on the first match.
+  A valid simulator scan with zero no-return rays is published as present-empty.
+  The ROS callback validates identity/header/shape and enqueues the immutable
+  `RegisteredScan`; point and visibility decoding now runs in the latest-only
+  mapping worker. Snapshot publication is locked to `0.10 s`.
+- **Safety impact:** Missing visibility can no longer be confused with a valid
+  empty observation, and one visibility sample cannot authorize two map
+  updates. Callback decode cannot starve command execution. Existing changed-
+  region history, patch export, world-generation rejection, protected-region
+  recertification, and full-validation fallback remain authoritative. ROG
+  log-odds and every planning/execution gate are unchanged.
+- **False-accept/false-reject consequences:** Late, duplicate, regressed beyond
+  the 0.5 s window, malformed, or unmatched visibility is absent rather than
+  reused. A replaced latest-only scan is accounted and never partially decoded.
+- **Runtime cost and evidence:** Association search is bounded by 32 entries;
+  wait is capped at 10 ms. Release builds passed for simulator, FAST-LIO ROS,
+  and runtime; 4/4 visibility, 17/17 mapping-worker, and 6/6 shutdown tests pass.
+- **Removal/review condition:** Keep exact single-consume semantics. Adjust the
+  wait or history only from association/latency distributions, never to mask
+  estimator or callback starvation.
+- **Verification:** `python3 tools/runtime/build.py --mode release build
+  --packages fast_lio_ros navigation_runtime uav_simulation`; focused
+  `test_visibility_cloud`, `test_mapping_worker`, and
+  `test_navigation_runtime_shutdown` binaries.
+
 ### 2026-08-30 - Require 800 ms MAIN reserve and evidence-bounded speed
 
 - **Owner/status:** candidate admission, renewal timing, and planner speed

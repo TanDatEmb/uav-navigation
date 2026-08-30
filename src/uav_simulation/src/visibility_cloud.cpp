@@ -45,6 +45,8 @@ std::optional<VisibilityCloud> makeVisibilityCloud(
   result.frame_id = scan.frame();
   result.stamp_sec = static_cast<std::int32_t>(stamp.sec());
   result.stamp_nanosec = static_cast<std::uint32_t>(stamp.nsec());
+  result.source_ray_count = static_cast<std::uint32_t>(
+      horizontal_count * vertical_count);
   const double range_max = scan.range_max();
   const double range_epsilon = std::max(1.0e-3, 1.0e-6 * range_max);
   result.endpoints.reserve(static_cast<std::size_t>(scan.ranges_size()));
@@ -76,7 +78,6 @@ std::optional<VisibilityCloud> makeVisibilityCloud(
       }
     }
   }
-  if (result.endpoints.empty()) return std::nullopt;
   if (result.endpoints.size() > maximum_endpoints) {
     std::vector<VisibilityEndpoint> downsampled;
     downsampled.reserve(maximum_endpoints);

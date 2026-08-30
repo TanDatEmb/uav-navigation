@@ -161,6 +161,13 @@ struct NavigationRuntimeDependencies {
   std::shared_ptr<MappingLifecycleObserver> lifecycle_observer;
 };
 
+struct PendingRegisteredScan final {
+  navigation_contracts::msg::RegisteredScan::ConstSharedPtr message;
+  std::int64_t stamp_ns{0};
+  std::uint64_t localization_epoch{0};
+  std::uint64_t scan_sequence{0};
+};
+
 // Product ROS boundary for the planner backend core. Mapping consumes one atomic
 // RegisteredScan containing the registered cloud and its corrected pose.
 class NavigationRuntimeNode final : public rclcpp::Node {
@@ -207,7 +214,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // available for that budget; command sampling remains independent at 50 Hz.
   double planner_rate_hz_{5.0};
   double command_rate_hz_{50.0};
-  double mapping_snapshot_publication_period_s_{0.20};
+  double mapping_snapshot_publication_period_s_{0.10};
   double data_freshness_window_s_{0.5};
   std::int64_t data_freshness_window_ns_{500'000'000};
   double planner_watchdog_timeout_s_{1.0};
@@ -322,7 +329,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   navigation_execution::CommandSampler command_sampler_;
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;
   std::shared_ptr<MappingLifecycleObserver> mapping_lifecycle_observer_;
-  std::unique_ptr<navigation_mapping::MappingWorker<navigation_mapping::MappingObservation>> mapping_worker_;
+  std::unique_ptr<navigation_mapping::MappingWorker<PendingRegisteredScan>> mapping_worker_;
   navigation_planning_backend::PlannerFacade* planner_{nullptr};
   std::unique_ptr<PlanningWorker<navigation_planning_backend::PlannerFacade>> planning_worker_;
 };

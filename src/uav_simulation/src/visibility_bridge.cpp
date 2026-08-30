@@ -39,7 +39,7 @@ class VisibilityBridge final : public rclcpp::Node {
     if (!converted.has_value()) {
       RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 5000,
-          "discarding malformed or empty Gazebo visibility scan");
+          "discarding malformed Gazebo visibility scan");
       return;
     }
     sensor_msgs::msg::PointCloud2 cloud;
@@ -52,6 +52,12 @@ class VisibilityBridge final : public rclcpp::Node {
     sensor_msgs::PointCloud2Modifier modifier(cloud);
     modifier.setPointCloud2FieldsByString(1, "xyz");
     modifier.resize(converted->endpoints.size());
+    sensor_msgs::msg::PointField source_count;
+    source_count.name = "visibility_source_ray_count";
+    source_count.offset = 0U;
+    source_count.datatype = sensor_msgs::msg::PointField::UINT8;
+    source_count.count = converted->source_ray_count;
+    cloud.fields.push_back(source_count);
     sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
     sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
     sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");
