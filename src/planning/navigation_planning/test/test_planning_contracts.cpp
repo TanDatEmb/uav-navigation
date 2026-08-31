@@ -92,6 +92,31 @@ TEST(PlanningCandidate, AllowsDeclaredMainToBackupRoleSchedule) {
   EXPECT_FALSE(candidate.sample(175).has_value());
 }
 
+TEST(PlanningCandidate, RequiresExplicitTerminalStopSemanticForMainWithBackup) {
+  auto candidate = validCandidate();
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.backup_start_time_s = 7.5e-8;
+  candidate.certificates.terminal_stop = true;
+  candidate.terminal_stop = true;
+  candidate.role_schedule = {
+      {0.0, 7.5e-8, navigation_planning::CandidateRole::kMain},
+      {7.5e-8, 1.0e-7, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.role = stamp < 175
+                     ? navigation_planning::CandidateRole::kMain
+                     : navigation_planning::CandidateRole::kBackup;
+    point.trajectory_time_s = static_cast<double>(stamp - 100) * 1.0e-9;
+    return true;
+  };
+  EXPECT_TRUE(candidate.valid());
+  EXPECT_TRUE(navigation_planning::certifiedTerminalStopAtEndpoint(candidate));
+
+  candidate.certificates.terminal_stop = false;
+  EXPECT_FALSE(candidate.valid());
+}
+
 TEST(PlanningCandidate, AdmissionRequiresEightHundredMillisecondsOfMain) {
   auto candidate = validCandidate();
   candidate.start_wall_time_s = 10.0;

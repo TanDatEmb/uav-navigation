@@ -1991,6 +1991,12 @@ def _run_sim_unlocked(
                 )
             scenario_name = "offboard_scenario.py" if control_interface == "offboard" else "external_mode_scenario.py"
             scenario_role = "offboard" if control_interface == "offboard" else "external_mode_scenario"
+            # The sensor stack may enter LIO TRACKING well before the vehicle
+            # is handed to the mission scenario. Record the exact wall-time
+            # boundary so the report can distinguish warm-up from active
+            # navigation without relaxing any in-flight freshness gate.
+            if headless or auto_scenario:
+                _write_runtime(session, navigation_start_wall_ns=time.time_ns())
             scenario = session.start(
                 scenario_role,
                 _ros_shell([

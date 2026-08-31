@@ -51,6 +51,15 @@ TEST(PlannerFsm, StartsAnchorRecoveryBeforeExecutionLeaseIsExhausted) {
       std::numeric_limits<double>::quiet_NaN(), 0.75));
 }
 
+TEST(PlannerFsm, AnchorRecoveryUsesRetainedTrackingCertificate) {
+  const double retained_limit = retainedCommandTrackingLimit(0.25, 0.75);
+  EXPECT_DOUBLE_EQ(retained_limit, 0.25);
+  EXPECT_FALSE(commandAnchorRecoveryDue(
+      true, navigation_planning::CandidateRole::kMain, 0.124, retained_limit));
+  EXPECT_TRUE(commandAnchorRecoveryDue(
+      true, navigation_planning::CandidateRole::kMain, 0.125, retained_limit));
+}
+
 TEST(PlannerFsm, StartsRecoveryBeforeCommandLeaseExpires) {
   EXPECT_FALSE(commandLeaseRenewalDue(true, 10'000'000'000LL,
                                       10'500'000'000LL, 0.49));
@@ -62,12 +71,53 @@ TEST(PlannerFsm, StartsRecoveryBeforeCommandLeaseExpires) {
                                       10'100'000'000LL, 0.20));
 }
 
+TEST(PlannerFsm, DefersOnlyTerminalStopLeaseRenewal) {
+  EXPECT_TRUE(terminalStopMayDeferLeaseRenewal(
+      true, true, true, true,
+      navigation_planning::CandidateRole::kMain, false));
+  EXPECT_TRUE(terminalStopMayDeferLeaseRenewal(
+      true, true, true, true,
+      navigation_planning::CandidateRole::kMain, false));
+  EXPECT_FALSE(terminalStopMayDeferLeaseRenewal(
+      false, true, true, true,
+      navigation_planning::CandidateRole::kMain, false));
+  EXPECT_FALSE(terminalStopMayDeferLeaseRenewal(
+      true, true, true, true,
+      navigation_planning::CandidateRole::kMain, true));
+  EXPECT_FALSE(terminalStopMayDeferLeaseRenewal(
+      true, true, true, false,
+      navigation_planning::CandidateRole::kMain, false));
+}
+
+TEST(PlannerFsm, DefersTerminalStopAnchorRecoveryOnlyInsideTrackingEnvelope) {
+  EXPECT_TRUE(terminalStopMayDeferAnchorRecovery(
+      true, true, true, true,
+      navigation_planning::CandidateRole::kMain, true, 0.125, 0.25));
+  EXPECT_FALSE(terminalStopMayDeferAnchorRecovery(
+      true, true, true, false,
+      navigation_planning::CandidateRole::kMain, true, 0.125, 0.25));
+  EXPECT_FALSE(terminalStopMayDeferAnchorRecovery(
+      true, true, true, true,
+      navigation_planning::CandidateRole::kBackup, true, 0.125, 0.25));
+  EXPECT_FALSE(terminalStopMayDeferAnchorRecovery(
+      true, true, true, true,
+      navigation_planning::CandidateRole::kMain, true, 0.251, 0.25));
+  EXPECT_FALSE(terminalStopMayDeferAnchorRecovery(
+      true, true, true, true,
+      navigation_planning::CandidateRole::kMain, false, 0.20, 0.25));
+}
+
 TEST(PlannerFsm, UsesBoundedSlowerVelocityEnvelopeAfterRestFailures) {
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(0U), 1.0);
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(1U), 0.75);
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(2U), 0.50);
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(3U), 0.35);
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(100U), 0.35);
+}
+
+TEST(PlannerFsm, UsesHalfSpeedEnvelopeOnlyForTerminalStopSolve) {
+  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(true), 0.5);
+  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(false), 1.0);
 }
 
 TEST(PlannerFsm, RenewsBeforeMainCanReachBackupDuringSchedulingAndSolve) {
@@ -172,11 +222,31 @@ TEST(PlannerFsm, EmergencyBrakeCannotBeRearmedFromADriftingEmergency) {
       navigation_planning::CandidateRole::kMain));
 }
 
-TEST(PlannerFsm, ProjectedAnchorCrossingDoesNotReplaceValidCommandEarly) {
+TEST(PlannerFsm, ProjectedAnchorCrossingRequiresUnsafeSuffixAndKnownFreeState) {
   EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
       false, true, true, true, true, false,
       ExecutionRecoveryState::kTrackMain,
       navigation_planning::CandidateRole::kMain));
+  EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, false, true, true, true, false,
+      ExecutionRecoveryState::kTrackMain,
+      navigation_planning::CandidateRole::kMain, true, true));
+  EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, true, true, true, true, false,
+      ExecutionRecoveryState::kTrackMain,
+      navigation_planning::CandidateRole::kMain, true, true, false));
+  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, true, true, true, true, false,
+      ExecutionRecoveryState::kTrackMain,
+      navigation_planning::CandidateRole::kMain, true, true, false, true));
+  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, false, true, true, true, false,
+      ExecutionRecoveryState::kTrackMain,
+      navigation_planning::CandidateRole::kMain, true, false));
+  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, true, true, true, true, false,
+      ExecutionRecoveryState::kTrackMain,
+      navigation_planning::CandidateRole::kMain, true, true, true));
   EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
       false, false, true, true, true, true,
       ExecutionRecoveryState::kTrackMain,
@@ -221,6 +291,10 @@ TEST(PlannerFsm, BackupAndEmergencyAreOneWayUntilCertifiedStop) {
                 ExecutionRecoveryEvent::kCertifiedStopObserved),
             ExecutionRecoveryState::kStoppedRecovery);
   EXPECT_TRUE(nominalPlanningAllowed(ExecutionRecoveryState::kStoppedRecovery));
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kStoppedRecovery,
+                ExecutionRecoveryEvent::kMotionObserved),
+            ExecutionRecoveryState::kStoppedRecovery);
 }
 
 TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {

@@ -34,9 +34,10 @@ planner:
   iris_iter_num: 1
   # Replan from a short future state to preserve PVA continuity without
   # committing the vehicle to a one-second blind prefix near obstacles.
-  # Current integrated hot-replan p95 is below 40 ms in SITL; 0.2 s leaves a
-  # bounded compute margin while remaining close to planner backend's 0.1 s profiles.
-  replan_forward_dt_s: 0.2
+  # The retained-prefix handoff must cover the complete 0.4 s stitch contract;
+  # using 0.2 s left only ~20 ms after a solve at the 180 ms deadline for
+  # recertification and atomic command publication.
+  replan_forward_dt_s: 0.4
   # One absolute budget spans A*, corridor, EXP, yaw and backup validation.
   solve_deadline_s: 0.18
   # Stop optional nominal refinement early enough to construct and certify the

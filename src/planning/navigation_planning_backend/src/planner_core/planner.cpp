@@ -17,6 +17,7 @@
 #include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/replan_contract.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
+#include <navigation_world_model/continuous_clearance.hpp>
 #include <navigation_world_model/goal_contract.hpp>
 #include <navigation_common/time.hpp>
 #include <navigation_planning/planning_timing.hpp>
@@ -64,6 +65,71 @@ double knownFreeGuideSupport(
         support_m += segment_m;
     }
     return support_m;
+}
+
+std::optional<double> firstRouteBoundaryEntryTime(
+        const Trajectory& trajectory,
+        const Eigen::Vector3d& boundary_point,
+        const double boundary_radius_m) {
+    if (trajectory.empty() || trajectory.getPieceNum() < 1 ||
+        !boundary_point.allFinite() || !std::isfinite(boundary_radius_m) ||
+        boundary_radius_m <= 0.0) {
+        return std::nullopt;
+    }
+
+    const double total_duration_s = trajectory.getTotalDuration();
+    if (!std::isfinite(total_duration_s) || total_duration_s <= 0.0) {
+        return std::nullopt;
+    }
+
+    // The route contract is an entry into the mission acceptance ball, not a
+    // requirement that the optimizer place a polynomial junction exactly at
+    // the ball centre.  Check polynomial junctions first.  A fixed sampling
+    // grid alone is not a certificate: a fast trajectory can enter and leave
+    // the ball between two 10 ms samples even though the optimizer's hard
+    // route-boundary junction is valid.
+    double junction_time_s = 0.0;
+    for (int junction_index = 0;
+         junction_index <= trajectory.getPieceNum(); ++junction_index) {
+        const Eigen::Vector3d position = trajectory.getJuncPos(junction_index);
+        if (!position.allFinite()) return std::nullopt;
+        const double distance_m = (position - boundary_point).norm();
+        if (std::isfinite(distance_m) &&
+            distance_m <= boundary_radius_m + 1.0e-6) {
+            return junction_time_s;
+        }
+        if (junction_index < trajectory.getPieceNum()) {
+            const double duration_s = trajectory[junction_index].getDuration();
+            if (!std::isfinite(duration_s) || duration_s <= 0.0 ||
+                !std::isfinite(junction_time_s + duration_s)) {
+                return std::nullopt;
+            }
+            junction_time_s += duration_s;
+        }
+    }
+
+    // The junction check above covers the hard optimizer contract.  Keep a
+    // conservative fixed-time witness for a valid interior crossing in a
+    // trajectory representation that does not put the crossing at a junction.
+    constexpr double kBoundaryWitnessDtS = 0.01;
+    const double sample_count = std::ceil(total_duration_s / kBoundaryWitnessDtS);
+    if (!std::isfinite(sample_count) || sample_count > 10000000.0) {
+        return std::nullopt;
+    }
+    for (std::uint64_t sample = 0;
+         sample <= static_cast<std::uint64_t>(sample_count); ++sample) {
+        const double time_s = std::min(
+            total_duration_s,
+            static_cast<double>(sample) * kBoundaryWitnessDtS);
+        const Eigen::Vector3d position = trajectory.getPos(time_s);
+        if (!position.allFinite()) return std::nullopt;
+        const double distance_m = (position - boundary_point).norm();
+        if (std::isfinite(distance_m) &&
+            distance_m <= boundary_radius_m + 1.0e-6) {
+            return time_s;
+        }
+    }
+    return std::nullopt;
 }
 
 }  // namespace
@@ -114,6 +180,123 @@ double knownFreeGuideSupport(
         requested_goal_inflated_state_ = map_ptr_->classify(
             requested_goal.cast<double>(), navigation_world_model::GridLayer::kInflated);
         planning_goal_inflated_state_ = requested_goal_inflated_state_;
+
+        // A STOP waypoint is an acceptance region, not a requirement to stop
+        // at the exact centre of a point that may have only one voxel of
+        // clearance.  When the requested voxel is already free, choose the
+        // highest-clearance known-free lattice point in the same acceptance
+        // ball.  This protects the terminal stop against the measured
+        // tracking residual that can otherwise turn a legal nominal endpoint
+        // into an occupied emergency-brake boundary.  The endpoint remains
+        // owned by the mission acceptance contract and the complete candidate
+        // is still checked by authorizeAndStage().
+        if (terminal_stop_required_ &&
+            requested_goal_inflated_state_ ==
+                navigation_world_model::CellState::kKnownFree &&
+            std::isfinite(goal_acceptance_radius_m_) &&
+            goal_acceptance_radius_m_ > 0.0) {
+            // A known-free requested endpoint already carries the authoritative
+            // inflated-layer safety certificate. Do not replace it solely
+            // because raw occupied samples produce a larger heuristic
+            // clearance score elsewhere in the acceptance ball: that moves a
+            // terminal waypoint without improving the contract, can make the
+            // following route regression harder, and may create a needless
+            // MINCO/corridor failure at the handoff. Keep the conservative
+            // acceptance-ball projection below only for the inconsistent case
+            // where the point classification is free but the exact continuous
+            // oracle cannot certify the point.
+            if (map_ptr_->isSegmentTraversable(
+                    requested_goal.cast<double>(), requested_goal.cast<double>(),
+                    navigation_world_model::GridLayer::kInflated,
+                    navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+                return planning_goal_p_;
+            }
+            const auto geometry = map_ptr_->geometry();
+            const double step = geometry.inflated_resolution_m;
+            const double obstacle_radius = geometry.occupied_inflation_radius_m;
+            const bool geometry_valid = std::isfinite(step) && step > 0.0 &&
+                std::isfinite(obstacle_radius) && obstacle_radius >= 0.0;
+            navigation_world_model::AxisAlignedBox query;
+            const double query_radius = goal_acceptance_radius_m_ + obstacle_radius + step;
+            if (geometry_valid && std::isfinite(query_radius) && query_radius > 0.0) {
+                query.minimum = requested_goal.cast<double>() -
+                    Eigen::Vector3d::Constant(query_radius);
+                query.maximum = requested_goal.cast<double>() +
+                    Eigen::Vector3d::Constant(query_radius);
+            }
+            const auto occupied = query.valid()
+                ? map_ptr_->observedOccupiedPoints(query)
+                : navigation_world_model::PointVector{};
+            const auto clearance_score = [&occupied](const Eigen::Vector3d& point) {
+                double score = std::numeric_limits<double>::infinity();
+                for (const auto& occupied_point : occupied) {
+                    if (!occupied_point.allFinite()) {
+                        return -std::numeric_limits<double>::infinity();
+                    }
+                    score = std::min(score, (point - occupied_point).norm());
+                }
+                return score;
+            };
+            Eigen::Vector3d best = requested_goal.cast<double>();
+            double best_score = clearance_score(best);
+            const double clearance_trigger = obstacle_radius + goal_acceptance_radius_m_;
+            // Do not move an otherwise well-separated STOP merely because a
+            // far-away occupied sample happens to score slightly better at a
+            // different point in the acceptance ball.  The endpoint search
+            // is for a terminal clearance deficit, not general goal shaping.
+            if (!std::isfinite(clearance_trigger) ||
+                best_score >= clearance_trigger) {
+                return planning_goal_p_;
+            }
+            const int extent = geometry_valid
+                ? static_cast<int>(std::ceil(goal_acceptance_radius_m_ / step)) : -1;
+            if (extent >= 0 && extent <= 64) {
+                for (int dx = -extent; dx <= extent; ++dx) {
+                    for (int dy = -extent; dy <= extent; ++dy) {
+                        const Eigen::Vector3d candidate = requested_goal.cast<double>() +
+                            Eigen::Vector3d{dx * step, dy * step, 0.0};
+                        const double distance =
+                            (candidate - requested_goal.cast<double>()).norm();
+                        if (!candidate.allFinite() || !std::isfinite(distance) ||
+                            distance > goal_acceptance_radius_m_ + 1.0e-6 ||
+                            !map_ptr_->contains(candidate) ||
+                            map_ptr_->classify(
+                                candidate, navigation_world_model::GridLayer::kInflated) !=
+                                navigation_world_model::CellState::kKnownFree ||
+                            !map_ptr_->isSegmentTraversable(
+                                candidate, candidate,
+                                navigation_world_model::GridLayer::kInflated,
+                                navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+                            continue;
+                        }
+                        const double score = clearance_score(candidate);
+                        const bool higher_clearance = score > best_score + 1.0e-9;
+                        const bool equal_clearance_closer =
+                            std::abs(score - best_score) <= 1.0e-9 &&
+                            distance < (best - requested_goal.cast<double>()).norm();
+                        if (higher_clearance || equal_clearance_closer) {
+                            best = candidate;
+                            best_score = score;
+                        }
+                    }
+                }
+            }
+            planning_goal_p_ = best;
+            planning_goal_inflated_state_ = map_ptr_->classify(
+                best, navigation_world_model::GridLayer::kInflated);
+            goal_endpoint_adjusted_ =
+                (best - requested_goal.cast<double>()).norm() > 1.0e-6;
+            if (goal_endpoint_adjusted_) {
+                planner_context_->info(
+                    " -- [planner] selected clearance-maximizing STOP endpoint "
+                    "requested=({:.3f},{:.3f},{:.3f}) planning=({:.3f},{:.3f},{:.3f}) "
+                    "offset={:.3f} clearance_score={:.3f}",
+                    requested_goal.x(), requested_goal.y(), requested_goal.z(),
+                    planning_goal_p_.x(), planning_goal_p_.y(), planning_goal_p_.z(),
+                    (best - requested_goal.cast<double>()).norm(), best_score);
+            }
+            return planning_goal_p_;
+        }
 
         // UNKNOWN remains governed by the configured policy. OCCUPIED and
         // OUT_OF_MAP terminal points may be projected into the mission
@@ -306,9 +489,85 @@ double knownFreeGuideSupport(
                 0.0, authorization_wall_time - candidate.start_wall_time);
             const double route_regression_tolerance_m =
                 navigation_mission::RouteProgressConfig{}.backtrack_tolerance_m;
+            bool bounded_terminal_stop_recovery = false;
+            if (candidate.terminal_stop &&
+                route_snapshot_->active_waypoint_index <
+                    route_snapshot_->waypoints.size()) {
+                const auto& active_waypoint = route_snapshot_->waypoints[
+                    route_snapshot_->active_waypoint_index];
+                const Eigen::Vector3d candidate_start =
+                    candidate.position.getState(
+                        std::clamp(begin_tt, 0.0,
+                                   candidate.position.getTotalDuration())).col(0);
+                const Eigen::Vector3d candidate_end =
+                    candidate.position.getState(
+                        candidate.position.getTotalDuration()).col(0);
+                const double recovery_radius =
+                    active_waypoint.acceptance_radius_m + cfg_.tracking_error_budget_m;
+                const bool candidate_is_bounded_correction =
+                    active_waypoint.behavior ==
+                        navigation_mission::MissionWaypoint::Behavior::Stop &&
+                    candidate_start.allFinite() &&
+                    candidate_end.allFinite() &&
+                    std::isfinite(recovery_radius) && recovery_radius > 0.0 &&
+                    (candidate_start - active_waypoint.position_enu).norm() <=
+                        recovery_radius + 1.0e-9 &&
+                    (candidate_end - active_waypoint.position_enu).norm() <=
+                        active_waypoint.acceptance_radius_m + 1.0e-9;
+
+                // An emergency brake can stop beyond the waypoint acceptance
+                // ball. A later PlanFromRest correction back to that same STOP
+                // is legitimate only when the previous command was an actual
+                // emergency bundle and its analytic endpoint bounds the
+                // measured recovery start. This is a proof from the execution
+                // history, not a wider route-regression tolerance: the route
+                // fold gate is bypassed only for this bounded STOP correction;
+                // world, dynamic, yaw, anchor, and handoff certificates still
+                // authorize the candidate independently.
+                const auto previous = cmd_traj_info_.snapshot();
+                const bool previous_was_emergency =
+                    !previous.empty && previous.emergency_brake &&
+                    previous.identity.localization_epoch ==
+                        command_identity.localization_epoch &&
+                    previous.identity.goal_epoch == command_identity.goal_epoch &&
+                    previous.identity.request_id == command_identity.request_id;
+                Eigen::Vector3d previous_endpoint =
+                    Eigen::Vector3d::Constant(
+                        std::numeric_limits<double>::quiet_NaN());
+                if (previous_was_emergency) {
+                    previous_endpoint = previous.position.getState(
+                        previous.position.getTotalDuration()).col(0);
+                }
+                const double emergency_endpoint_distance =
+                    previous_endpoint.allFinite()
+                        ? (previous_endpoint - active_waypoint.position_enu).norm()
+                        : std::numeric_limits<double>::quiet_NaN();
+                const bool emergency_bounded_correction =
+                    previous_was_emergency && candidate_start.allFinite() &&
+                    candidate_end.allFinite() &&
+                    std::isfinite(emergency_endpoint_distance) &&
+                    std::isfinite(cfg_.tracking_error_budget_m) &&
+                    cfg_.tracking_error_budget_m >= 0.0 &&
+                    (candidate_start - active_waypoint.position_enu).norm() <=
+                        emergency_endpoint_distance +
+                        cfg_.tracking_error_budget_m + 1.0e-9 &&
+                    (candidate_end - active_waypoint.position_enu).norm() <=
+                        active_waypoint.acceptance_radius_m + 1.0e-9;
+                bounded_terminal_stop_recovery =
+                    candidate_is_bounded_correction || emergency_bounded_correction;
+                if (emergency_bounded_correction && !candidate_is_bounded_correction) {
+                    planner_context_->info(
+                        " -- [planner] allowing bounded STOP correction after "
+                        "certified emergency endpoint distance={} start_distance={} "
+                        "acceptance_radius={}",
+                        emergency_endpoint_distance,
+                        (candidate_start - active_waypoint.position_enu).norm(),
+                        active_waypoint.acceptance_radius_m);
+                }
+            }
             const auto route_certificate = certifyMainRouteRegression(
                 candidate, *route_snapshot_, begin_tt,
-                route_regression_tolerance_m);
+                route_regression_tolerance_m, bounded_terminal_stop_recovery);
             if (route_certificate.applicable && !route_certificate.valid) {
                 latest_commit_decision_.store(static_cast<int>(
                     navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -362,7 +621,8 @@ double knownFreeGuideSupport(
                 if (solve_cancelled_.load()) return false;
                 if (!cmd_traj_info_.canCommitCandidate(candidate)) return false;
                 staged_command_candidate_ = StagedCommandCandidate{
-                    std::move(candidate), certificate, cmd_traj_info_.nextGeneration()};
+                    std::move(candidate), certificate, cmd_traj_info_.nextGeneration(),
+                    std::nullopt, false};
                 return true;
             });
         latest_commit_decision_.store(static_cast<int>(decision));
@@ -374,39 +634,57 @@ double knownFreeGuideSupport(
         return true;
     }
 
+    bool Planner::stageCommandHistoryForCandidate(const ExpTraj& exp_traj) {
+        if (exp_traj.empty()) return false;
+        std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+        if (!staged_command_candidate_) return false;
+        staged_command_candidate_->pending_exp_history = exp_traj;
+        staged_command_candidate_->clear_new_goal_on_ack = true;
+        return true;
+    }
+
     bool Planner::acknowledgeCommandCandidate(const std::uint64_t generation) {
-        if (commit_authorizer_ == nullptr) return false;
-        CommandCertificate staged_certificate;
-        {
-            std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-            if (!staged_command_candidate_ ||
-                staged_command_candidate_->generation != generation) {
-                return false;
-            }
-            staged_certificate = staged_command_candidate_->certificate;
+        std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+        if (!staged_command_candidate_ ||
+            staged_command_candidate_->generation != generation) {
+            return false;
         }
-        // The execution store commits before this planner-history ACK. Repeat
-        // the world identity check so a map publication in that interval
-        // cannot make CmdTraj look committed on an obsolete certificate. Do
-        // not hold solve_commit_mutex_ while acquiring the world publication
-        // gate; authorizeAndStage acquires them in the opposite order.
-        const auto decision = commit_authorizer_->commitIfCurrent(
-            staged_certificate.validated_world,
-            [&]() {
-                std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-                if (!staged_command_candidate_ ||
-                    staged_command_candidate_->generation != generation ||
-                    !navigation_world_model::sameWorldSnapshotIdentity(
-                        staged_command_candidate_->certificate.validated_world,
-                        staged_certificate.validated_world)) {
-                    return false;
-                }
-                auto staged = std::move(*staged_command_candidate_);
-                staged_command_candidate_.reset();
-                return cmd_traj_info_.commitCandidate(
-                    std::move(staged.command), staged.certificate);
-            });
-        return decision == navigation_world_model::WorldCommitDecision::kCommitted;
+        // The execution store has already performed the atomic world/goal
+        // check immediately before this ACK. Rechecking the authorizer here
+        // creates a race: a harmless world publication between the two
+        // stores turns a successful execution commit into a false ACK
+        // failure. A later world publication recertifies or invalidates the
+        // execution-store pointer; it must not erase planner history after a
+        // command was accepted by that store.
+        auto staged = std::move(*staged_command_candidate_);
+        const auto candidate_start = staged.command.start_wall_time;
+        const auto candidate_duration = staged.command.position.getTotalDuration();
+        const auto candidate_role_count = staged.command.roles.size();
+        const auto candidate_backup_start = staged.command.backup_start_tt;
+        const auto previous = cmd_traj_info_.snapshot();
+        if (!cmd_traj_info_.commitCandidate(
+                std::move(staged.command), staged.certificate)) {
+            planner_context_->error(
+                " -- [planner] command ACK rejected by CmdTraj generation={} "
+                "previous_generation={} candidate_start={} candidate_duration={} "
+                "candidate_roles={} candidate_backup_start={} previous_start={} "
+                "previous_duration={} previous_empty={}",
+                generation, previous.generation, candidate_start,
+                candidate_duration, candidate_role_count, candidate_backup_start,
+                previous.position.start_WT, previous.position.getTotalDuration(),
+                previous.empty);
+            staged_command_candidate_.reset();
+            return false;
+        }
+        // The execution store is now authoritative. Only this ACK point may
+        // advance planner history or consume new-goal state; a runtime
+        // rejection leaves both unchanged.
+        if (staged.pending_exp_history.has_value()) {
+            last_exp_traj_info_ = std::move(*staged.pending_exp_history);
+        }
+        if (staged.clear_new_goal_on_ack) gi_.new_goal = false;
+        staged_command_candidate_.reset();
+        return true;
     }
 
     void Planner::discardCommandCandidate() noexcept {
@@ -469,6 +747,7 @@ double knownFreeGuideSupport(
         candidate.declared_end_ns = *declared_end_ns;
         candidate.backup_start_time_s = command.backup_start_tt;
         candidate.backup_available = command.backup_suffix_available;
+        candidate.terminal_stop = command.terminal_stop;
         const bool emergency_candidate =
             command.backup_disposition == BackupDisposition::EMERGENCY;
         candidate.kind = emergency_candidate
@@ -482,8 +761,13 @@ double knownFreeGuideSupport(
         candidate.certificates.dynamics = true;
         candidate.certificates.flatness = true;
         candidate.certificates.world = true;
+        // A main-only finite endpoint remains a terminal executable bundle
+        // for admission even when the mission behavior is PASS_THROUGH. The
+        // explicit semantic bit above is reserved for the STOP mission
+        // contract used by runtime renewal/recovery decisions.
         candidate.certificates.terminal_stop =
-            candidate.kind == navigation_planning::CandidateBundleKind::kTerminalStop;
+            candidate.kind == navigation_planning::CandidateBundleKind::kTerminalStop ||
+            command.terminal_stop;
         candidate.protected_region = certificate.protected_region;
         candidate.role = emergency_candidate
             ? navigation_planning::CandidateRole::kEmergency
@@ -707,14 +991,19 @@ double knownFreeGuideSupport(
             }
 
             auto candidate = CmdTraj::buildCandidate(
-                exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS);
+                exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS,
+                terminal_stop_required_);
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
-            last_exp_traj_info_ = exp_traj_info;
-            gi_.new_goal = false;
+            if (!stageCommandHistoryForCandidate(exp_traj_info)) {
+                planner_context_->error(" -- [planner] failed to stage EXP history with candidate");
+                discardCommandCandidate();
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
+                return FAILED;
+            }
 
             // For visualization
             {
@@ -732,14 +1021,18 @@ double knownFreeGuideSupport(
             const auto disposition = back_ret_code == FINISH
                 ? BackupDisposition::FINISH : BackupDisposition::NO_NEED;
             auto candidate = CmdTraj::buildCandidate(
-                exp_traj_info, nullptr, disposition);
+                exp_traj_info, nullptr, disposition, terminal_stop_required_);
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
-            last_exp_traj_info_ = exp_traj_info;
-            gi_.new_goal = false;
+            if (!stageCommandHistoryForCandidate(exp_traj_info)) {
+                planner_context_->error(" -- [planner] failed to stage EXP history with candidate");
+                discardCommandCandidate();
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
+                return FAILED;
+            }
 
             // For visualization
             TimeConsuming t_viz("viz goal VisualizeCommitTrajectory", false);
@@ -923,7 +1216,8 @@ double knownFreeGuideSupport(
 
         if (back_ret_code == SUCCESS) {
             auto candidate = CmdTraj::buildCandidate(
-                exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS);
+                exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS,
+                terminal_stop_required_);
             if (!candidate) {
                 planner_context_->warn(
                     " -- [planner] rejected malformed main+backup candidate: "
@@ -940,8 +1234,12 @@ double knownFreeGuideSupport(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
-            last_exp_traj_info_ = exp_traj_info;
-            gi_.new_goal = false;
+            if (!stageCommandHistoryForCandidate(exp_traj_info)) {
+                planner_context_->error(" -- [planner] failed to stage EXP history with candidate");
+                discardCommandCandidate();
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
+                return FAILED;
+            }
 
             {
                 // For visualization
@@ -957,14 +1255,19 @@ double knownFreeGuideSupport(
         } else if (back_ret_code == NO_NEED) {
             // 这次生成backup轨迹的点没有意义,
             auto candidate = CmdTraj::buildCandidate(
-                exp_traj_info, nullptr, BackupDisposition::NO_NEED);
+                exp_traj_info, nullptr, BackupDisposition::NO_NEED,
+                terminal_stop_required_);
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
-            last_exp_traj_info_ = exp_traj_info;
-            gi_.new_goal = false;
+            if (!stageCommandHistoryForCandidate(exp_traj_info)) {
+                planner_context_->error(" -- [planner] failed to stage EXP history with candidate");
+                discardCommandCandidate();
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
+                return FAILED;
+            }
 
 
             {
@@ -981,14 +1284,19 @@ double knownFreeGuideSupport(
         } else if (back_ret_code == FINISH) {
             // Which means the exp traj is all in known free, no need for backup traj
             auto candidate = CmdTraj::buildCandidate(
-                exp_traj_info, nullptr, BackupDisposition::FINISH);
+                exp_traj_info, nullptr, BackupDisposition::FINISH,
+                terminal_stop_required_);
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
-            last_exp_traj_info_ = exp_traj_info;
-            gi_.new_goal = false;
+            if (!stageCommandHistoryForCandidate(exp_traj_info)) {
+                planner_context_->error(" -- [planner] failed to stage EXP history with candidate");
+                discardCommandCandidate();
+                latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
+                return FAILED;
+            }
 
             {
                 TimeConsuming t_viz("tviz", false);
@@ -1125,23 +1433,51 @@ double knownFreeGuideSupport(
             return false;
         }
 
+        // The translational braking seed does not account for the independent
+        // yaw-acceleration limit.  A short emergency stop can therefore be
+        // translationally feasible but rejected at the final yaw certificate
+        // (especially after a waypoint handoff). Extend the same stop
+        // polynomial until the existing flatness/yaw limits accept it; this
+        // changes duration only and does not relax any safety gate.
+        double stop_duration_s = seed.duration_s;
         Trajectory position_trajectory;
-        position_trajectory.emplace_back(
-                minimumSnapStopPiece(bounded_state, seed.duration_s));
-        position_trajectory.start_WT = start_WT;
-
-        StatePVAJ yaw_state = StatePVAJ::Zero();
-        yaw_state(0, 0) = initial_command_yaw;
-        yaw_state(0, 1) = initial_command_yaw_dot;
         Trajectory yaw_trajectory;
-        yaw_trajectory.emplace_back(
-                minimumSnapStopPiece(yaw_state, seed.duration_s));
-        yaw_trajectory.start_WT = start_WT;
-
         traj_opt::TrajectoryDynamicReport dynamic_report;
-        if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
-                position_trajectory, cfg_.back_traj_cfg, &dynamic_report,
-                0.005, &yaw_trajectory)) {
+        bool dynamic_certificate_valid = false;
+        for (int attempt = 0; attempt < 24; ++attempt) {
+            position_trajectory = Trajectory{};
+            position_trajectory.emplace_back(
+                    minimumSnapStopPiece(bounded_state, stop_duration_s));
+            position_trajectory.start_WT = start_WT;
+
+            StatePVAJ yaw_state = StatePVAJ::Zero();
+            yaw_state(0, 0) = initial_command_yaw;
+            yaw_state(0, 1) = initial_command_yaw_dot;
+            yaw_trajectory = Trajectory{};
+            yaw_trajectory.emplace_back(
+                    minimumSnapStopPiece(yaw_state, stop_duration_s));
+            yaw_trajectory.start_WT = start_WT;
+
+            const double emergency_yaw_rate = yaw_trajectory.getMaxVelRate();
+            const double emergency_yaw_acceleration =
+                yaw_trajectory.getMaxAccRate();
+            if (std::isfinite(emergency_yaw_rate) &&
+                emergency_yaw_rate <= cfg_.yaw_rate_max_rad_s + 1.0e-6 &&
+                std::isfinite(emergency_yaw_acceleration) &&
+                emergency_yaw_acceleration <=
+                    cfg_.yaw_acceleration_max_rad_s2 + 1.0e-6 &&
+                traj_opt::trajectorySatisfiesFlatnessEnvelope(
+                    position_trajectory, cfg_.back_traj_cfg, &dynamic_report,
+                    0.005, &yaw_trajectory)) {
+                dynamic_certificate_valid = true;
+                break;
+            }
+            stop_duration_s *= 1.15;
+            if (!std::isfinite(stop_duration_s) || stop_duration_s <= 0.0) {
+                break;
+            }
+        }
+        if (!dynamic_certificate_valid) {
             planner_context_->error(
                     " -- [planner] emergency brake dynamic gate failed: finite={} "
                     "first_nonfinite_time={} nonfinite_mask={} body_rate={} thrust=[{},{}] "
@@ -1171,7 +1507,7 @@ double knownFreeGuideSupport(
                 "peak_vel={} peak_acc={} peak_jerk={}",
                 seed.initial_velocity_mps, cfg_.back_traj_cfg.max_vel,
                 seed.initial_overspeed,
-                seed.duration_s,
+                stop_duration_s,
                 (seed.endpoint - bounded_state.col(0)).norm(),
                 seed.maximum_velocity_mps, seed.maximum_acceleration_mps2,
                 seed.maximum_jerk_mps3);
@@ -1220,6 +1556,7 @@ double knownFreeGuideSupport(
         const double replan_process_start_WT = planner_context_->getSimTime();
         double replan_process_start_TT, replan_state_TT;
         HotReplanWindow replan_window;
+        bool measured_state_rebase_boundary = false;
 
         // A hot replan normally preserves a short prefix of the currently
         // committed command so PVAJ remains continuous.  That prefix is not
@@ -1303,6 +1640,7 @@ double knownFreeGuideSupport(
                             command_anchor_error, future_position_error,
                             future_velocity_error, cfg_.tracking_error_budget_m);
                     last_exp_traj_info.setEmpty();
+                    measured_state_rebase_boundary = true;
                 } else {
                 const auto recovery = classifyHotReplanTrackingRecovery(
                         tracking_budget_exceeded, measured_start_traversable);
@@ -1350,7 +1688,14 @@ double knownFreeGuideSupport(
             // Only position is shifted to the collision-free map start.
             pos_init_state = makeCommandBoundaryPVAJ(
                 solve_state_, solve_acceleration_estimated_, solve_jerk_estimated_);
-            pos_init_state.col(0) = local_start_p_;
+            // A measured-state hot rebase is a complete boundary change. Do
+            // not combine the new measured P/V with the stale PlanFromRest
+            // voxel shift retained in local_start_p_; that creates a
+            // candidate whose position, velocity and command clock come from
+            // different states. The measured start was already certified
+            // traversable in the rebase branch above.
+            pos_init_state.col(0) = measured_state_rebase_boundary
+                ? solve_state_.p : local_start_p_;
             replan_process_start_TT = -1;
             replan_state_TT = -1;
         } else {
@@ -2237,12 +2582,43 @@ double knownFreeGuideSupport(
             }
         }
         if (connected_goal) {
-            // A pass-through endpoint must retain its outgoing tangent even
-            // when the geometric endpoint is snapped inside the acceptance
-            // ball. Stop goals clear the look-ahead before every solve.
-            if (!pass_through_next_target_.has_value()) {
-                pos_fina_state.col(1).setZero();
+            if (pass_through_coincident_terminal_stop_) {
+                planner_context_->info(
+                    " -- [planner] pass-through checkpoint is coincident with "
+                    "following STOP; suppressing outgoing terminal velocity");
             }
+            // Preserve an outgoing tangent only when the same solve has a
+            // certified outgoing lookahead.  If the local horizon cannot
+            // certify that leg, this command must terminate at the current
+            // waypoint acceptance ball; exposing a moving endpoint would
+            // force BACKUP to start before the checkpoint or require
+            // KNOWN_FREE evidence beyond the available horizon.
+            if (!pass_through_next_target_.has_value() ||
+                !route_lookahead_active) {
+                pos_fina_state.col(1).setZero();
+                if (pass_through_next_target_.has_value()) {
+                    planner_context_->info(
+                        " -- [planner] pass-through outgoing lookahead is not "
+                        "certified; terminating at acceptance-ball endpoint");
+                }
+            }
+        }
+        if (terminal_stop_required_) {
+            // STOP is an explicit mission terminal contract.  It must not
+            // inherit an outgoing tangent or a non-zero frontier velocity,
+            // even when the route snapshot also carries a next waypoint for
+            // diagnostics.  Otherwise a short residual STOP motion is handed
+            // to backup generation as a moving terminal and can collapse its
+            // visibility seed to a zero-length CIRI line.
+            if (pos_fina_state.col(1).norm() > 1.0e-9) {
+                planner_context_->info(
+                    " -- [planner] terminal STOP forces zero terminal velocity "
+                    "after route/goal endpoint selection speed={}",
+                    pos_fina_state.col(1).norm());
+            }
+            pos_fina_state.col(1).setZero();
+            pos_fina_state.col(2).setZero();
+            pos_fina_state.col(3).setZero();
         }
 
         // optimize and update exp traj
@@ -2258,8 +2634,21 @@ double knownFreeGuideSupport(
                 : committed_before_refinement.position.start_WT +
                       committed_before_refinement.backup_start_tt -
                       planner_context_->getSimTime();
+        const double committed_elapsed_before_refinement_s =
+            committed_before_refinement.empty
+                ? std::numeric_limits<double>::quiet_NaN()
+                : planner_context_->getSimTime() -
+                      committed_before_refinement.position.start_WT;
+        const bool committed_main_active =
+            !committed_before_refinement.empty &&
+            std::isfinite(committed_elapsed_before_refinement_s) &&
+            committed_elapsed_before_refinement_s >= 0.0 &&
+            committed_elapsed_before_refinement_s <
+                committed_before_refinement.backup_start_tt;
         const bool urgent_baseline =
+            committed_main_active &&
             std::isfinite(remaining_main_before_refinement_s) &&
+            remaining_main_before_refinement_s > 0.0 &&
             remaining_main_before_refinement_s <=
                 navigation_planning::PlanningTimingContract::
                     kUrgentBaselineThresholdS;
@@ -2386,6 +2775,36 @@ double knownFreeGuideSupport(
         }
 
         auto temp_yaw_traj = old_traj + new_traj;
+
+        // The route-boundary gate is enforced by the optimized MAIN
+        // corridor. Carry the first independently evaluated entry time into
+        // ExpTraj so a visibility/braking BACKUP suffix cannot become active
+        // before the vehicle has entered the mission acceptance ball. Without
+        // this certificate the composed command can expose a stop suffix on
+        // the incoming leg, even though the nominal MAIN itself crosses the
+        // waypoint.
+        if (route_lookahead_active && route_boundary_gate.has_value()) {
+            const auto route_boundary_time = firstRouteBoundaryEntryTime(
+                temp_exp_traj,
+                route_boundary_gate->point,
+                route_boundary_gate->radius_m);
+            if (!route_boundary_time.has_value()) {
+                planner_context_->error(
+                    " -- [planner] pass-through MAIN missing route-boundary "
+                    "entry witness point=({}, {}, {}) radius={} pieces={}",
+                    route_boundary_gate->point.x(), route_boundary_gate->point.y(),
+                    route_boundary_gate->point.z(), route_boundary_gate->radius_m,
+                    temp_exp_traj.getPieceNum());
+                return FAILED;
+            }
+            required_main_prefix_duration_TT = *route_boundary_time;
+            planner_context_->info(
+                " -- [planner] certified pass-through MAIN prefix before BACKUP: "
+                "duration={} boundary=({}, {}, {}) radius={}",
+                required_main_prefix_duration_TT,
+                route_boundary_gate->point.x(), route_boundary_gate->point.y(),
+                route_boundary_gate->point.z(), route_boundary_gate->radius_m);
+        }
 
         traj_opt::TrajectoryDynamicReport exp_dynamic_report;
         if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
@@ -3184,22 +3603,65 @@ double knownFreeGuideSupport(
                 yaw_init_vec, yaw_init_vec(0), temp_pos_traj,
                 temp_yaw_traj)) {
             const auto& yaw = yaw_traj_opt_->lastDiagnostics();
-            planner_context_->error(
-                " -- [planner] in [generateBackupTrajectory] YawTrajOpt failed reason={} "
-                "duration={} init=[{},{},{}] target={} delta={} "
-                "full_max=[{},{}] hold_max=[{},{}] stop=[{},{},{}] limits=[{},{}]",
-                static_cast<int>(yaw.failure), yaw.duration_s,
-                yaw.initial_state(0), yaw.initial_state(1), yaw.initial_state(2),
-                yaw.target_yaw_rad, yaw.requested_delta_rad,
-                yaw.full_turn_max_rate_rad_s,
-                yaw.full_turn_max_acceleration_rad_s2,
-                yaw.hold_max_rate_rad_s,
-                yaw.hold_max_acceleration_rad_s2,
-                yaw.stopping_displacement_rad,
-                yaw.stopping_max_rate_rad_s,
-                yaw.stopping_max_acceleration_rad_s2,
-                cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
-            return OPT_FAILED;
+            // Backup yaw normally holds the current route yaw. When the yaw
+            // optimizer cannot fit that hold because it must first remove a
+            // non-zero yaw rate, construct the same minimum-snap stop used by
+            // the emergency boundary and extend its duration until the
+            // existing yaw limits accept it. The backup remains a complete
+            // atomic candidate and the combined flatness/world checks below
+            // stay authoritative.
+            StatePVAJ yaw_state = StatePVAJ::Zero();
+            yaw_state(0, 0) = yaw_init_vec(0);
+            yaw_state(0, 1) = yaw_init_vec(1);
+            yaw_state(0, 2) = yaw_init_vec(2);
+            yaw_state(0, 3) = yaw_init_vec(3);
+            double yaw_stop_duration_s = temp_pos_traj.getTotalDuration();
+            bool yaw_stop_certificate_valid = false;
+            for (int attempt = 0; attempt < 24; ++attempt) {
+                const auto yaw_piece = minimumSnapStopPiece(
+                    yaw_state, yaw_stop_duration_s);
+                const double yaw_max_rate = yaw_piece.getMaxVelRate();
+                const double yaw_max_acceleration = yaw_piece.getMaxAccRate();
+                if (yaw_piece.getCoeffMat().allFinite() &&
+                    std::isfinite(yaw_max_rate) &&
+                    std::isfinite(yaw_max_acceleration) &&
+                    yaw_max_rate <= cfg_.yaw_rate_max_rad_s + 1.0e-6 &&
+                    yaw_max_acceleration <=
+                        cfg_.yaw_acceleration_max_rad_s2 + 1.0e-6) {
+                    temp_yaw_traj.clear();
+                    temp_yaw_traj.emplace_back(yaw_piece);
+                    yaw_stop_certificate_valid = true;
+                    break;
+                }
+                yaw_stop_duration_s *= 1.15;
+                if (!std::isfinite(yaw_stop_duration_s) ||
+                    yaw_stop_duration_s <= 0.0) {
+                    break;
+                }
+            }
+            if (!yaw_stop_certificate_valid) {
+                planner_context_->error(
+                    " -- [planner] in [generateBackupTrajectory] YawTrajOpt failed "
+                    "and certified yaw stop fallback failed reason={} duration={} "
+                    "init=[{},{},{}] target={} delta={} full_max=[{},{}] "
+                    "hold_max=[{},{}] stop=[{},{},{}] limits=[{},{}]",
+                    static_cast<int>(yaw.failure), yaw.duration_s,
+                    yaw.initial_state(0), yaw.initial_state(1), yaw.initial_state(2),
+                    yaw.target_yaw_rad, yaw.requested_delta_rad,
+                    yaw.full_turn_max_rate_rad_s,
+                    yaw.full_turn_max_acceleration_rad_s2,
+                    yaw.hold_max_rate_rad_s,
+                    yaw.hold_max_acceleration_rad_s2,
+                    yaw.stopping_displacement_rad,
+                    yaw.stopping_max_rate_rad_s,
+                    yaw.stopping_max_acceleration_rad_s2,
+                    cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
+                return OPT_FAILED;
+            }
+            planner_context_->warn(
+                " -- [planner] YawTrajOpt failed; using certified minimum-snap yaw stop "
+                "duration={} reason={}",
+                yaw_stop_duration_s, static_cast<int>(yaw.failure));
         }
         traj_opt::TrajectoryDynamicReport backup_dynamic_report;
         if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(

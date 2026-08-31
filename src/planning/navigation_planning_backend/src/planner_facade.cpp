@@ -314,6 +314,7 @@ navigation_planning::CommittedTrajectorySnapshot PlannerFacade::committedSnapsho
   output.diagnostics = toProductDiagnostics(snapshot.diagnostics);
   output.backup_available = snapshot.backup_available;
   output.backup_start_time_s = snapshot.backup_start_tt;
+  output.terminal_stop = snapshot.terminal_stop;
   if (snapshot.empty) output.position = {};
   return output;
 }

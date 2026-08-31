@@ -354,7 +354,8 @@ std::string plannerPathSnapshotJson(
     const navigation_world_model::CellState robot_inflated_grid,
     const navigation_world_model::CellState target_grid,
     const navigation_world_model::CellState target_inflated_grid,
-    const bool safety_suffix_active) {
+    const bool safety_suffix_active,
+    const bool terminal_stop) {
   const auto& trajectory = snapshot.position;
   const bool has_committed_bundle = snapshot.generation > 0U && !trajectory.empty();
   std::vector<Eigen::Vector3d> nominal_path;
@@ -399,6 +400,7 @@ std::string plannerPathSnapshotJson(
   appendJsonString(output, has_committed_bundle ? "" : "no_committed_executable_candidate");
   output << ",\"terminal_command_semantics\":";
   appendJsonString(output, has_committed_bundle ? "trajectory_sample" : "no_path_origin_hold");
+  output << ",\"terminal_stop\":" << (terminal_stop ? "true" : "false");
   output << ",\"planning_cycle_id\":" << planning_cycle_id;
   output << ",\"solve_generation\":" << solve_generation;
   output << ",\"bundle_generation\":" << snapshot.generation;
@@ -663,6 +665,20 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       next.pointcloud_decode_us = observation.pointcloud_decode_us;
       next.world_snapshot_published = static_cast<bool>(result.snapshot);
       if (result.snapshot) {
+        // The mapping callback and PlanningWorker share the mutable
+        // PlannerFacade ownership boundary.  Hold the same lock from the
+        // bundle snapshot through backend validation and execution-store
+        // finalization.  Otherwise a planner commit can replace
+        // expected_bundle between validation and publishWorldIdentity(), and
+        // the stale callback would clear that newer candidate as
+        // uncertified.  The newer candidate is still validated against this
+        // exact snapshot on a later callback; this lock only makes the
+        // decision atomic with respect to backend ownership.
+        std::unique_lock<std::recursive_mutex> planner_lock;
+        if (planning_worker_ && planner_) {
+          planner_lock = std::unique_lock<std::recursive_mutex>(
+              planning_worker_->backendAccessMutex());
+        }
         const auto expected_bundle = command_store->load();
         std::optional<navigation_contracts::msg::NavigationGoal> expected_goal;
         if (expected_bundle) {
@@ -1584,10 +1600,6 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
       active_goal_->waypoint_index == message->waypoint_index;
   const bool same_logical_goal = same_checkpoint &&
       active_goal_->request_id == message->request_id;
-  const bool reuse_completed_stop = same_checkpoint && !same_logical_goal &&
-      message->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP &&
-      planner_command_available_.load() && trajectory_reaches_goal_.load() &&
-      !planner_failure_latched_.load() && !safety_suffix_active_.load();
   if (active_goal_.has_value() && !same_logical_goal) {
     if (message->mission_id == active_goal_->mission_id &&
         !goalIdentityNewer(*message, *active_goal_)) {
@@ -1661,7 +1673,7 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
       RCLCPP_ERROR(get_logger(), "rejected navigation goal: active goal epoch exhausted");
       return;
     }
-    const bool retain_bundle = reuse_completed_stop || can_hot_retarget;
+    const bool retain_bundle = can_hot_retarget;
     if (!command_bundle_store_.setActiveGoalEpoch(*next_goal_epoch, retain_bundle)) {
       effective_hot_retarget = false;
     }
@@ -1675,20 +1687,6 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
     }
   }
   active_goal_ = *message;
-  if (reuse_completed_stop) {
-    // The mission controller may republish a STOP checkpoint when one noisy
-    // velocity sample temporarily breaks its hold confirmation. The completed
-    // planner backend command already terminates at this same checkpoint and PX4 is
-    // actively holding it; replacing it with a zero-distance PlanFromRest
-    // creates a singular yaw problem and unnecessarily drops position hold.
-    new_goal_ = false;
-    hot_goal_transition_ = false;
-    restart_from_rest_ = false;
-    skip_replan_once_.store(false, std::memory_order_release);
-    trajectory_finished_.store(true);
-    command_goal_epoch_.store(active_goal_epoch_.load());
-    return;
-  }
   if (!same_logical_goal) {
     // Global order is input_mutex_ -> execution transition. Command sampling
     // snapshots input and releases it before taking the transition lock.
@@ -1860,6 +1858,36 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   }
   const auto candidate_ptr = std::make_shared<const navigation_planning::CandidateBundle>(
       *candidate);
+  // The store swap is the execution authority.  Certify the old->new command
+  // boundary before that swap so a discontinuous candidate can never become
+  // visible to the sampler, even for the short interval before the planner
+  // history ACK. Emergency candidates use the separate measured-state brake
+  // contract and are intentionally excluded here.
+  const bool certified_stop_recovery =
+      execution_recovery_state_.load(std::memory_order_acquire) ==
+      ExecutionRecoveryState::kStoppedRecovery;
+  std::int64_t handoff_stamp_ns = 0;
+  if (latest_bundle_before_commit &&
+      candidate_ptr->kind != navigation_planning::CandidateBundleKind::kEmergencyBrake &&
+      !navigation_planning::candidateBundleHandoffContinuous(
+          *latest_bundle_before_commit, *candidate_ptr, &handoff_stamp_ns,
+          certified_stop_recovery)) {
+    planner_->discardCommandCandidate();
+    RCLCPP_WARN(
+        get_logger(),
+                "execution boundary rejected candidate with discontinuous old-to-new handoff "
+                "previous_generation=%lu candidate_generation=%lu previous_kind=%d "
+                "previous_role=%d previous_end_ns=%lld handoff_ns=%lld "
+                "certified_stop_recovery=%d",
+                static_cast<unsigned long>(latest_bundle_before_commit->bundle_generation),
+                static_cast<unsigned long>(candidate_ptr->bundle_generation),
+                static_cast<int>(latest_bundle_before_commit->kind),
+                static_cast<int>(latest_bundle_before_commit->role),
+                static_cast<long long>(latest_bundle_before_commit->declared_end_ns),
+                static_cast<long long>(handoff_stamp_ns),
+                certified_stop_recovery ? 1 : 0);
+    return false;
+  }
   const bool stop_goal = goal.behavior ==
       navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
   const bool pass_through_goal = goal.behavior ==
@@ -2303,11 +2331,41 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   // sensing frontier rather than at the mission goal. Once it finishes,
   // restart PlanFromRest for the same logical goal so newly observed map
   // cells can extend the route. Mapping has already published this cycle.
-  const bool completed_trajectory = trajectory_finished_.exchange(false);
+  //
+  // This is deliberately a peek. A finished BACKUP endpoint can be sampled before
+  // the measured vehicle velocity has settled below the certified-stop threshold;
+  // consuming the flag in that interval loses the only event that can advance a
+  // pending handoff. The flag is cleared below only after the recovery gate has
+  // accepted this cycle for processing.
+  const bool completed_trajectory = trajectory_finished_.load(std::memory_order_acquire);
+  bool completed_trajectory_for_planning = completed_trajectory;
+  std::shared_ptr<const navigation_contracts::msg::NavigationGoal>
+      pending_handoff_goal;
   const double measured_speed_mps = execution_state.velocity_world.norm();
+  auto route_snapshot = goal ? decodeRouteSnapshot(*goal) : std::nullopt;
+  bool coincident_pass_through_stop = route_snapshot.has_value() &&
+      navigation_mission::passThroughNextWaypointIsCoincidentStop(*route_snapshot);
+  bool pass_through_goal = goal &&
+      goal->behavior ==
+          navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+  bool stop_goal = goal &&
+      goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
+  bool effective_terminal_stop = stop_goal || coincident_pass_through_stop;
+  const auto refresh_goal_metadata = [&]() {
+    route_snapshot = goal ? decodeRouteSnapshot(*goal) : std::nullopt;
+    coincident_pass_through_stop = route_snapshot.has_value() &&
+        navigation_mission::passThroughNextWaypointIsCoincidentStop(*route_snapshot);
+    pass_through_goal = goal &&
+        goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+    stop_goal = goal &&
+        goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
+    effective_terminal_stop = stop_goal || coincident_pass_through_stop;
+  };
   auto recovery_state = execution_recovery_state_.load(std::memory_order_acquire);
   if (recovery_state == ExecutionRecoveryState::kTrackBackup ||
       recovery_state == ExecutionRecoveryState::kEmergencyBrake) {
+    const bool emergency_stop_completed =
+        recovery_state == ExecutionRecoveryState::kEmergencyBrake;
     if (!completed_trajectory || !std::isfinite(measured_speed_mps) ||
         measured_speed_mps > 0.15) {
       // BACKUP and emergency are one-way while moving. Do not let a queued or
@@ -2337,13 +2395,24 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
         return;
       }
-      if (auto promoted = pending_goal_owner_.promoteGoal(true); promoted) {
+      if (auto pending = pending_goal_owner_.goalSnapshot(); pending) {
         planner_command_available_.store(false, std::memory_order_release);
         planner_failure_latched_.store(false, std::memory_order_release);
         safety_suffix_active_.store(false, std::memory_order_release);
         command_goal_epoch_.store(0U, std::memory_order_release);
-        applyValidatedGoalLocked(promoted, true);
-        return;
+        // Keep ownership of the pending request until the replacement
+        // candidate commits. Solving in this same cycle avoids the old
+        // promote-then-wait command-lease gap.
+        applyValidatedGoalLocked(pending, true);
+        pending_handoff_goal = pending;
+        goal = *pending;
+        refresh_goal_metadata();
+        goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
+        new_goal = true;
+        hot_goal_transition = false;
+        restart_from_rest = false;
+        completed_trajectory_for_planning = false;
+        recovery_state = execution_recovery_state_.load(std::memory_order_acquire);
       }
       if (deferred_terminal_status_.has_value() && goal.has_value() &&
           deferred_terminal_status_->mission_id == goal->mission_id &&
@@ -2373,33 +2442,150 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           active_goal_->request_id != goal->request_id) {
         return;
       }
+      if (emergency_stop_completed) {
+        // An emergency brake is a safety stop, not proof that the nominal
+        // waypoint was completed. Even when its endpoint happens to fall
+        // inside the acceptance ball, resume the same goal from the measured
+        // stopped state. Otherwise completion bookkeeping can turn a recovery
+        // endpoint into a terminal STOP hold and External Mode eventually
+        // hands over to PX4 Hold without another nominal solve.
+        restart_from_rest_ = true;
+        hot_goal_transition_ = false;
+        restart_from_rest = true;
+        trajectory_reaches_goal_.store(false, std::memory_order_release);
+        terminal_bundle_generation_.store(0U, std::memory_order_release);
+        RCLCPP_WARN(
+            get_logger(),
+            "emergency brake reached a certified stop; replanning the active waypoint "
+            "from measured state instead of treating the safety endpoint as terminal");
+      }
     }
   } else if (recovery_state == ExecutionRecoveryState::kStoppedRecovery &&
              (!std::isfinite(measured_speed_mps) || measured_speed_mps > 0.15)) {
+    bool emergency_replan_pending = false;
+    {
+      std::lock_guard<std::mutex> lock(input_mutex_);
+      emergency_replan_pending = restart_from_rest_;
+    }
+    if (emergency_replan_pending) {
+      // The emergency endpoint may be sampled as completed before PX4's
+      // measured velocity has settled again. Keep the recovery episode alive
+      // and let the exact endpoint hold remain authoritative; the next cycle
+      // will run PlanFromRest once the measured stop gate is satisfied. Treating
+      // this short post-brake residual as a new violation would erase the
+      // recovery request and publish a stale STATUS_REJECTED command.
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "emergency recovery endpoint still settling speed=%.3f m/s; waiting for measured stop",
+          measured_speed_mps);
+      return;
+    }
+    const bool terminal_hold_pending = terminalHoldIsPending(
+        planner_command_available_.load(std::memory_order_acquire),
+        trajectory_reaches_goal_.load(std::memory_order_acquire),
+        effective_terminal_stop,
+        terminal_bundle_generation_.load(std::memory_order_acquire));
+    if (terminal_hold_pending) {
+      // A STOP bundle has an atomically committed, known-free terminal
+      // endpoint. PX4 can still report a small residual velocity during the
+      // first samples after the endpoint; keep replaying that exact endpoint
+      // until the vehicle settles. This does not authorize a new trajectory
+      // or an enum-only emergency transition. The normal terminal hold and
+      // mission acknowledgement path remains responsible for completion.
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "terminal STOP endpoint still settling speed=%.3f m/s; retaining exact endpoint hold",
+          measured_speed_mps);
+      return;
+    }
     {
       std::lock_guard<std::mutex> lock(input_mutex_);
       plan_from_rest_failure_budget_.reset();
       plan_from_rest_first_failure_steady_ns_ = 0;
     }
+    // Motion observed after a certified stop is not an authorization to enter
+    // EmergencyBrake by enum alone. There is no emergency candidate
+    // transaction in this branch, so fail closed to PX4 Hold; a future
+    // emergency request must create, certify and commit its command before the
+    // state can become kEmergencyBrake.
+    planner_command_available_.store(false, std::memory_order_release);
+    planner_failure_latched_.store(true, std::memory_order_release);
+    safety_suffix_active_.store(false, std::memory_order_release);
+    command_goal_epoch_.store(0U, std::memory_order_release);
     execution_recovery_state_.store(
-        transitionExecutionRecovery(
-            recovery_state, ExecutionRecoveryEvent::kMotionObserved),
-        std::memory_order_release);
+        ExecutionRecoveryState::kPx4Hold, std::memory_order_release);
+    RCLCPP_ERROR(
+        get_logger(),
+        "motion observed after certified stop without an atomically committed "
+        "emergency candidate; entering PX4 Hold");
     return;
+  } else if (recovery_state == ExecutionRecoveryState::kStoppedRecovery) {
+    // A terminal STOP may have received the next waypoint while its certified
+    // safety suffix was still draining. Once the measured vehicle is
+    // stationary, linearize the stop boundary before the old terminal command
+    // can be sampled again: promote the newest pending goal and let its next
+    // cycle perform PlanFromRest. Without this transition the pending goal
+    // remains blocked behind safety_suffix_active forever and External Mode
+    // eventually hands over to PX4 Hold even though the vehicle is settled.
+    std::unique_lock<std::mutex> input_lock(input_mutex_);
+    std::unique_lock<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    if (foreign_mission_hold_after_stop_) {
+      transitionForeignMissionLocked(false);
+      return;
+    }
+    if (auto pending = pending_goal_owner_.goalSnapshot(); pending) {
+      planner_command_available_.store(false, std::memory_order_release);
+      planner_failure_latched_.store(false, std::memory_order_release);
+      safety_suffix_active_.store(false, std::memory_order_release);
+      command_goal_epoch_.store(0U, std::memory_order_release);
+      // Keep the pending request until the replacement candidate commits in
+      // this cycle; a failed solve can then retry the same active identity.
+      applyValidatedGoalLocked(pending, true);
+      pending_handoff_goal = pending;
+      goal = *pending;
+      refresh_goal_metadata();
+      goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
+      new_goal = true;
+      hot_goal_transition = false;
+      restart_from_rest = false;
+      completed_trajectory_for_planning = false;
+      recovery_state = execution_recovery_state_.load(std::memory_order_acquire);
+      RCLCPP_INFO(get_logger(),
+                  "preparing pending navigation goal after certified stop request=%lu",
+                  static_cast<unsigned long>(pending->request_id));
+    }
+    if (deferred_terminal_status_.has_value() && goal.has_value() &&
+        deferred_terminal_status_->mission_id == goal->mission_id &&
+        deferred_terminal_status_->waypoint_index == goal->waypoint_index &&
+        deferred_terminal_status_->request_id == goal->request_id) {
+      if (planning_worker_) planning_worker_->cancelActive();
+      active_goal_.reset();
+      deferred_terminal_status_.reset();
+      command_bundle_store_.invalidate();
+      planner_command_available_.store(false, std::memory_order_release);
+      planner_failure_latched_.store(false, std::memory_order_release);
+      safety_suffix_active_.store(false, std::memory_order_release);
+      command_goal_epoch_.store(0U, std::memory_order_release);
+      execution_recovery_state_.store(
+          ExecutionRecoveryState::kInitialHold, std::memory_order_release);
+      return;
+    }
   } else if (recovery_state == ExecutionRecoveryState::kPx4Hold) {
     return;
   }
+  if (completed_trajectory) {
+    bool expected_completion = true;
+    (void)trajectory_finished_.compare_exchange_strong(
+        expected_completion, false, std::memory_order_acq_rel,
+        std::memory_order_acquire);
+  }
   bool completed_trajectory_reaches_goal = trajectory_reaches_goal_.load();
-  const bool pass_through_goal = goal &&
-      goal->behavior ==
-          navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
-  const bool stop_goal = goal &&
-      goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
-  const bool has_outgoing_route = goal &&
+  const bool has_outgoing_route = goal && !coincident_pass_through_stop &&
       static_cast<std::size_t>(goal->route.active_waypoint_index + 1U) <
       goal->route.waypoint_positions.size();
   bool completed_endpoint_valid = false;
-  if (completed_trajectory && goal) {
+  if (completed_trajectory_for_planning && goal) {
     // The completion flag can be cleared by a concurrent replan before this
     // callback observes the publisher's terminal sample. Recompute it from
     // the immutable committed candidate so a terminal command is not
@@ -2420,14 +2606,27 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // only STOP owns a terminal waypoint comparison here. Comparing an
     // outgoing continuation endpoint with the requested checkpoint creates a
     // false terminal failure and can restart the wrong state machine branch.
-    completed_trajectory_reaches_goal = stop_goal && completed_endpoint_valid &&
+    completed_trajectory_reaches_goal = effective_terminal_stop && completed_endpoint_valid &&
         (endpoint->position_world - target_position).norm() <= completion_tolerance;
     trajectory_reaches_goal_.store(completed_trajectory_reaches_goal);
     terminal_bundle_generation_.store(
-        completed_trajectory_reaches_goal && stop_goal && committed_bundle
+        completed_trajectory_reaches_goal && effective_terminal_stop && committed_bundle &&
+            committed_bundle->terminal_stop
             ? committed_bundle->bundle_generation
             : 0U,
         std::memory_order_release);
+    if (effective_terminal_stop && committed_bundle &&
+        committed_bundle->terminal_stop && completed_endpoint_valid &&
+        recovery_state == ExecutionRecoveryState::kTrackMain) {
+      // A terminal STOP is a certified finite command even when the measured
+      // vehicle endpoint is outside the waypoint acceptance ball. Move the
+      // lifecycle into the same measured-stop state used by BACKUP and
+      // EMERGENCY so a retry can start after the expired terminal command
+      // without inventing an old-to-new continuity splice.
+      recovery_state = transitionExecutionRecovery(
+          recovery_state, ExecutionRecoveryEvent::kCertifiedStopObserved);
+      execution_recovery_state_.store(recovery_state, std::memory_order_release);
+    }
     RCLCPP_INFO(get_logger(),
                 "planner backend trajectory completion observed reaches_goal=%d goal=(%.2f,%.2f,%.2f)",
                 completed_trajectory_reaches_goal ? 1 : 0,
@@ -2439,11 +2638,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       completedPassThroughRequiresContinuation(
           completed_trajectory, completed_endpoint_valid,
           pass_through_goal, has_outgoing_route);
-  if (completed_trajectory && goal && completed_trajectory_reaches_goal &&
+  if (completed_trajectory_for_planning && goal && completed_trajectory_reaches_goal &&
       !continue_completed_pass_through) {
     return;
   }
-  if (completed_trajectory && goal &&
+  if (completed_trajectory_for_planning && goal &&
       (!completed_trajectory_reaches_goal || continue_completed_pass_through)) {
     const auto& target_message = plannerTarget(*goal);
     const double dx = pointFromMessage(target_message, 0) - execution_state.position_world.x();
@@ -2472,7 +2671,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
 
   if (!goal) return;
-  const auto route_snapshot = decodeRouteSnapshot(*goal);
   if (!route_snapshot.has_value() ||
       !routeSnapshotMatchesGoalMirrors(*route_snapshot, *goal)) {
     if (planning_worker_) planning_worker_->cancelActive();
@@ -2491,7 +2689,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   if (terminalHoldIsPending(
           planner_command_available_.load(std::memory_order_acquire),
           trajectory_reaches_goal_.load(std::memory_order_acquire),
-          stop_goal,
+          effective_terminal_stop,
           terminal_bundle_generation_.load(std::memory_order_acquire))) {
     std::lock_guard<std::mutex> lock(input_mutex_);
     if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
@@ -2545,10 +2743,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       ? transition_sample->role
       : transition_bundle ? transition_bundle->role
                           : navigation_planning::CandidateRole::kEmergency;
+  const double retained_tracking_limit_m = retainedCommandTrackingLimit(
+      planner_->trackingErrorBudgetMeters(),
+      navigation_contracts::kCommandAnchorErrorLimitM);
   const bool anchor_recovery_due = commandAnchorRecoveryDue(
       planner_command_available_.load(std::memory_order_acquire), transition_role,
       transition_anchor_error_m,
-      navigation_contracts::kCommandAnchorErrorLimitM);
+      retained_tracking_limit_m);
   const bool command_lease_recovery_due = transition_bundle && commandLeaseRenewalDue(
       planner_command_available_.load(std::memory_order_acquire), now_ns,
       transition_bundle->valid_until_ns,
@@ -2565,12 +2766,43 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   // before the previous trajectory can turn toward its goal.
   const bool lease_renewal_replan = command_lease_recovery_due &&
       !plan_from_rest && !hot_goal_transition && !anchor_renewal_replan;
+  const bool stop_waypoint = goal &&
+      goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
+  const bool terminal_stop_lease_deferred = transition_bundle &&
+      terminalStopMayDeferLeaseRenewal(
+          stop_waypoint,
+          planner_command_available_.load(std::memory_order_acquire),
+          transition_bundle->hasDeclaredEndpointMetadata(),
+          transition_bundle->terminal_stop,
+          transition_role,
+          anchor_renewal_replan) &&
+      lease_renewal_replan;
+  const bool terminal_stop_anchor_deferred = transition_bundle &&
+      terminalStopMayDeferAnchorRecovery(
+          stop_waypoint,
+          planner_command_available_.load(std::memory_order_acquire),
+          transition_bundle->hasDeclaredEndpointMetadata(),
+          transition_bundle->terminal_stop,
+          transition_role,
+          anchor_renewal_replan,
+          transition_anchor_error_m,
+          retained_tracking_limit_m);
+  if (terminal_stop_lease_deferred || terminal_stop_anchor_deferred) {
+    ++optimizer_deferred_count_;
+    RCLCPP_DEBUG_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "deferring terminal STOP optimizer renewal lease=%d anchor=%d error=%.3f limit=%.3f",
+        terminal_stop_lease_deferred ? 1 : 0,
+        terminal_stop_anchor_deferred ? 1 : 0,
+        transition_anchor_error_m, retained_tracking_limit_m);
+    return;
+  }
   const bool plan_from_rest_with_transition = plan_from_rest;
   const bool replan_for_new_goal = hotRetargetUsesCommittedFutureState(
       hot_goal_transition,
       planner_command_available_.load(std::memory_order_acquire),
       transition_role, transition_anchor_error_m,
-      navigation_contracts::kCommandAnchorErrorLimitM);
+      retained_tracking_limit_m);
   if (new_goal) {
     // MissionController has invalidated the previous waypoint already. Do
     // not publish that waypoint while PlanFromRest runs.
@@ -2614,7 +2846,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     failure_count_for_scale = plan_from_rest_failure_budget_.failureCount();
   }
   const double recovery_scale = plan_from_rest_with_transition
-      ? plannerRecoveryVelocityScale(failure_count_for_scale) : 1.0;
+      ? plannerRecoveryVelocityScale(failure_count_for_scale) *
+            plannerTerminalStopVelocityScale(stop_waypoint)
+      : 1.0;
   planner_->setRecoveryVelocityScale(recovery_scale);
   navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
   const auto solve_generation_value = advanceMonotonicId(planner_solve_generation_);
@@ -2851,6 +3085,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const double anchor_error_m = !command_anchor_valid || !fresh_vehicle_state
                                       ? std::numeric_limits<double>::infinity()
                                       : (command_anchor - current_vehicle_position).norm();
+    const auto latest_world = world_snapshot_store_.latest();
+    const bool current_vehicle_state_known_free = fresh_vehicle_state && latest_world &&
+        latest_world.view &&
+        latest_world.view->classify(
+            current_vehicle_position,
+            navigation_world_model::GridLayer::kInflated) ==
+            navigation_world_model::CellState::kKnownFree;
     bool sampled_path_clear = committed;
     double first_blocked_sample_s = std::numeric_limits<double>::quiet_NaN();
     Eigen::Vector3d first_blocked_sample = Eigen::Vector3d::Constant(
@@ -2858,7 +3099,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     navigation_world_model::CellState first_blocked_grid =
         navigation_world_model::CellState::kUnknown;
     if (sampled_path_clear) {
-      const auto latest_world = world_snapshot_store_.latest();
       const auto validation = latest_world
           ? planner_->validateCommittedTrajectory(latest_world.view, now().seconds())
           : navigation_planning::TrajectoryValidationResult{};
@@ -2887,9 +3127,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const double safety_transition_s = backup_available
                                            ? std::max(backup_start_s, clamped_elapsed_s)
                                            : clamped_elapsed_s;
-    const double retained_tracking_limit_m = retainedCommandTrackingLimit(
-        planner_->trackingErrorBudgetMeters(),
-        navigation_contracts::kCommandAnchorErrorLimitM);
     const double relative_anchor_speed_mps =
         command_anchor_valid && fresh_vehicle_state
             ? (command_anchor_sample.velocity_world - current_vehicle_velocity).norm()
@@ -2929,7 +3166,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             execution_recovery_state_.load(std::memory_order_acquire),
             committed_bundle
                 ? committed_bundle->role
-                : navigation_planning::CandidateRole::kEmergency)) {
+            : navigation_planning::CandidateRole::kEmergency,
+            projected_tracking_certificate_exceeded,
+            current_vehicle_state_known_free,
+            backup_available,
+            transition_bundle && transition_bundle->terminal_stop)) {
       // This is the only measured-state moving transition. Propagated P/V and
       // Propagated odometry does not expose measured A/J. Keep P/V and yaw
       // continuous, but do not promote finite-difference estimates into the
@@ -3100,23 +3341,19 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         planner_->discardCommandCandidate();
         return;
       }
-      planner_command_available_.store(false);
-      command_goal_epoch_.store(0U);
-      planner_failure_latched_.store(false);
-      safety_suffix_active_.store(false);
-      trajectory_finished_.store(false);
-      terminal_bundle_generation_.store(0U);
+      // Keep the currently exposed command authoritative while the candidate
+      // is exported, revalidated and committed.  Clearing availability here
+      // creates an observable replacement window in which the sampler can see
+      // no command even though the old immutable bundle is still executable.
+      // A successful commit below swaps the store pointer first and only then
+      // updates the lifecycle flags. A rejected candidate leaves all previous
+      // command state untouched.
     }
     if (!commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
                                 now().nanoseconds(), scheduled_key)) {
-      std::lock_guard<std::mutex> command_lock(
-          command_execution_lease_failure_latch_.transitionMutex());
-      planner_command_available_.store(false);
-      command_goal_epoch_.store(0U);
-      safety_suffix_active_.store(false);
       RCLCPP_WARN(get_logger(),
                   "execution boundary rejected planner candidate after solve; "
-                  "command remains fail-closed");
+                  "retaining the previously exposed command when still current");
       return;
     }
     {
@@ -3139,6 +3376,14 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
               execution_recovery_state_.load(std::memory_order_acquire),
               ExecutionRecoveryEvent::kMainCommitted),
           std::memory_order_release);
+      if (pending_handoff_goal &&
+          !pending_goal_owner_.consumeGoal(pending_handoff_goal)) {
+        // The pending pointer is the ownership witness for this two-phase
+        // handoff. A disappearance while solving is an ordering violation;
+        // keep the validated active command, but make the loss observable.
+        RCLCPP_WARN(get_logger(),
+                    "committed stopped-suffix replacement but pending goal owner changed");
+      }
     }
     const auto committed_bundle = command_bundle_store_.load();
     const auto committed_end_sample = committed_bundle &&
@@ -3619,7 +3864,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         planner_diagnostics.goal_acceptance_radius_m,
         planner_diagnostics.goal_endpoint_adjusted, robot_grid_type,
         robot_inflated_grid_type, target_grid_type, target_inflated_grid_type,
-        safety_suffix_active_.load());
+        safety_suffix_active_.load(), committed_snapshot.terminal_stop);
     path_status.values.push_back(std::move(path_item));
     trace_diagnostics.status.push_back(std::move(path_status));
     diagnostics_publisher_->publish(trace_diagnostics);
@@ -3738,8 +3983,14 @@ void NavigationRuntimeNode::publishCommand() {
           timed_out_planner_solve_generation_.exchange(active_solve);
       if (previous_timeout != active_solve) {
         if (planning_worker_) planning_worker_->cancelActive();
-        const int timeout_stage = planner_->solveStage();
-        const std::size_t timeout_point_count = planner_->solvePointCount();
+        int timeout_stage = 0;
+        std::size_t timeout_point_count = 0U;
+        if (planning_worker_) {
+          std::lock_guard<std::recursive_mutex> planner_lock(
+              planning_worker_->backendAccessMutex());
+          timeout_stage = planner_->solveStage();
+          timeout_point_count = planner_->solvePointCount();
+        }
         bool retain_safety_suffix = false;
         {
           std::lock_guard<std::mutex> command_lock(
@@ -4047,6 +4298,23 @@ void NavigationRuntimeNode::publishCommand() {
                 ExecutionRecoveryEvent::kEmergencyCommitted),
             std::memory_order_release);
       }
+      // The sampled role is the execution-side source of truth for a
+      // certified MAIN+BACKUP bundle. World-freshness suspension temporarily
+      // clears the derived atomic flag while preserving the immutable bundle;
+      // when the resumed sampler observes its actual BACKUP interval, restore
+      // the suffix ownership before completion handling. Otherwise a finished
+      // backup is misclassified as a nominal frontier and the runtime replans
+      // the old waypoint behind the vehicle instead of promoting a pending
+      // waypoint at the certified stop boundary.
+      if (point.role == navigation_planning::CandidateRole::kBackup ||
+          safety_suffix_active) {
+        safety_suffix_active_.store(true, std::memory_order_release);
+        execution_recovery_state_.store(
+            transitionExecutionRecovery(
+                execution_recovery_state_.load(std::memory_order_acquire),
+                ExecutionRecoveryEvent::kBackupActivated),
+            std::memory_order_release);
+      }
       traj_finish = point.finished;
       sampled_command_valid = true;
       if (traj_finish) {
@@ -4064,7 +4332,7 @@ void NavigationRuntimeNode::publishCommand() {
               goalCompletionTolerance(*command_goal);
         }
         terminal_bundle_generation_.store(
-            endpoint_reaches_goal && command_goal &&
+            endpoint_reaches_goal && sample.bundle->terminal_stop && command_goal &&
                     command_goal->behavior ==
                         navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
                 ? sample.bundle->bundle_generation

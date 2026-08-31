@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <navigation_world_model/goal_contract.hpp>
 
 #include "navigation_mission/mission.hpp"
 
@@ -66,6 +67,25 @@ struct ImmutableRouteSnapshot {
   [[nodiscard]] std::optional<Eigen::Vector3d> routeLookaheadPoint(
       double lookahead_m) const noexcept;
 };
+
+// A pass-through checkpoint immediately followed by a STOP at the same
+// physical location is one terminal mission boundary.  The pass-through
+// checkpoint must still be accepted by measured mission progress, but it
+// must not request outgoing velocity toward a zero-length STOP leg.
+[[nodiscard]] inline bool passThroughNextWaypointIsCoincidentStop(
+    const ImmutableRouteSnapshot& route) noexcept {
+  if (route.active_waypoint_index >= route.waypoints.size() ||
+      route.active_waypoint_index + 1U >= route.waypoints.size()) {
+    return false;
+  }
+  const auto& active = route.waypoints[route.active_waypoint_index];
+  const auto& next = route.waypoints[route.active_waypoint_index + 1U];
+  return active.behavior == MissionWaypoint::Behavior::PassThrough &&
+      next.behavior == MissionWaypoint::Behavior::Stop &&
+      active.position_enu.allFinite() && next.position_enu.allFinite() &&
+      (next.position_enu - active.position_enu).norm() <=
+          navigation_world_model::kGoalConnectionToleranceM + 1.0e-6;
+}
 
 // Pure route geometry/progress owner shared by mission and planner-facing
 // adapters. It never accepts a waypoint; acceptance remains a measured-state

@@ -80,7 +80,7 @@ struct PlanningRequest {
   [[nodiscard]] bool valid() const noexcept {
     return key.valid() && goal.valid() &&
            key.localization_epoch == goal.localization_epoch &&
-           key.goal_epoch != 0 && key.request_id == goal.request_id &&
+           key.goal_epoch == goal.goal_epoch && key.request_id == goal.request_id &&
            key.anchor_stamp_ns == start_state.source_stamp_ns &&
            start_state.finite() &&
            static_cast<bool>(world) && world->identity().localization_epoch ==

@@ -155,6 +155,22 @@ TEST(NavigationCommandContract, GoalHandoffRetainsExactCertifiedCommandIdentity)
   EXPECT_EQ(retained->sample_id, 21U);
 }
 
+TEST(NavigationCommandContract, RejectedCommandIsNotAHandOffCertificate) {
+  navigation_contracts::msg::NavigationCommand rejected;
+  rejected.mission_id = "mission";
+  rejected.waypoint_index = 1U;
+  rejected.request_id = 3U;
+  rejected.status = navigation_contracts::msg::NavigationCommand::STATUS_REJECTED;
+  rejected.role = navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY;
+
+  EXPECT_FALSE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(
+      rejected));
+
+  rejected.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  EXPECT_TRUE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(
+      rejected));
+}
+
 TEST(NavigationCommandContract, AcceptedReplacementCommitsAtomically) {
   navigation_contracts::msg::NavigationCommand current;
   current.waypoint_index = 3U;

@@ -354,7 +354,11 @@ void NavigationMode::checkArmingAndRunConditions(
         px4_ros2::events::ID("uav_navigation_odometry_stale"),
         px4_ros2::events::Log::Error, "Navigation odometry is stale");
   }
-  const bool diagnostics_stale = stale(last_lio_diagnostics_ns_, state_stale_after_s_);
+  const auto health_freshness = navigation_contracts::evaluateExecutionStateFreshness(
+      now_ns, last_health_source_stamp_ns_,
+      navigation_common::steadyClockNowNanoseconds(),
+      last_health_receive_steady_ns_, state_stale_after_s_);
+  const bool diagnostics_stale = !health_freshness.valid();
   if (diagnostics_stale || !lio_health_valid_) {
     reporter.armingCheckFailureExt(
         px4_ros2::events::ID("uav_navigation_lio_unhealthy"),
@@ -459,9 +463,11 @@ void NavigationMode::onNavigationCommand(
       ++trajectory_rejected_count_;
       return;
     }
-    const bool terminal_failure =
+      const bool terminal_failure =
         message->status ==
             navigation_contracts::msg::NavigationCommand::STATUS_REJECTED;
+    const bool coincident_pass_through_stop = mission_controller_ &&
+        mission_controller_->activePassThroughHasCoincidentStop();
     completed_command =
         message->status ==
         navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
@@ -501,7 +507,8 @@ void NavigationMode::onNavigationCommand(
       terminal_main_hold_inside_acceptance =
           message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
           measured_inside_acceptance && command_inside_acceptance;
-      if (waypoint->behavior == MissionWaypoint::Behavior::Stop &&
+      if ((waypoint->behavior == MissionWaypoint::Behavior::Stop ||
+           coincident_pass_through_stop) &&
           measured_inside_acceptance) {
         const auto& velocity = odometry_->twist.twist.linear;
         const Eigen::Vector3d measured_velocity{velocity.x, velocity.y, velocity.z};
@@ -792,6 +799,7 @@ void NavigationMode::updateMission() {
 void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, double now_s) {
   if (!mission_controller_ || event.type == MissionControllerEvent::Type::None) return;
   if (event.type == MissionControllerEvent::Type::PublishGoal) {
+    bool recovery_handoff_deadline_invalid = false;
     const auto waypoint = mission_controller_->activeWaypoint();
     if (!waypoint.has_value()) {
       handover_requested_ = true;
@@ -803,7 +811,8 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
       // callbacks. Preserve the exact old certified command under its old
       // identity until a new command is committed atomically. Never relabel it
       // here; normal validity/freshness expiry remains fail-closed.
-      if (navigation_command_.has_value()) {
+      if (navigation_command_.has_value() &&
+          commandMayBeRetainedAcrossWaypointHandoff(*navigation_command_)) {
         ++waypoint_handoff_retained_command_count_;
         const auto& retained = *navigation_command_;
         safety_suffix_handoff_pending_ =
@@ -813,14 +822,40 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
         if (safety_suffix_handoff_pending_) {
           safety_suffix_waypoint_index_ = retained.waypoint_index;
           safety_suffix_request_id_ = retained.request_id;
+          // The old completed BACKUP suffix may have started the generic
+          // planner-recovery timer before this waypoint was accepted. A new
+          // waypoint creates a distinct, bounded handoff transaction: restart
+          // that window from this publication so the runtime can finish its
+          // measured-stop handoff. This does not extend a moving command or
+          // authorize the old suffix for the new waypoint.
+          const auto deadline = checkedTimestampAdd(
+              node().get_clock()->now().nanoseconds(), planner_recovery_wait_timeout_ns_);
+          if (deadline) {
+            planner_recovery_pending_ = true;
+            planner_recovery_deadline_ns_ = *deadline;
+          } else {
+            recovery_handoff_deadline_invalid = true;
+          }
         }
       } else {
+        // A rejected command is a terminal status for the old waypoint, not a
+        // certified command that may bridge the waypoint handoff.  If it is
+        // retained here, the mission timer can publish the next goal and the
+        // setpoint callback can immediately consume the old rejection before
+        // the runtime has processed that goal, causing a false PX4 Hold.
+        navigation_command_ = transitionCertifiedCommand(
+            navigation_command_, std::nullopt,
+            CertifiedCommandTransition::kInvalidate);
         safety_suffix_handoff_pending_ = false;
         safety_suffix_waypoint_index_ = 0U;
         safety_suffix_request_id_ = 0U;
       }
       navigation_command_ = transitionCertifiedCommand(
           navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
+    }
+    if (recovery_handoff_deadline_invalid) {
+      safetyStopNavigation("planner handoff recovery deadline is not representable");
+      return;
     }
     navigation_contracts::msg::NavigationGoal goal;
     goal.header.frame_id = planning_frame_;
@@ -1407,21 +1442,26 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
 
   bool lio_healthy = false;
   bool typed_health_seen = false;
-  std::int64_t lio_diagnostics_age_ns = std::numeric_limits<std::int64_t>::max();
+  std::int64_t health_source_stamp_ns = 0;
+  std::int64_t health_receive_steady_ns = 0;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     lio_healthy = lio_health_valid_;
     typed_health_seen = typed_health_seen_;
-    if (last_lio_diagnostics_ns_ > 0 && now.nanoseconds() >= last_lio_diagnostics_ns_) {
-      lio_diagnostics_age_ns = now.nanoseconds() - last_lio_diagnostics_ns_;
-    }
+    health_source_stamp_ns = last_health_source_stamp_ns_;
+    health_receive_steady_ns = last_health_receive_steady_ns_;
   }
+  const auto health_freshness = navigation_contracts::evaluateExecutionStateFreshness(
+      now.nanoseconds(), health_source_stamp_ns,
+      navigation_common::steadyClockNowNanoseconds(), health_receive_steady_ns,
+      state_stale_after_s_);
   // The first diagnostics sample can legitimately be in flight when PX4
   // hands control to the mode. Hold zero velocity for a short bounded
   // acquisition window; once a sample exists, any unhealthy value is an
   // immediate fail-closed event and a stale healthy sample uses the normal
   // finite health timeout.
-  const bool diagnostics_missing = lio_diagnostics_age_ns == std::numeric_limits<std::int64_t>::max();
+  const bool diagnostics_missing = !typed_health_seen || health_source_stamp_ns <= 0 ||
+      health_receive_steady_ns <= 0;
   const double diagnostics_wait_s = std::min(0.5, std::max(0.0, trajectory_wait_timeout_s_));
   if (diagnostics_missing && !typed_health_seen && since_activation_s <= diagnostics_wait_s) {
     publishStationary(std::nullopt);
@@ -1430,7 +1470,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     return;
   }
   if ((!diagnostics_missing && !lio_healthy) ||
-      lio_diagnostics_age_ns > state_stale_after_ns_ ||
+      (!diagnostics_missing && !health_freshness.valid()) ||
       (diagnostics_missing &&
        (typed_health_seen || since_activation_s > diagnostics_wait_s))) {
     std::uint8_t health_state = 0U;
@@ -1459,7 +1499,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
                  diagnostics_missing ? "true" : "false",
                  diagnostics_missing
                      ? -1.0
-                     : static_cast<double>(lio_diagnostics_age_ns) / 1e6,
+                     : health_freshness.source_age_ms,
                  static_cast<unsigned>(health_state),
                  health_navigation_valid ? "true" : "false",
                  health_covariance_valid ? "true" : "false",

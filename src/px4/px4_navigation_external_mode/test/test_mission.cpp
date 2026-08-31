@@ -310,6 +310,54 @@ mission:
   EXPECT_EQ(controller.nextWaypoint(), std::nullopt);
 }
 
+TEST(MissionController, PassThroughDoesNotAdvanceWithoutCurrentGoalTrajectory) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: pass_through_handoff_contract
+  frame: lio_odom
+  waypoints:
+    - {id: first, position: [1.0, 0.0, 3.0], behavior: pass_through, acceptance_radius_m: 0.4}
+    - {id: second, position: [2.0, 0.0, 3.0], behavior: pass_through, acceptance_radius_m: 0.4}
+    - {id: finish, position: [3.0, 0.0, 3.0], behavior: stop, acceptance_radius_m: 0.4}
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+
+  const auto first = controller.update(0.1, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                                       Eigen::Vector3d{1.0, 0.0, 0.0});
+  ASSERT_EQ(first.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(first, 0U);
+  ASSERT_EQ(controller.activeWaypointIndex(), 1U);
+
+  // The vehicle is inside the second pass-through waypoint, but no native
+  // trajectory for that new goal has been acknowledged.  Position and speed
+  // alone must not advance the mission across an unowned command boundary.
+  const auto stale = controller.update(0.2, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                       Eigen::Vector3d::Zero());
+  EXPECT_EQ(stale.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(stale);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  controller.onTrajectory(true, 0.2);
+  const auto second = controller.update(0.3, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                        Eigen::Vector3d::Zero());
+  EXPECT_EQ(second.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(second, 1U);
+  EXPECT_EQ(second.waypoint_index, 2U);
+}
+
 TEST(MissionController, PassThroughAcceptanceDoesNotBypassAcceptanceRadius) {
   const auto path = writeMission(R"yaml(
 mission:

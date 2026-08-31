@@ -23,7 +23,8 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
     const CandidateCommandBundle& candidate,
     const navigation_mission::ImmutableRouteSnapshot& route,
     const double validation_begin_tt,
-    const double regression_tolerance_m) noexcept {
+    const double regression_tolerance_m,
+    const bool bounded_terminal_stop_recovery = false) noexcept {
   RouteRegressionCertificate result;
   if (!route.valid() || route.active_waypoint_index == 0U ||
       route.active_waypoint_index >= route.waypoints.size()) {
@@ -35,6 +36,18 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
         return segment.end_waypoint_index == route.active_waypoint_index;
       });
   if (active_segment_it == route.segments.end()) return result;
+  if (bounded_terminal_stop_recovery && candidate.terminal_stop &&
+      route.waypoints[route.active_waypoint_index].behavior ==
+          navigation_mission::MissionWaypoint::Behavior::Stop) {
+    // A measured emergency stop can leave the vehicle just beyond a STOP
+    // waypoint's acceptance ball. A bounded terminal correction back toward
+    // that same waypoint is recovery geometry, not an arbitrary nominal route
+    // fold. The caller proves proximity to the mission-owned acceptance region;
+    // world, dynamic, tracking, and command-continuity certificates still run.
+    result.applicable = false;
+    result.valid = true;
+    return result;
+  }
   const bool has_unexecuted_main = std::any_of(
       candidate.roles.begin(), candidate.roles.end(),
       [validation_begin_tt](const CandidateRoleInterval& role) {

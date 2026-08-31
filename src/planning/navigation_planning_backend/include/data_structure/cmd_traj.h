@@ -22,6 +22,7 @@
 
 
 namespace navigation_planning_backend {
+
     using geometry_utils::Trajectory;
 
     enum class CandidateTrajectoryRole : std::uint8_t { MAIN = 0, BACKUP = 1 };
@@ -49,6 +50,10 @@ namespace navigation_planning_backend {
         bool backup_suffix_available{false};
         double backup_start_tt{0.0};
         bool connected_goal{false};
+        // CandidateBundleKind describes the executable role partition; it
+        // cannot distinguish a terminal STOP with a braking suffix from an
+        // ordinary moving MAIN+BACKUP command.
+        bool terminal_stop{false};
         BackupDisposition backup_disposition{BackupDisposition::SUCCESS};
     };
 
@@ -116,6 +121,8 @@ namespace navigation_planning_backend {
         bool empty{true};
         bool backup_available{false};
         double backup_start_tt{0.0};
+        bool terminal_stop{false};
+        bool emergency_brake{false};
     };
 
     struct CommittedTrajectoryMetadata {
@@ -145,6 +152,8 @@ namespace navigation_planning_backend {
         /* some flags */
         bool flag_empty_{true};
         bool backup_trajectory_available_{false};
+        bool terminal_stop_{false};
+        bool emergency_brake_{false};
         std::uint64_t generation_{0};
         CommandIdentity identity_{};
         std::vector<CandidateRoleInterval> role_intervals_{};
@@ -194,6 +203,8 @@ namespace navigation_planning_backend {
             on_backup_start_TT_ = on_backup_end_TT_ = -1.0;
             first_part_exp_has_backup_traj_ = false;
             backup_trajectory_available_ = false;
+            terminal_stop_ = false;
+            emergency_brake_ = false;
             identity_ = {};
             role_intervals_.clear();
             certificate_ = {};
@@ -208,10 +219,11 @@ namespace navigation_planning_backend {
 
         static std::optional<CandidateCommandBundle> buildCandidate(
             const ExpTraj& exp_traj, const BackupTraj* backup_traj,
-            BackupDisposition disposition) {
+            BackupDisposition disposition, bool terminal_stop = false) {
             Trajectory tmp_pos_traj, tmp_yaw_traj;
             CandidateCommandBundle candidate;
             candidate.connected_goal = exp_traj.connectedToGoal();
+            candidate.terminal_stop = terminal_stop;
             candidate.backup_disposition = disposition;
             if (backup_traj != nullptr) {
                 const double backup_start = backup_traj->getStartTT();
@@ -392,6 +404,13 @@ namespace navigation_planning_backend {
             if (!flag_empty_ && candidate.start_wall_time < start_WT_) {
                 return false;
             }
+            // PVAJ/yaw handoff admission belongs to the execution boundary,
+            // which compares the candidate against the exact immutable bundle
+            // that the sampler would execute. CmdTraj is only the planner's
+            // ACK/history store; duplicating that comparison here can compare
+            // against a shorter planner-history trajectory than the bundle
+            // already committed by runtime. Keep its structural and monotonic
+            // checks, while leaving one owner for the handoff certificate.
             if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
                 return false;
             }
@@ -441,6 +460,9 @@ namespace navigation_planning_backend {
             start_WT_ = pos_traj_.start_WT;
             flag_empty_ = false;
             backup_trajectory_available_ = candidate.backup_suffix_available;
+            terminal_stop_ = candidate.terminal_stop;
+            emergency_brake_ =
+                candidate.backup_disposition == BackupDisposition::EMERGENCY;
             backup_traj_start_TT_ = candidate.backup_start_tt;
             role_intervals_ = std::move(candidate.roles);
             identity_ = {
@@ -489,6 +511,8 @@ namespace navigation_planning_backend {
             snapshot.empty = flag_empty_;
             snapshot.backup_available = backup_trajectory_available_;
             snapshot.backup_start_tt = backup_traj_start_TT_;
+            snapshot.terminal_stop = terminal_stop_;
+            snapshot.emergency_brake = emergency_brake_;
             return snapshot;
         }
 

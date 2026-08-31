@@ -161,6 +161,30 @@ TEST(RouteProgress, SkipsDuplicateWaypointsAndInterpolatesAltitude) {
   EXPECT_NEAR(route.altitudeAtArc(std::sqrt(101.0) / 2.0), 2.5, 1.0e-12);
 }
 
+TEST(RouteProgress, TreatsCoincidentPassThroughThenStopAsTerminalBoundary) {
+  auto mission = makeRouteMission();
+  mission.waypoints = {
+      {"pass", Eigen::Vector3d{7.0, 0.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"stop", Eigen::Vector3d{7.0, 0.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::Stop},
+  };
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(Eigen::Vector3d{6.5, 0.0, 3.0}).valid);
+  const auto route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
+
+  EXPECT_TRUE(navigation_mission::passThroughNextWaypointIsCoincidentStop(route));
+
+  mission.waypoints[1].position_enu.x() +=
+      navigation_world_model::kGoalConnectionToleranceM + 0.01;
+  navigation_mission::RouteProgress separated_progress(mission);
+  ASSERT_TRUE(separated_progress.update(Eigen::Vector3d{6.5, 0.0, 3.0}).valid);
+  const auto separated = separated_progress.snapshot(
+      mission.id, mission.frame, 1U, 1U, 0U);
+  EXPECT_FALSE(
+      navigation_mission::passThroughNextWaypointIsCoincidentStop(separated));
+}
+
 TEST(RouteProgress, ProgressDoesNotRegressWithinOrBeyondNoiseTolerance) {
   navigation_mission::RouteProgress route(
       makeRouteMission(), navigation_mission::RouteProgressConfig{0.5});

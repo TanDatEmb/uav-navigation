@@ -123,6 +123,7 @@ struct CommittedTrajectorySnapshot {
   CommitDiagnostics diagnostics{};
   bool backup_available{false};
   double backup_start_time_s{0.0};
+  bool terminal_stop{false};
 
   [[nodiscard]] bool empty() const noexcept {
     return position.empty();

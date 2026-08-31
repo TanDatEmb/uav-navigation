@@ -8,6 +8,12 @@ namespace px4_navigation_external_mode {
 
 enum class CertifiedCommandTransition { kRetain, kCommit, kInvalidate };
 
+inline bool commandMayBeRetainedAcrossWaypointHandoff(
+    const navigation_contracts::msg::NavigationCommand& command) noexcept {
+  return command.status !=
+         navigation_contracts::msg::NavigationCommand::STATUS_REJECTED;
+}
+
 inline std::optional<navigation_contracts::msg::NavigationCommand>
 transitionCertifiedCommand(
     const std::optional<navigation_contracts::msg::NavigationCommand>& current,

@@ -2162,6 +2162,67 @@ class RuntimeContractTest(unittest.TestCase):
             )
         self.assertEqual(summary["count"], 0)
 
+    def test_clock_gap_before_navigation_start_is_warmup_only(self) -> None:
+        config = runner.load_config("common.yaml")
+        samples = [{
+            "kind": "sample",
+            "stream": "diagnostics",
+            "arrival_wall_ns": 1_400_000_000,
+            "timestamp_ns": 1,
+            "payload": {"values": {"state": "TRACKING"}},
+        }]
+        row = {
+            "arrival_gap_event_count": 1,
+            "arrival_gap_event_record_count": 1,
+            "arrival_gap_event_overflow_count": 0,
+            "arrival_gap_event_times_ns": [2_000_000_000],
+            "arrival_gap_events": [{
+                "event_wall_ns": 2_000_000_000,
+                "previous_arrival_wall_ns": 1_500_000_000,
+                "arrival_wall_ns": 2_200_000_000,
+                "gap_ms": 700.0,
+            }],
+            "maximum_arrival_gap_ms": 700.0,
+            "stale_event_count": 0,
+            "stale_event_times_ns": [],
+        }
+        runtime = {"navigation_start_wall_ns": 2_300_000_000}
+        summary = report._active_arrival_gap_summary(
+            "simulation_clock", config, runtime, samples, row
+        )
+        self.assertEqual(summary["count"], 0)
+
+    def test_clock_gap_after_navigation_start_remains_active_failure(self) -> None:
+        config = runner.load_config("common.yaml")
+        samples = [{
+            "kind": "sample",
+            "stream": "diagnostics",
+            "arrival_wall_ns": 1_400_000_000,
+            "timestamp_ns": 1,
+            "payload": {"values": {"state": "TRACKING"}},
+        }]
+        row = {
+            "arrival_gap_event_count": 1,
+            "arrival_gap_event_record_count": 1,
+            "arrival_gap_event_overflow_count": 0,
+            "arrival_gap_event_times_ns": [2_000_000_000],
+            "arrival_gap_events": [{
+                "event_wall_ns": 2_000_000_000,
+                "previous_arrival_wall_ns": 1_500_000_000,
+                "arrival_wall_ns": 2_200_000_000,
+                "gap_ms": 700.0,
+            }],
+            "maximum_arrival_gap_ms": 700.0,
+            "stale_event_count": 0,
+            "stale_event_times_ns": [],
+        }
+        runtime = {"navigation_start_wall_ns": 1_700_000_000}
+        summary = report._active_arrival_gap_summary(
+            "simulation_clock", config, runtime, samples, row
+        )
+        self.assertEqual(summary["count"], 1)
+        self.assertEqual(summary["maximum_gap_ms"], 700.0)
+
     def test_simulation_profiles_separate_headless_and_interactive_manual_control(self) -> None:
         self.assertEqual(
             runner._px4_manual_control_mode(True),

@@ -636,6 +636,31 @@ def _first_tracking_wall_ns(samples: list[dict[str, Any]]) -> int | None:
     return min(tracking_times) if tracking_times else None
 
 
+def _active_window_start_wall_ns(
+    runtime: dict[str, Any], samples: list[dict[str, Any]]
+) -> int | None:
+    """Return the conservative start of the active navigation window.
+
+    LIO can report TRACKING during simulator and estimator warm-up, before an
+    auto scenario has actually started sending navigation commands. When the
+    runner captured that handoff boundary, freshness evidence starts at the
+    later of TRACKING and scenario start. Artifacts without the new field
+    retain the historical TRACKING-only behavior.
+    """
+    candidates: list[int] = []
+    first_tracking_ns = _first_tracking_wall_ns(samples)
+    if first_tracking_ns is not None and first_tracking_ns > 0:
+        candidates.append(first_tracking_ns)
+    navigation_start_ns = runtime.get("navigation_start_wall_ns")
+    try:
+        navigation_start_ns = int(navigation_start_ns)
+    except (TypeError, ValueError):
+        navigation_start_ns = 0
+    if navigation_start_ns > 0:
+        candidates.append(navigation_start_ns)
+    return max(candidates) if candidates else None
+
+
 def _active_stale_times(
     row: dict[str, Any],
     runtime: dict[str, Any],
@@ -654,14 +679,14 @@ def _active_stale_times(
             times.append(int(value))
         except (TypeError, ValueError):
             return None
-    first_tracking_ns = _first_tracking_wall_ns(samples or [])
+    active_start_ns = _active_window_start_wall_ns(runtime, samples or [])
     # A stream can pause while LIO is still collecting its startup state. That
     # is not a tracking-time freshness violation; if TRACKING is never
     # observed, the report already fails the explicit TRACKING contract.
     active_times = [
         int(value)
         for value in times
-        if first_tracking_ns is None or int(value) >= first_tracking_ns
+        if active_start_ns is None or int(value) >= active_start_ns
     ]
     observation_finished = runtime.get("observation_finished_wall_ns")
     if observation_finished:
@@ -759,7 +784,7 @@ def _active_arrival_gap_summary(
                 intervals.append((before, after))
         except (KeyError, TypeError, ValueError, OverflowError):
             return {"count": 1, "maximum_gap_ms": None, "evidence_valid": False}
-        first_tracking_ns = _first_tracking_wall_ns(samples)
+        active_start_ns = _active_window_start_wall_ns(runtime, samples)
         active_until_ns: int | None = None
         if runtime.get("observation_finished_wall_ns"):
             active_until_ns = int(runtime["observation_finished_wall_ns"])
@@ -771,7 +796,7 @@ def _active_arrival_gap_summary(
         active_gap_values: list[float] = []
         for before, after in intervals:
             violation_begin = before + threshold_ns
-            active_begin = max(violation_begin, first_tracking_ns or violation_begin)
+            active_begin = max(violation_begin, active_start_ns or violation_begin)
             active_end = min(after, active_until_ns or after)
             if active_end > active_begin:
                 active_direct.append(active_begin)

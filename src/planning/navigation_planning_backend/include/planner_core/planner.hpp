@@ -93,6 +93,11 @@ namespace navigation_planning_backend {
             CandidateCommandBundle command;
             CommandCertificate certificate;
             std::uint64_t generation{0};
+            // Planner history is promoted only with the execution-store ACK.
+            // A staged candidate may still be rejected by the runtime after
+            // export, so history must not move ahead of command authority.
+            std::optional<ExpTraj> pending_exp_history;
+            bool clear_new_goal_on_ack{false};
         };
         std::optional<StagedCommandCandidate> staged_command_candidate_;
 
@@ -112,6 +117,8 @@ namespace navigation_planning_backend {
         navigation_world_model::CellState planning_goal_inflated_state_{
             navigation_world_model::CellState::kUndefined};
         bool goal_endpoint_adjusted_{false};
+        bool terminal_stop_required_{false};
+        bool pass_through_coincident_terminal_stop_{false};
         std::optional<Vec3f> pass_through_next_target_;
         std::optional<navigation_mission::ImmutableRouteSnapshot> route_snapshot_;
         RouteYawReference route_yaw_reference_{};
@@ -161,6 +168,8 @@ namespace navigation_planning_backend {
         bool lookahead_complete_{false};
 
         bool authorizeAndStage(CandidateCommandBundle&& candidate);
+
+        bool stageCommandHistoryForCandidate(const ExpTraj& exp_traj);
 
         [[nodiscard]] std::optional<navigation_planning::CandidateBundle>
         exportStagedCommandCandidate(
@@ -362,6 +371,7 @@ namespace navigation_planning_backend {
                 const std::optional<Eigen::Vector3d>& next_target) noexcept {
             if (next_target.has_value() && next_target->allFinite()) {
                 pass_through_next_target_ = *next_target;
+                pass_through_coincident_terminal_stop_ = false;
             } else {
                 pass_through_next_target_.reset();
             }
@@ -377,6 +387,8 @@ namespace navigation_planning_backend {
                 route_snapshot_.reset();
                 pass_through_next_target_.reset();
                 last_route_yaw_target_rad_.reset();
+                terminal_stop_required_ = false;
+                pass_through_coincident_terminal_stop_ = false;
                 return false;
             }
             if (!route_snapshot_.has_value() ||
@@ -385,12 +397,22 @@ namespace navigation_planning_backend {
                 last_route_yaw_target_rad_.reset();
             }
             route_snapshot_ = route;
+            pass_through_coincident_terminal_stop_ =
+                navigation_mission::passThroughNextWaypointIsCoincidentStop(route);
+            terminal_stop_required_ =
+                route.waypoints[route.active_waypoint_index].behavior ==
+                    navigation_mission::MissionWaypoint::Behavior::Stop ||
+                pass_through_coincident_terminal_stop_;
             const std::size_t next_index = route.active_waypoint_index + 1U;
             if (route.waypoints[route.active_waypoint_index].behavior ==
                     navigation_mission::MissionWaypoint::Behavior::PassThrough &&
                 next_index < route.waypoints.size()) {
-                pass_through_next_target_ =
-                    route.waypoints[next_index].position_enu;
+                if (pass_through_coincident_terminal_stop_) {
+                    pass_through_next_target_.reset();
+                } else {
+                    pass_through_next_target_ =
+                        route.waypoints[next_index].position_enu;
+                }
             } else {
                 pass_through_next_target_.reset();
             }

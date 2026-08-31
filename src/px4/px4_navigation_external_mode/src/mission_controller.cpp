@@ -38,6 +38,13 @@ navigation_mission::ImmutableRouteSnapshot MissionController::routeSnapshot() co
       mission_.id, mission_.frame, 1U, request_id_, active_waypoint_index_);
 }
 
+bool MissionController::activePassThroughHasCoincidentStop() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return navigation_mission::passThroughNextWaypointIsCoincidentStop(
+      route_progress_.snapshot(
+          mission_.id, mission_.frame, 1U, request_id_, active_waypoint_index_));
+}
+
 void MissionController::activate(double now_s) {
   if (!std::isfinite(now_s)) {
     throw std::invalid_argument("mission activation time must be finite");
@@ -265,6 +272,16 @@ void MissionController::onNativeTerminalHoldObserved() {
     terminal_hold_pending_ = true;
     return;
   }
+  if (navigation_mission::passThroughNextWaypointIsCoincidentStop(
+          route_progress_.snapshot(
+              mission_.id, mission_.frame, 1U, request_id_,
+              active_waypoint_index_))) {
+    // The active pass-through checkpoint is still accepted by the normal
+    // measured pass-through path, but the following STOP owns the hold. Do
+    // not request an outgoing velocity for the zero-length boundary.
+    terminal_hold_pending_ = true;
+    return;
+  }
   if (active_waypoint_index_ == 0U ||
       active_waypoint_index_ + 1U >= mission_.waypoints.size()) {
     return;
@@ -460,14 +477,16 @@ MissionControllerEvent MissionController::update(
   if (state_ == MissionControllerState::ExecutingWaypoint) {
     const bool pass_through = waypoint.behavior == MissionWaypoint::Behavior::PassThrough;
     const bool inside = passThroughAcceptance();
-    // A receding-horizon mission may legitimately publish a waypoint that is
-    // already inside the vehicle's acceptance ball (for example the takeoff
-    // pose is also the first pass-through waypoint).  Waiting for a planner
-    // trajectory in that case can manufacture a zero-length braking stop and
-    // pause the mission forever.  Pass-through semantics only require a
-    // finite measured state; a stop waypoint still requires the normal
-    // trajectory/low-speed confirmation below.
-    const bool immediate_pass_through = pass_through && inside && slowEnough();
+    // Only the initial pass-through checkpoint may be accepted before the
+    // first native trajectory is acknowledged.  This is the takeoff/mission
+    // handoff exception for a waypoint that is already inside the measured
+    // acceptance ball.  Once the route has advanced, trajectory_ready_ is a
+    // handoff certificate for the *current* waypoint: allowing a later
+    // pass-through to bypass it can advance MissionController while PX4 is
+    // still executing the previous waypoint's certified bundle.
+    const bool immediate_pass_through =
+        pass_through && active_waypoint_index_ == 0U && request_id_ == 1U && inside &&
+        slowEnough();
     const bool acceptance_ready = pass_through ? passThroughCornerReady() : slowEnough();
     if (terminal_hold_pending_) {
       // A certified terminal MAIN sample already supplies a position hold.

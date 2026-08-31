@@ -22,7 +22,8 @@ namespace navigation_planning {
 
 [[nodiscard]] inline bool certifiedTerminalStopAtEndpoint(
     const CandidateBundle& candidate) {
-  if (candidate.kind != CandidateBundleKind::kTerminalStop ||
+  if ((!candidate.terminal_stop &&
+       candidate.kind != CandidateBundleKind::kTerminalStop) ||
       !candidate.certificates.completeFor(candidate.kind) ||
       !candidate.certificates.terminal_stop) {
     return false;
@@ -43,7 +44,7 @@ namespace navigation_planning {
       minimum_reserve_s <= 0.0) {
     return false;
   }
-  if (candidate.kind == CandidateBundleKind::kTerminalStop) {
+  if (candidate.terminal_stop || candidate.kind == CandidateBundleKind::kTerminalStop) {
     return certifiedTerminalStopAtEndpoint(candidate);
   }
   if (candidate.kind == CandidateBundleKind::kBackupOnly ||

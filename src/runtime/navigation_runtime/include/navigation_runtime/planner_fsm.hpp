@@ -56,6 +56,18 @@ class PendingGoalHandoffOwner {
     return pending_goal_;
   }
 
+  // Peek and consume are separate so a stopped-suffix handoff can prepare a
+  // new candidate before the pending request is removed from its sole owner.
+  // The caller must consume the exact pointer only after the replacement
+  // command has committed successfully.
+  [[nodiscard]] bool consumeGoal(const GoalConstPtr& expected) {
+    if (!expected) return false;
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    if (!pending_goal_ || pending_goal_.get() != expected.get()) return false;
+    pending_goal_.reset();
+    return true;
+  }
+
   [[nodiscard]] bool goalMatchesStatus(
       const std::string& mission_id, std::uint32_t waypoint_index,
       std::uint64_t request_id) const {
@@ -196,6 +208,42 @@ inline bool commandLeaseRenewalDue(
   return remaining_s <= static_cast<long double>(required_lead_time_s);
 }
 
+// A terminal STOP command is already a complete, known-free command ending at
+// a stationary endpoint. It may be represented either as a main-only
+// TerminalStop or as a MainWithBackup bundle whose final safety suffix is part
+// of the same STOP command. Its short execution lease is refreshed by world
+// recertification; recomputing a hot trajectory solely to renew that lease can
+// turn a physically feasible stop into an infeasible short yaw solve. This
+// defer predicate never applies to anchor recovery or to a moving safety role.
+inline bool terminalStopMayDeferLeaseRenewal(
+    bool stop_waypoint, bool command_available, bool trajectory_metadata_valid,
+    bool terminal_stop,
+    navigation_planning::CandidateRole command_role,
+    bool anchor_recovery_due) noexcept {
+  return stop_waypoint && command_available && trajectory_metadata_valid &&
+         terminal_stop &&
+         command_role == navigation_planning::CandidateRole::kMain &&
+         !anchor_recovery_due;
+}
+
+// A certified terminal STOP is already a finite, world-validated command
+// ending at rest. While it is still inside the unchanged tracking envelope,
+// an early anchor-pressure tick must not replace it with a shorter hot
+// replan. The hard anchor limit remains authoritative: once the measured
+// residual exceeds it, this exception is false and the normal emergency or
+// PX4-Hold path owns the decision.
+inline bool terminalStopMayDeferAnchorRecovery(
+    bool stop_waypoint, bool command_available, bool trajectory_metadata_valid,
+    bool terminal_stop, navigation_planning::CandidateRole command_role,
+    bool anchor_recovery_due, double anchor_error_m,
+    double maximum_anchor_error_m) noexcept {
+  return stop_waypoint && command_available && trajectory_metadata_valid &&
+         terminal_stop && command_role == navigation_planning::CandidateRole::kMain &&
+         anchor_recovery_due && std::isfinite(anchor_error_m) &&
+         std::isfinite(maximum_anchor_error_m) && maximum_anchor_error_m > 0.0 &&
+         anchor_error_m <= maximum_anchor_error_m;
+}
+
 // A failed rest-to-rest solve is retried with a slower velocity envelope.
 // This never relaxes physical limits; it gives the same jerk/acceleration
 // certificate more time to satisfy tight geometry. The failure budget remains
@@ -212,6 +260,15 @@ inline double plannerRecoveryVelocityScale(
     default:
       return 0.35;
   }
+}
+
+// Terminal STOP is a precision phase, not a cruise phase. Use the bounded
+// half-speed envelope only for a new STOP solve so PX4 has more time to track
+// the finite braking profile. This changes neither the physical limits nor
+// the 0.25 m tracking certificate; a candidate remains rejected/fail-closed
+// when it violates any existing certificate.
+inline double plannerTerminalStopVelocityScale(bool terminal_stop) noexcept {
+  return terminal_stop ? 0.5 : 1.0;
 }
 
 // World recertification and command sampling remain active independently of
@@ -286,20 +343,30 @@ inline RetainedValidationTransition retainedValidationTransition(bool usable) no
 // certificate, constructing another brake from the newly drifting state every
 // planner tick resets deceleration indefinitely. A later certified MAIN may
 // start a new episode; an unusable emergency must fail closed to PX4 Hold.
-// A projected crossing is an early warning for scheduling/diagnostics only.
-// It must not replace a currently valid command: the next validation tick
-// still observes the actual anchor and applies the unchanged hard boundary.
-// This keeps a transient velocity mismatch from braking a vehicle that is
-// still inside its certified tracking tube.
+// When the conservative projected anchor bound crosses the unchanged hard
+// limit, a fresh measured state may trigger this same one-shot brake early,
+// but only while the current state is KNOWN_FREE in the inflated map. The
+// emergency candidate is still atomically world-certified; projection never
+// authorizes an unvalidated command or changes the tracking limit.
 inline bool measuredStateEmergencyMayReplaceCommittedCommand(
     bool validate_without_new_commit, bool committed_suffix_usable,
     bool fresh_vehicle_state, bool committed_command_available,
     bool command_anchor_valid, bool tracking_certificate_exceeded,
     ExecutionRecoveryState recovery_state,
-    navigation_planning::CandidateRole committed_role) noexcept {
-  return !validate_without_new_commit && !committed_suffix_usable &&
-         fresh_vehicle_state && committed_command_available &&
-         command_anchor_valid && tracking_certificate_exceeded &&
+    navigation_planning::CandidateRole committed_role,
+    bool projected_tracking_certificate_exceeded = false,
+    bool current_vehicle_state_known_free = false,
+    bool safety_trajectory_available = false,
+    bool terminal_stop = false) noexcept {
+  const bool actual_anchor_recovery = !committed_suffix_usable &&
+      tracking_certificate_exceeded;
+  const bool projected_main_only_recovery =
+      projected_tracking_certificate_exceeded && !tracking_certificate_exceeded &&
+      current_vehicle_state_known_free && !safety_trajectory_available &&
+      !terminal_stop;
+  return !validate_without_new_commit && fresh_vehicle_state &&
+         committed_command_available && command_anchor_valid &&
+         (actual_anchor_recovery || projected_main_only_recovery) &&
          recovery_state == ExecutionRecoveryState::kTrackMain &&
          committed_role != navigation_planning::CandidateRole::kEmergency;
 }

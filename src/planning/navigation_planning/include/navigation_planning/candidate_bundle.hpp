@@ -113,6 +113,10 @@ struct CandidateBundle {
   std::int64_t declared_end_ns{0};
   double backup_start_time_s{std::numeric_limits<double>::quiet_NaN()};
   bool backup_available{false};
+  // CandidateBundleKind describes the executable role partition. This
+  // explicit semantic bit distinguishes a terminal STOP with a braking
+  // suffix from an ordinary moving MAIN+BACKUP command.
+  bool terminal_stop{false};
   CandidateBundleKind kind{CandidateBundleKind::kTerminalStop};
   CandidateSource source{CandidateSource::kDeterministicBaseline};
   CompleteBundleCertificates certificates{};
@@ -204,6 +208,12 @@ struct CandidateBundle {
          role == CandidateRole::kBackup) ||
         (kind == CandidateBundleKind::kEmergencyBrake &&
          role == CandidateRole::kEmergency);
+    const bool terminal_stop_contract =
+        !terminal_stop ||
+        (role == CandidateRole::kMain &&
+         (kind == CandidateBundleKind::kTerminalStop ||
+          kind == CandidateBundleKind::kMainWithBackup) &&
+         certificates.terminal_stop);
     const bool endpoint_metadata_legacy = declared_start_ns == 0 && declared_end_ns == 0;
     const auto expected_start_ns = navigation_common::secondsToNanoseconds(start_wall_time_s);
     const auto expected_end_ns = navigation_common::secondsSumToNanoseconds(
@@ -215,7 +225,7 @@ struct CandidateBundle {
     return localization_epoch != 0 && goal_epoch != 0 && request_id != 0 &&
            bundle_generation != 0 && valid_from_ns > 0 &&
            valid_until_ns >= valid_from_ns && static_cast<bool>(evaluator) &&
-           candidateRoleValid(role) && kind_contract &&
+           candidateRoleValid(role) && kind_contract && terminal_stop_contract &&
            certificates.completeFor(kind) && protected_region.valid() &&
            endpoint_metadata_consistent &&
            roleScheduleValid() && (!quality || quality->finite()) &&
@@ -288,5 +298,94 @@ struct CandidateBundle {
     return point;
   }
 };
+
+// Numerical boundary tolerances for replacing one analytic command with the
+// next. These are not tracking or safety margins. They only account for the
+// roundoff of evaluating two immutable polynomials at the same wall timestamp.
+struct CandidateHandoffCertificate final {
+  static constexpr double kPositionToleranceM = 1.0e-5;
+  static constexpr double kVelocityToleranceMps = 1.0e-5;
+  static constexpr double kAccelerationToleranceMps2 = 1.0e-4;
+  static constexpr double kJerkToleranceMps3 = 1.0e-3;
+  static constexpr double kYawToleranceRad = 1.0e-6;
+  static constexpr double kYawRateToleranceRadS = 1.0e-5;
+};
+
+// Verify the exact old-command -> new-command boundary before either command
+// is exposed. Measured-state emergency candidates intentionally do not use
+// this helper: their separate certificate preserves measured P/V when the old
+// command is already outside the tracking envelope.
+[[nodiscard]] inline bool candidateBundleHandoffContinuous(
+    const CandidateBundle& previous,
+    const CandidateBundle& next,
+    std::int64_t* handoff_stamp_ns = nullptr,
+    bool allow_expired_safety_after_certified_stop = false) {
+  if (!previous.valid() || !next.valid() ||
+      next.kind == CandidateBundleKind::kEmergencyBrake ||
+      !next.hasDeclaredEndpointMetadata()) {
+    return false;
+  }
+  const auto handoff = next.declared_start_ns > 0
+      ? std::optional<std::int64_t>{next.declared_start_ns}
+      : navigation_common::secondsToNanoseconds(next.start_wall_time_s);
+  if (!handoff || *handoff <= 0) return false;
+  if (handoff_stamp_ns) *handoff_stamp_ns = *handoff;
+
+  // A measured emergency brake or a certified MAIN+BACKUP safety suffix may
+  // end at its analytic stop point while PX4/LIO tracking still leaves a
+  // bounded position residual. Once the suffix has fully expired and the
+  // runtime has observed a certified stop, the next PlanFromRest command is a
+  // new measured-state episode, not an overlapping analytic splice. Requiring
+  // the expired suffix polynomial to equal the new measured state would reject
+  // the safe recovery path and force PX4 Hold.
+  //
+  // Keep this exception deliberately narrow: prove the old endpoint is
+  // sampleable, require the handoff at or after the declared end, and only
+  // allow a completed safety role or a completed terminal-stop hold. The
+  // latter is needed when a STOP waypoint must be replanned from the measured
+  // stopped state because the analytic endpoint was inside the acceptance
+  // ball but the vehicle itself was not; it never applies to an active
+  // nominal MAIN.
+  if (allow_expired_safety_after_certified_stop &&
+      previous.declared_end_ns > 0 && *handoff >= previous.declared_end_ns) {
+    const auto previous_endpoint = previous.sampleAtDeclaredEnd();
+    const bool expired_emergency = previous.kind == CandidateBundleKind::kEmergencyBrake &&
+        previous_endpoint && previous_endpoint->role == CandidateRole::kEmergency;
+    const bool expired_backup_suffix =
+        (previous.kind == CandidateBundleKind::kMainWithBackup ||
+         previous.kind == CandidateBundleKind::kBackupOnly) &&
+        previous_endpoint && previous_endpoint->role == CandidateRole::kBackup;
+    const bool expired_terminal_stop =
+        previous.kind == CandidateBundleKind::kTerminalStop &&
+        previous.terminal_stop && previous_endpoint &&
+        previous_endpoint->role == CandidateRole::kMain;
+    if (previous_endpoint && previous_endpoint->finished &&
+        (expired_emergency || expired_backup_suffix || expired_terminal_stop)) {
+      return true;
+    }
+  }
+
+  const auto previous_sample = previous.sample(*handoff);
+  if (!previous_sample || !next.evaluator) return false;
+  TrajectoryPoint next_sample;
+  next_sample.role = next.role;
+  if (!next.evaluator(*handoff, next_sample) || !next_sample.finite()) return false;
+  const auto scheduled_role = next.scheduledRole(next_sample.trajectory_time_s);
+  if (!scheduled_role || *scheduled_role != next_sample.role) return false;
+
+  const double yaw_residual = std::remainder(
+      next_sample.yaw - previous_sample->yaw, 2.0 * std::acos(-1.0));
+  return (next_sample.position_world - previous_sample->position_world).norm() <=
+             CandidateHandoffCertificate::kPositionToleranceM &&
+         (next_sample.velocity_world - previous_sample->velocity_world).norm() <=
+             CandidateHandoffCertificate::kVelocityToleranceMps &&
+         (next_sample.acceleration_world - previous_sample->acceleration_world).norm() <=
+             CandidateHandoffCertificate::kAccelerationToleranceMps2 &&
+         (next_sample.jerk_world - previous_sample->jerk_world).norm() <=
+             CandidateHandoffCertificate::kJerkToleranceMps3 &&
+         std::abs(yaw_residual) <= CandidateHandoffCertificate::kYawToleranceRad &&
+         std::abs(next_sample.yaw_rate - previous_sample->yaw_rate) <=
+             CandidateHandoffCertificate::kYawRateToleranceRadS;
+}
 
 }  // namespace navigation_planning

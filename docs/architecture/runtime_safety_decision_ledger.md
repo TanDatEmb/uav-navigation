@@ -14754,3 +14754,1079 @@ release profiles must not use the former allowance.
   experiment produced startup artifact
   `external-mode-check-20260831T093923-151866` with
   `planner backend timing and safety parameters must be positive`.
+
+### 2026-08-31 - Preserve the old command until a replacement is committed
+
+- **Owner/status:** navigation runtime command authority, `IMPLEMENTED`; focused
+  execution tests, build, and repeated SITL handoff evidence are required.
+- **Scope:** a successful planner result no longer clears
+  `planner_command_available` before candidate export, world recertification,
+  store commit, and planner-history acknowledgement. A rejected candidate
+  leaves the previous immutable bundle and its availability state untouched;
+  the successful store swap is followed by the lifecycle-flag update.
+- **Safety impact:** removes the internally-created empty replacement window
+  that could make the command timer observe no command while the old bundle was
+  still executable. Independent goal, localization, freshness, world,
+  tracking, dynamic, and PX4 gates remain unchanged. Explicit goal, lease,
+  freshness, and fault transitions may still revoke command authority.
+- **Evidence:** static review identified the pre-commit availability clear in
+  the `CommandReady` path. This entry records the narrow lifecycle fix; SITL
+  must still demonstrate that command gaps remain below the unchanged 0.10 s
+  lease during accepted replacement and rejected-candidate races.
+- **Removal/review condition:** remove only after one immutable execution
+  authority replaces the remaining compatibility flags, or re-review if the
+  commit/ACK ordering changes.
+- **Verification:** `test_committed_bundle_store`; `test_navigation_command`;
+  `make build`; repeated replacement and stale-result SITL with command-gap
+  evidence.
+
+### 2026-08-31 - Require an analytic old-to-new PVAJ/yaw handoff certificate
+
+- **Owner/status:** planner backend and runtime admission, `IMPLEMENTED`;
+  focused trajectory tests, build, and repeated handoff SITL are required.
+- **Scope:** before a non-emergency candidate can replace a live command, both
+  immutable trajectories are sampled at the candidate's exact declared start
+  timestamp and position, velocity, acceleration, jerk, yaw, and yaw-rate are
+  compared against numerical evaluation tolerances at the execution boundary.
+  The planner ACK/history store keeps structural and monotonic checks but does
+  not duplicate this comparison against a potentially shorter history copy.
+  Emergency candidates use the separate measured-state emergency certificate
+  and are not relabeled as ordinary continuous replans.
+- **Safety impact:** prevents a position-only anchor check from authorizing an
+  instantaneous velocity/acceleration/yaw change. A missing, expired, stale, or
+  discontinuous handoff rejects the new candidate and retains the old command;
+  it does not widen any tracking or dynamic gate.
+- **Evidence:** current `CmdTraj` stored splice residuals for diagnostics but
+  did not reject a discontinuous regular candidate. The execution-boundary
+  certificate rejects it before store exposure. A duplicate backend guard was
+  removed after SITL showed it comparing against a shorter planner-history
+  copy after execution had already accepted the exact candidate bundle.
+- **Removal/review condition:** remove only if a stronger typed execution
+  schedule proves the same boundary invariants. Re-review after changing
+  trajectory start-time, emergency handover, or polynomial ownership.
+- **Verification:** `test_trajectory` discontinuity/continuity cases;
+  `test_committed_bundle_store`; `make build`; repeated 5 m/s handoff SITL with
+  PVAJ/yaw residual traces.
+
+### 2026-08-31 - Align replan forward horizon with the 0.4 s stitch contract
+
+- **Owner/status:** planner timing contract, `IMPLEMENTED`; configuration tests,
+  build, and repeated SITL latency distributions are required.
+- **Scope:** set `planner/replan_forward_dt_s` to `0.4 s`, matching
+  `PlanningTimingContract::kStitchDurationS`. The 0.18 s solve deadline,
+  0.04 s finalization reserve, 0.80 s minimum MAIN reserve, and all hard gates
+  remain unchanged.
+- **Safety impact:** leaves a complete future handoff interval for solve,
+  recertification, commit, and command sampling instead of relying on the
+  previous approximately 20 ms residual margin. It may increase the required
+  visibility horizon and can reject a route when evidence is insufficient;
+  that fail-closed behavior is intentional.
+- **Evidence:** static review found the implementation contract at 0.4 s but
+  the deployed YAML at 0.2 s. No single SITL run is used to tune this value.
+- **Removal/review condition:** revisit only with measured p99 solve plus
+  recertification/commit latency proving a shorter horizon safe, and update the
+  single timing authority and tests together.
+- **Verification:** `test_planner_config`; `make build`; repeated 1/3/5 m/s
+  SITL with solve, commit, handoff, command-gap, and freshness distributions.
+
+### 2026-08-31 - Do not enter EmergencyBrake from motion observation alone
+
+- **Owner/status:** runtime execution recovery, `IMPLEMENTED`; focused FSM and
+  recovery SITL evidence are required.
+- **Scope:** `MotionObserved` while `StoppedRecovery` no longer changes the
+  public state to `EmergencyBrake` by enum alone. Without a completed emergency
+  candidate transaction, runtime revokes command exposure and enters PX4 Hold.
+  A future emergency path must build, certify, and atomically commit the
+  command before advertising `EmergencyBrake`.
+- **Safety impact:** prevents a state/command mismatch in which the FSM waits
+  for an emergency trajectory that was never committed. The result is a
+  conservative Hold handover, with no stale command retention or gate relief.
+- **Evidence:** static review found the direct transition in the stopped
+  recovery branch without a corresponding emergency commit.
+- **Removal/review condition:** replace the Hold fallback only after a typed
+  `RecoveryAction` transaction owns emergency construction, certification, and
+  commit end-to-end.
+- **Verification:** `test_planner_fsm`; `make build`; forced motion-after-stop
+  SITL proving no EmergencyBrake state is exposed without an emergency command.
+
+### 2026-08-31 - Preserve the certified fallback after retry cancellation
+
+- **Owner/status:** planner backend optimizer, `IMPLEMENTED`; focused optimizer
+  tests, build, and repeated obstacle-route SITL evidence are required.
+- **Scope:** cancellation during a bounded dynamic-feasibility retry no longer
+  clears the trajectory and returns before the common post-solve admission
+  path. The last finite candidate is restored, then the existing hard-gate and
+  independently certified deterministic-seed selection path decides whether
+  a command can be returned.
+- **Safety impact:** avoids turning a transient retry cancellation into an
+  avoidable empty planner result, while preserving corridor, boundary,
+  dynamic, flatness, freshness, and runtime admission gates. No infeasible
+  candidate is authorized by this change.
+- **Evidence:** static review found the `LBFGS_CANCELED` branch explicitly
+  clearing `traj` and returning `INFINITY` before the shared certified fallback
+  logic.
+- **Removal/review condition:** remove only after optimizer cancellation and
+  fallback selection are owned by a typed transaction that proves the same
+  invariants; re-review if retry budgets or candidate ownership change.
+- **Verification:** `test_trajectory`; `make build`; repeated 5 m/s obstacle
+  SITL with retry-cancellation, planner-result, command-gap, and handoff
+  residual evidence.
+
+### 2026-08-31 - Keep measured-state hot rebase fields from mixed provenance
+
+- **Owner/status:** planner backend hot-replan boundary, `IMPLEMENTED`; focused
+  rebase tests, build, and repeated tracking-recovery SITL evidence are
+  required.
+- **Scope:** when a hot replan is explicitly allowed to restart from measured
+  state, the initial position is now the same measured state that supplies
+  velocity and command time. The stale PlanFromRest voxel-shift position is
+  retained only for a genuine fresh rest plan.
+- **Safety impact:** prevents a candidate from combining position, velocity,
+  and timestamp from different epochs. Measured-start traversability,
+  corridor, dynamic, flatness, world, anchor, and PX4 gates remain required.
+- **Evidence:** SITL review found a measured-state hot rebase whose candidate
+  position differed from the measured position while its velocity and clock
+  were current; the mismatch caused downstream anchor rejection.
+- **Removal/review condition:** replace only with a typed boundary-source
+  contract that proves all PVAJ fields and command time share one source.
+- **Verification:** hot-rebase continuity tests; `make build`; repeated
+  tracking-recovery SITL with measured/candidate boundary residuals.
+
+### 2026-08-31 - Promote planner history only after execution ACK
+
+- **Owner/status:** planner/runtime transaction boundary, `IMPLEMENTED`;
+  staged-rejection tests, build, and repeated stale-result SITL evidence are
+  required.
+- **Scope:** EXP history and `new_goal` are stored in the staged candidate and
+  promoted only after the execution store commits and planner ACK succeeds.
+  Runtime rejection or discard no longer advances planner history ahead of
+  command authority. The ACK no longer repeats the world-authorizer check
+  after the execution store's atomic world/goal commit; later world updates
+  use the execution-store recertify/invalidate path.
+- **Safety impact:** prevents a rejected candidate from poisoning the next
+  hot-replan source or consuming mission state without an executable command.
+  No command, freshness, world, tracking, or dynamic gate is relaxed.
+- **Evidence:** static review found history updates immediately after staging,
+  before the runtime execution-boundary ACK. The first post-fix SITL then
+  showed execution generation 3 committed followed by a false planner ACK
+  failure when the world snapshot advanced between the two checks.
+- **Removal/review condition:** remove only after one typed transaction owns
+  execution and planner history atomically.
+- **Verification:** `test_committed_bundle_store`; `test_planner_fsm`;
+  `make build`; stale-candidate rejection SITL proving generation/history
+  remain unchanged.
+
+### 2026-08-31 - Restrict urgent refinement to active MAIN time
+
+- **Owner/status:** planner optimizer scheduling, `IMPLEMENTED`; focused
+  scheduling tests, build, and repeated SITL timing distributions are required.
+- **Scope:** an urgent baseline is selected only while a committed command is
+  actively inside its MAIN interval and has positive time remaining before the
+  BACKUP boundary. Expired or already-BACKUP commands no longer force an
+  immediate refinement cancellation merely because remaining time is negative.
+- **Safety impact:** preserves the finite deadline and all hard gates while
+  preventing a stale urgency predicate from discarding a usable refinement
+  path. It does not extend a lease or authorize an expired command.
+- **Evidence:** SITL review found `remaining_main <= threshold` classified
+  negative remaining time as urgent after the command had already crossed its
+  boundary.
+- **Removal/review condition:** replace only with a typed execution-role and
+  deadline contract covering MAIN/BACKUP transitions.
+- **Verification:** urgent-predicate unit cases; `make build`; repeated 5 m/s
+  SITL with solve-cancellation and role-transition traces.
+
+### 2026-08-31 - Rebase after an expired safety suffix only after certified stop
+
+- **Owner/status:** runtime execution-boundary recovery, `IMPLEMENTED`; focused
+  handoff tests, build, and repeated emergency-recovery SITL evidence are
+  required.
+- **Scope:** a normal measured-state PlanFromRest candidate may replace an
+  expired `EMERGENCY_BRAKE` or a `MAIN+BACKUP`/`BACKUP_ONLY` safety suffix only
+  when the runtime is already in `kStoppedRecovery`, the candidate starts at
+  or after the suffix's declared end, and the old declared endpoint is
+  sampleable with the corresponding emergency or backup role. An active
+  MAIN/BACKUP/emergency bundle, a terminal-stop bundle, or an overlap still
+  requires exact old-to-new P/V/A/J/yaw continuity.
+- **Safety impact:** removes a false rejection after the emergency trajectory
+  has ended and a measured stop has been observed; it does not allow a
+  candidate to overlap an emergency command, bypass world/freshness/dynamic
+  gates, or relax the 0.25 m tracking envelope. If the emergency is still
+  active, the existing fail-closed handoff rejection remains authoritative.
+- **Evidence:** repeated SITL artifacts showed a safety suffix had completed,
+  but measured-state PlanFromRest was rejected because its measured boundary
+  differed from the expired suffix polynomial endpoint; the next cycle then
+  entered PX4 Hold despite fresh odometry. The latest run identified the
+  suffix as a `MAIN+BACKUP` bundle rather than `EMERGENCY_BRAKE`, so an
+  emergency-only exception was insufficient.
+- **Removal/review condition:** remove or narrow this exception if recovery
+  state no longer proves a certified stop, or if command validity can overlap
+  the previous emergency end; re-review with recorded PX4 stop data.
+- **Verification:** `test_trajectory`; `make build`; repeated 5 m/s obstacle
+  SITL proving no active-emergency overlap and successful measured-state
+  continuation after stop.
+
+### 2026-08-31 - Serialize runtime planner views with the PlanningWorker transaction
+
+- **Owner/status:** runtime/planner backend ownership boundary, `IMPLEMENTED`;
+  focused worker tests, build, and repeated SITL runs without runtime crashes
+  are required.
+- **Scope:** the PlanningWorker now holds one backend-access mutex while it
+  executes a planner job. Runtime mapping recertification and watchdog
+  diagnostics take the same mutex before reading or validating `PlannerFacade`;
+  mapping keeps it through the dependent execution-store finalization so a
+  stale callback cannot clear a newer planner candidate between validation and
+  publication. Active-solve cancellation remains an out-of-band interrupt and
+  does not authorize concurrent planner state access.
+- **Safety impact:** prevents concurrent planner history, world validation, and
+  solve-state access from producing a use-after-free/data-race crash or a
+  mixed-generation certificate. No command, freshness, tracking, world, or
+  dynamic gate is relaxed; serialization may increase diagnostic latency and
+  therefore remains fail-closed if a lease expires.
+- **Evidence:** repeated external-mode artifacts ended with
+  `navigation_runtime_node` exit code `-11` while a worker solve and runtime
+  mapping/watchdog planner reads overlapped. The focused PlanningWorker suite
+  and full build pass after the ownership lock was added.
+- **Removal/review condition:** replace only with an immutable planner snapshot
+  API whose lifetime and generation are independent of the mutable backend;
+  re-review if cancellation or planner ownership changes.
+- **Verification:** `test_planning_worker`; `test_planner_fsm`; `make build`;
+  repeated 5 m/s obstacle SITL proving no SIGSEGV and preserving candidate
+  generation/role/handoff diagnostics.
+
+### 2026-08-31 - Do not expose BACKUP before a pass-through mission boundary
+
+- **Owner/status:** planner route-boundary and BACKUP composition, `IMPLEMENTED`;
+  focused candidate tests, build, and repeated multi-waypoint 5 m/s SITL are
+  required.
+- **Scope:** when pass-through lookahead is active, the optimized MAIN
+  trajectory must provide an independently evaluated entry witness inside the
+  controller-owned waypoint acceptance ball. Its elapsed trajectory time is
+  carried as `required_main_prefix_duration_TT`; BACKUP switch selection and
+  candidate construction cannot begin before that time. If the optimized
+  MAIN loses the route-boundary entry, the candidate is rejected.
+- **Safety impact:** prevents a braking suffix from replacing the incoming
+  route before the waypoint has been crossed, which can make the executed
+  command stop beside the waypoint even though the nominal MAIN route passed
+  the geometric gate. No waypoint radius, tracking gate, world, freshness, or
+  dynamic limit is relaxed; failure remains fail-closed.
+- **Evidence:** latest obstacle SITL showed active BACKUP samples at roughly
+  `(20, 3.16)` while the waypoint was `(20, 5)` and its acceptance radius was
+  `0.9 m`; the MAIN route-boundary certificate existed but the BACKUP suffix
+  was allowed to start before it. The run had fresh odometry and no simulation
+  clock gap, so this was a planner command-sequencing defect rather than a
+  Gazebo/PX4 transport gap.
+- **Removal/review condition:** replace only with an equivalent typed mission
+  progress certificate that is preserved through MAIN/BACKUP composition and
+  hot replanning; do not remove the prefix constraint while pass-through
+  mission checkpoints can be advanced by the same command.
+- **Verification:** `test_trajectory`; `make build`; repeated obstacle and
+  long-route SITL proving the executed role schedule crosses each acceptance
+  ball before BACKUP and does not regress to an uncompleted waypoint.
+
+### 2026-08-31 - Schedule anchor recovery from the retained tracking certificate
+
+- **Owner/status:** navigation runtime renewal scheduler, `IMPLEMENTED`;
+  focused FSM coverage, build, and repeated SITL timing distributions are
+  required.
+- **Scope:** the anchor-recovery and hot-retarget scheduling predicates now use
+  the same retained-command limit used by runtime validation:
+  `min(planner_tracking_budget, execution_anchor_limit)`. The wider execution
+  anchor limit is no longer used as the early renewal trigger when the planner
+  has already certified a tighter tracking envelope.
+- **Safety impact:** starts continuous replanning before the retained command
+  consumes the 0.25 m planner certificate, reducing the chance that a late
+  solver miss forces emergency/hold. It does not change the admission limit,
+  command lease, world/freshness, or emergency threshold; invalid or exceeded
+  state still fails closed.
+- **Evidence:** expert review of an infrastructure-valid External Mode trace
+  found the scheduler waiting until approximately 0.375 m while the retained
+  certificate was 0.25 m; the next observed anchor was already outside the
+  certified envelope after a solve-free interval.
+- **Removal/review condition:** replace only with a typed scheduler contract
+  that proves renewal begins no later than the retained tracking boundary;
+  re-review if planner/execution limits or projected-anchor logic changes.
+- **Verification:** `test_planner_fsm` retained-limit cases; `make build`;
+  repeated 1/3/5 m/s SITL proving renewal timing, no command gap, and unchanged
+  0.25 m admission evidence.
+
+### 2026-08-31 - Stop at a pass-through checkpoint when outgoing lookahead is uncertified
+
+- **Owner/status:** planner pass-through terminal-state selection,
+  `IMPLEMENTED`; focused planner trajectory coverage, build, and repeated
+  multi-waypoint 5 m/s SITL are required.
+- **Scope:** a connected pass-through endpoint keeps its outgoing velocity only
+  when the current solve has certified outgoing lookahead. If the local horizon
+  cannot certify that next leg, the endpoint velocity is set to zero inside the
+  current waypoint acceptance ball, allowing MissionController to advance the
+  checkpoint and plan the next leg from a measured rest state.
+- **Safety impact:** avoids exposing a moving endpoint whose BACKUP must either
+  start before the current checkpoint or rely on unavailable KNOWN_FREE
+  evidence beyond the sensor horizon. This is a bounded stop-and-replan
+  fallback, not a relaxed gate; world, freshness, tracking, dynamic, and
+  clearance contracts remain unchanged.
+- **Evidence:** the latest infrastructure-valid SITL accepted waypoint 1 but
+  stopped before waypoint 2 because the endpoint was near the waypoint while
+  outgoing lookahead was not certified; the resulting BACKUP started on the
+  incoming side and the vehicle exited External Mode. The preceding route
+  boundary witness fix removed the earlier pre-checkpoint BACKUP, isolating
+  this remaining terminal-state defect.
+- **Removal/review condition:** replace only with a stronger outgoing-route and
+  known-free braking certificate that permits continuous pass-through; do not
+  remove the stop fallback while the next leg lacks a complete certificate.
+- **Verification:** focused planner/trajectory tests; `make build`; repeated
+  long multi-waypoint SITL proving each checkpoint is accepted before the next
+  plan and that continuous pass-through is used only with certified lookahead.
+
+### 2026-08-31 - Preserve an observed terminal STOP endpoint while PX4 settles
+
+- **Owner/status:** navigation runtime terminal-stop handoff, `IMPLEMENTED`;
+  focused FSM coverage, build, and repeated External Mode SITL are required.
+- **Scope:** after a certified STOP bundle has reached its declared endpoint,
+  a small measured residual velocity no longer immediately enters PX4 Hold.
+  The runtime keeps replaying only that exact atomically committed endpoint
+  until the normal stationary-stop/mission-acknowledgement path completes.
+  Motion after any BACKUP, emergency, or non-terminal stopped recovery still
+  fails closed to PX4 Hold.
+- **Safety impact:** removes a false terminal failure caused by PX4 settling
+  latency without authorizing a new trajectory, extending a moving command,
+  or converting an enum into an emergency command. The endpoint remains
+  subject to the existing world revalidation and terminal bundle identity
+  checks.
+- **Evidence:** `sanity_open` reached the final waypoint endpoint with a
+  committed terminal bundle but the first post-endpoint measured speed was
+  `0.166 m/s`, just above the `0.15 m/s` stop detector; the old branch entered
+  PX4 Hold before the endpoint hold could settle.
+- **Removal/review condition:** replace only with an equivalent typed terminal
+  endpoint lease/settling contract that preserves exact endpoint replay and a
+  bounded fail-closed recovery path. Re-review if stop detection, terminal
+  bundle revalidation, or mission acknowledgement changes.
+- **Verification:** `test_planner_fsm`; `make build`; repeated final-waypoint
+  SITL proving zero-velocity endpoint replay, eventual stationary acceptance,
+  and unchanged fail-closed behavior for non-terminal safety recovery.
+
+### 2026-09-01 - Do not hot-replan a certified terminal STOP only to renew its lease
+
+- **Owner/status:** navigation runtime renewal scheduler, `IMPLEMENTED`;
+  focused FSM coverage, build, and repeated obstacle SITL are required.
+- **Scope:** while the active goal is STOP and the retained bundle is a valid
+  terminal-stop representation (`TerminalStop`, or `MainWithBackup` whose
+  active role is still MAIN) with declared endpoint metadata, lease-only
+  renewal is deferred. Main-only terminal bundles intentionally use endpoint
+  metadata; backup-start metadata is not required for this kind. World
+  publication continues to recertify the exact bundle and
+  refresh its short exposure lease. Anchor recovery, stale-world handling,
+  localization/goal transitions, and all moving MAIN/BACKUP/EMERGENCY bundles
+  still follow their existing solve or fail-closed paths.
+- **Safety impact:** avoids replacing a valid terminal trajectory with a
+  short-horizon hot solve whose yaw stop may be dynamically infeasible. No
+  command lease is extended by this predicate; only the existing world
+  recertification path may refresh it, and a missing/stale world suspends
+  publication.
+- **Evidence:** `structured_obstacle/detour` at 5 m/s repeatedly showed a
+  valid STOP command near the pillar followed by yaw optimization failure on
+  the remaining ~0.8 s (`max_acceleration=0.32` against `0.30`), then no
+  backup suffix and PX4 Hold. The exact terminal command had already been
+  certified and could be held without a new solve.
+- **Removal/review condition:** remove only when lease renewal is represented
+  by a typed recertification transaction independent of optimizer execution;
+  re-review if command validity, world refresh, or anchor scheduling changes.
+- **Verification:** `test_planner_fsm`; `make build`; repeated STOP waypoint
+  obstacle SITL proving no lease-only yaw replan, fresh-world lease refresh,
+  eventual waypoint completion, and unchanged emergency behavior on anchor
+  loss.
+
+### 2026-09-01 - Promote a queued waypoint after certified STOP recovery
+
+- **Owner/status:** navigation runtime stop-boundary transaction,
+  `IMPLEMENTED`; focused FSM coverage, build, and repeated multi-waypoint
+  External Mode SITL are required.
+- **Scope:** when a STOP endpoint has been certified and the measured vehicle
+  is stationary, promote the newest same-mission pending waypoint while the
+  old safety suffix is still marked active. The promoted goal starts its own
+  measured-state planning cycle; foreign missions and deferred terminal
+  statuses retain their existing fail-closed handling.
+- **Safety impact:** closes a lifecycle deadlock without weakening command,
+  world, tracking, or clearance gates. Promotion occurs only after the
+  existing stationary threshold and under the input/transition lock order;
+  the old command is not relabeled or reused for the new waypoint.
+- **Evidence:** `structured_obstacle/detour` reached and accepted waypoint 0,
+  but request 3 remained pending after the STOP suffix settled because the
+  `kStoppedRecovery` path handled only moving recovery. The External Mode
+  mission then timed out at waypoint 1 despite valid odometry and no collision.
+- **Removal/review condition:** replace only with an equivalent explicit
+  certified-stop transaction. Re-review if pending-goal ownership,
+  `kStoppedRecovery`, or terminal mission-status ordering changes.
+- **Verification:** `test_planner_fsm`; `make build`; repeated obstacle and
+  long-route SITL proving the next waypoint is promoted after stationary STOP,
+  all waypoint identities remain ordered, and no stale suffix is exposed under
+  the new goal.
+
+### 2026-09-01 - Preserve a certified terminal STOP during early anchor pressure
+
+- **Owner/status:** navigation runtime terminal-stop renewal scheduler,
+  `IMPLEMENTED`; focused FSM coverage, build, and repeated 5 m/s SITL are
+  required before qualification.
+- **Scope:** a terminal STOP is explicitly marked in the immutable planner
+  candidate, including the `MAIN+BACKUP` representation. While its declared
+  endpoint metadata is valid, its active role is MAIN, and the measured anchor
+  remains within the unchanged `0.25 m` tracking envelope, early anchor
+  pressure does not launch a replacement hot solve. The existing world
+  recertification keeps the exact command current; stale/blocked world,
+  invalid metadata, role transition, or anchor error beyond `0.25 m` exits this
+  exception and uses the normal recovery/fail-closed path.
+- **Safety impact:** prevents a semantically terminal STOP from being treated
+  as an ordinary moving `MAIN+BACKUP` renewal and then failing a short yaw
+  optimization near rest. This does not widen the tracking gate, extend a
+  moving command, or permit stale data; the exact endpoint remains subject to
+  world, freshness, identity, and command sampling certificates.
+- **Evidence:** `external-mode-check-20260831T174148-116367` had a valid STOP
+  command and anchor error below `0.25 m`, but the scheduler triggered anchor
+  recovery at the existing half-envelope threshold (`0.125 m`); repeated
+  short `YawTrajOpt` failures then caused PX4 Hold before the endpoint handoff.
+- **Removal/review condition:** remove only after a typed terminal endpoint
+  renewal transaction makes optimizer-free STOP retention unnecessary. Revisit
+  if terminal semantics, world recertification, or anchor/emergency ownership
+  changes.
+- **Verification:** `test_planner_fsm`; `make build`; repeated obstacle and
+  long-route 5 m/s SITL proving terminal STOP completion, no unnecessary yaw
+  replan, unchanged `0.25 m` anchor enforcement, and fail-closed behavior once
+  that envelope is exceeded.
+
+### 2026-09-01 - Retiming new terminal STOP solves for PX4 tracking authority
+
+- **Owner/status:** navigation runtime to planner terminal-stop handoff,
+  `EXPERIMENTAL`; focused FSM/build evidence and repeated 5 m/s SITL are
+  required before promotion.
+- **Scope:** new `PlanFromRest` solves for STOP waypoints use a `0.5` velocity
+  scale in the existing planner envelope. The scale is applied before
+  trajectory generation and is multiplied by the existing bounded recovery
+  scale; pass-through and moving MAIN/BACKUP commands remain unchanged.
+- **Safety impact:** gives PX4 more time to track a finite stop trajectory
+  after the measured state enters the new waypoint. It does not widen V/A/J,
+  world, freshness, endpoint, command-lease, or `0.25 m` tracking gates; an
+  infeasible or over-error candidate still fails closed.
+- **False-accept/false-reject consequences:** valid STOP missions may take
+  longer and can consume more local map horizon. If the slower candidate is
+  infeasible, existing planner retry and PX4 Hold behavior remains the
+  authority; this is not permission to retain an over-error command.
+- **Evidence:** `external-mode-check-20260831T175035-124794` completed the
+  stop-boundary promotion but the next STOP trajectory reached
+  `anchor_error=0.285 m` with the unchanged `0.25 m` limit before endpoint
+  acceptance. The scale is an experiment to reduce command-following error,
+  not a gate adjustment.
+- **Removal/review condition:** remove or retune only after a distribution of
+  repeated 1/3/5 m/s STOP and pass-through runs plus recorded-data comparison
+  shows lower anchor p95/p99 without increased collision, stale, timeout, or
+  horizon failures. Never infer this from one SITL run.
+- **Verification:** `test_planner_fsm`; `make build`; repeated obstacle,
+  long-route, tunnel, and clutter SITL with unchanged acceptance criteria and
+  full command/PX4/propagated-odometry tracking evidence.
+
+### 2026-09-01 - One-shot measured emergency on projected tracking-boundary crossing
+
+- **Owner/status:** navigation runtime measured-state recovery,
+  `EXPERIMENTAL`; focused FSM/build evidence and repeated obstacle SITL are
+  required before qualification.
+- **Scope:** when a retained MAIN command has no usable safety suffix and its
+  conservative projected anchor bound crosses the unchanged `0.25 m` tracking
+  limit, the runtime may attempt one measured-state emergency brake before the
+  next sampling tick. This is allowed only with fresh odometry, a valid command
+  anchor, `kTrackMain`, and the current measured position classified
+  `KNOWN_FREE` on the latest inflated map. Actual anchor exceedance keeps the
+  existing emergency path regardless of the current cell classification.
+- **Safety impact:** this moves the recovery trigger earlier to avoid waiting
+  until the vehicle has drifted into an inflated blocked cell. It does not
+  relax the tracking limit, world certificate, dynamic certificate, freshness,
+  or atomic commit. The emergency candidate remains subject to the strict
+  known-free swept validator; rejection transitions to PX4 Hold and the
+  one-shot state prevents repeated rebraking.
+- **False-accept/false-reject consequences:** a conservative projection can
+  brake a still-safe vehicle earlier and may reduce mission progress. A stale,
+  unknown, occupied, or out-of-map measured state cannot use this early path;
+  fail-closed behavior remains PX4 Hold. If repeated runs show projection is
+  too aggressive, remove this trigger and fix the hot-replan feasibility path
+  rather than widening the tracking gate.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T175505-129402`
+  showed `projected_anchor_error=0.264 m` while current anchor error was
+  `0.095 m`; the subsequent hot-replan failed and actual error reached
+  `0.368 m`, after which the emergency candidate was rejected because the
+  measured initial point was already in an inflated blocked cell.
+- **Removal/review condition:** remove or revise after repeated 1/3/5 m/s
+  obstacle and open-map runs compare early emergency count, anchor p95/p99,
+  completion, clearance, and PX4 Hold outcomes. Never use this as permission
+  to accept an over-gate command or to bypass world validation.
+- **Verification:** `test_planner_fsm`; `make build`; repeated
+  `structured_obstacle/detour` 5 m/s SITL with logs proving either an atomic
+  emergency commit while current state is `KNOWN_FREE` or an immediate
+  fail-closed PX4 Hold, plus unchanged collision and `0.25 m` reporting.
+
+### 2026-09-01 - Use dual-clock estimator-health freshness at External Mode boundary
+
+- **Owner/status:** PX4 External Mode FAST-LIO health gate,
+  `IMPLEMENTED`; build and repeated External Mode SITL are required.
+- **Scope:** estimator health freshness uses the existing ROS source timestamp
+  and steady-clock receive timestamp contract. A small positive source-time
+  lead caused by the independent propagated-health producer is accepted only
+  within the existing bounded freshness window; missing, stale, unhealthy, or
+  receive-future health still fails closed. The same contract is used by the
+  arming check and the active setpoint gate.
+- **Safety impact:** removes a false startup handover caused by treating any
+  source timestamp later than the controller's current tick as infinitely
+  stale, while preserving typed health predicates, receive-age limits, and
+  PX4 Hold on invalid health. This is timestamp-consistency handling, not a
+  health bypass or timeout extension.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T180824-146308`
+  reported `typed_seen=true`, `healthy=true`, all typed health predicates true,
+  and `health_stamp_ns=19408000000`, but the active gate classified diagnostics
+  as missing because the source stamp was a few milliseconds ahead of the
+  current ROS tick. The run then handed over before completing the mission.
+- **Removal/review condition:** keep while health is produced by independent
+  correction/propagation callbacks; re-review if timestamp domains, producer
+  scheduling, or freshness windows change. Do not replace this with a larger
+  arbitrary future tolerance.
+- **Verification:** PX4 External Mode health/command tests, `make build`, and
+  repeated 5 m/s SITL proving startup health is accepted only after a valid
+  typed sample and stale/invalid health still requests PX4 Hold.
+
+### 2026-09-01 - Do not preempt a certified terminal STOP on projected anchor error
+
+- **Owner/status:** navigation runtime terminal-stop execution,
+  `EXPERIMENTAL`; focused FSM/build evidence and repeated obstacle SITL are
+  required before qualification.
+- **Scope:** a terminal STOP bundle that is still within the measured hard
+  anchor limit is not replaced by a measured-state emergency brake solely
+  because the conservative one-cycle projected bound crosses that limit. The
+  existing actual anchor-exceedance path, freshness checks, known-free checks,
+  dynamic certificate, and atomic commit remain unchanged.
+- **Safety impact:** avoids replacing a world-certified finite stop with a
+  new brake polynomial whose measured velocity may point into a nearby
+  occupied voxel. This preserves fail-closed behavior if the actual anchor
+  later exceeds the hard limit; it is not a relaxation of the `0.25 m` gate.
+- **False-accept/false-reject consequences:** deferring the projected trigger
+  can allow a terminal STOP to settle and complete when the projection is
+  conservative. If the vehicle actually leaves the hard envelope, the normal
+  emergency attempt may still be rejected and PX4 Hold remains the outcome.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T181113-150405`
+  showed a terminal STOP with measured anchor error `0.106 m`, projected
+  error `0.282 m`, and an emergency candidate rejected by
+  `certificate_tube_blocked` at the latest world model.
+- **Removal/review condition:** re-review after repeated STOP and pass-through
+  runs at 1/3/5 m/s compare completion, actual anchor p95/p99, clearance,
+  emergency attempts, and PX4 Hold outcomes. Do not infer safety from one run.
+- **Verification:** `test_planner_fsm`; `make build`; repeated structured
+  obstacle and open-map SITL with unchanged tracking/collision gates.
+
+### 2026-09-01 - Select a clearance-maximizing terminal STOP endpoint
+
+- **Owner/status:** navigation planner terminal-goal resolution,
+  `EXPERIMENTAL`; focused planner tests/build and repeated mission SITL are
+  required before qualification.
+- **Scope:** for a STOP waypoint whose requested inflated voxel is already
+  `KNOWN_FREE`, the planner may select a higher-clearance lattice point inside
+  the existing mission acceptance ball. Candidates must remain known-free and
+  pass the existing continuous occupied-tube oracle; pass-through and
+  occupied-goal projection behavior are unchanged.
+- **Safety impact:** adds endpoint clearance against observed occupied cells
+  without enlarging the acceptance radius, changing tracking gates, or
+  bypassing full candidate authorization. The final trajectory remains
+  subject to the same swept world and dynamic certificates.
+- **False-accept/false-reject consequences:** a STOP may be completed at a
+  point offset from the requested centre but still inside its declared
+  acceptance region. Sparse or stale occupied evidence can fail to improve
+  the selected point; later world recertification and candidate validation
+  still fail closed.
+- **Evidence:** repeated `structured_obstacle/detour` runs showed the exact
+  STOP endpoint near the pillar could be accepted as nominal while the
+  measured-state brake from a `0.106 m` anchor residual was rejected by
+  `certificate_tube_blocked`.
+- **Removal/review condition:** retain only if repeated 1/3/5 m/s STOP and
+  detour runs show improved completion and clearance with no increase in
+  collision, tracking, stale, or PX4 Hold failures. Never infer this from one
+  SITL run.
+- **Verification:** planner unit/build tests plus repeated structured,
+  open-map, and long-route SITL with endpoint offset, acceptance error,
+  clearance, and full waypoint coverage recorded.
+
+### 2026-09-01 - Resume the active waypoint after an emergency safety stop
+
+- **Owner/status:** navigation runtime emergency-stop lifecycle,
+  `IMPLEMENTED`; focused tests/build and repeated External Mode SITL are
+  required before qualification.
+- **Scope:** an atomically certified EMERGENCY brake endpoint is never treated
+  as a nominal terminal STOP merely because it lies inside the waypoint
+  acceptance ball. After measured stop, the runtime schedules `PlanFromRest`
+  for the same active waypoint. Only an explicitly certified terminal STOP
+  bundle may set the terminal-hold generation.
+- **Safety impact:** prevents recovery bookkeeping from declaring a waypoint
+  complete after an emergency intervention and then exhausting the bounded
+  External Mode recovery window. Emergency braking remains world-certified,
+  dynamically certified, command-continuous, and fail-closed; no tracking,
+  freshness, clearance, or acceptance gate is widened.
+- **False-accept/false-reject consequences:** the same waypoint may receive a
+  second nominal solve after a safe emergency stop, even when the emergency
+  endpoint is inside its acceptance radius. This can add a bounded recovery
+  cycle, but avoids silently converting a safety action into mission progress.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T183940-167636`
+  showed emergency generation `4` committed successfully, followed by
+  `trajectory completion observed reaches_goal=1` and then
+  `motion observed after certified stop ... entering PX4 Hold`; no new
+  nominal solve was committed for waypoint 1.
+- **Removal/review condition:** re-review only after the command contract
+  carries an explicit, end-to-end safety-stop versus nominal-terminal marker
+  and repeated 1/3/5 m/s obstacle/open-map runs prove equivalent lifecycle
+  behavior. Do not use this change to accept a rejected emergency command.
+- **Verification:** `test_trajectory`, `test_planner_fsm`, `make build`, and
+  repeated External Mode SITL proving emergency stop -> measured stop -> same
+  waypoint `PlanFromRest`, with unchanged `0.25 m` tracking and collision
+  gates.
+
+### 2026-09-01 - Bound route-regression handling for terminal recovery
+
+- **Owner/status:** navigation planner route-regression certificate,
+  `IMPLEMENTED`; focused certificate tests/build and repeated obstacle SITL are
+  required before qualification.
+- **Scope:** when an explicitly terminal STOP candidate is a recovery solve
+  after an emergency stop, the route-fold check may be marked non-applicable
+  only if its solve-start state is within the waypoint acceptance radius plus
+  the configured tracking-error budget and its declared endpoint is inside
+  the original acceptance radius. This does not apply to pass-through or
+  ordinary terminal planning.
+- **Safety impact:** allows a bounded return from an emergency overshoot to the
+  active STOP checkpoint without changing the acceptance radius. The candidate
+  still passes continuous world, known-free, dynamic, PVAJ/yaw handoff,
+  freshness, and execution tracking certificates; no stale or arbitrary route
+  fold is authorized.
+- **False-accept/false-reject consequences:** a terminal recovery can make a
+  local correction that is not monotonic in route arc, while far starts,
+  endpoints outside acceptance, and pass-through folds remain rejected. The
+  exception may cost a replan but cannot expose an uncertified command.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T185153-173315`
+  showed the lifecycle fix reaching repeated same-waypoint `PlanFromRest`, but
+  every candidate was rejected by route regression (`0.636–0.949 m`) after
+  emergency overshoot, with zero command transport gaps and no collision.
+- **Removal/review condition:** remove when route progress explicitly models
+  emergency overshoot and recovery, or when repeated 1/3/5 m/s runs show no
+  bounded terminal recovery rejection. Re-review if tracking budget,
+  acceptance semantics, or emergency endpoint policy changes.
+- **Verification:** `test_trajectory`; `make build`; repeated structured,
+  open-map, and long-route SITL recording recovery start/end distances,
+  route-regression results, clearance, collision, tracking, and completion.
+
+### 2026-09-01 - Do not carry a rejected command across a waypoint handoff
+
+- **Owner/status:** PX4 External Mode command handoff, `IMPLEMENTED`; focused
+  command tests/build and repeated mission SITL are required before
+  qualification.
+- **Scope:** when MissionController advances to a new waypoint, retain only
+  the previous certified executable command. Invalidate a `STATUS_REJECTED`
+  command instead of allowing the next setpoint callback to consume the old
+  waypoint's terminal failure.
+- **Safety impact:** removes a false-positive PX4 Hold caused by callback
+  ordering; malformed, stale, or rejected commands still fail closed and no
+  rejected command is made executable or relabeled for the new waypoint.
+- **False-accept/false-reject consequences:** a new waypoint briefly has no
+  cached command until its own identity-matching candidate arrives, so the
+  normal freshness/trajectory gate may hold or fail closed. This is safer than
+  carrying an old terminal rejection into the new waypoint.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T190825-180483`
+  showed waypoint 1 acceptance and publication of waypoint 2 at the same
+  timestamp that External Mode consumed the old rejected command and handed
+  over to PX4 Hold; the runtime log had not yet received waypoint 2.
+- **Removal/review condition:** retain while goal publication and command
+  subscription are independent executor callbacks; re-review after the
+  transport contract provides an explicit per-goal terminal-result channel.
+- **Verification:** `test_navigation_command`; `make build`; repeated
+  structured obstacle SITL proving waypoint 2 does not fail from the prior
+  waypoint's rejection and all existing tracking/freshness/collision gates
+  remain unchanged.
+
+### 2026-09-01 - Allow a bounded emergency endpoint to settle before replan
+
+- **Owner/status:** navigation runtime emergency recovery, `IMPLEMENTED`;
+  focused FSM/build and repeated External Mode SITL are required before
+  qualification.
+- **Scope:** after a certified measured-state emergency endpoint has completed,
+  keep the recovery episode pending while measured speed is still above the
+  stationary threshold. Do not convert that short post-brake residual into a
+  new `STATUS_REJECTED` command; run the same-waypoint `PlanFromRest` only after
+  measured stop evidence.
+- **Safety impact:** preserves the certified emergency endpoint and prevents a
+  false terminal failure caused by PX4 settling dynamics. It does not extend
+  the trajectory lease, change the `0.15 m/s` stop criterion, or authorize a
+  nominal command before the stop gate; External Mode's existing bounded
+  recovery timeout still owns final handover.
+- **False-accept/false-reject consequences:** a real post-brake motion episode
+  gets a bounded settling opportunity instead of immediate Hold, while a
+  vehicle that never settles still reaches the existing fail-closed timeout.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T192424-186466`
+  showed emergency completion followed by measured speed `0.211 m/s` and the
+  runtime's immediate `motion observed after certified stop` Hold before any
+  same-waypoint solve; transport and collision metrics were otherwise healthy.
+- **Removal/review condition:** retain only if repeated 1/3/5 m/s emergency and
+  STOP runs show recovery solve after measured stop without increased tracking,
+  collision, stale-stream, or timeout failures. Re-review if the stop threshold
+  or recovery timeout changes.
+- **Verification:** `test_planner_fsm`; `make build`; repeated structured,
+  open-map, and long-route SITL recording emergency endpoint, settling speed,
+  same-waypoint PlanFromRest, command status, and final handover.
+
+### 2026-09-01 - Replan a STOP request after request-identity renewal
+
+- **Owner/status:** navigation runtime goal lifecycle, `IMPLEMENTED`; focused
+  build/tests and repeated mission SITL are required before qualification.
+- **Scope:** a newly numbered request for the same STOP checkpoint no longer
+  reuses a completed bundle under the previous goal epoch. The old bundle is
+  invalidated and the new request enters the normal measured-state
+  `PlanFromRest` path.
+- **Safety impact:** prevents the sampler from producing a synthetic
+  `STATUS_REJECTED` for the new epoch because a retained bundle still carries
+  the old epoch. Every executable command must now be certified against the
+  exact `{mission, waypoint, request, goal_epoch}` tuple; no acceptance or
+  tracking gate is relaxed.
+- **False-accept/false-reject consequences:** a STOP republish may briefly
+  hold the previous certified endpoint while the new solve is pending and may
+  cost one solve cycle. A failed new solve remains fail-closed; an old bundle
+  can never be relabeled as the new request without an explicit rebind
+  certificate.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T193423-191787`
+  showed request 4 republished for the same STOP checkpoint after request 3,
+  followed by immediate External Mode Hold; runtime had no request-4 solve and
+  the latest command carried `goal_epoch=3` with no executable trajectory.
+- **Removal/review condition:** retain until the command contract has an
+  explicit, tested same-checkpoint terminal rebind operation that preserves
+  bundle identity and validity without a new solve.
+- **Verification:** `make build`; `test_navigation_command`,
+  `test_planner_fsm`; repeated 1/3/5 m/s STOP and obstacle SITL proving each
+  renewed request either receives its own certified command or fails closed.
+
+### 2026-09-01 - Enforce zero terminal derivatives for STOP planning
+
+- **Owner/status:** navigation planner terminal-state contract,
+  `IMPLEMENTED`; focused trajectory/build tests and repeated External Mode
+  SITL are required before qualification.
+- **Scope:** after route endpoint and pass-through selection, an active STOP
+  waypoint explicitly zeros terminal velocity, acceleration, and jerk before
+  nominal optimization. PASS_THROUGH and frontier continuation retain their
+  existing terminal-velocity behavior.
+- **Safety impact:** prevents a STOP candidate from being classified as a
+  moving terminal and then requiring a degenerate backup visibility line. The
+  candidate still requires the existing dynamic, PVAJ/yaw handoff, continuous
+  world, KNOWN_FREE backup, and execution certificates; no collision or
+  tracking gate is relaxed.
+- **False-accept/false-reject consequences:** STOP motion may decelerate
+  earlier than a continuation trajectory, costing progress time but preserving
+  the mission's declared stop semantics. If a valid rest trajectory or backup
+  cannot be certified, the planner continues to reject it fail-closed.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T194055-195933`
+  repeatedly logged an active STOP request with `GenerateExpTrajectory
+  SUCCESS` followed by `visible MAIN has moving terminal state`; CIRI then
+  received a zero-length seed line and the mission stopped despite healthy
+  odometry/transport and zero collision count.
+- **Removal/review condition:** retain only if repeated 1/3/5 m/s STOP,
+  open-map, and obstacle runs show no moving STOP terminal, no degenerate CIRI
+  seed failure, and no increase in tracking, stale-stream, collision, or PX4
+  Hold failures. Re-review if route lookahead or STOP acceptance semantics
+  change.
+- **Verification:** `test_trajectory`; `test_planner_fsm`; `make build`;
+  repeated structured, open-map, and long-route SITL recording terminal PVAJ,
+  backup role transition, waypoint coverage, tracking, freshness, clearance,
+  and collision gates.
+
+### 2026-09-01 - Suppress outgoing velocity for a coincident PASS_THROUGH to STOP boundary
+
+- **Owner/status:** mission route contract and planning handoff,
+  `IMPLEMENTED`; focused route/planner tests, build, and repeated External
+  Mode SITL are required before qualification.
+- **Scope:** when an active PASS_THROUGH waypoint is followed by a STOP
+  waypoint within the planner's existing connection tolerance, route snapshot
+  semantics suppress the outgoing pass-through target. The pass-through event
+  remains measured and advances normally; the following STOP owns the hold.
+- **Safety impact:** prevents a zero-length outgoing leg from requesting
+  non-zero terminal velocity and causing overshoot before the STOP request.
+  Collision, UNKNOWN, freshness, tracking, acceptance, and PX4 state gates are
+  unchanged; no tolerance is widened.
+- **False-accept/false-reject consequences:** an intentionally distinct STOP
+  farther than the existing connection tolerance retains normal pass-through
+  lookahead. A coincident boundary may decelerate earlier and cost time, but
+  cannot turn a STOP into a moving command.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T195159-203729`
+  completed all waypoints with no collision/failsafe and no transport gap, but
+  failed cross-track p95 at `0.7206 m`; logs show PASS_THROUGH `(7,0,3)` and
+  STOP `(7,0,3)` with overshoot before braking.
+- **Removal/review condition:** retain while mission inputs may contain
+  coincident pass-through/stop checkpoints; re-review if route acceptance or
+  connection tolerance changes, or if route progress gains an explicit
+  zero-length terminal-boundary representation.
+- **Verification:** `test_mission_contract`; `make build`; repeated
+  `sanity_open` and structured/long-route SITL recording waypoint order,
+  terminal PVAJ, cross-track, completion, freshness, clearance, and collision.
+
+### 2026-09-01 - Propagate the coincident terminal boundary across execution layers
+
+- **Owner/status:** planner/runtime/External Mode route handoff,
+  `IMPLEMENTED`; focused tests and repeated SITL are required before
+  qualification.
+- **Scope:** the coincident PASS_THROUGH-to-STOP predicate is now used by the
+  planner terminal metadata, runtime completion/continuation policy, and
+  MissionController terminal-hold policy. It is not inferred from an enum
+  alone: it requires the immutable route's behavior and position contract.
+- **Safety impact:** keeps planner, runtime, and PX4 External Mode consistent
+  about a zero-length terminal leg, preventing a false frontier continuation or
+  command-stream timeout. Existing command freshness, measured acceptance,
+  world, collision, and tracking gates remain unchanged.
+- **False-accept/false-reject consequences:** a truly separated next STOP keeps
+  normal pass-through continuation. A coincident boundary can hold and settle
+  at the shared checkpoint; malformed route metadata still fails closed.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T200908-210599`
+  showed the first planner-only suppression logging correctly, but the
+  cross-layer mismatch caused `PAUSED_SAFETY_STOP` after a 100 ms command gap
+  with only waypoints 0-2 accepted.
+- **Removal/review condition:** retain until route transport has an explicit
+  first-class terminal-boundary field, then replace the derived predicate with
+  that validated field. Re-review if mission behavior or connection tolerance
+  changes.
+- **Verification:** `test_mission_contract`; `test_mission`; `test_planner_fsm`;
+  `make build`; repeated 5 m/s open, structured-obstacle, and long-route SITL
+  recording terminal metadata, command continuity, waypoint order, completion,
+  freshness, clearance, and collision.
+
+### 2026-09-01 - Scope freshness qualification to active mission navigation
+
+- **Owner/status:** runtime validation and SITL artifact contract, `IMPLEMENTED`;
+  focused report tests and repeated External Mode SITL are required before
+  qualification.
+- **Scope:** automatic runner sessions record `navigation_start_wall_ns` at
+  the handoff immediately before the mission scenario starts. Freshness and
+  wall-arrival gap accounting uses the later of LIO TRACKING and this boundary;
+  artifacts without the field retain the previous TRACKING-only behavior.
+- **Safety impact:** excludes only sensor warm-up before navigation commands are
+  issued. A gap at or after the active navigation boundary remains a failure;
+  no freshness threshold, PX4 timeout, tracking gate, or fail-closed behavior is
+  relaxed.
+- **False-accept/false-reject consequences:** this prevents pre-flight LIO/GZ
+  warm-up stalls from being misreported as in-flight failures. A gap that starts
+  before handoff and remains active after handoff is still retained when direct
+  callback evidence covers the active interval; missing or malformed evidence
+  still fails closed.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T202501-216520`
+  completed all five waypoints with no collision/failsafe and no PX4 command
+  gap, while three LiDAR gaps of `501.0`, `622.6`, and `749.9 ms` occurred
+  before mission execution at approximately `23.3 s` simulation time.
+- **Removal/review condition:** retain while the runner separates estimator
+  warm-up from automatic mission execution. Re-review if manual control,
+  scenario start, or stream freshness ownership changes; active-window evidence
+  must remain explicit in the runtime artifact.
+- **Verification:** `python3 -m unittest tools/runtime/tests/test_runtime_contract.py`;
+  `make build`; repeated 5 m/s External Mode SITL proving warm-up gaps are
+  excluded only before navigation start and active gaps still fail closed.
+
+### 2026-09-01 - Restore suffix ownership from the sampled executable role
+
+- **Owner/status:** runtime execution-recovery state and command sampler,
+  `IMPLEMENTED`; focused FSM/build and repeated External Mode SITL are required
+  before qualification.
+- **Scope:** when the command sampler observes the immutable bundle's actual
+  `BACKUP` role, it restores `safety_suffix_active_` and the `TrackBackup` FSM
+  state before processing completion. This covers a world-freshness suspension
+  that temporarily cleared the derived flag while retaining the same certified
+  bundle.
+- **Safety impact:** prevents a certified braking suffix from being treated as
+  a nominal frontier after resume. Pending waypoint promotion still requires
+  the existing completed suffix and measured-stop conditions; no uncertified
+  backup is created and no tracking/freshness/collision gate is relaxed.
+- **False-accept/false-reject consequences:** a sampled BACKUP command may keep
+  the pending waypoint queued until the suffix reaches its declared end and the
+  measured stop gate passes. If the bundle is invalid, sampling and command
+  publication already fail closed before this role restoration.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T203406-222661`
+  recorded `trajectory_flag=1` through the certified suffix, but the runtime
+  subsequently restarted the old pass-through goal and failed the route-boundary
+  witness after the suffix expired.
+- **Removal/review condition:** retain until execution-schedule metadata exposes
+  suffix ownership as one atomic field shared by store, sampler, and FSM; then
+  replace this derived synchronization with that first-class field.
+- **Verification:** `test_planner_fsm`; `make build`; repeated 5 m/s open,
+  structured-obstacle, and long-route SITL proving BACKUP completion promotes
+  the latest pending goal and does not replan a passed waypoint.
+
+### 2026-09-01 - Make stopped-suffix pending handoff same-cycle and two-phase
+
+- **Owner/status:** runtime execution ownership and pending-goal transaction,
+  `IMPLEMENTED`; focused runtime/store tests, build, and repeated External
+  Mode SITL are required before qualification.
+- **Scope:** when a certified BACKUP/EMERGENCY suffix has stopped, the runtime
+  peeks the newest pending goal, switches the planning context, and runs its
+  `PlanFromRest` in the same planner cycle. The pending pointer is consumed
+  only after the replacement candidate and planner history have committed.
+  A failed solve retains the pending identity for retry.
+- **Safety impact:** removes the old promote-then-return interval where the
+  old command was invalidated and the 5 Hz planner waited behind a 100 ms
+  command lease. The old suffix is never relabeled as the new goal; the normal
+  world, localization, handoff, anchor, and planner-history gates still guard
+  the new commit.
+- **False-accept/false-reject consequences:** a transient replacement failure
+  can retain the stopped state and retry the exact pending request; it cannot
+  expose an uncertified command. If the pending owner changes during solving,
+  the committed active identity remains authoritative and the ordering anomaly
+  is recorded.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T205024-232762`
+  showed certified BACKUP endpoint samples until simulation time `34.212 s`,
+  then no new command before External Mode's `100 ms` lease expired. The
+  high-level review identified the promote-then-wait sequence as the root
+  cause, not GZ, LiDAR, or GPU load.
+- **Removal/review condition:** retain until the committed bundle store has a
+  first-class atomic old-bundle/pending-goal swap API and the runtime no longer
+  needs the same-cycle preparation path. Re-review any change to planner rate,
+  command lease, or suffix ownership.
+- **Verification:** `test_mission`; `test_navigation_command`;
+  `test_planner_fsm`; `make build`; repeated 5 m/s `sanity_open`,
+  `structured_obstacle`, and `long_route` SITL recording command continuity,
+  exact identity, pending promotion, completion, freshness, tracking,
+  clearance, and collision gates.
+
+### 2026-09-01 - Require current-goal trajectory readiness before pass-through advancement
+
+- **Owner/status:** MissionController route handoff, `IMPLEMENTED`; focused
+  mission regression, build, and repeated External Mode SITL are required
+  before qualification.
+- **Scope:** after the first pass-through waypoint, measured position/speed
+  acceptance cannot advance the mission until a successful native trajectory
+  for the new active waypoint has been acknowledged. The existing immediate
+  acceptance exception remains only for the initial request (`waypoint 0`,
+  request `1`) at the takeoff/mission handoff boundary.
+- **Safety impact:** prevents MissionController from publishing the next goal
+  while PX4 is still executing a certified bundle owned by the prior waypoint.
+  This preserves the adjacent-waypoint safety-suffix contract and avoids
+  replanning a waypoint already passed by the vehicle. No tracking, freshness,
+  collision, or acceptance threshold is relaxed.
+- **False-accept/false-reject consequences:** a genuinely zero-length initial
+  pass-through may still be accepted without a native trajectory. A later
+  pass-through can wait one planner acknowledgement even when the measured
+  vehicle is already inside its radius; this can add latency, but prevents a
+  false route advancement and stale-command ownership.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T203406-222661`
+  showed a BACKUP bundle for the prior waypoint while the active mission goal
+  advanced to a later waypoint; the high-level review identified the
+  `immediate_pass_through` bypass as the cross-layer trigger. The regression
+  `PassThroughDoesNotAdvanceWithoutCurrentGoalTrajectory` reproduces the
+  invalid acceptance ordering.
+- **Removal/review condition:** retain until route progress and execution
+  ownership expose one atomic current-goal handoff certificate, or the route
+  transport carries a validated multi-waypoint coverage certificate. Re-review
+  if initial mission handoff semantics change.
+- **Verification:** `test_mission`; `make build`; repeated 5 m/s
+  `sanity_open`, `structured_obstacle`, and `long_route` SITL recording command
+  owner, trajectory role, waypoint order, completion, freshness, clearance,
+  tracking, and collision gates.
+
+### 2026-09-01 - Make measured emergency braking and terminal-stop retry satisfy yaw limits
+
+- **Owner/status:** planning backend emergency candidate and runtime terminal
+  recovery state, `IMPLEMENTED`; focused trajectory tests, build, and repeated
+  obstacle/long-route SITL remain required before qualification.
+- **Scope:** the measured emergency brake now extends its existing stop
+  polynomial when the translational seed is valid but the same candidate fails
+  the existing flatness/yaw-acceleration certificate, including the final
+  composed-candidate yaw-rate and yaw-acceleration checks used at admission. A completed terminal
+  STOP bundle transitions into measured stopped recovery, allowing a retry from
+  the measured state after its declared endpoint rather than rejecting the
+  retry as a discontinuous active-MAIN splice.
+- **Safety impact:** no yaw, acceleration, jerk, world, tracking, or command
+  lease gate is relaxed. The brake remains a single atomic candidate and is
+  admitted only after the unchanged dynamic and world certificates pass. The
+  terminal exception requires a sampleable finished terminal bundle and the
+  explicit certified-stop lifecycle state; an active nominal MAIN remains
+  continuity-protected.
+- **False-accept/false-reject consequences:** extending the brake can increase
+  stopping time and swept distance, which is revalidated by the normal world
+  certificate. Without the terminal-stop state transition, a valid measured
+  retry could be falsely rejected after the old terminal polynomial expired and
+  the mission would enter PX4 Hold despite no collision or stale odometry.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T214830-267608`
+  recorded emergency candidate rejection solely because yaw acceleration was
+  `0.383886 rad/s^2` against the unchanged `0.3 rad/s^2` limit. The subsequent
+  run `.artifacts/runtime/external-mode-check-20260831T220933-275603` admitted
+  the extended emergency brake and progressed through waypoint 2; it then
+  exposed the separate terminal-stop retry continuity issue.
+- **Removal/review condition:** retain until emergency-candidate duration and
+  terminal-stop retry are represented by one first-class execution handoff
+  certificate and repeated all-map SITL confirms no added clearance or timing
+  regression. Re-review if yaw limits, brake construction, or terminal mission
+  semantics change.
+- **Verification:** `test_trajectory`; `test_planner_fsm`; `make build`; repeat
+  `SPEED_CAP_MPS=5 MAP_SCENE=structured_obstacle TEST_CASE=positive
+  MOTION_PRESET=nominal make external-mode-check` and the corresponding
+  `long_route` run, checking yaw certificate, endpoint handoff, completion,
+  freshness, tracking, clearance, and collision gates.
+
+### 2026-09-01 - Permit only proven emergency-endpoint correction to a STOP waypoint
+
+- **Owner/status:** planning backend route-regression certificate,
+  `IMPLEMENTED`; repeated obstacle and long-route SITL remain required before
+  qualification.
+- **Scope:** after an atomically committed emergency brake has reached a
+  certified stop, a new terminal STOP candidate may correct back toward that
+  same waypoint even when the emergency endpoint is outside the ordinary
+  acceptance-plus-tracking radius. The correction is admitted only when the
+  previous command contains an actual EMERGENCY role with the same
+  localization/goal/request identity, the measured start is no farther from
+  the waypoint than that endpoint plus the tracking budget, and the new
+  endpoint is inside the waypoint acceptance radius.
+- **Safety impact:** this is not a wider route-regression tolerance. It is a
+  narrow, history-proven recovery exception; world occupancy, dynamics,
+  flatness/yaw, current-state anchor, freshness, lease, and handoff checks stay
+  authoritative. Active nominal MAIN candidates and corrections without a
+  committed emergency history remain route-regression protected.
+- **False-accept/false-reject consequences:** without the exception, a valid
+  emergency stop that overshoots a STOP waypoint can never return to its
+  mission-owned acceptance region and the runtime fails closed to PX4 Hold.
+  The bounded history and endpoint checks prevent an arbitrary reverse route
+  from being reclassified as recovery.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T223127-289399`
+  showed a certified emergency stop at approximately `(-4.59, 6.11, 3.09)`
+  for waypoint `(-3, 6, 3)` followed by repeated valid PlanFromRest
+  candidates rejected only by route regression (`0.80--1.19 m` versus the
+  `0.5 m` tolerance), with odometry active-gap count `0`.
+- **Removal/review condition:** replace with a first-class emergency-stop to
+  terminal-goal handoff certificate that carries the measured endpoint bound;
+  re-review if route progress, STOP acceptance, or emergency braking semantics
+  change.
+- **Verification:** `test_trajectory`; `make build`; repeat the structured
+  obstacle positive run and the long-route run, confirming the correction is
+  world/dynamic/yaw/anchor certified and that completion, freshness, tracking,
+  clearance, and collision gates still pass.
+
+### 2026-09-01 - Preserve a directly certified STOP waypoint endpoint
+
+- **Owner/status:** planning backend terminal-goal resolution,
+  `IMPLEMENTED`; focused trajectory/build checks and repeated structured and
+  long-route SITL remain required before qualification.
+- **Scope:** when the requested terminal waypoint is `KNOWN_FREE` and the
+  exact point passes the inflated-layer `RequireKnownFree` continuous oracle,
+  planning retains that mission-owned endpoint. The acceptance-ball
+  clearance search remains available only for the inconsistent case where
+  classification says free but the exact continuous oracle cannot certify the
+  point.
+- **Safety impact:** removes heuristic endpoint motion caused only by raw
+  occupied-sample clearance scoring; it does not enlarge the acceptance ball
+  or relax the inflated-map, dynamics, yaw, tracking, freshness, handoff, or
+  collision gates. The complete candidate is still admitted through the normal
+  world and execution certificates.
+- **False-accept/false-reject consequences:** retaining a directly certified
+  mission waypoint avoids an unnecessary `0.632 m` terminal offset that can
+  break the next route handoff and trigger repeated MINCO/corridor failure.
+  If the exact continuous oracle is not certified, the existing bounded
+  acceptance-ball projection remains fail-closed and unchanged.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T232747-322381`
+  repeatedly logged `requested=(-1.000,6.000,3.000)` and heuristic
+  `planning=(-0.400,5.800,3.000)`, followed by repeated transient planning
+  failures and `PAUSED_SAFETY_STOP`; the same artifact recorded zero active
+  gaps for both external and propagated odometry.
+- **Removal/review condition:** retain until terminal endpoint selection is
+  replaced by a first-class route/acceptance certificate that proves both
+  current clearance and continuation support. Re-review if inflated-map
+  classification or STOP acceptance semantics change.
+- **Verification:** `test_trajectory`; `make build`; repeat
+  `structured_obstacle` and `long_route` at 5 m/s, checking exact endpoint
+  ownership, waypoint completion, route continuity, freshness, tracking,
+  clearance, yaw/dynamics, and collision gates.

@@ -172,6 +172,15 @@ class PlanningWorker {
   [[nodiscard]] Planner* plannerHandle() noexcept { return planner_.get(); }
   [[nodiscard]] const Planner* plannerHandle() const noexcept { return planner_.get(); }
 
+  // Runtime diagnostics and world-recertification callbacks may need a
+  // certificate view while the worker is solving. They must take this same
+  // mutex before using plannerHandle(); the active job holds it for the entire
+  // backend transaction. cancelActiveSolve() intentionally remains an
+  // out-of-band interrupt and is not serialized by this mutex.
+  [[nodiscard]] std::recursive_mutex& backendAccessMutex() noexcept {
+    return backend_access_mutex_;
+  }
+
  private:
   struct WorkItem {
     PlanningKey key;
@@ -204,6 +213,7 @@ class PlanningWorker {
       }
 
       try {
+        std::lock_guard<std::recursive_mutex> backend_lock(backend_access_mutex_);
         work->job(*planner_, job_stop);
       } catch (...) {
         const auto failure = std::current_exception();
@@ -235,6 +245,7 @@ class PlanningWorker {
   std::unique_ptr<Planner> planner_;
   FatalHandler fatal_handler_;
   mutable std::mutex mutex_;
+  std::recursive_mutex backend_access_mutex_;
   std::condition_variable_any cv_;
   std::condition_variable shutdown_cv_;
   std::optional<WorkItem> pending_;

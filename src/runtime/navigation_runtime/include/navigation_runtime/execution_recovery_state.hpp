@@ -78,7 +78,10 @@ enum class ExecutionRecoveryEvent : std::uint8_t {
           ? ExecutionRecoveryState::kStoppedRecovery : state;
     case ExecutionRecoveryState::kStoppedRecovery:
       if (event == ExecutionRecoveryEvent::kMotionObserved) {
-        return ExecutionRecoveryState::kEmergencyBrake;
+        // This event alone does not prove that an emergency command was
+        // constructed and atomically committed. The runtime must perform that
+        // command transaction first, or fail closed to kPx4Hold.
+        return state;
       }
       return event == ExecutionRecoveryEvent::kMainCommitted
           ? ExecutionRecoveryState::kTrackMain : state;

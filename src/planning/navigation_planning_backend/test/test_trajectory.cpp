@@ -274,6 +274,17 @@ geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_t
   return result;
 }
 
+geometry_utils::Trajectory offsetLinearTrajectory(
+    double duration, double start_wall_time, double position_offset) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 7) = position_offset;
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory result({duration}, {coefficients});
+  result.start_WT = start_wall_time;
+  return result;
+}
+
 geometry_utils::Trajectory stationaryTrajectory(double duration, double start_wall_time) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
   coefficients(0, 7) = 2.0;
@@ -1043,6 +1054,7 @@ TEST(PlannerTrajectory, FailedCandidateLeavesEmergencyBundleUnchanged) {
   position.start_WT = yaw.start_WT = 7.0;
   navigation_planning_backend::CmdTraj command;
   ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  EXPECT_TRUE(command.snapshot().emergency_brake);
   const auto generation = command.generation();
   const auto diagnostics_before = command.snapshot().diagnostics;
   const auto before = command.getPos(0.5);
@@ -1056,39 +1068,296 @@ TEST(PlannerTrajectory, FailedCandidateLeavesEmergencyBundleUnchanged) {
       diagnostics_before.candidate_start_pvaj));
 }
 
-TEST(PlannerTrajectory, CommitDiagnosticsDescribeExactOldToNewSplice) {
+TEST(PlannerTrajectory, DiscontinuousOldToNewSpliceIsRejected) {
+  auto first_position = linearTrajectory(1.0, 10.0);
+  auto first_yaw = linearTrajectory(1.0, 10.0);
+  const auto make_bundle = [&](const auto& position, const auto& yaw,
+                               const std::uint64_t generation,
+                               const navigation_planning::CandidateRole candidate_role =
+                                   navigation_planning::CandidateRole::kMain) {
+    navigation_planning::CandidateBundle bundle;
+    bundle.pinned_world_identity = {1U, 1U, 1U, 1};
+    bundle.world_identity = bundle.pinned_world_identity;
+    bundle.localization_epoch = 1U;
+    bundle.goal_epoch = 1U;
+    bundle.request_id = 1U;
+    bundle.bundle_generation = generation;
+    bundle.start_wall_time_s = position.start_WT;
+    bundle.duration_s = position.getTotalDuration();
+    bundle.declared_start_ns =
+        navigation_common::secondsToNanoseconds(bundle.start_wall_time_s).value();
+    bundle.declared_end_ns = navigation_common::secondsSumToNanoseconds(
+        bundle.start_wall_time_s, bundle.duration_s).value();
+    bundle.valid_from_ns = bundle.declared_start_ns;
+    bundle.valid_until_ns = bundle.declared_end_ns;
+    bundle.role = candidate_role;
+    bundle.kind = candidate_role == navigation_planning::CandidateRole::kEmergency
+        ? navigation_planning::CandidateBundleKind::kEmergencyBrake
+        : navigation_planning::CandidateBundleKind::kTerminalStop;
+    bundle.source = navigation_planning::CandidateSource::kRefined;
+    bundle.certificates = {true, true, true, true};
+    bundle.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+    bundle.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+    bundle.role_schedule = {{0.0, bundle.duration_s,
+                             navigation_planning::CandidateRole::kMain}};
+    const auto start_ns = bundle.declared_start_ns;
+    const auto end_ns = bundle.declared_end_ns;
+    bundle.evaluator = [position, yaw, start_ns, end_ns, candidate_role](
+                           const std::int64_t stamp_ns,
+                           navigation_planning::TrajectoryPoint& point) {
+      if (stamp_ns < start_ns || stamp_ns > end_ns) return false;
+      const double trajectory_time_s = std::clamp(
+          static_cast<double>(stamp_ns - start_ns) / 1.0e9,
+          0.0, position.getTotalDuration());
+      const auto pvaj = position.getState(trajectory_time_s);
+      const auto yaw_state = yaw.getState(trajectory_time_s);
+      if (!pvaj.allFinite() || !yaw_state.allFinite()) return false;
+      point.position_world = pvaj.col(0);
+      point.velocity_world = pvaj.col(1);
+      point.acceleration_world = pvaj.col(2);
+      point.jerk_world = pvaj.col(3);
+      point.yaw = yaw_state(0, 0);
+      point.yaw_rate = yaw_state(0, 1);
+      point.role = candidate_role;
+      point.trajectory_time_s = trajectory_time_s;
+      return true;
+    };
+    return bundle;
+  };
+  auto second_position = linearTrajectory(1.0, 10.5);
+  auto second_yaw = linearTrajectory(1.0, 10.5);
+  const auto first = make_bundle(first_position, first_yaw, 1U);
+  const auto second = make_bundle(second_position, second_yaw, 2U);
+  EXPECT_FALSE(navigation_planning::candidateBundleHandoffContinuous(first, second));
+}
+
+TEST(PlannerTrajectory, ExpiredEmergencyMayRebaseOnlyAfterCertifiedStop) {
+  auto emergency_position = linearTrajectory(1.0, 10.0);
+  auto emergency_yaw = linearTrajectory(1.0, 10.0);
+  auto next_position = linearTrajectory(1.0, 10.0);
+  auto next_yaw = linearTrajectory(1.0, 10.0);
+  next_position.start_WT = next_yaw.start_WT = emergency_position.start_WT +
+      emergency_position.getTotalDuration() + 0.5;
+  const auto make_bundle = [&](const auto& position, const auto& yaw,
+                               const std::uint64_t generation,
+                               const navigation_planning::CandidateRole candidate_role) {
+    navigation_planning::CandidateBundle bundle;
+    bundle.pinned_world_identity = {1U, 1U, 1U, 1};
+    bundle.world_identity = bundle.pinned_world_identity;
+    bundle.localization_epoch = 1U;
+    bundle.goal_epoch = 1U;
+    bundle.request_id = 1U;
+    bundle.bundle_generation = generation;
+    bundle.start_wall_time_s = position.start_WT;
+    bundle.duration_s = position.getTotalDuration();
+    bundle.declared_start_ns =
+        navigation_common::secondsToNanoseconds(bundle.start_wall_time_s).value();
+    bundle.declared_end_ns = navigation_common::secondsSumToNanoseconds(
+        bundle.start_wall_time_s, bundle.duration_s).value();
+    bundle.valid_from_ns = bundle.declared_start_ns;
+    bundle.valid_until_ns = bundle.declared_end_ns;
+    bundle.role = candidate_role;
+    bundle.kind = candidate_role == navigation_planning::CandidateRole::kEmergency
+        ? navigation_planning::CandidateBundleKind::kEmergencyBrake
+        : navigation_planning::CandidateBundleKind::kTerminalStop;
+    bundle.source = navigation_planning::CandidateSource::kRefined;
+    bundle.certificates = {true, true, true, true};
+    bundle.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+    bundle.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+    bundle.role_schedule = {{0.0, bundle.duration_s, candidate_role}};
+    const auto start_ns = bundle.declared_start_ns;
+    const auto end_ns = bundle.declared_end_ns;
+    bundle.evaluator = [position, yaw, start_ns, end_ns, candidate_role](
+                           const std::int64_t stamp_ns,
+                           navigation_planning::TrajectoryPoint& point) {
+      if (stamp_ns < start_ns || stamp_ns > end_ns) return false;
+      const double trajectory_time_s = std::clamp(
+          static_cast<double>(stamp_ns - start_ns) / 1.0e9,
+          0.0, position.getTotalDuration());
+      const auto pvaj = position.getState(trajectory_time_s);
+      const auto yaw_state = yaw.getState(trajectory_time_s);
+      if (!pvaj.allFinite() || !yaw_state.allFinite()) return false;
+      point.position_world = pvaj.col(0);
+      point.velocity_world = pvaj.col(1);
+      point.acceleration_world = pvaj.col(2);
+      point.jerk_world = pvaj.col(3);
+      point.yaw = yaw_state(0, 0);
+      point.yaw_rate = yaw_state(0, 1);
+      point.role = candidate_role;
+      point.trajectory_time_s = trajectory_time_s;
+      return true;
+    };
+    return bundle;
+  };
+  const auto make_bundle_with_kind = [&](const auto& position, const auto& yaw,
+                                         const auto kind, const auto role,
+                                         const std::uint64_t generation) {
+    auto bundle = make_bundle(position, yaw, generation, role);
+    bundle.kind = kind;
+    bundle.role = role;
+    bundle.role_schedule = {{0.0, bundle.duration_s, role}};
+    return bundle;
+  };
+  const auto emergency = make_bundle_with_kind(
+      emergency_position, emergency_yaw,
+      navigation_planning::CandidateBundleKind::kEmergencyBrake,
+      navigation_planning::CandidateRole::kEmergency, 1U);
+  const auto next = make_bundle_with_kind(
+      next_position, next_yaw,
+      navigation_planning::CandidateBundleKind::kTerminalStop,
+      navigation_planning::CandidateRole::kMain, 2U);
+  EXPECT_FALSE(navigation_planning::candidateBundleHandoffContinuous(
+      emergency, next));
+  EXPECT_TRUE(navigation_planning::candidateBundleHandoffContinuous(
+      emergency, next, nullptr, true));
+}
+
+TEST(PlannerTrajectory, ExpiredBackupSuffixMayRebaseOnlyAfterCertifiedStop) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  position.start_WT = yaw.start_WT = 20.0;
+  const auto start_ns = navigation_common::secondsToNanoseconds(position.start_WT).value();
+  const auto end_ns = navigation_common::secondsSumToNanoseconds(
+      position.start_WT, position.getTotalDuration()).value();
+
+  navigation_planning::CandidateBundle previous;
+  previous.pinned_world_identity = {1U, 1U, 1U, 1};
+  previous.world_identity = previous.pinned_world_identity;
+  previous.localization_epoch = 1U;
+  previous.goal_epoch = 1U;
+  previous.request_id = 1U;
+  previous.bundle_generation = 1U;
+  previous.start_wall_time_s = position.start_WT;
+  previous.duration_s = position.getTotalDuration();
+  previous.declared_start_ns = start_ns;
+  previous.declared_end_ns = end_ns;
+  previous.valid_from_ns = start_ns;
+  previous.valid_until_ns = end_ns;
+  previous.role = navigation_planning::CandidateRole::kMain;
+  previous.backup_available = true;
+  previous.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  previous.certificates = {true, true, true, false};
+  previous.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  previous.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  previous.role_schedule = {
+      {0.0, 0.5, navigation_planning::CandidateRole::kMain},
+      {0.5, 1.0, navigation_planning::CandidateRole::kBackup}};
+  previous.evaluator = [start_ns, end_ns](const std::int64_t stamp_ns,
+                                          navigation_planning::TrajectoryPoint& point) {
+    if (stamp_ns < start_ns || stamp_ns > end_ns) return false;
+    point.position_world = Eigen::Vector3d::Zero();
+    point.velocity_world = Eigen::Vector3d::Zero();
+    point.acceleration_world = Eigen::Vector3d::Zero();
+    point.jerk_world = Eigen::Vector3d::Zero();
+    point.yaw = 0.0;
+    point.yaw_rate = 0.0;
+    point.trajectory_time_s = static_cast<double>(stamp_ns - start_ns) * 1.0e-9;
+    point.role = point.trajectory_time_s >= 0.5
+        ? navigation_planning::CandidateRole::kBackup
+        : navigation_planning::CandidateRole::kMain;
+    return true;
+  };
+
+  auto next = previous;
+  next.bundle_generation = 2U;
+  next.start_wall_time_s = position.start_WT + position.getTotalDuration() + 0.25;
+  next.declared_start_ns = navigation_common::secondsToNanoseconds(
+      next.start_wall_time_s).value();
+  next.declared_end_ns = navigation_common::secondsSumToNanoseconds(
+      next.start_wall_time_s, next.duration_s).value();
+  next.valid_from_ns = next.declared_start_ns;
+  next.valid_until_ns = next.declared_end_ns;
+  next.role = navigation_planning::CandidateRole::kMain;
+  next.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  next.backup_available = false;
+  next.certificates = {true, true, true, true};
+  const auto next_start_ns = next.declared_start_ns;
+  const auto next_end_ns = next.declared_end_ns;
+  next.role_schedule = {{0.0, next.duration_s,
+                         navigation_planning::CandidateRole::kMain}};
+  next.evaluator = [next_start_ns, next_end_ns](
+      const std::int64_t stamp_ns, navigation_planning::TrajectoryPoint& point) {
+    if (stamp_ns < next_start_ns || stamp_ns > next_end_ns) return false;
+    point.position_world = Eigen::Vector3d{5.0, 0.0, 0.0};
+    point.velocity_world = Eigen::Vector3d::Zero();
+    point.acceleration_world = Eigen::Vector3d::Zero();
+    point.jerk_world = Eigen::Vector3d::Zero();
+    point.yaw = 0.0;
+    point.yaw_rate = 0.0;
+    point.trajectory_time_s = static_cast<double>(stamp_ns - next_start_ns) * 1.0e-9;
+    point.role = navigation_planning::CandidateRole::kMain;
+    return true;
+  };
+
+  EXPECT_FALSE(navigation_planning::candidateBundleHandoffContinuous(
+      previous, next));
+  EXPECT_TRUE(navigation_planning::candidateBundleHandoffContinuous(
+      previous, next, nullptr, true));
+
+  auto terminal = previous;
+  terminal.bundle_generation = 3U;
+  terminal.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  terminal.backup_available = false;
+  terminal.role_schedule = {{0.0, terminal.duration_s,
+                             navigation_planning::CandidateRole::kMain}};
+  terminal.evaluator = [start_ns, end_ns](
+      const std::int64_t stamp_ns, navigation_planning::TrajectoryPoint& point) {
+    if (stamp_ns < start_ns || stamp_ns > end_ns) return false;
+    point.position_world = Eigen::Vector3d::Zero();
+    point.velocity_world = Eigen::Vector3d::Zero();
+    point.acceleration_world = Eigen::Vector3d::Zero();
+    point.jerk_world = Eigen::Vector3d::Zero();
+    point.yaw = 0.0;
+    point.yaw_rate = 0.0;
+    point.trajectory_time_s = static_cast<double>(stamp_ns - start_ns) * 1.0e-9;
+    point.role = navigation_planning::CandidateRole::kMain;
+    return true;
+  };
+  terminal.terminal_stop = true;
+  terminal.certificates.terminal_stop = true;
+  EXPECT_TRUE(navigation_planning::candidateBundleHandoffContinuous(
+      terminal, next, nullptr, true));
+}
+
+TEST(PlannerTrajectory, CommitDiagnosticsDescribeExactContinuousOldToNewSplice) {
   auto first_position = linearTrajectory(1.0, 10.0);
   auto first_yaw = linearTrajectory(1.0, 10.0);
   navigation_planning_backend::CmdTraj command;
-  ASSERT_TRUE(command.setEmergencyBackup(first_position, first_yaw));
-  auto first = command.snapshot();
-  EXPECT_EQ(first.generation, 1U);
-  EXPECT_EQ(first.diagnostics.generation, first.generation);
-  EXPECT_EQ(first.diagnostics.previous_generation, 0U);
-  EXPECT_FALSE(first.diagnostics.previous_valid);
-  EXPECT_TRUE(first.diagnostics.candidate_start_pvaj.isApprox(
-      first_position.getState(0.0)));
+  navigation_planning_backend::CommandCertificate certificate;
+  certificate.pinned_world = {1U, 1U, 1U, 1};
+  certificate.validated_world = certificate.pinned_world;
+  certificate.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  certificate.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  const auto make_candidate = [&](const auto& position, const auto& yaw) {
+    navigation_planning_backend::CandidateCommandBundle candidate;
+    candidate.position = position;
+    candidate.yaw = yaw;
+    candidate.start_wall_time = position.start_WT;
+    candidate.roles = {{0.0, position.getTotalDuration(),
+                        navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+    candidate.backup_start_tt = position.getTotalDuration();
+    candidate.backup_disposition = navigation_planning_backend::BackupDisposition::NO_NEED;
+    candidate.localization_epoch = 1U;
+    candidate.goal_epoch = 1U;
+    candidate.request_id = 1U;
+    return candidate;
+  };
+  ASSERT_TRUE(command.commitCandidate(
+      make_candidate(first_position, first_yaw), certificate));
 
-  auto second_position = linearTrajectory(1.0, 10.5);
-  auto second_yaw = linearTrajectory(1.0, 10.5);
-  ASSERT_TRUE(command.setEmergencyBackup(second_position, second_yaw));
+  auto second_position = offsetLinearTrajectory(1.0, 10.5, 0.5);
+  auto second_yaw = offsetLinearTrajectory(1.0, 10.5, 0.5);
+  ASSERT_TRUE(command.commitCandidate(
+      make_candidate(second_position, second_yaw), certificate));
   const auto second = command.snapshot();
   ASSERT_EQ(second.generation, 2U);
-  EXPECT_EQ(second.diagnostics.generation, second.generation);
-  EXPECT_EQ(second.diagnostics.previous_generation, first.generation);
   EXPECT_TRUE(second.diagnostics.previous_valid);
   EXPECT_DOUBLE_EQ(second.diagnostics.previous_sample_tt, 0.5);
-  EXPECT_TRUE(second.diagnostics.previous_pvaj.isApprox(
-      first_position.getState(0.5)));
-  EXPECT_TRUE(second.diagnostics.position_residual.isApprox(
-      second_position.getPos(0.0) - first_position.getPos(0.5)));
-  EXPECT_TRUE(second.diagnostics.velocity_residual.isApprox(
-      second_position.getVel(0.0) - first_position.getVel(0.5)));
-  EXPECT_TRUE(second.diagnostics.acceleration_residual.isApprox(
-      second_position.getAcc(0.0) - first_position.getAcc(0.5)));
-  EXPECT_TRUE(second.diagnostics.jerk_residual.isApprox(
-      second_position.getJer(0.0) - first_position.getJer(0.5)));
-  EXPECT_NEAR(second.diagnostics.yaw_residual, -0.5, 1.0e-12);
+  EXPECT_TRUE(second.diagnostics.position_residual.isZero(1.0e-12));
+  EXPECT_TRUE(second.diagnostics.velocity_residual.isZero(1.0e-12));
+  EXPECT_TRUE(second.diagnostics.acceleration_residual.isZero(1.0e-12));
+  EXPECT_TRUE(second.diagnostics.jerk_residual.isZero(1.0e-12));
+  EXPECT_NEAR(second.diagnostics.yaw_residual, 0.0, 1.0e-12);
 }
 
 TEST(PlannerTrajectory, CommitDiagnosticsClampPriorSampleAtFinishedEnd) {
@@ -1367,6 +1636,10 @@ TEST(PlannerTrajectory, ExpOnlyDispositionsAndEmergencyPreserveProvenance) {
   ASSERT_TRUE(emergency);
   EXPECT_EQ(emergency->backup_disposition,
             navigation_planning_backend::BackupDisposition::EMERGENCY);
+  // A safety brake is not a nominal mission terminal STOP. Runtime must
+  // replan the active waypoint after the measured stop instead of treating
+  // an endpoint inside the acceptance ball as waypoint completion.
+  EXPECT_FALSE(emergency->terminal_stop);
   ASSERT_EQ(emergency->roles.size(), 1U);
   EXPECT_EQ(emergency->roles.front().role,
             navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
@@ -1790,7 +2063,8 @@ TEST(PlannerTrajectory, MinimumJerkForwardYawStopHasPhysicalAccelerationPeak) {
 navigation_mission::ImmutableRouteSnapshot makeStraightActiveRouteSnapshot(
     const Eigen::Vector3d& start_position = Eigen::Vector3d{0.0, 0.0, 3.0},
     const Eigen::Vector3d& active_position = Eigen::Vector3d{20.0, 0.0, 3.0},
-    const Eigen::Vector3d& measured_position = Eigen::Vector3d{5.0, 0.0, 3.0}) {
+    const Eigen::Vector3d& measured_position = Eigen::Vector3d{5.0, 0.0, 3.0},
+    const bool active_stop = false) {
   navigation_mission::Mission mission;
   mission.id = "route-regression-test";
   mission.frame = "lio_odom";
@@ -1800,6 +2074,10 @@ navigation_mission::ImmutableRouteSnapshot makeStraightActiveRouteSnapshot(
   navigation_mission::MissionWaypoint active;
   active.id = "active";
   active.position_enu = active_position;
+  active.behavior = active_stop
+      ? navigation_mission::MissionWaypoint::Behavior::Stop
+      : navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  active.acceptance_radius_m = 0.5;
   mission.waypoints = {start, active};
   navigation_mission::RouteProgress progress(mission);
   const auto measured = progress.update(measured_position);
@@ -1943,6 +2221,30 @@ TEST(PlannerTrajectory, MainRouteRegressionCertificateRejectsFoldAfterCorner) {
   EXPECT_TRUE(certificate.applicable);
   EXPECT_FALSE(certificate.valid);
   EXPECT_NEAR(certificate.maximum_regression_m, 4.0, 1.0e-9);
+}
+
+TEST(PlannerTrajectory, BoundedTerminalStopRecoveryDoesNotUseRouteFoldGate) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
+  // Start just outside the STOP acceptance ball, then return into it while
+  // the route-progress coordinate decreases. This is the bounded correction
+  // produced after an emergency stop overshoots the checkpoint.
+  coefficients.row(0) << -3.7, 3.6, 19.6;
+  coefficients(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 1.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  candidate.terminal_stop = true;
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate,
+      makeStraightActiveRouteSnapshot(
+          Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{20.0, 0.0, 3.0},
+          Eigen::Vector3d{19.5, 0.0, 3.0}, true),
+      0.0, 0.5, true);
+  EXPECT_FALSE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
 }
 
 TEST(PlannerTrajectory, SemanticYawUsesForwardStoppingDisplacementForBackupHold) {

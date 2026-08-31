@@ -80,6 +80,7 @@ class MissionController final {
   [[nodiscard]] bool terminalHoldPending() const;
   [[nodiscard]] double acceptanceSpeedMps() const;
   [[nodiscard]] navigation_mission::ImmutableRouteSnapshot routeSnapshot() const;
+  [[nodiscard]] bool activePassThroughHasCoincidentStop() const;
 
  private:
   static constexpr double kSafetyStopSpeedMps = 0.15;

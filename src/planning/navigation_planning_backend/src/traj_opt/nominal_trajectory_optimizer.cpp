@@ -1765,9 +1765,13 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             diagnostics_.retry_stop_reason = 2;
             diagnostics_.final_normalized_dynamic_violation =
                     std::numeric_limits<double>::infinity();
+            // Cancellation is a solver termination, not permission to erase
+            // the last finite candidate.  Restore it and let the common
+            // post-solve selection path choose the independently certified
+            // seed when the restored retry iterate is not hard-feasible.
             restore_best_candidate();
-            traj.clear();
-            return INFINITY;
+            ret = -1;
+            break;
         }
         // Hitting the explicit iteration bound yields a finite candidate that
         // still requires every hard gate.  Keep the raw solver result in
