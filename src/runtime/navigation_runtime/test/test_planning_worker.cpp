@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "navigation_runtime/planning_supervisor.hpp"
 #include "navigation_runtime/planning_worker.hpp"
@@ -217,6 +218,34 @@ TEST(PlanningWorker, RejectsLowerPriorityWhileHigherPriorityIsInflight) {
   gate.release();
   worker.shutdown();
   EXPECT_EQ(worker.snapshot().rejected_lower_priority, 1U);
+}
+
+TEST(PlanningWorker, ConcurrentSubmittersKeepBoundedOwnership) {
+  auto planner = std::make_unique<FakePlanner>();
+  PlanningWorker<FakePlanner> worker(std::move(planner));
+  worker.start();
+  constexpr int kSubmitterCount = 4;
+  constexpr int kSubmitsPerThread = 32;
+  std::vector<std::thread> submitters;
+  submitters.reserve(kSubmitterCount);
+  for (int thread_index = 0; thread_index < kSubmitterCount; ++thread_index) {
+    submitters.emplace_back([&worker, thread_index] {
+      for (int index = 0; index < kSubmitsPerThread; ++index) {
+        const auto request_id = static_cast<std::uint64_t>(
+            100 + thread_index * kSubmitsPerThread + index);
+        (void)worker.submit(
+            makeKey(request_id), PlanningPriority::kNormalRenewal,
+            [](FakePlanner&, std::stop_token) {});
+      }
+    });
+  }
+  for (auto& submitter : submitters) submitter.join();
+  worker.shutdown();
+  const auto snapshot = worker.snapshot();
+  EXPECT_FALSE(snapshot.fatal);
+  EXPECT_FALSE(snapshot.in_flight);
+  EXPECT_FALSE(snapshot.pending);
+  EXPECT_GT(snapshot.started, 0U);
 }
 
 }  // namespace

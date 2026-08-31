@@ -5,8 +5,11 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
 
+#include <navigation_contracts/msg/navigation_goal.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/planner_status.hpp>
 #include <navigation_planning/planning_timing.hpp>
@@ -14,17 +17,95 @@
 
 namespace navigation_runtime {
 
+// Small sole-owner model for the runtime's single pending request. It makes
+// callback/promotion interleavings explicit: enqueue and promote are each
+// linearizable operations under the caller's input/transition critical
+// section, and promotion consumes the newest request exactly once.
+class PendingGoalHandoffOwner {
+ public:
+  using GoalConstPtr = navigation_contracts::msg::NavigationGoal::ConstSharedPtr;
+
+  // The owner stores one immutable message, not a parallel identity and
+  // message optional.  The caller must hold the runtime input/transition
+  // transaction while deciding suffix ownership and invoking this method.
+  bool enqueueGoal(const GoalConstPtr& candidate,
+                  const std::optional<navigation_contracts::msg::NavigationGoal>& active,
+                  bool safety_suffix_active) {
+    if (!safety_suffix_active || !candidate || !active.has_value() ||
+        candidate->mission_id != active->mission_id ||
+        !goalMessageNewer(*candidate, *active)) return false;
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    if (pending_goal_ && !goalMessageNewer(*candidate, *pending_goal_)) {
+      return false;
+    }
+    pending_goal_ = candidate;
+    return true;
+  }
+
+  [[nodiscard]] GoalConstPtr promoteGoal(bool certified_stop_observed) {
+    if (!certified_stop_observed) return {};
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    if (!pending_goal_) return {};
+    auto result = pending_goal_;
+    pending_goal_.reset();
+    return result;
+  }
+
+  [[nodiscard]] GoalConstPtr goalSnapshot() const {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    return pending_goal_;
+  }
+
+  [[nodiscard]] bool goalMatchesStatus(
+      const std::string& mission_id, std::uint32_t waypoint_index,
+      std::uint64_t request_id) const {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    return pending_goal_ && pending_goal_->mission_id == mission_id &&
+           pending_goal_->waypoint_index == waypoint_index &&
+           pending_goal_->request_id == request_id;
+  }
+
+  void clearGoal() {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    pending_goal_.reset();
+  }
+
+ private:
+  static bool goalMessageNewer(
+      const navigation_contracts::msg::NavigationGoal& candidate,
+      const navigation_contracts::msg::NavigationGoal& current) noexcept {
+    if (candidate.mission_id != current.mission_id) return false;
+    if (candidate.request_id != current.request_id) {
+      return candidate.request_id > current.request_id;
+    }
+    if (candidate.waypoint_index != current.waypoint_index) {
+      return candidate.waypoint_index > current.waypoint_index;
+    }
+    return candidate.route.route_revision > current.route.route_revision;
+  }
+
+  mutable std::mutex goal_mutex_;
+  GoalConstPtr pending_goal_;
+};
+
 inline bool canHotRetargetAtWaypointTransition(
     bool same_logical_goal, bool previous_goal_was_pass_through,
     bool command_available, bool planner_failure_latched, bool safety_suffix_active) {
   // A committed safety suffix is a world-certified braking command, not a
-  // goal-geometry claim. At a measured pass-through transition it may retain
-  // physical command ownership while the exact bundle identity is rebound to
-  // the new epoch. It remains safety-owned and finite; the planner must still
-  // replace it with a new-goal candidate before its declared end.
-  (void)safety_suffix_active;
+  // goal-geometry claim. It cannot be rebound to a new goal: doing so would
+  // let a new nominal solve relabel a moving BACKUP/EMERGENCY command as
+  // TrackMain before certified stop/handover. Defer the retarget until the
+  // suffix reaches a certified stop (or fail closed if it cannot).
   return !same_logical_goal && previous_goal_was_pass_through && command_available &&
-         !planner_failure_latched;
+         !planner_failure_latched && !safety_suffix_active;
+}
+
+inline bool watchdogTimeoutMayRetainSafetySuffix(
+    ExecutionRecoveryState state, bool command_available,
+    bool safety_suffix_active) noexcept {
+  const bool safety_state = state == ExecutionRecoveryState::kTrackBackup ||
+                            state == ExecutionRecoveryState::kEmergencyBrake;
+  return safety_state && command_available && safety_suffix_active;
 }
 
 // A hot-retarget flag authorizes exactly one forced solve for the new
@@ -205,6 +286,11 @@ inline RetainedValidationTransition retainedValidationTransition(bool usable) no
 // certificate, constructing another brake from the newly drifting state every
 // planner tick resets deceleration indefinitely. A later certified MAIN may
 // start a new episode; an unusable emergency must fail closed to PX4 Hold.
+// A projected crossing is an early warning for scheduling/diagnostics only.
+// It must not replace a currently valid command: the next validation tick
+// still observes the actual anchor and applies the unchanged hard boundary.
+// This keeps a transient velocity mismatch from braking a vehicle that is
+// still inside its certified tracking tube.
 inline bool measuredStateEmergencyMayReplaceCommittedCommand(
     bool validate_without_new_commit, bool committed_suffix_usable,
     bool fresh_vehicle_state, bool committed_command_available,
@@ -216,6 +302,21 @@ inline bool measuredStateEmergencyMayReplaceCommittedCommand(
          command_anchor_valid && tracking_certificate_exceeded &&
          recovery_state == ExecutionRecoveryState::kTrackMain &&
          committed_role != navigation_planning::CandidateRole::kEmergency;
+}
+
+// Propagated odometry currently carries acceleration and jerk only as runtime
+// finite-difference estimates. They are diagnostic values, not measured
+// command-boundary derivatives. A measured-state emergency handover must
+// preserve P/V and attitude while dropping estimated A/J; otherwise a noisy
+// derivative can make the command-continuous brake polynomial infeasible
+// before its independent dynamic certificate runs.
+inline navigation_planning::TrajectoryPoint makeMeasuredEmergencyBoundary(
+    const navigation_planning::TrajectoryPoint& source,
+    const bool acceleration_estimated, const bool jerk_estimated) noexcept {
+  auto boundary = source;
+  if (acceleration_estimated) boundary.acceleration_world.setZero();
+  if (jerk_estimated) boundary.jerk_world.setZero();
+  return boundary;
 }
 
 // Only a STOP waypoint owns a terminal endpoint hold.  A PASS_THROUGH endpoint
@@ -235,9 +336,10 @@ inline bool terminalHoldIsPending(
 // the measured waypoint handoff.  STOP remains terminal and a frontier
 // trajectory follows the existing non-goal completion path.
 inline bool completedPassThroughRequiresContinuation(
-    bool trajectory_completed, bool endpoint_reaches_goal,
-    bool pass_through_waypoint) noexcept {
-  return trajectory_completed && endpoint_reaches_goal && pass_through_waypoint;
+    bool trajectory_completed, bool endpoint_valid,
+    bool pass_through_waypoint, bool has_outgoing_route) noexcept {
+  return trajectory_completed && endpoint_valid && pass_through_waypoint &&
+         has_outgoing_route;
 }
 
 // A finite PASS_THROUGH waypoint is meaningful only when the immutable route
@@ -376,6 +478,16 @@ inline PlannerResultDisposition classifyPlannerResult(
   // certified source while the replacement is retried. Revalidate/retain it
   // before charging the no-command PlanFromRest failure budget.
   if (result == navigation_planning::PlannerStatus::kFailed && command_available) {
+    return PlannerResultDisposition::RetainCommittedCommand;
+  }
+  // A backend EMERGENCY result means that nominal hot replanning cannot
+  // continue. If a previously committed command still exists, route the
+  // result through the same retained-command validation and one-shot measured
+  // emergency-brake path. That path remains fail-closed when freshness,
+  // clearance, anchor, or brake certification is unavailable. Dropping
+  // directly to PX4 Hold here would skip the bounded recovery transition.
+  if (result == navigation_planning::PlannerStatus::kEmergency &&
+      command_available) {
     return PlannerResultDisposition::RetainCommittedCommand;
   }
   // planner backend's native FSM retries a failed rest-to-rest solve when no

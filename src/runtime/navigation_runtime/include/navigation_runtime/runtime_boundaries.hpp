@@ -35,6 +35,15 @@ inline std::optional<std::chrono::nanoseconds> ratePeriodNanoseconds(
   return std::chrono::nanoseconds{static_cast<std::int64_t>(period_ns)};
 }
 
+inline bool plannerPeriodCoversSolveBudget(
+    const double planner_rate_hz, const double solve_deadline_s) noexcept {
+  if (!std::isfinite(planner_rate_hz) || planner_rate_hz <= 0.0 ||
+      !std::isfinite(solve_deadline_s) || solve_deadline_s <= 0.0) {
+    return false;
+  }
+  return solve_deadline_s < 1.0 / planner_rate_hz;
+}
+
 inline std::optional<std::size_t> boundedTrajectorySampleCount(
     const double duration_s, const double sample_period_s,
     const std::size_t maximum_points) noexcept {

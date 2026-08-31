@@ -16,6 +16,7 @@
   <depend>diagnostic_msgs</depend>
   <depend>navigation_contracts</depend>
   <depend>nav_msgs</depend>
+  <depend>px4_msgs</depend>
   <depend>px4_ros2_cpp</depend>
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>

@@ -106,6 +106,11 @@ struct CandidateBundle {
   // checks. The evaluator remains the only source for a sampled point.
   double start_wall_time_s{std::numeric_limits<double>::quiet_NaN()};
   double duration_s{std::numeric_limits<double>::quiet_NaN()};
+  // Producer-owned integer wall-clock declaration. When present, endpoint
+  // checks use this exact nanosecond boundary rather than re-rounding two
+  // independently represented doubles at the consumer.
+  std::int64_t declared_start_ns{0};
+  std::int64_t declared_end_ns{0};
   double backup_start_time_s{std::numeric_limits<double>::quiet_NaN()};
   bool backup_available{false};
   CandidateBundleKind kind{CandidateBundleKind::kTerminalStop};
@@ -141,12 +146,38 @@ struct CandidateBundle {
         trajectory_time_s < 0.0 || trajectory_time_s > duration_s + 1.0e-9) {
       return std::nullopt;
     }
+    // Role boundaries are part of the integer timestamp contract.  Rounding
+    // both the sampled local time and interval offsets avoids reintroducing
+    // epoch-scale cancellation through a second, double-only boundary test.
+    const auto to_offset_ns = [](const double seconds) -> std::optional<std::int64_t> {
+      if (!std::isfinite(seconds) || seconds < 0.0) return std::nullopt;
+      const long double rounded = std::round(
+          static_cast<long double>(seconds) * 1.0e9L);
+      if (!std::isfinite(rounded) ||
+          rounded > static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+        return std::nullopt;
+      }
+      return static_cast<std::int64_t>(rounded);
+    };
+    const auto sample_ns = to_offset_ns(trajectory_time_s);
+    if (!sample_ns) return std::nullopt;
     for (const auto& interval : role_schedule) {
-      if (trajectory_time_s >= interval.begin_time_s &&
-          (trajectory_time_s < interval.end_time_s ||
-           std::abs(trajectory_time_s - duration_s) <= 1.0e-9)) {
+      const auto begin_ns = to_offset_ns(interval.begin_time_s);
+      const auto end_ns = to_offset_ns(interval.end_time_s);
+      if (begin_ns && end_ns && *sample_ns >= *begin_ns &&
+          *sample_ns < *end_ns) {
         return interval.role;
       }
+    }
+    // The half-open intervals deliberately assign an exact internal boundary
+    // to the following role. At the declared end there is no following
+    // interval, so select the final producer-declared role explicitly. The
+    // previous endpoint clause returned the first interval at every endpoint,
+    // rejecting valid MainWithBackup samples when the evaluator correctly
+    // emitted BACKUP at the final instant.
+    const auto duration_ns = to_offset_ns(duration_s);
+    if (duration_ns && *sample_ns == *duration_ns) {
+      return role_schedule.back().role;
     }
     return std::nullopt;
   }
@@ -173,11 +204,20 @@ struct CandidateBundle {
          role == CandidateRole::kBackup) ||
         (kind == CandidateBundleKind::kEmergencyBrake &&
          role == CandidateRole::kEmergency);
+    const bool endpoint_metadata_legacy = declared_start_ns == 0 && declared_end_ns == 0;
+    const auto expected_start_ns = navigation_common::secondsToNanoseconds(start_wall_time_s);
+    const auto expected_end_ns = navigation_common::secondsSumToNanoseconds(
+        start_wall_time_s, duration_s);
+    const bool endpoint_metadata_consistent = endpoint_metadata_legacy ||
+        (declared_start_ns > 0 && declared_end_ns >= declared_start_ns &&
+         expected_start_ns.has_value() && expected_end_ns.has_value() &&
+         declared_start_ns == *expected_start_ns && declared_end_ns == *expected_end_ns);
     return localization_epoch != 0 && goal_epoch != 0 && request_id != 0 &&
            bundle_generation != 0 && valid_from_ns > 0 &&
            valid_until_ns >= valid_from_ns && static_cast<bool>(evaluator) &&
            candidateRoleValid(role) && kind_contract &&
            certificates.completeFor(kind) && protected_region.valid() &&
+           endpoint_metadata_consistent &&
            roleScheduleValid() && (!quality || quality->finite()) &&
            pinned_world_identity.localization_epoch == localization_epoch &&
            pinned_world_identity.generation != 0 &&
@@ -226,8 +266,9 @@ struct CandidateBundle {
   // executable validity interval used by sample().
   [[nodiscard]] std::optional<TrajectoryPoint> sampleAtDeclaredEnd() const {
     if (!valid() || !hasDeclaredEndpointMetadata()) return std::nullopt;
-    const auto end_stamp_ns = navigation_common::secondsSumToNanoseconds(
-        start_wall_time_s, duration_s);
+    const auto end_stamp_ns = declared_end_ns > 0
+        ? std::optional<std::int64_t>{declared_end_ns}
+        : navigation_common::secondsSumToNanoseconds(start_wall_time_s, duration_s);
     if (!end_stamp_ns || *end_stamp_ns <= 0) {
       return std::nullopt;
     }

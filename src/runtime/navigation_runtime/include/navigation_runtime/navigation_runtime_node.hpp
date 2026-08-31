@@ -185,6 +185,14 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   void onPropagatedOdometry(
       const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message);
   void onGoal(const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message);
+  // Caller owns input_mutex_. This is the sole goal-transition implementation;
+  // promotion and the ROS callback therefore share one linearization path.
+  void applyValidatedGoalLocked(
+      const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message,
+      bool execution_transition_held = false);
+  // Caller holds input_mutex_ and transitionMutex() in that order.
+  void transitionForeignMissionLocked(bool defer_until_certified_stop);
+  bool consumeForeignMissionCancelIfCurrent();
   void onModeStatus(
       const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message);
   void schedulePlanningCycle();
@@ -246,6 +254,20 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::mutex localization_transition_mutex_;
   navigation_execution::ExecutionStateStore execution_state_store_;
   std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;
+  // Sole runtime owner for a goal published while a moving BACKUP/EMERGENCY
+  // suffix owns execution.  Do not add another pending optional.
+  PendingGoalHandoffOwner pending_goal_owner_;
+  // Terminal status observed while the suffix is still draining. It is
+  // consumed only after certified stop and exact active-identity matching.
+  std::optional<navigation_contracts::msg::NavigationGoal> deferred_terminal_status_;
+  // A mission-id change is a control-authority violation, not an ordered goal.
+  // Defer the fail-closed Hold transition until measured stop so a certified
+  // moving suffix is never cut mid-flight.
+  bool foreign_mission_hold_after_stop_{false};
+  std::atomic_bool foreign_mission_cancel_pending_{false};
+  std::uint64_t foreign_cancel_target_epoch_{0U};
+  std::uint64_t foreign_cancel_transition_epoch_{0U};
+  std::uint64_t foreign_cancel_localization_epoch_{0U};
   std::atomic_uint64_t active_goal_epoch_{0};
   std::atomic_uint64_t active_localization_epoch_{1U};
   std::atomic_bool localization_epoch_ready_{true};
@@ -264,7 +286,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // successful PlanFromRest.  Keep that state at the ROS adapter boundary so
   // the first hot replan is not run against a trajectory that has just been
   // committed.
-  bool skip_replan_once_{false};
+  std::atomic_bool skip_replan_once_{false};
   ConsecutiveFailureBudget plan_from_rest_failure_budget_{3U};
   std::int64_t plan_from_rest_first_failure_steady_ns_{0};
   std::atomic_uint64_t stale_input_count_{0};

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace navigation_planning_backend {
 
@@ -20,6 +21,27 @@ inline CommandTrajectoryTime commandTrajectoryTime(double wall_time_s,
   const double elapsed_s = wall_time_s - start_wall_time_s;
   const bool finished = elapsed_s > duration_s;
   return {finished, finished ? duration_s : elapsed_s};
+}
+
+// Exact execution-boundary variant.  Absolute epoch seconds are not used for
+// this contract: converting a nanosecond stamp to a large double and
+// subtracting another large double loses tens to hundreds of nanoseconds.
+// Keep the delta integral until the final conversion to the small trajectory
+// clock, and clamp at the rounded declared endpoint.
+inline CommandTrajectoryTime commandTrajectoryTime(
+    const std::int64_t stamp_ns, const std::int64_t start_ns,
+    const std::int64_t end_ns, const double duration_s) noexcept {
+  if (start_ns <= 0 || end_ns < start_ns || !std::isfinite(duration_s) ||
+      duration_s < 0.0) {
+    return {};
+  }
+  const __int128 delta_ns = static_cast<__int128>(stamp_ns) -
+                            static_cast<__int128>(start_ns);
+  if (stamp_ns >= end_ns) {
+    return {stamp_ns > end_ns, duration_s};
+  }
+  const double elapsed_s = static_cast<double>(delta_ns) * 1.0e-9;
+  return {false, elapsed_s};
 }
 
 struct HotReplanWindow {

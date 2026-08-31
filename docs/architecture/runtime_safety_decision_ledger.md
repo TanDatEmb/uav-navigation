@@ -1,5 +1,331 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-08-31 - Preserve the certified safety suffix across a pass-through handoff
+
+- **Owner/status:** PX4 External Mode mission-command ingress, `IMPLEMENTED`; focused
+  command-contract tests, build, and repeated corner SITL are required before
+  qualification.
+- **Scope:** When MissionController advances a same-mission pass-through checkpoint
+  while runtime still owns the previous moving BACKUP suffix, accept only that exact
+  previous `{waypoint, request}` command identity for the existing command lease.
+  The exception is bounded by the command's existing validity window and is closed by
+  the first command for the new checkpoint. It does not relabel the suffix or change
+  planner/runtime ownership.
+- **Safety impact:** Prevents a valid, world-certified moving suffix from being
+  discarded solely because mission bookkeeping advanced before the atomic planner
+  handoff. This avoids a false stale-command handover at the unchanged `0.10 s`
+  command lease. Same-mission, adjacent-waypoint, BACKUP-role, monotonic-id,
+  finite-PVAJ, tracking, odometry, health, and world gates remain authoritative;
+  foreign missions, MAIN commands, rejected commands, wrong epochs, and non-adjacent
+  identities remain fail-closed.
+- **Evidence:** The 2026-08-31 `sanity_open` run had odometry max gap `20 ms`,
+  setpoint max gap `16 ms`, and zero native clock-gap failure, but after waypoint 1
+  acceptance the old safety suffix was rejected by the new mission identity and PX4
+  entered stale hold exactly about `0.10 s` later.
+- **Removal/review condition:** Remove if runtime and External Mode expose a single
+  atomic active-command/safety-suffix identity, or if repeated pass-through handoff
+  evidence proves no cross-boundary command loss. Re-review after changing mission
+  identity, suffix ownership, command validity, or PX4 handover semantics.
+- **Verification:** `test_navigation_command`; `make build`; repeated 5 m/s
+  pass-through corner SITL with suffix-expiry negative coverage and unchanged
+  tracking/freshness gates.
+
+### 2026-08-31 - Align LIO planner positions with the PX4 local setpoint origin
+
+- **Owner/status:** PX4 External Mode setpoint integration, `IMPLEMENTED`; focused
+  transform test, build, and repeated SITL are required before qualification.
+- **Scope:** After the mission has passed the disarmed takeoff-preparation state,
+  capture the fixed translation between `lio_odom` ENU and PX4 local NED from
+  stationary propagated-LIO and `vehicle_local_position` samples. Apply
+  it only to PX4 position setpoints; velocity and acceleration retain the fixed
+  ENU-to-NED basis transform. Invalidate the alignment on PX4 XY/Z reset-counter
+  changes and wait for a new stationary pair. The alignment is not continuously
+  fitted during flight.
+- **Safety impact:** Prevents a valid LIO-frame trajectory from being sent to a
+  different PX4 local origin when GPS and external vision are fused together.
+  Without this translation the position controller starts with an artificial
+  origin error and can fall outside the planner's unchanged tracking tube. A
+  non-finite, stale, moving, or implausibly large alignment fails closed; no
+  tracking, freshness, dynamic, clearance, or command lease gate is widened.
+- **False-accept/false-reject consequences:** A wrong stationary pair could
+  shift PX4 position setpoints, so alignment is accepted only while both sources
+  are valid and stationary and is discarded on PX4 local-frame reset. If no
+  alignment is available, position-bearing commands are rejected or terminal
+  holds use velocity-only output until the normal handover path completes.
+- **Evidence:** The 2026-08-31 `sanity_open` artifact showed propagated LIO and
+  PX4 external odometry in the expected basis while PX4 local position retained
+  a repeatable local-origin offset of approximately `0.14–0.21 m`; the run had
+  no native clock gap, but the first active trajectory began with that offset
+  and later exceeded the unchanged `0.25 m` planner anchor gate.
+- **Removal/review condition:** Remove only if the PX4 estimator contract is
+  changed to guarantee an identical local origin for planner and trajectory
+  setpoints, or if repeated A/B proves the alignment is unnecessary. Re-review
+  after any PX4 estimator aiding, local-origin reset, or frame-convention change.
+- **Verification:** `test_local_frame_alignment`; `make build`; repeated
+  `sanity_open` SITL at 1/3/5 m/s with PX4 local position, propagated odometry,
+  command transfer, and unchanged `0.25 m` tracking evidence.
+
+### 2026-08-31 - Experimental backport of PX4 POSIX lockstep signal-loss fix
+
+- **Owner/status:** PX4 integration/runtime; `EXPERIMENTAL`, applied only in the
+  separate `/home/letandat/Dev/Autopilot` working tree for SITL A/B.
+- **Scope:** Backport the upstream lockstep scheduler synchronization changes
+  corresponding to `476026afb0` and `27a21488b2`: atomic timeout state, bounded
+  wall-clock recheck, staged wakeups outside `_timed_waits_mutex`, and ordered
+  signaling lifetime protection. Only the POSIX lockstep scheduler and its
+  focused test are in scope; navigation planner, LIO, freshness, tracking and
+  qualification gates are unchanged.
+- **Safety impact:** This is a SITL synchronization correctness experiment. It
+  is intended to prevent a lost condition-variable signal or lock-order race
+  from stalling PX4/Gazebo lockstep. It does not disable lockstep, reuse stale
+  state, widen a freshness lease, or turn an infrastructure-invalid run into a
+  qualification result. A regression could cause a deadlock or timing change,
+  so the patched binary is not a qualification baseline until repeated A/B
+  evidence is complete.
+- **Evidence:** On the unpatched `release/1.17` binary, GZ-only stayed below
+  `133 ms` while standard `gz_x500` with PX4 reached `2.257 s` native `/stats`
+  gap and RTF `0.0188`; PX4-only project runs reproduced active gaps after
+  `Ready for takeoff`. The cited upstream fixes target the lockstep wait/signal
+  boundary, but they are not yet proof of this host's root cause.
+- **Removal/review condition:** Revert the experimental PX4 working-tree
+  change if focused lockstep tests fail, build/provenance cannot be reproduced,
+  or repeated clean-host A/B does not reduce active native gaps. Promote only
+  after at least 10 PX4-only runs plus bridge/full-stack regression evidence;
+  remove this ledger row when the fix is upstreamed or the experiment is
+  discarded.
+- **Verification:** `make px4_sitl_default -j2`; the focused
+  `lockstep_scheduler_test`; then repeated native-observer runs with
+  `GZ-only → PX4-only → bridge` and unchanged strict qualification gates.
+
+### 2026-08-31 - Do not use finite-difference A/J as emergency command boundaries
+
+- **Owner/status:** External Mode measured-state emergency handover, `IMPLEMENTED`;
+  focused runtime test and SITL rerun are required before qualification.
+- **Scope:** Propagated odometry currently transports position and velocity. Its
+  acceleration and jerk are finite-difference estimates. Emergency braking now
+  preserves measured-state P/V and yaw, drops only estimated A/J, and preserves
+  A/J only when an ingress explicitly marks them as measured.
+- **Safety impact:** Prevents noisy derivative estimates from making a
+  command-continuous emergency brake infeasible. The emergency candidate still
+  passes the independent dynamic, flatness, world, role, freshness, and command
+  ownership certificates; no tracking, freshness, dynamic, or clearance gate is
+  relaxed.
+- **False-accept/false-reject consequences:** Dropping estimated A/J can produce
+  a more conservative brake profile and may reject or delay a handover when the
+  resulting polynomial cannot be certified. Treating an estimate as measured
+  could create an infeasible boundary, so that path is prohibited.
+- **Evidence:** The 2026-08-31 `sanity_open` trace recorded raw estimated jerk
+  `45.41 m/s^3` while the planner bounded diagnostic jerk to `6 m/s^3`; passing
+  the raw estimate into emergency seed construction caused `no feasible PVAJ
+  stop seed`.
+- **Removal/review condition:** Revisit only when the propagated-odometry
+  contract carries independently measured acceleration and jerk with provenance
+  and timing guarantees. Any new measured interface requires a separate contract
+  and recorded-data validation.
+- **Verification:** `test_planner_fsm` emergency-boundary test; `make build`;
+  repeated `sanity_open` SITL at 1/3/5 m/s with the unchanged `0.25 m` tracking
+  gate and command/PX4/odometry evidence.
+
+### 2026-08-31 - Rebase hot replans before a future-velocity envelope expires
+
+- **Owner/status:** planner hot-replan continuity and runtime command lease,
+  `IMPLEMENTED`; focused planner test, build, and repeated SITL are required
+  before qualification.
+- **Scope:** If the current measured position remains inside the existing
+  `0.25 m` tracking tube, the measured yaw is valid and within its existing
+  budget, and the measured pose is traversable, a hot replan whose future
+  position/velocity envelope is no longer reachable explicitly rebases from
+  measured P/V. The previous command remains exposed until the new candidate is
+  fully certified and atomically committed. If the current anchor is already
+  outside the tube, the prior retain/emergency/fail-closed path is unchanged.
+- **Safety impact:** This prevents a finite retained command lease from expiring
+  while a future-velocity mismatch is recoverable at the current pose. The new
+  measured-state candidate still passes dynamic, flatness, corridor, world,
+  command freshness, identity, and execution-anchor certificates. No tracking,
+  freshness, dynamic, clearance, or command lease threshold is widened.
+- **False-accept/false-reject consequences:** A rebase can be refused when yaw,
+  traversability, current position, or compatibility evidence is invalid; the
+  system then retains only the certified command or enters PX4 Hold. A rebase
+  cannot be used after the current position has exceeded the reserved tube.
+- **Evidence:** The 2026-08-31 patched-lockstep `sanity_open` run had native
+  infrastructure `VALID`, current anchor `0.114 m`, projected position `0.187 m`,
+  but future velocity error `0.668 m/s` versus the derived `0.4 m/s` envelope.
+  The previous implementation retained the command until External Mode reported
+  `planner backend PVA command stale`.
+- **Removal/review condition:** Remove or change this transition only if a
+  measured command-to-PX4 state transfer contract replaces the current
+  acceleration-bounded envelope. Do not replace it with a relaxed anchor gate or
+  indefinite command retention.
+- **Verification:** focused `HotReplanTrackingRecovery` tests; `make build`;
+  repeated `sanity_open` at 1/3/5 m/s with command/PX4/propagated-odometry
+  continuity and unchanged `0.25 m` gate.
+
+### 2026-08-30 - Re-enter External Mode only through a confirmed stationary PX4 Hold gate
+
+- **Owner/status:** PX4 External Mode lifecycle and runtime planning generation,
+  `IMPLEMENTED`; focused unit/build evidence is required before SITL
+  qualification.
+- **Scope:** A transient propagated-state or typed-health freshness failure still
+  invalidates the command immediately and hands execution to native PX4 Hold.
+  Automatic re-entry is armed only for those state/health failures. The
+  executor observes `VehicleStatus.nav_state` directly and starts a steady-clock
+  countdown only after PX4 reports `AUTO_LOITER`. Re-entry requires the vehicle
+  to remain armed, propagated odometry and typed health to pass both source-age
+  and receive-age `0.20 s` gates, all estimator health bits to remain valid, and
+  measured speed to remain at or below `0.15 m/s` continuously for `5 s`.
+  Hold loss, stale/invalid state or health, non-finite speed, clock regression,
+  motion above the threshold, disarm, or executor deactivation resets or
+  cancels recovery. At most one automatic re-entry is permitted per executor
+  activation; a repeated state/health failure remains latched in PX4 Hold.
+  Re-entry invalidates the old command, resumes the mission
+  checkpoint, publishes a new goal/request generation, and emits stationary
+  setpoints until a newly certified complete planner bundle arrives.
+- **Safety impact:** The `0.20 s` state gate and all V/A/J, thrust, body-rate,
+  tracking, known-free, world, and command-stream gates remain unchanged.
+  Gazebo `/clock` or sensor-stream stalls cannot satisfy recovery because wall
+  receive age becomes stale and resets the stationary countdown.
+- **False-accept/false-reject consequences:** A real stationary recovery may be
+  delayed or refused by any intermittent estimator or transport gap, leading
+  to continued PX4 Hold. It cannot reuse a pre-failure bundle or resume motion
+  from measured moving state. Non-state failures remain latched in PX4 Hold and
+  require operator action.
+- **Runtime cost and evidence:** One shared `VehicleStatus` callback and a 20 Hz
+  constant-time gate check are added. The thresholds are the locked closure
+  contract, not values tuned from the current single-host SITL run. The helper
+  has boundary/reset tests; representative repeated recovery/fault SITL remains
+  required before qualification.
+- **Harness behavior:** The External Mode scenario recognizes only the typed
+  `FAILED/ODOMETRY_STALE` status as recoverable, suppresses its own mode command,
+  and waits up to `15 s` wall time for the product-owned re-entry. Other exits
+  remain immediate component failures. This timeout changes observation length,
+  not flight behavior or a safety threshold.
+  The report additionally emits `infrastructure.classification` and
+  `qualification_eligible`; any active `/clock` wall-arrival lease violation is
+  `INFRASTRUCTURE_INVALID` and can never become qualification evidence, while
+  the top-level safety verdict remains fail-closed `FAIL`.
+- **Removal/review condition:** Remove automatic re-entry if PX4 Hold identity,
+  estimator freshness, or mission checkpoint ownership can no longer be proven
+  at the executor boundary. Any faster or moving recovery requires a separate
+  measured safety decision and is outside this closure.
+- **Verification:** focused `test_navigation_command`; one `make build`; then a
+  forced receive-stall SITL showing Hold, rejected countdown during the stall,
+  five fresh stationary seconds, a new goal/request and complete bundle before
+  renewed motion.
+
+### 2026-08-30 - Remove percentage dynamic tolerance and lock product map geometry
+
+- **Owner/status:** planner physical-envelope and mapping geometry contracts,
+  `IMPLEMENTED`; focused configuration tests and the Release build are required
+  before qualification.
+- **Scope:** The removed `dynamic_limit_tolerance_ratio` key no longer has a
+  struct field, loader value, diagnostic value, YAML setting, or compatibility
+  behavior. Any stale YAML that still declares it is rejected before optimizer
+  construction. Hard V/A/J certification retains only fixed floating-point ULP
+  accounting; the `0.98` nominal optimization reserve remains a search target
+  below the physical envelope. The product evidence map and raycasting update
+  box are synchronized at requested size `50 x 50 x 8 m`; planner startup
+  validates each discretized X/Y/Z extent independently, allowing only the
+  single-cell upward rounding performed by ROG-Map. The local optimization
+  window remains `20 m`.
+- **Safety impact:** No V/A/J, thrust, body-rate, tracking, known-free,
+  freshness, or log-odds gate is relaxed. Per-axis validation prevents excess
+  extent on one map axis from masking insufficient support on another.
+- **False-accept/false-reject consequences:** Stale deployments and map/update
+  geometry drift now fail startup instead of silently changing certificate
+  support. The smaller locked map can reduce route support and governed speed;
+  existing directional, swept-world, and known-free checks must reject rather
+  than infer support outside the finite map.
+- **Runtime cost and evidence:** The checks run once during startup. The
+  `50 x 50 x 8 m` geometry is the closure contract and is not tuned from the
+  current single-host SITL run; runtime and snapshot latency distributions are
+  still required before qualification.
+- **Removal/review condition:** Change the product geometry only in a separate
+  evidence-backed decision with per-axis memory, snapshot, mapping-latency, and
+  cross-map flight distributions. Do not restore a percentage safety
+  tolerance.
+- **Verification:** focused `PlannerProductConfig` tests; `make build`; then
+  the declared repeated 1/3/5 m/s cross-map SITL matrix after the current host
+  clock-stall blocker is resolved.
+
+### 2026-08-30 - Isolate Gazebo visibility decoding behind a latest-only worker
+
+- **Owner/status:** simulated free-space evidence transport, `IMPLEMENTED`;
+  focused conversion tests and representative SITL are required before
+  qualification.
+- **Scope:** Gazebo's organized PointCloud transport preserves all `720 x 28`
+  rays: a live probe observed 6,702 finite hits, 13,432 signed-infinity
+  no-returns, and no NaNs. The visibility producer therefore subscribes to the
+  same `/lidar/points` stream as LIO instead of asking Gazebo to serialize a
+  second full LaserScan stream. Its ROS callback only replaces a shared pointer
+  in a one-slot inbox; a product-owned worker validates the immutable grid,
+  reconstructs no-return directions from the locked FOV, and publishes ROS
+  evidence. Shutdown stops and joins the worker before publisher destruction.
+  Received, replacement, published, and malformed counters are emitted.
+- **Safety impact:** Full scan validation, exact source stamp, frame, FOV,
+  range, no-return classification, deterministic endpoint cap, and valid-empty
+  publication semantics are unchanged. Overload cannot create delayed stale
+  free-space evidence; it can only replace it with a newer complete scan.
+- **False-accept/false-reject consequences:** A replaced scan may temporarily
+  reduce free-space support and therefore reject planning, but cannot mark an
+  occupied or malformed ray free. The latest scan remains independently paired
+  and freshness-checked downstream.
+- **Runtime cost and evidence:** The previous path made Gazebo serialize both
+  PointCloudPacked and LaserScan for every 20,160-ray frame, then performed the
+  full classification and reliable ROS publish on a Gazebo callback. Kernel
+  evidence recorded two `gz_visibility_bridge` teardown segfaults in `librcl`;
+  SITL clock streams simultaneously showed 0.5--1.6 s wall gaps.
+- **Removal/review condition:** Keep one Gazebo LiDAR transport stream and a
+  bounded ROS callback. Replace the worker only with measured evidence that
+  preserves latest-only ownership, explicit infinity classification,
+  valid-empty observations, and safe teardown.
+- **Verification:** `make build`; focused `visibility_cloud` tests; `sanity_open`
+  1 m/s SITL with clock/visibility replacement evidence, then 3/5 m/s.
+
+### 2026-08-30 - Isolate External Mode state reception from PX4 callback load
+
+- **Owner/status:** PX4 External Mode state/health ingestion, `IMPLEMENTED`;
+  focused build/test and representative SITL are required before qualification.
+- **Scope:** `/lio/odometry_propagated` and `/lio/health` are received by a
+  product-owned sidecar ROS node on its own single-thread executor. PX4 mode,
+  mode-executor, setpoint, command, and mission callbacks remain serialized on
+  the original single-thread executor required by `px4_ros2`. The sidecar only
+  writes the existing mutex-protected immutable state snapshots. FAST-LIO also
+  publishes a current health assessment at propagated-state cadence; its
+  correction-fresh flag is recomputed from the last accepted correction and
+  the existing bounded correction-age contract. Out-of-order health delivery
+  is ignored instead of invalidating a newer assessment.
+- **Safety impact:** A burst of PX4 callbacks can no longer delay receipt of a
+  newer propagated state past the locked `0.20 s` state lease while a current
+  command is being admitted. No freshness, tracking, dynamic, flatness, world,
+  thrust, body-rate, or command-stream threshold changes.
+- **False-accept/false-reject consequences:** Commands still fail closed when
+  either source time or steady receive time is stale. Concurrent snapshot
+  replacement cannot authorize a command because command admission and
+  setpoint sampling take the same state mutex.
+- **Runtime cost and evidence:** One additional serialized ROS executor thread
+  handles only latest-depth-one propagated state plus estimator health. The
+  first failing `sanity_open` artifact showed a fresh 20 ms source stamp but a
+  `206.978 ms` receive age and zero state callbacks after mode activation. The
+  first sidecar run accepted 58/58 commands with a 44 ms maximum odometry gap,
+  then exposed the next owner boundary: correction-cadence health reached
+  `204 ms` against the unchanged `200 ms` state-health lease. A native Gazebo
+  observer on the subsequent run measured the world clock and world statistics
+  both pausing for up to `1.45 s`, with minimum real-time factor `0.0067` and
+  no host PSI pressure. Gazebo's explicit EGL headless backend was rejected
+  after it increased the maximum world gap to `8.84 s` on this hybrid-GPU
+  host. Shadow-off, target RTF `0.4`, GameMode, CPU affinity, Ogre1, nouveau
+  offload, and reduced/split sensor grids were also measured and rejected or
+  reverted because they did not remove the freeze or destabilized LIO. The
+  `720 x 28` grid, 10 Hz rate, FOV, range, noise, collisions, world geometry,
+  target RTF `0.8`, 4 ms/200 Hz physics stepping, source world/model, and all
+  runtime gates remain unchanged.
+- **Removal/review condition:** Remove only if PX4 callback scheduling is later
+  proven to meet the state lease without the sidecar. Do not replace this with
+  a multi-thread executor for the PX4 node or increase the freshness timeout.
+- **Verification:** `make build`; focused External Mode tests; representative
+  launcher asset test; `sanity_open` SITL at 1 m/s followed by 3/5 m/s only
+  after the smoke run passes.
+
 ### 2026-08-30 - Add planning-stability qualification artifacts
 
 - **Owner/status:** runtime report, validation guide, and qualification matrix,
@@ -715,7 +1041,7 @@ and `REMOVED`. A `TEMPORARY_BYPASS` may not be closed by deleting its entry.
 | HG-014 | Typed estimator-health control gate (`SAFETY_INVARIANT`) | `TRACKING` plus navigation/covariance/observability/correction/propagation flags all true | PROVISIONAL | PX4 now consumes typed `/lio/health`; invalid health fails closed immediately, source timestamps must advance, and the message carries the latest propagated-state timestamp used as the localization-reset barrier. A false accept could expose External Mode during an invalid estimator or public-frame transition, while a false reject causes a bounded hold/handover. | Repeat typed-health negative tests, loaded SITL and recorded-data health timing; certify the typed health lease and reset barrier from repeated evidence. |
 | HG-015 | Guide-owned vertical SFC envelope (`SAFETY_INVARIANT`) | each SFC seed-line min/max Z plus one inflated-map voxel | PROVISIONAL | Intentional vertical avoidance remains owned by each collision-checked A* guide segment; MINCO cannot exploit the full rolling-map height and create an unrelated dive/climb on another segment. The scale follows map discretization and overlap is recertified after clipping, but repeated vertical-obstacle and dataset evidence is still required. | Prove vertical detours remain feasible, continuous corridor overlap is preserved, and altitude/clearance improve across repeated SITL and recorded data without optimizer starvation. |
 | HG-016 | Nominal boundary-overspeed recovery (`SAFETY_INVARIANT`) | peak no greater than measured initial speed; exact suffix below mission cap by `1.15 * jerkLimitedStopTime(initial-cap)` | PROVISIONAL | A measured state already above the nominal speed cap makes an instantaneous strict boundary impossible. MAIN now matches BACKUP ownership: it may only reduce, never worsen, that inherited overspeed and must recover on a bounded physics-derived schedule. Acceleration, jerk, corridor, flatness, world and execution gates remain unchanged. | Exercise normal, worsening and late-recovery negatives; repeat speed-cap SITL and recorded-data shadow planning, then inspect overspeed magnitude/recovery distributions before promotion. |
-| HG-017 | Pass-through safety-suffix ownership transfer (`SAFETY_INVARIANT`) | exact previous goal identity, measured pass-through transition, current command lease, unchanged world certificate and finite declared end | PROVISIONAL | A braking suffix remains a world-certified physical command when mission ownership advances to the next route checkpoint. The store may atomically rebind its goal epoch/request identity without relabeling it as MAIN, giving the new-goal solve only the suffix's existing finite recovery window. Failed identity/world/lease checks still invalidate immediately. | Exercise nominal and safety-suffix handoffs, wrong-epoch/world negative tests, repeated SITL corner transitions and suffix-expiry fail-closed behavior. |
+| HG-017 | Pass-through safety-suffix ownership transfer (`SAFETY_INVARIANT`) | exact previous goal identity, measured pass-through transition, current command lease, unchanged world certificate and finite declared end | PROVISIONAL | A braking suffix remains a world-certified physical command when mission ownership advances to the next route checkpoint. Runtime keeps the old identity until its atomic promotion; External Mode admits only the exact adjacent previous BACKUP identity during that existing validity window, then closes the handoff on the first current-goal command. Failed identity/world/lease checks still invalidate immediately. | Exercise nominal and safety-suffix handoffs, wrong-epoch/world/role/adjacency negative tests, repeated SITL corner transitions and suffix-expiry fail-closed behavior. |
 | HG-018 | Physics-derived corner route window (`SAFETY_INVARIANT`) | stopping distance plus two forward-replan intervals plus configured receding distance, bounded by certified outgoing route and planning horizon | PROVISIONAL | Genuine pass-through corners now retain a long outgoing route instead of relying only on an acceptance-ball fillet. A hard route-boundary gate still forces the nominal trajectory through the mission waypoint and all corridor, continuous V/A/J, flatness, world and execution checks remain authoritative. | Repeat 90-degree and arbitrary-bearing missions; require waypoint acceptance, longer certified command duration, reduced command starvation, no corner cutting, and bounded yaw/route regression before promotion. |
 | HG-019 | Polyline-aware MAIN route-regression certificate (`SAFETY_INVARIANT`) | exact optimizer-pinned waypoint junction selects incoming arc before the boundary and outgoing arc after it; unchanged 0.5 m per-route backtrack tolerance | PROVISIONAL | A long corner candidate is no longer measured forever on the incoming tangent. Each phase remains analytically checked at all polynomial progress extrema; a genuine fold on either leg is still rejected. If no exact pinned junction exists, the certificate retains the conservative incoming-segment behavior. | Exercise arbitrary bearings, shallow and 90/180-degree boundaries, overlapping routes and candidates with multiple role intervals; compare reject reasons against repeated SITL trajectories. |
 | HG-020 | Cruise-envelope pass-through window (`SAFETY_INVARIANT`) | jerk-limited stopping/replan/receding distance evaluated at the mission maximum velocity, bounded by finite outgoing leg and certified horizon | PROVISIONAL | Consecutive solves request stable route geometry while measured speed changes. Low speed no longer collapses the path window, while finite mission/map availability still shortens it and all candidate certificates remain unchanged. | Compare requested/certified lookahead variance, command duration and renewal success across acceleration, braking, corners and recorded-data shadow planning before promotion. |
@@ -14134,3 +14460,297 @@ release profiles must not use the former allowance.
 - **Verification:** focused runtime FSM tests, `make build`, `make test`, and
   repeated 5 m/s three-column and hardest multiwaypoint external-mode runs,
   with mapping/External Mode/PX4 artifacts correlated by simulator time.
+
+### 2026-08-30 - Keep safety suffix ownership through retarget and watchdog timeout
+
+- **Owner/status:** runtime planner FSM and command publication, `PROVISIONAL`;
+  focused FSM/build evidence is required before SITL qualification and the
+  runtime pending-goal handover integration remains open.
+- **Scope:** PASS_THROUGH hot-retarget is rejected while a BACKUP or EMERGENCY
+  suffix is active; the runtime retains the newest validated goal in a
+  single-slot pending handoff and applies it only after certified stop. A
+  planner watchdog timeout retains that suffix only when
+  command availability, suffix ownership, and the recovery state agree;
+  otherwise it transitions explicitly to PX4 Hold and clears command exposure.
+  Candidate producers carry the exact integer declared endpoint used by
+  endpoint sampling; commit rejection remains a fail-closed backstop.
+  STOP endpoint metadata is required for terminal completion, while
+  PASS_THROUGH endpoint validation does not compare outgoing continuation with
+  the requested waypoint.
+- **Safety impact:** no nominal candidate can relabel moving safety ownership as
+  `TrackMain`, no timeout continues an uncertified stale command, and missing
+  endpoint evidence cannot be downgraded to a warning when completion depends
+  on it. Existing freshness, tracking, dynamics, and command leases remain
+  unchanged.
+- **False-accept/false-reject consequences:** retarget may wait for a certified
+  stop; an unavailable suffix causes Hold. A superseding pending request wins
+  only by monotonic identity within the active mission; invalid or exhausted
+  identity remains fail-closed. Valid PASS_THROUGH routes avoid a false
+  terminal failure from continuation geometry.
+- **Runtime cost and evidence:** one atomic exchange for the one-shot planner
+  skip, a mutex-protected failure-budget read, and constant-time watchdog
+  ownership checks. Focused FSM tests cover active suffix retarget rejection
+  and TrackMain/TrackBackup/Emergency timeout decisions; no flight acceptance
+  is claimed.
+- **Removal/review condition:** remove only after a typed supervisor handover
+  proves equivalent ownership, pending-goal lifecycle tests cover reset and
+  terminal cleanup, and repeated representative runs preserve the same
+  fail-closed behavior. Dual-clock world/health and role-aware PVAJ/yaw
+  continuity remain separate open items; no thresholds were added.
+- **Verification:** `./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no`, `./build/navigation_runtime/test_planning_worker
+  --gtest_color=no`, Release build, and TSan if supported.
+
+### 2026-08-31 - Linearize pending-goal promotion and isolate cadence contract test
+
+- **Owner/status:** runtime planner goal handover and test harness, `PROVISIONAL`;
+  direct ROS integration evidence for pending promotion is still required.
+- **Scope:** pending-goal selection, suffix ownership clearing, and goal
+  activation now occur while holding the ordered `input_mutex_` then execution
+  transition lock, through `applyValidatedGoalLocked`; the public callback is
+  not recursively invoked. Normal callbacks reject stale/non-newer identities,
+  and cross-mission requests fail closed because request ids are not comparable
+  across mission resets. Terminal status matching a pending request clears it
+  and prevents promotion while preserving a moving safety suffix until stop.
+  Candidate endpoint metadata is either legacy all-zero or exactly consistent
+  with the producer-derived integer start/end timestamps.
+- **Safety impact:** no safety suffix can be replaced by a callback interleaving
+  between extraction and promotion, and a terminal pending mission cannot be
+  resurrected. No freshness, tracking, dynamics, endpoint lease, or other gate
+  was widened.
+- **Test/evidence:** a pure pending-owner state model covers supersession,
+  stale rejection, exact-once certified promotion, and cleanup. The cadence
+  test now exercises the product predicate directly; constructing a node only
+  to throw caused a reproducible rclcpp double-shutdown crash in Context
+  teardown. Release, ASan shutdown, TSan focused runtime tests, planner FSM,
+  worker, facade, and 209 runtime Python tests pass. TSan still reports only
+  external libOpenNI2 initialization warnings.
+- **Removal/review condition:** keep the pure model as a unit guard, then add
+  a ROS-level callback/promotion test before marking this handover implemented.
+  Dual-clock world/health and role-aware PVAJ/yaw continuity remain open.
+- **Verification:** Release/ASan/TSan builds, direct focused binaries, and
+  `python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py'`.
+
+### 2026-08-31 - Start measured recovery before the projected anchor boundary
+
+- **Owner/status:** runtime planner supervisor, `PROVISIONAL`; this is an
+  experimental recovery-liveness fix and is not SITL qualification evidence.
+- **Scope:** when the retained command is fresh, world/corridor certified, and
+  its current anchor is still within the existing `0.25 m` execution envelope,
+  but the bounded next-validation projection crosses that same envelope, start
+  the existing one-shot measured-state emergency recovery immediately. The
+  emergency candidate still uses measured P/V, drops estimated A/J, and must
+  pass the normal dynamic, world, identity, and execution commit certificates.
+  It is not a continuously renewed gate or a lease extension.
+- **Safety impact:** this closes the narrow race where the current sample is
+  safe (`0.241 m`) but the next validation interval is predicted at `0.252 m`,
+  causing an immediate Hold without giving the already-certified recovery path
+  a commit opportunity. A failed emergency certification remains fail-closed;
+  no tracking threshold, freshness window, or command validity window is
+  widened.
+- **Evidence:** repeated `sanity_open` 5 m/s runs produced current/projection
+  pairs near the boundary (`0.241/0.252 m`) and otherwise valid odom/command
+  streams; the earlier `0.337 m` run demonstrated the existing actual-overrun
+  emergency path. These are diagnosis artifacts, not acceptance claims.
+- **Removal/review condition:** remove or replace after typed recovery-state
+  ownership is implemented and repeated representative 5 m/s runs show no
+  projection-driven Hold while preserving collision, clearance, freshness, and
+  mission-completion gates.
+- **Verification:** `./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no`, `make build`, `make test`, and repeated headless
+  `sanity_open`, `structured_obstacle`, and `long_route` runs at declared 5 m/s.
+
+### 2026-08-31 - Preserve the seed clock across optimizer latency
+
+- **Owner/status:** planner candidate timing and runtime execution boundary,
+  `PROVISIONAL`; repeated SITL evidence is still required.
+- **Scope:** a `PlanFromRest` or hot-replan candidate keeps the wall-clock
+  instant at which `solve_state_` was captured. It must not move a rest-plan's
+  start time to the end of optimization, because that relabels a historical
+  PVA sample as current when the vehicle continues moving during the solve.
+  The execution boundary evaluates the candidate at the current timestamp and
+  retains the existing freshness, identity, world, dynamic, and `0.25 m`
+  anchor checks.
+- **Safety impact:** removes a false timestamp/state pairing that can produce
+  an apparently fresh candidate whose first current sample is the old solve
+  state. A candidate that is genuinely stale after the solve is rejected by
+  the unchanged anchor/freshness gates; no gate or command lease is widened.
+- **Evidence:** run `external-mode-check-20260831T081525-92329` showed a
+  candidate with `start_wall_time=25.224`, candidate position `(-0.244,
+  -0.275,2.915)`, and current measured position `(0.650,-0.195,2.903)`;
+  odometry and command callbacks were fresh and infrastructure was VALID.
+- **Removal/review condition:** keep until repeated 5 m/s runs show that
+  candidates either begin from the seed clock and pass the unchanged current
+  sample anchor check or are rejected fail-closed, with no mission-completion,
+  clearance, or PX4 handover regression across representative maps.
+- **Verification:** `git diff --check`, focused planner/runtime tests,
+  `make build`, and repeated headless 5 m/s SITL with planner, propagated
+  odometry, External Mode, PX4, and world-clock artifacts correlated.
+
+### 2026-08-31 - Route backend EMERGENCY through certified measured recovery
+
+- **Owner/status:** runtime planner supervisor, `PROVISIONAL`; repeated SITL
+  evidence is required before qualification.
+- **Scope:** when the planner cannot continue a nominal hot replan but an
+  existing committed command is available, classify `EMERGENCY` into the
+  retained-command validation path. The runtime may then commit the existing
+  one-shot measured P/V emergency brake only if execution state, world
+  clearance, command anchor, identity, and independent brake dynamics are all
+  valid. If any condition fails, it transitions to PX4 Hold and clears command
+  exposure.
+- **Safety impact:** closes a recovery-path omission where a backend emergency
+  result bypassed the measured emergency certificate and went directly to Hold
+  even though a command bundle still existed. This does not resume nominal
+  planning, extend a lease, relax freshness, clearance, dynamics, or the
+  `0.25 m` anchor envelope, and cannot create a repeatedly rearmed brake.
+- **Evidence:** `external-mode-check-20260831T082409-102972` had fresh odom and
+  command streams, then `PlannerStatus::kEmergency` at anchor `0.284 m`; the
+  existing classifier sent this directly to fail-closed before the measured
+  recovery branch could run.
+- **Removal/review condition:** remove or replace after typed recovery-state
+  ownership covers backend emergency results and repeated 5 m/s runs show
+  certified emergency recovery or explicit Hold without stale-command tails,
+  mission resurrection, collision, or clearance regression.
+- **Verification:** focused planner FSM tests, `make build`, and repeated
+  headless 5 m/s SITL with correlated planner, odometry, External Mode, PX4,
+  world-clock, clearance, and mission-completion artifacts.
+
+### 2026-08-31 - Preserve only an observed expired endpoint across map updates
+
+- **Owner/status:** runtime world recertification and endpoint handover,
+  `PROVISIONAL`; integration evidence is required before qualification.
+- **Scope:** after a command's declared end, world recertification may retain
+  the immutable bundle only when its exact finite endpoint is still
+  `KNOWN_FREE`, fresh propagated odometry proves the vehicle is within the
+  existing `0.25 m` anchor envelope, and the endpoint is already finished.
+  Otherwise the existing full recertification/fail-closed path remains in
+  force. No future trajectory sample is accepted.
+- **Safety impact:** prevents a completed emergency/frontier brake from being
+  invalidated by the next map publication before the runtime observes its
+  endpoint and starts the stopped measured-state recovery. This is a bounded
+  endpoint hold, not a lease extension or moving-command continuation; the
+  endpoint must remain known-free on every new world snapshot.
+- **Evidence:** `external-mode-check-20260831T082649-107174` committed a
+  measured emergency brake, then mapping recertification rejected generation 4
+  at `t=0` after the declared command had expired, causing External Mode stale
+  handover before `trajectory_finished_` could trigger the pending waypoint
+  recovery. Odometry and command streams were fresh before this endpoint race.
+- **Removal/review condition:** remove or replace once a typed endpoint/recovery
+  state owns this lifecycle and repeated 5 m/s multiwaypoint runs show the
+  endpoint is observed, stopped recovery is retried, and no moving command is
+  retained after endpoint or map-clearance loss.
+- **Verification:** focused planner/runtime tests, `make build`, and repeated
+  headless 5 m/s SITL with endpoint, freshness, clearance, mission-completion,
+  External Mode, PX4, and world-clock artifacts.
+
+### 2026-08-31 - Keep an accepted terminal endpoint alive during bounded recovery
+
+- **Owner/status:** PX4 External Mode terminal-hold contract, `PROVISIONAL`;
+  integration evidence is required before qualification.
+- **Scope:** an already accepted `STATUS_COMPLETED` command may continue to
+  publish its exact endpoint hold after the normal 100 ms command lease only
+  while `planner_recovery_pending_` is true and its existing finite recovery
+  deadline has not elapsed. READY commands, rejected commands, future samples,
+  and any command after the deadline remain subject to the normal validity and
+  freshness gates.
+- **Safety impact:** closes the terminal scheduling race where External Mode
+  handed over during the bounded planner recovery window before runtime could
+  publish the measured-state continuation. This does not extend a trajectory,
+  allow a new sample, relax odometry health, or widen the tracking/anchor gate;
+  expiry still causes the existing fail-closed Hold handover.
+- **Evidence:** `external-mode-check-20260831T083036-111066` showed the exact
+  emergency endpoint was completed and runtime started measured-state recovery,
+  but External Mode handed over about 0.8 s later because its generic 100 ms
+  command validity check ran before the completed-command hold branch. Odom,
+  command callback, and setpoint gaps remained bounded in that run.
+- **Removal/review condition:** replace with a typed terminal endpoint lease
+  owned end-to-end by runtime and External Mode; remove if repeated 5 m/s runs
+  show no stale handover while preserving endpoint clearance, odometry health,
+  mission completion, and PX4 fallback behavior.
+- **Verification:** focused External Mode recovery tests, `make build`, and
+  repeated headless 5 m/s SITL with terminal endpoint, freshness, clearance,
+  mission-completion, External Mode, PX4, and world-clock artifacts.
+
+### 2026-08-31 - Hold a settled STOP endpoint when backup completion is still moving
+
+- **Owner/status:** PX4 External Mode terminal mission gate, `PROVISIONAL`;
+  repeated multiwaypoint SITL evidence is required before qualification.
+- **Scope:** when an accepted completed BACKUP endpoint is already inside a
+  STOP waypoint's measured and command acceptance regions but measured speed is
+  still above the existing mission acceptance speed, open the same bounded
+  endpoint-hold window used by terminal recovery and mark the mission's
+  measured terminal hold pending. Do not request a moving connector replan;
+  completion remains owned by the existing measured position and speed gates.
+- **Safety impact:** prevents the exact certified STOP endpoint from expiring
+  after `STATUS_COMPLETED` while the vehicle is settling, which previously
+  caused an avoidable PX4 Hold handover. The endpoint remains finite,
+  accepted, and anchor-checked; the existing speed, freshness, validity,
+  clearance, and recovery deadline gates are unchanged. No trajectory or
+  lease is extended.
+- **Evidence:** `external-mode-check-20260831T091939-131553` reached the final
+  STOP waypoint with measured error `0.222 m` and speed `0.240 m/s` after the
+  completed backup endpoint was inside the acceptance region; no terminal hold
+  window was opened and External Mode handed over when the normal command lease
+  expired.
+- **Removal/review condition:** remove once a typed terminal endpoint lease is
+  owned end-to-end or repeated 5 m/s runs prove STOP completion through the
+  normal measured low-speed gate without this compatibility path. If the
+  endpoint leaves acceptance or the bounded deadline expires, retain the
+  existing fail-closed handover.
+- **Verification:** `test_mission`, `test_navigation_command`, `make build`,
+  and repeated headless 5 m/s SITL with terminal endpoint, speed, freshness,
+  clearance, mission-completion, External Mode, PX4, and world-clock evidence.
+
+### 2026-08-31 - Do not replace a valid command on projected anchor crossing
+
+- **Owner/status:** runtime planner supervisor, `PROVISIONAL`; this supersedes
+  the earlier projection-triggered emergency experiment and requires repeated
+  representative SITL evidence before qualification.
+- **Scope:** a retained command remains exposed while its measured anchor is
+  inside the unchanged `0.25 m` tracking envelope, its finite validity window
+  and world/clearance certificate remain valid, and the vehicle state is fresh.
+  The bounded projection remains a scheduling/diagnostic signal, but does not
+  itself trigger measured-state braking. Emergency recovery is allowed only
+  after the measured anchor crosses the gate or the retained command fails an
+  independent validity check.
+- **Safety impact:** avoids converting a transient projected crossing into an
+  immediate stop that destroys mission progress while the current command is
+  still certified. This does not widen the gate: the next callback still
+  applies the actual-anchor check, and stale, blocked, expired, non-finite, or
+  over-error commands remain fail-closed to the existing recovery/Hold path.
+- **Evidence:** `external-mode-check-20260831T092733-139475` showed actual
+  anchor `0.215 m`, projected anchor `0.278 m`, followed by measured emergency
+  replacement; the replacement stopped near `0.42 m` and all subsequent
+  long-open PlanFromRest attempts failed, before any cruise-speed evidence.
+- **Removal/review condition:** replace after typed recovery ownership and
+  repeated long/open/obstacle runs prove that projection-only cases recover
+  without mission-progress loss, while actual overrun, freshness, clearance,
+  dynamic, and PX4 fallback gates remain unchanged.
+- **Verification:** `test_planner_fsm`, `make build`, `git diff --check`, and
+  repeated headless 5 m/s long-open and obstacle-route SITL with actual versus
+  projected anchor traces.
+### 2026-08-31 - Rejected snapshot-period coalescing experiment
+
+- Owner/status: Navigation runtime and mapping owners; `ABORTED` before runtime
+  evaluation because the change violates the existing timing contract.
+- Scope: an experiment to change
+  `navigation_runtime.mapping_snapshot_publication_period_s` from 0.10 s to
+  0.20 s was prepared and immediately reverted. The committed configuration
+  remains 0.10 s; mutable ROG updates and snapshot/world recertification are
+  unchanged.
+- Safety impact: no relaxed behavior remains. The runtime rejected 0.20 s at
+  startup against `PlanningTimingContract::kSnapshotPeriodS`, so no SITL result
+  was produced under that configuration.
+- Evidence: `external-mode-check-20260831T093241-143874` measured mapping
+  callback up to 94.0 ms, map update up to 82.8 ms, full snapshot export on
+  every accepted observation, and LiDAR arrival gaps of 503.7/625.3 ms while
+  external odometry stayed at 20--24 ms. The experiment must be compared with
+  the same map/mission and repeated runs; it is not acceptance evidence by
+  itself.
+- Removal/review condition: remove this debt entry after a separately designed
+  snapshot/export optimization preserves the 0.10 s timing contract and is
+  validated on repeated long/obstacle runs.
+- Verification: `source /opt/ros/jazzy/setup.bash && make build`; the rejected
+  experiment produced startup artifact
+  `external-mode-check-20260831T093923-151866` with
+  `planner backend timing and safety parameters must be positive`.

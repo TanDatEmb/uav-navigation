@@ -228,6 +228,25 @@ TEST(HotReplanTrackingRecovery, RejectsSpliceOutsideNecessaryKinematicEnvelope) 
   EXPECT_DOUBLE_EQ(artifact_failure.future_velocity_allowance_mps, 0.4);
 }
 
+TEST(HotReplanTrackingRecovery, AllowsMeasuredRebaseOnlyInsideCurrentTube) {
+  using navigation_planning_backend::assessHotReplanSpliceCompatibility;
+  using navigation_planning_backend::measuredStateHotRebaseAllowed;
+
+  const auto future_velocity_mismatch = assessHotReplanSpliceCompatibility(
+      0.114, 0.211, 0.668, 0.2, 2.0, 0.25);
+  EXPECT_TRUE(measuredStateHotRebaseAllowed(
+      future_velocity_mismatch, true, 0.01, 0.35, true));
+  EXPECT_FALSE(measuredStateHotRebaseAllowed(
+      future_velocity_mismatch, true, 0.01, 0.35, false));
+  EXPECT_FALSE(measuredStateHotRebaseAllowed(
+      future_velocity_mismatch, true, 0.36, 0.35, true));
+
+  const auto current_position_mismatch = assessHotReplanSpliceCompatibility(
+      0.251, 0.211, 0.668, 0.2, 2.0, 0.25);
+  EXPECT_FALSE(measuredStateHotRebaseAllowed(
+      current_position_mismatch, true, 0.01, 0.35, true));
+}
+
 TEST(HotReplanTrackingRecovery, KeepsSpliceInsideNecessaryKinematicEnvelope) {
   using navigation_planning_backend::assessHotReplanSpliceCompatibility;
 
@@ -317,12 +336,15 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   const rog_map::Config map(PLANNER_PRODUCT_CONFIG_PATH);
   // ROG-Map rounds each dimension up to an odd voxel count after inflation;
   // assert the product contract without depending on the one-cell padding.
-  EXPECT_GE(map.map_size_d.x(), 110.0);
-  EXPECT_GE(map.map_size_d.y(), 30.0);
-  EXPECT_GE(map.map_size_d.z(), 6.0);
-  EXPECT_LE(map.map_size_d.x(), 110.0 + map.resolution + 1.0e-9);
-  EXPECT_LE(map.map_size_d.y(), 30.0 + map.resolution + 1.0e-9);
-  EXPECT_LE(map.map_size_d.z(), 6.0 + map.resolution + 1.0e-9);
+  const Eigen::Vector3d requested_map_size_m{50.0, 50.0, 8.0};
+  for (int axis = 0; axis < 3; ++axis) {
+    EXPECT_GE(map.map_size_d(axis), requested_map_size_m(axis));
+    EXPECT_LE(map.map_size_d(axis),
+              requested_map_size_m(axis) + map.resolution + 1.0e-9);
+    EXPECT_GE(map.local_update_box_d(axis), requested_map_size_m(axis));
+    EXPECT_LE(map.local_update_box_d(axis),
+              requested_map_size_m(axis) + map.resolution + 1.0e-9);
+  }
   navigation_world_model::WorldGeometry world_geometry;
   world_geometry.evidence_resolution_m = map.resolution;
   world_geometry.inflated_resolution_m = map.inflation_resolution;
@@ -357,8 +379,6 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_lateral_deadband_m, 0.05);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.route_reference_vertical_deadband_m, 0.05);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.optimization_dynamic_reserve_ratio, 0.98);
-  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
-  EXPECT_DOUBLE_EQ(planner.back_traj_cfg.dynamic_limit_tolerance_ratio, 0.0);
   EXPECT_TRUE(planner.preserve_backup_altitude);
   EXPECT_DOUBLE_EQ(planner.yaw_tracking_error_budget_rad, 0.35);
   EXPECT_GT(planner.exp_traj_cfg.feasibility_retry_max_iterations, 0);
@@ -367,12 +387,11 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.corridor_plane_tolerance_m, 0.01);
 }
 
-TEST(PlannerProductConfig, RejectsDynamicLimitToleranceThatWeakensPhysicalEnvelope) {
-  EXPECT_NO_THROW(traj_opt::validateDynamicLimitToleranceRatio(0.0));
-  EXPECT_THROW(traj_opt::validateDynamicLimitToleranceRatio(0.01), std::invalid_argument);
-  EXPECT_THROW(
-      traj_opt::validateDynamicLimitToleranceRatio(std::numeric_limits<double>::infinity()),
-      std::invalid_argument);
+TEST(PlannerProductConfig, RejectsRemovedDynamicLimitToleranceKey) {
+  YAML::Node document = YAML::LoadFile(PLANNER_PRODUCT_CONFIG_PATH);
+  document["traj_opt"]["boundary"]["dynamic_limit_tolerance_ratio"] = 0.0;
+  const yaml_loader::YamlLoader loader(document);
+  EXPECT_THROW((traj_opt::Config(loader, "exp_traj")), std::invalid_argument);
 }
 
 TEST(PlannerPassThrough, UsesBoundedOutgoingTerminalVelocity) {
@@ -690,6 +709,26 @@ TEST(PlannerProductConfig, RejectsMapBelowThePlannerSafetyEnvelope) {
   world_geometry.effective_virtual_ground_m = -10.0;
   world_geometry.effective_virtual_ceiling_m = 10.0;
   EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument);
+}
+
+TEST(PlannerProductConfig, RejectsProductMapDriftOnEachAxis) {
+  const rog_map::Config map(PLANNER_PRODUCT_CONFIG_PATH);
+  for (int axis = 0; axis < 3; ++axis) {
+    navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH);
+    navigation_world_model::WorldGeometry world_geometry;
+    world_geometry.evidence_resolution_m = map.resolution;
+    world_geometry.inflated_resolution_m = map.inflation_resolution;
+    world_geometry.occupied_inflation_radius_m =
+        map.inflation_resolution * map.inflation_step;
+    world_geometry.local_size_m = map.map_size_d.cast<double>();
+    world_geometry.local_size_m(axis) =
+        navigation_planning_backend::Config::kProductMapSizeM(axis) -
+        map.resolution;
+    world_geometry.effective_virtual_ground_m = -10.0;
+    world_geometry.effective_virtual_ceiling_m = 10.0;
+    EXPECT_THROW(planner.bindWorldGeometry(world_geometry), std::invalid_argument)
+        << "axis=" << axis;
+  }
 }
 
 TEST(PlannerProductConfig, RejectsUnboundedSafetyNeighbourGeneration) {

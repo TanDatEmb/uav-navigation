@@ -16,6 +16,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(navigation_contracts REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(px4_msgs REQUIRED)
 find_package(px4_ros2_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -38,7 +39,7 @@ target_link_libraries(${PROJECT_NAME}_node
   Eigen3::Eigen
   px4_ros2_cpp::px4_ros2_cpp
   rclcpp::rclcpp)
-ament_target_dependencies(${PROJECT_NAME}_node navigation_common diagnostic_msgs navigation_contracts navigation_mission nav_msgs rclcpp std_msgs)
+ament_target_dependencies(${PROJECT_NAME}_node navigation_common diagnostic_msgs navigation_contracts navigation_mission nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
 target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
 
 install(DIRECTORY include/ DESTINATION include)
@@ -55,7 +56,7 @@ install(EXPORT ${PROJECT_NAME}Targets
   DESTINATION share/${PROJECT_NAME}/cmake)
 
 ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
-ament_export_dependencies(navigation_common navigation_mission Eigen3 diagnostic_msgs geometry_msgs navigation_contracts nav_msgs px4_ros2_cpp rclcpp std_msgs)
+ament_export_dependencies(navigation_common navigation_mission Eigen3 diagnostic_msgs geometry_msgs navigation_contracts nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -70,6 +71,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_tracking_envelope test/test_tracking_envelope.cpp)
   target_include_directories(test_tracking_envelope PRIVATE include)
   target_link_libraries(test_tracking_envelope Eigen3::Eigen)
+  ament_add_gtest(test_local_frame_alignment test/test_local_frame_alignment.cpp)
+  target_include_directories(test_local_frame_alignment PRIVATE include)
+  target_link_libraries(test_local_frame_alignment Eigen3::Eigen)
+  ament_target_dependencies(test_local_frame_alignment navigation_common)
 endif()
 
 ament_package()

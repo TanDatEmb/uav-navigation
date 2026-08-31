@@ -101,11 +101,22 @@ class RuntimeContractTest(unittest.TestCase):
                 encoding="utf-8",
             )
             result = report._write_qualification_timelines(session)
+            self.assertTrue(result["complete"])
             self.assertEqual(result["perception"]["event_count"], 1)
             self.assertEqual(result["planning"]["event_count"], 1)
             self.assertEqual(result["execution"]["event_count"], 1)
             for domain in ("perception", "planning", "execution"):
                 self.assertTrue((session / f"{domain}_timeline.jsonl").is_file())
+
+    def test_empty_or_partial_qualification_timeline_is_not_complete(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary)
+            (session / "samples.jsonl").write_text(
+                json.dumps({"kind": "sample", "stream": "lidar", "timestamp_ns": 10}) + "\n",
+                encoding="utf-8",
+            )
+            result = report._write_qualification_timelines(session)
+            self.assertFalse(result["complete"])
 
     def test_canonical_python_rejects_virtualenv_and_non_system_interpreter(self) -> None:
         self.assertIsNone(
@@ -2123,6 +2134,11 @@ class RuntimeContractTest(unittest.TestCase):
                 result["streams"]["simulation_clock"]["active_wall_arrival_gap_count"], 1
             )
             self.assertEqual(result["verdict"], "FAIL")
+            self.assertEqual(
+                result["infrastructure"]["classification"],
+                "INFRASTRUCTURE_INVALID",
+            )
+            self.assertFalse(result["infrastructure"]["qualification_eligible"])
 
     def test_clock_arrival_gap_before_tracking_is_not_an_active_failure(self) -> None:
         config = runner.load_config("common.yaml")
@@ -2429,6 +2445,123 @@ class RuntimeContractTest(unittest.TestCase):
         )())
         self.assertTrue(scenario.mode_exit_observed)
 
+    def test_external_mode_scenario_waits_for_typed_odometry_recovery(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_recovery",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class DummyModeStatus:
+            ACTIVE = 0
+            PAUSED = 2
+            FAILED = 4
+            SAFETY_STOP = 1
+            ODOMETRY_STALE = 3
+
+        scenario = object.__new__(module.ExternalModeScenario)
+        scenario.NavigationModeStatus = DummyModeStatus
+        scenario.execution = "mission"
+        scenario.mission_complete_observed = False
+        scenario.mode_status_state = None
+        scenario.mode_status_reason = None
+        scenario.automatic_recovery_pending = False
+        scenario.automatic_recovery_started_wall_s = None
+        scenario.mission_unexpected_exit_observed = True
+        scenario.failure = "External Mode exited before mission completion"
+        scenario.safety_stop_observed = False
+        scenario.safety_stop_sim_ns = None
+        scenario.safety_stop_reason_name = None
+        scenario.waypoint_acceptance_events = []
+        scenario.sim_now_ns = 10
+        records = []
+        scenario._record = lambda kind, payload: records.append((kind, payload))
+
+        scenario._mode_status(type(
+            "Message", (), {
+                "state": DummyModeStatus.FAILED,
+                "reason": DummyModeStatus.ODOMETRY_STALE,
+                "mission_id": "mission",
+                "waypoint_index": 1,
+                "request_id": 2,
+                "waypoint_accepted": False,
+                "accepted_waypoint_index": 0,
+                "acceptance_position_error_m": 0.0,
+                "acceptance_speed_mps": 0.0,
+            })())
+
+        self.assertTrue(scenario.automatic_recovery_pending)
+        self.assertIsNotNone(scenario.automatic_recovery_started_wall_s)
+        self.assertFalse(scenario.mission_unexpected_exit_observed)
+        self.assertIsNone(scenario.failure)
+        self.assertTrue(any(
+            payload.get("name") == "automatic_recovery_wait_started"
+            for kind, payload in records if kind == "event"))
+
+    def test_external_mode_scenario_records_product_owned_reentry(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_reentry",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class DummyVehicleStatus:
+            NAVIGATION_STATE_EXTERNAL1 = 23
+            NAVIGATION_STATE_EXTERNAL8 = 30
+            NAVIGATION_STATE_AUTO_LOITER = 4
+            NAVIGATION_STATE_AUTO_RTL = 20
+            ARMING_STATE_ARMED = 2
+
+        scenario = object.__new__(module.ExternalModeScenario)
+        scenario.external_mode_id = 23
+        scenario.mode_entered = True
+        scenario.mode_active = False
+        scenario.mode_entered_sim_ns = 1
+        scenario.mode_exit_observed = True
+        scenario.exit_requested = False
+        scenario.previous_nav_state = 4
+        scenario.events = []
+        scenario.VehicleStatus = DummyVehicleStatus
+        scenario.execution = "mission"
+        scenario.takeoff_requested = True
+        scenario.takeoff_observed = True
+        scenario.post_takeoff_mode_entered = True
+        scenario.automatic_recovery_pending = True
+        scenario.automatic_recovery_started_wall_s = time.monotonic()
+        scenario.automatic_recovery_count = 0
+        scenario.sim_now_ns = 20
+        scenario.latest_status = {}
+        scenario.failsafe_seen = False
+        scenario.armed_seen = True
+        scenario.unexpected_rtl = False
+        scenario.px4_hold_observed = True
+        records = []
+        scenario._record = lambda kind, payload: records.append((kind, payload))
+
+        scenario._status(type(
+            "Message", (), {
+                "nav_state": 23,
+                "arming_state": 2,
+                "can_set_nav_states_mask": 1 << 23,
+                "failsafe": False,
+                "pre_flight_checks_pass": True,
+                "executor_in_charge": 1,
+                "timestamp": 20,
+            })())
+
+        self.assertTrue(scenario.mode_active)
+        self.assertFalse(scenario.automatic_recovery_pending)
+        self.assertEqual(scenario.automatic_recovery_count, 1)
+        self.assertTrue(any(
+            payload.get("automatic_recovery") is True
+            for kind, payload in records if kind == "event"))
+
     def test_external_mode_scenario_records_px4_hold_handover_without_commands(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario_handover",
@@ -2627,6 +2760,13 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertIn(
                 "simulation_clock timestamp/freshness/validity violation",
                 result["reasons"],
+            )
+            self.assertEqual(
+                result["infrastructure"]["classification"],
+                "INFRASTRUCTURE_INVALID",
+            )
+            self.assertEqual(
+                result["infrastructure"]["simulation_clock_active_wall_gap_count"], 1
             )
 
     def test_clock_gap_is_clipped_against_tracking_window(self) -> None:
@@ -3611,6 +3751,51 @@ class RuntimeContractTest(unittest.TestCase):
                 "full_replan_count": 2,
             },
         )
+
+    def test_planning_execution_summary_ignores_interleaved_mapping_last_message(self) -> None:
+        snapshot = {
+            "latest": {
+                "mapping_diagnostics": {
+                    "statuses": [{"name": "navigation_mapping/world_model", "values": {}}]
+                },
+                "diagnostics": {
+                    "statuses": [{"name": "navigation_planning/planner", "values": {
+                        "plan_count": "7", "success_count": "6", "failure_count": "1"
+                    }}]
+                },
+            }
+        }
+        samples = [
+            {"stream": "diagnostics", "arrival_wall_ns": 10, "payload": {
+                "statuses": [{"name": "navigation_planning/planner", "values": {
+                    "plan_count": "7", "success_count": "6", "failure_count": "1"
+                }}]
+            }},
+            {"stream": "mapping_diagnostics", "arrival_wall_ns": 20, "payload": {
+                "statuses": [{"name": "navigation_mapping/world_model", "values": {}}]
+            }},
+        ]
+        result = report._planning_execution_summary(snapshot, samples)
+        self.assertEqual(result.get("plan_count"), 7)
+
+    def test_planning_execution_summary_merges_runtime_lifecycle_with_trace_last(self) -> None:
+        lifecycle = {"name": "navigation_runtime/planner", "values": {
+            "cycle_count": "12", "trajectory_publish_count": "11",
+            "received_observation_count": "20", "accepted_observation_count": "19",
+        }}
+        trace = {"name": "navigation_runtime/planner", "values": {
+            "plan_count": "8", "success_count": "7", "failure_count": "1",
+        }}
+        result = report._planning_execution_summary({}, [
+            {"stream": "diagnostics", "arrival_wall_ns": 10,
+             "payload": {"statuses": [lifecycle]}},
+            {"stream": "diagnostics", "arrival_wall_ns": 20,
+             "payload": {"statuses": [trace]}},
+        ])
+        self.assertTrue(result["available"])
+        self.assertEqual(result["cycle_count"], 12)
+        self.assertEqual(result["plan_count"], 8)
+        self.assertEqual(result["failure_count"], 1)
 
 
 if __name__ == "__main__":

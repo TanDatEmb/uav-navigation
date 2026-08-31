@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <limits>
 
 #include <gz/msgs/laserscan.pb.h>
@@ -61,6 +62,61 @@ TEST(VisibilityCloud, DoesNotTurnAllOccupiedScanIntoEvidence) {
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(result->source_ray_count, 4U);
   EXPECT_TRUE(result->endpoints.empty());
+}
+
+sensor_msgs::msg::PointCloud2 makeOrganizedCloud() {
+  sensor_msgs::msg::PointCloud2 cloud;
+  cloud.header.frame_id = "livox_frame";
+  cloud.header.stamp.sec = 4;
+  cloud.header.stamp.nanosec = 24U;
+  cloud.width = 2U;
+  cloud.height = 2U;
+  cloud.point_step = 12U;
+  cloud.row_step = 24U;
+  cloud.is_dense = false;
+  for (std::uint32_t index = 0U; index < 3U; ++index) {
+    sensor_msgs::msg::PointField field;
+    field.name = index == 0U ? "x" : (index == 1U ? "y" : "z");
+    field.offset = index * 4U;
+    field.datatype = sensor_msgs::msg::PointField::FLOAT32;
+    field.count = 1U;
+    cloud.fields.push_back(field);
+  }
+  cloud.data.resize(48U);
+  const float values[4][3] = {
+      {1.0F, 0.0F, 0.0F},
+      {std::numeric_limits<float>::infinity(),
+       -std::numeric_limits<float>::infinity(),
+       std::numeric_limits<float>::infinity()},
+      {10.0F, 0.0F, 0.0F},
+      {std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.0F},
+  };
+  for (std::size_t point = 0U; point < 4U; ++point) {
+    std::memcpy(cloud.data.data() + point * 12U, values[point], 12U);
+  }
+  return cloud;
+}
+
+TEST(VisibilityCloud, ReconstructsOnlyExplicitInfiniteOrganizedRays) {
+  const OrganizedVisibilityConfig config{
+      2U, 2U, 0.0, 1.5707963267948966, 0.0, 1.5707963267948966, 10.0};
+  const auto result = makeVisibilityCloud(
+      makeOrganizedCloud(), config, "livox_frame");
+  ASSERT_TRUE(result.has_value());
+  ASSERT_EQ(result->endpoints.size(), 1U);
+  EXPECT_EQ(result->source_ray_count, 4U);
+  EXPECT_EQ(result->stamp_sec, 4);
+  EXPECT_EQ(result->stamp_nanosec, 24U);
+  EXPECT_NEAR(result->endpoints[0].x, 0.0F, 1.0e-5F);
+  EXPECT_NEAR(result->endpoints[0].y, 10.0F, 1.0e-5F);
+  EXPECT_NEAR(result->endpoints[0].z, 0.0F, 1.0e-5F);
+}
+
+TEST(VisibilityCloud, RejectsMismatchedOrganizedGrid) {
+  auto cloud = makeOrganizedCloud();
+  const OrganizedVisibilityConfig config{
+      720U, 28U, -3.14, 3.14, -0.12, 0.90, 40.0};
+  EXPECT_FALSE(makeVisibilityCloud(cloud, config, "livox_frame").has_value());
 }
 
 }  // namespace uav::simulation

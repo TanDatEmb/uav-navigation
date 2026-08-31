@@ -18,6 +18,7 @@
 #include <planner_core/replan_contract.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
 #include <navigation_world_model/goal_contract.hpp>
+#include <navigation_common/time.hpp>
 #include <navigation_planning/planning_timing.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
@@ -444,16 +445,12 @@ double knownFreeGuideSupport(
         if (!std::isfinite(end_wall_time_s) || end_wall_time_s < start_wall_time_s) {
             return std::nullopt;
         }
-        const auto to_nanoseconds = [](const double seconds) -> std::optional<std::int64_t> {
-            if (!std::isfinite(seconds) || seconds <= 0.0 ||
-                seconds > static_cast<double>(std::numeric_limits<std::int64_t>::max()) * 1.0e-9) {
-                return std::nullopt;
-            }
-            return static_cast<std::int64_t>(seconds * 1.0e9);
-        };
-        const auto start_ns = to_nanoseconds(start_wall_time_s);
-        const auto end_ns = to_nanoseconds(end_wall_time_s);
-        if (!start_ns || !end_ns || *end_ns < *start_ns) return std::nullopt;
+        const auto start_ns = navigation_common::secondsToNanoseconds(start_wall_time_s);
+        const auto end_ns = navigation_common::secondsToNanoseconds(end_wall_time_s);
+        const auto declared_end_ns = navigation_common::secondsSumToNanoseconds(
+            start_wall_time_s, command.position.getTotalDuration());
+        if (!start_ns || !end_ns || !declared_end_ns ||
+            *end_ns < *start_ns || *declared_end_ns < *start_ns) return std::nullopt;
 
         navigation_planning::CandidateBundle candidate;
         candidate.pinned_world_identity = certificate.pinned_world;
@@ -468,6 +465,8 @@ double knownFreeGuideSupport(
         // make the exported candidate lose its declared endpoint metadata.
         candidate.start_wall_time_s = start_wall_time_s;
         candidate.duration_s = command.position.getTotalDuration();
+        candidate.declared_start_ns = *start_ns;
+        candidate.declared_end_ns = *declared_end_ns;
         candidate.backup_start_time_s = command.backup_start_tt;
         candidate.backup_available = command.backup_suffix_available;
         const bool emergency_candidate =
@@ -500,18 +499,18 @@ double knownFreeGuideSupport(
                         : navigation_planning::CandidateRole::kMain});
         }
         candidate.valid_from_ns = std::max(valid_from_ns, *start_ns);
-        candidate.valid_until_ns = std::min(valid_until_ns, *end_ns);
+        candidate.valid_until_ns = std::min(valid_until_ns, *declared_end_ns);
         if (candidate.valid_until_ns < candidate.valid_from_ns) return std::nullopt;
         candidate.evaluator = [position = command.position,
                                yaw = command.yaw,
                                roles = command.roles,
                                emergency_candidate,
-                               start_wall_time_s] (
+                               start_ns = *start_ns,
+                               end_ns = *declared_end_ns] (
                                   const std::int64_t stamp_ns,
                                   navigation_planning::TrajectoryPoint& point) {
-            const double wall_time_s = static_cast<double>(stamp_ns) * 1.0e-9;
             const auto command_time = commandTrajectoryTime(
-                wall_time_s, start_wall_time_s, position.getTotalDuration());
+                stamp_ns, start_ns, end_ns, position.getTotalDuration());
             if (command_time.trajectory_time_s < 0.0) return false;
             const auto state = position.getState(command_time.trajectory_time_s);
             const auto yaw_state = yaw.getState(command_time.trajectory_time_s);
@@ -528,12 +527,19 @@ double knownFreeGuideSupport(
                 ? navigation_planning::CandidateRole::kEmergency
                 : navigation_planning::CandidateRole::kMain;
             if (emergency_candidate) return true;
+            const __int128 elapsed_ns = static_cast<__int128>(stamp_ns) -
+                                        static_cast<__int128>(start_ns);
+            const __int128 duration_ns = static_cast<__int128>(end_ns) -
+                                         static_cast<__int128>(start_ns);
             for (const auto& interval : roles) {
-                if (command_time.trajectory_time_s >= interval.begin_tt &&
-                    (command_time.trajectory_time_s < interval.end_tt ||
-                     (std::abs(command_time.trajectory_time_s -
-                               position.getTotalDuration()) <= 1.0e-9 &&
-                      std::abs(interval.end_tt - position.getTotalDuration()) <= 1.0e-9)) &&
+                const auto begin_ns = static_cast<__int128>(std::llround(
+                    static_cast<long double>(interval.begin_tt) * 1.0e9L));
+                const auto interval_end_ns = static_cast<__int128>(std::llround(
+                    static_cast<long double>(interval.end_tt) * 1.0e9L));
+                const bool at_declared_endpoint = elapsed_ns == duration_ns &&
+                    &interval == &roles.back();
+                if (elapsed_ns >= begin_ns &&
+                    (elapsed_ns < interval_end_ns || at_declared_endpoint) &&
                     interval.role == CandidateTrajectoryRole::BACKUP) {
                     point.role = navigation_planning::CandidateRole::kBackup;
                     break;
@@ -616,12 +622,12 @@ double knownFreeGuideSupport(
         // make the backup CIRI seed fail even though the measured pose has
         // clearance. The fallback remains on the inflated layer so a truly
         // occupied or out-of-map pose is still corrected before planning.
+        const auto measured_start_cell = map_ptr_->classify(
+                solve_state_.p.cast<double>(), navigation_world_model::GridLayer::kInflated);
         const auto measured_start_is_traversable =
                 map_ptr_->contains(solve_state_.p) &&
                 navigation_world_model::isCellTraversable(
-                        map_ptr_->classify(
-                                solve_state_.p,
-                                navigation_world_model::GridLayer::kInflated),
+                        measured_start_cell,
                         unknownPolicy());
         Vec3f local_star_pt = solve_state_.p;
         if (!measured_start_is_traversable) {
@@ -634,6 +640,15 @@ double knownFreeGuideSupport(
                 return FAILED;
             }
             local_star_pt = *nearest_start;
+            planner_context_->warn(
+                    " -- [planner] PlanFromRest shifted non-traversable measured start: "
+                    "cell_state={} measured=({:.3f},{:.3f},{:.3f}) local_start=({:.3f},{:.3f},{:.3f}) "
+                    "shift={} traversable={}",
+                    static_cast<int>(measured_start_cell),
+                    solve_state_.p.x(), solve_state_.p.y(), solve_state_.p.z(),
+                    local_star_pt.x(), local_star_pt.y(), local_star_pt.z(),
+                    (local_star_pt - solve_state_.p).norm(),
+                    measured_start_is_traversable ? 1 : 0);
         }
         latest_replan.setLocalStartP(local_star_pt);
 
@@ -1270,6 +1285,25 @@ double knownFreeGuideSupport(
                                         solve_state_.p,
                                         navigation_world_model::GridLayer::kInflated),
                                 unknownPolicy());
+                if (measuredStateHotRebaseAllowed(
+                        splice_compatibility, measured_yaw_valid,
+                        yaw_anchor_error, cfg_.yaw_tracking_error_budget_rad,
+                        measured_start_traversable)) {
+                    // The current position is still inside the reserved tube,
+                    // but the command's future velocity envelope is no longer
+                    // reachable by the vehicle. Rebase this explicit recovery
+                    // solve from measured P/V rather than retaining the old
+                    // finite command lease until it expires. The new candidate
+                    // remains subject to the full execution/world certificates.
+                    planner_context_->warn(
+                            " -- [planner] hot splice future envelope exceeded; "
+                            "rebasing from measured state while current anchor remains safe: "
+                            "position_error={} future_position_error={} "
+                            "future_velocity_error={} tracking_limit={}",
+                            command_anchor_error, future_position_error,
+                            future_velocity_error, cfg_.tracking_error_budget_m);
+                    last_exp_traj_info.setEmpty();
+                } else {
                 const auto recovery = classifyHotReplanTrackingRecovery(
                         tracking_budget_exceeded, measured_start_traversable);
                 if (recovery == HotReplanTrackingRecovery::kFailClosed) {
@@ -1301,6 +1335,7 @@ double knownFreeGuideSupport(
                         splice_compatibility.future_velocity_allowance_mps,
                         cfg_.yaw_tracking_error_budget_rad);
                 return FAILED;
+                }
             }
         }
 
@@ -1913,6 +1948,52 @@ double knownFreeGuideSupport(
             }
         }
 
+        // Keep the route geometry observable at the optimizer boundary.  A
+        // large lateral excursion in an open mission is a map/A* or guide
+        // construction decision; it must not be misdiagnosed as PX4 tracking
+        // lag from the final MINCO control points.
+        const Eigen::Vector3d diagnostic_route_goal = planning_goal_p_.allFinite()
+            ? planning_goal_p_.cast<double>() : requested_goal_p_.cast<double>();
+        if (guide_path.size() >= 2U && diagnostic_route_goal.allFinite()) {
+            const Eigen::Vector3d route_start = guide_path.front().cast<double>();
+            const Eigen::Vector3d route_delta =
+                diagnostic_route_goal - route_start;
+            const double route_length_squared = route_delta.squaredNorm();
+            if (std::isfinite(route_length_squared) && route_length_squared > 1.0e-9) {
+                double maximum_lateral_error = 0.0;
+                Eigen::Vector3d maximum_lateral_point = route_start;
+                for (std::size_t index = 1U; index + 1U < guide_path.size(); ++index) {
+                    const auto& point = guide_path[index];
+                    const Eigen::Vector3d point_d = point.cast<double>();
+                    const double projection = std::clamp(
+                        (point_d - route_start).dot(route_delta) /
+                            route_length_squared,
+                        0.0, 1.0);
+                    const Eigen::Vector3d projected = route_start + projection * route_delta;
+                    const double lateral_error = (point_d - projected).norm();
+                    if (std::isfinite(lateral_error) && lateral_error > maximum_lateral_error) {
+                        maximum_lateral_error = lateral_error;
+                        maximum_lateral_point = point_d;
+                    }
+                }
+                if (maximum_lateral_error > 0.5) {
+                    planner_context_->warn(
+                        " -- [planner] guide has large interior lateral excursion before MINCO: "
+                        "error={} point=({}, {}, {}) start=({}, {}, {}) "
+                        "requested_goal=({}, {}, {}) planning_goal=({}, {}, {}) "
+                        "points={} pass_through_next={}",
+                        maximum_lateral_error,
+                        maximum_lateral_point.x(), maximum_lateral_point.y(),
+                        maximum_lateral_point.z(), route_start.x(), route_start.y(),
+                        route_start.z(), requested_goal_p_.x(), requested_goal_p_.y(),
+                        requested_goal_p_.z(), diagnostic_route_goal.x(),
+                        diagnostic_route_goal.y(), diagnostic_route_goal.z(),
+                        guide_path.size(),
+                        pass_through_next_target_.has_value());
+                }
+            }
+        }
+
         // Resolve the terminal point before corridor construction. Snapping
         // only the MINCO tail after CIRI has certified the unsnapped guide can
         // place the fixed endpoint outside every generated polytope.
@@ -2218,13 +2299,15 @@ double knownFreeGuideSupport(
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
-        // A rest-to-rest solve holds the vehicle while optimizing.  Start its
-        // command clock at commit time so optimizer latency cannot advance the
-        // first PVA sample several metres ahead of the stationary vehicle.
-        // Hot replans retain the original future-state stitching timestamp.
-        double new_traj_WT = last_exp_traj_info.empty()
-                                 ? planner_context_->getSimTime()
-                                 : replan_process_start_WT;
+        // Both rest-to-rest and hot-replan trajectories are seeded from the
+        // state captured at the beginning of this solve.  Keep that same
+        // command clock; moving a rest-plan's start to the post-optimization
+        // time would pair a current timestamp with a historical PVA sample
+        // when optimizer latency lets the vehicle continue moving.  The
+        // execution boundary samples this candidate at the current time and
+        // rejects it if the propagated state has diverged beyond the existing
+        // anchor envelope.
+        const double new_traj_WT = replan_process_start_WT;
 
         Trajectory temp_exp_traj;
         if (!last_exp_traj_info.empty() &&
@@ -2236,6 +2319,29 @@ double knownFreeGuideSupport(
         out_exp_traj_info.setSFC(sfc);
         temp_exp_traj = temp_exp_traj + out_traj;
         temp_exp_traj.start_WT = new_traj_WT; //last_exp_traj_info.replan_start_WT ;
+        const auto generated_boundary_state = temp_exp_traj.getState(0.0);
+        StatePVAJ expected_boundary_state = pos_init_state;
+        bool expected_boundary_valid = expected_boundary_state.allFinite();
+        if (!last_exp_traj_info.empty()) {
+            expected_boundary_valid = guide_pos_traj.getState(
+                replan_process_start_TT, expected_boundary_state);
+        }
+        if (expected_boundary_valid && generated_boundary_state.allFinite()) {
+            const double boundary_error = (
+                generated_boundary_state.col(0) - expected_boundary_state.col(0)).norm();
+            if (!std::isfinite(boundary_error) || boundary_error > 0.02) {
+                planner_context_->warn(
+                    " -- [planner] generated EXP boundary disagrees with its seed: "
+                    "mode={} solve_start={} output_start={} boundary_error={} "
+                    "solve_p=({},{},{}) expected_p=({},{},{}) generated_p=({},{},{})",
+                    last_exp_traj_info.empty() ? "measured" : "hot",
+                    replan_process_start_WT, new_traj_WT, boundary_error,
+                    solve_state_.p.x(), solve_state_.p.y(), solve_state_.p.z(),
+                    expected_boundary_state.col(0).x(), expected_boundary_state.col(0).y(),
+                    expected_boundary_state.col(0).z(), generated_boundary_state.col(0).x(),
+                    generated_boundary_state.col(0).y(), generated_boundary_state.col(0).z());
+            }
+        }
         double required_main_prefix_duration_TT = 0.0;
 
         if (!last_exp_traj_info.empty()) {

@@ -1924,10 +1924,17 @@ def _run_sim_unlocked(
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("visibility_bridge", _ros_shell([
             "ros2", "run", "uav_simulation", "gz_visibility_bridge", "--ros-args",
-            "-p", "gz_topic:=/sim/mid360/scan",
+            "-p", "input_topic:=/lidar/points",
             "-p", "ros_topic:=/lidar/free_space_endpoints",
             "-p", "expected_frame:=livox_frame",
             "-p", "maximum_endpoints:=4096",
+            "-p", "horizontal_count:=720",
+            "-p", "vertical_count:=28",
+            "-p", "horizontal_angle_min_rad:=-3.141592653589793",
+            "-p", "horizontal_angle_max_rad:=3.141592653589793",
+            "-p", "vertical_angle_min_rad:=-0.122173047639603",
+            "-p", "vertical_angle_max_rad:=0.907571211037051",
+            "-p", "range_max_m:=40.0",
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("px4_ingress", _ros_shell([
             "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",

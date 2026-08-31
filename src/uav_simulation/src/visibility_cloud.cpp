@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 namespace uav::simulation {
@@ -87,6 +88,103 @@ std::optional<VisibilityCloud> makeVisibilityCloud(
       downsampled.push_back(result.endpoints[source_index]);
     }
     result.endpoints = std::move(downsampled);
+  }
+  return result;
+}
+
+std::optional<VisibilityCloud> makeVisibilityCloud(
+    const sensor_msgs::msg::PointCloud2& cloud,
+    const OrganizedVisibilityConfig& config,
+    const std::string_view expected_frame,
+    const std::size_t maximum_endpoints) {
+  constexpr std::size_t kMaximumRayCount = 262144U;
+  if (expected_frame.empty() || cloud.header.frame_id != expected_frame ||
+      maximum_endpoints == 0U || cloud.is_bigendian ||
+      cloud.header.stamp.sec < 0 || cloud.header.stamp.nanosec >= 1'000'000'000U ||
+      config.horizontal_count == 0U || config.vertical_count == 0U ||
+      cloud.width != config.horizontal_count ||
+      cloud.height != config.vertical_count ||
+      config.vertical_count > kMaximumRayCount / config.horizontal_count ||
+      !std::isfinite(config.horizontal_angle_min_rad) ||
+      !std::isfinite(config.horizontal_angle_max_rad) ||
+      !std::isfinite(config.vertical_angle_min_rad) ||
+      !std::isfinite(config.vertical_angle_max_rad) ||
+      !std::isfinite(config.range_max_m) || config.range_max_m <= 0.0 ||
+      cloud.point_step == 0U ||
+      cloud.row_step < cloud.point_step * cloud.width ||
+      static_cast<std::uint64_t>(cloud.row_step) * cloud.height > cloud.data.size()) {
+    return std::nullopt;
+  }
+  const auto field_offset = [&cloud](const std::string_view name)
+      -> std::optional<std::uint32_t> {
+    for (const auto& field : cloud.fields) {
+      if (field.name == name &&
+          field.datatype == sensor_msgs::msg::PointField::FLOAT32 &&
+          field.count == 1U && field.offset <= cloud.point_step &&
+          sizeof(float) <= cloud.point_step - field.offset) {
+        return field.offset;
+      }
+    }
+    return std::nullopt;
+  };
+  const auto x_offset = field_offset("x");
+  const auto y_offset = field_offset("y");
+  const auto z_offset = field_offset("z");
+  if (!x_offset || !y_offset || !z_offset) return std::nullopt;
+
+  VisibilityCloud result;
+  result.frame_id = cloud.header.frame_id;
+  result.stamp_sec = cloud.header.stamp.sec;
+  result.stamp_nanosec = cloud.header.stamp.nanosec;
+  result.source_ray_count = config.horizontal_count * config.vertical_count;
+  result.endpoints.reserve(std::min<std::size_t>(result.source_ray_count,
+                                                  maximum_endpoints));
+  const double horizontal_step = config.horizontal_count > 1U
+      ? (config.horizontal_angle_max_rad - config.horizontal_angle_min_rad) /
+            static_cast<double>(config.horizontal_count - 1U)
+      : 0.0;
+  const double vertical_step = config.vertical_count > 1U
+      ? (config.vertical_angle_max_rad - config.vertical_angle_min_rad) /
+            static_cast<double>(config.vertical_count - 1U)
+      : 0.0;
+  std::vector<VisibilityEndpoint> all_endpoints;
+  all_endpoints.reserve(result.source_ray_count);
+  for (std::uint32_t row = 0U; row < cloud.height; ++row) {
+    const double elevation = config.vertical_angle_min_rad +
+        static_cast<double>(row) * vertical_step;
+    const double horizontal_range = config.range_max_m * std::cos(elevation);
+    for (std::uint32_t column = 0U; column < cloud.width; ++column) {
+      const std::size_t offset = static_cast<std::size_t>(row) * cloud.row_step +
+          static_cast<std::size_t>(column) * cloud.point_step;
+      float x = 0.0F;
+      float y = 0.0F;
+      float z = 0.0F;
+      std::memcpy(&x, cloud.data.data() + offset + *x_offset, sizeof(float));
+      std::memcpy(&y, cloud.data.data() + offset + *y_offset, sizeof(float));
+      std::memcpy(&z, cloud.data.data() + offset + *z_offset, sizeof(float));
+      const bool explicit_no_return =
+          !std::isnan(x) && !std::isnan(y) && !std::isnan(z) &&
+          (std::isinf(x) || std::isinf(y) || std::isinf(z));
+      if (!explicit_no_return) continue;
+      const double azimuth = config.horizontal_angle_min_rad +
+          static_cast<double>(column) * horizontal_step;
+      const VisibilityEndpoint endpoint{
+          static_cast<float>(horizontal_range * std::cos(azimuth)),
+          static_cast<float>(horizontal_range * std::sin(azimuth)),
+          static_cast<float>(config.range_max_m * std::sin(elevation))};
+      if (std::isfinite(endpoint.x) && std::isfinite(endpoint.y) &&
+          std::isfinite(endpoint.z)) {
+        all_endpoints.push_back(endpoint);
+      }
+    }
+  }
+  if (all_endpoints.size() <= maximum_endpoints) {
+    result.endpoints = std::move(all_endpoints);
+  } else {
+    for (std::size_t index = 0U; index < maximum_endpoints; ++index) {
+      result.endpoints.push_back(
+          all_endpoints[index * all_endpoints.size() / maximum_endpoints]);
+    }
   }
   return result;
 }

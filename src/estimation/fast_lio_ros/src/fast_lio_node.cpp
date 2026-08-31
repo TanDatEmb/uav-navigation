@@ -178,6 +178,7 @@ FastLioNode::FastLioNode(const rclcpp::NodeOptions& options)
         if (estimate.has_value()) {
           propagated_odometry_publisher_->publish(*estimate);
           transform_publisher_.publishPropagated(*estimate);
+          output_publisher_.publishPropagatedHealth(estimate->estimate.time);
         }
       });
   propagated_odometry_worker_->start();

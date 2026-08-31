@@ -16,7 +16,10 @@
 #include <px4_ros2/components/mode.hpp>
 #include <px4_ros2/components/mode_executor.hpp>
 #include <px4_ros2/components/health_and_arming_checks.hpp>
+#include <px4_ros2/components/shared_subscription.hpp>
 #include <px4_ros2/control/setpoint_types/experimental/trajectory.hpp>
+#include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/vehicle_status.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
 
@@ -24,6 +27,7 @@
 
 #include "px4_navigation_external_mode/mission.hpp"
 #include "px4_navigation_external_mode/mission_controller.hpp"
+#include "px4_navigation_external_mode/automatic_recovery_gate.hpp"
 
 namespace px4_navigation_external_mode {
 
@@ -32,6 +36,12 @@ class NavigationMode final : public px4_ros2::ModeBase {
   explicit NavigationMode(rclcpp::Node& node);
 
   void setPx4HoldHandover(std::function<void()> callback);
+  void attachStateInputNode(rclcpp::Node& state_input_node);
+  void setPx4HoldConfirmed(bool confirmed, std::int64_t now_steady_ns);
+  bool consumeAutomaticRecoveryReady(bool armed, std::int64_t now_ros_ns,
+                                     std::int64_t now_steady_ns);
+  void cancelAutomaticRecovery();
+  void resetAutomaticRecoveryBudget();
 
   void onActivate() override;
   void onDeactivate() override;
@@ -44,12 +54,15 @@ class NavigationMode final : public px4_ros2::ModeBase {
       const navigation_contracts::msg::NavigationCommand::ConstSharedPtr& message);
   void onOdometry(
       const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message);
+  void onPx4LocalPosition(
+      const px4_msgs::msg::VehicleLocalPosition::ConstSharedPtr& message);
+  void tryAlignPx4LocalFrameLocked();
   void onEstimatorHealth(
       const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message);
   void updateMission();
   void handleMissionEvent(const MissionControllerEvent& event, double now_s);
   void safetyStopNavigation(const char* reason);
-  void failNavigation(const char* reason);
+  void failNavigation(const char* reason, bool automatic_recovery = false);
   void logRuntimeMetrics(const rclcpp::Time& now);
   void publishStatus(std::uint8_t state, std::uint8_t reason,
                      const MissionControllerEvent* event = nullptr);
@@ -61,6 +74,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
       navigation_command_subscription_;
   rclcpp::Subscription<navigation_contracts::msg::EstimatorHealth>::SharedPtr
       estimator_health_subscription_;
+  rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
+      px4_local_position_subscription_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationGoal>::SharedPtr goal_publisher_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationModeStatus>::SharedPtr
       status_publisher_;
@@ -71,6 +86,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   rclcpp::Time last_setpoint_time_;
   std::string navigation_command_topic_;
   std::string goal_topic_;
+  std::string state_topic_;
   std::string planning_frame_;
   std::string body_frame_;
   double stale_after_s_{0.10};
@@ -81,6 +97,13 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::int64_t state_stale_after_ns_{0};
   std::int64_t planner_recovery_wait_timeout_ns_{0};
   std::optional<nav_msgs::msg::Odometry> odometry_;
+  std::optional<Eigen::Vector3d> px4_local_position_ned_;
+  std::optional<Eigen::Vector3d> px4_local_velocity_ned_;
+  std::optional<Eigen::Vector3d> lio_to_px4_local_translation_ned_;
+  std::uint8_t px4_xy_reset_counter_{0U};
+  std::uint8_t px4_z_reset_counter_{0U};
+  std::int64_t last_px4_local_position_receive_steady_ns_{0};
+  bool px4_local_frame_aligned_{false};
   std::optional<navigation_contracts::msg::NavigationCommand> navigation_command_;
   bool lio_health_valid_{false};
   bool typed_health_seen_{false};
@@ -95,6 +118,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t last_propagated_state_sequence_{0U};
   std::int64_t last_lio_diagnostics_ns_{0};
   std::int64_t last_health_source_stamp_ns_{0};
+  std::int64_t last_health_receive_steady_ns_{0};
   std::optional<Mission> mission_;
   std::unique_ptr<MissionController> mission_controller_;
   std::function<void()> px4_hold_handover_;
@@ -104,6 +128,14 @@ class NavigationMode final : public px4_ros2::ModeBase {
   bool handover_requested_{false};
   bool planner_recovery_pending_{false};
   std::int64_t planner_recovery_deadline_ns_{0};
+  // Exact previous BACKUP identity allowed to refresh the command lease while
+  // MissionController has advanced a pass-through checkpoint but runtime still
+  // owns the certified moving suffix. Cleared on the first current-goal
+  // command, lifecycle reset, or safety handover.
+  bool safety_suffix_handoff_pending_{false};
+  std::uint32_t safety_suffix_waypoint_index_{0U};
+  std::uint64_t safety_suffix_request_id_{0U};
+  AutomaticRecoveryGate automatic_recovery_gate_;
   std::uint32_t last_completed_waypoint_index_{0U};
   std::uint64_t last_completed_request_id_{0U};
   std::optional<Eigen::Vector3d> completion_position_;
@@ -144,9 +176,13 @@ class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {
   void schedulePx4Hold(bool complete_navigation_failure);
   void onPx4HoldHandoverCompleted(px4_ros2::Result result,
                                   bool complete_navigation_failure);
+  void onVehicleStatus(const px4_msgs::msg::VehicleStatus::UniquePtr& message);
+  void checkAutomaticRecovery();
 
   rclcpp::Node& node_;
   NavigationMode& navigation_mode_;
+  SharedSubscriptionCallbackInstance vehicle_status_subscription_;
+  rclcpp::TimerBase::SharedPtr automatic_recovery_timer_;
 };
 
 }  // namespace px4_navigation_external_mode

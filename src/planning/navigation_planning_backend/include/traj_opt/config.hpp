@@ -19,14 +19,6 @@ namespace traj_opt {
     using std::string;
     using std::vector;
 
-    inline void validateDynamicLimitToleranceRatio(const double ratio) {
-        if (!std::isfinite(ratio) || ratio != 0.0) {
-            throw std::invalid_argument(
-                "dynamic_limit_tolerance_ratio must be exactly zero; "
-                "physical V/A/J certificates cannot be relaxed");
-        }
-    }
-
     enum PosConstrainType {
         WAYPOINT = 1,
         CORRIDOR = 2,
@@ -88,10 +80,6 @@ namespace traj_opt {
         // physical mission envelope. This is a search reserve only; the
         // independent V/A/J certificate still uses max_vel/max_acc/max_jerk.
         double optimization_dynamic_reserve_ratio{1.0};
-        // Retained as a compatibility field so stale YAML fails explicitly at
-        // validation instead of silently changing the physical certificate.
-        // Product behavior is strict: this value must be exactly zero.
-        double dynamic_limit_tolerance_ratio{0.0};
         int integral_reso{0};
         double opt_accuracy{0};
         int feasibility_retry_max_iterations{64};
@@ -144,8 +132,6 @@ namespace traj_opt {
                 !std::isfinite(optimization_dynamic_reserve_ratio) ||
                 optimization_dynamic_reserve_ratio <= 0.0 ||
                 optimization_dynamic_reserve_ratio > 1.0 ||
-                !std::isfinite(dynamic_limit_tolerance_ratio) ||
-                dynamic_limit_tolerance_ratio != 0.0 ||
                 feasibility_retry_max_iterations <= 0 ||
                 feasibility_retry_max_iterations > kMaximumFeasibilityRetryIterations ||
                 integral_reso > kMaximumIntegralResolution ||
@@ -158,6 +144,16 @@ namespace traj_opt {
             : Config(yaml_loader::YamlLoader(cfg_path), std::move(ns)) {}
 
         Config(const yaml_loader::YamlLoader& loader, string ns) {
+            const YAML::Node traj_opt_node = loader.document()["traj_opt"];
+            if (traj_opt_node.IsDefined() && traj_opt_node.IsMap()) {
+                const YAML::Node boundary_node = traj_opt_node["boundary"];
+                if (boundary_node.IsDefined() && boundary_node.IsMap() &&
+                    boundary_node["dynamic_limit_tolerance_ratio"].IsDefined()) {
+                    throw std::invalid_argument(
+                        "traj_opt/boundary/dynamic_limit_tolerance_ratio was removed; "
+                        "physical V/A/J certificates use fixed floating-point ULP accounting only");
+                }
+            }
             if (ns.empty()) {
                 ns = "/";
             }
@@ -208,8 +204,6 @@ namespace traj_opt {
                 loader.LoadParam("traj_opt" + ns + "optimization_dynamic_reserve_ratio",
                                  optimization_dynamic_reserve_ratio, 1.0);
             }
-            loader.LoadParam("traj_opt/boundary/dynamic_limit_tolerance_ratio",
-                             dynamic_limit_tolerance_ratio, 0.0);
             // Missing physical limits remain invalid and are rejected by the
             // planner contract; zero is the neutral loader default rather
             // than a negative sentinel with an overloaded meaning.
@@ -255,7 +249,6 @@ namespace traj_opt {
                         "use zero to disable an objective term");
                 }
             }
-            validateDynamicLimitToleranceRatio(dynamic_limit_tolerance_ratio);
             if (!std::isfinite(smooth_eps) || smooth_eps <= 0.0 ||
                 !std::isfinite(corridor_plane_tolerance_m) ||
                 corridor_plane_tolerance_m < 0.0 ||

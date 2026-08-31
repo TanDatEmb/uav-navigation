@@ -219,6 +219,9 @@ class ExternalModeScenario:
         self.operator_aborted = False
         self.mode_status_state: int | None = None
         self.mode_status_reason: int | None = None
+        self.automatic_recovery_pending = False
+        self.automatic_recovery_started_wall_s: float | None = None
+        self.automatic_recovery_count = 0
         self.waypoint_acceptance_events: list[dict[str, Any]] = []
         self.trajectory_received = 0
         self.trajectory_success_count = 0
@@ -592,6 +595,12 @@ class ExternalModeScenario:
         if self.external_mode_id is not None and nav_state == self.external_mode_id:
             if not mode_was_active:
                 event = {"name": "external_mode_entered", "mode_id": self.external_mode_id}
+                if self.automatic_recovery_pending:
+                    self.automatic_recovery_pending = False
+                    self.automatic_recovery_started_wall_s = None
+                    self.automatic_recovery_count += 1
+                    event["automatic_recovery"] = True
+                    event["automatic_recovery_count"] = self.automatic_recovery_count
                 self.events.append(event)
                 self._record("event", event)
                 self.mode_entered_sim_ns = self.sim_now_ns
@@ -621,6 +630,7 @@ class ExternalModeScenario:
                 self.execution == "mission"
                 and self.takeoff_observed
                 and not self.mission_complete_observed
+                and not self.automatic_recovery_pending
                 and str(self.config.get("expected_outcome", "complete")) != "fail_closed"
             ):
                 self.mission_unexpected_exit_observed = True
@@ -791,6 +801,23 @@ class ExternalModeScenario:
             "acceptance_position_error_m": float(message.acceptance_position_error_m),
             "acceptance_speed_mps": float(message.acceptance_speed_mps),
         }
+        if (
+            record["state"] == int(self.NavigationModeStatus.FAILED)
+            and record["reason"] == int(self.NavigationModeStatus.ODOMETRY_STALE)
+            and self.execution == "mission"
+            and not self.mission_complete_observed
+        ):
+            if not self.automatic_recovery_pending:
+                self.automatic_recovery_pending = True
+                self.automatic_recovery_started_wall_s = time.monotonic()
+                self.mission_unexpected_exit_observed = False
+                if self.failure == "External Mode exited before mission completion":
+                    self.failure = None
+                self._record("event", {
+                    "name": "automatic_recovery_wait_started",
+                    "reason": record["reason_name"],
+                    "request_id": record["request_id"],
+                })
         if (
             record["state"] == int(self.NavigationModeStatus.PAUSED)
             and record["reason"] == int(self.NavigationModeStatus.SAFETY_STOP)
@@ -1387,6 +1414,18 @@ class ExternalModeScenario:
                     self.finish("TAKEOFF_TIMEOUT")
                 else:
                     return
+            if self.automatic_recovery_pending and not self.mode_active:
+                recovery_timeout_s = float(
+                    self.config.get("automatic_recovery_timeout_s", 15.0))
+                recovery_elapsed_s = (
+                    0.0 if self.automatic_recovery_started_wall_s is None else
+                    time.monotonic() - self.automatic_recovery_started_wall_s)
+                if recovery_elapsed_s > recovery_timeout_s:
+                    self.failure = (
+                        "automatic External Mode recovery gate was not satisfied "
+                        "within the bounded timeout")
+                    self._finish_or_wait("RECOVERY_TIMEOUT")
+                return
             # Re-arm the stability window whenever the vehicle is still moving.
             # Reaching altitude alone is not sufficient for a safe handover:
             # the first planner cycle must have a usable stop envelope even
@@ -1485,6 +1524,8 @@ class ExternalModeScenario:
                     self._finish_or_wait("HOLD_HANDOVER_FAILED")
                 return
             if self.mode_status_state == int(self.NavigationModeStatus.FAILED):
+                if self.automatic_recovery_pending:
+                    return
                 # A terminal ModeCompleted failure is authoritative for the
                 # navigation component. PX4 can reject the requested Hold
                 # handover while its health gate is false; waiting forever
@@ -1727,6 +1768,8 @@ class ExternalModeScenario:
             "mode_status_state_name": _MODE_STATUS_NAMES.get(self.mode_status_state, "UNKNOWN"),
             "mode_status_reason": self.mode_status_reason,
             "mode_status_reason_name": _MODE_STATUS_REASON_NAMES.get(self.mode_status_reason, "UNKNOWN"),
+            "automatic_recovery_count": self.automatic_recovery_count,
+            "automatic_recovery_pending": self.automatic_recovery_pending,
             "armed": self.armed_seen,
             "takeoff_requested": self.takeoff_requested,
             "manual_takeoff": self.manual_takeoff,

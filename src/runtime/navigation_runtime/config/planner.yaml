@@ -93,9 +93,6 @@ traj_opt:
     max_omg: 5.0
     max_acc_thr: 25.0
     min_acc_thr: 6.0
-    # Dynamic certificates are strict physical limits. This compatibility key
-    # is intentionally zero; non-zero stale overrides are rejected at load.
-    dynamic_limit_tolerance_ratio: 0.0
   exp_traj:
     # Parameterize nominal MINCO control points inside the generated SFC.
     # Direct waypoint variables (type=1) only apply a soft plane penalty and
@@ -212,14 +209,10 @@ rog_map:
   # explicitly; increasing inflation must not be used as a substitute for
   # resolving an oracle/quantization mismatch.
   inflation_step: 4
-  # ROG-Map storage remains an axis-aligned ENU evidence grid; it is not
-  # rotated with vehicle yaw.  The 30 m lateral extent gives a centered
-  # sliding window enough Y support for the current 14 m visibility horizon,
-  # the 5 m/s braking/replan envelope, and the measured three-column route.
-  # Route-direction support is still checked at runtime and an unsupported
-  # AABB request fails closed.  A wider/sparse map remains a future
-  # optimization after memory, snapshot, and mapping-tail measurements.
-  map_size: [110, 30, 6]
+  # ROG-Map storage is the locked axis-aligned ENU evidence window. Planner
+  # startup validates every discretized axis against this product geometry;
+  # route-direction and known-free support remain independent runtime gates.
+  map_size: [50, 50, 8]
   fix_map_origin: [0, 0, 1.5]
   # lio_odom is initialized from the estimator trajectory, so zero is not a
   # physical ground datum and a valid mission may descend below it.  Keep the
@@ -246,7 +239,9 @@ rog_map:
     # never on the committed BACKUP suffix.
     enable: true
     batch_update_size: 1
-    local_update_box: [100, 100, 5]
+    # Keep the raycasting update box synchronized with the complete evidence
+    # window; startup/product tests compare all three discretized axes.
+    local_update_box: [50, 50, 8]
     # Reject returns from the airframe before occupancy insertion. This only
     # affects the planning map; the estimator keeps its own registered cloud.
     # The minimum ray range is also the body-clear radius. It must cover the

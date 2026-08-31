@@ -36,7 +36,7 @@ fast_lio:
       minimum_imu_samples: 200
       require_stationary: true
     preprocessing:
-      minimum_range_m: 0.1
+      minimum_range_m: 0.5
       maximum_range_m: 40.0
       scan_voxel_size_m: 0.2
     registration:

@@ -9,6 +9,62 @@
 #include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
 #include "px4_navigation_external_mode/runtime_metrics_policy.hpp"
+#include "px4_navigation_external_mode/automatic_recovery_gate.hpp"
+
+TEST(AutomaticRecoveryGate, RequiresConfirmedHoldAndFiveContinuousSeconds) {
+  px4_navigation_external_mode::AutomaticRecoveryGate gate;
+  ASSERT_TRUE(gate.arm());
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 1));
+
+  gate.setHoldConfirmed(true, 1);
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.15, 1));
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.15, 5'000'000'000LL));
+  EXPECT_TRUE(gate.consumeIfReady(true, true, true, 0.15, 5'000'000'001LL));
+  EXPECT_FALSE(gate.pending());
+}
+
+TEST(AutomaticRecoveryGate, InvalidStateOrMotionResetsStationaryCountdown) {
+  px4_navigation_external_mode::AutomaticRecoveryGate gate;
+  ASSERT_TRUE(gate.arm());
+  gate.setHoldConfirmed(true, 10);
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 10));
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.151, 4'000'000'010LL));
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 5'000'000'010LL));
+  EXPECT_FALSE(gate.consumeIfReady(true, false, true, 0.0, 10'000'000'010LL));
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 10'000'000'011LL));
+  EXPECT_TRUE(gate.consumeIfReady(true, true, true, 0.0, 15'000'000'011LL));
+}
+
+TEST(AutomaticRecoveryGate, HoldLossDisarmAndNonfiniteSpeedFailClosed) {
+  px4_navigation_external_mode::AutomaticRecoveryGate gate;
+  ASSERT_TRUE(gate.arm());
+  gate.setHoldConfirmed(true, 20);
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 20));
+  gate.setHoldConfirmed(false, 1'000'000'020LL);
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 6'000'000'020LL));
+  gate.setHoldConfirmed(true, 6'000'000'021LL);
+  EXPECT_FALSE(gate.consumeIfReady(false, true, true, 0.0, 6'000'000'021LL));
+  EXPECT_FALSE(gate.consumeIfReady(
+      true, true, true, std::numeric_limits<double>::quiet_NaN(),
+      11'000'000'021LL));
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 11'000'000'022LL));
+  EXPECT_TRUE(gate.consumeIfReady(true, true, true, 0.0, 16'000'000'022LL));
+}
+
+TEST(AutomaticRecoveryGate, PermitsOnlyOneAttemptUntilExecutorBudgetReset) {
+  px4_navigation_external_mode::AutomaticRecoveryGate gate;
+  ASSERT_TRUE(gate.arm());
+  gate.setHoldConfirmed(true, 1);
+  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 1));
+  EXPECT_TRUE(gate.consumeIfReady(true, true, true, 0.0, 5'000'000'001LL));
+  EXPECT_EQ(gate.attemptCount(), 1U);
+  EXPECT_FALSE(gate.arm());
+  EXPECT_FALSE(gate.pending());
+
+  gate.resetBudget();
+  EXPECT_EQ(gate.attemptCount(), 0U);
+  EXPECT_TRUE(gate.arm());
+}
 
 TEST(RuntimeMetricsPolicy, RejectsClockRegressionWithoutOverflow) {
   EXPECT_FALSE(px4_navigation_external_mode::runtimeMetricsLogDue(
@@ -55,6 +111,25 @@ TEST(NavigationCommandContract, WrongLateTerminalIdentityIsRejected) {
   command.waypoint_index = 7U;
   EXPECT_FALSE(px4_navigation_external_mode::missionCommandIdentityMatches(
       command, "mission", 9U, 17U, true, 8U, 17U));
+}
+
+TEST(NavigationCommandContract, ExactAdjacentBackupSuffixMayCrossPassThroughHandoff) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.mission_id = "mission";
+  command.waypoint_index = 1U;
+  command.request_id = 11U;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+
+  EXPECT_TRUE(px4_navigation_external_mode::priorSafetySuffixCommandIdentityMatches(
+      command, "mission", 2U, 12U, 1U, 11U));
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  EXPECT_FALSE(px4_navigation_external_mode::priorSafetySuffixCommandIdentityMatches(
+      command, "mission", 2U, 12U, 1U, 11U));
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
+  command.waypoint_index = 0U;
+  EXPECT_FALSE(px4_navigation_external_mode::priorSafetySuffixCommandIdentityMatches(
+      command, "mission", 2U, 12U, 1U, 11U));
 }
 
 TEST(NavigationCommandContract, DuplicateLateTerminalSampleStillFailsMonotonicGate) {
@@ -113,6 +188,17 @@ TEST(NavigationCommandContract, BackupRecoveryWindowIsBoundedAndHoldOnly) {
       true, 1'000'000'000LL, 1'000'000'000LL));
   EXPECT_TRUE(px4_navigation_external_mode::plannerRecoveryWaitExpired(
       true, 1'100'000'000LL, 1'000'000'000LL));
+}
+
+TEST(NavigationCommandContract, TerminalRecoveryHoldMayOutliveCommandLeaseOnlyBoundedly) {
+  EXPECT_TRUE(px4_navigation_external_mode::terminalRecoveryCommandMayBeHeld(
+      true, true, 1'500'000'000LL, 2'000'000'000LL));
+  EXPECT_FALSE(px4_navigation_external_mode::terminalRecoveryCommandMayBeHeld(
+      false, true, 1'500'000'000LL, 2'000'000'000LL));
+  EXPECT_FALSE(px4_navigation_external_mode::terminalRecoveryCommandMayBeHeld(
+      true, false, 1'500'000'000LL, 2'000'000'000LL));
+  EXPECT_FALSE(px4_navigation_external_mode::terminalRecoveryCommandMayBeHeld(
+      true, true, 2'000'000'000LL, 2'000'000'000LL));
 }
 
 TEST(NavigationCommandContract, BackupEndpointNearAcceptanceEdgeUsesAnchorEnvelope) {

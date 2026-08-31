@@ -3,6 +3,10 @@
 #include <navigation_planning/candidate_bundle.hpp>
 
 #include <gtest/gtest.h>
+#include <barrier>
+#include <thread>
+#include <atomic>
+#include <memory>
 
 namespace navigation_runtime {
 namespace {
@@ -168,6 +172,39 @@ TEST(PlannerFsm, EmergencyBrakeCannotBeRearmedFromADriftingEmergency) {
       navigation_planning::CandidateRole::kMain));
 }
 
+TEST(PlannerFsm, ProjectedAnchorCrossingDoesNotReplaceValidCommandEarly) {
+  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, true, true, true, true, false,
+      ExecutionRecoveryState::kTrackMain,
+      navigation_planning::CandidateRole::kMain));
+  EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
+      false, false, true, true, true, true,
+      ExecutionRecoveryState::kTrackMain,
+      navigation_planning::CandidateRole::kMain));
+}
+
+TEST(PlannerFsm, EmergencyBoundaryDropsOnlyEstimatedHighOrderDerivatives) {
+  navigation_planning::TrajectoryPoint source;
+  source.position_world << 1.0, 2.0, 3.0;
+  source.velocity_world << 0.4, -0.2, 0.1;
+  source.acceleration_world << 2.0, 3.0, 4.0;
+  source.jerk_world << -5.0, 6.0, -7.0;
+  source.yaw = 0.3;
+  source.yaw_rate = -0.1;
+
+  const auto estimated = makeMeasuredEmergencyBoundary(source, true, true);
+  EXPECT_TRUE(estimated.position_world.isApprox(source.position_world));
+  EXPECT_TRUE(estimated.velocity_world.isApprox(source.velocity_world));
+  EXPECT_TRUE(estimated.acceleration_world.isApprox(Eigen::Vector3d::Zero()));
+  EXPECT_TRUE(estimated.jerk_world.isApprox(Eigen::Vector3d::Zero()));
+  EXPECT_DOUBLE_EQ(estimated.yaw, source.yaw);
+  EXPECT_DOUBLE_EQ(estimated.yaw_rate, source.yaw_rate);
+
+  const auto measured = makeMeasuredEmergencyBoundary(source, false, false);
+  EXPECT_TRUE(measured.acceleration_world.isApprox(source.acceleration_world));
+  EXPECT_TRUE(measured.jerk_world.isApprox(source.jerk_world));
+}
+
 TEST(PlannerFsm, BackupAndEmergencyAreOneWayUntilCertifiedStop) {
   EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kTrackBackup));
   EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kEmergencyBrake));
@@ -205,11 +242,76 @@ TEST(PlannerFsm, PreservesObservedTerminalHoldAcrossRestRetry) {
   EXPECT_FALSE(terminalHoldIsPending(true, true, false, 17U));
 }
 
+TEST(PlannerFsm, PendingGoalOwnerLinearizesSupersedeAndCertifiedPromotion) {
+  PendingGoalHandoffOwner owner;
+  navigation_contracts::msg::NavigationGoal active;
+  active.mission_id = "mission";
+  active.request_id = 10U;
+  active.waypoint_index = 2U;
+  active.route.route_revision = 4U;
+  auto make_goal = [](std::uint64_t request, std::uint32_t waypoint,
+                      std::uint64_t revision) {
+    auto goal = std::make_shared<navigation_contracts::msg::NavigationGoal>();
+    goal->mission_id = "mission";
+    goal->request_id = request;
+    goal->waypoint_index = waypoint;
+    goal->route.route_revision = revision;
+    return std::shared_ptr<const navigation_contracts::msg::NavigationGoal>(goal);
+  };
+  EXPECT_TRUE(owner.enqueueGoal(make_goal(11U, 3U, 5U), active, true));
+  EXPECT_FALSE(owner.enqueueGoal(make_goal(14U, 6U, 8U), active, false));
+  EXPECT_FALSE(owner.enqueueGoal(make_goal(10U, 3U, 5U), active, true));
+  EXPECT_TRUE(owner.enqueueGoal(make_goal(12U, 4U, 6U), active, true));
+  EXPECT_FALSE(owner.promoteGoal(false));
+  const auto promoted = owner.promoteGoal(true);
+  ASSERT_TRUE(promoted);
+  EXPECT_EQ(promoted->request_id, 12U);
+  EXPECT_FALSE(owner.promoteGoal(true));
+  EXPECT_TRUE(owner.enqueueGoal(make_goal(13U, 5U, 7U), active, true));
+  EXPECT_TRUE(owner.goalMatchesStatus("mission", 5U, 13U));
+  EXPECT_FALSE(owner.goalMatchesStatus("mission", 5U, 12U));
+  owner.clearGoal();
+  EXPECT_FALSE(owner.goalSnapshot());
+}
+
+TEST(PlannerFsm, PendingGoalOwnerConcurrentSupersedeKeepsNewestOnly) {
+  PendingGoalHandoffOwner owner;
+  navigation_contracts::msg::NavigationGoal active;
+  active.mission_id = "mission";
+  active.request_id = 10U;
+  active.waypoint_index = 1U;
+  active.route.route_revision = 1U;
+  auto make_goal = [](std::uint64_t request) {
+    auto goal = std::make_shared<navigation_contracts::msg::NavigationGoal>();
+    goal->mission_id = "mission";
+    goal->request_id = request;
+    goal->waypoint_index = static_cast<std::uint32_t>(request - 9U);
+    goal->route.route_revision = request;
+    return std::shared_ptr<const navigation_contracts::msg::NavigationGoal>(goal);
+  };
+  std::barrier rendezvous(3);
+  std::thread older([&] {
+    rendezvous.arrive_and_wait();
+    (void)owner.enqueueGoal(make_goal(11U), active, true);
+  });
+  std::thread newer([&] {
+    rendezvous.arrive_and_wait();
+    (void)owner.enqueueGoal(make_goal(12U), active, true);
+  });
+  rendezvous.arrive_and_wait();
+  older.join();
+  newer.join();
+  const auto pending = owner.goalSnapshot();
+  ASSERT_TRUE(pending);
+  EXPECT_EQ(pending->request_id, 12U);
+}
+
 TEST(PlannerFsm, ContinuesOnlyCompletedPassThroughGoalEndpoints) {
-  EXPECT_TRUE(completedPassThroughRequiresContinuation(true, true, true));
-  EXPECT_FALSE(completedPassThroughRequiresContinuation(false, true, true));
-  EXPECT_FALSE(completedPassThroughRequiresContinuation(true, false, true));
-  EXPECT_FALSE(completedPassThroughRequiresContinuation(true, true, false));
+  EXPECT_TRUE(completedPassThroughRequiresContinuation(true, true, true, true));
+  EXPECT_FALSE(completedPassThroughRequiresContinuation(false, true, true, true));
+  EXPECT_FALSE(completedPassThroughRequiresContinuation(true, false, true, true));
+  EXPECT_FALSE(completedPassThroughRequiresContinuation(true, true, true, false));
+  EXPECT_FALSE(completedPassThroughRequiresContinuation(true, true, false, true));
 }
 
 TEST(PlannerFsm, RejectsFinitePassThroughWithoutOutgoingRouteLeg) {
@@ -381,6 +483,60 @@ TEST(PlannerFsm, SamplesDeclaredTerminalMainOnlyCandidateWithoutBackupMetadata) 
   EXPECT_TRUE(endpoint->finished);
 }
 
+TEST(PlannerFsm, SamplesExactFractionalMainWithBackupEndpointRole) {
+  navigation_planning::CandidateBundle candidate;
+  candidate.world_identity.localization_epoch = 1U;
+  candidate.world_identity.generation = 1U;
+  candidate.world_identity.revision = 1U;
+  candidate.world_identity.observation_stamp_ns = 10000000000LL;
+  candidate.pinned_world_identity = candidate.world_identity;
+  candidate.localization_epoch = 1U;
+  candidate.goal_epoch = 1U;
+  candidate.request_id = 1U;
+  candidate.bundle_generation = 1U;
+  candidate.start_wall_time_s = 10.123456789;
+  candidate.duration_s = 0.75;
+  candidate.declared_start_ns = *navigation_common::secondsToNanoseconds(
+      candidate.start_wall_time_s);
+  candidate.declared_end_ns = *navigation_common::secondsSumToNanoseconds(
+      candidate.start_wall_time_s, candidate.duration_s);
+  candidate.valid_from_ns = candidate.declared_start_ns;
+  candidate.valid_until_ns = candidate.declared_end_ns;
+  candidate.role = navigation_planning::CandidateRole::kMain;
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.certificates = {true, true, true, false};
+  candidate.protected_region.minimum = Eigen::Vector3d::Zero();
+  candidate.protected_region.maximum = Eigen::Vector3d::Ones();
+  candidate.role_schedule = {
+      {0.0, 0.5, navigation_planning::CandidateRole::kMain},
+      {0.5, 0.75, navigation_planning::CandidateRole::kBackup}};
+  const auto start_ns = candidate.declared_start_ns;
+  candidate.evaluator = [start_ns](const std::int64_t stamp_ns,
+                                   navigation_planning::TrajectoryPoint& point) {
+    point.position_world = Eigen::Vector3d{1.0, 2.0, 3.0};
+    point.trajectory_time_s = static_cast<double>(stamp_ns - start_ns) * 1.0e-9;
+    point.role = point.trajectory_time_s >= 0.5
+        ? navigation_planning::CandidateRole::kBackup
+        : navigation_planning::CandidateRole::kMain;
+    return true;
+  };
+
+  const auto endpoint = candidate.sampleAtDeclaredEnd();
+  ASSERT_TRUE(endpoint.has_value());
+  EXPECT_EQ(endpoint->role, navigation_planning::CandidateRole::kBackup);
+  EXPECT_TRUE(endpoint->finished);
+  EXPECT_EQ(candidate.scheduledRole(candidate.duration_s - 1.0e-9),
+            navigation_planning::CandidateRole::kBackup);
+  EXPECT_EQ(candidate.scheduledRole(0.5 - 1.0e-9),
+            navigation_planning::CandidateRole::kMain);
+  EXPECT_EQ(candidate.scheduledRole(0.5), navigation_planning::CandidateRole::kBackup);
+
+  auto inconsistent = candidate;
+  inconsistent.declared_end_ns += 1;
+  EXPECT_FALSE(inconsistent.valid());
+}
+
 TEST(PlannerFsm, RestartsAtLocalTrajectoryBoundary) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kRestartFromRest, false, true, false),
             PlannerResultDisposition::RestartFromRest);
@@ -403,6 +559,8 @@ TEST(PlannerFsm, FailsClosedForEmergencyOrUnrecoverableFailures) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFailed, false, false, false),
             PlannerResultDisposition::FailClosed);
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kEmergency, false, true, false),
+            PlannerResultDisposition::RetainCommittedCommand);
+  EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kEmergency, false, false, false),
             PlannerResultDisposition::FailClosed);
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kOptimizationFailed, true, false, false),
             PlannerResultDisposition::FailClosed);
@@ -495,7 +653,22 @@ TEST(PlannerFsm, PassThroughHotRetargetsFromCertifiedFiniteCommand) {
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, false, true, false, false));
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, false, false, false));
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, true, true, false));
-  EXPECT_TRUE(canHotRetargetAtWaypointTransition(false, true, true, false, true));
+  // A moving safety suffix remains owned by BACKUP/EMERGENCY until a
+  // certified stop; a new nominal goal cannot rebind it as TrackMain.
+  EXPECT_FALSE(canHotRetargetAtWaypointTransition(false, true, true, false, true));
+}
+
+TEST(PlannerFsm, WatchdogRetainsOnlyMovingCertifiedSafetySuffix) {
+  EXPECT_TRUE(watchdogTimeoutMayRetainSafetySuffix(
+      ExecutionRecoveryState::kTrackBackup, true, true));
+  EXPECT_TRUE(watchdogTimeoutMayRetainSafetySuffix(
+      ExecutionRecoveryState::kEmergencyBrake, true, true));
+  EXPECT_FALSE(watchdogTimeoutMayRetainSafetySuffix(
+      ExecutionRecoveryState::kTrackMain, true, true));
+  EXPECT_FALSE(watchdogTimeoutMayRetainSafetySuffix(
+      ExecutionRecoveryState::kTrackBackup, false, true));
+  EXPECT_FALSE(watchdogTimeoutMayRetainSafetySuffix(
+      ExecutionRecoveryState::kTrackBackup, true, false));
 }
 
 TEST(PlannerFsm, HotRetargetUsesOnlyCertifiedFutureMainState) {

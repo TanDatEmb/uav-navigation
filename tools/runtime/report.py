@@ -520,7 +520,20 @@ def _write_qualification_timelines(session: Path) -> dict[str, Any]:
             "time_ns": _qualification_event_time_ns(record),
             "record": record,
         })
-    result: dict[str, Any] = {"schema_version": 1, "complete": True}
+    # A file being emitted is not evidence that qualification has a usable
+    # timeline. Empty domains, missing event times, or malformed records must
+    # remain explicitly incomplete so a downstream consumer cannot treat an
+    # artifact-only report as acceptance evidence.
+    complete = bool(records) and all(buckets[domain] for domain in buckets)
+    if complete:
+        complete = all(
+            isinstance(item.get("time_ns"), int) and item["time_ns"] >= 0
+            for items in buckets.values() for item in items
+        )
+    result: dict[str, Any] = {
+        "schema_version": 1,
+        "complete": complete,
+    }
     for domain, items in buckets.items():
         name = f"{domain}_timeline.jsonl"
         body = "".join(
@@ -918,6 +931,31 @@ def _sim_stream_stale_violation(name: str, row: dict[str, Any]) -> int:
             return 1
         return int(row.get("active_wall_arrival_gap_count", 0) or 0)
     return int(row.get("source_stale_event_count", 0) or 0)
+
+
+def _sim_infrastructure_classification(
+    streams: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Classify simulator time transport separately from product behavior."""
+    clock = streams.get("simulation_clock", {})
+    reasons: list[str] = []
+    if int(clock.get("sample_count", 0) or 0) <= 0:
+        reasons.append("simulation clock was not observed")
+    if clock.get("arrival_gap_evidence_valid") is False:
+        reasons.append("simulation clock arrival-gap evidence is incomplete")
+    gap_count = int(clock.get("active_wall_arrival_gap_count", 0) or 0)
+    if gap_count > 0:
+        reasons.append(
+            f"simulation clock exceeded its wall-arrival lease {gap_count} time(s)")
+    return {
+        "classification": "VALID" if not reasons else "INFRASTRUCTURE_INVALID",
+        "valid": not reasons,
+        "reasons": reasons,
+        "simulation_clock_active_wall_gap_count": gap_count,
+        "simulation_clock_maximum_active_wall_gap_ms":
+            clock.get("maximum_active_wall_arrival_gap_ms"),
+        "qualification_eligible": not reasons,
+    }
 
 
 def _metric_summary(values: list[float]) -> dict[str, Any]:
@@ -1996,16 +2034,50 @@ def _planning_timing_summary(samples: list[dict[str, Any]]) -> dict[str, dict[st
     )
 
 
-def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Return the latest planner counters without treating them as timings."""
+def _planning_execution_summary(
+    snapshot: dict[str, Any], samples: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
+    """Return planner counters from the newest matching planner status.
+
+    Mapping and planner diagnostics are interleaved on the monitor stream. A
+    snapshot's last message is therefore not an owner boundary: selecting it
+    can make a newer mapping status hide the planner counters entirely. When
+    the event stream is available, retain monitor order and select only the
+    newest status owned by the planner; legacy snapshots use the same owner
+    filter over their ``latest`` entries.
+    """
     latest_values = snapshot.get("latest", {})
-    latest = (
-        latest_values.get("planning_diagnostics") or
-        latest_values.get("mapping_diagnostics") or
-        latest_values.get("diagnostics") or
-        {}
-    )
-    statuses = latest.get("statuses", []) if isinstance(latest, dict) else []
+    planner_statuses: list[tuple[int, int, dict[str, Any]]] = []
+    if samples:
+        for sequence, item in enumerate(samples):
+            if item.get("stream") not in {
+                "planning_diagnostics", "mapping_diagnostics", "diagnostics"
+            }:
+                continue
+            try:
+                order = int(item.get("arrival_wall_ns", 0))
+            except (TypeError, ValueError):
+                order = 0
+            for status in item.get("payload", {}).get("statuses", []):
+                if isinstance(status, dict) and status.get("name") in {
+                    "navigation_planning/planner", "navigation_runtime/planner"
+                }:
+                    planner_statuses.append((order, sequence, status))
+    if planner_statuses:
+        statuses = [item[2] for item in sorted(planner_statuses, key=lambda item: (item[0], item[1]))]
+    else:
+        statuses = []
+        # Do not use ``or`` here: it encodes stream priority and can select a
+        # non-planner mapping message simply because it was last populated.
+        for latest in latest_values.values():
+            if not isinstance(latest, dict):
+                continue
+            statuses.extend(
+                status for status in latest.get("statuses", [])
+                if isinstance(status, dict) and status.get("name") in {
+                    "navigation_planning/planner", "navigation_runtime/planner"
+                }
+            )
     keys = (
         "plan_count",
         "plan_skip_count",
@@ -2035,6 +2107,14 @@ def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "known_free_horizon_m", "splice_position_residual_m",
         "splice_velocity_residual_mps", "splice_acceleration_residual_mps2",
     )
+    lifecycle_keys = {
+        "received_observation_count", "accepted_observation_count",
+        "cycle_count", "trajectory_publish_count", "dropped_cloud_count",
+        "processing_exception_count",
+    }
+    decision_keys = set(keys) | set(optional_count_fields) | set(numeric_fields) | {"replan_reason"}
+    newest_lifecycle: dict[str, Any] | None = None
+    newest_decision: dict[str, Any] | None = None
     for status in statuses:
         if not isinstance(status, dict) or status.get("name") not in {
             "navigation_planning/planner", "navigation_runtime/planner"
@@ -2043,23 +2123,33 @@ def _planning_execution_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         values = status.get("values", {})
         if not isinstance(values, dict):
             continue
-        if status.get("name") == "navigation_runtime/planner":
-            return {
-                "available": True,
-                "status_name": status.get("name"),
-                **{
-                    key: int(_number(values[key], 0.0))
-                    for key in (
-                        "received_observation_count",
-                        "accepted_observation_count",
-                        "cycle_count",
-                        "trajectory_publish_count",
-                        "dropped_cloud_count",
-                        "processing_exception_count",
-                    )
-                    if key in values
-                },
-            }
+        if lifecycle_keys.intersection(values):
+            newest_lifecycle = status
+        if decision_keys.intersection(values):
+            newest_decision = status
+    if newest_lifecycle is not None:
+        lifecycle_values = newest_lifecycle.get("values", {})
+        result = {
+            "available": True,
+            "status_name": newest_lifecycle.get("name"),
+            **{
+                key: int(_number(lifecycle_values[key], 0.0))
+                for key in lifecycle_keys if key in lifecycle_values
+            },
+        }
+        if newest_decision is not None:
+            values = newest_decision.get("values", {})
+            # Merge only fields actually emitted by the newest decision trace;
+            # never zero-fill a lifecycle snapshot with absent telemetry.
+            result.update({key: int(_number(values[key], 0.0)) for key in keys if key in values})
+            result.update({key: int(_number(values[key], 0.0)) for key in optional_count_fields if key in values})
+            if "replan_reason" in values:
+                result["replan_reason"] = str(values["replan_reason"])
+            result.update({key: _number(values[key], 0.0) for key in numeric_fields if key in values})
+        return result
+    if newest_decision is not None:
+        status = newest_decision
+        values = status.get("values", {})
         result: dict[str, Any] = {key: int(_number(values.get(key), 0.0)) for key in keys}
         if any(field in values for field in optional_count_fields):
             result.update({key: int(_number(values.get(key), 0.0)) for key in optional_count_fields})
@@ -2607,7 +2697,7 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
     map_maintenance = _map_maintenance_summary(samples)
     navigation_mapping = _navigation_mapping_summary(snapshot, samples)
     planning = _planning_timing_summary(samples)
-    planning["execution"] = _planning_execution_summary(snapshot)
+    planning["execution"] = _planning_execution_summary(snapshot, samples)
     planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
     shadow_planning = _load_json(session / "dataset_shadow_planning.json", {})
     planning["shadow_goal"] = shadow_planning
@@ -2698,13 +2788,14 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     failures = _process_failures(session)
     samples = _samples(session / "samples.jsonl")
     _annotate_stale_classification(streams, config, runtime, samples)
+    infrastructure = _sim_infrastructure_classification(streams)
     diagnostic_states = _diagnostic_states(samples)
     observability = _observability_summary(samples)
     map_point_count = _map_point_summary(samples)
     map_maintenance = _map_maintenance_summary(samples)
     navigation_mapping = _navigation_mapping_summary(snapshot, samples)
     planning = _planning_timing_summary(samples)
-    planning["execution"] = _planning_execution_summary(snapshot)
+    planning["execution"] = _planning_execution_summary(snapshot, samples)
     planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
     planner_reference_residuals = _planner_reference_residuals(
         planning["rolling_bundle_trace"].get("records", []),
@@ -2793,6 +2884,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "workflow": workflow,
         "verdict": verdict,
         "reasons": reasons,
+        "infrastructure": infrastructure,
         "streams": streams,
         "px4": {
             "estimator_initialized": streams["estimator_status_flags"]["sample_count"] > 0,
@@ -2882,6 +2974,10 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     report["session"] = str(session.resolve())
     report["schema_version"] = 1
     report["qualification_timelines"] = _write_qualification_timelines(session)
+    # Timeline serialization is deliberately weaker than qualification. The
+    # repeated PASS/infrastructure-valid speed/seed matrix is not aggregated
+    # by this single-session report, so never infer eligibility from buckets.
+    report["qualification_eligible"] = False
     (session / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     # Keep the machine-readable report as the contract, and add a standalone
     # visualization artifact for SITL mission analysis. Every completed
@@ -2932,6 +3028,7 @@ def build(session: Path, workflow: str, config_path: Path, workspace: Path, px4_
             "session": str(session),
             "schema_version": 1,
             "qualification_timelines": timelines,
+            "qualification_eligible": False,
         }
         (session / "REPORT_BUILD_ERROR.txt").write_text(error_text + "\n", encoding="utf-8")
         (session / "report.json").write_text(

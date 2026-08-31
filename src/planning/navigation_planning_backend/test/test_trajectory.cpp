@@ -18,6 +18,7 @@
 #include "path_search/astar.h"
 #include "planner_core/absolute_deadline.hpp"
 #include "planner_core/command_time.hpp"
+#include <navigation_common/time.hpp>
 #include "planner_core/ciri.h"
 #include "planner_core/corridor_generator.h"
 #include "planner_core/guide_endpoint.hpp"
@@ -754,6 +755,35 @@ TEST(PlannerTrajectory, CommandTrajectoryTimePreservesEstablishedSamplingSemanti
   const auto finished = navigation_planning_backend::commandTrajectoryTime(12.1, 10.0, 2.0);
   EXPECT_TRUE(finished.finished);
   EXPECT_DOUBLE_EQ(finished.trajectory_time_s, 2.0);
+}
+
+TEST(PlannerTrajectory, ExactCommandClockUsesIntegerEpochDelta) {
+  constexpr double start_s = 1788103865.180704;
+  constexpr double duration_s = 0.000123456789;
+  const auto start_ns = navigation_common::secondsToNanoseconds(start_s);
+  const auto end_ns = navigation_common::secondsSumToNanoseconds(start_s, duration_s);
+  ASSERT_TRUE(start_ns.has_value());
+  ASSERT_TRUE(end_ns.has_value());
+
+  const auto at_start = navigation_planning_backend::commandTrajectoryTime(
+      *start_ns, *start_ns, *end_ns, duration_s);
+  EXPECT_FALSE(at_start.finished);
+  EXPECT_DOUBLE_EQ(at_start.trajectory_time_s, 0.0);
+
+  const auto before_end = navigation_planning_backend::commandTrajectoryTime(
+      *end_ns - 1, *start_ns, *end_ns, duration_s);
+  EXPECT_FALSE(before_end.finished);
+  EXPECT_LT(before_end.trajectory_time_s, duration_s);
+
+  const auto at_end = navigation_planning_backend::commandTrajectoryTime(
+      *end_ns, *start_ns, *end_ns, duration_s);
+  EXPECT_FALSE(at_end.finished);
+  EXPECT_DOUBLE_EQ(at_end.trajectory_time_s, duration_s);
+
+  const auto after_end = navigation_planning_backend::commandTrajectoryTime(
+      *end_ns + 1, *start_ns, *end_ns, duration_s);
+  EXPECT_TRUE(after_end.finished);
+  EXPECT_DOUBLE_EQ(after_end.trajectory_time_s, duration_s);
 }
 
 TEST(PlannerTrajectory, HotReplanUsesExecutableCommandClock) {

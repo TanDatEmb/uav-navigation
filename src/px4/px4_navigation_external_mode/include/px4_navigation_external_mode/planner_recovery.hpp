@@ -13,6 +13,17 @@ inline bool plannerRecoveryWaitExpired(
   return pending && deadline_ns > 0 && now_ns >= deadline_ns;
 }
 
+// A previously accepted terminal command may be held after its normal command
+// validity interval only while the existing bounded planner-recovery window is
+// open. This is endpoint hold, never permission to sample or extend a future
+// trajectory.
+inline bool terminalRecoveryCommandMayBeHeld(
+    bool completed_command, bool pending, std::int64_t now_ns,
+    std::int64_t deadline_ns) noexcept {
+  return completed_command && pending && now_ns > 0 && deadline_ns > 0 &&
+         now_ns < deadline_ns;
+}
+
 // A completed backup endpoint is geometrically anchored only when the command
 // itself is accepted and the measured state remains within the existing
 // command-anchor envelope. The caller must independently require measured

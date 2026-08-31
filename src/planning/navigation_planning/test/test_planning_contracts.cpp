@@ -132,6 +132,22 @@ TEST(PlanningCandidate, CertifiedTerminalStopIsReserveExempt) {
       candidate, 100.0));
 }
 
+TEST(PlanningCandidate, FinalRoleWinsWhenProducerOffsetRoundsOneNanosecondShort) {
+  auto candidate = validCandidate();
+  candidate.duration_s = 0.000019999400017999461;
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.certificates.terminal_stop = false;
+  // This reproduces a producer role endpoint whose independently rounded
+  // offset is 19,999 ns while the declared duration rounds to 20,000 ns.
+  candidate.role_schedule = {
+      {0.0, 0.000009, navigation_planning::CandidateRole::kMain},
+      {0.000009, 0.0000199994, navigation_planning::CandidateRole::kBackup}};
+  const auto role = candidate.scheduledRole(candidate.duration_s);
+  ASSERT_TRUE(role.has_value());
+  EXPECT_EQ(*role, navigation_planning::CandidateRole::kBackup);
+}
+
 TEST(PlanningOutcome, SuccessRequiresCandidateAndFailureDoesNotCarryOne) {
   navigation_planning::PlanningOutcome success;
   success.outcome = navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle;

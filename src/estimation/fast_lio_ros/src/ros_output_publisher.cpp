@@ -418,14 +418,14 @@ void RosOutputPublisher::publish(const ProcessResult& result,
   if (!result.hasCorrectedOutput() ||
       !result.corrected_kinematic_estimate.has_value() ||
       !base_link_converter) {
-    publishTypedHealth(health, result, diagnostics_stamp);
+    publishTypedHealth(health, result.hasCorrectedOutput(), diagnostics_stamp);
     return;
   }
   const auto converted = base_link_converter->convert(
       result.corrected_kinematic_estimate->estimate,
       result.corrected_kinematic_estimate->angular_velocity_imu_rad_s);
   if (!converted.ok()) {
-    publishTypedHealth(health, result, diagnostics_stamp);
+    publishTypedHealth(health, result.hasCorrectedOutput(), diagnostics_stamp);
     return;
   }
   std::optional<builtin_interfaces::msg::Time> odometry_stamp;
@@ -499,7 +499,7 @@ void RosOutputPublisher::publish(const ProcessResult& result,
     }
     registered_scan_->publish(std::move(observation));
   }
-  publishTypedHealth(health, result, diagnostics_stamp);
+  publishTypedHealth(health, result.hasCorrectedOutput(), diagnostics_stamp);
   if (transitioned_to_usable) {
     // Publish the recovery edge only after covariance projection has updated
     // its availability snapshot and corrected odometry has been emitted.
@@ -508,7 +508,7 @@ void RosOutputPublisher::publish(const ProcessResult& result,
 }
 
 void RosOutputPublisher::publishTypedHealth(
-    const EstimatorHealthSnapshot& health, const ProcessResult& result,
+    const EstimatorHealthSnapshot& health, const bool correction_fresh,
     const builtin_interfaces::msg::Time& stamp) {
   navigation_contracts::msg::EstimatorHealth message;
   message.header.stamp = stamp;
@@ -544,7 +544,7 @@ void RosOutputPublisher::publishTypedHealth(
   message.covariance_valid = covariance.pose_covariance_available &&
                              covariance.twist_covariance_available;
   message.observability_valid = health.translation_observability_valid;
-  message.correction_fresh = result.hasCorrectedOutput();
+  message.correction_fresh = correction_fresh;
   message.propagation_valid =
       propagation_valid_.load(std::memory_order_acquire);
   if (health.last_lidar_correction_time_ns > 0) {
@@ -563,6 +563,42 @@ void RosOutputPublisher::publishTypedHealth(
   }
   message.reason_code = static_cast<std::uint16_t>(health.failure_class);
   typed_health_->publish(std::move(message));
+}
+
+void RosOutputPublisher::publishPropagatedHealth(
+    const Timestamp& propagated_time) {
+  const auto propagated_stamp_ns = propagated_time.nanoseconds();
+  if (propagated_stamp_ns <= 0) return;
+
+  std::optional<EstimatorHealthSnapshot> health;
+  {
+    std::scoped_lock lock(diagnostics_mutex_);
+    health = latest_diagnostic_health_;
+  }
+  if (!health.has_value()) return;
+
+  const long double maximum_correction_age_ns_ld =
+      static_cast<long double>(parameters_.propagated_odometry_maximum_correction_age_s) *
+      1.0e9L;
+  if (!std::isfinite(maximum_correction_age_ns_ld) ||
+      maximum_correction_age_ns_ld <= 0.0L ||
+      maximum_correction_age_ns_ld >
+          static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+    return;
+  }
+  const auto maximum_correction_age_ns =
+      static_cast<std::int64_t>(std::llround(maximum_correction_age_ns_ld));
+  const bool correction_fresh =
+      health->corrected_output && health->last_lidar_correction_time_ns > 0 &&
+      propagated_stamp_ns >= health->last_lidar_correction_time_ns &&
+      propagated_stamp_ns - health->last_lidar_correction_time_ns <=
+          maximum_correction_age_ns;
+
+  last_propagated_state_stamp_ns_.store(
+      propagated_stamp_ns, std::memory_order_release);
+  propagation_valid_.store(true, std::memory_order_release);
+  publishTypedHealth(*health, correction_fresh,
+                     RosTimeConverter::toRos(propagated_time));
 }
 
 void RosOutputPublisher::publishDiagnosticsSnapshot() {

@@ -30,6 +30,8 @@ namespace navigation_planning_backend {
 
     class Config {
     public:
+        inline static const Eigen::Vector3d kProductMapSizeM{50.0, 50.0, 8.0};
+
         traj_opt::Config exp_traj_cfg, back_traj_cfg;
         path_search::PathSearchConfig astar_cfg;
 
@@ -326,6 +328,19 @@ namespace navigation_planning_backend {
             if (world_geometry.local_size_m.minCoeff() < minimum_map_extent - 1.0e-9) {
                 throw std::invalid_argument(
                     "world map extent is insufficient for the planner safety envelope");
+            }
+            // ROG-Map rounds each requested dimension upward by at most one
+            // evidence cell. Validate every axis independently so excess
+            // support on one axis cannot hide insufficient or drifted support
+            // on another axis.
+            for (int axis = 0; axis < 3; ++axis) {
+                const double actual_extent_m = world_geometry.local_size_m(axis);
+                const double requested_extent_m = kProductMapSizeM(axis);
+                if (actual_extent_m + 1.0e-9 < requested_extent_m ||
+                    actual_extent_m > requested_extent_m + world_resolution + 1.0e-9) {
+                    throw std::invalid_argument(
+                        "world map extent does not match the locked 50 x 50 x 8 m product geometry on every axis");
+                }
             }
             if (corridor_bound_distance_m + 1.0e-9 < robot_r ||
                 corridor_segment_max_length_m + 1.0e-9 < world_resolution) {

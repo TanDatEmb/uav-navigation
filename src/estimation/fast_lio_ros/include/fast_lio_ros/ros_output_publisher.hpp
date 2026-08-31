@@ -39,6 +39,10 @@ class RosOutputPublisher {
     return covariance_runtime_;
   }
   void publish(const ProcessResult& result, std::uint64_t scan_sequence);
+  // Publishes a current health assessment at propagated-state cadence. The
+  // header stamp follows the exact propagated state; correction freshness is
+  // still evaluated from the last accepted LiDAR correction.
+  void publishPropagatedHealth(const Timestamp& propagated_time);
   // Publishes the latest health snapshot at the runtime diagnostic cadence.
   // The estimator path only replaces this latest-only snapshot.
   void publishDiagnosticsSnapshot();
@@ -102,7 +106,7 @@ class RosOutputPublisher {
       const nav_msgs::msg::Odometry& corrected_odometry,
       const builtin_interfaces::msg::Time& stamp) const;
   void publishTypedHealth(const EstimatorHealthSnapshot& health,
-                          const ProcessResult& result,
+                          bool correction_fresh,
                           const builtin_interfaces::msg::Time& stamp);
   void publishDiagnostics(const EstimatorHealthSnapshot& health,
                           const builtin_interfaces::msg::Time& stamp);
