@@ -1484,7 +1484,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
     bool Planner::commitEmergencyBrake(const StatePVAJ &initial_command_state,
                                             const double initial_command_yaw,
                                             const double initial_command_yaw_dot,
-                                            const double start_WT) {
+                                            const double start_WT,
+                                            const std::optional<double>
+                                                terminal_altitude_override_m) {
         if (!initial_command_state.allFinite() ||
             !std::isfinite(initial_command_yaw) ||
             !std::isfinite(initial_command_yaw_dot) || !std::isfinite(start_WT)) {
@@ -1504,10 +1506,15 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // downward velocity finish below the current altitude.  Repeating
         // that recovery during a long obstacle detour accumulates altitude
         // loss and can drive the vehicle into the ground even though every
-        // individual polynomial is dynamically valid.  Certify the same stop
-        // with a zero-net-altitude terminal boundary; this changes neither
-        // the hard dynamic limits nor the world/command certificates.
-        const double terminal_altitude_m = bounded_state.col(0).z();
+        // individual polynomial is dynamically valid.  The runtime may
+        // provide a bounded terminal altitude from the retained certified
+        // command; this changes neither the hard dynamic limits nor the
+        // world/command certificates.
+        const double terminal_altitude_m =
+            terminal_altitude_override_m.has_value() &&
+                    std::isfinite(*terminal_altitude_override_m)
+                ? *terminal_altitude_override_m
+                : bounded_state.col(0).z();
         const auto seed = makeBackupBrakingSeedWithTerminalAltitude(
                 0.0, bounded_state,
                 cfg_.back_traj_cfg.max_vel,

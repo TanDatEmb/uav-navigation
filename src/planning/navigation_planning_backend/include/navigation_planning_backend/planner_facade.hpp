@@ -64,7 +64,11 @@ class PlannerFacade final {
 
   [[nodiscard]] bool commitEmergencyBrake(
       const navigation_planning::TrajectoryPoint& initial_command,
-      double start_wall_time_s);
+      double start_wall_time_s,
+      // Optional execution-owned terminal altitude. The caller must bound it
+      // against the measured boundary; the planner still certifies the full
+      // emergency trajectory before committing it.
+      std::optional<double> terminal_altitude_m = std::nullopt);
 
   [[nodiscard]] navigation_planning::CommittedTrajectorySnapshot committedSnapshot() const;
   [[nodiscard]] navigation_planning::CommittedTrajectoryMetadata committedMetadata() const;

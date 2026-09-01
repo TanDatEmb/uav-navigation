@@ -483,7 +483,12 @@ namespace navigation_planning_backend {
         bool commitEmergencyBrake(const StatePVAJ &initial_command_state,
                                   double initial_command_yaw,
                                   double initial_command_yaw_dot,
-                                  double start_WT);
+                                  double start_WT,
+                                  // Optional execution-owned terminal
+                                  // altitude; all dynamic/world certificates
+                                  // remain authoritative.
+                                  std::optional<double> terminal_altitude_m =
+                                      std::nullopt);
 
         void getModuleTimeConsuming(vector<double> &time);
         vector<double> moduleTimeConsumingSnapshot() const;

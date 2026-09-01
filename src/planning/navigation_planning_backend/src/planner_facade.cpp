@@ -292,7 +292,8 @@ std::optional<navigation_planning::CandidateBundle> PlannerFacade::exportCommand
 
 bool PlannerFacade::commitEmergencyBrake(
     const navigation_planning::TrajectoryPoint& initial_command,
-    const double start_wall_time_s) {
+    const double start_wall_time_s,
+    const std::optional<double> terminal_altitude_m) {
   if (!initial_command.finite()) return false;
   StatePVAJ state = StatePVAJ::Zero();
   state.col(0) = initial_command.position_world;
@@ -300,7 +301,8 @@ bool PlannerFacade::commitEmergencyBrake(
   state.col(2) = initial_command.acceleration_world;
   state.col(3) = initial_command.jerk_world;
   return impl_->planner->commitEmergencyBrake(
-      state, initial_command.yaw, initial_command.yaw_rate, start_wall_time_s);
+      state, initial_command.yaw, initial_command.yaw_rate, start_wall_time_s,
+      terminal_altitude_m);
 }
 
 navigation_planning::CommittedTrajectorySnapshot PlannerFacade::committedSnapshot() const {

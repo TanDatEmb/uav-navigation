@@ -442,6 +442,27 @@ inline navigation_planning::TrajectoryPoint makeMeasuredEmergencyBoundary(
   return boundary;
 }
 
+// Keep a measured-state emergency route-agnostic while preventing repeated
+// recoveries from ratcheting the terminal altitude toward a drifting
+// estimator. The command anchor is only a bounded reference: it is never
+// replaced by mission, GPS, or PX4 state, and the emergency trajectory must
+// still pass its normal dynamic and world certificates.
+inline double plannerEmergencyTerminalAltitude(
+    double measured_altitude_m, double command_anchor_altitude_m,
+    double correction_limit_m) noexcept {
+  if (!std::isfinite(measured_altitude_m)) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  if (!std::isfinite(command_anchor_altitude_m) ||
+      !std::isfinite(correction_limit_m) || correction_limit_m < 0.0) {
+    return measured_altitude_m;
+  }
+  const double bounded_correction = std::clamp(
+      command_anchor_altitude_m - measured_altitude_m,
+      -correction_limit_m, correction_limit_m);
+  return measured_altitude_m + bounded_correction;
+}
+
 // Only a STOP waypoint owns a terminal endpoint hold.  A PASS_THROUGH endpoint
 // inside its acceptance ball is a route boundary, not permission to stop
 // extending the executable trajectory.  The hold remains limited to the exact

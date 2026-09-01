@@ -3344,8 +3344,21 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
               retained_execution_state->state.jerk_world;
         }
         emergency_command.yaw = retained_execution_state->state.yaw_rad;
+        const double measured_altitude_m =
+            emergency_command.position_world.z();
+        const double command_anchor_altitude_m =
+            command_anchor_sample.position_world.z();
+        const double terminal_altitude_m =
+            plannerEmergencyTerminalAltitude(
+                measured_altitude_m, command_anchor_altitude_m,
+                retained_tracking_limit_m);
+        RCLCPP_WARN(
+            get_logger(),
+            "one-shot emergency altitude anchor measured=%.3f command=%.3f terminal=%.3f limit=%.3f",
+            measured_altitude_m, command_anchor_altitude_m,
+            terminal_altitude_m, retained_tracking_limit_m);
         emergency_brake_committed = planner_->commitEmergencyBrake(
-            emergency_command, now().seconds());
+            emergency_command, now().seconds(), terminal_altitude_m);
       }
       use_safety_suffix = emergency_brake_committed;
       if (projected_tracking_certificate_exceeded && !tracking_certificate_exceeded) {

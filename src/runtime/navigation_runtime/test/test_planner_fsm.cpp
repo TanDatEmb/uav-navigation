@@ -296,6 +296,20 @@ TEST(PlannerFsm, EmergencyBoundaryDropsOnlyEstimatedHighOrderDerivatives) {
   EXPECT_TRUE(measured.jerk_world.isApprox(source.jerk_world));
 }
 
+TEST(PlannerFsm, EmergencyTerminalAltitudeUsesBoundedCertifiedAnchor) {
+  EXPECT_DOUBLE_EQ(
+      plannerEmergencyTerminalAltitude(2.0, 2.2, 0.25), 2.2);
+  EXPECT_DOUBLE_EQ(
+      plannerEmergencyTerminalAltitude(2.0, 3.0, 0.25), 2.25);
+  EXPECT_DOUBLE_EQ(
+      plannerEmergencyTerminalAltitude(2.0, 1.0, 0.25), 1.75);
+  EXPECT_DOUBLE_EQ(
+      plannerEmergencyTerminalAltitude(2.0, std::numeric_limits<double>::quiet_NaN(),
+                                       0.25), 2.0);
+  EXPECT_DOUBLE_EQ(
+      plannerEmergencyTerminalAltitude(2.0, 3.0, -0.25), 2.0);
+}
+
 TEST(PlannerFsm, BackupAndEmergencyAreOneWayUntilCertifiedStop) {
   EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kTrackBackup));
   EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kEmergencyBrake));

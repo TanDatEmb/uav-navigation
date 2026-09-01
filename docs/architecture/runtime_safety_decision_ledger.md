@@ -16927,3 +16927,39 @@ release profiles must not use the former allowance.
   `1/3/5 m/s`; compare PlanFromRest speed, setpoint speed, stop distance,
   hot-replan/emergency counts, mission completion, collision, reserve,
   freshness, and the unchanged `0.25 m` tracking gate.
+
+## 2026-09-01 - Bound emergency terminal altitude to the retained command anchor
+
+- Owner: navigation runtime emergency handover and planner braking-certificate
+  boundary.
+- Scope: the one-shot measured-state emergency path in
+  `navigation_runtime_node.cpp` and `Planner::commitEmergencyBrake`.
+- Decision: preserve measured position/velocity and the existing measured or
+  explicitly available derivatives at the emergency start, but set the
+  terminal altitude toward the currently certified command-anchor altitude by
+  at most the unchanged retained-command tracking limit. The correction is
+  `z_measured + clamp(z_command_anchor - z_measured, +/- limit)`. Mission,
+  GPS, and PX4 altitude are not used as planner state, and no continuous frame
+  fitting is introduced.
+- Safety impact: prevents repeated emergency recoveries from ratcheting a
+  slowly drifting LIO altitude downward. The initial PVAJ continuity,
+  V/A/J, yaw, flatness, known-free, swept-world, freshness, command ownership,
+  and PX4 Hold fail-closed gates remain authoritative. The bounded terminal
+  correction is not an admission-gate relaxation; an infeasible or blocked
+  emergency candidate is rejected as before.
+- Evidence: artifact
+  `external-mode-check-20260901T132537-773133` showed LIO z-vs-GT p95
+  `0.7585 m`, PX4 z-vs-GT p95 `0.4819 m`, no transport drops or actuator
+  saturation, and repeated emergency terminal states descending from about
+  `2.90 m` to `0.45 m` while every emergency used the measured LIO altitude.
+  The expert review identified this as a reference-altitude feedback loop and
+  rejected direct PX4/mission-z substitution.
+- Removal/review condition: remove or replace this policy only after repeated
+  External Mode and representative recorded-data runs show bounded vertical
+  drift with a validated estimator/frame contract. Do not replace it with
+  direct PX4 altitude injection or continuous offset fitting.
+- Verification command: run `test_planner_fsm`, planning/runtime contract
+  tests, `make build`, then repeat `long_open_featured_speed` and obstacle SITL;
+  inspect emergency altitude-anchor logs, LIO/PX4/ground-truth altitude,
+  command continuity, dynamic/world certificates, Hold transitions,
+  completion, collision, and the unchanged `0.25 m` gate.
