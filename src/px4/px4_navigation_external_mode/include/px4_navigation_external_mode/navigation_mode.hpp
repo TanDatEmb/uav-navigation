@@ -61,6 +61,11 @@ class NavigationMode final : public px4_ros2::ModeBase {
       const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message);
   void updateMission();
   void handleMissionEvent(const MissionControllerEvent& event, double now_s);
+  void clearPlannerRecoveryEpisodeLocked() noexcept;
+  void rememberPlannerRecoveryEpisodeLocked(
+      const navigation_contracts::msg::NavigationCommand& command);
+  [[nodiscard]] bool plannerRecoveryEpisodeMatchesLocked(
+      const navigation_contracts::msg::NavigationCommand& command) const noexcept;
   void safetyStopNavigation(const char* reason);
   void failNavigation(const char* reason, bool automatic_recovery = false);
   void logRuntimeMetrics(const rclcpp::Time& now);
@@ -128,6 +133,10 @@ class NavigationMode final : public px4_ros2::ModeBase {
   bool handover_requested_{false};
   bool planner_recovery_pending_{false};
   std::int64_t planner_recovery_deadline_ns_{0};
+  std::string planner_recovery_mission_id_;
+  std::uint32_t planner_recovery_waypoint_index_{0U};
+  std::uint64_t planner_recovery_request_id_{0U};
+  std::uint64_t planner_recovery_bundle_generation_{0U};
   // Exact previous BACKUP identity allowed to refresh the command lease while
   // MissionController has advanced a pass-through checkpoint but runtime still
   // owns the certified moving suffix. Cleared on the first current-goal

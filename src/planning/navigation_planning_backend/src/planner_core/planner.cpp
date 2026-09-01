@@ -181,6 +181,43 @@ std::optional<double> firstRouteBoundaryEntryTime(
             requested_goal.cast<double>(), navigation_world_model::GridLayer::kInflated);
         planning_goal_inflated_state_ = requested_goal_inflated_state_;
 
+        // Reserve the existing tracking certificate before projecting a
+        // blocked terminal waypoint. The mission acceptance gate remains the
+        // full radius, but a projected endpoint at that outer boundary has
+        // no room for the unchanged 0.25 m execution-anchor budget.
+        const double usable_projection_radius =
+            goal_acceptance_radius_m_ - cfg_.tracking_error_budget_m;
+        const bool usable_projection_radius_valid =
+            std::isfinite(usable_projection_radius) && usable_projection_radius > 0.0;
+        if (terminal_stop_required_ && usable_projection_radius_valid &&
+            acceptance_endpoint_lease_.has_value() && route_snapshot_.has_value() &&
+            acceptance_endpoint_lease_request_id_ == route_snapshot_->request_id &&
+            acceptance_endpoint_lease_route_revision_ == route_snapshot_->route_revision &&
+            acceptance_endpoint_lease_waypoint_index_ ==
+                route_snapshot_->active_waypoint_index) {
+            const auto& leased = *acceptance_endpoint_lease_;
+            const double lease_error =
+                (leased.cast<double>() - requested_goal.cast<double>()).norm();
+            const bool lease_valid = leased.allFinite() &&
+                std::isfinite(lease_error) && lease_error <=
+                    usable_projection_radius + 1.0e-6 && map_ptr_->contains(leased) &&
+                map_ptr_->classify(
+                    leased.cast<double>(), navigation_world_model::GridLayer::kInflated) ==
+                    navigation_world_model::CellState::kKnownFree &&
+                map_ptr_->isSegmentTraversable(
+                    leased.cast<double>(), leased.cast<double>(),
+                    navigation_world_model::GridLayer::kInflated,
+                    navigation_world_model::UnknownPolicy::kRequireKnownFree);
+            if (lease_valid) {
+                planning_goal_p_ = leased;
+                planning_goal_inflated_state_ = map_ptr_->classify(
+                    leased.cast<double>(), navigation_world_model::GridLayer::kInflated);
+                goal_endpoint_adjusted_ = lease_error > 1.0e-6;
+                return planning_goal_p_;
+            }
+            acceptance_endpoint_lease_.reset();
+        }
+
         // A STOP waypoint is an acceptance region, not a requirement to stop
         // at the exact centre of a point that may have only one voxel of
         // clearance.  When the requested voxel is already free, choose the
@@ -217,7 +254,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
             const bool geometry_valid = std::isfinite(step) && step > 0.0 &&
                 std::isfinite(obstacle_radius) && obstacle_radius >= 0.0;
             navigation_world_model::AxisAlignedBox query;
-            const double query_radius = goal_acceptance_radius_m_ + obstacle_radius + step;
+            const double query_radius = usable_projection_radius_valid
+                ? usable_projection_radius + obstacle_radius + step
+                : 0.0;
             if (geometry_valid && std::isfinite(query_radius) && query_radius > 0.0) {
                 query.minimum = requested_goal.cast<double>() -
                     Eigen::Vector3d::Constant(query_radius);
@@ -239,7 +278,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
             };
             Eigen::Vector3d best = requested_goal.cast<double>();
             double best_score = clearance_score(best);
-            const double clearance_trigger = obstacle_radius + goal_acceptance_radius_m_;
+            const double clearance_trigger = obstacle_radius +
+                (usable_projection_radius_valid ? usable_projection_radius : 0.0);
             // Do not move an otherwise well-separated STOP merely because a
             // far-away occupied sample happens to score slightly better at a
             // different point in the acceptance ball.  The endpoint search
@@ -248,8 +288,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 best_score >= clearance_trigger) {
                 return planning_goal_p_;
             }
-            const int extent = geometry_valid
-                ? static_cast<int>(std::ceil(goal_acceptance_radius_m_ / step)) : -1;
+            const int extent = geometry_valid && usable_projection_radius_valid
+                ? static_cast<int>(std::ceil(usable_projection_radius / step)) : -1;
             if (extent >= 0 && extent <= 64) {
                 for (int dx = -extent; dx <= extent; ++dx) {
                     for (int dy = -extent; dy <= extent; ++dy) {
@@ -258,7 +298,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                         const double distance =
                             (candidate - requested_goal.cast<double>()).norm();
                         if (!candidate.allFinite() || !std::isfinite(distance) ||
-                            distance > goal_acceptance_radius_m_ + 1.0e-6 ||
+                            distance > usable_projection_radius + 1.0e-6 ||
                             !map_ptr_->contains(candidate) ||
                             map_ptr_->classify(
                                 candidate, navigation_world_model::GridLayer::kInflated) !=
@@ -295,6 +335,24 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     planning_goal_p_.x(), planning_goal_p_.y(), planning_goal_p_.z(),
                     (best - requested_goal.cast<double>()).norm(), best_score);
             }
+            if (best.allFinite() && usable_projection_radius_valid &&
+                (best.cast<double>() - requested_goal.cast<double>()).norm() <=
+                    usable_projection_radius + 1.0e-6 && map_ptr_->contains(best) &&
+                map_ptr_->classify(
+                    best.cast<double>(), navigation_world_model::GridLayer::kInflated) ==
+                    navigation_world_model::CellState::kKnownFree &&
+                map_ptr_->isSegmentTraversable(
+                    best.cast<double>(), best.cast<double>(),
+                    navigation_world_model::GridLayer::kInflated,
+                    navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+                acceptance_endpoint_lease_ = best;
+                acceptance_endpoint_lease_request_id_ = route_snapshot_.has_value()
+                    ? route_snapshot_->request_id : 0U;
+                acceptance_endpoint_lease_route_revision_ = route_snapshot_.has_value()
+                    ? route_snapshot_->route_revision : 0U;
+                acceptance_endpoint_lease_waypoint_index_ = route_snapshot_.has_value()
+                    ? route_snapshot_->active_waypoint_index : 0U;
+            }
             return planning_goal_p_;
         }
 
@@ -308,17 +366,16 @@ std::optional<double> firstRouteBoundaryEntryTime(
                  navigation_world_model::CellState::kOccupied &&
              requested_goal_inflated_state_ !=
                  navigation_world_model::CellState::kOutOfMap) ||
-            !std::isfinite(goal_acceptance_radius_m_) ||
-            goal_acceptance_radius_m_ <= 0.0) {
+            !usable_projection_radius_valid) {
             return requested_goal;
         }
 
         const auto candidate = map_ptr_->nearestNotOccupied(
             requested_goal.cast<double>(), navigation_world_model::GridLayer::kInflated,
-            goal_acceptance_radius_m_);
+            usable_projection_radius);
         if (!candidate || !candidate->allFinite() || !map_ptr_->contains(*candidate) ||
             (*candidate - requested_goal.cast<double>()).norm() >
-                goal_acceptance_radius_m_ + 1.0e-6) {
+                usable_projection_radius + 1.0e-6) {
             return requested_goal;
         }
 
@@ -355,7 +412,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     (interior_candidate - requested_goal.cast<double>()).norm();
                 if (!interior_candidate.allFinite() || !map_ptr_->contains(interior_candidate) ||
                     !std::isfinite(interior_error) ||
-                    interior_error > goal_acceptance_radius_m_ + 1.0e-6) {
+                    interior_error > usable_projection_radius + 1.0e-6) {
                     break;
                 }
                 const auto interior_state = map_ptr_->classify(
@@ -374,14 +431,31 @@ std::optional<double> firstRouteBoundaryEntryTime(
             }
         }
         goal_endpoint_adjusted_ = true;
+        if (planning_goal_p_.allFinite() &&
+            (planning_goal_p_.cast<double>() - requested_goal.cast<double>()).norm() <=
+                usable_projection_radius + 1.0e-6 && map_ptr_->contains(planning_goal_p_) &&
+            planning_goal_inflated_state_ ==
+                navigation_world_model::CellState::kKnownFree &&
+            map_ptr_->isSegmentTraversable(
+                planning_goal_p_.cast<double>(), planning_goal_p_.cast<double>(),
+                navigation_world_model::GridLayer::kInflated,
+                navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+            acceptance_endpoint_lease_ = planning_goal_p_;
+            acceptance_endpoint_lease_request_id_ = route_snapshot_.has_value()
+                ? route_snapshot_->request_id : 0U;
+            acceptance_endpoint_lease_route_revision_ = route_snapshot_.has_value()
+                ? route_snapshot_->route_revision : 0U;
+            acceptance_endpoint_lease_waypoint_index_ = route_snapshot_.has_value()
+                ? route_snapshot_->active_waypoint_index : 0U;
+        }
         planner_context_->warn(
             " -- [planner] requested goal voxel is occupied or out-of-map; planning to acceptance-safe "
             "endpoint requested=({:.3f},{:.3f},{:.3f}) planning=({:.3f},{:.3f},{:.3f}) "
-            "offset={:.3f} radius={:.3f}",
+            "offset={:.3f} radius={:.3f} usable_radius={:.3f}",
             requested_goal.x(), requested_goal.y(), requested_goal.z(),
             planning_goal_p_.x(), planning_goal_p_.y(), planning_goal_p_.z(),
             (planning_goal_p_.cast<double>() - requested_goal.cast<double>()).norm(),
-            goal_acceptance_radius_m_);
+            goal_acceptance_radius_m_, usable_projection_radius);
         if (interior_steps > 0U) {
             planner_context_->info(
                 " -- [planner] moved acceptance-safe endpoint inward by {} inflated steps",
@@ -1556,8 +1630,6 @@ std::optional<double> firstRouteBoundaryEntryTime(
         const double replan_process_start_WT = planner_context_->getSimTime();
         double replan_process_start_TT, replan_state_TT;
         HotReplanWindow replan_window;
-        bool measured_state_rebase_boundary = false;
-
         // A hot replan normally preserves a short prefix of the currently
         // committed command so PVAJ remains continuous.  That prefix is not
         // authoritative when the vehicle has fallen behind it.  A measured
@@ -1622,26 +1694,6 @@ std::optional<double> firstRouteBoundaryEntryTime(
                                         solve_state_.p,
                                         navigation_world_model::GridLayer::kInflated),
                                 unknownPolicy());
-                if (measuredStateHotRebaseAllowed(
-                        splice_compatibility, measured_yaw_valid,
-                        yaw_anchor_error, cfg_.yaw_tracking_error_budget_rad,
-                        measured_start_traversable)) {
-                    // The current position is still inside the reserved tube,
-                    // but the command's future velocity envelope is no longer
-                    // reachable by the vehicle. Rebase this explicit recovery
-                    // solve from measured P/V rather than retaining the old
-                    // finite command lease until it expires. The new candidate
-                    // remains subject to the full execution/world certificates.
-                    planner_context_->warn(
-                            " -- [planner] hot splice future envelope exceeded; "
-                            "rebasing from measured state while current anchor remains safe: "
-                            "position_error={} future_position_error={} "
-                            "future_velocity_error={} tracking_limit={}",
-                            command_anchor_error, future_position_error,
-                            future_velocity_error, cfg_.tracking_error_budget_m);
-                    last_exp_traj_info.setEmpty();
-                    measured_state_rebase_boundary = true;
-                } else {
                 const auto recovery = classifyHotReplanTrackingRecovery(
                         tracking_budget_exceeded, measured_start_traversable);
                 if (recovery == HotReplanTrackingRecovery::kFailClosed) {
@@ -1673,7 +1725,6 @@ std::optional<double> firstRouteBoundaryEntryTime(
                         splice_compatibility.future_velocity_allowance_mps,
                         cfg_.yaw_tracking_error_budget_rad);
                 return FAILED;
-                }
             }
         }
 
@@ -1688,14 +1739,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // Only position is shifted to the collision-free map start.
             pos_init_state = makeCommandBoundaryPVAJ(
                 solve_state_, solve_acceleration_estimated_, solve_jerk_estimated_);
-            // A measured-state hot rebase is a complete boundary change. Do
-            // not combine the new measured P/V with the stale PlanFromRest
-            // voxel shift retained in local_start_p_; that creates a
-            // candidate whose position, velocity and command clock come from
-            // different states. The measured start was already certified
-            // traversable in the rebase branch above.
-            pos_init_state.col(0) = measured_state_rebase_boundary
-                ? solve_state_.p : local_start_p_;
+            pos_init_state.col(0) = local_start_p_;
             replan_process_start_TT = -1;
             replan_state_TT = -1;
         } else {
@@ -2085,9 +2129,16 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // acceptance region; pinning a C3 trajectory to the exact corner
             // would require either zero velocity or an instantaneous tangent
             // change between the incoming and outgoing corridors.
-            if (passThroughOutgoingLookaheadEligible(
-                    desired_lookahead, outgoing_distance, search_distance,
-                    cfg_.resolution)) {
+            // A sharp turn can be geometrically reachable but still be an
+            // invalid single MINCO problem when the outgoing route initially
+            // folds back toward the vehicle. Keep that turn in the bounded
+            // acceptance-ball fillet below; the next measured waypoint
+            // handoff owns the outgoing leg. This avoids repeatedly
+            // optimizing a U-shaped guide under one set of fixed boundary
+            // derivatives while preserving every collision and dynamic gate.
+            if (!genuine_corner && passThroughOutgoingLookaheadEligible(
+                desired_lookahead, outgoing_distance, search_distance,
+                cfg_.resolution)) {
                 vec_Vec3f next_path;
                 solve_stage_.store(2);
                 if (PathSearch(guide_path.back(), next_target, search_distance,
@@ -3003,20 +3054,46 @@ std::optional<double> firstRouteBoundaryEntryTime(
             if (all_traj_visible) out_t = total_dur;
         }
         if (all_traj_visible &&
-            trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj())) {
+            trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) &&
+            !terminal_stop_required_) {
             // A main-only command is safe to complete only when every
             // remaining sample is known-free and its terminal PVAJ is a true
-            // rest state. A moving pass-through endpoint still needs an
-            // independently certified braking suffix even when MAIN itself is
-            // wholly visible.
+            // rest state. A terminal STOP still needs an independently
+            // certified braking suffix until measured waypoint acceptance;
+            // otherwise tracking drift can expose an uncertified main-only
+            // endpoint and force a reactive emergency brake later.
+            back_traj_info.setEmpty();
+            time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
+            return FINISH;
+        }
+        const bool terminal_rest_capture_ready = all_traj_visible &&
+            terminal_stop_required_ &&
+            trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) &&
+            std::isfinite(cfg_.robot_r) && cfg_.robot_r > 0.0 &&
+            (candidate_ps.back().second - command_start).norm() <= cfg_.robot_r;
+        if (terminal_rest_capture_ready) {
+            // Once a measured-stop replan starts inside one vehicle radius of
+            // the known-free terminal endpoint, there is no positive-length
+            // corridor from which to construct another BACKUP suffix.  The
+            // complete main-only candidate is already a rest command; runtime
+            // still requires the immutable MAIN endpoint and fresh measured
+            // position to satisfy the waypoint acceptance gate.
+            planner_context_->info(
+                    " -- [planner] terminal rest capture is already within "
+                    "certified radius; keeping main-only terminal command "
+                    "distance={} radius={}",
+                    (candidate_ps.back().second - command_start).norm(), cfg_.robot_r);
             back_traj_info.setEmpty();
             time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
             return FINISH;
         }
         if (all_traj_visible) {
             planner_context_->info(
-                    " -- [planner] visible MAIN has moving terminal state; "
-                    "building certified backup instead of main-only command");
+                    " -- [planner] visible MAIN requires certified backup "
+                    "suffix instead of main-only command terminal_stop={} "
+                    "terminal_rest={}",
+                    terminal_stop_required_ ? 1 : 0,
+                    trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) ? 1 : 0);
             all_traj_visible = false;
         }
         Vec3f invisible_p = eval_ps.back().second;
@@ -3044,6 +3121,54 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // command-boundary KNOWN_FREE check above plus the full candidate
         // validator are the authority here.
         const Vec3f backup_origin = back_traj_info.getRobotPos();
+        const double backup_seed_max_length_m =
+                cfg_.corridor_segment_max_length_m;
+        if (std::isfinite(backup_seed_max_length_m) &&
+            backup_seed_max_length_m > 0.0) {
+            // GeneratePolytopeFromLine is the direct-line BACKUP path and
+            // does not perform the guide subdivision used by
+            // SearchPolytopeOnPath.  Keep its visibility prefix within the
+            // same bounded-seed contract instead of passing a long sparse A*
+            // edge to CIRI.  The prefix is monotonic: once the command ray
+            // exceeds the bound, later samples are not eligible even if a
+            // detour happens to return near the origin.
+            std::size_t bounded_prefix_size = 0U;
+            for (const auto& sample : eval_ps) {
+                const double distance_from_origin =
+                        (sample.second - backup_origin).norm();
+                if (!std::isfinite(distance_from_origin) ||
+                    distance_from_origin > backup_seed_max_length_m + 1.0e-6) {
+                    break;
+                }
+                ++bounded_prefix_size;
+            }
+            if (bounded_prefix_size < eval_ps.size()) {
+                if (bounded_prefix_size == 0U) {
+                    planner_context_->warn(
+                            " -- [planner] backup visibility has no sample "
+                            "inside bounded CIRI seed length={}",
+                            backup_seed_max_length_m);
+                    return FAILED;
+                }
+                eval_ps.resize(bounded_prefix_size);
+                seed_point_t = eval_ps.back().first;
+                seed_point = eval_ps.back().second;
+                planner_context_->info(
+                        " -- [planner] bounded BACKUP visibility seed "
+                        "from {} m to {} m (CIRI limit={})",
+                        (ref_exp_traj.getPos(total_dur) - backup_origin).norm(),
+                        (seed_point - backup_origin).norm(),
+                        backup_seed_max_length_m);
+            }
+            if (!std::isfinite(seed_point_t) || !seed_point.allFinite() ||
+                (seed_point - backup_origin).norm() <= cfg_.resolution) {
+                planner_context_->warn(
+                        " -- [planner] backup visibility seed is too short "
+                        "after bounded-prefix selection length={}",
+                        (seed_point - backup_origin).norm());
+                return FAILED;
+            }
+        }
         Line line{backup_origin, seed_point};
         Polytope temp_poly;
         if (!cg_ptr_->GeneratePolytopeFromLine(line, temp_poly, &solve_deadline)) {
@@ -4048,6 +4173,33 @@ std::optional<double> firstRouteBoundaryEntryTime(
             path.push_back(goal);
         }
         path.insert(path.begin(), start_pt);
+
+        // A point-to-point fallback may already return the measured start as
+        // its first point.  Prepending the authoritative measured start above
+        // would then manufacture a zero-length edge (start -> start).  That
+        // edge is not a physical route segment, but the continuous oracle
+        // quite correctly rejects it as a non-traversable segment.  Remove
+        // only adjacent finite duplicates; every non-zero edge remains in the
+        // path and is still checked by the invariant below.
+        constexpr double kDuplicatePathPointToleranceM = 1.0e-6;
+        const std::size_t path_size_before_deduplication = path.size();
+        vec_Vec3f deduplicated_path;
+        deduplicated_path.reserve(path.size());
+        for (const Vec3f &point : path) {
+            if (!deduplicated_path.empty() && point.allFinite() &&
+                deduplicated_path.back().allFinite() &&
+                (point - deduplicated_path.back()).norm() <=
+                    kDuplicatePathPointToleranceM) {
+                continue;
+            }
+            deduplicated_path.push_back(point);
+        }
+        path = std::move(deduplicated_path);
+        if (cfg_.print_log && path.size() < path_size_before_deduplication) {
+            planner_context_->info(
+                " -- [Astar] removed {} adjacent duplicate path point(s)",
+                path_size_before_deduplication - path.size());
+        }
 
         // A* and corridor generation must consume the same continuous
         // traversability contract. A grid-connected edge that fails this

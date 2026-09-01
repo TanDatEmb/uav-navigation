@@ -825,6 +825,7 @@ class RuntimeContractTest(unittest.TestCase):
             "long_three_pillars": 3.0,
             "long_three_pillars_speed": 5.0,
             "long_three_pillars_multiwaypoint": 5.0,
+            "long_cross_obstacles": 5.0,
             "long_open_featured_speed": 5.0,
             "navigation_generalization": 5.0,
             "single_pillar_speed": 8.0,
@@ -856,7 +857,7 @@ class RuntimeContractTest(unittest.TestCase):
         for profile in (
             "open", "speed", "long_open", "long_open_slow", "long_featured",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
-            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path",
+            "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path",
         ):
             obstacles = runner._collision_obstacles(profile)
             self.assertTrue(obstacles, profile)
@@ -868,7 +869,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_map_registry_is_deterministic_and_truth_names_are_unique(self) -> None:
         registry = runner._map_registry()
-        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path"):
+        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path"):
             descriptor = registry[profile]
             self.assertIn("world", descriptor)
             self.assertIn("mission", descriptor)
@@ -1077,6 +1078,22 @@ class RuntimeContractTest(unittest.TestCase):
         )
         self.assertEqual(runner._world_name_for_profile("speed"), "open")
         self.assertEqual(runner._world_name_for_profile("smoke"), "px4_lio_smoke")
+
+    def test_long_cross_obstacles_is_a_wide_four_waypoint_crossing_obstacle_benchmark(self) -> None:
+        descriptor = runner._map_registry()["long_cross_obstacles"]
+        self.assertEqual(descriptor["route_obstacles"], [
+            "cross_route_pillar_01", "cross_route_pillar_02", "cross_route_pillar_03",
+        ])
+        self.assertEqual(descriptor["route_segment_waypoints"], [0, 3])
+        self.assertEqual(descriptor["benchmark"]["waypoint_count"], 4)
+        self.assertEqual(descriptor["benchmark"]["speed_sweep_mps"], [3.0, 4.0, 5.0])
+        mission = yaml.safe_load(
+            (ROOT / "config/runtime/missions/long_cross_obstacles.yaml").read_text()
+        )["mission"]
+        self.assertEqual(len(mission["waypoints"]), 4)
+        self.assertEqual(mission["planning"]["max_velocity_mps"], 5.0)
+        self.assertEqual(mission["waypoints"][-1]["behavior"], "stop")
+        self.assertGreaterEqual(descriptor["benchmark"]["leg_length_m"], 40.0)
 
     def test_navigation_generalization_contract_covers_axes_and_behaviors(self) -> None:
         descriptor = runner._map_registry()["navigation_generalization"]
@@ -1861,6 +1878,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(summary["gazebo_native"]["world_stats"]["samples"], 1)
         self.assertEqual(summary["gazebo_native"]["world_stats"]["first_sim_time_ns"], 1_000_000_500)
         self.assertEqual(summary["gazebo_native"]["world_clock"]["last_sim_time_ns"], 2_000_000_000)
+        self.assertIn("native_lidar", summary["gazebo_native"])
         self.assertEqual(summary["process_roles"]["px4_gazebo"], 1)
         self.assertEqual(summary["psi_samples"], 1)
 
@@ -2042,6 +2060,10 @@ class RuntimeContractTest(unittest.TestCase):
         )
         self.assertEqual(lidar_topics, {"/lidar/points"})
         self.assertFalse(control_topics & lidar_topics)
+        lidar_bridge = lidar[0]
+        self.assertEqual(lidar_bridge["qos_profile"], "SENSOR_DATA")
+        self.assertEqual(lidar_bridge["subscriber_queue"], 100)
+        self.assertEqual(lidar_bridge["publisher_queue"], 100)
         runner_source = (RUNTIME / "runner.py").read_text(encoding="utf-8")
         self.assertIn('session.start("bridge"', runner_source)
         self.assertIn('session.start("bridge_lidar"', runner_source)
@@ -2051,6 +2073,11 @@ class RuntimeContractTest(unittest.TestCase):
             runner_source.index('session.start("px4_ingress"')
         ]
         self.assertNotIn("use_sim_time:=true", bridge_launch)
+        self.assertIn('"uav_simulation", "gz_lidar_bridge"', bridge_launch)
+        self.assertNotIn(
+            '"ros_gz_bridge", "parameter_bridge", "--ros-args",\n            "-r", "__node:=px4_mid360_lidar_bridge"',
+            bridge_launch,
+        )
 
     def test_simulation_clock_is_a_first_class_freshness_stream(self) -> None:
         runtime = runner.load_config("common.yaml")["runtime"]

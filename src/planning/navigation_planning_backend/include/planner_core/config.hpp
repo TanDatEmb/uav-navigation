@@ -136,7 +136,7 @@ namespace navigation_planning_backend {
                              visibility_horizon_floor_m,
                              visibility_horizon_cap_m);
             loader.LoadParam("planner/sensing_horizon_m", sensing_horizon_m, 0.0);
-            loader.LoadParam("planner/replan_forward_dt_s", replan_forward_dt_s, 0.3);
+            loader.LoadParam("planner/replan_forward_dt_s", replan_forward_dt_s, 0.4);
             loader.LoadParam("astar/search_time_limit_s", astar_search_time_limit_s, 0.1);
             loader.LoadParam("astar/total_time_limit_s", astar_total_time_limit_s,
                              2.0 * astar_search_time_limit_s);

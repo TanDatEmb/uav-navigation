@@ -99,7 +99,7 @@ CANONICAL_SCENES = (
     "sanity_open", "structured_obstacle", "long_route", "tunnel", "clutter",
     "planner_negative", "navigation_generalization",
 )
-TEST_CASES = ("positive", "degenerate", "detour", "no_path", "comprehensive")
+TEST_CASES = ("positive", "degenerate", "detour", "no_path", "comprehensive", "cross_obstacles")
 MOTION_PRESETS = ("nominal", "slow", "fast")
 
 # Keep the complete SITL stack off the default DDS domain and off the PX4
@@ -1221,6 +1221,7 @@ _SPEED_CERTIFICATION_PROFILES = {
     "long_three_pillars_speed",
     "long_three_pillars_multiwaypoint",
     "long_open_featured_speed",
+    "long_cross_obstacles",
 }
 
 
@@ -1631,6 +1632,7 @@ def _run_sim_unlocked(
             "long_featured": -1,
             "long_three_pillars": -1,
             "long_three_pillars_multiwaypoint": -1,
+            "long_cross_obstacles": -1,
             "long_open_featured_speed": -1,
             # The bounded open-world checkpoint is deliberately obstacle-free
             # in the mission corridor; its gate is LIO/PX4 long-leg stability,
@@ -1687,9 +1689,9 @@ def _run_sim_unlocked(
             scenario["mission_timeout_s"] = min(float(scenario.get("mission_timeout_s", 120.0)), 60.0)
         elif map_profile == "corridor":
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
-        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
+        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 300.0)
-        if map_profile in {"pillar", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
+        if map_profile in {"pillar", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
             # This profile has three route obstacles; use the multi-obstacle
             # ground-truth metric instead of the legacy single-pillar check.
             scenario["planned_clearance_check"] = False
@@ -1918,9 +1920,13 @@ def _run_sim_unlocked(
             "-p", f"config_file:={control_bridge_config}",
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("bridge_lidar", _ros_shell([
-            "ros2", "run", "ros_gz_bridge", "parameter_bridge", "--ros-args",
+            # PointCloud conversion is isolated in a dedicated bounded bridge.
+            # The control bridge above remains the only ros_gz parameter_bridge
+            # owner for /clock, IMU and evaluation-only ground truth.
+            "ros2", "run", "uav_simulation", "gz_lidar_bridge", "--ros-args",
             "-r", "__node:=px4_mid360_lidar_bridge",
-            "-p", f"config_file:={lidar_bridge_config}",
+            "-p", "input_topic:=/sim/mid360/scan/points",
+            "-p", "ros_topic:=/lidar/points",
         ], enable_rviz=not headless), cwd=ROOT)
         session.start("visibility_bridge", _ros_shell([
             "ros2", "run", "uav_simulation", "gz_visibility_bridge", "--ros-args",
@@ -2400,7 +2406,7 @@ def main() -> int:
     external_mode.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -2448,7 +2454,7 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),

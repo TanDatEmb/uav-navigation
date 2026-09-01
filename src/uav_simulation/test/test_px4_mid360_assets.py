@@ -170,3 +170,17 @@ def test_long_open_featured_speed_is_obstacle_free_and_featured():
         y = abs(float(models[name].findtext("pose").split()[1]))
         assert y >= (5.5 if "near_" in name else 8.0)
     assert not any("pillar" in name for name in models)
+
+
+def test_long_cross_obstacles_has_wide_map_and_obstacles_between_waypoints():
+    world = element_tree.parse(ROOT / "worlds/long_cross_obstacles.sdf")
+    assert world.find(".//world").attrib["name"] == "long_cross_obstacles"
+    models = {model.attrib["name"]: model for model in world.findall(".//model")}
+    route_obstacles = [
+        models[f"cross_route_pillar_{index:02d}"] for index in range(1, 4)
+    ]
+    positions = [model.findtext("pose").split() for model in route_obstacles]
+    assert [float(position[0]) for position in positions] == [20.0, 60.0, 100.0]
+    assert all(float(position[1]) == 0.0 for position in positions)
+    ground_size = models["ground_plane"].findtext(".//plane/size").split()
+    assert [float(value) for value in ground_size] == [180.0, 60.0]

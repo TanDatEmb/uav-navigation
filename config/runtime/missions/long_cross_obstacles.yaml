@@ -1,0 +1,32 @@
+mission:
+  version: 1
+  id: external_mode_long_cross_obstacles
+  frame: lio_odom
+  # Long diagonal legs cross one route obstacle each.  PASS_THROUGH keeps the
+  # route continuous; the terminal STOP still verifies measured settling.
+  waypoints:
+    - id: cross_start
+      position: [0.0, -10.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: cross_checkpoint_01
+      position: [40.0, 10.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: cross_checkpoint_02
+      position: [80.0, -10.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: cross_finish
+      position: [120.0, 10.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: stop
+      hold_s: 0.5
+  planning:
+    max_velocity_mps: 5.0
+    max_acceleration_mps2: 2.0
+    max_jerk_mps3: 6.0
+    unknown_policy: allow_unknown
+  control:
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.5

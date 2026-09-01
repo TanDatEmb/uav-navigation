@@ -248,9 +248,13 @@ def _summarize(samples: list[dict[str, Any]]) -> dict[str, Any]:
                 summary["process_roles"][role] = summary["process_roles"].get(role, 0) + 1
         elif kind == "psi_sample":
             summary["psi_samples"] += 1
-    for stream in ("world_stats", "world_clock"):
+    for stream in ("world_stats", "world_clock", "native_lidar"):
         rows = [row for row in samples if row.get("stream") == stream or row.get("kind") == stream]
-        source_field = "sim_time" if stream == "world_stats" else "sim"
+        source_field = {
+            "world_stats": "sim_time",
+            "world_clock": "sim",
+            "native_lidar": "stamp",
+        }[stream]
         source_values = [
             _message_time_ns(row.get("payload", {}), source_field)
             if not isinstance(row.get("payload", {}).get(source_field), int)
@@ -272,6 +276,7 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     try:
         import gz.transport13 as transport
         import gz.msgs10.clock_pb2 as clock_pb2
+        import gz.msgs10.pointcloud_packed_pb2 as pointcloud_packed_pb2
         import gz.msgs10.world_stats_pb2 as world_stats_pb2
     except ImportError as error:
         _atomic_json(args.session / "gazebo_native_summary.json", {"schema_version": 2, "status": "UNAVAILABLE", "error": str(error)})
@@ -279,6 +284,7 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     args.session.mkdir(parents=True, exist_ok=True)
     stats_state = _StreamState("world_stats")
     clock_state = _StreamState("world_clock")
+    lidar_state = _StreamState("native_lidar")
     gap_budget_ns = int(args.gap_budget_s * 1e9)
     node = transport.Node()
 
@@ -292,12 +298,24 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     def on_clock(message: Any) -> None:
         clock_state.record(arrival_ns=time.time_ns(), source_ns=_message_time_ns(message, "sim"), gap_budget_ns=gap_budget_ns)
 
+    def on_lidar(message: Any) -> None:
+        # Keep this observer diagnostic-only: do not decode or copy the point
+        # payload.  Arrival cadence and the native Gazebo timestamp are enough
+        # to distinguish a GPU sensor/transport gap from a ROS bridge gap.
+        lidar_state.record(
+            arrival_ns=time.time_ns(),
+            source_ns=_message_time_ns(getattr(message, "header", None), "stamp"),
+            gap_budget_ns=gap_budget_ns,
+        )
+
     stats_topic = f"/world/{args.world}/stats"
     clock_topic = f"/world/{args.world}/clock"
+    lidar_topic = "/sim/mid360/scan/points"
     # The Python binding intentionally returns None on successful subscribe;
     # readiness is therefore proven by delivery of both native streams below.
     node.subscribe(world_stats_pb2.WorldStatistics, stats_topic, on_stats)
     node.subscribe(clock_pb2.Clock, clock_topic, on_clock)
+    node.subscribe(pointcloud_packed_pb2.PointCloudPacked, lidar_topic, on_lidar)
     samples_path = args.session / "gazebo_native_samples.jsonl"
     process_role_counts: dict[str, int] = {}
     psi_sample_count = 0
@@ -324,13 +342,18 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     clock_state.finalize(now_ns, gap_budget_ns)
     node.unsubscribe(stats_topic)
     node.unsubscribe(clock_topic)
+    node.unsubscribe(lidar_topic)
     streams_observed = _native_streams_observed(stats_state.count, clock_state.count)
     _atomic_json(args.session / "gazebo_native_summary.json", {
         "schema_version": 2, "status": "OK" if streams_observed else "UNAVAILABLE",
         "error": None if streams_observed else "native clock/stats streams delivered no samples",
         "world": args.world,
         "gap_budget_s": args.gap_budget_s,
-        "gazebo_native": {"world_stats": stats_state.snapshot(), "world_clock": clock_state.snapshot()},
+        "gazebo_native": {
+            "world_stats": stats_state.snapshot(),
+            "world_clock": clock_state.snapshot(),
+            "native_lidar": lidar_state.snapshot(),
+        },
         "process_sample_count": process_sample_count,
         "process_roles": process_role_counts,
         "psi_samples": psi_sample_count,

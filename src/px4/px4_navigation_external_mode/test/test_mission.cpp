@@ -938,17 +938,21 @@ mission:
   EXPECT_EQ(controller.activeWaypointIndex(), 1U);
 }
 
-TEST(MissionController, CompletedBackupOutsideMeasuredAcceptanceRequestsConnector) {
+TEST(MissionController, CertifiedPassThroughSuffixStopAllowsMeasuredProgression) {
   const auto path = writeMission(R"yaml(
 mission:
   version: 1
-  id: terminal_connector_retry
+  id: certified_suffix_pass_through
   frame: lio_odom
   waypoints:
-    - id: finish
+    - id: first
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: second
       position: [2.0, 0.0, 3.0]
-      behavior: stop
-      acceptance_radius_m: 0.9
+      behavior: pass_through
+      acceptance_radius_m: 0.4
   control:
     acceptance_speed_mps: 0.15
 )yaml");
@@ -957,25 +961,71 @@ mission:
   px4_navigation_external_mode::MissionController controller(mission);
 
   controller.activate(0.0);
-  const auto initial = controller.update(0.0, std::nullopt);
-  ASSERT_EQ(initial.type,
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0U, 0U, 0.0, 0.0);
+  const auto first = controller.update(0.1, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                                       Eigen::Vector3d::Zero());
+  ASSERT_TRUE(first.waypoint_accepted);
+  EXPECT_EQ(first.waypoint_index, 1U);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  // No trajectory callback for the new waypoint is available yet. The
+  // certified suffix witness enables only the normal measured acceptance gate.
+  controller.onCertifiedPassThroughSuffixStop();
+  const auto second = controller.update(0.2, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                        Eigen::Vector3d::Zero());
+  EXPECT_EQ(second.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
+  expectWaypointAccepted(second, 1U);
+}
+
+TEST(MissionController, SafetyTrajectoryCannotAdvancePassThroughUntilCertifiedStop) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: safety_readiness_ownership
+  frame: lio_odom
+  waypoints:
+    - id: first
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: second
+      position: [2.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   controller.onNativeTrajectoryReady();
-  ASSERT_TRUE(controller.nativeTrajectoryReady());
+  const auto first = controller.update(0.1, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                                       Eigen::Vector3d::Zero());
+  ASSERT_TRUE(first.waypoint_accepted);
+  EXPECT_EQ(first.waypoint_index, 1U);
 
-  controller.requestNativeTerminalRecovery(1.0);
-  EXPECT_FALSE(controller.nativeTrajectoryReady());
-  const auto retry = controller.update(
-      1.0, Eigen::Vector3d{3.0, 0.0, 3.0}, true, Eigen::Vector3d::Zero());
-  EXPECT_EQ(retry.type,
-            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
-  EXPECT_EQ(retry.waypoint_index, 0U);
-  EXPECT_GT(retry.request_id, initial.request_id);
-  controller.requestNativeTerminalRecovery(1.01);
-  EXPECT_EQ(controller.update(
-                1.01, Eigen::Vector3d{3.0, 0.0, 3.0}, true,
-                Eigen::Vector3d::Zero()).type,
-            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  // A BACKUP/EMERGENCY trajectory is not a nominal readiness witness. Even
+  // when the vehicle is inside the next checkpoint, do not advance until the
+  // suffix-stop certificate arrives.
+  controller.onNativeSafetyTrajectoryObserved();
+  const auto blocked = controller.update(0.2, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                         Eigen::Vector3d::Zero());
+  EXPECT_EQ(blocked.type, px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  controller.onCertifiedPassThroughSuffixStop();
+  const auto progressed = controller.update(0.3, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                            Eigen::Vector3d::Zero());
+  EXPECT_EQ(progressed.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
+  expectWaypointAccepted(progressed, 1U);
 }
 
 TEST(MissionController, SafetyStopAllowsRollingRouteReplacement) {

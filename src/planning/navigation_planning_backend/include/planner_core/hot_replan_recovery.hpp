@@ -91,24 +91,4 @@ inline HotReplanTrackingRecovery classifyHotReplanTrackingRecovery(
       : HotReplanTrackingRecovery::kFailClosed;
 }
 
-// A measured-state rebase is admissible only while the vehicle is still inside
-// the existing position tube. It is an explicit recovery transition: the next
-// candidate starts from measured P/V (with estimated A/J removed by the
-// boundary policy) and must pass all normal dynamic, corridor, world, and
-// execution certificates. Once the current position itself has left the tube,
-// retaining/recovering the old command is the only safe classifier path.
-inline bool measuredStateHotRebaseAllowed(
-    const HotReplanSpliceCompatibility& compatibility,
-    const bool measured_yaw_valid, const double yaw_anchor_error_rad,
-    const double yaw_tracking_budget_rad,
-    const bool measured_start_traversable) noexcept {
-  return compatibility.finite &&
-         compatibility.current_position_within_budget &&
-         compatibility.requiresMeasuredStateRestart() && measured_yaw_valid &&
-         std::isfinite(yaw_anchor_error_rad) && yaw_anchor_error_rad >= 0.0 &&
-         std::isfinite(yaw_tracking_budget_rad) && yaw_tracking_budget_rad >= 0.0 &&
-         yaw_anchor_error_rad <= yaw_tracking_budget_rad &&
-         measured_start_traversable;
-}
-
 }  // namespace navigation_planning_backend

@@ -120,6 +120,15 @@ inline bool watchdogTimeoutMayRetainSafetySuffix(
   return safety_state && command_available && safety_suffix_active;
 }
 
+inline bool pendingGoalTerminalStatusMayClear(
+    bool matches_pending, bool safety_suffix_active) noexcept {
+  // A queued request can report PAUSED/COMPLETED while the preceding
+  // BACKUP/EMERGENCY command is still moving. That status is not a certified
+  // handoff boundary; retain the request until the suffix-stop transaction
+  // promotes it.
+  return matches_pending && !safety_suffix_active;
+}
+
 // A hot-retarget flag authorizes exactly one forced solve for the new
 // checkpoint. Once either the measured-state or hot-stitch transition has
 // committed, leaving the flag set would bypass horizon-driven renewal on every
@@ -230,18 +239,39 @@ inline bool terminalStopMayDeferLeaseRenewal(
 // ending at rest. While it is still inside the unchanged tracking envelope,
 // an early anchor-pressure tick must not replace it with a shorter hot
 // replan. The hard anchor limit remains authoritative: once the measured
-// residual exceeds it, this exception is false and the normal emergency or
-// PX4-Hold path owns the decision.
+// residual exceeds it, or a known-free projected validation boundary crosses
+// it, this exception is false and the normal emergency or PX4-Hold path owns
+// the decision.
 inline bool terminalStopMayDeferAnchorRecovery(
     bool stop_waypoint, bool command_available, bool trajectory_metadata_valid,
     bool terminal_stop, navigation_planning::CandidateRole command_role,
     bool anchor_recovery_due, double anchor_error_m,
-    double maximum_anchor_error_m) noexcept {
+    double maximum_anchor_error_m,
+    bool projected_tracking_certificate_exceeded = false) noexcept {
   return stop_waypoint && command_available && trajectory_metadata_valid &&
          terminal_stop && command_role == navigation_planning::CandidateRole::kMain &&
          anchor_recovery_due && std::isfinite(anchor_error_m) &&
          std::isfinite(maximum_anchor_error_m) && maximum_anchor_error_m > 0.0 &&
-         anchor_error_m <= maximum_anchor_error_m;
+         anchor_error_m <= maximum_anchor_error_m &&
+         !projected_tracking_certificate_exceeded;
+}
+
+// A terminal trajectory endpoint is not a mission completion witness by
+// itself. The vehicle must also be measured inside the waypoint acceptance
+// volume; otherwise the endpoint command can be repeatedly held while the
+// vehicle is already outside the mission gate and no same-request recovery is
+// scheduled. This predicate deliberately does not inspect speed: terminal
+// STOP settling remains owned by the mission acceptance gate.
+inline bool terminalStopCompletionObserved(
+    bool terminal_stop, bool nominal_main_terminal, bool endpoint_valid,
+    double endpoint_error_m,
+    double measured_error_m, double acceptance_tolerance_m) noexcept {
+  return terminal_stop && nominal_main_terminal && endpoint_valid &&
+         std::isfinite(endpoint_error_m) &&
+         std::isfinite(measured_error_m) &&
+         std::isfinite(acceptance_tolerance_m) && acceptance_tolerance_m >= 0.0 &&
+         endpoint_error_m <= acceptance_tolerance_m &&
+         measured_error_m <= acceptance_tolerance_m;
 }
 
 // A failed rest-to-rest solve is retried with a slower velocity envelope.
@@ -358,12 +388,14 @@ inline bool measuredStateEmergencyMayReplaceCommittedCommand(
     bool current_vehicle_state_known_free = false,
     bool safety_trajectory_available = false,
     bool terminal_stop = false) noexcept {
+  // Terminal STOP is intentionally not exempt here: before measured waypoint
+  // acceptance it still owns the same tracking certificate as any MAIN.
+  (void)terminal_stop;
   const bool actual_anchor_recovery = !committed_suffix_usable &&
       tracking_certificate_exceeded;
   const bool projected_main_only_recovery =
       projected_tracking_certificate_exceeded && !tracking_certificate_exceeded &&
-      current_vehicle_state_known_free && !safety_trajectory_available &&
-      !terminal_stop;
+      current_vehicle_state_known_free && !safety_trajectory_available;
   return !validate_without_new_commit && fresh_vehicle_state &&
          committed_command_available && command_anchor_valid &&
          (actual_anchor_recovery || projected_main_only_recovery) &&
@@ -396,6 +428,31 @@ inline bool terminalHoldIsPending(
     std::uint64_t terminal_bundle_generation) noexcept {
   return command_available && reaches_goal && stop_waypoint &&
          terminal_bundle_generation != 0U;
+}
+
+// The derived completion atomics are updated by the command publisher and the
+// planner timer independently. During that callback interleaving, the
+// immutable committed terminal bundle remains the authoritative hold owner.
+// This fallback is intentionally identity-bound; it does not turn an arbitrary
+// completed command into nominal waypoint completion.
+inline bool committedTerminalBundleHoldIsPending(
+    bool command_available, bool stop_waypoint, bool terminal_stop_bundle,
+    bool main_role, bool identity_matches, std::uint64_t bundle_generation) noexcept {
+  return command_available && stop_waypoint && terminal_stop_bundle && main_role &&
+         identity_matches && bundle_generation != 0U;
+}
+
+// A certified BACKUP suffix can end at a safe braking point that is still
+// outside the mission acceptance ball. That is a measured-stop boundary for
+// the same goal, not an emergency-certification failure. Record the restart
+// before the residual-velocity tick returns so the next cycle can wait and
+// then run PlanFromRest instead of treating the motion as an untransactioned
+// MotionObserved event.
+inline bool backupStopNeedsMeasuredRestart(
+    ExecutionRecoveryState state, bool completion_observed,
+    bool terminal_hold_pending) noexcept {
+  return state == ExecutionRecoveryState::kTrackBackup &&
+         completion_observed && !terminal_hold_pending;
 }
 
 // Once a finite PASS_THROUGH command has reached its declared endpoint, the

@@ -117,6 +117,24 @@ profiles:
       waypoint_count: 9
       speed_sweep_mps: [3.0, 4.0, 5.0]
       max_cross_track_m: 6.0
+  long_cross_obstacles:
+    family: long_route_cross_obstacles
+    world: long_cross_obstacles
+    mission: long_cross_obstacles
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [cross_route_pillar_01, cross_route_pillar_02, cross_route_pillar_03, cross_edge_feature_01, cross_edge_feature_02, cross_edge_feature_03, cross_edge_feature_04]
+    route_obstacles: [cross_route_pillar_01, cross_route_pillar_02, cross_route_pillar_03]
+    route_segment_waypoints: [0, 3]
+    benchmark:
+      objective: long_waypoint_continuity_with_crossing_obstacles
+      route_length_m: 134.164
+      waypoint_count: 4
+      speed_sweep_mps: [3.0, 4.0, 5.0]
+      leg_length_m: 44.721
+      obstacle_spacing_m: 40.0
+      max_cross_track_m: 8.0
   long_open_featured_speed:
     family: long_route
     world: long_open_featured_speed
@@ -256,6 +274,7 @@ scenes:
       three_pillars: long_three_pillars
       speed_benchmark: long_three_pillars_speed
       open_speed_calibration: long_open_featured_speed
+      cross_obstacles: long_cross_obstacles
   tunnel:
     variants:
       positive: tunnel_irregular

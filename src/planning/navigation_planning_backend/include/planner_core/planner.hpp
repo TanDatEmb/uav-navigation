@@ -119,6 +119,14 @@ namespace navigation_planning_backend {
         bool goal_endpoint_adjusted_{false};
         bool terminal_stop_required_{false};
         bool pass_through_coincident_terminal_stop_{false};
+        // A projected terminal endpoint is leased for one immutable mission
+        // request. Re-running the optimizer on a changing occupancy revision
+        // must not flip the endpoint between homotopy sides while the old
+        // endpoint is still known-free and certifiable.
+        std::optional<Vec3f> acceptance_endpoint_lease_;
+        std::uint64_t acceptance_endpoint_lease_request_id_{0U};
+        std::uint64_t acceptance_endpoint_lease_route_revision_{0U};
+        std::size_t acceptance_endpoint_lease_waypoint_index_{0U};
         std::optional<Vec3f> pass_through_next_target_;
         std::optional<navigation_mission::ImmutableRouteSnapshot> route_snapshot_;
         RouteYawReference route_yaw_reference_{};
@@ -382,7 +390,7 @@ namespace navigation_planning_backend {
         // M2 will drive yaw from its route lookahead. Compatibility mirrors
         // are never authoritative here.
         bool setRouteSnapshot(
-                const navigation_mission::ImmutableRouteSnapshot& route) noexcept {
+            const navigation_mission::ImmutableRouteSnapshot& route) noexcept {
             if (!route.valid()) {
                 route_snapshot_.reset();
                 pass_through_next_target_.reset();
@@ -393,8 +401,14 @@ namespace navigation_planning_backend {
             }
             if (!route_snapshot_.has_value() ||
                 route_snapshot_->mission_id != route.mission_id ||
-                route_snapshot_->route_revision != route.route_revision) {
+                route_snapshot_->route_revision != route.route_revision ||
+                route_snapshot_->request_id != route.request_id ||
+                route_snapshot_->active_waypoint_index != route.active_waypoint_index) {
                 last_route_yaw_target_rad_.reset();
+                acceptance_endpoint_lease_.reset();
+                acceptance_endpoint_lease_request_id_ = 0U;
+                acceptance_endpoint_lease_route_revision_ = 0U;
+                acceptance_endpoint_lease_waypoint_index_ = 0U;
             }
             route_snapshot_ = route;
             pass_through_coincident_terminal_stop_ =

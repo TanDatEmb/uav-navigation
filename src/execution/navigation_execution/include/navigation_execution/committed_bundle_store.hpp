@@ -27,6 +27,11 @@ enum class CommitDecision : std::uint8_t {
   kGoalAdvanced,
   kInvalidCandidate,
   kCancelled,
+  // The execution pointer was restored because the post-commit finalizer
+  // could not complete.  This is distinct from a stale/cancelled candidate so
+  // callers can account for an internal transaction fault without treating
+  // the previous command as lost.
+  kFinalizationFailed,
 };
 
 // Sole owner of the product command candidate that is allowed to reach the
@@ -196,6 +201,55 @@ class CommittedBundleStore final {
     }
     committed_ = std::move(candidate);
     last_transaction_id_ = expected.transaction_id;
+    return CommitDecision::kCommitted;
+  }
+
+  // Commit the execution candidate and run the planner-history finalizer as
+  // one rollback-safe transaction.  The execution pointer remains the sole
+  // authority: if the cache/history update fails, restore the exact previous
+  // pointer and transaction watermark instead of invalidating a command that
+  // was already accepted for execution.
+  template <typename FinalizeFn>
+  CommitDecision tryCommitAndFinalize(
+      const CommitToken& expected,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
+      FinalizeFn&& finalize) noexcept {
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0 ||
+        expected.transaction_id == 0) {
+      return CommitDecision::kInvalidCandidate;
+    }
+    std::lock_guard lock(mutex_);
+    if (active_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) {
+      return CommitDecision::kGoalAdvanced;
+    }
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity) ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, candidate->world_identity)) {
+      return CommitDecision::kWorldAdvanced;
+    }
+    if (expected.transaction_id <= last_transaction_id_) {
+      return CommitDecision::kCancelled;
+    }
+
+    const auto previous = committed_;
+    const auto previous_transaction_id = last_transaction_id_;
+    committed_ = std::move(candidate);
+    last_transaction_id_ = expected.transaction_id;
+    bool finalized = false;
+    try {
+      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)());
+    } catch (...) {
+      finalized = false;
+    }
+    if (!finalized) {
+      committed_ = previous;
+      last_transaction_id_ = previous_transaction_id;
+      return CommitDecision::kFinalizationFailed;
+    }
     return CommitDecision::kCommitted;
   }
 

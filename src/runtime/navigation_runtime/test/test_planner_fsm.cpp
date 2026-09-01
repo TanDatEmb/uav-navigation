@@ -105,6 +105,20 @@ TEST(PlannerFsm, DefersTerminalStopAnchorRecoveryOnlyInsideTrackingEnvelope) {
   EXPECT_FALSE(terminalStopMayDeferAnchorRecovery(
       true, true, true, true,
       navigation_planning::CandidateRole::kMain, false, 0.20, 0.25));
+  EXPECT_FALSE(terminalStopMayDeferAnchorRecovery(
+      true, true, true, true,
+      navigation_planning::CandidateRole::kMain, true, 0.20, 0.25, true));
+}
+
+TEST(PlannerFsm, TerminalStopCompletionRequiresMeasuredWaypointAcceptance) {
+  using navigation_runtime::terminalStopCompletionObserved;
+
+  EXPECT_TRUE(terminalStopCompletionObserved(true, true, true, 0.535, 0.314, 0.7));
+  EXPECT_FALSE(terminalStopCompletionObserved(true, false, true, 0.535, 0.314, 0.7));
+  EXPECT_FALSE(terminalStopCompletionObserved(true, true, true, 0.535, 0.701, 0.7));
+  EXPECT_FALSE(terminalStopCompletionObserved(true, true, true, 0.701, 0.314, 0.7));
+  EXPECT_FALSE(terminalStopCompletionObserved(true, true, false, 0.1, 0.1, 0.7));
+  EXPECT_FALSE(terminalStopCompletionObserved(false, true, true, 0.1, 0.1, 0.7));
 }
 
 TEST(PlannerFsm, UsesBoundedSlowerVelocityEnvelopeAfterRestFailures) {
@@ -222,7 +236,7 @@ TEST(PlannerFsm, EmergencyBrakeCannotBeRearmedFromADriftingEmergency) {
       navigation_planning::CandidateRole::kMain));
 }
 
-TEST(PlannerFsm, ProjectedAnchorCrossingRequiresUnsafeSuffixAndKnownFreeState) {
+TEST(PlannerFsm, ProjectedAnchorCrossingRequiresKnownFreeState) {
   EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
       false, true, true, true, true, false,
       ExecutionRecoveryState::kTrackMain,
@@ -235,7 +249,7 @@ TEST(PlannerFsm, ProjectedAnchorCrossingRequiresUnsafeSuffixAndKnownFreeState) {
       false, true, true, true, true, false,
       ExecutionRecoveryState::kTrackMain,
       navigation_planning::CandidateRole::kMain, true, true, false));
-  EXPECT_FALSE(measuredStateEmergencyMayReplaceCommittedCommand(
+  EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
       false, true, true, true, true, false,
       ExecutionRecoveryState::kTrackMain,
       navigation_planning::CandidateRole::kMain, true, true, false, true));
@@ -290,6 +304,10 @@ TEST(PlannerFsm, BackupAndEmergencyAreOneWayUntilCertifiedStop) {
                 ExecutionRecoveryState::kEmergencyBrake,
                 ExecutionRecoveryEvent::kCertifiedStopObserved),
             ExecutionRecoveryState::kStoppedRecovery);
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kTrackMain,
+                ExecutionRecoveryEvent::kTerminalStopCompleted),
+            ExecutionRecoveryState::kStoppedRecovery);
   EXPECT_TRUE(nominalPlanningAllowed(ExecutionRecoveryState::kStoppedRecovery));
   EXPECT_EQ(transitionExecutionRecovery(
                 ExecutionRecoveryState::kStoppedRecovery,
@@ -314,6 +332,33 @@ TEST(PlannerFsm, PreservesObservedTerminalHoldAcrossRestRetry) {
   EXPECT_FALSE(terminalHoldIsPending(true, false, true, 17U));
   EXPECT_FALSE(terminalHoldIsPending(true, true, true, 0U));
   EXPECT_FALSE(terminalHoldIsPending(true, true, false, 17U));
+}
+
+TEST(PlannerFsm, RetainsIdentityBoundTerminalBundleAcrossDerivedFlagRace) {
+  EXPECT_TRUE(committedTerminalBundleHoldIsPending(true, true, true, true, true, 17U));
+  EXPECT_FALSE(committedTerminalBundleHoldIsPending(true, true, false, true, true, 17U));
+  EXPECT_FALSE(committedTerminalBundleHoldIsPending(true, true, true, false, true, 17U));
+  EXPECT_FALSE(committedTerminalBundleHoldIsPending(true, true, true, true, false, 17U));
+  EXPECT_FALSE(committedTerminalBundleHoldIsPending(true, false, true, true, true, 17U));
+  EXPECT_FALSE(committedTerminalBundleHoldIsPending(true, true, true, true, true, 0U));
+}
+
+TEST(PlannerFsm, BackupOutsideAcceptanceSchedulesMeasuredRestart) {
+  EXPECT_TRUE(backupStopNeedsMeasuredRestart(
+      ExecutionRecoveryState::kTrackBackup, true, false));
+  EXPECT_FALSE(backupStopNeedsMeasuredRestart(
+      ExecutionRecoveryState::kTrackBackup, true, true));
+  EXPECT_FALSE(backupStopNeedsMeasuredRestart(
+      ExecutionRecoveryState::kTrackBackup, false, false));
+  EXPECT_FALSE(backupStopNeedsMeasuredRestart(
+      ExecutionRecoveryState::kEmergencyBrake, true, false));
+}
+
+TEST(PlannerFsm, RetainsPendingStatusWhileSafetySuffixDrains) {
+  EXPECT_FALSE(pendingGoalTerminalStatusMayClear(true, true));
+  EXPECT_TRUE(pendingGoalTerminalStatusMayClear(true, false));
+  EXPECT_FALSE(pendingGoalTerminalStatusMayClear(false, true));
+  EXPECT_FALSE(pendingGoalTerminalStatusMayClear(false, false));
 }
 
 TEST(PlannerFsm, PendingGoalOwnerLinearizesSupersedeAndCertifiedPromotion) {

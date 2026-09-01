@@ -50,19 +50,22 @@ class MissionController final {
   // callback that races activate()/update() cannot strand the mission on the
   // first waypoint.
   void onNativeTrajectoryReady();
+  // A safety-owned BACKUP/EMERGENCY sample is not a readiness certificate for
+  // the active waypoint. Clear the nominal readiness latch so a pass-through
+  // checkpoint cannot advance while the vehicle is already on a braking
+  // suffix. A later measured/certified progression witness may set it again.
+  void onNativeSafetyTrajectoryObserved();
   // A completed native MAIN trajectory may end inside a corner waypoint's
   // acceptance ball while the measured vehicle velocity is still non-zero.
   // Keep the certified terminal hold until the measured state satisfies the
   // normal acceptance gate; do not re-publish the same goal and restart the
   // planner in the meantime.
   void onNativeTerminalHoldObserved();
-  // A completed certified command may stop while the measured vehicle remains
-  // outside the waypoint acceptance ball. Re-issue the same mission checkpoint
-  // once so runtime plans a measured-state terminal connector; the executor
-  // keeps the endpoint hold during its existing bounded recovery window. A
-  // waypoint can request this retry only once.
-  void requestNativeTerminalRecovery(double now_s);
-
+  // A completed certified BACKUP may leave the vehicle stopped inside the
+  // active PASS_THROUGH checkpoint. This authorizes only measured checkpoint
+  // progression; it does not relabel or retain an adjacent old command for a
+  // new waypoint identity.
+  void onCertifiedPassThroughSuffixStop();
   [[nodiscard]] MissionControllerEvent update(double now_s,
                                                const std::optional<Eigen::Vector3d>& position,
                                                bool airborne = true,
@@ -109,7 +112,6 @@ class MissionController final {
   bool checkpoint_valid_{false};
   bool trajectory_ready_{false};
   bool terminal_hold_pending_{false};
-  bool terminal_recovery_requested_{false};
   std::optional<Eigen::Vector3d> previous_position_;
   double previous_position_time_s_{0.0};
 };

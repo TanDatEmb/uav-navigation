@@ -77,6 +77,51 @@ TEST(CommittedBundleStore, RejectsOutOfOrderTransactionIdentity) {
   EXPECT_EQ(store.load(), first);
 }
 
+TEST(CommittedBundleStore, FinalizerFailureRestoresPreviousExecutionPointer) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+
+  auto previous = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, previous),
+            navigation_execution::CommitDecision::kCommitted);
+
+  auto replacement = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  EXPECT_EQ(store.tryCommitAndFinalize(
+                {world, 7, 2}, replacement, [] { return false; }),
+            navigation_execution::CommitDecision::kFinalizationFailed);
+  EXPECT_EQ(store.load(), previous);
+
+  auto after_rollback = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  EXPECT_EQ(store.tryCommitAndFinalize(
+                {world, 7, 2}, after_rollback, [] { return true; }),
+            navigation_execution::CommitDecision::kCommitted);
+  EXPECT_EQ(store.load(), after_rollback);
+}
+
+TEST(CommittedBundleStore, SuccessfulFinalizerKeepsReplacementPointer) {
+  navigation_execution::CommittedBundleStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+
+  auto replacement = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  bool finalized = false;
+  EXPECT_EQ(store.tryCommitAndFinalize(
+                {world, 7, 2}, replacement, [&finalized] {
+                  finalized = true;
+                  return true;
+                }),
+            navigation_execution::CommitDecision::kCommitted);
+  EXPECT_TRUE(finalized);
+  EXPECT_EQ(store.load(), replacement);
+}
+
 TEST(CommittedBundleStore, GoalReplacementInvalidatesAndSamplerDoesNotLockWorld) {
   navigation_execution::CommittedBundleStore store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};

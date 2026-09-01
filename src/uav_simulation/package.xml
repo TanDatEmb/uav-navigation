@@ -18,12 +18,14 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>gz_msgs_vendor</depend>
+  <depend>gz_transport_vendor</depend>
   <depend>rclcpp</depend>
+  <depend>ros_gz_bridge</depend>
   <depend>sensor_msgs</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>ros_gz_bridge</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>uav_description</exec_depend>
 

@@ -6,3 +6,11 @@
   ros_type_name: sensor_msgs/msg/PointCloud2
   gz_type_name: gz.msgs.PointCloudPacked
   direction: GZ_TO_ROS
+  # Declarative transport contract retained in each runtime artifact. The
+  # executable runner uses uav_simulation/gz_lidar_bridge, whose native
+  # Gazebo callback is bounded by a latest-only inbox and whose ROS publisher
+  # uses SensorDataQoS. Keep these queue values explicit for provenance; they
+  # are not passed to ros_gz_bridge/parameter_bridge.
+  qos_profile: SENSOR_DATA
+  subscriber_queue: 100
+  publisher_queue: 100

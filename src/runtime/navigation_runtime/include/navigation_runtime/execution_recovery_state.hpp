@@ -18,6 +18,9 @@ enum class ExecutionRecoveryEvent : std::uint8_t {
   kBackupActivated,
   kEmergencyCommitted,
   kCertifiedStopObserved,
+  // A nominal terminal STOP is a distinct completion event. A safety
+  // endpoint must never be promoted by completion geometry alone.
+  kTerminalStopCompleted,
   kMotionObserved,
   kRecoveryTimedOut,
   kEmergencyCertificationFailed,
@@ -70,6 +73,9 @@ enum class ExecutionRecoveryEvent : std::uint8_t {
       }
       if (event == ExecutionRecoveryEvent::kEmergencyCommitted) {
         return ExecutionRecoveryState::kEmergencyBrake;
+      }
+      if (event == ExecutionRecoveryEvent::kTerminalStopCompleted) {
+        return ExecutionRecoveryState::kStoppedRecovery;
       }
       return state;
     case ExecutionRecoveryState::kTrackBackup:

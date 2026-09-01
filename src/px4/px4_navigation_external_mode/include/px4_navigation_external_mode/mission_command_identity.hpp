@@ -26,7 +26,9 @@ inline bool missionCommandIdentityMatches(
 // has reached a certified stop/retarget boundary. During that bounded window
 // the previous BACKUP command remains the physical owner of the vehicle. It
 // may refresh the External Mode command lease, but it must never be accepted
-// as the new waypoint's nominal command.
+// as the new waypoint's nominal command. A retry for the same checkpoint is
+// deliberately not bridged here: Runtime owns that retry and must preserve
+// the exact mission/request identity instead of creating two owners.
 inline bool priorSafetySuffixCommandIdentityMatches(
     const navigation_contracts::msg::NavigationCommand& command,
     const std::string& mission_id, std::uint32_t active_waypoint_index,

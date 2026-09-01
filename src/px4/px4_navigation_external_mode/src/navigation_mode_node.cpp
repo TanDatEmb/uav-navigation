@@ -61,6 +61,32 @@ std::optional<std::int64_t> checkedTimestampAdd(const std::int64_t base_ns,
 
 }  // namespace
 
+void NavigationMode::clearPlannerRecoveryEpisodeLocked() noexcept {
+  planner_recovery_pending_ = false;
+  planner_recovery_deadline_ns_ = 0;
+  planner_recovery_mission_id_.clear();
+  planner_recovery_waypoint_index_ = 0U;
+  planner_recovery_request_id_ = 0U;
+  planner_recovery_bundle_generation_ = 0U;
+}
+
+void NavigationMode::rememberPlannerRecoveryEpisodeLocked(
+    const navigation_contracts::msg::NavigationCommand& command) {
+  planner_recovery_mission_id_ = command.mission_id;
+  planner_recovery_waypoint_index_ = command.waypoint_index;
+  planner_recovery_request_id_ = command.request_id;
+  planner_recovery_bundle_generation_ = command.bundle_generation;
+}
+
+bool NavigationMode::plannerRecoveryEpisodeMatchesLocked(
+    const navigation_contracts::msg::NavigationCommand& command) const noexcept {
+  return planner_recovery_pending_ &&
+         command.mission_id == planner_recovery_mission_id_ &&
+         command.waypoint_index == planner_recovery_waypoint_index_ &&
+         command.request_id == planner_recovery_request_id_ &&
+         command.bundle_generation == planner_recovery_bundle_generation_;
+}
+
 NavigationMode::NavigationMode(rclcpp::Node& node)
     : ModeBase(node, Settings{kModeName}),
       node_(node),
@@ -283,8 +309,7 @@ void NavigationMode::onActivate() {
     mode_active_ = true;
     mission_terminal_ = false;
     handover_requested_ = false;
-    planner_recovery_pending_ = false;
-    planner_recovery_deadline_ns_ = 0;
+    clearPlannerRecoveryEpisodeLocked();
     safety_suffix_handoff_pending_ = false;
     safety_suffix_waypoint_index_ = 0U;
     safety_suffix_request_id_ = 0U;
@@ -397,6 +422,10 @@ void NavigationMode::onNavigationCommand(
     // leases remain authoritative in updateSetpoint().
     navigation_command_ = transitionCertifiedCommand(
         navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
+    RCLCPP_WARN_THROTTLE(
+        node().get_logger(), *node().get_clock(), 1000,
+        "planner backend command rejected before acceptance validation: valid=%d command_present=%d",
+        valid ? 1 : 0, message ? 1 : 0);
     return;
   }
 
@@ -409,6 +438,7 @@ void NavigationMode::onNavigationCommand(
   bool terminal_recovery_needed = false;
   bool terminal_stop_settle_required = false;
   bool prior_safety_suffix_command = false;
+  bool certified_suffix_pass_through_stop = false;
   bool recovery_deadline_invalid = false;
   std::optional<nav_msgs::msg::Odometry> completed_command_odometry;
   navigation_contracts::ExecutionStateFreshness odometry_freshness;
@@ -444,6 +474,22 @@ void NavigationMode::onNavigationCommand(
       ++trajectory_rejected_count_;
       navigation_command_ = transitionCertifiedCommand(
           navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
+      RCLCPP_WARN_THROTTLE(
+          node().get_logger(), *node().get_clock(), 1000,
+          "planner backend command rejected by identity contract: health_epoch=%d "
+          "mission_identity=%d prior_suffix=%d monotonic=%d command=(mission=%s wp=%u request=%lu "
+          "goal_epoch=%lu localization_epoch=%lu generation=%lu sample=%lu) active=(mission=%s wp=%u "
+          "request=%lu localization_epoch=%lu)",
+          health_epoch_matches ? 1 : 0, mission_identity_matches ? 1 : 0,
+          prior_safety_suffix_command ? 1 : 0, command_identity_monotonic ? 1 : 0,
+          message->mission_id.c_str(), message->waypoint_index,
+          static_cast<unsigned long>(message->request_id),
+          static_cast<unsigned long>(message->goal_epoch),
+          static_cast<unsigned long>(message->localization_epoch),
+          static_cast<unsigned long>(message->bundle_generation),
+          static_cast<unsigned long>(message->sample_id), mission_ ? mission_->id.c_str() : "<none>",
+          active_waypoint_index, static_cast<unsigned long>(active_request_id),
+          static_cast<unsigned long>(lio_localization_epoch_));
       return;
     }
     const auto odometry_source_ns = odometry_
@@ -462,6 +508,31 @@ void NavigationMode::onNavigationCommand(
     } else if (acceptance_gate == CommandAcceptanceGate::kNonIncreasingMessageId) {
       ++trajectory_rejected_count_;
       return;
+    }
+    if (!odometry_stale &&
+        message->status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
+        message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+        mission_controller_ && odometry_.has_value() &&
+        !mission_controller_->activePassThroughHasCoincidentStop()) {
+      const auto waypoint = mission_controller_->activeWaypoint();
+      if (waypoint.has_value() &&
+          waypoint->behavior == MissionWaypoint::Behavior::PassThrough) {
+        const auto& point = odometry_->pose.pose.position;
+        const Eigen::Vector3d measured{point.x, point.y, point.z};
+        const Eigen::Vector3d command_position{message->position.x, message->position.y,
+                                               message->position.z};
+        const auto& velocity = odometry_->twist.twist.linear;
+        const Eigen::Vector3d measured_velocity{velocity.x, velocity.y, velocity.z};
+        const bool measured_inside = measured.allFinite() &&
+            (measured - waypoint->position_enu).norm() <= waypoint->acceptance_radius_m;
+        const bool command_inside = command_position.allFinite() &&
+            (command_position - waypoint->position_enu).norm() <= waypoint->acceptance_radius_m;
+        certified_suffix_pass_through_stop =
+            measured_inside && command_inside && measured_velocity.allFinite() &&
+            measured_velocity.norm() <= mission_controller_->acceptanceSpeedMps() &&
+            (measured - command_position).norm() <=
+                navigation_contracts::kCommandAnchorErrorLimitM;
+      }
     }
       const bool terminal_failure =
         message->status ==
@@ -642,7 +713,8 @@ void NavigationMode::onNavigationCommand(
     safetyStopNavigation("planner backend PVA command anchor is not near vehicle");
     return;
   }
-    if (accepted && completed_command && !prior_safety_suffix_command && terminal_recovery_needed) {
+  if (accepted && completed_command && !prior_safety_suffix_command &&
+      terminal_recovery_needed) {
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       if (!planner_recovery_pending_) {
@@ -653,8 +725,9 @@ void NavigationMode::onNavigationCommand(
         } else {
           planner_recovery_pending_ = true;
           planner_recovery_deadline_ns_ = *deadline;
+          rememberPlannerRecoveryEpisodeLocked(*message);
           RCLCPP_WARN(node().get_logger(),
-                      "planner backend terminal endpoint has not settled waypoint acceptance; "
+                      "planner backend terminal endpoint requires mission acknowledgement; "
                       "holding for bounded planner recovery window %.3f s",
                       planner_recovery_wait_timeout_s_);
         }
@@ -667,27 +740,47 @@ void NavigationMode::onNavigationCommand(
         // endpoint hold until the normal measured speed gate settles.
         mission_controller_->onNativeTerminalHoldObserved();
       } else {
-        mission_controller_->requestNativeTerminalRecovery(
-            node().get_clock()->now().seconds());
+        // Runtime is the sole owner of internal continuation. Keep the same
+        // mission/request identity while it replans from the measured stop;
+        // advancing the request here creates two competing recovery owners.
+        RCLCPP_INFO(node().get_logger(),
+                    "terminal endpoint outside acceptance; waiting for same-request "
+                    "runtime recovery without advancing mission request");
       }
     }
   } else if (accepted && !completed_command) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    planner_recovery_pending_ = false;
-    planner_recovery_deadline_ns_ = 0;
+    clearPlannerRecoveryEpisodeLocked();
   } else if (accepted && (terminal_backup_hold_inside_acceptance ||
                           terminal_main_hold_inside_acceptance)) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    planner_recovery_pending_ = false;
-    planner_recovery_deadline_ns_ = 0;
+    clearPlannerRecoveryEpisodeLocked();
   }
   if (accepted && !prior_safety_suffix_command && mission_controller_ &&
       (!completed_command || terminal_backup_hold_inside_acceptance ||
        terminal_main_hold_inside_acceptance)) {
-    mission_controller_->onNativeTrajectoryReady();
+    const bool safety_role =
+        message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP ||
+        message->role == navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY;
+    if (safety_role) {
+      mission_controller_->onNativeSafetyTrajectoryObserved();
+    } else {
+      mission_controller_->onNativeTrajectoryReady();
+    }
     if (terminal_main_hold_inside_acceptance) {
       mission_controller_->onNativeTerminalHoldObserved();
     }
+  }
+  if (accepted && completed_command && certified_suffix_pass_through_stop &&
+      mission_controller_) {
+    // For an adjacent old suffix, the old BACKUP remains stored under its old
+    // identity. For a current-identity BACKUP, the same witness certifies the
+    // active checkpoint without changing command ownership. In both cases
+    // MissionController applies only its normal measured PASS_THROUGH gate.
+    mission_controller_->onCertifiedPassThroughSuffixStop();
+    RCLCPP_INFO(node().get_logger(),
+                "Certified BACKUP stop is inside next PASS_THROUGH checkpoint; "
+                "allowing measured route progression under a fresh command identity");
   }
   if (recovery_deadline_invalid) {
     safetyStopNavigation("planner recovery deadline is not representable");
@@ -739,8 +832,7 @@ void NavigationMode::updateMission() {
         planner_recovery_pending_, node().get_clock()->now().nanoseconds(),
         planner_recovery_deadline_ns_);
     if (recovery_expired) {
-      planner_recovery_pending_ = false;
-      planner_recovery_deadline_ns_ = 0;
+      clearPlannerRecoveryEpisodeLocked();
     }
   }
   if (recovery_expired) {
@@ -799,7 +891,6 @@ void NavigationMode::updateMission() {
 void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, double now_s) {
   if (!mission_controller_ || event.type == MissionControllerEvent::Type::None) return;
   if (event.type == MissionControllerEvent::Type::PublishGoal) {
-    bool recovery_handoff_deadline_invalid = false;
     const auto waypoint = mission_controller_->activeWaypoint();
     if (!waypoint.has_value()) {
       handover_requested_ = true;
@@ -822,20 +913,6 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
         if (safety_suffix_handoff_pending_) {
           safety_suffix_waypoint_index_ = retained.waypoint_index;
           safety_suffix_request_id_ = retained.request_id;
-          // The old completed BACKUP suffix may have started the generic
-          // planner-recovery timer before this waypoint was accepted. A new
-          // waypoint creates a distinct, bounded handoff transaction: restart
-          // that window from this publication so the runtime can finish its
-          // measured-stop handoff. This does not extend a moving command or
-          // authorize the old suffix for the new waypoint.
-          const auto deadline = checkedTimestampAdd(
-              node().get_clock()->now().nanoseconds(), planner_recovery_wait_timeout_ns_);
-          if (deadline) {
-            planner_recovery_pending_ = true;
-            planner_recovery_deadline_ns_ = *deadline;
-          } else {
-            recovery_handoff_deadline_invalid = true;
-          }
         }
       } else {
         // A rejected command is a terminal status for the old waypoint, not a
@@ -850,12 +927,13 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
         safety_suffix_waypoint_index_ = 0U;
         safety_suffix_request_id_ = 0U;
       }
+      if (!safety_suffix_handoff_pending_) {
+        // A completed MAIN endpoint belongs to the old waypoint. Do not carry
+        // its bounded recovery deadline into the newly published request.
+        clearPlannerRecoveryEpisodeLocked();
+      }
       navigation_command_ = transitionCertifiedCommand(
           navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
-    }
-    if (recovery_handoff_deadline_invalid) {
-      safetyStopNavigation("planner handoff recovery deadline is not representable");
-      return;
     }
     navigation_contracts::msg::NavigationGoal goal;
     goal.header.frame_id = planning_frame_;
@@ -1523,6 +1601,8 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
           navigation_command->status ==
               navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED,
           planner_recovery_pending_, now.nanoseconds(), planner_recovery_deadline_ns_);
+      terminal_recovery_window_open = terminal_recovery_window_open &&
+          plannerRecoveryEpisodeMatchesLocked(*navigation_command);
     }
     const auto receive_ns = [&]() {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
@@ -1619,6 +1699,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
             } else {
               planner_recovery_pending_ = true;
               planner_recovery_deadline_ns_ = *deadline;
+              rememberPlannerRecoveryEpisodeLocked(*navigation_command);
               RCLCPP_WARN(node().get_logger(),
                           "planner backend terminal endpoint reached; holding for bounded "
                           "planner recovery window %.3f s",

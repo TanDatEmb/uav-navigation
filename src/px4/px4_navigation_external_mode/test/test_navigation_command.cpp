@@ -132,6 +132,22 @@ TEST(NavigationCommandContract, ExactAdjacentBackupSuffixMayCrossPassThroughHand
       command, "mission", 2U, 12U, 1U, 11U));
 }
 
+TEST(NavigationCommandContract, OlderBackupRetryMustNotBridgeSameCheckpoint) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.mission_id = "mission";
+  command.waypoint_index = 3U;
+  command.request_id = 7U;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
+
+  EXPECT_FALSE(px4_navigation_external_mode::priorSafetySuffixCommandIdentityMatches(
+      command, "mission", 3U, 8U, 3U, 7U));
+  EXPECT_FALSE(px4_navigation_external_mode::priorSafetySuffixCommandIdentityMatches(
+      command, "mission", 3U, 7U, 3U, 7U));
+  EXPECT_FALSE(px4_navigation_external_mode::priorSafetySuffixCommandIdentityMatches(
+      command, "mission", 5U, 8U, 3U, 7U));
+}
+
 TEST(NavigationCommandContract, DuplicateLateTerminalSampleStillFailsMonotonicGate) {
   navigation_contracts::ExecutionStateFreshness fresh;
   fresh.reason = navigation_contracts::ExecutionStateFreshnessReason::kValid;
@@ -153,6 +169,24 @@ TEST(NavigationCommandContract, GoalHandoffRetainsExactCertifiedCommandIdentity)
   EXPECT_EQ(retained->waypoint_index, 3U);
   EXPECT_EQ(retained->request_id, 8U);
   EXPECT_EQ(retained->sample_id, 21U);
+}
+
+TEST(NavigationCommandContract, CompletedMainTerminalCommandCannotBridgeWaypointHandoff) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  EXPECT_FALSE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(command));
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  EXPECT_TRUE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(command));
+}
+
+TEST(NavigationCommandContract, CompletedBackupCannotBridgeWaypointHandoff) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
+  EXPECT_FALSE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(command));
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY;
+  EXPECT_FALSE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(command));
 }
 
 TEST(NavigationCommandContract, RejectedCommandIsNotAHandOffCertificate) {

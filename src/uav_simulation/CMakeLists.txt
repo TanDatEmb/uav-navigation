@@ -3,7 +3,9 @@ project(uav_simulation)
 
 find_package(ament_cmake REQUIRED)
 find_package(gz-msgs10 REQUIRED)
+find_package(gz-transport13 REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(ros_gz_bridge REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
 add_library(visibility_cloud src/visibility_cloud.cpp)
@@ -20,6 +22,15 @@ target_compile_features(gz_visibility_bridge PRIVATE cxx_std_20)
 target_compile_options(gz_visibility_bridge PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(gz_visibility_bridge visibility_cloud)
 ament_target_dependencies(gz_visibility_bridge rclcpp sensor_msgs)
+
+add_executable(gz_lidar_bridge src/gz_lidar_bridge.cpp)
+target_compile_features(gz_lidar_bridge PRIVATE cxx_std_20)
+target_compile_options(gz_lidar_bridge PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(gz_lidar_bridge
+  gz-msgs10::gz-msgs10
+  gz-transport13::gz-transport13
+  ros_gz_bridge::ros_gz_bridge)
+ament_target_dependencies(gz_lidar_bridge rclcpp sensor_msgs)
 
 foreach(asset_dir
     bridge
@@ -48,7 +59,7 @@ if(BUILD_TESTING)
   target_link_libraries(test_visibility_cloud visibility_cloud)
 endif()
 
-install(TARGETS visibility_cloud gz_visibility_bridge
+install(TARGETS visibility_cloud gz_visibility_bridge gz_lidar_bridge
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME})

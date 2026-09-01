@@ -15830,3 +15830,600 @@ release profiles must not use the former allowance.
   `structured_obstacle` and `long_route` at 5 m/s, checking exact endpoint
   ownership, waypoint completion, route continuity, freshness, tracking,
   clearance, yaw/dynamics, and collision gates.
+
+### 2026-09-01 - Keep a bounded terminal hold across asynchronous waypoint handoff
+
+- **Owner/status:** PX4 External Mode mission handoff and planner command lease,
+  `IMPLEMENTED`; focused command tests, build, and repeated structured/long-route
+  SITL remain required before qualification.
+- **Scope:** only an accepted completed command whose endpoint is outside the
+  current waypoint acceptance certificate starts the existing bounded
+  planner-recovery window. The old command keeps its original mission identity
+  and is used only as an endpoint position hold until Runtime publishes a
+  replacement with the same identity or the 5 s window expires. A normal
+  waypoint handoff does not restart or rebase this deadline.
+- **Safety impact:** this prevents a scheduler gap from converting a valid
+  endpoint handoff into PX4 Hold, without extending a moving trajectory,
+  changing the 100 ms command freshness contract, relabelling the old command,
+  or making it native-ready for the new waypoint. The existing timeout remains
+  fail-closed.
+- **False-accept/false-reject consequences:** without this bridge, a valid
+  endpoint outside acceptance can be rejected after the old command lease
+  expires even when odometry is fresh, before Runtime finishes the measured
+  stop/replan transaction. The recovery condition is identity- and endpoint-
+  bounded; expiry still hands over to PX4 Hold. Commands already inside the
+  acceptance certificate use the normal mission hold path and do not receive
+  an extra lease.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T233250-327547`
+  accepted waypoint 0 and published waypoint 1, then entered PX4 Hold after
+  the retained terminal MAIN command became stale while the synchronous
+  replacement solve was still in progress; external and propagated odometry
+  active-gap counts were both zero.
+- **Removal/review condition:** replace with a first-class atomic mission-goal
+  handoff certificate carrying the completed endpoint and replacement ownership;
+  re-review if command lease, mission acceptance, or terminal-stop semantics
+  change.
+- **Verification:** `test_navigation_command`; `make build`; repeat
+  `structured_obstacle` and `long_route` at 5 m/s and verify command continuity,
+  replacement identity, completion, freshness, tracking, clearance, yaw/dynamics,
+  and collision gates.
+
+### 2026-09-01 - Runtime owns same-checkpoint recovery identity
+
+- **Owner/status:** navigation runtime recovery FSM and PX4 External Mode
+  mission contract, `IMPLEMENTED`; focused tests/build and repeated SITL remain
+  required before qualification.
+- **Scope:** a completed non-terminal `BACKUP` outside waypoint acceptance is
+  replanned by Runtime from the measured stop while preserving the exact
+  `{mission_id, waypoint_index, request_id, goal_epoch}`. External Mode keeps a
+  single bounded endpoint hold and does not increment the mission request or
+  ask MissionController to create a connector request. A pass-through handoff
+  may still use the explicitly adjacent old BACKUP suffix bridge.
+- **Safety impact:** removes the two-owner race in which External advanced
+  `request_id` while Runtime continued the old recovery command. It also
+  re-reads the real `PlanningKey` after an atomic pending-goal promotion and
+  clears stale suffix/completion flags at the successful MAIN commit boundary.
+  No freshness, tracking, collision, acceptance, or `0.25 m` gate is relaxed,
+  and same-waypoint old commands remain rejected by the identity matcher.
+- **False-accept/false-reject consequences:** the old request can no longer be
+  mistaken for a new retry, while a genuine replacement must pass normal
+  identity, world, localization, PVA, and command-lease admission. If Runtime
+  cannot publish the same-identity replacement before the bounded deadline,
+  External Mode still fails closed to PX4 Hold.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260901T000813-366048`
+  showed Runtime completing `request=7` while External published `request=8`
+  for the same waypoint; the old request was then rejected and the command
+  lease expired. This is treated as an ownership defect, not evidence to widen
+  the identity matcher.
+- **Removal/review condition:** replace the implicit two-phase handoff with a
+  first-class typed recovery transaction carrying endpoint ownership and the
+  same-request replacement witness; re-review if request sequencing,
+  pass-through, or terminal-stop semantics change.
+- **Verification:** `test_navigation_command`; `test_mission`; `test_planner_fsm`;
+  `make build`; repeated structured-obstacle and long-route 5 m/s SITL with
+  checks for same-request recovery, adjacent handoff identity, completion,
+  freshness, tracking, clearance, yaw/dynamics, collision, and PX4 state.
+
+### 2026-09-01 - Continue a non-terminal BACKUP from a measured stop
+
+- **Owner/status:** navigation runtime execution-recovery FSM,
+  `IMPLEMENTED`; focused FSM/build checks and repeated structured/long-route
+  SITL remain required before qualification.
+- **Scope:** when a certified `BACKUP` suffix finishes outside the active
+  waypoint acceptance ball, record `restart_from_rest` before returning on the
+  residual measured-velocity tick. Keep the BACKUP command authoritative until
+  the existing `<=0.15 m/s` measured-stop gate is satisfied, then solve the
+  same goal with `PlanFromRest`. A BACKUP endpoint already carrying the
+  terminal-stop certificate remains an exact endpoint hold and is not restarted.
+- **Safety impact:** removes a false `MotionObserved`-to-PX4-Hold transition
+  caused by residual velocity after a valid safety suffix. It does not infer an
+  emergency command, expose nominal motion while the vehicle is moving, relax
+  the `0.25 m` tracking gate, or change the timeout/fail-closed behavior.
+- **False-accept/false-reject consequences:** without this transition, a
+  non-terminal BACKUP can be complete and safe while the measured velocity is
+  still settling, but the next cycle has no recovery intent and fails closed.
+  The state/role, completion flag, terminal-hold certificate, and measured-stop
+  checks prevent ordinary nominal or emergency commands from using this path.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260831T235213-349574`
+  reached waypoint 2 request 6 with accepted BACKUP completion,
+  `measured_error_m=0.113`, `command_error_m=0.321`, and
+  `measured_speed_mps=0.465`, then runtime logged
+  `motion observed after certified stop without an atomically committed
+  emergency candidate; entering PX4 Hold`. Odometry remained active with
+  `odom_max_gap_us=40000` and no stale-state failures.
+- **Removal/review condition:** replace with a first-class typed recovery
+  transaction that carries BACKUP completion, endpoint certificate, and
+  measured-stop ownership; re-review if recovery-state or terminal-stop
+  semantics change.
+- **Verification:** `test_planner_fsm`; `make build`; repeat the structured
+  obstacle and long-route 5 m/s runs, checking that non-terminal BACKUP reaches
+  PlanFromRest after measured stop and that terminal STOP, collision,
+  freshness, tracking, yaw/dynamics, and handoff gates remain unchanged.
+
+### 2026-09-01 - Start terminal STOP recovery at a projected tracking boundary
+
+- **Owner/status:** navigation runtime execution-recovery FSM,
+  `IMPLEMENTED`; focused FSM/build checks and repeated SITL remain required
+  before qualification.
+- **Scope:** a terminal STOP may leave its normal lease/anchor deferral only
+  when the next validation interval projects the retained command beyond the
+  existing tracking envelope and the current measured state is `KNOWN_FREE` in
+  the inflated world. The runtime then uses the existing one-shot measured-state
+  emergency certificate; it does not authorize a projected command directly.
+- **Safety impact:** moves recovery earlier, while the measured state is still
+  certifiable, instead of waiting for the hard anchor violation and attempting
+  a brake after the vehicle has entered a blocked tube. The `0.25 m` tracking
+  limit, world clearance, freshness, PVA continuity, and atomic emergency
+  admission gates are unchanged; unknown space still fails closed.
+- **False-accept/false-reject consequences:** without this trigger, a valid
+  STOP can drift past the hard envelope between planner ticks and its late
+  measured brake can be rejected by the latest world. The projection is only a
+  scheduling predicate and can cause an earlier emergency attempt; if that
+  candidate is not world-certified, the existing PX4 Hold path remains the
+  authority.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260901T000813-366048`
+  and `.artifacts/runtime/external-mode-check-20260901T002121-380163` showed
+  terminal recovery reaching the hard tracking boundary before a valid
+  replacement was available; the latter rejected the measured emergency tube
+  as `certificate_tube_blocked`. The follow-up
+  `.artifacts/runtime/external-mode-check-20260901T002921-386431` reached
+  waypoints 0, 1 and 2 with active odometry and no collision, confirming the
+  trigger did not widen the acceptance or collision gates.
+- **Removal/review condition:** replace with a first-class measured-state
+  recovery transaction carrying the projected boundary witness; re-review if
+  planner period, tracking envelope, world certificate, or emergency semantics
+  change.
+- **Verification:** `test_planner_fsm`; `make build`; repeat structured-obstacle
+  and long-route 5 m/s SITL and check emergency timing, same-request recovery,
+  tracking, clearance, freshness, yaw/dynamics, collision, and PX4 state.
+
+### 2026-09-01 - Reserve bounded A* time for newly revealed obstacle detours
+
+- **Owner/status:** navigation planning backend configuration,
+  `IMPLEMENTED` as an experimental timing correction; repeated representative
+  SITL and planner-latency distributions remain required before qualification.
+- **Scope:** the runtime planner config changes A* attempt/total budgets from
+  `0.04/0.08 s` to `0.06/0.12 s` inside the unchanged `0.18 s` solve deadline;
+  the remaining solve time is reserved for corridor, MINCO, yaw, backup and
+  final certification. No A* result is accepted without the existing
+  continuous world and dynamic certificates.
+- **Safety impact:** reduces false terminal handover caused by timing out while
+  routing around a newly revealed obstacle. It increases planner computation
+  time within the existing callback budget, so a deadline miss still fails
+  closed and cannot expose an uncertified command.
+- **False-accept/false-reject consequences:** a longer bounded search may find
+  a valid detour; it cannot turn timeout or an unsafe path into success. If the
+  added search tail starves final certification or command renewal, the
+  unchanged lease and PX4 Hold gates reject it.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260901T002921-386431`
+  repeatedly logged A* `TIME_OUT` at approximately `88 ms` while the active
+  waypoint required an acceptance-safe detour, followed by stale PVA command
+  handover; odometry gaps stayed at `20 ms` and mapping accepted all scans.
+- **Removal/review condition:** retain only if repeated 5 m/s obstacle and
+  long-route distributions show the p99 solve plus finalization reserve fits
+  the `0.18 s` deadline without tracking or freshness regressions; otherwise
+  redesign the search frontier/route cache rather than increasing this budget.
+- **Verification:** `test_planner_config`; `make build`; repeated structured,
+  occlusion and long-route SITL with planner p95/p99, command freshness,
+  waypoint completion, tracking, clearance, yaw/dynamics, collision and PX4
+  state checks.
+
+### 2026-09-01 - Make execution-store commit and planner-history ACK rollback-safe
+
+- **Owner/status:** navigation runtime command transaction and committed-bundle
+  store, `IMPLEMENTED`; focused store tests, build, and repeated SITL remain
+  required before qualification.
+- **Scope:** candidate admission now swaps the immutable execution pointer and
+  invokes planner-history ACK inside one store transaction. If ACK rejects or
+  throws, the exact previous pointer and transaction watermark are restored;
+  the caller clears only the staged candidate. A store/world/goal rejection
+  still rejects the candidate without modifying the current command.
+- **Safety impact:** removes the two-phase window in which a candidate was
+  visible to the sampler and then `invalidate()` erased it after a planner ACK
+  race. The previous command remains the authority until the new command has
+  both execution-store admission and planner-history finalization. No
+  freshness, tracking, clearance, or collision gate is relaxed.
+- **False-accept/false-reject consequences:** a genuine finalization failure
+  is reported as an internal transaction failure and preserves the prior
+  command; the next recovery path may still fail closed if that prior command
+  expires. A candidate is never exposed merely because its planner ACK was
+  skipped or rejected.
+- **Evidence:** `CommittedBundleStore.FinalizerFailureRestoresPreviousExecutionPointer`
+  and `CommittedBundleStore.SuccessfulFinalizerKeepsReplacementPointer` cover
+  rollback and successful publication; runtime integration is covered by
+  `commitPlannerCandidate` and requires the verification below.
+- **Removal/review condition:** replace the callback transaction with a typed
+  cross-component command lease/commit protocol carrying the same rollback
+  witness; re-review if store locking or planner-history ownership changes.
+- **Verification:** `test_committed_bundle_store`; `make build`; repeated
+  structured-obstacle and long-route 5 m/s SITL checking command continuity,
+  same-request recovery, freshness, tracking, clearance, completion, and PX4
+  state.
+
+### 2026-09-01 - Require measured waypoint acceptance before terminal completion
+
+- **Owner/status:** navigation runtime terminal-completion contract,
+  `IMPLEMENTED`; focused FSM/build checks and repeated SITL remain required.
+- **Scope:** a terminal STOP is marked `reaches_goal` only when its immutable
+  declared endpoint and the current fresh propagated vehicle position are both
+  inside the existing waypoint completion tolerance. Endpoint geometry alone
+  is insufficient; speed settling remains owned by the External Mode mission
+  acceptance gate.
+- **Safety impact:** prevents Runtime from returning indefinitely on a terminal
+  command whose endpoint is nominally near the waypoint while the measured UAV
+  is outside acceptance. Such a command now schedules same-request measured
+  recovery, while all existing world, tracking, freshness, and collision gates
+  remain unchanged.
+- **False-accept/false-reject consequences:** a trajectory endpoint within the
+  tolerance but a measured position outside it is treated as incomplete and
+  may incur an additional certified PlanFromRest attempt. This can cost time,
+  but avoids falsely completing a mission checkpoint and waiting for an
+  External Mode recovery deadline to expire.
+- **Evidence:** `.artifacts/runtime/external-mode-check-20260901T011502-404066`
+  logged terminal endpoint error `0.535 m` against tolerance `0.700 m` while
+  measured waypoint error remained outside acceptance; External Mode then
+  exhausted its bounded same-request recovery window.
+- **Removal/review condition:** replace the scalar witness with a typed,
+  cross-component waypoint acceptance certificate carrying endpoint, measured
+  position, and speed-settle ownership; re-review if terminal completion or
+  route-boundary semantics change.
+- **Verification:** `test_planner_fsm`; `make build`; repeated structured,
+  occlusion, and long-route 5 m/s SITL with measured acceptance, speed settle,
+  same-request recovery, command continuity, freshness, tracking, clearance,
+  collision, and PX4-state checks.
+## 2026-09-01 - Separate nominal terminal completion from safety-endpoint completion
+
+- Owner/status: Runtime execution FSM / External Mode handoff — IMPLEMENTED
+- Decision: `STATUS_COMPLETED` and endpoint geometry do not by themselves prove
+  waypoint completion. Runtime may enter `kStoppedRecovery` only for a
+  certified `kTerminalStop` MAIN bundle whose immutable endpoint and fresh
+  measured vehicle position are both inside the existing waypoint tolerance.
+  BACKUP/EMERGENCY endpoints remain same-request safety recovery even when
+  geometrically close to the waypoint. External Mode no longer retains a
+  completed MAIN terminal command across a waypoint transition or carries its
+  recovery deadline into the next request.
+- Scope/owner: `navigation_runtime` and `px4_navigation_external_mode` command
+  lifecycle; runtime/external-mode maintainers.
+- Safety impact: prevents a safety or expired terminal endpoint from becoming
+  nominal completion, while avoiding stale old-request holds after a valid
+  waypoint advance. No acceptance, tracking, speed, or recovery-timeout gate
+  was relaxed.
+- Evidence: runtime FSM provenance/completion tests and External Mode command
+  handoff test; repeated `structured_obstacle` 5 m/s SITL remains required.
+- Removal/review condition: replace with a typed cross-component completion
+  certificate carrying bundle role/kind and measured settle evidence.
+- Verification: `make build`; runtime FSM and External Mode focused tests;
+  repeated `MAP_SCENE=structured_obstacle TEST_CASE=positive MOTION_PRESET=fast
+  SPEED_CAP_MPS=5 PX4_DIR="$HOME/Dev/Autopilot" make external-mode-check`.
+
+## 2026-09-01 - Preserve immutable terminal ownership across publisher/timer races
+
+- Owner/status: Runtime terminal-hold FSM — IMPLEMENTED
+- Decision: During `kStoppedRecovery`, an identity-matching committed
+  `kTerminalStop` MAIN bundle remains a bounded endpoint-hold owner even if the
+  derived publisher atomics momentarily lose `terminal_bundle_generation`.
+  The fallback requires current goal/request/epoch identity and does not apply
+  to BACKUP, EMERGENCY, or arbitrary completed commands.
+- Safety impact: prevents a small callback-ordering race from converting a
+  still-certified terminal hold into an untransactioned `MotionObserved`
+  PX4-Hold handover. No gate or timeout was relaxed.
+- Evidence: focused FSM regression test; repeated 5 m/s SITL required to verify
+  measured speed settling and mission acceptance.
+- Removal/review condition: replace derived atomics with one typed immutable
+  terminal-hold certificate consumed by both runtime timer and command sampler.
+- Verification: `make build`; `test_planner_fsm`; repeated structured-obstacle
+  External Mode 5 m/s SITL.
+
+## 2026-09-01 - Recover projected tracking loss for terminal MAIN commands
+
+- Owner/status: Runtime measured-state recovery — IMPLEMENTED
+- Decision: a terminal STOP MAIN command without a usable BACKUP suffix may
+  trigger the existing one-shot measured emergency brake when its projected
+  anchor crosses the existing tracking envelope, provided the current fresh
+  vehicle state is known-free and all normal emergency-candidate certificates
+  pass. Terminal status does not suppress this recovery while the vehicle is
+  still outside measured waypoint acceptance.
+- Safety impact: prevents repeated hot-replan attempts from allowing a
+  main-only terminal command to drift past the `0.25 m` tracking certificate.
+  The emergency candidate preserves measured P/V, is atomically committed and
+  world-certified, and still fails closed to PX4 Hold if certification fails.
+  No tracking, freshness, collision, acceptance, speed, or timeout gate was
+  relaxed.
+- Evidence: `.artifacts/runtime/external-mode-check-20260901T022453-437735`
+  repeatedly logged terminal MAIN projected anchor growth before eventual
+  `anchor_error=0.316 m` and no safety suffix; the old predicate explicitly
+  excluded `terminal_stop` from projected recovery.
+- Removal/review condition: replace the derived predicate with a typed
+  `ExecutionEpisode` recovery certificate; re-review if terminal completion
+  ownership or measured emergency semantics change.
+- Verification: `test_planner_fsm`; `make build`; repeated 5 m/s SITL verifying
+  emergency commit, measured stop, same-waypoint PlanFromRest, waypoint
+  acceptance, command continuity, clearance, freshness, collision and PX4
+  state.
+
+## 2026-09-01 - Lease terminal projection inside the existing tracking budget
+
+- Owner/status: planning backend terminal-goal projection — IMPLEMENTED
+- Decision: when a terminal waypoint needs projection, reserve the existing
+  `tracking_error_budget_m` from the configured waypoint acceptance radius. A
+  projected endpoint is therefore searched and leased only within
+  `acceptance_radius - tracking_error_budget`; a valid lease is retained for
+  the same request/route revision/waypoint while its inflated-layer and
+  continuous-known-free certificate remains valid. If no such endpoint exists,
+  planning remains fail-closed and the full acceptance radius is not enlarged.
+- Safety impact: prevents endpoint chatter at the outer acceptance boundary
+  where normal execution error can push the vehicle into an occupied or
+  uncertified cell. This preserves the existing tracking, collision, unknown,
+  and waypoint gates; it does not convert a blocked goal into a pass.
+- Evidence: latest artifact
+  `.artifacts/runtime/external-mode-check-20260901T020027-427947` showed
+  terminal projections alternating across the full `0.9 m` acceptance ball and
+  later rejecting the safety certificate; the existing tracking budget was
+  `0.25 m`, leaving `0.65 m` as the bounded projection region.
+- Removal/review condition: replace the lease with a typed cross-component
+  terminal acceptance certificate shared by planner, Runtime, and External
+  Mode; re-review if waypoint acceptance or tracking-error ownership changes.
+- Verification: planning backend focused tests; `make build`; repeated
+  structured-obstacle, occlusion, and long-route 5 m/s SITL measuring endpoint
+  identity stability, command continuity, tracking, clearance, completion,
+  freshness, collision, and PX4 state.
+
+## 2026-09-01 - Keep a certified safety suffix for terminal STOP commands
+
+- Owner/status: planning backend terminal-stop command generation — IMPLEMENTED
+- Decision: the all-visible fast path may still emit a main-only command for a
+  non-terminal rest endpoint. A terminal STOP is routed through the existing
+  backup-certificate pipeline even when its MAIN trajectory is entirely
+  KNOWN_FREE and ends at rest, except when a measured-stop replan is already
+  within one configured vehicle radius of that known-free rest endpoint. In
+  that bounded capture case there is no positive-length braking corridor to
+  build, and the main-only candidate is still required to be a true rest
+  command. Any generated suffix remains subject to the existing dynamic,
+  flatness, KNOWN_FREE swept-tube, corridor, freshness, and atomic candidate
+  authorization checks.
+- Scope: terminal-stop semantics only; no change to waypoint acceptance,
+  tracking, collision, UNKNOWN, or timing thresholds. If a certified suffix
+  cannot be built, planning fails closed and Runtime retains only an already
+  certified command or enters PX4 Hold.
+- Safety impact: avoids repeatedly exposing a moving terminal MAIN command as
+  the only executable safety option while measured waypoint acceptance is not
+  yet established. This removes reliance on a reactive emergency brake for
+  ordinary terminal-stop execution without weakening its certificates.
+- False-accept/false-reject consequences: a valid terminal command may take
+  the more expensive backup path or be rejected when its braking hull cannot
+  be certified. The bounded capture exception cannot authorize a moving
+  endpoint and remains subject to measured waypoint acceptance; no
+  uncertified main-only terminal command is substituted.
+- Evidence: `.artifacts/runtime/external-mode-check-20260901T030353-450880`
+  showed the first projected terminal recovery could stop safely, but the
+  subsequent PlanFromRest again committed `backup_start=duration` and the
+  next measured emergency candidate was rejected by
+  `certificate_tube_blocked`. The previous all-visible terminal fast path was
+  the source of that repeated main-only command.
+- Removal/review condition: replace this branch with a typed terminal
+  execution/acceptance certificate shared by planner, Runtime, and External
+  Mode; do not remove the suffix requirement while measured waypoint
+  acceptance remains a separate runtime gate.
+- Verification: `test_trajectory`; `make build`; repeated structured-obstacle,
+  occlusion, and long-route 5 m/s SITL verifying positive terminal backup
+  suffix, measured acceptance, command continuity, tracking, clearance,
+  freshness, collision, and PX4 state.
+
+## 2026-09-01 - Do not bridge a completed command across a waypoint handoff
+
+- Owner/status: PX4 External Mode command handoff — IMPLEMENTED
+- Decision: only an identity-independent `READY` command that has not reached
+  its terminal sample may be retained while MissionController publishes the
+  next waypoint. `COMPLETED` MAIN, BACKUP, and EMERGENCY commands are no longer
+  retained; they are invalidated and the new waypoint waits for its own
+  identity-matching command.
+- Scope: callback-ordering handoff only. An unfinished BACKUP remains the
+  physical owner until it completes; a completed suffix cannot be replayed as
+  a new waypoint command.
+- Safety impact: removes a stale old-endpoint lease that could be sampled
+  after the next waypoint was published and cause a false command-stale Hold.
+  The new command still requires all existing identity, freshness, tracking,
+  dynamic, world, and PX4 setpoint contracts.
+- False-accept/false-reject consequences: a next-waypoint command may spend a
+  bounded acquisition interval publishing the normal stationary hold instead
+  of reusing a completed endpoint. No completed command can be accepted under
+  a new waypoint identity.
+- Evidence: `.artifacts/runtime/external-mode-check-20260901T031214-460249`
+  accepted wp2 with `role=BACKUP`, then retained its completed command while
+  publishing wp3; External Mode entered `planner backend PVA command stale`
+  and Runtime received a PAUSED safety status before wp3 command admission.
+- Removal/review condition: replace the boolean handoff marker with one typed
+  command-lease certificate carrying unfinished interval and exact owner;
+  re-review if command status or waypoint publication ordering changes.
+- Verification: `test_navigation_command`; `make build`; repeated 5 m/s
+  structured-obstacle, occlusion, and long-route SITL checking no old
+  completed command after handoff, fresh new-waypoint admission, command
+  continuity, collision, clearance, and PX4 state.
+
+## 2026-09-01 - Isolate simulated LiDAR conversion behind a bounded bridge
+
+- Owner/status: simulation Gazebo-to-ROS LiDAR transport — EXPERIMENTAL
+- Decision: use `uav_simulation/gz_lidar_bridge` for
+  `/sim/mid360/scan/points` -> `/lidar/points`. The native Gazebo callback
+  copies into a bounded latest-only inbox and a worker performs PointCloud
+  conversion and publishes with ROS `SENSOR_DATA` QoS. `/clock` and IMU remain
+  in the separate control bridge process. The checked-in YAML records the
+  queue/QoS contract for provenance; it is not passed to
+  `ros_gz_bridge/parameter_bridge`. This is a transport-loss mitigation and
+  observability experiment; it does not extend command leases or freshness
+  gates.
+- Scope: simulation bridge only; it must not be copied to a hardware driver or
+  used to declare sensor quality without measured source-to-output evidence.
+- Safety impact: reduces synchronous conversion/publish blocking in the native
+  Gazebo callback and bounds backlog to one pending cloud, while the estimator
+  and planner still fail closed when corrected data is stale or invalid. A
+  latest-only policy may drop intermediate scans under overload, so ingress,
+  publish, drop and conversion latency must be measured; no safety gate is
+  relaxed.
+- False-accept/false-reject consequences: a transient burst may replace an
+  older pending scan; if conversion remains slower than production, the
+  counters and existing timestamp/freshness contracts must expose/reject the
+  loss. No missing scan is synthesized.
+- Evidence: `.artifacts/runtime/external-mode-check-20260901T033234-477895`
+  observed 485 native scans but only 393 ROS scans, with ROS LiDAR source gaps
+  up to 400 ms while native Gazebo arrival gaps stayed below 144 ms. Upstream
+  `ros_gz_bridge` documents a default queue of 10 without a QoS profile and
+  supports `SENSOR_DATA` in bridge YAML.
+- Removal condition: remove or revise after repeated native-vs-ROS transport
+  distributions show no material scan loss/backlog at all qualified maps, or
+  if the dedicated bridge adds less value than a newer deployed transport
+  implementation.
+- Verification: `test_runtime_contract.py`; `make build`; repeated 5 m/s SITL
+  with `--gazebo-native-diagnostic`, comparing native_lidar count/gaps against
+  `/lidar/points`, corrected odometry, mapping freshness, collision, clearance,
+  waypoint completion, and PX4 state.
+
+## 2026-09-01 - Progress a pass-through checkpoint from a certified suffix stop
+
+- Owner/status: PX4 External Mode mission handoff — EXPERIMENTAL
+- Decision: when a completed BACKUP command is certified stopped inside the
+  active non-terminal PASS_THROUGH checkpoint, External Mode may notify
+  MissionController of the measured suffix stop. For an adjacent old suffix it
+  remains under its original identity; for a current-identity BACKUP it
+  certifies the active checkpoint without changing command ownership. The
+  notification is accepted only when the current measured position and the
+  certified endpoint are both inside the active waypoint acceptance radius,
+  measured speed is at or below `acceptance_speed_mps`, and measured-to-command
+  anchor error is within the existing `0.25 m` limit. MissionController then
+  applies its ordinary measured checkpoint gate; an adjacent old suffix still
+  requires Runtime to publish a fresh command for the new waypoint identity.
+- Scope: completed BACKUP handling at a pass-through checkpoint, including the
+  callback-ordering case after waypoint publication. It does not relabel,
+  replay, or broaden the validity of a completed command, and it does not apply
+  to STOP or coincident STOP boundaries.
+- Safety impact: prevents a physically stationary vehicle inside a valid
+  pass-through checkpoint from being sent to PX4 Hold solely because the next
+  command has not arrived yet. An adjacent old command remains identity-bound;
+  measured position, velocity, anchor, freshness, collision, and planner
+  certificates remain required. If any witness is missing or inconsistent,
+  the existing fail-closed handoff is preserved.
+- False-accept/false-reject consequences: a false acceptance requires all
+  independent position, endpoint, speed, and anchor predicates to pass; a
+  false rejection can leave the vehicle in bounded hold until a fresh planner
+  command is available. No new trajectory is authorized by this callback.
+- Evidence: `.artifacts/runtime/external-mode-check-20260901T042807-499297`
+  showed the dedicated LiDAR bridge published all 356 ingress clouds with zero
+  drops/conversion failures, while the mission still stalled after a completed
+  old BACKUP suffix: the fresh candidate had only `0.665 s` MAIN reserve
+  against the existing `0.800 s` requirement and was correctly rejected.
+  This separates the remaining blocker from the LiDAR transport path.
+- Removal condition: replace this callback with a typed cross-component
+  execution/checkpoint certificate, or remove it if Runtime and
+  MissionController acquire a fresh command atomically at the waypoint
+  boundary. Re-review if acceptance, anchor, or command identity ownership
+  changes.
+- Verification: `test_mission`; `test_navigation_command`; `make build`; then
+  repeated 5 m/s SITL with native-vs-ROS LiDAR counters, fresh command
+  identity, command continuity, measured waypoint progression, clearance,
+  collision, freshness, and PX4 state.
+
+## 2026-09-01 - Bound sharp pass-through turns to the acceptance-ball fillet
+
+- Owner/status: planning backend pass-through route construction — EXPERIMENTAL
+- Decision: when the incoming and outgoing mission legs form a genuine sharp
+  corner (`dot <= 0.7`), do not append the full outgoing lookahead to the same
+  MINCO guide. Use the existing bounded acceptance-ball fillet and let the
+  next measured waypoint handoff plan the outgoing leg. Straight or shallow
+  pass-through legs retain the existing lookahead path.
+- Scope: guide construction for non-terminal PASS_THROUGH corners only. The
+  route remains required to be inflated-map traversable and the fillet remains
+  subject to corridor, dynamic, yaw, world, tracking, freshness, identity and
+  backup certificates.
+- Safety impact: prevents a sharp detour whose outgoing route folds back
+  toward the vehicle from becoming a single U-shaped polynomial with
+  incompatible fixed boundary derivatives. This removes repeated optimizer
+  failures without relaxing collision, UNKNOWN, V/A/J, yaw, or tracking gates.
+- False-accept/false-reject consequences: a valid corner may be split into two
+  certified commands and temporarily slow at the measured checkpoint; an
+  invalid fillet remains rejected and follows the existing safety hold path.
+  No unverified route prefix is exposed.
+- Evidence: `.artifacts/runtime/external-mode-check-20260901T044631-507266`
+  showed the pillar route had an available A* path but its sharp `(-4,4) ->
+  (0,0) -> (-6,3)` turn produced a guide with about `5.31 m` lateral
+  excursion; MINCO/corridor certification failed repeatedly while solve
+  deadlines and transport remained healthy.
+- Removal condition: replace the split-corner strategy with a formally
+  certified multi-segment turn solver that proves the same boundary and
+  dynamic contracts; re-review if the corner threshold or route ownership
+  changes.
+- Verification: planner trajectory/config focused tests; `make build`; repeat
+  5 m/s pillar, occlusion, and long-route SITL, requiring ordered waypoint
+  completion, command continuity, clearance, no collision/failsafe, and no
+  planner candidate bypass.
+
+## 2026-09-01 - Retain a queued waypoint until the moving safety suffix stops
+
+- Owner/status: Runtime pending-goal handoff and External Mode readiness ownership — EXPERIMENTAL
+- Decision: a BACKUP/EMERGENCY command is the sole owner of execution while it
+  is moving. A later queued waypoint may receive a terminal-looking status
+  before that suffix reaches its measured stop, but this status must not clear
+  the pending request or grant nominal trajectory readiness. Runtime retains
+  the newest same-mission pending goal, and External Mode clears readiness for
+  safety-role samples; only the existing measured endpoint/velocity/anchor
+  certificate may release progression and allow Runtime to promote a fresh
+  command identity.
+- Scope: interleaving between an already-published next waypoint, terminal
+  status publication, and the preceding safety suffix. It does not relabel a
+  safety command, bypass the `0.15 m/s` acceptance gate, extend the lease, or
+  suppress PX4 Hold when the stop certificate is absent.
+- Safety impact: prevents a moving BACKUP from advancing a pass-through
+  checkpoint and prevents Runtime from losing the only pending next-waypoint
+  request when External Mode reports `PAUSED` early. If the certificate never
+  arrives, the request remains bounded in the pending owner and the existing
+  fail-closed stop/hold paths remain authoritative.
+- False-accept/false-reject consequences: false acceptance still requires the
+  normal measured position, velocity, route-crossing, freshness, anchor and
+  command-identity predicates. A false rejection can delay the next waypoint
+  until the safety suffix is certified stopped; it cannot authorize an
+  unverified moving handoff.
+- Evidence: `.artifacts/runtime/external-mode-check-20260901T051035-518911`
+  showed External accepted waypoint 3 while Runtime was already in
+  `kTrackBackup`, then reported `PAUSED` for pending waypoint 4 before the
+  suffix stopped. Runtime cleared that pending identity and replanned the old
+  waypoint, reproducing the lost-handoff defect.
+- Removal condition: replace the split readiness/status callbacks with one
+  typed execution-episode certificate atomically owned across Runtime and
+  External Mode, with equivalent or stronger identity and measured-stop
+  guarantees. Re-review if pending ownership, status ordering, or safety
+  recovery states change.
+- Verification: `test_mission`; `test_planner_fsm`; `make build`; repeated 5
+  m/s structured-obstacle, occlusion and long-route SITL requiring no
+  pass-through advancement from safety samples, no lost pending request,
+  ordered waypoint completion, command continuity, clearance, collision
+  freedom, freshness, and valid PX4 state.
+
+## 2026-09-01 - Bound the direct BACKUP visibility seed before CIRI
+
+- Owner/status: planning backend BACKUP certificate construction — EXPERIMENTAL
+- Decision: before the direct `GeneratePolytopeFromLine()` call used to build
+  the visibility corridor for BACKUP, retain only the monotonic KNOWN_FREE
+  command prefix whose origin-to-sample distance is within
+  `corridor_segment_max_length_m`. Reject a command with no usable bounded
+  sample. The existing inflated-map, KNOWN_FREE swept, V/A/J, endpoint,
+  freshness, tracking and identity certificates remain authoritative.
+- Scope: direct-line BACKUP visibility preprocessing only. It does not change
+  the configured 3.0 m seed bound, robot radius, sensing horizon, unknown-space
+  policy, braking limits, or the main planning route.
+- Safety impact: prevents a sparse long visibility ray from bypassing the
+  bounded CIRI seed contract and failing before any braking candidate can be
+  evaluated. Trimming to an earlier known-free prefix may reduce recovery
+  progress or reject if no usable prefix exists; it cannot authorize an
+  uncertified suffix or weaken collision validation.
+- Evidence: `.artifacts/runtime/external-mode-check-20260901T055129-534334`
+  recorded a direct BACKUP seed of about `5.088 m` while
+  `corridor_segment_max_length_m=3.0`; `switch_candidate_count=0`,
+  `feasible_seed_count=0`, and `known_free_check_count=0`, proving the failure
+  occurred before braking-certificate evaluation.
+- Removal condition: replace direct-line BACKUP corridor construction with a
+  bounded-segment API that enforces the same contract internally, or remove
+  this preprocessing if that API becomes the single owner of seed bounds.
+- Verification: planner focused tests including bounded-seed and no-prefix
+  rejection; `make build`; repeated 5 m/s structured-obstacle detour,
+  occlusion and long-route SITL with backup candidate counts, ordered waypoint
+  completion, clearance, collision, freshness, command continuity and PX4
+  state recorded.

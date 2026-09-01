@@ -228,23 +228,22 @@ TEST(HotReplanTrackingRecovery, RejectsSpliceOutsideNecessaryKinematicEnvelope) 
   EXPECT_DOUBLE_EQ(artifact_failure.future_velocity_allowance_mps, 0.4);
 }
 
-TEST(HotReplanTrackingRecovery, AllowsMeasuredRebaseOnlyInsideCurrentTube) {
+TEST(HotReplanTrackingRecovery, MeasuredRebaseNeverEntersNormalCandidatePath) {
   using navigation_planning_backend::assessHotReplanSpliceCompatibility;
-  using navigation_planning_backend::measuredStateHotRebaseAllowed;
+  using navigation_planning_backend::classifyHotReplanTrackingRecovery;
+  using navigation_planning_backend::HotReplanTrackingRecovery;
 
   const auto future_velocity_mismatch = assessHotReplanSpliceCompatibility(
       0.114, 0.211, 0.668, 0.2, 2.0, 0.25);
-  EXPECT_TRUE(measuredStateHotRebaseAllowed(
-      future_velocity_mismatch, true, 0.01, 0.35, true));
-  EXPECT_FALSE(measuredStateHotRebaseAllowed(
-      future_velocity_mismatch, true, 0.01, 0.35, false));
-  EXPECT_FALSE(measuredStateHotRebaseAllowed(
-      future_velocity_mismatch, true, 0.36, 0.35, true));
+  EXPECT_TRUE(future_velocity_mismatch.requiresMeasuredStateRestart());
+  EXPECT_EQ(classifyHotReplanTrackingRecovery(true, true),
+            HotReplanTrackingRecovery::kRetainCommittedCommand);
 
   const auto current_position_mismatch = assessHotReplanSpliceCompatibility(
       0.251, 0.211, 0.668, 0.2, 2.0, 0.25);
-  EXPECT_FALSE(measuredStateHotRebaseAllowed(
-      current_position_mismatch, true, 0.01, 0.35, true));
+  EXPECT_EQ(classifyHotReplanTrackingRecovery(
+                current_position_mismatch.requiresMeasuredStateRestart(), true),
+            HotReplanTrackingRecovery::kRetainCommittedCommand);
 }
 
 TEST(HotReplanTrackingRecovery, KeepsSpliceInsideNecessaryKinematicEnvelope) {

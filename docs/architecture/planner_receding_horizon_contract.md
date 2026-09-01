@@ -9,7 +9,7 @@ At each planning timer tick:
 1. A new waypoint or invalidated command starts `PlanFromRest`. A valid MAIN
    is re-certified on each published map snapshot but does not run the
    optimizer on every timer tick.
-2. planner backend replans from a short future state (`replan_forward_dt_s: 0.2`) and
+2. planner backend replans from a short future state (`replan_forward_dt_s: 0.4`) and
    retains a bounded prefix (`receding_distance_m: 3.0`) so position, velocity, and
    acceleration remain continuous. `ReplanOnce` is scheduled when the time to
    the certified BACKUP switch (or a main-only endpoint) is no greater than
@@ -56,7 +56,7 @@ The relevant runtime bounds are:
 | Input pair maximum skew | 0.1 s |
 | Input maximum age | 0.5 s |
 | Planner solve timeout | 0.18 s |
-| Replan-forward interval | 0.2 s |
+| Replan-forward interval | 0.4 s |
 | Receding distance | 3.0 m |
 | Planning horizon | 45.0 m |
 

@@ -185,14 +185,14 @@ astar:
   # verification are unchanged, so the weight trades geometric optimality for
   # deterministic real-time search without weakening safety.
   heuristic_weight: 1.5
-  # PathSearch can retry once on the probabilistic map. Bound each search to a
-  # quarter of the 0.2 s future-state lead so both searches plus CIRI/MINCO fit
-  # planner backend's own 0.18 s hot-replan acceptance deadline.
-  search_time_limit_s: 0.04
-  # Preferred-altitude and unrestricted fallback share this stage budget.
-  # It preserves a bounded fallback opportunity without multiplying the solve
-  # deadline when either attempt times out.
-  total_time_limit_s: 0.08
+  # PathSearch can retry once on the probabilistic map. Give each bounded
+  # attempt enough time to route around a newly revealed obstacle while keeping
+  # both attempts inside the single 0.12 s A* stage budget.
+  search_time_limit_s: 0.06
+  # Preferred-altitude and unrestricted fallback share this stage budget. The
+  # remaining 0.06 s of the 0.18 s solve deadline is reserved for corridor,
+  # MINCO, yaw, backup construction and final certification.
+  total_time_limit_s: 0.12
   visual_process: false
   allow_diag: true
   heu_type: 2

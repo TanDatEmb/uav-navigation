@@ -66,7 +66,6 @@ void MissionController::activate(double now_s) {
   pending_position_control_ = false;
   trajectory_ready_ = false;
   terminal_hold_pending_ = false;
-  terminal_recovery_requested_ = false;
   previous_position_.reset();
   previous_position_time_s_ = 0.0;
 }
@@ -85,7 +84,6 @@ void MissionController::deactivate() {
   pending_position_control_ = false;
   trajectory_ready_ = false;
   terminal_hold_pending_ = false;
-  terminal_recovery_requested_ = false;
   previous_position_.reset();
   previous_position_time_s_ = 0.0;
 }
@@ -258,6 +256,21 @@ void MissionController::onNativeTrajectoryReady() {
   terminal_hold_pending_ = false;
 }
 
+void MissionController::onNativeSafetyTrajectoryObserved() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (state_ == MissionControllerState::Idle ||
+      state_ == MissionControllerState::Complete ||
+      state_ == MissionControllerState::Failed) {
+    return;
+  }
+  // BACKUP/EMERGENCY owns the current command until a certified stop. It may
+  // not be used as the nominal trajectory-ready witness for pass-through
+  // progress. Keep terminal_hold_pending_ unchanged: a terminal STOP still
+  // needs its own bounded hold contract.
+  trajectory_ready_ = false;
+  checkpoint_valid_ = true;
+}
+
 void MissionController::onNativeTerminalHoldObserved() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (state_ == MissionControllerState::Idle ||
@@ -301,20 +314,28 @@ void MissionController::onNativeTerminalHoldObserved() {
   }
 }
 
-void MissionController::requestNativeTerminalRecovery(const double now_s) {
-  if (!std::isfinite(now_s)) return;
+void MissionController::onCertifiedPassThroughSuffixStop() {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (state_ != MissionControllerState::ExecutingWaypoint ||
-      active_waypoint_index_ >= mission_.waypoints.size() ||
-      terminal_recovery_requested_) {
+  if (state_ == MissionControllerState::Idle ||
+      state_ == MissionControllerState::Complete ||
+      state_ == MissionControllerState::Failed ||
+      active_waypoint_index_ >= mission_.waypoints.size()) {
     return;
   }
-  terminal_recovery_requested_ = true;
+  // This is a measured route-progress witness, not a command handoff. Keep
+  // it limited to a non-terminal pass-through checkpoint; STOP and coincident
+  // STOP boundaries must continue through their own terminal-hold contract.
+  if (mission_.waypoints[active_waypoint_index_].behavior !=
+          MissionWaypoint::Behavior::PassThrough ||
+      navigation_mission::passThroughNextWaypointIsCoincidentStop(
+          route_progress_.snapshot(
+              mission_.id, mission_.frame, 1U, request_id_,
+              active_waypoint_index_))) {
+    return;
+  }
   checkpoint_valid_ = true;
-  trajectory_ready_ = false;
+  trajectory_ready_ = true;
   terminal_hold_pending_ = false;
-  arrival_start_time_s_.reset();
-  next_goal_time_s_ = std::min(next_goal_time_s_, now_s);
 }
 
 MissionControllerEvent MissionController::update(
@@ -371,7 +392,6 @@ MissionControllerEvent MissionController::update(
             (*position - braking_waypoint.position_enu).norm();
         const double acceptance_speed = velocity->norm();
         ++active_waypoint_index_;
-        terminal_recovery_requested_ = false;
         if (active_waypoint_index_ >= mission_.waypoints.size()) {
           state_ = MissionControllerState::Complete;
           checkpoint_valid_ = false;
@@ -511,7 +531,6 @@ MissionControllerEvent MissionController::update(
         }
         const double acceptance_speed = velocity->norm();
         ++active_waypoint_index_;
-        terminal_recovery_requested_ = false;
         if (active_waypoint_index_ >= mission_.waypoints.size()) {
           state_ = MissionControllerState::Complete;
           checkpoint_valid_ = false;
@@ -584,7 +603,6 @@ MissionControllerEvent MissionController::update(
       const double acceptance_error = (*position - waypoint.position_enu).norm();
       const double acceptance_speed = velocity->norm();
       ++active_waypoint_index_;
-      terminal_recovery_requested_ = false;
       if (active_waypoint_index_ >= mission_.waypoints.size()) {
         state_ = MissionControllerState::Complete;
         checkpoint_valid_ = false;
