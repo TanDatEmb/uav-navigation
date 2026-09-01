@@ -16896,3 +16896,34 @@ release profiles must not use the former allowance.
   inspect the four new streams together with planner PVA, PX4 local state,
   propagated LIO, ground truth, and estimator innovations. Keep the existing
   acceptance gates unchanged.
+
+## 2026-09-01 - Apply terminal STOP slowdown only in the certified approach phase
+
+- Owner: navigation runtime planner renewal supervisor.
+- Scope: terminal STOP velocity-phase selection in `runCycle`; the route arc
+  remaining to the active STOP waypoint is compared with a conservative
+  jerk/acceleration stopping-distance upper bound derived from the immutable
+  mission dynamics. A distant STOP keeps the normal mission speed envelope;
+  the reduced `0.5` recovery scale is selected only inside the approach
+  horizon.
+- Safety impact: removes an incorrect half-speed policy from the complete
+  cruise leg and prevents the observed `2.45 m/s` PlanFromRest versus faster
+  replan oscillation. It does not raise the mission speed cap, alter V/A/J,
+  tracking `0.25 m`, freshness, world, backup, or emergency gates. Invalid
+  route/dynamics evidence conservatively selects the slower phase.
+- Evidence: artifact
+  `external-mode-check-20260901T123552-742758` had a terminal STOP about
+  `140 m` away but candidate maximum velocity near `2.45 m/s`; the expert
+  review traced this to unconditional `plannerTerminalStopVelocityScale(true)
+  == 0.5`. The same artifact recorded PX4 post-controller setpoint peaks
+  above `4.1 m/s`, proving the low speed was phase-policy dependent rather
+  than a global physical or transport ceiling.
+- Removal condition: replace this phase selector only with a shared route
+  timing contract that proves terminal approach timing and preserves the same
+  fail-closed candidate certificates. Do not restore unconditional terminal
+  scaling or tune the stopping horizon from one SITL run.
+- Verification command: run focused `test_planner_fsm`, build the affected
+  workspace, then repeat `long_open_featured_speed` and obstacle missions at
+  `1/3/5 m/s`; compare PlanFromRest speed, setpoint speed, stop distance,
+  hot-replan/emergency counts, mission completion, collision, reserve,
+  freshness, and the unchanged `0.25 m` tracking gate.

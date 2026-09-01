@@ -137,9 +137,18 @@ TEST(PlannerFsm, UsesBoundedSlowerVelocityEnvelopeAfterRestFailures) {
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(100U), 0.35);
 }
 
-TEST(PlannerFsm, UsesHalfSpeedEnvelopeOnlyForTerminalStopSolve) {
-  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(true), 0.5);
-  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(false), 1.0);
+TEST(PlannerFsm, UsesHalfSpeedEnvelopeOnlyInsideTerminalStopApproach) {
+  const double braking_distance = plannerTerminalStopBrakingDistanceM(5.0, 2.0, 4.0);
+  EXPECT_NEAR(braking_distance, 8.75, 1.0e-12);
+  EXPECT_FALSE(plannerTerminalStopApproachDue(
+      false, 0.0, 5.0, 2.0, 4.0));
+  EXPECT_FALSE(plannerTerminalStopApproachDue(
+      true, 140.0, 5.0, 2.0, 4.0));
+  EXPECT_TRUE(plannerTerminalStopApproachDue(
+      true, braking_distance, 5.0, 2.0, 4.0));
+  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(true, false), 1.0);
+  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(true, true), 0.5);
+  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(false, true), 1.0);
 }
 
 TEST(PlannerFsm, RenewsBeforeMainCanReachBackupDuringSchedulingAndSolve) {

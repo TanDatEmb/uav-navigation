@@ -282,13 +282,43 @@ inline double plannerRecoveryVelocityScale(
   }
 }
 
-// Terminal STOP is a precision phase, not a cruise phase. Use the bounded
-// half-speed envelope only for a new STOP solve so PX4 has more time to track
-// the finite braking profile. This changes neither the physical limits nor
-// the 0.25 m tracking certificate; a candidate remains rejected/fail-closed
-// when it violates any existing certificate.
-inline double plannerTerminalStopVelocityScale(bool terminal_stop) noexcept {
-  return terminal_stop ? 0.5 : 1.0;
+// Return a conservative upper bound for the distance needed to stop from the
+// configured cruise speed. The jerk term deliberately over-approximates the
+// triangular/trapezoidal jerk-limited profile; it is only a phase-selection
+// condition and never replaces the planner's exact braking certificate.
+inline double plannerTerminalStopBrakingDistanceM(
+    double speed_mps, double acceleration_mps2, double jerk_mps3) noexcept {
+  if (!std::isfinite(speed_mps) || speed_mps <= 0.0 ||
+      !std::isfinite(acceleration_mps2) || acceleration_mps2 <= 0.0 ||
+      !std::isfinite(jerk_mps3) || jerk_mps3 <= 0.0) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const double distance = speed_mps * speed_mps / (2.0 * acceleration_mps2) +
+      speed_mps * acceleration_mps2 / jerk_mps3;
+  return std::isfinite(distance) && distance > 0.0
+      ? distance : std::numeric_limits<double>::infinity();
+}
+
+// A terminal STOP owns the reduced-speed approach envelope only when the
+// remaining route arc is inside the conservative stopping horizon. A distant
+// STOP is still a cruise leg; applying a terminal scale to the whole
+// PlanFromRest solve creates the observed half-speed/fast-replan oscillation.
+// Invalid route/dynamics evidence fails conservative by selecting the slower
+// phase, while candidate V/A/J and world certificates remain authoritative.
+inline bool plannerTerminalStopApproachDue(
+    bool terminal_stop, double remaining_route_m, double speed_mps,
+    double acceleration_mps2, double jerk_mps3) noexcept {
+  if (!terminal_stop) return false;
+  const double stopping_distance = plannerTerminalStopBrakingDistanceM(
+      speed_mps, acceleration_mps2, jerk_mps3);
+  if (!std::isfinite(stopping_distance)) return true;
+  if (!std::isfinite(remaining_route_m) || remaining_route_m < 0.0) return true;
+  return remaining_route_m <= stopping_distance;
+}
+
+inline double plannerTerminalStopVelocityScale(
+    bool terminal_stop, bool terminal_stop_approach_due) noexcept {
+  return terminal_stop && terminal_stop_approach_due ? 0.5 : 1.0;
 }
 
 // World recertification and command sampling remain active independently of

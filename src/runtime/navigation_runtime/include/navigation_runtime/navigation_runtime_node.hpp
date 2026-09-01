@@ -33,6 +33,7 @@
 #include <navigation_execution/committed_bundle_store.hpp>
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_mapping/world_snapshot_store.hpp>
+#include <navigation_planning/planning_limits.hpp>
 #include "navigation_runtime/kinematic_derivative_estimator.hpp"
 
 namespace navigation_planning_backend {
@@ -232,6 +233,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   double stopped_recovery_timeout_s_{5.0};
   std::uint32_t max_plan_from_rest_failures_{3U};
   std::uint64_t dynamics_hash_{1U};
+  navigation_planning::DynamicLimits mission_dynamic_limits_{};
 
   rclcpp::Subscription<navigation_contracts::msg::RegisteredScan>::SharedPtr
       registered_scan_subscription_;

@@ -566,6 +566,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   std::optional<navigation_planning::DynamicLimits> mission_limits;
   if (!mission_file.empty()) {
     mission_limits = loadMissionDynamicLimits(mission_file, planning_frame_);
+    mission_dynamic_limits_ = *mission_limits;
     RCLCPP_INFO(
         get_logger(),
         "Applying mission dynamics to planner backend before optimizer construction: "
@@ -2929,10 +2930,73 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     std::lock_guard<std::mutex> lock(input_mutex_);
     failure_count_for_scale = plan_from_rest_failure_budget_.failureCount();
   }
+  const double remaining_route_m = [&]() {
+    const double euclidean_distance = execution_state.finite()
+        ? (target - execution_state.position_world).norm()
+        : std::numeric_limits<double>::quiet_NaN();
+    if (route_snapshot && execution_state.finite() &&
+        route_snapshot->active_waypoint_index <
+            route_snapshot->waypoint_arc_lengths_m.size()) {
+      const double target_arc = route_snapshot->waypoint_arc_lengths_m[
+          route_snapshot->active_waypoint_index];
+      double best_arc = route_snapshot->measured_progress.valid &&
+          std::isfinite(route_snapshot->measured_progress.progress_arc_m)
+          ? route_snapshot->measured_progress.progress_arc_m : 0.0;
+      double best_distance_squared = std::numeric_limits<double>::infinity();
+      for (const auto& segment : route_snapshot->segments) {
+        if (!segment.start.allFinite() || !segment.end.allFinite() ||
+            !std::isfinite(segment.length_m) || segment.length_m <= 0.0 ||
+            !std::isfinite(segment.start_arc_m) ||
+            !std::isfinite(segment.end_arc_m)) {
+          continue;
+        }
+        const Eigen::Vector3d delta = execution_state.position_world - segment.start;
+        const double fraction = std::clamp(
+            delta.dot(segment.tangent) / segment.length_m, 0.0, 1.0);
+        const Eigen::Vector3d projection = segment.start + fraction *
+            (segment.end - segment.start);
+        const double distance_squared =
+            (execution_state.position_world - projection).squaredNorm();
+        if (!std::isfinite(distance_squared) ||
+            distance_squared >= best_distance_squared) {
+          continue;
+        }
+        best_distance_squared = distance_squared;
+        best_arc = segment.start_arc_m + fraction * segment.length_m;
+      }
+      if (std::isfinite(target_arc) && std::isfinite(best_arc)) {
+        const double route_remaining = std::max(0.0, target_arc - best_arc);
+        // The Euclidean lower bound makes the phase conservative when the
+        // vehicle is temporarily offset by an obstacle detour: it can enter
+        // the slow approach early, never late, without changing the exact
+        // route, backup, or dynamic certificates.
+        return std::min(route_remaining, euclidean_distance);
+      }
+    }
+    return euclidean_distance;
+  }();
+  const bool terminal_stop_approach_due = plannerTerminalStopApproachDue(
+      stop_waypoint, remaining_route_m,
+      mission_dynamic_limits_.max_velocity_mps,
+      mission_dynamic_limits_.max_acceleration_mps2,
+      mission_dynamic_limits_.max_jerk_mps3);
   const double recovery_scale = plan_from_rest_with_transition
       ? plannerRecoveryVelocityScale(failure_count_for_scale) *
-            plannerTerminalStopVelocityScale(stop_waypoint)
+            plannerTerminalStopVelocityScale(
+                stop_waypoint, terminal_stop_approach_due)
       : 1.0;
+  if (plan_from_rest_with_transition && stop_waypoint) {
+    const double stop_distance = plannerTerminalStopBrakingDistanceM(
+        mission_dynamic_limits_.max_velocity_mps,
+        mission_dynamic_limits_.max_acceleration_mps2,
+        mission_dynamic_limits_.max_jerk_mps3);
+    RCLCPP_INFO(
+        get_logger(),
+        "terminal STOP phase remaining_route=%.3f braking_horizon=%.3f approach=%d scale=%.3f",
+        remaining_route_m, stop_distance,
+        terminal_stop_approach_due ? 1 : 0,
+        recovery_scale);
+  }
   planner_->setRecoveryVelocityScale(recovery_scale);
   navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
   const auto solve_generation_value = advanceMonotonicId(planner_solve_generation_);
