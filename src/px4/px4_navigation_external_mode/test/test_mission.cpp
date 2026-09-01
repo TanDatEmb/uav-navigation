@@ -720,6 +720,74 @@ mission:
   expectWaypointAccepted(complete, 0U);
 }
 
+TEST(MissionController, NativeReadinessCannotClearPendingTerminalStopHold) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: terminal_hold_ownership
+  frame: lio_odom
+  waypoints:
+    - id: finish
+      position: [2.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+  control:
+    acceptance_speed_mps: 0.2
+    acceptance_confirmation_s: 0.5
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onNativeSafetyTrajectoryObserved();
+  controller.onNativeTerminalHoldObserved();
+  ASSERT_TRUE(controller.terminalHoldPending());
+  ASSERT_TRUE(controller.nativeTrajectoryReady());
+
+  // A generic MAIN readiness notification may race the terminal BACKUP
+  // callback, but it must not release the STOP hold while the vehicle is
+  // still moving inside the acceptance ball.
+  controller.onNativeTrajectoryReady();
+  EXPECT_TRUE(controller.terminalHoldPending());
+  const auto moving = controller.update(0.1, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                        Eigen::Vector3d{0.5, 0.0, 0.0});
+  EXPECT_EQ(moving.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(moving);
+  EXPECT_EQ(controller.state(),
+            px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+  EXPECT_TRUE(controller.terminalHoldPending());
+
+  const auto premature = controller.update(0.2, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                           Eigen::Vector3d::Zero());
+  EXPECT_EQ(premature.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_TRUE(controller.terminalHoldPending());
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+
+  const auto lost_speed_gate = controller.update(0.3, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                                 Eigen::Vector3d{0.5, 0.0, 0.0});
+  EXPECT_EQ(lost_speed_gate.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_TRUE(controller.terminalHoldPending());
+
+  const auto settling = controller.update(0.9, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                          Eigen::Vector3d::Zero());
+  EXPECT_EQ(settling.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_TRUE(controller.terminalHoldPending());
+
+  const auto settled = controller.update(1.5, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
+                                         Eigen::Vector3d::Zero());
+  EXPECT_EQ(settled.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_FALSE(controller.terminalHoldPending());
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+}
+
 TEST(MissionController, HoldingDoesNotReplanForTransientSpeedOvershootInsideAcceptance) {
   const auto path = writeMission(R"yaml(
 mission:

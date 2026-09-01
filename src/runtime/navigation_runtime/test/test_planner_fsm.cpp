@@ -37,15 +37,33 @@ TEST(PlannerFsm, DefersOptimizerWhileCertifiedMainHasRenewalMargin) {
   EXPECT_NEAR(decision.required_lead_time_s, 0.80, 1.0e-15);
 }
 
+TEST(PlannerFsm, ProductionRenewalLeadIncludesTwoForwardIntervals) {
+  const auto decision = classifyPlannerRenewal(
+      false, true, false, navigation_planning::CandidateRole::kMain,
+      true, 2.0, 3.2,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+      navigation_planning::PlanningTimingContract::kStitchDurationS,
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS);
+  EXPECT_TRUE(decision.run_optimizer);
+  EXPECT_EQ(decision.reason, PlannerRenewalReason::kRenewalDue);
+  EXPECT_DOUBLE_EQ(
+      decision.required_lead_time_s,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS +
+          2.0 * navigation_planning::PlanningTimingContract::kStitchDurationS +
+          navigation_planning::PlanningTimingContract::kPlannerPeriodS +
+          navigation_planning::PlanningTimingContract::kCommitGuardS);
+  EXPECT_DOUBLE_EQ(decision.remaining_main_horizon_s, 1.2);
+}
+
 TEST(PlannerFsm, StartsAnchorRecoveryBeforeExecutionLeaseIsExhausted) {
   EXPECT_FALSE(commandAnchorRecoveryDue(
       false, navigation_planning::CandidateRole::kMain, 0.6, 0.75));
   EXPECT_FALSE(commandAnchorRecoveryDue(
       true, navigation_planning::CandidateRole::kBackup, 0.6, 0.75));
-  EXPECT_TRUE(commandAnchorRecoveryDue(
+  EXPECT_FALSE(commandAnchorRecoveryDue(
       true, navigation_planning::CandidateRole::kMain, 0.375, 0.75));
   EXPECT_TRUE(commandAnchorRecoveryDue(
-      true, navigation_planning::CandidateRole::kMain, 0.6, 0.75));
+      true, navigation_planning::CandidateRole::kMain, 0.75, 0.75));
   EXPECT_FALSE(commandAnchorRecoveryDue(
       true, navigation_planning::CandidateRole::kMain,
       std::numeric_limits<double>::quiet_NaN(), 0.75));
@@ -55,38 +73,9 @@ TEST(PlannerFsm, AnchorRecoveryUsesRetainedTrackingCertificate) {
   const double retained_limit = retainedCommandTrackingLimit(0.25, 0.75);
   EXPECT_DOUBLE_EQ(retained_limit, 0.25);
   EXPECT_FALSE(commandAnchorRecoveryDue(
-      true, navigation_planning::CandidateRole::kMain, 0.124, retained_limit));
+      true, navigation_planning::CandidateRole::kMain, 0.249, retained_limit));
   EXPECT_TRUE(commandAnchorRecoveryDue(
-      true, navigation_planning::CandidateRole::kMain, 0.125, retained_limit));
-}
-
-TEST(PlannerFsm, StartsRecoveryBeforeCommandLeaseExpires) {
-  EXPECT_FALSE(commandLeaseRenewalDue(true, 10'000'000'000LL,
-                                      10'500'000'000LL, 0.49));
-  EXPECT_TRUE(commandLeaseRenewalDue(true, 10'000'000'000LL,
-                                     10'500'000'000LL, 0.50));
-  EXPECT_TRUE(commandLeaseRenewalDue(true, 10'600'000'000LL,
-                                     10'500'000'000LL, 0.20));
-  EXPECT_FALSE(commandLeaseRenewalDue(false, 10'000'000'000LL,
-                                      10'100'000'000LL, 0.20));
-}
-
-TEST(PlannerFsm, DefersOnlyTerminalStopLeaseRenewal) {
-  EXPECT_TRUE(terminalStopMayDeferLeaseRenewal(
-      true, true, true, true,
-      navigation_planning::CandidateRole::kMain, false));
-  EXPECT_TRUE(terminalStopMayDeferLeaseRenewal(
-      true, true, true, true,
-      navigation_planning::CandidateRole::kMain, false));
-  EXPECT_FALSE(terminalStopMayDeferLeaseRenewal(
-      false, true, true, true,
-      navigation_planning::CandidateRole::kMain, false));
-  EXPECT_FALSE(terminalStopMayDeferLeaseRenewal(
-      true, true, true, true,
-      navigation_planning::CandidateRole::kMain, true));
-  EXPECT_FALSE(terminalStopMayDeferLeaseRenewal(
-      true, true, true, false,
-      navigation_planning::CandidateRole::kMain, false));
+      true, navigation_planning::CandidateRole::kMain, 0.25, retained_limit));
 }
 
 TEST(PlannerFsm, DefersTerminalStopAnchorRecoveryOnlyInsideTrackingEnvelope) {
@@ -121,6 +110,25 @@ TEST(PlannerFsm, TerminalStopCompletionRequiresMeasuredWaypointAcceptance) {
   EXPECT_FALSE(terminalStopCompletionObserved(false, true, true, 0.1, 0.1, 0.7));
 }
 
+TEST(PlannerFsm, TerminalStopAcceptsCertifiedBackupEndpointButNotEmergency) {
+  EXPECT_TRUE(terminalStopEndpointContractValid(
+      true, navigation_planning::CandidateBundleKind::kMainWithBackup,
+      navigation_planning::CandidateRole::kMain,
+      navigation_planning::CandidateRole::kBackup));
+  EXPECT_TRUE(terminalStopEndpointContractValid(
+      true, navigation_planning::CandidateBundleKind::kTerminalStop,
+      navigation_planning::CandidateRole::kMain,
+      navigation_planning::CandidateRole::kMain));
+  EXPECT_FALSE(terminalStopEndpointContractValid(
+      true, navigation_planning::CandidateBundleKind::kMainWithBackup,
+      navigation_planning::CandidateRole::kMain,
+      navigation_planning::CandidateRole::kEmergency));
+  EXPECT_FALSE(terminalStopEndpointContractValid(
+      true, navigation_planning::CandidateBundleKind::kBackupOnly,
+      navigation_planning::CandidateRole::kBackup,
+      navigation_planning::CandidateRole::kBackup));
+}
+
 TEST(PlannerFsm, UsesBoundedSlowerVelocityEnvelopeAfterRestFailures) {
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(0U), 1.0);
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(1U), 0.75);
@@ -137,12 +145,12 @@ TEST(PlannerFsm, UsesHalfSpeedEnvelopeOnlyForTerminalStopSolve) {
 TEST(PlannerFsm, RenewsBeforeMainCanReachBackupDuringSchedulingAndSolve) {
   const auto before_boundary = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 3.19, 4.0, 0.18, 0.2, 0.2);
+      true, 2.79, 4.0, 0.18, 0.4, 0.2);
   EXPECT_FALSE(before_boundary.run_optimizer);
 
   const auto at_boundary = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 3.20, 4.0, 0.18, 0.2, 0.2);
+      true, 2.80, 4.0, 0.18, 0.4, 0.2);
   EXPECT_TRUE(at_boundary.run_optimizer);
   EXPECT_EQ(at_boundary.reason, PlannerRenewalReason::kRenewalDue);
 }
@@ -194,16 +202,6 @@ TEST(PlannerFsm, StoppedRecoveryFailureRemainsRetryableWithoutCommand) {
             PlannerResultDisposition::RetryFromRest);
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(1U), 0.75);
   EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(2U), 0.50);
-}
-
-TEST(PlannerFsm, LeaseRenewalIsAContinuousReplanTrigger) {
-  EXPECT_TRUE(commandLeaseRenewalDue(true, 1'000'000'000LL,
-                                    1'350'000'000LL, 0.38));
-  EXPECT_FALSE(commandAnchorRecoveryDue(
-      true, navigation_planning::CandidateRole::kMain, 0.1, 0.75));
-  EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFailed,
-                                  false, true, false),
-            PlannerResultDisposition::RetainCommittedCommand);
 }
 
 TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {

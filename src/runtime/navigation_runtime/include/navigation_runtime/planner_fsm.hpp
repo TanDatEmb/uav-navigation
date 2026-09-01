@@ -186,9 +186,12 @@ struct PlannerRenewalDecision {
   double required_lead_time_s{std::numeric_limits<double>::quiet_NaN()};
 };
 
-// Start a replacement solve before the execution-anchor lease is exhausted.
-// This is a recovery trigger only: the replacement still has to pass the
-// normal world, geometry, dynamics, and command-identity certificates.
+// A replacement solve is scheduled by the command's continuation deadline,
+// not by crossing an arbitrary fraction of the tracking certificate.  The
+// latter used to start repeated nominal hot replans while the same command
+// was still valid; each failed attempt only consumed latency and made the
+// eventual projected-anchor emergency more likely.  The hard tracking
+// certificate remains enforced by the execution boundary below.
 inline bool commandAnchorRecoveryDue(
     bool command_available, navigation_planning::CandidateRole command_role,
     double command_anchor_error_m, double maximum_anchor_error_m) noexcept {
@@ -198,41 +201,7 @@ inline bool commandAnchorRecoveryDue(
       !std::isfinite(maximum_anchor_error_m) || maximum_anchor_error_m <= 0.0) {
     return false;
   }
-  return command_anchor_error_m >= 0.5 * maximum_anchor_error_m;
-}
-
-// The short execution lease is intentionally fail-closed, but a planner
-// supervisor must start replacement work before that lease expires. This
-// predicate is a scheduling trigger only; it never extends the lease or
-// authorizes the current bundle past valid_until_ns.
-inline bool commandLeaseRenewalDue(
-    bool command_available, std::int64_t now_ns, std::int64_t valid_until_ns,
-    double required_lead_time_s) noexcept {
-  if (!command_available || now_ns <= 0 || valid_until_ns <= 0 ||
-      !std::isfinite(required_lead_time_s) || required_lead_time_s <= 0.0) {
-    return false;
-  }
-  if (valid_until_ns < now_ns) return true;
-  const long double remaining_s = static_cast<long double>(valid_until_ns - now_ns) * 1.0e-9L;
-  return remaining_s <= static_cast<long double>(required_lead_time_s);
-}
-
-// A terminal STOP command is already a complete, known-free command ending at
-// a stationary endpoint. It may be represented either as a main-only
-// TerminalStop or as a MainWithBackup bundle whose final safety suffix is part
-// of the same STOP command. Its short execution lease is refreshed by world
-// recertification; recomputing a hot trajectory solely to renew that lease can
-// turn a physically feasible stop into an infeasible short yaw solve. This
-// defer predicate never applies to anchor recovery or to a moving safety role.
-inline bool terminalStopMayDeferLeaseRenewal(
-    bool stop_waypoint, bool command_available, bool trajectory_metadata_valid,
-    bool terminal_stop,
-    navigation_planning::CandidateRole command_role,
-    bool anchor_recovery_due) noexcept {
-  return stop_waypoint && command_available && trajectory_metadata_valid &&
-         terminal_stop &&
-         command_role == navigation_planning::CandidateRole::kMain &&
-         !anchor_recovery_due;
+  return command_anchor_error_m >= maximum_anchor_error_m;
 }
 
 // A certified terminal STOP is already a finite, world-validated command
@@ -272,6 +241,27 @@ inline bool terminalStopCompletionObserved(
          std::isfinite(acceptance_tolerance_m) && acceptance_tolerance_m >= 0.0 &&
          endpoint_error_m <= acceptance_tolerance_m &&
          measured_error_m <= acceptance_tolerance_m;
+}
+
+// A terminal STOP bundle may be a complete MAIN+BACKUP command. Its declared
+// endpoint is then emitted by the BACKUP role even though the immutable bundle
+// is owned by MAIN. The endpoint role is therefore not a completion veto. An
+// EMERGENCY endpoint is deliberately excluded: an emergency brake can stop
+// inside the acceptance ball by coincidence, but it never owns mission
+// completion.
+inline bool terminalStopEndpointContractValid(
+    bool terminal_stop, navigation_planning::CandidateBundleKind bundle_kind,
+    navigation_planning::CandidateRole bundle_role,
+    navigation_planning::CandidateRole endpoint_role) noexcept {
+  const bool terminal_bundle_kind =
+      bundle_kind == navigation_planning::CandidateBundleKind::kTerminalStop ||
+      bundle_kind == navigation_planning::CandidateBundleKind::kMainWithBackup;
+  const bool endpoint_role_valid =
+      endpoint_role == navigation_planning::CandidateRole::kMain ||
+      endpoint_role == navigation_planning::CandidateRole::kBackup;
+  return terminal_stop && terminal_bundle_kind &&
+         bundle_role == navigation_planning::CandidateRole::kMain &&
+         endpoint_role_valid;
 }
 
 // A failed rest-to-rest solve is retried with a slower velocity envelope.
@@ -331,6 +321,10 @@ inline PlannerRenewalDecision classifyPlannerRenewal(
     return {true, PlannerRenewalReason::kInvalidHorizon};
   }
 
+  // Renew before the command enters its braking/backup phase.  The two
+  // forward intervals cover the committed future splice and solver timing.
+  // Candidate admission independently enforces the 0.80 s MAIN reserve
+  // contract; the scheduler must not invent a second reserve value here.
   const long double lead_time =
       static_cast<long double>(solve_deadline_s) +
       2.0L * static_cast<long double>(replan_forward_s) +

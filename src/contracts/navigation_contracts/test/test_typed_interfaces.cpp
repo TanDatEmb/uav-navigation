@@ -183,3 +183,25 @@ TEST(NavigationContracts, NavigationCommandContractRejectsMalformedOrRegressedId
   EXPECT_FALSE(navigation_contracts::commandMissionIdentityMatches(
       previous, "mission-b", 2U, 8U));
 }
+
+TEST(NavigationContracts, CertifiedEmergencyUsesBrakingStatus) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.header.frame_id = "lio_odom";
+  command.header.stamp.sec = 10;
+  command.valid_until.sec = 11;
+  command.world_observation_stamp.sec = 9;
+  command.state_source_stamp.sec = 9;
+  command.mission_id = "mission-a";
+  command.localization_epoch = 3U;
+  command.goal_epoch = 5U;
+  command.world_generation = 13U;
+  command.world_revision = 21U;
+  command.bundle_generation = 34U;
+  command.sample_id = 55U;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_BRAKING;
+  EXPECT_TRUE(navigation_contracts::commandContractValid(command, "lio_odom"));
+
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  EXPECT_FALSE(navigation_contracts::commandContractValid(command, "lio_odom"));
+}

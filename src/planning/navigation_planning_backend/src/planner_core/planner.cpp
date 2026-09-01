@@ -9,6 +9,7 @@
 #include <planner_core/route_backbone.hpp>
 #include <planner_core/hot_replan_recovery.hpp>
 #include <planner_core/guide_vertical_envelope.hpp>
+#include <planner_core/altitude_route_projection.hpp>
 #include <planner_core/absolute_deadline.hpp>
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/evidence_speed_governor.hpp>
@@ -943,6 +944,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         }
         const AbsoluteDeadline solve_deadline(
                 planner_context_->getSimTime(), cfg_.solve_deadline_s);
+        candidate_terminal_stop_active_ = false;
         solve_stage_.store(1);
         latest_commit_decision_.store(static_cast<int>(
             navigation_world_model::WorldCommitDecision::kNotAttempted));
@@ -1066,7 +1068,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
 
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS,
-                terminal_stop_required_);
+                candidate_terminal_stop_active_);
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
@@ -1095,7 +1097,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
             const auto disposition = back_ret_code == FINISH
                 ? BackupDisposition::FINISH : BackupDisposition::NO_NEED;
             auto candidate = CmdTraj::buildCandidate(
-                exp_traj_info, nullptr, disposition, terminal_stop_required_);
+                exp_traj_info, nullptr, disposition,
+                candidate_terminal_stop_active_);
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
@@ -1144,6 +1147,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         }
         const AbsoluteDeadline solve_deadline(
                 planner_context_->getSimTime(), cfg_.solve_deadline_s);
+        candidate_terminal_stop_active_ = false;
         solve_stage_.store(1);
         latest_commit_decision_.store(static_cast<int>(
             navigation_world_model::WorldCommitDecision::kNotAttempted));
@@ -1291,7 +1295,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         if (back_ret_code == SUCCESS) {
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS,
-                terminal_stop_required_);
+                candidate_terminal_stop_active_);
             if (!candidate) {
                 planner_context_->warn(
                     " -- [planner] rejected malformed main+backup candidate: "
@@ -1330,7 +1334,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // 这次生成backup轨迹的点没有意义,
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::NO_NEED,
-                terminal_stop_required_);
+                candidate_terminal_stop_active_);
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
@@ -1359,7 +1363,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // Which means the exp traj is all in known free, no need for backup traj
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::FINISH,
-                terminal_stop_required_);
+                candidate_terminal_stop_active_);
             if (!candidate || !authorizeAndStage(std::move(*candidate))) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
@@ -1494,16 +1498,29 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // discontinuity this emergency transition is meant to eliminate. The
         // seed and final flatness certificates reject an infeasible boundary.
 
-        const auto seed = makeBackupBrakingSeed(
+        // A measured-state emergency brake is also the last command that can
+        // protect the vehicle while a replacement solve is unavailable.  A
+        // free-end stop preserves P/V/J continuity but lets an existing
+        // downward velocity finish below the current altitude.  Repeating
+        // that recovery during a long obstacle detour accumulates altitude
+        // loss and can drive the vehicle into the ground even though every
+        // individual polynomial is dynamically valid.  Certify the same stop
+        // with a zero-net-altitude terminal boundary; this changes neither
+        // the hard dynamic limits nor the world/command certificates.
+        const double terminal_altitude_m = bounded_state.col(0).z();
+        const auto seed = makeBackupBrakingSeedWithTerminalAltitude(
                 0.0, bounded_state,
                 cfg_.back_traj_cfg.max_vel,
                 cfg_.back_traj_cfg.max_acc,
                 cfg_.back_traj_cfg.max_jerk,
                 cfg_.sample_traj_dt_s,
-                0.0);
-        if (!seed.feasible || !std::isfinite(seed.duration_s) ||
-            seed.duration_s <= 0.0) {
-            planner_context_->error(" -- [planner] emergency brake rejected: no feasible PVAJ stop seed");
+                0.0, terminal_altitude_m);
+        if (!seed.feasible || !seed.terminal_altitude_preserved ||
+            !std::isfinite(seed.duration_s) || seed.duration_s <= 0.0) {
+            planner_context_->error(
+                " -- [planner] emergency brake rejected: no feasible altitude-preserving PVAJ stop seed "
+                "altitude={} preserved={}",
+                terminal_altitude_m, seed.terminal_altitude_preserved);
             return false;
         }
 
@@ -1521,7 +1538,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
         for (int attempt = 0; attempt < 24; ++attempt) {
             position_trajectory = Trajectory{};
             position_trajectory.emplace_back(
-                    minimumSnapStopPiece(bounded_state, stop_duration_s));
+                    minimumSnapStopPieceWithTerminalAltitude(
+                        bounded_state, stop_duration_s, terminal_altitude_m));
             position_trajectory.start_WT = start_WT;
 
             StatePVAJ yaw_state = StatePVAJ::Zero();
@@ -1613,6 +1631,11 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // the guide_stamp saves a TT
         vector<double> guide_stamp;
         double guide_path_end_vel{0.0};
+        // Preserve the mission-resolved endpoint before receding-horizon
+        // construction is allowed to replace gi_.goal_p with a bounded local
+        // prefix.  Local endpoint connectivity is useful for geometry, but it
+        // must not activate terminal STOP semantics for a remote mission goal.
+        const Vec3f mission_planning_goal = gi_.goal_p;
         int reserve_size = cfg_.local_window_m / cfg_.resolution * 1.2;
         guide_path.reserve(reserve_size);
         guide_stamp.reserve(reserve_size);
@@ -2076,6 +2099,24 @@ std::optional<double> firstRouteBoundaryEntryTime(
         double route_terminal_speed_cap_mps =
             cfg_.exp_traj_cfg.max_vel * cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
         std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
+        const auto mission_incoming_tangent = [&]()
+                -> std::optional<Eigen::Vector3d> {
+            if (!route_snapshot_.has_value() ||
+                route_snapshot_->active_waypoint_index == 0U) {
+                return std::nullopt;
+            }
+            const auto segment = std::find_if(
+                route_snapshot_->segments.begin(), route_snapshot_->segments.end(),
+                [this](const navigation_mission::RouteSegment& candidate) {
+                    return candidate.end_waypoint_index ==
+                        route_snapshot_->active_waypoint_index;
+                });
+            if (segment == route_snapshot_->segments.end() ||
+                !segment->tangent.allFinite() || segment->tangent.norm() <= 1.0e-6) {
+                return std::nullopt;
+            }
+            return segment->tangent;
+        };
         if (gi_.new_goal && pass_through_next_target_.has_value()) {
             planner_context_->info(
                 " -- [planner] pass-through lookahead input active goal=({}, {}, {}) "
@@ -2098,6 +2139,24 @@ std::optional<double> firstRouteBoundaryEntryTime(
             const double outgoing_distance = (next_target - current_endpoint).norm();
             const double guide_length = geometry_utils::computePathLength(guide_path);
             const double remaining_horizon = cfg_.local_window_m - guide_length;
+            const double known_free_to_boundary_m = knownFreeGuideSupport(
+                *map_ptr_, guide_path);
+            const bool boundary_known_free =
+                std::isfinite(known_free_to_boundary_m) &&
+                std::isfinite(guide_length) &&
+                known_free_to_boundary_m + cfg_.resolution >= guide_length;
+            const bool outgoing_known_free = map_ptr_->isSegmentTraversable(
+                current_endpoint, next_target,
+                navigation_world_model::GridLayer::kInflated,
+                navigation_world_model::UnknownPolicy::kRequireKnownFree);
+            const bool pass_through_visibility_ready = boundary_known_free &&
+                outgoing_known_free;
+            if (!pass_through_visibility_ready) {
+                planner_context_->info(
+                    " -- [planner] defer pass-through lookahead: KNOWN_FREE "
+                    "support_to_boundary={:.3f}/{:.3f} outgoing_known_free={}",
+                    known_free_to_boundary_m, guide_length, outgoing_known_free);
+            }
             Eigen::Vector3d incoming_tangent = Eigen::Vector3d::Zero();
             for (std::size_t index = guide_path.size(); index > 1U; --index) {
                 const Eigen::Vector3d delta =
@@ -2109,6 +2168,17 @@ std::optional<double> firstRouteBoundaryEntryTime(
             }
             const bool genuine_corner = passThroughGenuineCorner(
                 current_endpoint, next_target, incoming_tangent);
+            // Obstacle detours can change the final A* edge enough to make a
+            // true mission corner look almost collinear.  Use the immutable
+            // route tangent as a second, geometry-owned witness; otherwise a
+            // planner-local detour accidentally selects a long outgoing
+            // MINCO lookahead and later fails its waypoint-boundary witness.
+            const auto mission_tangent = mission_incoming_tangent();
+            const bool mission_geometry_corner = mission_tangent.has_value() &&
+                passThroughGenuineCorner(
+                    current_endpoint, next_target, *mission_tangent);
+            const bool effective_genuine_corner = genuine_corner ||
+                mission_geometry_corner;
             const double required_lookahead_envelope =
                 passThroughCruiseLookaheadDistance(
                     cfg_.exp_traj_cfg.max_vel,
@@ -2122,7 +2192,64 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // The A* query must be allowed to reach the next mission target;
             // the shorter desired_lookahead is applied only when selecting the
             // certified prefix from that returned route.
-            const double search_distance = remaining_horizon;
+            std::optional<PassThroughRouteWindow> corner_window;
+            double search_distance = remaining_horizon;
+            Eigen::Vector3d outgoing_search_start = current_endpoint;
+            if (effective_genuine_corner && guide_path.size() >= 2U) {
+                auto candidate_window = passThroughRouteWindow(
+                    current_endpoint, next_target, incoming_tangent,
+                    goal_acceptance_radius_m_,
+                    navigation_world_model::kGoalConnectionToleranceM);
+                if (!candidate_window.has_value() && mission_tangent.has_value()) {
+                    candidate_window = passThroughRouteWindow(
+                        current_endpoint, next_target, *mission_tangent,
+                        goal_acceptance_radius_m_,
+                        navigation_world_model::kGoalConnectionToleranceM);
+                }
+                const Eigen::Vector3d predecessor =
+                    guide_path[guide_path.size() - 2U].cast<double>();
+                const auto point_is_traversable = [this](const Eigen::Vector3d& point) {
+                    return point.allFinite() && map_ptr_->contains(point) &&
+                        navigation_world_model::isCellTraversable(
+                            map_ptr_->classify(
+                                point, navigation_world_model::GridLayer::kInflated),
+                            unknownPolicy());
+                };
+                const auto segment_is_traversable = [this](
+                        const Eigen::Vector3d& start, const Eigen::Vector3d& end) {
+                    return map_ptr_->isSegmentTraversable(
+                        start, end, navigation_world_model::GridLayer::kInflated,
+                        unknownPolicy());
+                };
+                const bool window_certified = candidate_window.has_value() &&
+                    point_is_traversable(candidate_window->entry) &&
+                    point_is_traversable(candidate_window->outgoing_blend) &&
+                    point_is_traversable(candidate_window->endpoint) &&
+                    segment_is_traversable(predecessor, candidate_window->entry) &&
+                    segment_is_traversable(candidate_window->entry,
+                                           candidate_window->outgoing_blend) &&
+                    segment_is_traversable(candidate_window->outgoing_blend,
+                                           current_endpoint) &&
+                    segment_is_traversable(current_endpoint,
+                                           candidate_window->endpoint);
+                if (window_certified) {
+                    const double current_leg_length =
+                        (current_endpoint - predecessor).norm();
+                    const double window_length =
+                        (candidate_window->entry - predecessor).norm() +
+                        (candidate_window->outgoing_blend -
+                         candidate_window->entry).norm() +
+                        (current_endpoint - candidate_window->outgoing_blend).norm() +
+                        (candidate_window->endpoint - current_endpoint).norm();
+                    const double guide_length_with_window = guide_length -
+                        current_leg_length + window_length;
+                    search_distance = cfg_.local_window_m - guide_length_with_window;
+                    outgoing_search_start = candidate_window->endpoint;
+                    if (search_distance > 2.0 * cfg_.resolution) {
+                        corner_window = candidate_window;
+                    }
+                }
+            }
             // Every pass-through boundary needs enough certified outgoing
             // route to remain executable across the measured handoff. A
             // genuine corner is allowed to fillet inside its mission-owned
@@ -2136,16 +2263,21 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // handoff owns the outgoing leg. This avoids repeatedly
             // optimizing a U-shaped guide under one set of fixed boundary
             // derivatives while preserving every collision and dynamic gate.
-            if (!genuine_corner && passThroughOutgoingLookaheadEligible(
+            const bool corner_window_ready = !effective_genuine_corner ||
+                corner_window.has_value();
+            if (pass_through_visibility_ready && corner_window_ready &&
+                passThroughOutgoingLookaheadEligible(
                 desired_lookahead, outgoing_distance, search_distance,
                 cfg_.resolution)) {
                 vec_Vec3f next_path;
                 solve_stage_.store(2);
-                if (PathSearch(guide_path.back(), next_target, search_distance,
+                const Vec3f outgoing_start = outgoing_search_start;
+                if (PathSearch(outgoing_start, next_target,
+                               search_distance,
                                next_path, solve_deadline, true) && next_path.size() >= 2U) {
                     vec_Vec3f lookahead_points;
                     double accumulated_distance = 0.0;
-                    Vec3f previous_point = guide_path.back();
+                    Vec3f previous_point = outgoing_start;
                     for (const auto& point : next_path) {
                         const double segment_length =
                             (point - previous_point).norm();
@@ -2177,10 +2309,18 @@ std::optional<double> firstRouteBoundaryEntryTime(
                         if (geometry_utils::allocateGuideElapsedTimes(
                                 cfg_.exp_traj_cfg.max_acc,
                                 cfg_.exp_traj_cfg.max_vel,
-                                guide_path_end_vel, guide_path.back(),
+                                corner_window.has_value()
+                                    ? std::min(
+                                          guide_path_end_vel,
+                                          passThroughCornerSpeedCap(
+                                              goal_acceptance_radius_m_,
+                                              cfg_.exp_traj_cfg.max_acc,
+                                              route_terminal_speed_cap_mps))
+                                    : guide_path_end_vel,
+                                outgoing_search_start,
                                 lookahead_points, allocation)) {
                             bool certified = true;
-                            Eigen::Vector3d segment_start = guide_path.back().cast<double>();
+                            Eigen::Vector3d segment_start = outgoing_search_start;
                             for (const auto& point : allocation.points) {
                                 const Eigen::Vector3d segment_end = point.cast<double>();
                                 if (!map_ptr_->isSegmentTraversable(
@@ -2213,6 +2353,45 @@ std::optional<double> firstRouteBoundaryEntryTime(
                                             certified_speed_cap);
                                     }
                                 }
+                                if (corner_window.has_value()) {
+                                    const double predecessor_stamp =
+                                        guide_stamp.size() >= 2U
+                                            ? guide_stamp[guide_stamp.size() - 2U]
+                                            : guide_stamp.back();
+                                    const auto segment_duration = [this](
+                                            const Eigen::Vector3d& start,
+                                            const Eigen::Vector3d& end) {
+                                        return (end - start).norm() /
+                                            cfg_.exp_traj_cfg.max_vel;
+                                    };
+                                    guide_path.back() = corner_window->entry;
+                                    guide_stamp.back() = predecessor_stamp +
+                                        segment_duration(
+                                            guide_path[guide_path.size() - 2U].cast<double>(),
+                                            corner_window->entry);
+                                    guide_path.emplace_back(
+                                        corner_window->outgoing_blend);
+                                    guide_stamp.emplace_back(
+                                        guide_stamp.back() + segment_duration(
+                                            corner_window->entry,
+                                            corner_window->outgoing_blend));
+                                    // Keep the exact mission waypoint in the
+                                    // guide so CorridorGenerator and MINCO
+                                    // assign the route-boundary cell to an
+                                    // interior junction, while the outgoing
+                                    // endpoint remains inside the same
+                                    // acceptance ball.
+                                    guide_path.emplace_back(current_endpoint);
+                                    guide_stamp.emplace_back(
+                                        guide_stamp.back() + segment_duration(
+                                            corner_window->outgoing_blend,
+                                            current_endpoint));
+                                    guide_path.emplace_back(corner_window->endpoint);
+                                    guide_stamp.emplace_back(
+                                        guide_stamp.back() + segment_duration(
+                                            current_endpoint,
+                                            corner_window->endpoint));
+                                }
                                 const double guide_time_origin_s = guide_stamp.back();
                                 for (std::size_t index = 0;
                                      index < allocation.points.size(); ++index) {
@@ -2225,7 +2404,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                                 planning_goal_p_ = gi_.goal_p;
                                 goal_endpoint_adjusted_ = true;
                                 route_lookahead_active = true;
-                                route_lookahead_is_corner = genuine_corner;
+                                route_lookahead_is_corner = effective_genuine_corner;
                                 certified_lookahead_m_ = allocation.path_length_m;
                                 lookahead_complete_ = complete;
                                 // Every outgoing lookahead must still cross
@@ -2241,7 +2420,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                                     "remaining_horizon={:.3f} corner={}",
                                     allocation.path_length_m, desired_lookahead, complete,
                                     route_terminal_speed_cap_mps, remaining_horizon,
-                                    genuine_corner);
+                                    effective_genuine_corner);
                             }
                         }
                     }
@@ -2272,10 +2451,24 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     break;
                 }
             }
-            const auto route_window = passThroughRouteWindow(
+            auto route_window = passThroughRouteWindow(
                 requested_goal_p_.cast<double>(), *pass_through_next_target_,
                 incoming_tangent, goal_acceptance_radius_m_,
                 navigation_world_model::kGoalConnectionToleranceM);
+            // Prefer the measured A* approach when it proves the corner. If
+            // the detour's final edge is shallow, retry with the immutable
+            // mission incoming tangent so the same corner classification used
+            // above also creates its bounded acceptance-ball fillet.
+            if (!route_window.has_value()) {
+                const auto mission_tangent = mission_incoming_tangent();
+                if (mission_tangent.has_value()) {
+                    route_window = passThroughRouteWindow(
+                        requested_goal_p_.cast<double>(),
+                        *pass_through_next_target_, *mission_tangent,
+                        goal_acceptance_radius_m_,
+                        navigation_world_model::kGoalConnectionToleranceM);
+                }
+            }
             const auto point_is_traversable = [this](const Eigen::Vector3d& point) {
                 return point.allFinite() && map_ptr_->contains(point) &&
                     navigation_world_model::isCellTraversable(
@@ -2404,6 +2597,10 @@ std::optional<double> firstRouteBoundaryEntryTime(
         guide_path.back() = resolved_endpoint.position;
         const bool connected_goal = !route_lookahead_active &&
             (resolved_endpoint.goal_connected || route_window_endpoint);
+        const bool mission_goal_connected = !route_lookahead_active &&
+            mission_planning_goal.allFinite() &&
+            (resolved_endpoint.position - mission_planning_goal).norm() <=
+                navigation_world_model::kGoalConnectionToleranceM + 1.0e-6;
         out_exp_traj_info.setGoalConnectedFlag(connected_goal);
 
         latest_guide_start_ = guide_path.front();
@@ -2654,7 +2851,22 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 }
             }
         }
-        if (terminal_stop_required_) {
+        // The mission may declare a distant final STOP while this solve only
+        // reaches a bounded local prefix. Keep that prefix moving; activate
+        // terminal semantics only once the current endpoint is connected to
+        // the actual STOP waypoint.
+        candidate_terminal_stop_active_ =
+            terminal_stop_required_ && mission_goal_connected;
+        if (terminal_stop_required_ && connected_goal &&
+            !mission_goal_connected) {
+            planner_context_->info(
+                " -- [planner] remote STOP remains moving on bounded local prefix: "
+                "local_endpoint=({}, {}, {}) mission_endpoint=({}, {}, {})",
+                resolved_endpoint.position.x(), resolved_endpoint.position.y(),
+                resolved_endpoint.position.z(), mission_planning_goal.x(),
+                mission_planning_goal.y(), mission_planning_goal.z());
+        }
+        if (candidate_terminal_stop_active_) {
             // STOP is an explicit mission terminal contract.  It must not
             // inherit an outgoing tangent or a non-zero frontier velocity,
             // even when the route snapshot also carries a next waypoint for
@@ -2840,12 +3052,30 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 route_boundary_gate->point,
                 route_boundary_gate->radius_m);
             if (!route_boundary_time.has_value()) {
+                double nearest_junction_distance_m =
+                    std::numeric_limits<double>::infinity();
+                int nearest_junction_index = -1;
+                for (int junction_index = 0;
+                     junction_index <= temp_exp_traj.getPieceNum();
+                     ++junction_index) {
+                    const Eigen::Vector3d position =
+                        temp_exp_traj.getJuncPos(junction_index);
+                    const double distance =
+                        (position - route_boundary_gate->point).norm();
+                    if (std::isfinite(distance) &&
+                        distance < nearest_junction_distance_m) {
+                        nearest_junction_distance_m = distance;
+                        nearest_junction_index = junction_index;
+                    }
+                }
                 planner_context_->error(
                     " -- [planner] pass-through MAIN missing route-boundary "
-                    "entry witness point=({}, {}, {}) radius={} pieces={}",
+                    "entry witness point=({}, {}, {}) radius={} pieces={} "
+                    "nearest_junction_distance={} index={}",
                     route_boundary_gate->point.x(), route_boundary_gate->point.y(),
                     route_boundary_gate->point.z(), route_boundary_gate->radius_m,
-                    temp_exp_traj.getPieceNum());
+                    temp_exp_traj.getPieceNum(), nearest_junction_distance_m,
+                    nearest_junction_index);
                 return FAILED;
             }
             required_main_prefix_duration_TT = *route_boundary_time;
@@ -3055,7 +3285,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         }
         if (all_traj_visible &&
             trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) &&
-            !terminal_stop_required_) {
+            !candidate_terminal_stop_active_) {
             // A main-only command is safe to complete only when every
             // remaining sample is known-free and its terminal PVAJ is a true
             // rest state. A terminal STOP still needs an independently
@@ -3067,7 +3297,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             return FINISH;
         }
         const bool terminal_rest_capture_ready = all_traj_visible &&
-            terminal_stop_required_ &&
+            candidate_terminal_stop_active_ &&
             trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) &&
             std::isfinite(cfg_.robot_r) && cfg_.robot_r > 0.0 &&
             (candidate_ps.back().second - command_start).norm() <= cfg_.robot_r;
@@ -3092,7 +3322,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     " -- [planner] visible MAIN requires certified backup "
                     "suffix instead of main-only command terminal_stop={} "
                     "terminal_rest={}",
-                    terminal_stop_required_ ? 1 : 0,
+                    candidate_terminal_stop_active_ ? 1 : 0,
                     trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) ? 1 : 0);
             all_traj_visible = false;
         }
@@ -3121,53 +3351,20 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // command-boundary KNOWN_FREE check above plus the full candidate
         // validator are the authority here.
         const Vec3f backup_origin = back_traj_info.getRobotPos();
-        const double backup_seed_max_length_m =
-                cfg_.corridor_segment_max_length_m;
-        if (std::isfinite(backup_seed_max_length_m) &&
-            backup_seed_max_length_m > 0.0) {
-            // GeneratePolytopeFromLine is the direct-line BACKUP path and
-            // does not perform the guide subdivision used by
-            // SearchPolytopeOnPath.  Keep its visibility prefix within the
-            // same bounded-seed contract instead of passing a long sparse A*
-            // edge to CIRI.  The prefix is monotonic: once the command ray
-            // exceeds the bound, later samples are not eligible even if a
-            // detour happens to return near the origin.
-            std::size_t bounded_prefix_size = 0U;
-            for (const auto& sample : eval_ps) {
-                const double distance_from_origin =
-                        (sample.second - backup_origin).norm();
-                if (!std::isfinite(distance_from_origin) ||
-                    distance_from_origin > backup_seed_max_length_m + 1.0e-6) {
-                    break;
-                }
-                ++bounded_prefix_size;
-            }
-            if (bounded_prefix_size < eval_ps.size()) {
-                if (bounded_prefix_size == 0U) {
-                    planner_context_->warn(
-                            " -- [planner] backup visibility has no sample "
-                            "inside bounded CIRI seed length={}",
-                            backup_seed_max_length_m);
-                    return FAILED;
-                }
-                eval_ps.resize(bounded_prefix_size);
-                seed_point_t = eval_ps.back().first;
-                seed_point = eval_ps.back().second;
-                planner_context_->info(
-                        " -- [planner] bounded BACKUP visibility seed "
-                        "from {} m to {} m (CIRI limit={})",
-                        (ref_exp_traj.getPos(total_dur) - backup_origin).norm(),
-                        (seed_point - backup_origin).norm(),
-                        backup_seed_max_length_m);
-            }
-            if (!std::isfinite(seed_point_t) || !seed_point.allFinite() ||
-                (seed_point - backup_origin).norm() <= cfg_.resolution) {
-                planner_context_->warn(
-                        " -- [planner] backup visibility seed is too short "
-                        "after bounded-prefix selection length={}",
-                        (seed_point - backup_origin).norm());
-                return FAILED;
-            }
+        // The seed has already been truncated at the first sample that is not
+        // within the configured KNOWN_FREE visibility horizon. Do not apply
+        // corridor_segment_max_length_m here: that parameter subdivides sparse
+        // guide edges, but using it as a second backup-distance cap limits an
+        // open-space vehicle to a 3 m recovery prefix and forces a brake every
+        // few metres. GeneratePolytopeFromLine receives only the certified
+        // visibility segment; the full candidate validator remains mandatory.
+        if (!std::isfinite(seed_point_t) || !seed_point.allFinite() ||
+            (seed_point - backup_origin).norm() <= cfg_.resolution) {
+            planner_context_->warn(
+                    " -- [planner] backup visibility seed is too short "
+                    "after KNOWN_FREE visibility selection length={}",
+                    (seed_point - backup_origin).norm());
+            return FAILED;
         }
         Line line{backup_origin, seed_point};
         Polytope temp_poly;
@@ -3251,9 +3448,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
         if (!std::isfinite(backup_switch_lower_bound) ||
             !(backup_switch_lower_bound < te)) {
             planner_context_->warn(
-                    " -- [planner] no backup switch window after required main "
-                    "prefix prefix={} lower_bound={} visibility_end={}",
-                    required_main_prefix_duration_TT, backup_switch_lower_bound, te);
+                " -- [planner] no backup switch window after required main "
+                "prefix prefix={} lower_bound={} visibility_end={}",
+                required_main_prefix_duration_TT, backup_switch_lower_bound, te);
             return OPT_FAILED;
         }
         //            cout << "t0: " << t0 << endl;
@@ -4043,40 +4240,73 @@ std::optional<double> firstRouteBoundaryEntryTime(
         }
 
         // Prefer a mission-altitude route when the same A* lateral detour is
-        // collision-free at the start-to-goal height profile. With
-        // UNKNOWN_AS_FREE and no raycasting, an unconstrained 3-D graph can
-        // otherwise take a numerically equivalent shortcut toward the unseen
-        // ground; that shortcut becomes OCCUPIED only after the vehicle is too
-        // close for its certified brake. Preserve the original 3-D route when
-        // vertical avoidance is actually required.
+        // collision-free at the requested route altitude. The old projection
+        // interpolated from the measured start altitude to the goal altitude;
+        // after a tracking/recovery event that made every later nominal route
+        // inherit the previous altitude error. The certified projection below
+        // inserts an explicit climb first, then keeps the route horizontal at
+        // the mission altitude. Preserve the original 3-D route when either
+        // the climb or the horizontal projection is not traversable: a real
+        // vertical avoidance route must remain available.
         if (path.size() >= 2) {
             const Vec3f route_delta = goal - shifted_start_pt;
             const double horizontal_distance = route_delta.head<2>().norm();
             if (horizontal_distance > cfg_.resolution) {
-                const Eigen::Vector2d horizontal_direction =
-                        route_delta.head<2>() / horizontal_distance;
-                vec_Vec3f altitude_preserving_path = path;
-                for (auto &point : altitude_preserving_path) {
-                    const double progress = std::clamp(
-                            (point.head<2>() - shifted_start_pt.head<2>())
-                                    .dot(horizontal_direction) / horizontal_distance,
-                            0.0, 1.0);
-                    point.z() = shifted_start_pt.z() + progress * route_delta.z();
-                }
-                bool altitude_projection_free = true;
-                for (std::size_t index = 1;
-                     index < altitude_preserving_path.size(); ++index) {
-                    if (!map_ptr_->isSegmentTraversable(
-                            altitude_preserving_path[index - 1],
-                            altitude_preserving_path[index],
+                vec_Vec3f constant_altitude_path;
+                const auto segment_is_traversable = [this](
+                        const Vec3f& begin, const Vec3f& end) {
+                    return map_ptr_->isSegmentTraversable(
+                            begin, end,
                             navigation_world_model::GridLayer::kInflated,
-                            unknownPolicy())) {
-                        altitude_projection_free = false;
-                        break;
+                            unknownPolicy());
+                };
+                if (buildConstantAltitudeRoute(
+                        path, goal.z(), cfg_.resolution * 0.25,
+                        segment_is_traversable, constant_altitude_path)) {
+                    path = std::move(constant_altitude_path);
+                    planner_context_->info(
+                        " -- [Astar] selected certified constant mission-altitude route "
+                        "altitude={} start_altitude={} points={}",
+                        goal.z(), shifted_start_pt.z(), path.size());
+                } else {
+                    // Retain the prior start-to-goal profile as a conservative
+                    // fallback for maps where the explicit climb is blocked.
+                    const Eigen::Vector2d horizontal_direction =
+                            route_delta.head<2>() / horizontal_distance;
+                    vec_Vec3f altitude_preserving_path = path;
+                    for (auto &point : altitude_preserving_path) {
+                        const double progress = std::clamp(
+                                (point.head<2>() - shifted_start_pt.head<2>())
+                                        .dot(horizontal_direction) / horizontal_distance,
+                                0.0, 1.0);
+                        point.z() = shifted_start_pt.z() + progress * route_delta.z();
                     }
-                }
-                if (altitude_projection_free) {
-                    path = std::move(altitude_preserving_path);
+                    bool altitude_projection_free = true;
+                    for (std::size_t index = 1;
+                         index < altitude_preserving_path.size(); ++index) {
+                        if (!map_ptr_->isSegmentTraversable(
+                                altitude_preserving_path[index - 1],
+                                altitude_preserving_path[index],
+                                navigation_world_model::GridLayer::kInflated,
+                                unknownPolicy())) {
+                            altitude_projection_free = false;
+                            break;
+                        }
+                    }
+                    if (altitude_projection_free) {
+                        path = std::move(altitude_preserving_path);
+                        planner_context_->info(
+                            " -- [Astar] retained start-to-goal altitude profile; "
+                            "constant mission-altitude route was not certified "
+                            "target_altitude={} start_altitude={}",
+                            goal.z(), shifted_start_pt.z());
+                    } else {
+                        planner_context_->info(
+                            " -- [Astar] retained certified 3-D altitude route; "
+                            "neither constant nor interpolated projection was free "
+                            "target_altitude={} start_altitude={}",
+                            goal.z(), shifted_start_pt.z());
+                    }
                 }
             }
         }

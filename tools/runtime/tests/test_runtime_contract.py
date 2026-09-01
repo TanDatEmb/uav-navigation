@@ -67,6 +67,26 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_px4_controller_observability_decoders_preserve_setpoints_and_saturation(self) -> None:
+        local_setpoint = monitor._px4_local_position_setpoint_payload(SimpleNamespace(
+            timestamp=123,
+            x=1.0, y=2.0, z=-3.0,
+            vx=4.0, vy=5.0, vz=6.0,
+            acceleration=[0.1, 0.2, 0.3],
+            thrust=[0.0, 0.0, -0.6],
+            yaw=0.7, yawspeed=0.8,
+        ))
+        self.assertEqual(local_setpoint["timestamp_us"], 123)
+        self.assertEqual(local_setpoint["position_ned"], [1.0, 2.0, -3.0])
+        self.assertEqual(local_setpoint["velocity_ned"], [4.0, 5.0, 6.0])
+        motors = monitor._px4_actuator_motors_payload(SimpleNamespace(
+            timestamp=124, timestamp_sample=120,
+            control=[1.0, -1.0, 0.5, float("nan")],
+        ))
+        self.assertEqual(motors["saturated_control_count"], 2)
+        self.assertEqual(motors["finite_control_min"], -1.0)
+        self.assertEqual(motors["finite_control_max"], 1.0)
+
     def test_planning_stability_qualification_matrix_is_locked(self) -> None:
         matrix = yaml.safe_load(
             (ROOT / "config/runtime/planning_stability_qualification.yaml").read_text(
@@ -2027,6 +2047,9 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("param show MPC_YAWRAUTO_MAX", startup)
         self.assertIn("param show MPC_YAWRAUTO_ACC", startup)
         self.assertIn("param show MC_YAWRATE_MAX", startup)
+        self.assertIn("param show MPC_XY_P", startup)
+        self.assertIn("param show MPC_Z_P", startup)
+        self.assertIn("param show MPC_THR_HOVER", startup)
 
     def test_planner_has_one_unknown_space_policy_owner(self) -> None:
         planner_config = yaml.safe_load(

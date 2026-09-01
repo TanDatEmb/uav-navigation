@@ -2689,14 +2689,12 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const double endpoint_error = endpoint.has_value()
         ? (endpoint->position_world - target_position).norm()
         : std::numeric_limits<double>::infinity();
-    const bool nominal_main_terminal = committed_bundle &&
-        committed_bundle->kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
-        committed_bundle->terminal_stop &&
-        committed_bundle->role == navigation_planning::CandidateRole::kMain &&
-        endpoint.has_value() &&
-        endpoint->role == navigation_planning::CandidateRole::kMain;
+    const bool terminal_endpoint_contract = committed_bundle && endpoint &&
+        terminalStopEndpointContractValid(
+            committed_bundle->terminal_stop, committed_bundle->kind,
+            committed_bundle->role, endpoint->role);
     completed_trajectory_reaches_goal = terminalStopCompletionObserved(
-        effective_terminal_stop, nominal_main_terminal, completed_endpoint_valid,
+        effective_terminal_stop, terminal_endpoint_contract, completed_endpoint_valid,
         endpoint_error, measured_goal_error, completion_tolerance);
     trajectory_reaches_goal_.store(completed_trajectory_reaches_goal);
     terminal_bundle_generation_.store(
@@ -2835,22 +2833,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       planner_command_available_.load(std::memory_order_acquire), transition_role,
       transition_anchor_error_m,
       retained_tracking_limit_m);
-  const bool command_lease_recovery_due = transition_bundle && commandLeaseRenewalDue(
-      planner_command_available_.load(std::memory_order_acquire), now_ns,
-      transition_bundle->valid_until_ns,
-      planning_interval_s + planner_->solveDeadlineSeconds());
-  // Anchor pressure, lease renewal and hot retargeting may schedule a solve,
+  // Anchor pressure and hot retargeting may schedule a solve,
   // but every moving nominal renewal is anchored to committed future PVAJ.
   // Exceeding the certificate is handled by the one-shot emergency path after
   // retained validation; it never authorizes measured-state nominal planning.
   const bool anchor_renewal_replan = anchor_recovery_due && !plan_from_rest;
-  // A short execution lease is an exposure/renewal boundary, not evidence
-  // that the executing trajectory has lost its measured-state anchor. Renew
-  // it with the normal continuous ReplanOnce path. Treating this as
-  // PlanFromRest repeatedly re-seeds from the transient measured velocity
-  // before the previous trajectory can turn toward its goal.
-  const bool lease_renewal_replan = command_lease_recovery_due &&
-      !plan_from_rest && !hot_goal_transition && !anchor_renewal_replan;
   const bool stop_waypoint = goal &&
       goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
   const double terminal_stop_relative_speed_mps = transition_sample &&
@@ -2873,15 +2860,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       terminal_stop_projected_anchor_error_m > retained_tracking_limit_m;
   const bool terminal_stop_recovery_due = anchor_recovery_due ||
       terminal_stop_projected_tracking_certificate_exceeded;
-  const bool terminal_stop_lease_recovery_deferred = transition_bundle &&
-      terminalStopMayDeferLeaseRenewal(
-          stop_waypoint,
-          planner_command_available_.load(std::memory_order_acquire),
-          transition_bundle->hasDeclaredEndpointMetadata(),
-          transition_bundle->terminal_stop,
-          transition_role,
-          terminal_stop_recovery_due) &&
-      lease_renewal_replan;
   const bool terminal_stop_anchor_deferred = transition_bundle &&
       terminalStopMayDeferAnchorRecovery(
           stop_waypoint,
@@ -2893,12 +2871,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           transition_anchor_error_m,
           retained_tracking_limit_m,
           terminal_stop_projected_tracking_certificate_exceeded);
-  if (terminal_stop_lease_recovery_deferred || terminal_stop_anchor_deferred) {
+  if (terminal_stop_anchor_deferred) {
     ++optimizer_deferred_count_;
     RCLCPP_DEBUG_THROTTLE(
         get_logger(), *get_clock(), 1000,
-        "deferring terminal STOP optimizer renewal lease=%d anchor=%d error=%.3f limit=%.3f",
-        terminal_stop_lease_recovery_deferred ? 1 : 0,
+        "deferring terminal STOP optimizer renewal anchor=%d error=%.3f limit=%.3f",
         terminal_stop_anchor_deferred ? 1 : 0,
         transition_anchor_error_m, retained_tracking_limit_m);
     return;
@@ -2920,11 +2897,12 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     terminal_bundle_generation_.store(0U);
   }
   if (!plan_from_rest_with_transition && !replan_for_new_goal &&
+      !anchor_renewal_replan &&
       skip_replan_once_.exchange(false, std::memory_order_acq_rel)) {
     return;
   }
   const bool forced_transition = plan_from_rest_with_transition ||
-      lease_renewal_replan || replan_for_new_goal || anchor_renewal_replan;
+      replan_for_new_goal || anchor_renewal_replan;
   const auto renewal_decision = classifyPlannerRenewal(
       forced_transition,
       planner_command_available_.load(std::memory_order_acquire),
@@ -3521,9 +3499,15 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                   static_cast<long>(committed_bundle->valid_until_ns),
                   target.x(), target.y(), target.z());
     }
-    if (plan_from_rest_with_transition) {
-      skip_replan_once_.store(true, std::memory_order_release);
-    }
+    // A newly committed MAIN already passed the complete candidate and
+    // execution-boundary contracts. Give it one scheduler interval to
+    // establish a continuous command before evaluating its next renewal
+    // deadline. Without this one-shot quiet period, a candidate whose
+    // BACKUP switch is only slightly beyond the renewal lead is immediately
+    // replaced on the next timer tick, producing a commit/replan train and
+    // needlessly increasing hot-splice pressure. A new goal and a hard
+    // anchor recovery remain higher priority at the next tick.
+    skip_replan_once_.store(true, std::memory_order_release);
     std::lock_guard<std::mutex> lock(input_mutex_);
     plan_from_rest_failure_budget_.reset();
     plan_from_rest_first_failure_steady_ns_ = 0;
@@ -4149,6 +4133,8 @@ void NavigationRuntimeNode::publishCommand() {
   double yaw = 0.0;
   double yaw_dot = 0.0;
   bool on_backup_traj = false;
+  navigation_planning::CandidateRole sampled_role =
+      navigation_planning::CandidateRole::kMain;
   bool traj_finish = false;
   std::uint64_t trajectory_generation = 0;
   double trajectory_time_s = 0.0;
@@ -4367,7 +4353,8 @@ void NavigationRuntimeNode::publishCommand() {
         trajectory_time_s = point.trajectory_time_s;
         command_world_identity = sample.bundle->world_identity;
         sampled_bundle = sample.bundle;
-        on_backup_traj = point.role != navigation_planning::CandidateRole::kMain;
+        sampled_role = point.role;
+        on_backup_traj = sampled_role != navigation_planning::CandidateRole::kMain;
         traj_finish = true;
         sampled_command_valid = true;
         RCLCPP_DEBUG_THROTTLE(
@@ -4397,7 +4384,8 @@ void NavigationRuntimeNode::publishCommand() {
       trajectory_time_s = point.trajectory_time_s;
       command_world_identity = sample.bundle->world_identity;
       sampled_bundle = sample.bundle;
-      on_backup_traj = point.role != navigation_planning::CandidateRole::kMain;
+      sampled_role = point.role;
+      on_backup_traj = sampled_role != navigation_planning::CandidateRole::kMain;
       if (point.role == navigation_planning::CandidateRole::kBackup) {
         execution_recovery_state_.store(
             transitionExecutionRecovery(
@@ -4456,7 +4444,10 @@ void NavigationRuntimeNode::publishCommand() {
     // The safety suffix contains the dynamically continuous main prefix up to
     // planner backend's backup switch plus the braking polynomial. Once frozen by a
     // failed hot replan, the whole suffix is safety-owned.
-    if (sampled_command_valid && safety_suffix_active) on_backup_traj = true;
+    if (sampled_command_valid && safety_suffix_active &&
+        sampled_role == navigation_planning::CandidateRole::kMain) {
+      on_backup_traj = true;
+    }
     if (traj_finish) trajectory_finished_.store(true);
   } else {
     // A rest-to-rest solve can fail before a command has ever been committed. Emit an
@@ -4505,18 +4496,25 @@ void NavigationRuntimeNode::publishCommand() {
       : command_time_ns + command_stream_timeout_ns_;
   command.valid_until = navigation_common::nanosecondsToRosTime(valid_until_ns).value_or(
       builtin_interfaces::msg::Time{});
-  const bool main_trajectory_rejected = planner_failed && !on_backup_traj;
-  command.status = main_trajectory_rejected
+  const bool emergency_braking = sampled_command_valid &&
+      sampled_role == navigation_planning::CandidateRole::kEmergency;
+  const bool main_trajectory_rejected = planner_failed && !on_backup_traj &&
+      !emergency_braking;
+  command.status = emergency_braking
+                       ? navigation_contracts::msg::NavigationCommand::STATUS_BRAKING
+                       : main_trajectory_rejected
                        ? navigation_contracts::msg::NavigationCommand::STATUS_REJECTED
                        : traj_finish
                        ? navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED
                        : navigation_contracts::msg::NavigationCommand::STATUS_READY;
-  command.role = main_trajectory_rejected
+  command.role = emergency_braking
+                     ? navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY
+                     : main_trajectory_rejected
                      ? navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY
                      : on_backup_traj
                      ? navigation_contracts::msg::NavigationCommand::ROLE_BACKUP
                      : navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
-  command.reason_code = main_trajectory_rejected ? 1U : 0U;
+  command.reason_code = emergency_braking ? 2U : main_trajectory_rejected ? 1U : 0U;
   command.position.x = pvaj(0, 0);
   command.position.y = pvaj(1, 0);
   command.position.z = pvaj(2, 0);

@@ -767,7 +767,8 @@ void NavigationMode::onNavigationCommand(
     } else {
       mission_controller_->onNativeTrajectoryReady();
     }
-    if (terminal_main_hold_inside_acceptance) {
+    if (terminal_backup_hold_inside_acceptance ||
+        terminal_main_hold_inside_acceptance) {
       mission_controller_->onNativeTerminalHoldObserved();
     }
   }

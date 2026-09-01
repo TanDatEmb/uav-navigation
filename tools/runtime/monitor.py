@@ -28,6 +28,10 @@ PX4_SIMULATION_STREAMS = frozenset({
     "vehicle_status",
     "local_position",
     "estimator_status_flags",
+    "px4_local_position_setpoint",
+    "px4_attitude_setpoint",
+    "px4_thrust_setpoint",
+    "px4_actuator_motors",
 })
 
 
@@ -308,6 +312,57 @@ def _px4_odom_payload(message: Any) -> dict[str, Any]:
     }
 
 
+def _px4_local_position_setpoint_payload(message: Any) -> dict[str, Any]:
+    """Decode PX4's post-controller local-position setpoint telemetry.
+
+    This is intentionally a diagnostic stream.  It shows what PX4's position
+    controller received after the external-mode adapter, which lets the
+    report distinguish an adapter/reference mismatch from controller tracking
+    or vehicle-model saturation.
+    """
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "position_ned": [_finite(getattr(message, name, None)) for name in ("x", "y", "z")],
+        "velocity_ned": [_finite(getattr(message, name, None)) for name in ("vx", "vy", "vz")],
+        "acceleration_ned": [_finite(value) for value in getattr(message, "acceleration", [])],
+        "thrust_ned": [_finite(value) for value in getattr(message, "thrust", [])],
+        "yaw": _finite(getattr(message, "yaw", None)),
+        "yawspeed": _finite(getattr(message, "yawspeed", None)),
+    }
+
+
+def _px4_attitude_setpoint_payload(message: Any) -> dict[str, Any]:
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "yaw_sp_move_rate": _finite(getattr(message, "yaw_sp_move_rate", None)),
+        "q_d_wxyz": [_finite(value) for value in getattr(message, "q_d", [])],
+        "thrust_body": [_finite(value) for value in getattr(message, "thrust_body", [])],
+    }
+
+
+def _px4_thrust_setpoint_payload(message: Any) -> dict[str, Any]:
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "timestamp_sample_us": int(getattr(message, "timestamp_sample", 0)),
+        "thrust_body": [_finite(value) for value in getattr(message, "xyz", [])],
+    }
+
+
+def _px4_actuator_motors_payload(message: Any) -> dict[str, Any]:
+    controls = [_finite(value) for value in getattr(message, "control", [])]
+    finite_controls = [value for value in controls if value is not None]
+    return {
+        "timestamp_us": int(getattr(message, "timestamp", 0)),
+        "timestamp_sample_us": int(getattr(message, "timestamp_sample", 0)),
+        "controls": controls,
+        "finite_control_min": min(finite_controls, default=None),
+        "finite_control_max": max(finite_controls, default=None),
+        "saturated_control_count": sum(
+            value is not None and abs(value) >= 0.999 for value in controls
+        ),
+    }
+
+
 def _pointcloud_payload(message: Any) -> tuple[dict[str, Any], int]:
     payload: dict[str, Any] = {
         "stamp_ns": _message_stamp_ns(message),
@@ -507,7 +562,17 @@ class RuntimeMonitor:
                 # missing diagnostic message must not suppress odometry,
                 # local-position, status and attitude streams needed by the
                 # mission benchmark.
-                from px4_msgs.msg import EstimatorStatus, VehicleAttitude, VehicleLocalPosition, VehicleOdometry, VehicleStatus
+                from px4_msgs.msg import (
+                    ActuatorMotors,
+                    EstimatorStatus,
+                    VehicleAttitude,
+                    VehicleAttitudeSetpoint,
+                    VehicleLocalPosition,
+                    VehicleLocalPositionSetpoint,
+                    VehicleOdometry,
+                    VehicleStatus,
+                    VehicleThrustSetpoint,
+                )
                 specs.extend([
                     TopicSpec("external_odometry", "/fmu/in/vehicle_visual_odometry", VehicleOdometry, _px4_odom_payload),
                     TopicSpec("px4_odometry", "/fmu/out/vehicle_odometry", VehicleOdometry, _px4_odom_payload),
@@ -532,6 +597,30 @@ class RuntimeMonitor:
                         "reset_count_pos_ne": int(m.reset_count_pos_ne), "reset_count_vel_ne": int(m.reset_count_vel_ne),
                         "reset_count_quat": int(m.reset_count_quat),
                     }),
+                    TopicSpec(
+                        "px4_local_position_setpoint",
+                        "/fmu/out/vehicle_local_position_setpoint",
+                        VehicleLocalPositionSetpoint,
+                        _px4_local_position_setpoint_payload,
+                    ),
+                    TopicSpec(
+                        "px4_attitude_setpoint",
+                        "/fmu/out/vehicle_attitude_setpoint",
+                        VehicleAttitudeSetpoint,
+                        _px4_attitude_setpoint_payload,
+                    ),
+                    TopicSpec(
+                        "px4_thrust_setpoint",
+                        "/fmu/out/vehicle_thrust_setpoint",
+                        VehicleThrustSetpoint,
+                        _px4_thrust_setpoint_payload,
+                    ),
+                    TopicSpec(
+                        "px4_actuator_motors",
+                        "/fmu/out/actuator_motors",
+                        ActuatorMotors,
+                        _px4_actuator_motors_payload,
+                    ),
                 ])
                 try:
                     from px4_msgs.msg import EstimatorStatusFlags

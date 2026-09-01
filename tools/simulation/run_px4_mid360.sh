@@ -175,7 +175,10 @@ export PX4_PARAM_EKF2_BARO_CTRL=1
 export PX4_PARAM_EKF2_RNG_CTRL=1
 export PX4_PARAM_EKF2_MAG_TYPE=0
 export PX4_PARAM_EKF2_HGT_REF=1
-export PX4_PARAM_EKF2_EV_CTRL=15
+# Keep the normal multisensor contract by default, while allowing an explicit
+# SITL A/B experiment to select a documented EV subset without editing the
+# launcher. Production callers must still choose the value deliberately.
+export PX4_PARAM_EKF2_EV_CTRL="${PX4_PARAM_EKF2_EV_CTRL:-15}"
 
 
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi

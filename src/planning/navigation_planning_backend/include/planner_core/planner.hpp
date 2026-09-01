@@ -118,6 +118,10 @@ namespace navigation_planning_backend {
             navigation_world_model::CellState::kUndefined};
         bool goal_endpoint_adjusted_{false};
         bool terminal_stop_required_{false};
+        // A remote mission STOP must not turn each bounded local prefix into
+        // a terminal stop. This flag is set only after the current candidate
+        // endpoint is actually connected to that STOP.
+        bool candidate_terminal_stop_active_{false};
         bool pass_through_coincident_terminal_stop_{false};
         // A projected terminal endpoint is leased for one immutable mission
         // request. Re-running the optimizer on a changing occupancy revision

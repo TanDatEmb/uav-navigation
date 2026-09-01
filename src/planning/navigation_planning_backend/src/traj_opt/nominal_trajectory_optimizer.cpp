@@ -700,6 +700,26 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
                 time_stamps(j), opt_vars.guide_t.back(), opt_vars.guide_t[nearest_index]);
     }
 
+    for (std::size_t gate_index = 0;
+         gate_index < opt_vars.route_boundary_gates.size(); ++gate_index) {
+        if (opt_vars.route_boundary_gates[gate_index] == 0U || gate_index == 0U ||
+            gate_index - 1U >= static_cast<std::size_t>(opt_vars.points.cols())) {
+            continue;
+        }
+        const auto& boundary_point = opt_vars.route_boundary_points[gate_index];
+        const double initial_distance =
+            (opt_vars.points.col(static_cast<Eigen::Index>(gate_index - 1U)) -
+             boundary_point).norm();
+        planner_context_->info(
+            " -- [ExpOpt] route-boundary seed cell={} point=({}, {}, {}) "
+            "junction=({}, {}, {}) distance={}",
+            gate_index, boundary_point.x(), boundary_point.y(), boundary_point.z(),
+            opt_vars.points.col(static_cast<Eigen::Index>(gate_index - 1U)).x(),
+            opt_vars.points.col(static_cast<Eigen::Index>(gate_index - 1U)).y(),
+            opt_vars.points.col(static_cast<Eigen::Index>(gate_index - 1U)).z(),
+            initial_distance);
+    }
+
     std::vector<double> monotonic_time_stamps(
             time_stamps.data(), time_stamps.data() + time_stamps.size());
     if (!navigation_planning_backend::spreadRepeatedGuideJunctionTimes(

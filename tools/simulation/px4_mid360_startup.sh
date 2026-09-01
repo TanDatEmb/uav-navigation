@@ -32,3 +32,19 @@ param show UXRCE_DDS_SYNCT
 param show MPC_YAWRAUTO_MAX
 param show MPC_YAWRAUTO_ACC
 param show MC_YAWRATE_MAX
+# Capture the position-controller and actuator limits used by this run.  These
+# are observations for post-run ownership analysis; the harness deliberately
+# does not tune them implicitly.
+param show MPC_XY_P
+param show MPC_Z_P
+param show MPC_XY_VEL_MAX
+param show MPC_Z_VEL_MAX_UP
+param show MPC_Z_VEL_MAX_DN
+param show MPC_ACC_HOR
+param show MPC_ACC_HOR_MAX
+param show MPC_ACC_UP_MAX
+param show MPC_ACC_DOWN_MAX
+param show MPC_TILTMAX_AIR
+param show MPC_THR_HOVER
+param show MPC_THR_MIN
+param show MPC_THR_MAX

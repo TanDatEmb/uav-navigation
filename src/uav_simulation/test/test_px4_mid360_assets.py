@@ -69,7 +69,7 @@ def test_launcher_disables_px4_gazebo_truth_odometry_source():
     # PX4's GZ bridge otherwise republishes this model's odometry as internal
     # vehicle_visual_odometry, competing with the ROS LIO external-vision path.
     assert "export PX4_PARAM_SIM_GZ_EN_ODOM=0" in active_lines
-    assert "export PX4_PARAM_EKF2_EV_CTRL=15" in launcher
+    assert 'export PX4_PARAM_EKF2_EV_CTRL="${PX4_PARAM_EKF2_EV_CTRL:-15}"' in launcher
     assert "export PX4_PARAM_SIM_GZ_EN_GPS=1" in launcher
     assert "export PX4_PARAM_SIM_GPS_USED=10" in launcher
     assert "export PX4_PARAM_EKF2_GPS_CTRL=7" in launcher

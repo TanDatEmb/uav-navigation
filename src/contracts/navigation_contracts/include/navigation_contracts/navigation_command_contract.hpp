@@ -64,6 +64,7 @@ inline bool commandContractValid(
   const bool rejected = command.status == NavigationCommand::STATUS_REJECTED;
   const bool normal = command.status == NavigationCommand::STATUS_READY ||
                       command.status == NavigationCommand::STATUS_COMPLETED;
+  const bool braking = command.status == NavigationCommand::STATUS_BRAKING;
   const bool pvaj_finite = std::isfinite(command.position.x) &&
                            std::isfinite(command.position.y) &&
                            std::isfinite(command.position.z) &&
@@ -83,6 +84,8 @@ inline bool commandContractValid(
                            (command.role == NavigationCommand::ROLE_MAIN ||
                             command.role == NavigationCommand::ROLE_BACKUP) &&
                            command.bundle_generation != 0U) ||
+                          (braking && command.role == NavigationCommand::ROLE_EMERGENCY &&
+                           command.bundle_generation != 0U) ||
                           (rejected && command.role == NavigationCommand::ROLE_EMERGENCY);
   return !expected_frame.empty() && !command.mission_id.empty() &&
          command.header.frame_id == expected_frame && header_ns > 0 &&
@@ -90,7 +93,7 @@ inline bool commandContractValid(
          command.localization_epoch != 0U && command.goal_epoch != 0U &&
          command.world_generation != 0U && command.world_revision != 0U &&
          command.sample_id != 0U && command.status != NavigationCommand::STATUS_EMPTY &&
-         (normal || rejected) && role_valid && pvaj_finite &&
+         (normal || braking || rejected) && role_valid && pvaj_finite &&
          command.trajectory_time_s >= 0.0;
 }
 

@@ -253,7 +253,18 @@ void MissionController::onNativeTrajectoryReady() {
   }
   checkpoint_valid_ = true;
   trajectory_ready_ = true;
-  terminal_hold_pending_ = false;
+  // A terminal BACKUP can be the only certified command that holds the
+  // active STOP waypoint. Do not let a later generic readiness callback erase
+  // that measured-settling contract before the vehicle is slow enough.
+  // The pending latch is cleared by update() after measured settling, or by
+  // a new waypoint transition.
+  const bool active_terminal_stop =
+      active_waypoint_index_ < mission_.waypoints.size() &&
+      mission_.waypoints[active_waypoint_index_].behavior ==
+          MissionWaypoint::Behavior::Stop;
+  if (!active_terminal_stop || !terminal_hold_pending_) {
+    terminal_hold_pending_ = false;
+  }
 }
 
 void MissionController::onNativeSafetyTrajectoryObserved() {
@@ -283,6 +294,12 @@ void MissionController::onNativeTerminalHoldObserved() {
   const auto& waypoint = mission_.waypoints[active_waypoint_index_];
   if (waypoint.behavior == MissionWaypoint::Behavior::Stop) {
     terminal_hold_pending_ = true;
+    // A terminal safety suffix is not nominal readiness for a pass-through
+    // checkpoint, but it is the certified command that owns this STOP
+    // endpoint. Keep the readiness witness so update() can enter the normal
+    // measured confirmation window when the speed gate settles.
+    trajectory_ready_ = true;
+    checkpoint_valid_ = true;
     return;
   }
   if (navigation_mission::passThroughNextWaypointIsCoincidentStop(
@@ -508,14 +525,36 @@ MissionControllerEvent MissionController::update(
         pass_through && active_waypoint_index_ == 0U && request_id_ == 1U && inside &&
         slowEnough();
     const bool acceptance_ready = pass_through ? passThroughCornerReady() : slowEnough();
+    if (terminal_hold_pending_ && !pass_through) {
+      // A terminal STOP requires a continuous measured confirmation window,
+      // not a single low-speed sample. Keep the certified endpoint hold while
+      // either position or speed temporarily leaves the gate, and restart
+      // the confirmation timer. This prevents a brief speed dip from
+      // releasing the hold and allowing a moving replan before the vehicle is
+      // actually settled.
+      if (!inside || !acceptance_ready) {
+        arrival_start_time_s_.reset();
+        return {};
+      }
+      if (!arrival_start_time_s_.has_value()) {
+        arrival_start_time_s_ = now_s;
+      }
+      if (now_s - *arrival_start_time_s_ >= mission_.control.acceptance_confirmation_s) {
+        terminal_hold_pending_ = false;
+        state_ = MissionControllerState::Holding;
+        hold_start_time_s_ = now_s;
+      }
+      return {};
+    }
     if (terminal_hold_pending_) {
       // A certified terminal MAIN sample already supplies a position hold.
       // While the vehicle is inside the active acceptance ball but still
       // moving, keep that hold and wait for measured settling. Re-publishing
       // the same goal here would clear the hold and recreate the oscillation
       // at a corner. If the vehicle has not yet entered the ball, the same
-      // bounded hold is still safe; a fresh non-terminal native trajectory
-      // clears this latch through onNativeTrajectoryReady().
+      // bounded hold is still safe. A later generic readiness callback cannot
+      // clear this latch while the active waypoint is a STOP; only measured
+      // settling or a waypoint transition may release it.
       if (inside && acceptance_ready) {
         terminal_hold_pending_ = false;
       } else {

@@ -12,6 +12,7 @@
 #include <planner_core/evidence_speed_governor.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/guide_vertical_envelope.hpp>
+#include <planner_core/altitude_route_projection.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/pass_through_terminal_velocity.hpp>
 #include <planner_core/route_boundary_timing.hpp>
@@ -93,9 +94,15 @@ TEST(GuideVerticalEnvelope, UsesOneInflatedVoxelAroundCertifiedGuide) {
               0.0, 0.0,-1.0, -10.0;
   geometry_utils::Polytope polytope(wide_box);
   polytope.SetSeedLine({guide.front(), guide.back()});
+  const navigation_math::Vec3f route_boundary_point{2.0, 0.0, 3.1};
+  polytope.SetRouteBoundaryContract(route_boundary_point, 0.9);
   geometry_utils::PolytopeVec corridor{polytope};
   ASSERT_TRUE(navigation_planning_backend::applyGuideVerticalEnvelope(
       corridor, envelope));
+  ASSERT_TRUE(corridor.front().IsRouteBoundaryGate());
+  EXPECT_TRUE(corridor.front().GetRouteBoundaryPoint().isApprox(
+      route_boundary_point, 1.0e-12));
+  EXPECT_DOUBLE_EQ(corridor.front().GetRouteBoundaryRadius(), 0.9);
   const auto bounded = corridor.front().GetPlanes();
   ASSERT_EQ(bounded.rows(), 8);
   EXPECT_DOUBLE_EQ(bounded(6, 2), 1.0);
@@ -144,6 +151,41 @@ TEST(GuideVerticalEnvelope, RejectsInvalidScaleOrGuide) {
   EXPECT_FALSE(navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.0).valid);
   guide.front().z() = std::numeric_limits<double>::quiet_NaN();
   EXPECT_FALSE(navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.2).valid);
+}
+
+TEST(AltitudeRouteProjection, InsertsCertifiedClimbBeforeHorizontalRoute) {
+  const navigation_math::vec_Vec3f source{
+      navigation_math::Vec3f{0.0F, 0.0F, 2.0F},
+      navigation_math::Vec3f{2.0F, 0.0F, 2.0F},
+      navigation_math::Vec3f{4.0F, 1.0F, 2.0F}};
+  navigation_math::vec_Vec3f projected;
+  ASSERT_TRUE(navigation_planning_backend::buildConstantAltitudeRoute(
+      source, 3.0, 0.01,
+      [](const navigation_math::Vec3f& begin,
+         const navigation_math::Vec3f& end) {
+        return begin.allFinite() && end.allFinite();
+      }, projected));
+  ASSERT_EQ(projected.size(), 4U);
+  EXPECT_FLOAT_EQ(projected[0].z(), 2.0F);
+  EXPECT_FLOAT_EQ(projected[1].z(), 3.0F);
+  EXPECT_FLOAT_EQ(projected[2].z(), 3.0F);
+  EXPECT_FLOAT_EQ(projected[3].z(), 3.0F);
+  EXPECT_TRUE(projected[1].head<2>().isApprox(source.front().head<2>()));
+}
+
+TEST(AltitudeRouteProjection, RejectsUncertifiedClimbWithoutChangingRoute) {
+  const navigation_math::vec_Vec3f source{
+      navigation_math::Vec3f{0.0F, 0.0F, 2.0F},
+      navigation_math::Vec3f{2.0F, 0.0F, 2.0F}};
+  navigation_math::vec_Vec3f projected{
+      navigation_math::Vec3f{99.0F, 99.0F, 99.0F}};
+  ASSERT_FALSE(navigation_planning_backend::buildConstantAltitudeRoute(
+      source, 3.0, 0.01,
+      [](const navigation_math::Vec3f& begin,
+         const navigation_math::Vec3f& end) {
+        return std::abs(end.z() - begin.z()) < 0.1F;
+      }, projected));
+  EXPECT_TRUE(projected.empty());
 }
 
 namespace {
@@ -975,6 +1017,31 @@ TEST(PlannerBackupBraking, ExtendsCertifiedSeedWhenAltitudeNeedsMoreTime) {
   EXPECT_LE(seed.maximum_velocity_mps, seed.allowed_peak_velocity_mps);
   EXPECT_LE(seed.maximum_acceleration_mps2, 2.0);
   EXPECT_LE(seed.maximum_jerk_mps3, 8.0);
+}
+
+TEST(PlannerBackupBraking, PreservesCurrentAltitudeForMeasuredEmergencyStop) {
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(0) << 4.0, -2.0, 3.0;
+  initial.col(1) << 2.0, -0.5, -0.35;
+  initial.col(2) << 0.1, -0.05, -0.02;
+  initial.col(3) << 0.02, 0.01, 0.0;
+
+  const auto seed =
+      navigation_planning_backend::makeBackupBrakingSeedWithTerminalAltitude(
+          0.0, initial, 3.0, 2.0, 8.0, 0.05, 0.0, initial.col(0).z());
+  ASSERT_TRUE(seed.feasible);
+  ASSERT_TRUE(seed.terminal_altitude_preserved);
+  const auto piece =
+      navigation_planning_backend::minimumSnapStopPieceWithTerminalAltitude(
+          initial, seed.duration_s, initial.col(0).z());
+  EXPECT_TRUE(piece.getState(0.0).isApprox(initial, 1.0e-9));
+  EXPECT_NEAR(piece.getPos(seed.duration_s).z(), initial.col(0).z(), 1.0e-9);
+  EXPECT_NEAR(piece.getVel(seed.duration_s).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR(piece.getAcc(seed.duration_s).norm(), 0.0, 1.0e-8);
+  EXPECT_NEAR(piece.getJer(seed.duration_s).norm(), 0.0, 1.0e-8);
+  EXPECT_LE(piece.getMaxVelRate(), seed.allowed_peak_velocity_mps + 1.0e-9);
+  EXPECT_LE(piece.getMaxAccRate(), 2.0 + 1.0e-9);
+  EXPECT_LE(piece.getMaxJerRate(), 8.0 + 1.0e-9);
 }
 
 TEST(PlannerBackupBraking, PreservesMeasuredOverspeedWithoutIncreasingIt) {

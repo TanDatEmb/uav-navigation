@@ -53,6 +53,9 @@ inline bool applyGuideVerticalEnvelope(
     const auto seed_line = polytope.seed_line;
     const double robot_radius = polytope.robot_r;
     const bool known_free = polytope.IsKnownFree();
+    const bool route_boundary_gate = polytope.IsRouteBoundaryGate();
+    const auto route_boundary_point = polytope.GetRouteBoundaryPoint();
+    const double route_boundary_radius = polytope.GetRouteBoundaryRadius();
     if (planes.cols() != 4 || planes.rows() <= 0 || !planes.allFinite() ||
         !polytope.HaveSeedLine() ||
         !polytope.seed_line.first.allFinite() ||
@@ -72,6 +75,10 @@ inline bool applyGuideVerticalEnvelope(
     polytope.SetPlanes(std::move(bounded));
     polytope.SetSeedLine(seed_line, robot_radius);
     polytope.SetKnownFree(known_free);
+    if (route_boundary_gate) {
+      polytope.SetRouteBoundaryContract(
+          route_boundary_point, route_boundary_radius);
+    }
     if (!polytope.PointIsInside(polytope.seed_line.first, 1.0e-9) ||
         !polytope.PointIsInside(polytope.seed_line.second, 1.0e-9)) {
       return false;

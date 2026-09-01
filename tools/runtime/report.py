@@ -471,6 +471,8 @@ _EXECUTION_STREAMS = {
     "ground_truth_odometry", "external_odometry", "px4_odometry",
     "vehicle_status", "local_position", "vehicle_attitude",
     "estimator_status", "estimator_status_flags", "estimator_innovations",
+    "px4_local_position_setpoint", "px4_attitude_setpoint",
+    "px4_thrust_setpoint", "px4_actuator_motors",
 }
 
 
@@ -2003,6 +2005,59 @@ def _timing_distribution(values: list[float]) -> dict[str, Any]:
     }
 
 
+def _px4_controller_telemetry_summary(
+    samples: list[dict[str, Any]], tolerance_ms: float,
+) -> dict[str, Any]:
+    """Compare PX4's post-controller setpoint with its local state.
+
+    This is attribution evidence only. It deliberately does not become an
+    acceptance gate: a missing optional uXRCE stream must not turn a valid
+    navigation verdict into a controller verdict.
+    """
+    setpoint = _series(samples, "px4_local_position_setpoint")
+    local_position = _series(samples, "local_position")
+    matches = _match(setpoint, local_position, int(tolerance_ms * 1e6))
+    position_errors: list[float] = []
+    velocity_errors: list[float] = []
+    for left, right, _ in matches:
+        lp = _vector(left.get("payload", {}).get("position_ned"))
+        rp = _vector([
+            right.get("payload", {}).get("x_ned_m"),
+            right.get("payload", {}).get("y_ned_m"),
+            right.get("payload", {}).get("z_ned_m"),
+        ])
+        lv = _vector(left.get("payload", {}).get("velocity_ned"))
+        rv = _vector([
+            right.get("payload", {}).get("vx_ned_m_s"),
+            right.get("payload", {}).get("vy_ned_m_s"),
+            right.get("payload", {}).get("vz_ned_m_s"),
+        ])
+        if lp is not None and rp is not None:
+            position_errors.append(math.sqrt(sum((lp[i] - rp[i]) ** 2 for i in range(3))))
+        if lv is not None and rv is not None:
+            velocity_errors.append(math.sqrt(sum((lv[i] - rv[i]) ** 2 for i in range(3))))
+    actuator = _series(samples, "px4_actuator_motors")
+    saturation_counts = [
+        float(item.get("payload", {}).get("saturated_control_count", 0))
+        for item in actuator
+    ]
+    return {
+        "setpoint_state_matched_sample_count": len(matches),
+        "setpoint_state_timestamp_tolerance_ms": tolerance_ms,
+        "setpoint_vs_local_position_m": _metric_summary(position_errors),
+        "setpoint_vs_local_velocity_m_s": _metric_summary(velocity_errors),
+        "actuator_saturation": {
+            "sample_count": len(saturation_counts),
+            "samples_with_saturation": sum(value > 0.0 for value in saturation_counts),
+            "maximum_saturated_control_count": max(saturation_counts, default=None),
+        },
+        "interpretation": (
+            "diagnostic-only: compares PX4 post-controller setpoint to local "
+            "state and reports actuator saturation; no acceptance gate"
+        ),
+    }
+
+
 def _diagnostic_timing_summary(
     samples: list[dict[str, Any]], status_name: str | tuple[str, ...], fields: tuple[str, ...],
     stream_names: tuple[str, ...] = ("diagnostics", "planning_diagnostics"),
@@ -2807,7 +2862,13 @@ def _dataset_report(session: Path, config: dict[str, Any], snapshot: dict[str, A
 
 def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any], workspace: Path, px4_dir: Path | None, workflow: str = "sim") -> dict[str, Any]:
     thresholds = config.get("runtime", {}).get("thresholds", {})
-    names = ("simulation_clock", "imu", "lidar", "corrected_odometry", "propagated_odometry", "ground_truth_odometry", "external_odometry", "px4_odometry", "vehicle_status", "local_position", "estimator_status_flags")
+    names = (
+        "simulation_clock", "imu", "lidar", "corrected_odometry",
+        "propagated_odometry", "ground_truth_odometry", "external_odometry",
+        "px4_odometry", "vehicle_status", "local_position",
+        "estimator_status_flags", "px4_local_position_setpoint",
+        "px4_attitude_setpoint", "px4_thrust_setpoint", "px4_actuator_motors",
+    )
     streams = {name: _rate_row(snapshot, name) for name in names}
     runtime = _load_json(session / "runtime.json", {})
     failures = _process_failures(session)
@@ -2824,6 +2885,10 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     planning["rolling_bundle_trace"] = _planner_trace_report(session, samples)
     planner_reference_residuals = _planner_reference_residuals(
         planning["rolling_bundle_trace"].get("records", []),
+        samples,
+        _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0),
+    )
+    px4_controller_telemetry = _px4_controller_telemetry_summary(
         samples,
         _number(thresholds.get("maximum_synchronization_tolerance_ms"), 20.0),
     )
@@ -2921,6 +2986,17 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
             "external_vision_status_interpretation": "PX4 control-status observation only; not per-sample fusion proof",
             "dead_reckoning_events": int(bool(snapshot.get("latest", {}).get("local_position", {}).get("dead_reckoning"))),
             "estimator_fault_events": int(bool(snapshot.get("latest", {}).get("estimator_status", {}).get("filter_fault_flags"))),
+            "controller_telemetry": {
+                "local_position_setpoint_samples": streams["px4_local_position_setpoint"]["sample_count"],
+                "attitude_setpoint_samples": streams["px4_attitude_setpoint"]["sample_count"],
+                "thrust_setpoint_samples": streams["px4_thrust_setpoint"]["sample_count"],
+                "actuator_motors_samples": streams["px4_actuator_motors"]["sample_count"],
+                "setpoint_vs_state": px4_controller_telemetry,
+                "interpretation": (
+                    "diagnostic-only PX4 post-controller and actuator telemetry; "
+                    "absence does not change the product acceptance verdict"
+                ),
+            },
         },
         "lio": {
             "state": diagnostics.get("state", "NOT_AVAILABLE"),
