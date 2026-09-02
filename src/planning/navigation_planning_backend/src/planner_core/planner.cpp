@@ -585,9 +585,10 @@ double knownFreeGuideSupport(
                     std::isfinite(emergency_endpoint_distance) &&
                     std::isfinite(cfg_.tracking_error_budget_m) &&
                     cfg_.tracking_error_budget_m >= 0.0 &&
+                    std::isfinite(recovery_radius) && recovery_radius > 0.0 &&
+                    emergency_endpoint_distance <= recovery_radius + 1.0e-9 &&
                     (candidate_start - active_waypoint.position_enu).norm() <=
-                        emergency_endpoint_distance +
-                        cfg_.tracking_error_budget_m + 1.0e-9 &&
+                        recovery_radius + 1.0e-9 &&
                     (candidate_end - active_waypoint.position_enu).norm() <=
                         active_waypoint.acceptance_radius_m + 1.0e-9;
                 bounded_terminal_stop_recovery =
