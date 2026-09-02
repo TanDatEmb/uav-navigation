@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -199,9 +200,19 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   void onModeStatus(
       const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message);
   void schedulePlanningCycle();
+
+  [[nodiscard]] bool queueExecutionTimelineActivation(
+      std::uint64_t generation) noexcept;
+  void applyQueuedExecutionTimelineActivations(
+      navigation_planning_backend::PlannerFacade& planner) noexcept;
   void runCycle(const PlanningKey& scheduled_key);
   [[nodiscard]] std::optional<PlanningKey> currentPlanningKey();
   void publishCommand();
+  [[nodiscard]] bool clearCommandForCurrentIdentity(
+      const navigation_contracts::msg::NavigationGoal& command_goal,
+      std::uint64_t goal_epoch_at_command,
+      std::uint64_t localization_epoch_at_command,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected);
   bool commitPlannerCandidate(const navigation_contracts::msg::NavigationGoal& goal,
                              std::uint64_t goal_epoch,
                              std::uint64_t localization_epoch,
@@ -289,7 +300,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // execution-anchor successor path so the
   // committed polynomial supplies the future PVA initial state.
   bool hot_goal_transition_{false};
-  bool restart_from_rest_{false};
   // planner backend's native FSM skips one replan timer callback immediately after a
   // successful stopped-state plan. Keep that state at the ROS adapter boundary so
   // the first hot replan is not run against a trajectory that has just been
@@ -332,6 +342,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t planner_solve_generation_{0U};
   std::atomic_uint64_t active_planner_solve_generation_{0U};
   std::atomic_uint64_t timed_out_planner_solve_generation_{0U};
+  std::atomic_uint64_t planner_timeline_activation_generation_{0U};
+  mutable std::mutex planner_timeline_activation_mutex_;
+  std::deque<std::uint64_t> queued_planner_timeline_activations_;
   std::atomic_int64_t planner_solve_started_steady_ns_{0};
   std::atomic_int last_planning_outcome_{
       static_cast<int>(navigation_planning::CompletePlanningOutcome::kInvalidRequest)};

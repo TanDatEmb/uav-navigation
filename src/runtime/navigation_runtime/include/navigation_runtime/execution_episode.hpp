@@ -24,6 +24,8 @@ struct ExecutionEpisodeSnapshot final {
   ExecutionEpisodePhase phase{ExecutionEpisodePhase::kInitialHold};
   bool command_available{false};
   bool failure_latched{false};
+  bool safety_suffix_active{false};
+  bool restart_from_rest{false};
 };
 
 // One serialized lifecycle record for an execution episode. The legacy atomics
@@ -54,6 +56,8 @@ class ExecutionEpisode final {
                                   : ExecutionEpisodePhase::kInitialHold;
     state_.command_available = retain_command;
     state_.failure_latched = false;
+    state_.safety_suffix_active = false;
+    state_.restart_from_rest = false;
     if (!retain_command) state_.active_generation = 0U;
   }
 
@@ -70,6 +74,9 @@ class ExecutionEpisode final {
     state_.active_generation = bundle.bundle_generation;
     state_.command_available = true;
     state_.failure_latched = false;
+    state_.safety_suffix_active =
+        bundle.role == navigation_planning::CandidateRole::kBackup ||
+        bundle.role == navigation_planning::CandidateRole::kEmergency;
     state_.phase = bundle.kind == navigation_planning::CandidateBundleKind::kEmergencyBrake
         ? ExecutionEpisodePhase::kTrackingBackup
         : ExecutionEpisodePhase::kTrackingMain;
@@ -83,9 +90,25 @@ class ExecutionEpisode final {
     if (role == navigation_planning::CandidateRole::kEmergency ||
         role == navigation_planning::CandidateRole::kBackup) {
       state_.phase = ExecutionEpisodePhase::kTrackingBackup;
+      state_.safety_suffix_active = true;
     } else {
       state_.phase = ExecutionEpisodePhase::kTrackingMain;
     }
+  }
+
+  void setSafetySuffix(bool active) noexcept {
+    std::lock_guard lock(mutex_);
+    state_.safety_suffix_active = active;
+  }
+
+  void requestRestartFromRest() noexcept {
+    std::lock_guard lock(mutex_);
+    state_.restart_from_rest = true;
+  }
+
+  void clearRestartFromRest() noexcept {
+    std::lock_guard lock(mutex_);
+    state_.restart_from_rest = false;
   }
 
   void stoppedHold(std::uint64_t generation) noexcept {
@@ -93,6 +116,8 @@ class ExecutionEpisode final {
     state_.active_generation = generation;
     state_.phase = ExecutionEpisodePhase::kStoppedHold;
     state_.command_available = true;
+    state_.safety_suffix_active = false;
+    state_.restart_from_rest = false;
   }
 
   void failClosed() noexcept {
@@ -100,6 +125,8 @@ class ExecutionEpisode final {
     state_.phase = ExecutionEpisodePhase::kPx4Hold;
     state_.command_available = false;
     state_.failure_latched = true;
+    state_.safety_suffix_active = false;
+    state_.restart_from_rest = false;
   }
 
   void suspendCommand() noexcept {

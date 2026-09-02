@@ -30,10 +30,9 @@ class CommandSampler final {
   [[nodiscard]] SampleResult sample(
       std::int64_t stamp_ns,
       std::uint64_t expected_goal_epoch = 0U) const noexcept {
-    // Activation is the only active-pointer swap. Keep it on the sampler's
-    // bounded 50 Hz path so a planning completion can never interrupt the
-    // command currently being published.
-    (void)store_.activatePendingIfDue(stamp_ns);
+    // Activation is owned by the runtime execution transaction. Sampling is
+    // read-only and cannot independently swap the active pointer or finalize
+    // planner history.
     return sampleActive(stamp_ns, expected_goal_epoch);
   }
 

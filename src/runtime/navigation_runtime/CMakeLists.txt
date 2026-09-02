@@ -123,7 +123,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_planner_fsm navigation_planning navigation_contracts builtin_interfaces)
   ament_add_gtest(test_planning_worker test/test_planning_worker.cpp)
   target_include_directories(test_planning_worker PRIVATE include)
-  ament_target_dependencies(test_planning_worker navigation_planning)
+  ament_target_dependencies(test_planning_worker navigation_planning builtin_interfaces)
   ament_add_gtest(test_mission_dynamics
     test/test_mission_dynamics.cpp
     src/mission_dynamics.cpp)
@@ -147,7 +147,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_execution_episode
     test/test_execution_episode.cpp)
   target_include_directories(test_execution_episode PRIVATE include)
-  ament_target_dependencies(test_execution_episode navigation_planning)
+  ament_target_dependencies(test_execution_episode navigation_planning builtin_interfaces)
 endif()
 
 ament_package()

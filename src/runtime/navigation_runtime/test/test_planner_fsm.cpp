@@ -555,6 +555,9 @@ TEST(PlannerFsm, SamplesDeclaredTerminalCandidateBeyondExecutionLease) {
   candidate.backup_start_time_s = 0.0;
   candidate.valid_from_ns = 10000000000LL;
   candidate.valid_until_ns = 10500000000LL;
+  candidate.activation_stamp_ns = candidate.valid_from_ns;
+  candidate.declared_start_ns = 10000000000LL;
+  candidate.declared_end_ns = 11000000000LL;
   candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
   candidate.certificates = {true, true, true, true};
   candidate.protected_region.minimum = Eigen::Vector3d::Zero();
@@ -590,6 +593,9 @@ TEST(PlannerFsm, SamplesDeclaredTerminalMainOnlyCandidateWithoutBackupMetadata) 
   candidate.duration_s = 1.0;
   candidate.valid_from_ns = 10000000000LL;
   candidate.valid_until_ns = 10500000000LL;
+  candidate.activation_stamp_ns = candidate.valid_from_ns;
+  candidate.declared_start_ns = 10000000000LL;
+  candidate.declared_end_ns = 11000000000LL;
   candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
   candidate.certificates = {true, true, true, true};
   candidate.protected_region.minimum = Eigen::Vector3d::Zero();
@@ -628,6 +634,7 @@ TEST(PlannerFsm, SamplesExactFractionalMainWithBackupEndpointRole) {
       candidate.start_wall_time_s, candidate.duration_s);
   candidate.valid_from_ns = candidate.declared_start_ns;
   candidate.valid_until_ns = candidate.declared_end_ns;
+  candidate.activation_stamp_ns = candidate.valid_from_ns;
   candidate.role = navigation_planning::CandidateRole::kMain;
   candidate.backup_available = true;
   candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
