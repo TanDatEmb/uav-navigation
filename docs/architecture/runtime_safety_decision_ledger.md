@@ -17879,3 +17879,31 @@ release profiles must not use the former allowance.
 - **Verification:** `make build`; focused planning/execution/runtime tests;
   repeated obstacle-map SITL with no `insufficient MAIN reserve` rejection and
   with mission completion still subject to all existing acceptance gates.
+
+### 2026-09-02 - Re-enable certified outgoing lookahead through pass-through corners
+
+- **Owner/status:** navigation planning route continuity, `IMPLEMENTED`;
+  focused tests/build pass required and representative obstacle-map SITL is
+  still open.
+- **Scope:** A genuine pass-through corner may use the outgoing MINCO lookahead
+  again, but only when `corner_window` has passed the existing traversability
+  and search-horizon certification. An uncertified corner still uses the
+  bounded acceptance-ball fillet.
+- **Safety impact:** Avoids making every sharp pass-through turn terminate at
+  the waypoint acceptance ball and then depend on a measured stopped restart.
+  This preserves continuous motion when a certified outgoing corridor exists;
+  no unknown-space, route-boundary, dynamic, tracking, clearance, freshness,
+  identity, or acceptance gate is relaxed. A missing/invalid corner window
+  remains fail-closed.
+- **Evidence:** The artifact
+  `external-mode-check-20260902T105530-1314297` repeatedly showed the
+  fallback fillet ending near `(120,4.33,3)` while BACKUP began before the
+  waypoint boundary; a later optimizer failure led to overshoot and repeated
+  route-regression rejection. Verification must show certified corner
+  lookahead candidates and no unsafe candidate admission.
+- **Removal/review condition:** Revert only if repeated representative maps
+  show the certified lookahead violates tracking or completion requirements;
+  do not replace it with a gate relaxation or a single-run tuning change.
+- **Verification:** `make build`; focused planner/FSM/trajectory tests;
+  repeated obstacle-map SITL with route-boundary evidence, no collision, and
+  mission completion still required.
