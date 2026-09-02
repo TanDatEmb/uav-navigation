@@ -2022,7 +2022,16 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   }
   const bool emergency_candidate = candidate->kind ==
       navigation_planning::CandidateBundleKind::kEmergencyBrake;
-  const bool schedule_successor = has_active_bundle && !emergency_candidate;
+  const auto execution_recovery_state = execution_recovery_state_.load(
+      std::memory_order_acquire);
+  // An expired recovery endpoint is a bounded STOPPED_HOLD, not a future
+  // execution timeline. A measured-state replacement must cut over now and
+  // validate its first sample against measured state; reserving an anchor on
+  // the expired polynomial would reject the recovery that resumes the mission.
+  const bool replacing_stopped_recovery =
+      execution_recovery_state == ExecutionRecoveryState::kStoppedRecovery;
+  const bool schedule_successor = has_active_bundle && !emergency_candidate &&
+                                  !replacing_stopped_recovery;
   const auto activation_ns = schedule_successor
       ? candidate->declared_start_ns
       : now_ns;
@@ -3581,12 +3590,36 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       expected_active_generation, 0U);
   last_planner_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - planner_started).count();
-  if (timed_out_planner_solve_generation_.load() == solve_generation) {
+  const bool timed_out =
+      timed_out_planner_solve_generation_.load() == solve_generation;
+  const bool stopped_recovery_retry =
+      plan_from_rest_with_transition &&
+      execution_recovery_state_.load(std::memory_order_acquire) ==
+          ExecutionRecoveryState::kStoppedRecovery;
+  if (timed_out && !stopped_recovery_retry) {
     RCLCPP_ERROR(get_logger(),
                  "Discarding planner backend solve generation=%lu after planner watchdog timeout",
                  static_cast<unsigned long>(solve_generation));
     planner_->discardCommandCandidate();
     return;
+  }
+  if (timed_out) {
+    // The immutable STOPPED_HOLD remains exposed while the measured-state
+    // solve is retried. Treat the canceled solve as a bounded PlanFromRest
+    // failure so the existing stopped-recovery failure budget can decide
+    // whether to continue or fail closed.
+    result = navigation_planning::PlannerStatus::kFailed;
+    planning_outcome.outcome =
+        navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+    planning_outcome.failure_stage =
+        navigation_planning::PlanningFailureStage::kDeadline;
+    planning_outcome.failure_reason =
+        navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline;
+    RCLCPP_WARN(
+        get_logger(),
+        "planner backend stopped-recovery solve generation=%lu exceeded watchdog; "
+        "retaining bounded hold and charging retry budget",
+        static_cast<unsigned long>(solve_generation));
   }
   if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
       active_localization_epoch_.load(std::memory_order_acquire) !=
@@ -3631,7 +3664,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   const bool solve_committed_new_generation = planner_->hasStagedCommandCandidate();
   const auto disposition = classifyPlannerResult(
       result, plan_from_rest_with_transition,
-      execution_episode_.snapshot().command_available,
+      execution_episode_.snapshot().command_available && !stopped_recovery_retry,
       solve_committed_new_generation);
   if (disposition != PlannerResultDisposition::CommandReady) {
     // A staged candidate is private planner state until the execution store
@@ -4760,6 +4793,7 @@ void NavigationRuntimeNode::publishCommand() {
         constexpr int timeout_stage = -1;
         constexpr std::size_t timeout_point_count = 0U;
         bool retain_safety_suffix = false;
+        bool retain_stopped_recovery_hold = false;
         {
           std::lock_guard<std::mutex> command_lock(
               command_execution_lease_failure_latch_.transitionMutex());
@@ -4770,13 +4804,20 @@ void NavigationRuntimeNode::publishCommand() {
               recovery_state,
               episode.command_available,
               episode.safety_suffix_active);
-          if (retain_safety_suffix) {
+          retain_stopped_recovery_hold = watchdogTimeoutMayRetainStoppedRecoveryHold(
+              recovery_state,
+              episode.command_available,
+              episode.restart_from_rest);
+          if (retain_safety_suffix || retain_stopped_recovery_hold) {
             // The timed-out replacement is not allowed to revoke the already
-            // certified moving suffix. Keep its ownership and let the normal
-            // stop observation transition it to StoppedRecovery.
+            // certified suffix or bounded stopped-recovery hold. Keep its
+            // ownership and let the normal recovery budget decide the next
+            // transition.
             planner_failure_latched_.store(false, std::memory_order_release);
-            safety_suffix_active_.store(true, std::memory_order_release);
-            execution_episode_.setSafetySuffix(true);
+            if (retain_safety_suffix) {
+              safety_suffix_active_.store(true, std::memory_order_release);
+              execution_episode_.setSafetySuffix(true);
+            }
           } else {
             // No certified suffix is available for this solve. A watchdog
             // timeout is therefore a terminal handover, never a stale-command
@@ -4799,6 +4840,13 @@ void NavigationRuntimeNode::publishCommand() {
                      timeout_stage,
                      timeout_point_count,
                      retain_safety_suffix ? 1 : 0);
+        if (retain_stopped_recovery_hold) {
+          RCLCPP_WARN(
+              get_logger(),
+              "planner watchdog retained bounded STOPPED_HOLD for measured-state retry "
+              "generation=%lu",
+              static_cast<unsigned long>(active_solve));
+        }
       }
     }
   }

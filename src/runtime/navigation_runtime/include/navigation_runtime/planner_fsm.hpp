@@ -120,6 +120,18 @@ inline bool watchdogTimeoutMayRetainSafetySuffix(
   return safety_state && command_available && safety_suffix_active;
 }
 
+// A stopped recovery endpoint is a bounded, known-free hold while a measured
+// state PlanFromRest solve is retried. A watchdog timeout must not turn that
+// hold into PX4 Hold immediately: the stopped-recovery timeout and failure
+// budget remain the terminal authority, while the hold prevents drift during
+// the retry.
+inline bool watchdogTimeoutMayRetainStoppedRecoveryHold(
+    ExecutionRecoveryState state, bool command_available,
+    bool restart_from_rest) noexcept {
+  return state == ExecutionRecoveryState::kStoppedRecovery &&
+         command_available && restart_from_rest;
+}
+
 inline bool pendingGoalTerminalStatusMayClear(
     bool matches_pending, bool safety_suffix_active) noexcept {
   // A queued request can report PAUSED/COMPLETED while the preceding

@@ -474,6 +474,17 @@ TEST(PlannerFsm, FiveSecondTimeoutExistsOnlyWhileStationary) {
       ExecutionRecoveryState::kStoppedRecovery, true, 4.999, 5.0));
 }
 
+TEST(PlannerFsm, WatchdogKeepsBoundedStoppedRecoveryHoldForRetry) {
+  EXPECT_TRUE(watchdogTimeoutMayRetainStoppedRecoveryHold(
+      ExecutionRecoveryState::kStoppedRecovery, true, true));
+  EXPECT_FALSE(watchdogTimeoutMayRetainStoppedRecoveryHold(
+      ExecutionRecoveryState::kStoppedRecovery, true, false));
+  EXPECT_FALSE(watchdogTimeoutMayRetainStoppedRecoveryHold(
+      ExecutionRecoveryState::kTrackBackup, true, true));
+  EXPECT_FALSE(watchdogTimeoutMayRetainStoppedRecoveryHold(
+      ExecutionRecoveryState::kStoppedRecovery, false, true));
+}
+
 TEST(PlannerFsm, ResumesOnlyExactFreshWorldRecertifiedGeneration) {
   EXPECT_TRUE(worldFreshnessSuspendedCommandMayResume(
       17U, 17U, 3U, 5U, 3U, 5U, 10'500, 10'000,
