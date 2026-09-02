@@ -3746,6 +3746,68 @@ double knownFreeGuideSupport(
         };
         const double initial_switch_guess = heu_ts;
         const double backup_altitude_target_m = planning_goal_p_.z();
+        // A BACKUP that starts before an uncompleted pass-through waypoint is
+        // allowed to stop before it. It is not allowed to pass through the
+        // measured acceptance ball and stop beyond it: that would leave the
+        // mission requiring a backward correction, which the route-regression
+        // certificate must reject. Compute the MAIN entry once so each switch
+        // candidate can be classified without changing the safety window.
+        std::optional<double> main_acceptance_entry_t;
+        std::optional<Eigen::Vector3d> active_pass_through_waypoint;
+        double active_pass_through_radius_m =
+                std::numeric_limits<double>::quiet_NaN();
+        if (route_snapshot_.has_value() &&
+            route_snapshot_->active_waypoint_index < route_snapshot_->waypoints.size()) {
+            const auto& active_waypoint = route_snapshot_->waypoints[
+                    route_snapshot_->active_waypoint_index];
+            if (active_waypoint.behavior ==
+                    navigation_mission::MissionWaypoint::Behavior::PassThrough &&
+                active_waypoint.position_enu.allFinite() &&
+                std::isfinite(active_waypoint.acceptance_radius_m) &&
+                active_waypoint.acceptance_radius_m > 0.0) {
+                active_pass_through_waypoint = active_waypoint.position_enu;
+                active_pass_through_radius_m = active_waypoint.acceptance_radius_m;
+                const auto inside_acceptance = [&](const double time_s) {
+                    const auto position = ref_exp_traj.getPos(time_s);
+                    return position.allFinite() &&
+                        (position.cast<double>() - *active_pass_through_waypoint).norm() <=
+                        active_pass_through_radius_m + 1.0e-6;
+                };
+                const double total_duration = ref_exp_traj.getTotalDuration();
+                if (std::isfinite(total_duration) && total_duration >= visibility_start_t) {
+                    const auto sample_count = static_cast<std::size_t>(std::ceil(
+                        (total_duration - visibility_start_t) / cfg_.sample_traj_dt_s));
+                    if (sample_count <= 10000000U) {
+                        double previous_time = visibility_start_t;
+                        if (inside_acceptance(previous_time)) {
+                            main_acceptance_entry_t = previous_time;
+                        } else {
+                            for (std::size_t sample = 1U; sample <= sample_count; ++sample) {
+                                const double time_s = std::min(
+                                    total_duration,
+                                    visibility_start_t +
+                                        static_cast<double>(sample) * cfg_.sample_traj_dt_s);
+                                if (inside_acceptance(time_s)) {
+                                    main_acceptance_entry_t = time_s;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        const auto backup_crosses_uncompleted_pass_through =
+                [&](const double candidate_ts, const geometry_utils::Piece& piece) {
+            if (!active_pass_through_waypoint.has_value() ||
+                (main_acceptance_entry_t.has_value() &&
+                 *main_acceptance_entry_t <= candidate_ts + 1.0e-6)) {
+                return false;
+            }
+            return backupEntersAcceptanceAndEndsOutside(
+                piece, *active_pass_through_waypoint, active_pass_through_radius_m,
+                cfg_.sample_traj_dt_s);
+        };
         Polytope temp_poly;
         geometry_utils::Piece selected_braking_piece;
         bool selected_braking_piece_ready = false;
@@ -3885,10 +3947,24 @@ double knownFreeGuideSupport(
             }
             if (braking_seed_inside_sfc) {
                 const auto validation = minimum_snap_backup_validation(
-                    candidate_ts, braking_seed.duration_s, candidate_braking_piece);
+                        candidate_ts, braking_seed.duration_s, candidate_braking_piece);
                 braking_seed_inside_sfc = record_known_free_validation(
                     validation,
                     navigation_planning::BackupCertificateRejectStage::kKnownFree);
+            }
+            if (braking_seed_inside_sfc &&
+                backup_crosses_uncompleted_pass_through(
+                    candidate_ts, candidate_braking_piece)) {
+                braking_seed_inside_sfc = false;
+                planner_context_->info(
+                    " -- [planner] rejected BACKUP route disposition: suffix "
+                    "enters uncompleted pass-through acceptance and ends outside "
+                    "candidate_switch={} endpoint=({}, {}, {}) waypoint=({}, {}, {}) "
+                    "radius={}",
+                    candidate_ts, braking_seed.endpoint.x(), braking_seed.endpoint.y(),
+                    braking_seed.endpoint.z(), active_pass_through_waypoint->x(),
+                    active_pass_through_waypoint->y(), active_pass_through_waypoint->z(),
+                    active_pass_through_radius_m);
             }
             if (braking_seed_inside_sfc) {
                 temp_poly = candidate_sfc;

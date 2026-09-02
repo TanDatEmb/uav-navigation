@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
 #include <data_structure/base/piece.h>
@@ -274,6 +275,43 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithTerminalAltitude(
     }
   }
   return result;
+}
+
+// A non-terminal pass-through BACKUP may stop before its active waypoint, but
+// it must not enter that waypoint's measured acceptance ball and then stop
+// beyond it. The latter looks collision-safe locally while leaving the
+// mission with no forward route handoff; a later correction would be a
+// forbidden route regression. This is a geometric disposition check only:
+// the caller still owns the exact measured acceptance and all world/dynamic
+// certificates.
+inline bool backupEntersAcceptanceAndEndsOutside(
+    const geometry_utils::Piece &piece, const Eigen::Vector3d &waypoint,
+    const double acceptance_radius_m, const double sample_dt_s) noexcept {
+  const double duration_s = piece.getDuration();
+  if (!std::isfinite(duration_s) || duration_s <= 0.0 ||
+      !waypoint.allFinite() || !std::isfinite(acceptance_radius_m) ||
+      acceptance_radius_m <= 0.0 || !std::isfinite(sample_dt_s) ||
+      sample_dt_s <= 0.0) {
+    return false;
+  }
+  const auto endpoint = piece.getPos(duration_s);
+  if (!endpoint.allFinite() ||
+      (endpoint.cast<double>() - waypoint).norm() <= acceptance_radius_m + 1.0e-6) {
+    return false;
+  }
+  const auto sample_count = static_cast<std::size_t>(std::ceil(
+      duration_s / sample_dt_s));
+  if (sample_count > 10000000U) return false;
+  for (std::size_t sample = 0U; sample <= sample_count; ++sample) {
+    const double time_s = std::min(
+        duration_s, static_cast<double>(sample) * sample_dt_s);
+    const auto position = piece.getPos(time_s);
+    if (position.allFinite() &&
+        (position.cast<double>() - waypoint).norm() <= acceptance_radius_m + 1.0e-6) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace navigation_planning_backend

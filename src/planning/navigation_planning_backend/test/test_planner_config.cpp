@@ -673,6 +673,19 @@ TEST(PlannerPassThrough, RouteBoundaryTimingSplitsDirectEndpointInterval) {
       10.0);
 }
 
+TEST(PlannerPassThrough, BackupCannotCrossUncompletedAcceptanceAndStopBeyondIt) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  state.col(1) = Eigen::Vector3d{5.0, 0.0, 0.0};
+  const auto piece = navigation_planning_backend::minimumSnapStopPiece(state, 2.0);
+
+  EXPECT_TRUE(navigation_planning_backend::backupEntersAcceptanceAndEndsOutside(
+      piece, Eigen::Vector3d{3.0, 0.0, 0.0}, 0.5, 0.005));
+  EXPECT_FALSE(navigation_planning_backend::backupEntersAcceptanceAndEndsOutside(
+      piece, Eigen::Vector3d{5.0, 0.0, 0.0}, 0.5, 0.005));
+  EXPECT_FALSE(navigation_planning_backend::backupEntersAcceptanceAndEndsOutside(
+      piece, Eigen::Vector3d{6.0, 0.0, 0.0}, 0.5, 0.005));
+}
+
 TEST(PlannerPassThrough, RepeatedGuideTimesUseNeighbouringTimeAnchors) {
   std::vector<double> interior_plateau{0.0, 3.0, 3.0, 3.0, 10.0};
   ASSERT_TRUE(navigation_planning_backend::spreadRepeatedGuideJunctionTimes(
