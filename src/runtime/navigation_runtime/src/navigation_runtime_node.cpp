@@ -2320,11 +2320,21 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   world_freshness_suspended_safety_suffix_active_.store(
       false, std::memory_order_release);
   if (!anchor) {
-    // The execution store is the sole command-authority cutover.  Planner
-    // warm-start history follows through the worker-owned activation queue,
-    // including the initial command; do not call the mutable backend directly
-    // from the execution callback.
-    if (!queueExecutionTimelineActivation(candidate_ptr->bundle_generation)) {
+    // The execution store is the sole command-authority cutover. Emergency
+    // replacement is already committed synchronously at this worker-owned
+    // measured boundary, so synchronize planner warm-start history before the
+    // next PlanFromRest attempt. Future successors still use the activation
+    // queue and remain pending until their exact producer boundary.
+    bool planner_activation_queued = true;
+    if (emergency_candidate) {
+      planner_->onExecutionTimelineActivated(candidate_ptr->bundle_generation);
+      planner_timeline_activation_generation_.store(
+          candidate_ptr->bundle_generation, std::memory_order_release);
+    } else {
+      planner_activation_queued = queueExecutionTimelineActivation(
+          candidate_ptr->bundle_generation);
+    }
+    if (!planner_activation_queued) {
       (void)clearCommandForCurrentIdentity(
           goal, goal_epoch, localization_epoch, candidate_ptr);
       planner_->discardCommandCandidate();

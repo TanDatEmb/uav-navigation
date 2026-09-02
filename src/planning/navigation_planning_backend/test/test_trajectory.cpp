@@ -2251,6 +2251,36 @@ TEST(PlannerTrajectory, BoundedTerminalStopRecoveryDoesNotUseRouteFoldGate) {
   EXPECT_TRUE(certificate.valid);
 }
 
+TEST(PlannerTrajectory, BoundedPassThroughRecoveryUsesEmergencyIdentityBoundary) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 2);
+  // The measured emergency endpoint is just beyond the pass-through
+  // waypoint. The MAIN correction returns into its acceptance ball; its
+  // BACKUP suffix is not part of the route-progress certificate.
+  coefficients.row(0) << -1.0, 21.0;
+  coefficients(2, 1) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 1.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  candidate.backup_suffix_available = true;
+
+  const auto route = makeStraightActiveRouteSnapshot(
+      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{20.0, 0.0, 3.0},
+      Eigen::Vector3d{20.8, 0.0, 3.0});
+  const auto nominal_certificate =
+      navigation_planning_backend::certifyMainRouteRegression(
+          candidate, route, 0.0, 0.5);
+  EXPECT_TRUE(nominal_certificate.applicable);
+  EXPECT_FALSE(nominal_certificate.valid);
+
+  const auto recovery_certificate =
+      navigation_planning_backend::certifyMainRouteRegression(
+          candidate, route, 0.0, 0.5, true);
+  EXPECT_FALSE(recovery_certificate.applicable);
+  EXPECT_TRUE(recovery_certificate.valid);
+}
+
 TEST(PlannerTrajectory, SemanticYawUsesForwardStoppingDisplacementForBackupHold) {
   const std::vector<double> durations{3.0};
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);

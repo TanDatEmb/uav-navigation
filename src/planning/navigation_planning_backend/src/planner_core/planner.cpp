@@ -500,7 +500,7 @@ double knownFreeGuideSupport(
             const double route_regression_tolerance_m =
                 navigation_mission::RouteProgressConfig{}.backtrack_tolerance_m;
             bool bounded_terminal_stop_recovery = false;
-            if (candidate.terminal_stop &&
+            if ((candidate.terminal_stop || candidate.backup_suffix_available) &&
                 route_snapshot_->active_waypoint_index <
                     route_snapshot_->waypoints.size()) {
                 const auto& active_waypoint = route_snapshot_->waypoints[
@@ -509,14 +509,34 @@ double knownFreeGuideSupport(
                     candidate.position.getState(
                         std::clamp(begin_tt, 0.0,
                                    candidate.position.getTotalDuration())).col(0);
-                const Eigen::Vector3d candidate_end =
-                    candidate.position.getState(
-                        candidate.position.getTotalDuration()).col(0);
+                double candidate_end_tt = candidate.position.getTotalDuration();
+                if (!candidate.terminal_stop) {
+                    candidate_end_tt =
+                        -std::numeric_limits<double>::infinity();
+                    for (const auto& role : candidate.roles) {
+                        if (role.role == CandidateTrajectoryRole::MAIN &&
+                            std::isfinite(role.end_tt)) {
+                            candidate_end_tt = std::max(candidate_end_tt,
+                                                        role.end_tt);
+                        }
+                    }
+                }
+                Eigen::Vector3d candidate_end = Eigen::Vector3d::Constant(
+                    std::numeric_limits<double>::quiet_NaN());
+                if (std::isfinite(candidate_end_tt) &&
+                    candidate_end_tt >= 0.0 &&
+                    candidate_end_tt <=
+                        candidate.position.getTotalDuration() + 1.0e-9) {
+                    candidate_end = candidate.position.getState(std::clamp(
+                        candidate_end_tt, 0.0,
+                        candidate.position.getTotalDuration())).col(0);
+                }
                 const double recovery_radius =
                     active_waypoint.acceptance_radius_m + cfg_.tracking_error_budget_m;
                 const bool candidate_is_bounded_correction =
                     active_waypoint.behavior ==
                         navigation_mission::MissionWaypoint::Behavior::Stop &&
+                    candidate.terminal_stop &&
                     candidate_start.allFinite() &&
                     candidate_end.allFinite() &&
                     std::isfinite(recovery_radius) && recovery_radius > 0.0 &&
@@ -555,6 +575,13 @@ double knownFreeGuideSupport(
                 const bool emergency_bounded_correction =
                     previous_was_emergency && candidate_start.allFinite() &&
                     candidate_end.allFinite() &&
+                    ((active_waypoint.behavior ==
+                          navigation_mission::MissionWaypoint::Behavior::Stop &&
+                      candidate.terminal_stop) ||
+                     (active_waypoint.behavior ==
+                          navigation_mission::MissionWaypoint::Behavior::PassThrough &&
+                      !candidate.terminal_stop &&
+                      candidate.backup_suffix_available)) &&
                     std::isfinite(emergency_endpoint_distance) &&
                     std::isfinite(cfg_.tracking_error_budget_m) &&
                     cfg_.tracking_error_budget_m >= 0.0 &&
@@ -567,7 +594,7 @@ double knownFreeGuideSupport(
                     candidate_is_bounded_correction || emergency_bounded_correction;
                 if (emergency_bounded_correction && !candidate_is_bounded_correction) {
                     planner_context_->info(
-                        " -- [planner] allowing bounded STOP correction after "
+                        " -- [planner] allowing bounded waypoint correction after "
                         "certified emergency endpoint distance={} start_distance={} "
                         "acceptance_radius={}",
                         emergency_endpoint_distance,

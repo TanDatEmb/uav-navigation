@@ -1,5 +1,14 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Synchronize emergency activation before bounded pass-through recovery
+
+- **Owner/status:** planning/runtime emergency handoff and route-progress recovery, `IMPLEMENTED`; focused regression/build and representative obstacle SITL verification remain open.
+- **Scope:** a measured emergency replacement is activated into planner warm-start history immediately after the execution timeline commits it at the worker-owned boundary. A subsequent `PlanFromRest` candidate may bypass the MAIN route-fold certificate only for the same command identity, a PASS_THROUGH active waypoint, a MAIN+BACKUP candidate whose MAIN endpoint is inside that waypoint's acceptance ball, and a start bounded by the certified emergency endpoint plus the existing tracking budget. STOP recovery keeps the existing equivalent bounded rule.
+- **Safety impact:** closes stale planner-history state that repeatedly rejected recovery after a pass-through corner. This is not a wider route-regression tolerance and does not bypass world, dynamic, flatness, yaw, anchor, MAIN-reserve, freshness, route-boundary, or PX4 gates. Nominal pass-through candidates and identity-mismatched candidates remain subject to route-regression rejection.
+- **Evidence:** the long multi-pillar artifact committed an emergency generation but did not show its planner activation before repeated `PlanFromRest` route-regression rejections. Add a deterministic pass-through recovery regression, rebuild, and rerun the obstacle SITL.
+- **Removal/review condition:** retain until repeated long obstacle SITL shows emergency activation followed by bounded recovery, continuous command publication, waypoint completion, and no collision; remove only if an equivalent synchronous worker-owned activation contract is established.
+- **Verification:** `build/navigation_planning_backend/test_trajectory`, affected-package build, sourced focused CTest, and repeated long multi-obstacle SITL with generation activation, recovery identity, tracking, clearance, and mission-completion evidence.
+
 ### 2026-09-02 - Bounded optimizer fallback when deterministic baseline seed is unavailable
 
 - **Owner/status:** EXP nominal baseline construction, `IMPLEMENTED`; focused regression/build and representative SITL verification remain open.

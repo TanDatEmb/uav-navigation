@@ -36,13 +36,21 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
         return segment.end_waypoint_index == route.active_waypoint_index;
       });
   if (active_segment_it == route.segments.end()) return result;
-  if (bounded_terminal_stop_recovery && candidate.terminal_stop &&
-      route.waypoints[route.active_waypoint_index].behavior ==
-          navigation_mission::MissionWaypoint::Behavior::Stop) {
-    // A measured emergency stop can leave the vehicle just beyond a STOP
-    // waypoint's acceptance ball. A bounded terminal correction back toward
-    // that same waypoint is recovery geometry, not an arbitrary nominal route
-    // fold. The caller proves proximity to the mission-owned acceptance region;
+  const auto active_behavior =
+      route.waypoints[route.active_waypoint_index].behavior;
+  const bool bounded_stop_recovery =
+      bounded_terminal_stop_recovery && candidate.terminal_stop &&
+      active_behavior == navigation_mission::MissionWaypoint::Behavior::Stop;
+  const bool bounded_pass_through_recovery =
+      bounded_terminal_stop_recovery && !candidate.terminal_stop &&
+      candidate.backup_suffix_available &&
+      active_behavior == navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  if (bounded_stop_recovery || bounded_pass_through_recovery) {
+    // A measured emergency stop can leave the vehicle just beyond a waypoint
+    // acceptance ball. A bounded correction back toward that same waypoint is
+    // recovery geometry, not an arbitrary nominal route fold. The caller
+    // proves exact command identity, emergency provenance, proximity to the
+    // mission-owned acceptance region, and that MAIN ends inside acceptance;
     // world, dynamic, tracking, and command-continuity certificates still run.
     result.applicable = false;
     result.valid = true;
