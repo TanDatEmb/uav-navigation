@@ -160,7 +160,7 @@ TEST(CommandSampler, RejectsRetainedBundleFromPreviousGoal) {
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 8)));
 }
 
-TEST(CommittedBundleStore, RebindsRetainedBundleOnlyAcrossExactGoalIdentity) {
+TEST(CommittedBundleStore, RetainedCommandStaysOldUntilSuccessorActivation) {
   navigation_execution::CommittedBundleStore store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(store.publishWorldIdentity(world));
@@ -171,16 +171,33 @@ TEST(CommittedBundleStore, RebindsRetainedBundleOnlyAcrossExactGoalIdentity) {
             navigation_execution::CommitDecision::kCommitted);
 
   ASSERT_TRUE(store.setActiveGoalEpoch(8, true));
-  EXPECT_FALSE(store.rebindRetainedBundle(8, 20, 6));
-  EXPECT_TRUE(store.rebindRetainedBundle(8, 20, 7));
-
-  const auto rebound = store.load();
-  ASSERT_TRUE(rebound);
-  EXPECT_EQ(rebound->goal_epoch, 8U);
-  EXPECT_EQ(rebound->request_id, 20U);
   navigation_execution::CommandSampler sampler(store);
-  EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 8)));
+  const auto retained = store.load();
+  ASSERT_TRUE(retained);
+  EXPECT_EQ(retained->goal_epoch, 7U);
+  EXPECT_EQ(retained->request_id, 17U);
+  EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 7)));
+  EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 8)));
+
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto successor = candidateFor(8, 1);
+  successor.request_id = 20U;
+  successor.valid_from_ns = 50;
+  successor.activation_stamp_ns = 50;
+  auto successor_ptr = std::make_shared<const navigation_planning::CandidateBundle>(successor);
+  ASSERT_EQ(navigation_execution::candidateMatchesAnchor(*successor_ptr, *anchor),
+            navigation_execution::AnchorMatchResult::kMatch);
+  ASSERT_EQ(store.stagePending({world, 8, 2}, *anchor, successor_ptr),
+            navigation_execution::StageDecision::kStaged);
+  EXPECT_EQ(store.load(), retained);
+  EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 7)));
+  EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 8)));
+
+  ASSERT_TRUE(store.activatePendingIfDue(50));
+  EXPECT_EQ(store.load(), successor_ptr);
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 7)));
+  EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 8)));
 }
 
 TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
@@ -556,7 +573,7 @@ TEST(CommittedBundleStore, ExposureRejectsBundleInvalidatedAfterSampling) {
   EXPECT_FALSE(exposed);
 }
 
-TEST(CommittedBundleStore, ExposureRejectsRetainedBundleAfterGoalChange) {
+TEST(CommittedBundleStore, ExposureKeepsRetainedExecutionBundleUntilActivation) {
   navigation_execution::CommittedBundleStore store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(store.publishWorldIdentity(world));
@@ -569,8 +586,8 @@ TEST(CommittedBundleStore, ExposureRejectsRetainedBundleAfterGoalChange) {
   const auto sampled = store.load();
   ASSERT_TRUE(store.setActiveGoalEpoch(8, true));
   bool exposed = false;
-  EXPECT_FALSE(store.publishIfCurrent(sampled, 7, [&] { exposed = true; }));
-  EXPECT_FALSE(exposed);
+  EXPECT_TRUE(store.publishIfCurrent(sampled, 7, [&] { exposed = true; }));
+  EXPECT_TRUE(exposed);
 }
 
 TEST(CommittedBundleStore, RecertifiesOnlyTheValidatedBundleOnWorldAdvance) {

@@ -1,5 +1,37 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Preserve execution identity across pass-through successor staging
+
+- **Owner/status:** navigation execution timeline and PX4 External Mode
+  handoff; `IMPLEMENTED`, representative obstacle SITL rerun required.
+- **Scope:** a pass-through waypoint transition advances the desired goal
+  identity without relabelling the currently executing immutable bundle. The
+  old `{mission, waypoint, request, goal_epoch}` remains the command identity
+  until a validated successor is staged and atomically activated. PX4 accepts
+  only the explicitly bounded continuity case: one unfinished MAIN command
+  from the immediately previous pass-through waypoint; STOP, BACKUP,
+  EMERGENCY, skipped-waypoint, completed, and malformed commands remain
+  rejected.
+- **Safety impact:** removes the identity gap that previously either rebound
+  a physical command to a new waypoint or caused PX4 to reject the still-valid
+  continuity command before the successor existed. No freshness, tracking,
+  dynamic, map, collision, or acceptance gate is relaxed; all command/world
+  and anchor checks remain fail-closed.
+- **Evidence:** review P0 identified retained-bundle rebinding as unsafe. The
+  first long three-pillar SITL after the store change reproduced the cross-layer
+  symptom: WP0 was accepted, PX4 advanced to WP1, and the old MAIN command was
+  rejected before successor activation. The focused store/runtime tests passed;
+  the SITL remains open until the bridge predicate is verified on the same map.
+- **Removal/review condition:** remove the PX4 continuity predicate only when
+  MissionController publishes the next waypoint after successor activation;
+  do not broaden it to generic goal replacement or use it as a safety-suffix
+  bypass.
+- **Verification:** `ctest --test-dir build/navigation_execution
+  --output-on-failure`, `ctest --test-dir build/navigation_runtime
+  --output-on-failure`, the PX4 command-identity CTest, full Release build, and
+  repeated `long_three_pillars_multiwaypoint` SITL with waypoint continuity,
+  activation, clearance, collision, and mission-completion evidence.
+
 ### 2026-09-02 - Keep initialized gravity fixed in the odom frame
 
 - **Owner/status:** FAST-LIO IKFoM estimator; `IMPLEMENTED`, SITL

@@ -205,6 +205,23 @@ TEST(NavigationCommandContract, RejectedCommandIsNotAHandOffCertificate) {
       rejected));
 }
 
+TEST(NavigationCommandContract, PriorPassThroughMainCommandBridgesUntilSuccessorActivation) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.mission_id = "mission";
+  command.waypoint_index = 0U;
+  command.request_id = 1U;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+
+  EXPECT_TRUE(px4_navigation_external_mode::priorPassThroughMainCommandIdentityMatches(
+      command, "mission", 1U, 2U, true));
+  EXPECT_FALSE(px4_navigation_external_mode::priorPassThroughMainCommandIdentityMatches(
+      command, "mission", 1U, 2U, false));
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
+  EXPECT_FALSE(px4_navigation_external_mode::priorPassThroughMainCommandIdentityMatches(
+      command, "mission", 1U, 2U, true));
+}
+
 TEST(NavigationCommandContract, AcceptedReplacementCommitsAtomically) {
   navigation_contracts::msg::NavigationCommand current;
   current.waypoint_index = 3U;

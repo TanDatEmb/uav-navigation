@@ -272,6 +272,10 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   navigation_execution::ExecutionStateStore execution_state_store_;
   ExecutionEpisode execution_episode_;
   std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;
+  // Desired mission identity may advance before a pass-through successor is
+  // activated.  Keep the physical command identity separate until the
+  // execution timeline performs that atomic cutover.
+  std::optional<navigation_contracts::msg::NavigationGoal> executing_goal_;
   // Sole runtime owner for a goal published while a moving BACKUP/EMERGENCY
   // suffix owns execution.  Do not add another pending optional.
   PendingGoalHandoffOwner pending_goal_owner_;

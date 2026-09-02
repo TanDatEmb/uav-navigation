@@ -438,6 +438,7 @@ void NavigationMode::onNavigationCommand(
   bool terminal_recovery_needed = false;
   bool terminal_stop_settle_required = false;
   bool prior_safety_suffix_command = false;
+  bool prior_pass_through_main_command = false;
   bool certified_suffix_pass_through_stop = false;
   bool recovery_deadline_invalid = false;
   std::optional<nav_msgs::msg::Odometry> completed_command_odometry;
@@ -466,10 +467,20 @@ void NavigationMode::onNavigationCommand(
         priorSafetySuffixCommandIdentityMatches(
             *message, mission_->id, active_waypoint_index, active_request_id,
             safety_suffix_waypoint_index_, safety_suffix_request_id_);
+    const auto previous_waypoint = mission_controller_ && active_waypoint_index > 0U
+        ? mission_controller_->waypointAt(active_waypoint_index - 1U)
+        : std::nullopt;
+    prior_pass_through_main_command = mission_ && mission_controller_ &&
+        priorPassThroughMainCommandIdentityMatches(
+            *message, mission_->id, active_waypoint_index, active_request_id,
+            previous_waypoint.has_value() &&
+                previous_waypoint->behavior == MissionWaypoint::Behavior::PassThrough);
     const bool command_identity_monotonic = !navigation_command_.has_value() ||
         navigation_contracts::commandWorldIdentityNonRegressing(
             *message, *navigation_command_);
-    if (!health_epoch_matches || (!mission_identity_matches && !prior_safety_suffix_command) ||
+    if (!health_epoch_matches ||
+        (!mission_identity_matches && !prior_safety_suffix_command &&
+         !prior_pass_through_main_command) ||
         !command_identity_monotonic) {
       ++trajectory_rejected_count_;
       navigation_command_ = transitionCertifiedCommand(

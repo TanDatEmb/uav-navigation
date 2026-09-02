@@ -80,38 +80,6 @@ class ExecutionTimelineStore final {
     return true;
   }
 
-  // A measured pass-through acceptance changes the mission identity without
-  // changing the physical command that is already being executed. Rebind a
-  // retained immutable bundle to that new identity only when the caller
-  // supplies the exact previous identity. The world certificate, executable
-  // interval and evaluator are copied unchanged; this operation does not
-  // extend or otherwise alter the certified command.
-  bool rebindRetainedBundle(std::uint64_t new_goal_epoch,
-                            std::uint64_t new_request_id,
-                            std::uint64_t previous_goal_epoch) noexcept {
-    if (new_goal_epoch == 0U || new_request_id == 0U ||
-        previous_goal_epoch == 0U) {
-      return false;
-    }
-    std::lock_guard lock(mutex_);
-    if (active_goal_epoch_ != new_goal_epoch || !committed_ ||
-        committed_->goal_epoch != previous_goal_epoch) {
-      return false;
-    }
-    auto rebound = std::make_shared<navigation_planning::CandidateBundle>(*committed_);
-    rebound->goal_epoch = new_goal_epoch;
-    rebound->request_id = new_request_id;
-    if (!rebound->valid()) {
-      committed_.reset();
-      ++timeline_version_;
-      return false;
-    }
-    committed_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
-        std::move(rebound));
-    ++timeline_version_;
-    return true;
-  }
-
   bool publishWorldIdentity(
       const navigation_world_model::WorldSnapshotIdentity& identity) noexcept {
     return publishWorldIdentity(identity, {}, false);
@@ -139,7 +107,6 @@ class ExecutionTimelineStore final {
     if (world_identity_ && !advances(*world_identity_, identity)) return false;
     if (retain_validated_bundle && expected_bundle && committed_ &&
         committed_.get() == expected_bundle.get() && world_identity_ &&
-        active_goal_epoch_ == expected_bundle->goal_epoch &&
         navigation_world_model::sameWorldSnapshotIdentity(
             *world_identity_, expected_bundle->world_identity)) {
       auto recertified = std::make_shared<navigation_planning::CandidateBundle>(
@@ -214,7 +181,6 @@ class ExecutionTimelineStore final {
 
     const bool active_matches = retain_validated_bundle && expected_bundle && committed_ &&
         committed_.get() == expected_bundle.get() && world_identity_ &&
-        active_goal_epoch_ == expected_bundle->goal_epoch &&
         navigation_world_model::sameWorldSnapshotIdentity(
             *world_identity_, expected_bundle->world_identity);
     if (active_matches) {
@@ -243,7 +209,6 @@ class ExecutionTimelineStore final {
 
     const bool pending_matches = retain_validated_pending && expected_pending && pending_ &&
         pending_.get() == expected_pending.get() && pending_->valid() && world_identity_ &&
-        pending_->goal_epoch == active_goal_epoch_ &&
         navigation_world_model::sameWorldSnapshotIdentity(
             pending_->world_identity, *world_identity_);
     if (pending_matches) {
@@ -284,7 +249,6 @@ class ExecutionTimelineStore final {
         !pending_->valid() ||
         !navigation_world_model::sameWorldSnapshotIdentity(
             pending_->world_identity, *world_identity_) ||
-        pending_->goal_epoch != active_goal_epoch_ ||
         identity.localization_epoch != world_identity_->localization_epoch ||
         identity.generation != world_identity_->generation ||
         !advances(*world_identity_, identity)) {
@@ -374,8 +338,6 @@ class ExecutionTimelineStore final {
     if (!anchor.valid() || candidate->valid_from_ns != anchor.activation_stamp_ns ||
         candidate->activation_stamp_ns != anchor.activation_stamp_ns ||
         candidate->localization_epoch != anchor.localization_epoch ||
-        candidate->goal_epoch != anchor.goal_epoch ||
-        candidate->request_id != anchor.request_id ||
         !navigation_world_model::sameWorldSnapshotIdentity(
             candidate->world_identity, expected.world_identity)) {
       return StageDecision::kInvalidAnchor;
@@ -410,8 +372,6 @@ class ExecutionTimelineStore final {
     if (!anchor.valid() || candidate->valid_from_ns != anchor.activation_stamp_ns ||
         candidate->activation_stamp_ns != anchor.activation_stamp_ns ||
         candidate->localization_epoch != anchor.localization_epoch ||
-        candidate->goal_epoch != anchor.goal_epoch ||
-        candidate->request_id != anchor.request_id ||
         !navigation_world_model::sameWorldSnapshotIdentity(
             candidate->world_identity, expected.world_identity)) {
       return StageDecision::kInvalidAnchor;
@@ -514,7 +474,7 @@ class ExecutionTimelineStore final {
       ExposureFn&& expose) noexcept {
     std::lock_guard lock(mutex_);
     if (!expected || !committed_ || committed_.get() != expected.get() ||
-        active_goal_epoch_ != expected_goal_epoch || !world_identity_ ||
+        committed_->goal_epoch != expected_goal_epoch || !world_identity_ ||
         !navigation_world_model::sameWorldSnapshotIdentity(
             *world_identity_, expected->world_identity)) {
       return false;

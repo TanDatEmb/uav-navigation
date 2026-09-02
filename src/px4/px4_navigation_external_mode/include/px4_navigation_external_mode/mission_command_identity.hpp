@@ -44,4 +44,23 @@ inline bool priorSafetySuffixCommandIdentityMatches(
           command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED);
 }
 
+// MissionController publishes the next pass-through goal as soon as the
+// previous checkpoint is accepted.  The planner successor is intentionally a
+// later execution-timeline activation, so one unfinished MAIN command from
+// the immediately previous pass-through checkpoint must remain admissible in
+// the interim.  This is an explicit continuity bridge, not a goal rebind:
+// the command keeps its old {waypoint, request} identity and may not bridge a
+// STOP, safety suffix, skipped waypoint, or completed command.
+inline bool priorPassThroughMainCommandIdentityMatches(
+    const navigation_contracts::msg::NavigationCommand& command,
+    const std::string& mission_id, std::uint32_t active_waypoint_index,
+    std::uint64_t active_request_id, bool previous_waypoint_is_pass_through) noexcept {
+  return previous_waypoint_is_pass_through && active_waypoint_index > 0U &&
+         command.mission_id == mission_id &&
+         command.waypoint_index + 1U == active_waypoint_index &&
+         command.request_id < active_request_id && command.request_id != 0U &&
+         command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+         command.status == navigation_contracts::msg::NavigationCommand::STATUS_READY;
+}
+
 }  // namespace px4_navigation_external_mode
