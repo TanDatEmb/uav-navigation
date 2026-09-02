@@ -1,5 +1,33 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Preserve waypoint order in bounded pass-through corner windows
+
+- **Owner/status:** pass-through route-window geometry, `IMPLEMENTED`; focused
+  tests/build and representative multi-obstacle SITL verification remain open.
+- **Scope:** bounded corner guides now order the certified points as
+  `entry -> exact mission waypoint -> outgoing blend -> endpoint`. The same
+  ordering is used for the lookahead witness and the local acceptance-ball
+  fallback; every newly introduced segment is checked against the inflated
+  map before corridor construction.
+- **Safety impact:** removes a folded guide that placed the outgoing blend
+  before the waypoint and could make the strict continuous corridor solve
+  infeasible at a 90-degree transition. No collision, unknown-space, route
+  boundary, dynamic, tracking, freshness, or publication gate is relaxed;
+  candidates still fail closed when any segment or continuous certificate
+  fails.
+- **Evidence:** the multi-pillar SITL trace showed repeated `Minco exp_traj`
+  failure at the `(50, 5) -> (50, -5)` handoff with a large interior lateral
+  excursion. Add the focused route/planner regression and rerun the same
+  map after rebuilding the authoritative Release manifest.
+- **Removal/review condition:** retain while bounded corner transitions are
+  used for pass-through waypoint handoff; remove only with an equivalent
+  route-window representation that preserves physical waypoint order and
+  the same independent map/corridor certificates.
+- **Verification:** `ctest --test-dir build/navigation_planning_backend
+  --output-on-failure -R 'test_trajectory|test_planner_config'`, full Release
+  build, and repeated `long_three_pillars_multiwaypoint` SITL with mission
+  completion, activation continuity, clearance, and collision evidence.
+
 ### 2026-09-02 - Synchronize emergency activation before bounded pass-through recovery
 
 - **Owner/status:** planning/runtime emergency handoff and route-progress recovery, `IMPLEMENTED`; focused regression/build and representative obstacle SITL verification remain open.

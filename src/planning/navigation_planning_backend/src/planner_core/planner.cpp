@@ -2593,20 +2593,21 @@ double knownFreeGuideSupport(
                     point_is_traversable(candidate_window->endpoint) &&
                     segment_is_traversable(predecessor, candidate_window->entry) &&
                     segment_is_traversable(candidate_window->entry,
-                                           candidate_window->outgoing_blend) &&
-                    segment_is_traversable(candidate_window->outgoing_blend,
                                            current_endpoint) &&
                     segment_is_traversable(current_endpoint,
+                                           candidate_window->outgoing_blend) &&
+                    segment_is_traversable(candidate_window->outgoing_blend,
                                            candidate_window->endpoint);
                 if (window_certified) {
                     const double current_leg_length =
                         (current_endpoint - predecessor).norm();
                     const double window_length =
                         (candidate_window->entry - predecessor).norm() +
+                        (current_endpoint - candidate_window->entry).norm() +
                         (candidate_window->outgoing_blend -
-                         candidate_window->entry).norm() +
-                        (current_endpoint - candidate_window->outgoing_blend).norm() +
-                        (candidate_window->endpoint - current_endpoint).norm();
+                         current_endpoint).norm() +
+                        (candidate_window->endpoint -
+                         candidate_window->outgoing_blend).norm();
                     const double guide_length_with_window = guide_length -
                         current_leg_length + window_length;
                     search_distance = cfg_.local_window_m - guide_length_with_window;
@@ -2749,12 +2750,13 @@ double knownFreeGuideSupport(
                                         segment_duration(
                                             guide_path[guide_path.size() - 2U].cast<double>(),
                                             corner_window->entry);
-                                    guide_path.emplace_back(
-                                        corner_window->outgoing_blend);
-                                    guide_stamp.emplace_back(
-                                        guide_stamp.back() + segment_duration(
-                                            corner_window->entry,
-                                            corner_window->outgoing_blend));
+                                    // Preserve the waypoint order.  Inserting
+                                    // the outgoing blend before the exact
+                                    // waypoint creates a folded guide
+                                    // (entry -> blend -> waypoint) at a sharp
+                                    // turn and can make MINCO's corridor
+                                    // problem infeasible even when each local
+                                    // segment is collision-free.
                                     // Keep the exact mission waypoint in the
                                     // guide so CorridorGenerator and MINCO
                                     // assign the route-boundary cell to an
@@ -2764,12 +2766,18 @@ double knownFreeGuideSupport(
                                     guide_path.emplace_back(current_endpoint);
                                     guide_stamp.emplace_back(
                                         guide_stamp.back() + segment_duration(
-                                            corner_window->outgoing_blend,
+                                            corner_window->entry,
                                             current_endpoint));
-                                    guide_path.emplace_back(corner_window->endpoint);
+                                    guide_path.emplace_back(
+                                        corner_window->outgoing_blend);
                                     guide_stamp.emplace_back(
                                         guide_stamp.back() + segment_duration(
                                             current_endpoint,
+                                            corner_window->outgoing_blend));
+                                    guide_path.emplace_back(corner_window->endpoint);
+                                    guide_stamp.emplace_back(
+                                        guide_stamp.back() + segment_duration(
+                                            corner_window->outgoing_blend,
                                             corner_window->endpoint));
                                 }
                                 const double guide_time_origin_s = guide_stamp.back();
@@ -2870,6 +2878,8 @@ double knownFreeGuideSupport(
                 point_is_traversable(route_window->endpoint) &&
                 segment_is_traversable(predecessor, route_window->entry) &&
                 segment_is_traversable(route_window->entry,
+                                       requested_goal_p_.cast<double>()) &&
+                segment_is_traversable(requested_goal_p_.cast<double>(),
                                        route_window->outgoing_blend) &&
                 segment_is_traversable(route_window->outgoing_blend,
                                        route_window->endpoint) &&
@@ -2877,8 +2887,11 @@ double knownFreeGuideSupport(
                 const double first_segment_length =
                     (route_window->entry - predecessor).norm();
                 const double blend_segment_length =
-                    (route_window->outgoing_blend - route_window->entry).norm();
+                    (requested_goal_p_.cast<double>() - route_window->entry).norm();
                 const double final_segment_length =
+                    (route_window->outgoing_blend -
+                     requested_goal_p_.cast<double>()).norm();
+                const double endpoint_segment_length =
                     (route_window->endpoint - route_window->outgoing_blend).norm();
                 const double previous_stamp = guide_stamp.size() >= 2U
                     ? guide_stamp[guide_stamp.size() - 2U] : 0.0;
@@ -2891,11 +2904,14 @@ double knownFreeGuideSupport(
                 if (std::isfinite(first_segment_length) && first_segment_length > 1.0e-6 &&
                     std::isfinite(blend_segment_length) && blend_segment_length > 1.0e-6 &&
                     std::isfinite(final_segment_length) && final_segment_length > 1.0e-6 &&
+                    std::isfinite(endpoint_segment_length) &&
+                        endpoint_segment_length > 1.0e-6 &&
                     std::isfinite(first_segment_duration) && first_segment_duration > 0.0 &&
                     std::isfinite(blend_segment_duration) && blend_segment_duration > 0.0 &&
                     std::isfinite(final_segment_duration) && final_segment_duration > 0.0 &&
                     std::isfinite(previous_stamp)) {
                     guide_path.back() = route_window->entry;
+                    guide_path.emplace_back(requested_goal_p_);
                     guide_path.emplace_back(route_window->outgoing_blend);
                     guide_path.emplace_back(route_window->endpoint);
                     guide_stamp.back() = previous_stamp + first_segment_duration;
@@ -2903,6 +2919,9 @@ double knownFreeGuideSupport(
                         guide_stamp.back() + blend_segment_duration);
                     guide_stamp.emplace_back(
                         guide_stamp.back() + final_segment_duration);
+                    guide_stamp.emplace_back(
+                        guide_stamp.back() +
+                        endpoint_segment_length / cfg_.exp_traj_cfg.max_vel);
                     const double route_window_offset =
                         (route_window->endpoint - requested_goal_p_.cast<double>()).norm();
                     gi_.goal_p = route_window->endpoint;
