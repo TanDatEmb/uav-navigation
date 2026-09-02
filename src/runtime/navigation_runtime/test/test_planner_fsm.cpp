@@ -1,5 +1,6 @@
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/commit_trace.hpp"
+#include "navigation_runtime/runtime_boundaries.hpp"
 #include <navigation_planning/candidate_bundle.hpp>
 
 #include <gtest/gtest.h>
@@ -10,6 +11,33 @@
 
 namespace navigation_runtime {
 namespace {
+
+navigation_contracts::msg::NavigationGoal goal(
+    const char* mission_id, std::uint32_t waypoint_index,
+    std::uint64_t request_id, std::uint64_t route_revision) {
+  navigation_contracts::msg::NavigationGoal value;
+  value.mission_id = mission_id;
+  value.waypoint_index = waypoint_index;
+  value.request_id = request_id;
+  value.route.route_revision = route_revision;
+  return value;
+}
+
+TEST(PlannerFsm, ClassifiesDesiredAndExecutingIdentityTransitions) {
+  const auto executing = goal("mission", 2U, 3U, 7U);
+  EXPECT_EQ(classifyGoalTransition(std::nullopt, executing),
+            GoalTransitionKind::kCancelOrLocalizationReset);
+  EXPECT_EQ(classifyGoalTransition(goal("mission", 2U, 3U, 7U), std::nullopt),
+            GoalTransitionKind::kInitialGoal);
+  EXPECT_EQ(classifyGoalTransition(goal("mission", 3U, 4U, 7U), executing),
+            GoalTransitionKind::kSameRouteWaypointAdvance);
+  EXPECT_EQ(classifyGoalTransition(goal("mission", 3U, 4U, 8U), executing),
+            GoalTransitionKind::kRouteReplacement);
+  EXPECT_EQ(classifyGoalTransition(goal("other", 0U, 1U, 1U), executing),
+            GoalTransitionKind::kMissionReplacement);
+  EXPECT_STREQ(goalTransitionKindName(GoalTransitionKind::kSameRouteWaypointAdvance),
+               "same_route_waypoint_advance");
+}
 
 TEST(PlannerFsm, AcceptsSuccessfulPlannerResults) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kSuccess, true, false, true),

@@ -4425,11 +4425,32 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                              ? diagnostic_msgs::msg::DiagnosticStatus::OK
                              : diagnostic_msgs::msg::DiagnosticStatus::WARN;
     trace_status.message = "DECISION_TRACE";
+    // Snapshot the identities without holding an input lock while reading the
+    // execution timeline.  This preserves the established input -> timeline
+    // lock order and makes the trace describe the same post-commit boundary
+    // that the sampler will observe next.
+    std::optional<navigation_contracts::msg::NavigationGoal> desired_trace_goal;
+    std::optional<navigation_contracts::msg::NavigationGoal> executing_trace_goal;
+    {
+      std::lock_guard<std::mutex> lock(input_mutex_);
+      desired_trace_goal = active_goal_;
+      executing_trace_goal = executing_goal_;
+    }
+    const auto timeline_trace = command_bundle_store_.snapshot();
+    const auto transition_kind = classifyGoalTransition(
+        desired_trace_goal, executing_trace_goal);
     const auto add_trace_value = [&trace_status](const std::string& key,
                                                   const auto& value) {
       diagnostic_msgs::msg::KeyValue item;
       item.key = key;
       item.value = std::to_string(value);
+      trace_status.values.push_back(std::move(item));
+    };
+    const auto add_trace_string = [&trace_status](const std::string& key,
+                                                  const std::string_view value) {
+      diagnostic_msgs::msg::KeyValue item;
+      item.key = key;
+      item.value = value;
       trace_status.values.push_back(std::move(item));
     };
     const auto add_trace_vector = [&trace_status](const std::string& key,
@@ -4442,6 +4463,52 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       item.value = stream.str();
       trace_status.values.push_back(std::move(item));
     };
+    const auto add_goal_identity = [&add_trace_value, &add_trace_string](
+        const std::string_view prefix,
+        const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
+        const std::uint64_t epoch) {
+      const std::string key_prefix(prefix);
+      add_trace_value(key_prefix + "_valid", goal ? 1 : 0);
+      add_trace_value(key_prefix + "_epoch", epoch);
+      if (!goal) return;
+      add_trace_string(key_prefix + "_mission_id", goal->mission_id);
+      add_trace_value(key_prefix + "_waypoint_index", goal->waypoint_index);
+      add_trace_value(key_prefix + "_request_id", goal->request_id);
+      add_trace_value(key_prefix + "_route_revision", goal->route.route_revision);
+    };
+    const auto add_bundle_identity = [&add_trace_value, &add_trace_string](
+        const std::string_view prefix,
+        const std::shared_ptr<const navigation_planning::CandidateBundle>& bundle) {
+      const std::string key_prefix(prefix);
+      add_trace_value(key_prefix + "_valid", bundle ? 1 : 0);
+      if (!bundle) return;
+      add_trace_value(key_prefix + "_localization_epoch", bundle->localization_epoch);
+      add_trace_value(key_prefix + "_goal_epoch", bundle->goal_epoch);
+      add_trace_value(key_prefix + "_request_id", bundle->request_id);
+      add_trace_value(key_prefix + "_bundle_generation", bundle->bundle_generation);
+      add_trace_value(key_prefix + "_activation_stamp_ns", bundle->activation_stamp_ns);
+      add_trace_value(key_prefix + "_world_generation", bundle->world_identity.generation);
+      add_trace_value(key_prefix + "_world_revision", bundle->world_identity.revision);
+      add_trace_value(key_prefix + "_world_stamp_ns",
+                      bundle->world_identity.observation_stamp_ns);
+      add_trace_value(key_prefix + "_role", static_cast<int>(bundle->role));
+      add_trace_value(key_prefix + "_backup_available", bundle->backup_available ? 1 : 0);
+    };
+    add_trace_string("transition_kind", goalTransitionKindName(transition_kind));
+    add_goal_identity("desired", desired_trace_goal,
+                      active_goal_epoch_.load(std::memory_order_acquire));
+    add_goal_identity("executing", executing_trace_goal,
+                      command_goal_epoch_.load(std::memory_order_acquire));
+    add_bundle_identity("active_execution", timeline_trace.active);
+    add_bundle_identity("pending_execution", timeline_trace.pending);
+    add_trace_value("active_execution_timeline_version", timeline_trace.version);
+    add_trace_value("pending_activation_ns", timeline_trace.pending_activation_ns);
+    add_trace_value("planning_outcome",
+                    last_planning_outcome_.load(std::memory_order_acquire));
+    add_trace_value("planning_failure_stage",
+                    last_planning_failure_stage_.load(std::memory_order_acquire));
+    add_trace_value("planning_failure_reason",
+                    last_planning_failure_reason_.load(std::memory_order_acquire));
     add_trace_value("planning_cycle_id", cycle_count_);
     add_trace_value("bundle_id", committed_generation);
     add_trace_value("solve_generation", solve_generation);

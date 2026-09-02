@@ -6,8 +6,61 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <string_view>
+
+#include <navigation_contracts/msg/navigation_goal.hpp>
 
 namespace navigation_runtime {
+
+// This is an observability contract for the two identities involved in a
+// retarget.  The desired mission may advance before its successor becomes the
+// executable command; callers must not infer activation from the desired goal.
+enum class GoalTransitionKind : std::uint8_t {
+  kSteady,
+  kInitialGoal,
+  kSameRouteWaypointAdvance,
+  kRouteReplacement,
+  kMissionReplacement,
+  kCancelOrLocalizationReset,
+};
+
+[[nodiscard]] constexpr const char* goalTransitionKindName(
+    const GoalTransitionKind kind) noexcept {
+  switch (kind) {
+    case GoalTransitionKind::kSteady: return "steady";
+    case GoalTransitionKind::kInitialGoal: return "initial_goal";
+    case GoalTransitionKind::kSameRouteWaypointAdvance:
+      return "same_route_waypoint_advance";
+    case GoalTransitionKind::kRouteReplacement: return "route_replacement";
+    case GoalTransitionKind::kMissionReplacement: return "mission_replacement";
+    case GoalTransitionKind::kCancelOrLocalizationReset:
+      return "cancel_or_localization_reset";
+  }
+  return "unknown";
+}
+
+[[nodiscard]] inline GoalTransitionKind classifyGoalTransition(
+    const std::optional<navigation_contracts::msg::NavigationGoal>& desired,
+    const std::optional<navigation_contracts::msg::NavigationGoal>& executing) noexcept {
+  if (!desired) {
+    return executing ? GoalTransitionKind::kCancelOrLocalizationReset
+                     : GoalTransitionKind::kSteady;
+  }
+  if (!executing) return GoalTransitionKind::kInitialGoal;
+  if (desired->mission_id != executing->mission_id) {
+    return GoalTransitionKind::kMissionReplacement;
+  }
+  if (desired->route.route_revision == executing->route.route_revision &&
+      desired->waypoint_index != executing->waypoint_index) {
+    return GoalTransitionKind::kSameRouteWaypointAdvance;
+  }
+  if (desired->route.route_revision != executing->route.route_revision ||
+      desired->waypoint_index == executing->waypoint_index ||
+      desired->request_id != executing->request_id) {
+    return GoalTransitionKind::kRouteReplacement;
+  }
+  return GoalTransitionKind::kSteady;
+}
 
 inline std::optional<std::uint64_t> advanceMonotonicId(
     std::atomic_uint64_t& value) noexcept {

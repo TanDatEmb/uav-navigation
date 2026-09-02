@@ -1,5 +1,27 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Trace desired, executing, and timeline identities
+
+- **Owner/status:** navigation runtime decision trace; `IMPLEMENTED`, runtime
+  artifact verification remains open.
+- **Scope:** every planner decision record now reports the desired and
+  executing goal identities, transition kind, active and pending execution
+  bundle identities, pending activation timestamp, and typed planner outcome
+  stage/reason. The trace snapshots input identity before the timeline and
+  never changes command ownership.
+- **Safety impact:** observability only. No candidate admission, world,
+  freshness, tracking, dynamic, collision, or PX4 gate is relaxed; the
+  execution timeline and sampler remain authoritative.
+- **Evidence:** the obstacle SITL reached WP5 and then failed closed while the
+  report could expose planner stage and backup KNOWN_FREE failure but could not
+  prove desired-versus-executing identity at the same decision boundary.
+- **Removal/review condition:** retain until the route-transition review and
+  backup recertification starvation investigation are closed; remove only if
+  an equivalent artifact preserves all identities and typed stage evidence.
+- **Verification:** `test_planner_fsm`, affected runtime CTest, full Release
+  build, and a repeated multi-obstacle SITL whose `DECISION_TRACE` contains
+  identity and pending-activation fields.
+
 ### 2026-09-02 - Preserve execution identity across pass-through successor staging
 
 - **Owner/status:** navigation execution timeline and PX4 External Mode
