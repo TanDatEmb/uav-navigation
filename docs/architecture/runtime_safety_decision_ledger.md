@@ -1,28 +1,29 @@
 # Runtime safety decision and temporary-debt ledger
 
-### 2026-09-02 - Preserve waypoint order in bounded pass-through corner windows
+### 2026-09-02 - Keep genuine pass-through corners on the measured handoff
 
 - **Owner/status:** pass-through route-window geometry, `IMPLEMENTED`; focused
   tests/build and representative multi-obstacle SITL verification remain open.
-- **Scope:** bounded corner guides now order the certified points as
-  `entry -> exact mission waypoint -> outgoing blend -> endpoint`. The same
-  ordering is used for the lookahead witness and the local acceptance-ball
-  fallback; every newly introduced segment is checked against the inflated
-  map before corridor construction.
-- **Safety impact:** removes a folded guide that placed the outgoing blend
-  before the waypoint and could make the strict continuous corridor solve
-  infeasible at a 90-degree transition. No collision, unknown-space, route
-  boundary, dynamic, tracking, freshness, or publication gate is relaxed;
-  candidates still fail closed when any segment or continuous certificate
-  fails.
+- **Scope:** a genuine pass-through corner now ends the current MAIN at the
+  exact mission waypoint with a bounded incoming tangent; the next measured
+  execution anchor owns the outgoing turn. The short acceptance-ball fillet
+  is no longer used for this handoff. Any remaining route-window witness
+  keeps physical waypoint order `entry -> waypoint -> outgoing blend ->
+  endpoint` and checks every segment against the inflated map.
+- **Safety impact:** removes a short fixed-endpoint-derivative turn that made
+  the strict continuous corridor solve infeasible at a 90-degree transition.
+  No collision, unknown-space, route boundary, dynamic, tracking, freshness,
+  or publication gate is relaxed; candidates still fail closed when any
+  segment or continuous certificate fails, and the incoming tangent is
+  bounded by the existing dynamic envelope.
 - **Evidence:** the multi-pillar SITL trace showed repeated `Minco exp_traj`
   failure at the `(50, 5) -> (50, -5)` handoff with a large interior lateral
   excursion. Add the focused route/planner regression and rerun the same
   map after rebuilding the authoritative Release manifest.
-- **Removal/review condition:** retain while bounded corner transitions are
-  used for pass-through waypoint handoff; remove only with an equivalent
-  route-window representation that preserves physical waypoint order and
-  the same independent map/corridor certificates.
+- **Removal/review condition:** retain while measured corner handoffs are
+  needed for pass-through waypoint continuity; remove only with an equivalent
+  route-window representation that preserves physical waypoint order and the
+  same independent map/corridor certificates.
 - **Verification:** `ctest --test-dir build/navigation_planning_backend
   --output-on-failure -R 'test_trajectory|test_planner_config'`, full Release
   build, and repeated `long_three_pillars_multiwaypoint` SITL with mission

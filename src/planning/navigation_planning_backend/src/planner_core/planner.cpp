@@ -2816,125 +2816,13 @@ double knownFreeGuideSupport(
             }
         }
 
-        // If no long route lookahead is certified, retain a bounded
-        // acceptance-ball fillet for a genuine corner. Ending the incoming
-        // command at the exact waypoint with non-zero incoming velocity leaves
-        // the next measured handoff an instantaneous direction change and can
-        // exhaust its short planning window before the old command ends.
-        bool route_window_endpoint = false;
-        if (!route_lookahead_active &&
-            pass_through_next_target_.has_value() &&
-            guide_path.size() >= 2U &&
-            guide_stamp.size() == guide_path.size() &&
-            (guide_path.back() - gi_.goal_p).norm() <=
-                navigation_world_model::kGoalConnectionToleranceM + 1.0e-6 &&
-            (gi_.goal_p - requested_goal_p_).norm() <=
-                navigation_world_model::kGoalConnectionToleranceM + 1.0e-6) {
-            Eigen::Vector3d incoming_tangent = Eigen::Vector3d::Zero();
-            for (std::size_t index = guide_path.size(); index > 1U; --index) {
-                const Eigen::Vector3d delta =
-                    (guide_path[index - 1U] - guide_path[index - 2U]).cast<double>();
-                if (delta.norm() > 1.0e-6) {
-                    incoming_tangent = delta;
-                    break;
-                }
-            }
-            auto route_window = passThroughRouteWindow(
-                requested_goal_p_.cast<double>(), *pass_through_next_target_,
-                incoming_tangent, goal_acceptance_radius_m_,
-                navigation_world_model::kGoalConnectionToleranceM);
-            // Prefer the measured A* approach when it proves the corner. If
-            // the detour's final edge is shallow, retry with the immutable
-            // mission incoming tangent so the same corner classification used
-            // above also creates its bounded acceptance-ball fillet.
-            if (!route_window.has_value()) {
-                const auto mission_tangent = mission_incoming_tangent();
-                if (mission_tangent.has_value()) {
-                    route_window = passThroughRouteWindow(
-                        requested_goal_p_.cast<double>(),
-                        *pass_through_next_target_, *mission_tangent,
-                        goal_acceptance_radius_m_,
-                        navigation_world_model::kGoalConnectionToleranceM);
-                }
-            }
-            const auto point_is_traversable = [this](const Eigen::Vector3d& point) {
-                return point.allFinite() && map_ptr_->contains(point) &&
-                    navigation_world_model::isCellTraversable(
-                        map_ptr_->classify(
-                            point, navigation_world_model::GridLayer::kInflated),
-                        unknownPolicy());
-            };
-            const auto segment_is_traversable = [this](
-                    const Eigen::Vector3d& start, const Eigen::Vector3d& end) {
-                return map_ptr_->isSegmentTraversable(
-                    start, end, navigation_world_model::GridLayer::kInflated,
-                    unknownPolicy());
-            };
-            const Eigen::Vector3d predecessor =
-                guide_path[guide_path.size() - 2U].cast<double>();
-            if (route_window.has_value() &&
-                point_is_traversable(route_window->entry) &&
-                point_is_traversable(route_window->outgoing_blend) &&
-                point_is_traversable(route_window->endpoint) &&
-                segment_is_traversable(predecessor, route_window->entry) &&
-                segment_is_traversable(route_window->entry,
-                                       requested_goal_p_.cast<double>()) &&
-                segment_is_traversable(requested_goal_p_.cast<double>(),
-                                       route_window->outgoing_blend) &&
-                segment_is_traversable(route_window->outgoing_blend,
-                                       route_window->endpoint) &&
-                guide_path.size() >= 2U) {
-                const double first_segment_length =
-                    (route_window->entry - predecessor).norm();
-                const double blend_segment_length =
-                    (requested_goal_p_.cast<double>() - route_window->entry).norm();
-                const double final_segment_length =
-                    (route_window->outgoing_blend -
-                     requested_goal_p_.cast<double>()).norm();
-                const double endpoint_segment_length =
-                    (route_window->endpoint - route_window->outgoing_blend).norm();
-                const double previous_stamp = guide_stamp.size() >= 2U
-                    ? guide_stamp[guide_stamp.size() - 2U] : 0.0;
-                const double first_segment_duration =
-                    first_segment_length / cfg_.exp_traj_cfg.max_vel;
-                const double blend_segment_duration =
-                    blend_segment_length / cfg_.exp_traj_cfg.max_vel;
-                const double final_segment_duration =
-                    final_segment_length / cfg_.exp_traj_cfg.max_vel;
-                if (std::isfinite(first_segment_length) && first_segment_length > 1.0e-6 &&
-                    std::isfinite(blend_segment_length) && blend_segment_length > 1.0e-6 &&
-                    std::isfinite(final_segment_length) && final_segment_length > 1.0e-6 &&
-                    std::isfinite(endpoint_segment_length) &&
-                        endpoint_segment_length > 1.0e-6 &&
-                    std::isfinite(first_segment_duration) && first_segment_duration > 0.0 &&
-                    std::isfinite(blend_segment_duration) && blend_segment_duration > 0.0 &&
-                    std::isfinite(final_segment_duration) && final_segment_duration > 0.0 &&
-                    std::isfinite(previous_stamp)) {
-                    guide_path.back() = route_window->entry;
-                    guide_path.emplace_back(requested_goal_p_);
-                    guide_path.emplace_back(route_window->outgoing_blend);
-                    guide_path.emplace_back(route_window->endpoint);
-                    guide_stamp.back() = previous_stamp + first_segment_duration;
-                    guide_stamp.emplace_back(
-                        guide_stamp.back() + blend_segment_duration);
-                    guide_stamp.emplace_back(
-                        guide_stamp.back() + final_segment_duration);
-                    guide_stamp.emplace_back(
-                        guide_stamp.back() +
-                        endpoint_segment_length / cfg_.exp_traj_cfg.max_vel);
-                    const double route_window_offset =
-                        (route_window->endpoint - requested_goal_p_.cast<double>()).norm();
-                    gi_.goal_p = route_window->endpoint;
-                    planning_goal_p_ = gi_.goal_p;
-                    goal_endpoint_adjusted_ = true;
-                    route_window_endpoint = true;
-                    planner_context_->info(
-                        " -- [planner] pass-through route window fillet offset={:.3f} "
-                        "acceptance_radius={:.3f}",
-                        route_window_offset, goal_acceptance_radius_m_);
-                }
-            }
-        }
+        // A genuine corner is handed off at the exact mission waypoint. The
+        // incoming command keeps its bounded incoming tangent; the next
+        // measured execution anchor owns the outgoing turn. A short
+        // acceptance-ball fillet asks one MINCO solve to rotate between two
+        // fixed endpoint derivatives and repeatedly made the strict corridor
+        // problem infeasible on long obstacle routes.
+        const bool route_window_endpoint = false;
 
         // Keep the route geometry observable at the optimizer boundary.  A
         // large lateral excursion in an open mission is a map/A* or guide
@@ -3071,6 +2959,7 @@ double knownFreeGuideSupport(
 
         pos_fina_state.setZero();
         pos_fina_state.col(0) = guide_path.back();
+        bool connected_goal_is_genuine_corner = false;
         if (connected_goal && pass_through_next_target_.has_value()) {
             // Keep the outgoing tangent just inside the optimizer's declared
             // interior search target. The mission/product V/A/J limits below
@@ -3121,6 +3010,7 @@ double knownFreeGuideSupport(
             const bool genuine_corner = guide_tangent.norm() > 0.5 &&
                     outgoing_delta.allFinite() && outgoing_delta.norm() > 1.0e-6 &&
                     guide_tangent.dot(outgoing_delta.normalized()) <= 0.7;
+            connected_goal_is_genuine_corner = genuine_corner;
             if (genuine_corner && guide_path.size() >= 2U && !route_window_endpoint) {
                 // A corner is a hard route boundary, not a request to rotate
                 // the velocity vector at the endpoint of the incoming MINCO
@@ -3235,13 +3125,14 @@ double knownFreeGuideSupport(
                     "following STOP; suppressing outgoing terminal velocity");
             }
             // Preserve an outgoing tangent only when the same solve has a
-            // certified outgoing lookahead.  If the local horizon cannot
-            // certify that leg, this command must terminate at the current
-            // waypoint acceptance ball; exposing a moving endpoint would
-            // force BACKUP to start before the checkpoint or require
-            // KNOWN_FREE evidence beyond the available horizon.
+            // certified outgoing lookahead. At a genuine corner, preserve
+            // the bounded incoming tangent instead; the next measured anchor
+            // owns the outgoing turn and avoids an artificial stop at the
+            // waypoint. Other acceptance-ball endpoints still terminate
+            // unless their outgoing lookahead is certified.
             if ((!pass_through_next_target_.has_value() ||
-                 !route_lookahead_active) && !goal_endpoint_adjusted_) {
+                 !route_lookahead_active) && !goal_endpoint_adjusted_ &&
+                !connected_goal_is_genuine_corner) {
                 pos_fina_state.col(1).setZero();
                 if (pass_through_next_target_.has_value()) {
                     planner_context_->info(
