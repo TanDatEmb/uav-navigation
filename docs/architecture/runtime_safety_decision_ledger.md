@@ -17851,3 +17851,31 @@ release profiles must not use the former allowance.
   tests; repeated `MAP_PROFILE=long_three_pillars_multiwaypoint` external-mode
   SITL with route-boundary, tracking, collision, and mission-completion
   evidence.
+### 2026-09-02 - Align planner MAIN reserve with runtime candidate admission
+
+- **Owner/status:** navigation planning and execution admission, `IMPLEMENTED`;
+  focused tests/build and representative SITL rerun required before
+  qualification.
+- **Scope:** `generateExpTraj()` now declares the same `0.80 s` minimum MAIN
+  prefix required by runtime for moving MAIN+BACKUP candidates. Only a
+  genuinely connected, independently certified terminal STOP keeps the
+  reserve at zero.
+- **Safety impact:** Prevents the planner from spending a solve on candidates
+  that runtime must reject for insufficient MAIN reserve. This preserves the
+  active-command/successor handoff contract and does not relax any runtime
+  admission, tracking, clearance, freshness, identity, or terminal-stop gate.
+  The behavior change may reject candidates whose visible horizon is shorter
+  than the required handoff reserve; the existing fail-closed path remains
+  authoritative.
+- **Evidence:** The SITL artifact
+  `external-mode-check-20260902T104718-1307060` showed a backend candidate
+  with `backup_start=0.085 s` rejected by runtime's `0.800 s` MAIN-reserve
+  admission. Verification after this change must show the producer no longer
+  emits that mismatch and must include focused tests plus a repeated
+  representative SITL run.
+- **Removal/review condition:** Remove only if the shared timing contract is
+  replaced by one typed reserve value consumed by both producer and runtime;
+  never lower the reserve from a single SITL result.
+- **Verification:** `make build`; focused planning/execution/runtime tests;
+  repeated obstacle-map SITL with no `insufficient MAIN reserve` rejection and
+  with mission completion still subject to all existing acceptance gates.

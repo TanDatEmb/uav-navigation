@@ -3336,7 +3336,18 @@ double knownFreeGuideSupport(
                     generated_boundary_state.col(0).y(), generated_boundary_state.col(0).z());
             }
         }
-        double required_main_prefix_duration_TT = 0.0;
+        // Keep the producer-side switch bound identical to the runtime
+        // admission contract.  A moving MAIN+BACKUP candidate must leave
+        // enough MAIN time for solve, stitching, the next planner tick, and
+        // commit handoff; otherwise runtime would reject a candidate that
+        // this backend had already spent the solve budget constructing.
+        // A genuinely connected terminal STOP is the one intentional
+        // exception: it is independently certified as a terminal command
+        // and does not need a future BACKUP activation reserve.
+        const double required_main_prefix_duration_TT =
+            candidate_terminal_stop_active_
+                ? 0.0
+                : navigation_planning::PlanningTimingContract::kMinimumMainReserveS;
 
         Trajectory new_traj;
 
