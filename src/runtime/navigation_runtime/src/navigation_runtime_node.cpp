@@ -747,13 +747,44 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         const bool terminal_bundle_observed = expected_bundle &&
             terminal_generation != 0U &&
             expected_bundle->bundle_generation == terminal_generation;
-        if (terminal_bundle_observed) {
+        const auto terminal_endpoint = expected_bundle
+            ? expected_bundle->sampleAtDeclaredEnd() : std::nullopt;
+        const bool effective_terminal_route = expected_goal && [&] {
+          const auto route = decodeRouteSnapshot(*expected_goal);
+          return route.has_value() &&
+              (expected_goal->behavior ==
+                   navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP ||
+               navigation_mission::passThroughNextWaypointIsCoincidentStop(*route));
+        }();
+        const auto terminal_declared_end_ns = expected_bundle &&
+            expected_bundle->declared_end_ns > 0
+            ? std::optional<std::int64_t>{expected_bundle->declared_end_ns}
+            : expected_bundle
+                ? navigation_common::secondsToNanoseconds(
+                      expected_bundle->start_wall_time_s + expected_bundle->duration_s)
+                : std::nullopt;
+        const bool expired_terminal_endpoint = expected_bundle && expected_goal &&
+            effective_terminal_route && terminal_endpoint &&
+            terminal_declared_end_ns &&
+            ros_clock->now().nanoseconds() >= *terminal_declared_end_ns &&
+            terminal_endpoint->finished && terminal_endpoint->finite() &&
+            (terminal_endpoint->position_world -
+                Eigen::Vector3d{pointFromMessage(plannerTarget(*expected_goal), 0),
+                                pointFromMessage(plannerTarget(*expected_goal), 1),
+                                pointFromMessage(plannerTarget(*expected_goal), 2)}).norm() <=
+                goalCompletionTolerance(*expected_goal) &&
+            terminalStopEndpointContractValid(
+                effective_terminal_route, expected_bundle->kind,
+                expected_bundle->role, terminal_endpoint->role);
+        if (terminal_bundle_observed || expired_terminal_endpoint) {
           // The executable lease may have ended by the time this map callback
-          // runs. An already observed terminal command needs one final safe
-          // handover sample, not a revalidation of future trajectory time.
-          // Keep this exception narrow: only the declared endpoint is sampled,
-          // and it must still be finite and known-free in the new snapshot.
-          const auto terminal_endpoint = expected_bundle->sampleAtDeclaredEnd();
+          // runs. An observed or already-expired terminal command needs one
+          // final safe handover sample, not a revalidation of future
+          // trajectory time. Keep this exception narrow: only the declared
+          // endpoint is sampled, and it must still be finite and known-free
+          // in the new snapshot. The expired-endpoint branch closes the
+          // callback-order race where the command publisher has just emitted
+          // its terminal sample but has not yet published the derived witness.
           const auto terminal_state = terminal_endpoint
               ? result.snapshot->classify(
                     terminal_endpoint->position_world,
@@ -767,7 +798,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           if (!retain_validated_bundle) {
             RCLCPP_WARN(
                 this->get_logger(),
-                "terminal command retention rejected generation=%lu state=%d endpoint=%d",
+                  "terminal command retention rejected generation=%lu state=%d endpoint=%d",
                 static_cast<unsigned long>(expected_bundle->bundle_generation),
                 static_cast<int>(terminal_state), terminal_endpoint.has_value() ? 1 : 0);
           }
@@ -2226,6 +2257,32 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
   if (command_bundle_store_.hasPending()) return std::nullopt;
   const auto bundle = command_bundle_store_.load();
   const auto episode = execution_episode_.snapshot();
+  const auto route_snapshot = decodeRouteSnapshot(*goal);
+  const bool coincident_pass_through_stop = route_snapshot.has_value() &&
+      navigation_mission::passThroughNextWaypointIsCoincidentStop(*route_snapshot);
+  const bool effective_terminal_stop =
+      goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP ||
+      coincident_pass_through_stop;
+  const bool committed_terminal_hold = bundle &&
+      committedTerminalBundleHoldIsPending(
+          planner_command_available_.load(std::memory_order_acquire),
+          effective_terminal_stop,
+          bundle->kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+              bundle->terminal_stop,
+          bundle->role == navigation_planning::CandidateRole::kMain,
+          bundle->request_id == goal->request_id && bundle->goal_epoch == goal_epoch,
+          bundle->bundle_generation);
+  if (terminalHoldIsPending(
+          planner_command_available_.load(std::memory_order_acquire),
+          trajectory_reaches_goal_.load(std::memory_order_acquire),
+          effective_terminal_stop,
+          terminal_bundle_generation_.load(std::memory_order_acquire)) ||
+      committed_terminal_hold) {
+    // A certified terminal endpoint is the execution timeline's final
+    // command for this request. Do not let the periodic timer create a
+    // replacement solve while PX4 is settling or acknowledging the hold.
+    return std::nullopt;
+  }
   safety_renewal = safety_renewal ||
       episode.phase == ExecutionEpisodePhase::kTrackingBackup;
   PlanningKey key;
@@ -2871,9 +2928,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const double endpoint_error = endpoint.has_value()
         ? (endpoint->position_world - target_position).norm()
         : std::numeric_limits<double>::infinity();
-    const bool terminal_endpoint_contract = committed_bundle && endpoint &&
+      const bool terminal_endpoint_contract = committed_bundle && endpoint &&
         terminalStopEndpointContractValid(
-            committed_bundle->terminal_stop, committed_bundle->kind,
+            effective_terminal_stop, committed_bundle->kind,
             committed_bundle->role, endpoint->role);
     completed_trajectory_reaches_goal = terminalStopCompletionObserved(
         effective_terminal_stop, terminal_endpoint_contract, completed_endpoint_valid,
@@ -2881,7 +2938,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     trajectory_reaches_goal_.store(completed_trajectory_reaches_goal);
     terminal_bundle_generation_.store(
         completed_trajectory_reaches_goal && effective_terminal_stop && committed_bundle &&
-            committed_bundle->terminal_stop
+            terminal_endpoint_contract
             ? committed_bundle->bundle_generation
             : 0U,
         std::memory_order_release);
@@ -3085,10 +3142,24 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // not publish that waypoint while PlanFromRest runs.
     std::lock_guard<std::mutex> command_lock(
         command_execution_lease_failure_latch_.transitionMutex());
-    planner_command_available_.store(false);
-    planner_failure_latched_.store(false);
-    trajectory_reaches_goal_.store(false);
-    terminal_bundle_generation_.store(0U);
+    const auto current_bundle = command_bundle_store_.load();
+    const auto terminal_generation = terminal_bundle_generation_.load(
+        std::memory_order_acquire);
+    const bool terminal_hold_belongs_to_current_goal = current_bundle &&
+        terminal_generation != 0U &&
+        current_bundle->bundle_generation == terminal_generation &&
+        current_bundle->request_id == goal->request_id &&
+        current_bundle->goal_epoch == goal_epoch &&
+        terminalHoldIsPending(
+            planner_command_available_.load(std::memory_order_acquire),
+            trajectory_reaches_goal_.load(std::memory_order_acquire),
+            effective_terminal_stop, terminal_generation);
+    if (!terminal_hold_belongs_to_current_goal) {
+      planner_command_available_.store(false);
+      planner_failure_latched_.store(false);
+      trajectory_reaches_goal_.store(false);
+      terminal_bundle_generation_.store(0U);
+    }
   }
   if (!plan_from_rest_with_transition && !replan_for_new_goal &&
       !anchor_renewal_replan &&
@@ -3366,6 +3437,19 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       return;
     }
   }
+  if (terminalHoldIsPending(
+          planner_command_available_.load(std::memory_order_acquire),
+          trajectory_reaches_goal_.load(std::memory_order_acquire),
+          effective_terminal_stop,
+          terminal_bundle_generation_.load(std::memory_order_acquire))) {
+    // The command publisher may have observed the terminal endpoint while
+    // this solve was already in flight. The execution witness now owns the
+    // request; discard every late planner disposition, including retry and
+    // fail-closed paths, so it cannot erase the terminal hold or schedule a
+    // replacement solve.
+    planner_->discardCommandCandidate();
+    return;
+  }
   // The backend stages a certified candidate; the execution store commits it
   // once below.  Its planning-history generation intentionally changes only
   // after the execution commit ACK, so it is not evidence of a ready command.
@@ -3406,7 +3490,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const bool terminal_hold_pending = terminalHoldIsPending(
         planner_command_available_.load(std::memory_order_acquire),
         trajectory_reaches_goal_.load(std::memory_order_acquire),
-        stop_goal,
+        effective_terminal_stop,
         terminal_bundle_generation_.load(std::memory_order_acquire));
     if (!terminal_hold_pending) {
       trajectory_reaches_goal_.store(false);
@@ -4800,12 +4884,18 @@ void NavigationRuntimeNode::publishCommand() {
               (point.position_world - target_position).norm() <=
               goalCompletionTolerance(*command_goal);
         }
+        const bool terminal_hold_committed = endpoint_reaches_goal &&
+            (sample.bundle->terminal_stop || effective_terminal_goal);
         terminal_bundle_generation_.store(
-            endpoint_reaches_goal &&
-                    (sample.bundle->terminal_stop || effective_terminal_goal)
-                ? sample.bundle->bundle_generation
-                : 0U,
+            terminal_hold_committed ? sample.bundle->bundle_generation : 0U,
             std::memory_order_release);
+        if (terminal_hold_committed && planning_worker_) {
+          // The terminal witness supersedes any solve that raced with the
+          // final command sample. Cancellation is an interrupt only; the
+          // worker still owns the planner transaction and its completion path
+          // discards any stale staged candidate.
+          planning_worker_->cancelActive();
+        }
       }
     }
     // The safety suffix contains the dynamically continuous main prefix up to

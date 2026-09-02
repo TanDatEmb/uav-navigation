@@ -17367,3 +17367,124 @@ release profiles must not use the former allowance.
 - **Verification:** `make build`; direct execution/FSM/mission tests; repeated
   `make external-mode-check` with waypoint 3, final STOP, and no identity-gap
   handover.
+
+## 2026-09-02 - Suppress replacement solves after terminal execution witness
+
+- **Owner/status:** Navigation runtime planning scheduler and command
+  publisher; active until repeated terminal-boundary runs show no in-flight
+  watchdog timeout after a validated terminal hold.
+- **Scope:** Once the execution timeline has a validated terminal endpoint
+  witness, reject periodic planning-key creation for that active request and
+  cancel any solve that raced with the final terminal sample. The planner
+  worker remains the sole owner of backend operations; cancellation is only an
+  interrupt and its completion path still discards stale staged candidates.
+- **Safety impact:** Fail-closed authority ordering. A terminal command cannot
+  be replaced by a late hot-replan while PX4 settles or acknowledges mission
+  completion. This does not extend a command, relax freshness/trajectory gates,
+  or convert a non-terminal bundle into a terminal witness.
+- **Evidence:** Latest SITL reached the final STOP candidate but then logged
+  `planner watchdog timed out generation=11` after terminal completion, showing
+  that a raced periodic solve remained active after the terminal hold path.
+- **Removal condition:** Remove only after an equivalent typed scheduler state
+  makes terminal-hold suppression and in-flight cancellation explicit, with no
+  possibility of a late replacement solve.
+- **Verification:** `make build`; direct runtime/FSM tests; repeated
+  `make external-mode-check` with final waypoint acceptance, COMPLETE, and no
+  terminal-phase planner watchdog timeout.
+
+## 2026-09-02 - Preserve terminal contract for coincident route semantics
+
+- **Owner/status:** Navigation runtime terminal-completion witness; active for
+  a PASS_THROUGH waypoint immediately followed by a coincident STOP.
+- **Scope:** When the immutable route marks the current boundary as terminal,
+  allow the existing certified `MainWithBackup` endpoint contract to provide
+  the terminal witness even if the bundle's legacy `terminal_stop` bit was
+  produced from the current goal enum and is false for PASS_THROUGH. The
+  endpoint role, bundle role/kind, endpoint tolerance, route-boundary event,
+  and world checks remain mandatory.
+- **Safety impact:** No ordinary PASS_THROUGH is terminal and no certificate is
+  manufactured. This only prevents a route-semantic terminal witness from
+  being erased because a legacy bundle bit did not carry the coincident STOP
+  meaning; map recertification and measured mission acceptance remain hard
+  gates.
+- **Evidence:** SITL produced a finite completed `MainWithBackup` command at
+  the coincident waypoint, but runtime required `bundle.terminal_stop=true`,
+  cleared the witness, and then rejected the expired bundle on map revision.
+- **Removal condition:** Remove when bundle metadata directly carries the
+  effective route-terminal semantic for this boundary and the same hard
+  endpoint contract remains explicit.
+- **Verification:** `make build`; direct runtime/FSM/mission tests; repeated
+  `make external-mode-check` with waypoint 3, final STOP, and COMPLETE.
+
+## 2026-09-02 - Discard late planner results after terminal witness
+
+- **Owner/status:** Navigation runtime planner completion path; active until
+  repeated terminal-boundary runs show no late solve can clear a completed
+  terminal hold.
+- **Scope:** If the command publisher has already recorded the effective
+  terminal route witness, a planner solve that was in flight before that
+  sample is discard-only. It cannot commit, retry, fail-close, clear the
+  witness, or schedule PlanFromRest; the execution timeline remains the sole
+  authority for the terminal request.
+- **Safety impact:** Prevents a stale planner completion from replacing an
+  exact terminal endpoint or converting a validated hold into rejection. No
+  trajectory, freshness, route-boundary, or measured waypoint gate is
+  relaxed; ordinary non-terminal PASS_THROUGH remains unchanged.
+- **Evidence:** SITL showed a late `RetryFromRest` result for the coincident
+  PASS_THROUGH goal after terminal completion. The old enum-only guard used
+  `stop_goal=false`, cleared the witness, and allowed map recertification to
+  remove the command.
+- **Removal condition:** Remove only when planner completion carries an
+  explicit execution-episode generation and stale terminal results are
+  rejected by that typed transaction identity.
+- **Verification:** `make build`; direct runtime/FSM/mission tests; repeated
+  `make external-mode-check` with final waypoint acceptance, COMPLETE, and no
+  terminal-phase planner failure.
+
+## 2026-09-02 - Protect current terminal witness during goal setup
+
+- **Owner/status:** Navigation runtime goal-transition setup; active until
+  repeated coincident terminal runs show the witness survives concurrent
+  `new_goal` planning setup and map publication.
+- **Scope:** Do not clear the terminal witness during `new_goal` preparation
+  when the exact committed bundle generation, request id, and goal epoch still
+  belong to the active effective-terminal route. A different goal identity
+  continues to invalidate command state and the witness.
+- **Safety impact:** Prevents setup of a concurrent planner cycle from erasing
+  an already measured terminal endpoint hold. It does not retain a bundle
+  across mission identity changes and does not bypass endpoint, world, or
+  measured waypoint acceptance gates.
+- **Evidence:** SITL still entered ordinary command recertification for
+  generation 3 immediately after terminal completion, despite the terminal
+  and late-result guards; the remaining unconditional clear was the
+  `new_goal` block.
+- **Removal condition:** Remove when goal-transition setup and terminal
+  completion are represented by one typed execution-episode transaction with
+  no independent clear path.
+- **Verification:** `make build`; direct runtime/FSM/mission tests; repeated
+  `make external-mode-check` with final waypoint acceptance and COMPLETE.
+
+## 2026-09-02 - Close terminal endpoint recertification ordering race
+
+- **Owner/status:** Navigation mapping-to-execution certificate transition;
+  active until repeated terminal runs show no terminal endpoint is cleared by
+  a map callback ordering race.
+- **Scope:** During immutable world publication, recognize an expired terminal
+  endpoint directly from the active effective-terminal route, exact endpoint
+  contract, endpoint goal tolerance, finite completion metadata, and
+  `now >= declared_end`. Preserve only that endpoint when it remains known
+  free; an already observed terminal witness keeps its existing path.
+- **Safety impact:** Does not retain a moving trajectory or extend its lease.
+  Ordinary PASS_THROUGH, non-terminal bundles, wrong endpoint roles/kinds,
+  stale identity, non-finite endpoints, and unknown/occupied endpoints remain
+  fail-closed. The command publisher still performs near-execution validation
+  before exposing the bounded STOPPED_HOLD.
+- **Evidence:** Latest SITL accepted final STOP terminal hold, then the map
+  callback ran before the derived generation witness was visible and entered
+  full trajectory recertification, removing the expired command at `t=0`.
+- **Removal condition:** Remove when terminal completion and world
+  recertification share one typed execution-episode transaction, eliminating
+  the callback-order race while retaining the same endpoint gates.
+- **Verification:** `make build`; direct runtime/FSM/mission tests; repeated
+  `make external-mode-check` with final waypoint acceptance, COMPLETE, and no
+  terminal recertification rejection.
