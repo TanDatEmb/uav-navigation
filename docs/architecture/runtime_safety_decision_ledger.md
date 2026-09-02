@@ -17879,3 +17879,22 @@ release profiles must not use the former allowance.
 - **Verification:** `make build`; focused planning/execution/runtime tests;
   repeated obstacle-map SITL with no `insufficient MAIN reserve` rejection and
   with mission completion still subject to all existing acceptance gates.
+
+### 2026-09-02 - Revert certified corner outgoing lookahead experiment
+
+- **Owner/status:** navigation planning route continuity, `REVERTED`.
+- **Scope:** The experiment temporarily allowed a certified corner window to
+  use the outgoing MINCO lookahead. It has been removed; genuine corners again
+  use the bounded acceptance-ball fillet and measured handoff from commit
+  `43733ba`.
+- **Safety impact:** No gate was relaxed. The experiment remained under the
+  existing continuous dynamic/world/tracking checks, but it increased
+  optimizer and anchor instability on the representative long obstacle map.
+  The revert restores the previously observed, more stable fail-closed path.
+- **Evidence:** `external-mode-check-20260902T110348-1321541` stopped at
+  waypoint 3/9 with repeated physical hard-gate and anchor failures after the
+  experiment; it was reverted by commit `a87f76d`.
+- **Removal condition:** Already satisfied by `a87f76d`; do not re-enable until
+  a new bounded corner handoff design has repeated representative-map proof.
+- **Verification:** `git show a87f76d`; rebuild after the revert; rerun focused
+  planner/FSM/trajectory tests and representative obstacle-map SITL.
