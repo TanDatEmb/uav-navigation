@@ -2,11 +2,13 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include <Eigen/Core>
 
 #include <navigation_planning/kinematic_state.hpp>
+#include <navigation_planning/execution_anchor.hpp>
 #include <navigation_planning/planning_budget.hpp>
 #include <navigation_planning/planning_limits.hpp>
 #include <navigation_world_model/world_model_view.hpp>
@@ -71,14 +73,32 @@ struct PlanningHistory {
 struct PlanningRequest {
   PlanningKey key;
   GoalIdentity goal;
+  std::optional<ExecutionAnchor> anchor;
+  std::int64_t activation_stamp_ns{0};
   KinematicState start_state;
   PlanningHistory history;
   navigation_world_model::WorldModelViewPtr world;
   DynamicLimits dynamics;
   PlanningBudget budget;
 
+  [[nodiscard]] bool startModeContractValid() const noexcept {
+    const bool successor_anchor_valid =
+        key.start_mode != PlanningStartMode::kCommittedFutureState ||
+        (anchor.has_value() && anchor->valid() && activation_stamp_ns > 0 &&
+         anchor->activation_stamp_ns == activation_stamp_ns &&
+         anchor->active_bundle_generation == key.committed_bundle_generation &&
+         anchor->localization_epoch == key.localization_epoch &&
+         anchor->command_world.generation == key.pinned_world_generation &&
+         anchor->command_world.revision == key.pinned_world_revision);
+    const bool stopped_activation_valid =
+        key.start_mode == PlanningStartMode::kCommittedFutureState
+            ? activation_stamp_ns > key.anchor_stamp_ns
+            : !anchor.has_value() && activation_stamp_ns == 0;
+    return successor_anchor_valid && stopped_activation_valid;
+  }
+
   [[nodiscard]] bool valid() const noexcept {
-    return key.valid() && goal.valid() &&
+    return key.valid() && goal.valid() && startModeContractValid() &&
            key.localization_epoch == goal.localization_epoch &&
            key.goal_epoch == goal.goal_epoch && key.request_id == goal.request_id &&
            key.anchor_stamp_ns == start_state.source_stamp_ns &&

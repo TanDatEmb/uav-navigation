@@ -1464,6 +1464,23 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // kinematic snapshot to the backend solve.
         setWorldModelView(request.world);
         if (!setState(request.start_state)) return finish();
+        requested_activation_stamp_ns_ = 0;
+        if (request.key.start_mode ==
+                navigation_planning::PlanningStartMode::kCommittedFutureState) {
+            if (!request.anchor.has_value()) return finish();
+            auto anchor_state = request.start_state;
+            anchor_state.position_world = request.anchor->state.position_world;
+            anchor_state.velocity_world = request.anchor->state.velocity_world;
+            anchor_state.acceleration_world = request.anchor->state.acceleration_world;
+            anchor_state.jerk_world = request.anchor->state.jerk_world;
+            anchor_state.yaw_rad = request.anchor->state.yaw;
+            anchor_state.source_stamp_ns = request.anchor->activation_stamp_ns;
+            anchor_state.localization_epoch = request.anchor->localization_epoch;
+            anchor_state.acceleration_estimated = false;
+            anchor_state.jerk_estimated = false;
+            if (!setState(anchor_state)) return finish();
+            requested_activation_stamp_ns_ = request.activation_stamp_ns;
+        }
         setCommandIdentity(CommandIdentity{
             request.key.localization_epoch, request.key.goal_epoch,
             request.key.request_id});
@@ -1486,6 +1503,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
               })()
             : planSuccessorFromExecutionAnchor(
                 request.goal.target_world, 0.0, false);
+        requested_activation_stamp_ns_ = 0;
         const auto status = result == SUCCESS || result == FINISH || result == NO_NEED
             ? navigation_planning::PlanningFailureStage::kNone
             : navigation_planning::PlanningFailureStage::kNominalRefinement;
@@ -1797,6 +1815,16 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // record the wall time (WT) and the trajectory time (TT) at the start of the replan.
         const double replan_process_start_WT = planner_context_->getSimTime();
         double replan_process_start_TT, replan_state_TT;
+        const double requested_activation_wall_time_s =
+            requested_activation_stamp_ns_ > 0
+                ? static_cast<double>(requested_activation_stamp_ns_) * 1.0e-9
+                : std::numeric_limits<double>::quiet_NaN();
+        const double requested_forward_s =
+            std::isfinite(requested_activation_wall_time_s)
+                ? requested_activation_wall_time_s - replan_process_start_WT
+                : cfg_.replan_forward_dt_s;
+        const double successor_forward_s = std::max(
+            cfg_.replan_forward_dt_s, requested_forward_s);
         HotReplanWindow replan_window;
         // A hot replan normally preserves a short prefix of the currently
         // committed command so PVAJ remains continuous.  That prefix is not
@@ -1806,7 +1834,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // Retain the previous immutable command while its normal runtime
         // certificates remain valid; the bounded anchor-recovery supervisor
         // owns any explicit measured-state transition.
-        if (!last_exp_traj_info.empty()) {
+        if (!last_exp_traj_info.empty() && requested_activation_stamp_ns_ <= 0) {
             const auto committed = planner_warm_start_.snapshot();
             const double committed_start_WT = committed.position.start_WT;
             const double committed_duration = committed.position.getTotalDuration();
@@ -1917,7 +1945,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
 
             replan_window = hotReplanWindow(
                     replan_process_start_WT, guide_pos_traj.start_WT,
-                    cfg_.replan_forward_dt_s, planner_warm_start_.getTotalDuration());
+                    successor_forward_s, planner_warm_start_.getTotalDuration());
             if (!replan_window.valid) {
                 planner_context_->error(
                         " -- [generateExpTraj] invalid executable-command clock for hot replan");
@@ -1941,16 +1969,16 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 if (planner_warm_start_.isTTOnBackupTraj(replan_process_start_TT)) {
                     if (cfg_.print_log)
                         planner_context_->warn(
-                                " -- [planner] Replan emergency stop; return FAILED and wait for a rest-state plan.");
+                                " -- [planner] successor anchor reached BACKUP; reject successor and retain active suffix.");
                     return FAILED;
                 }
 
                 if (cfg_.print_log) {
                     planner_context_->warn(
-                            " -- [generateExpTraj] committed command ended before hot replan; "
-                            "requesting PlanFromRest.");
+                            " -- [generateExpTraj] active command cannot reach successor activation; "
+                            "rejecting stale successor request.");
                 }
-                return NEW_TRAJ;
+                return FAILED;
             }
 
             if (!last_exp_traj_info.empty()) {
@@ -2019,10 +2047,17 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // the rest of the route on every planning cycle.
 
 
-            // Begin the replan from the committed trajectory's measured-state
+            // A moving successor begins at the immutable execution anchor,
+            // never at a sample reconstructed from planner-private history.
+            // The old command may still provide a geometric guide after the
+            // splice point, but it cannot provide the candidate's PVAJ
             // boundary.
-            if (!guide_pos_traj.getState(replan_state_TT, pos_init_state)) {
-                planner_context_->warn(" -- [planner] Invalid traj or eval t");
+            if (requested_activation_stamp_ns_ > 0) {
+                pos_init_state = makeCommandBoundaryPVAJ(
+                    solve_state_, solve_acceleration_estimated_,
+                    solve_jerk_estimated_);
+            } else if (!guide_pos_traj.getState(replan_state_TT, pos_init_state)) {
+                planner_context_->warn(" -- [generateExpTraj] invalid guide state at replan boundary");
                 return FAILED;
             }
             // Build the hot-start guide path. Stamps are relative to its first
@@ -3085,7 +3120,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
             return FAILED;
         }
         double replan_total_t = (planner_context_->getSimTime() - replan_process_start_WT);
-        if (!last_exp_traj_info.empty() && replan_total_t > cfg_.replan_forward_dt_s) {
+        if (!last_exp_traj_info.empty() &&
+            replan_total_t > successor_forward_s) {
             planner_context_->warn(" -- [planner] Replan over time({})!!!! Return FAILED", replan_total_t);
             return FAILED;
         }
@@ -3096,33 +3132,19 @@ std::optional<double> firstRouteBoundaryEntryTime(
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
 
-        // Both rest-to-rest and hot-replan trajectories are seeded from the
-        // state captured at the beginning of this solve.  Keep that same
-        // command clock; moving a rest-plan's start to the post-optimization
-        // time would pair a current timestamp with a historical PVA sample
-        // when optimizer latency lets the vehicle continue moving.  The
-        // execution boundary samples this candidate at the current time and
-        // rejects it if the propagated state has diverged beyond the existing
-        // anchor envelope.
-        const double new_traj_WT = replan_process_start_WT;
+        // Successor candidates are suffix-only.  Their first polynomial is
+        // solved from the immutable future anchor and begins at the exact
+        // activation timestamp selected by ExecutionTimelineStore; the old
+        // command remains active until that timestamp.
+        const double new_traj_WT = std::isfinite(requested_activation_wall_time_s)
+            ? requested_activation_wall_time_s : replan_process_start_WT;
 
-        Trajectory temp_exp_traj;
-        if (!last_exp_traj_info.empty() &&
-            !guide_pos_traj.getPartialTrajectoryByTime(replan_process_start_TT, replan_state_TT,
-                                                       temp_exp_traj)) {
-            planner_context_->error(" -- [planner] in [generateExpTraj]: getPartialTrajectoryByTime failed, force return");
-            return FAILED;
-        }
+        Trajectory temp_exp_traj = out_traj;
         out_exp_traj_info.setSFC(sfc);
-        temp_exp_traj = temp_exp_traj + out_traj;
-        temp_exp_traj.start_WT = new_traj_WT; //last_exp_traj_info.replan_start_WT ;
+        temp_exp_traj.start_WT = new_traj_WT;
         const auto generated_boundary_state = temp_exp_traj.getState(0.0);
         StatePVAJ expected_boundary_state = pos_init_state;
         bool expected_boundary_valid = expected_boundary_state.allFinite();
-        if (!last_exp_traj_info.empty()) {
-            expected_boundary_valid = guide_pos_traj.getState(
-                replan_process_start_TT, expected_boundary_state);
-        }
         if (expected_boundary_valid && generated_boundary_state.allFinite()) {
             const double boundary_error = (
                 generated_boundary_state.col(0) - expected_boundary_state.col(0)).norm();
@@ -3131,7 +3153,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     " -- [planner] generated EXP boundary disagrees with its seed: "
                     "mode={} solve_start={} output_start={} boundary_error={} "
                     "solve_p=({},{},{}) expected_p=({},{},{}) generated_p=({},{},{})",
-                    last_exp_traj_info.empty() ? "measured" : "hot",
+                    last_exp_traj_info.empty() ? "measured" : "future-anchor",
                     replan_process_start_WT, new_traj_WT, boundary_error,
                     solve_state_.p.x(), solve_state_.p.y(), solve_state_.p.z(),
                     expected_boundary_state.col(0).x(), expected_boundary_state.col(0).y(),
@@ -3141,17 +3163,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         }
         double required_main_prefix_duration_TT = 0.0;
 
-        if (!last_exp_traj_info.empty()) {
-            StatePVAJ yaw_replan_state;
-            if (!guide_yaw_traj.getState(replan_state_TT, yaw_replan_state)) {
-                planner_context_->warn(" -- [planner] Invalid traj or eval t");
-                return FAILED;
-            }
-            init_yaw = yaw_replan_state.row(0);
-        }
-
-
-        Trajectory new_traj, old_traj;
+        Trajectory new_traj;
 
         if (!yaw_traj_opt_->optimizeToTarget(
                 init_yaw, route_yaw_reference_.target_yaw_rad,
@@ -3174,15 +3186,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
             return FAILED;
         }
-        if (!last_exp_traj_info.empty()) {
-            if (!guide_yaw_traj.getPartialTrajectoryByTime(replan_process_start_TT, replan_state_TT,
-                                                           old_traj)) {
-                planner_context_->error(" -- [planner] in [generateExpTraj]: getPartialTrajectoryByTime failed, force return");
-                return FAILED;
-            }
-        }
-
-        auto temp_yaw_traj = old_traj + new_traj;
+        auto temp_yaw_traj = new_traj;
 
         // The route-boundary gate is enforced by the optimized MAIN
         // corridor. Carry the first independently evaluated entry time into
@@ -3246,21 +3250,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
         }
         // check if part of the exp on last backup
         double on_backup_end_TT{-1}, on_backup_start_TT{-1};
-        if (!last_exp_traj_info.empty()) {
-            const auto inherited_backup = inheritedBackupInterval(
-                    planner_warm_start_.getBackupTrajStartTT(),
-                    replan_window,
-                    temp_exp_traj.getTotalDuration());
-            if (!inherited_backup.valid) {
-                planner_context_->error(
-                        " -- [generateExpTraj] invalid inherited BACKUP interval");
-                return FAILED;
-            }
-            if (inherited_backup.present) {
-                on_backup_start_TT = inherited_backup.begin_tt_s;
-                on_backup_end_TT = inherited_backup.end_tt_s;
-            }
-        }
+        // The new candidate owns a fresh MAIN/BACKUP schedule.  No backup
+        // interval is inherited from the old execution bundle.
         out_exp_traj_info.setTrajectory(new_traj_WT, temp_exp_traj, temp_yaw_traj, on_backup_start_TT,
                                         on_backup_end_TT);
         if (!out_exp_traj_info.setRequiredMainPrefixDuration(

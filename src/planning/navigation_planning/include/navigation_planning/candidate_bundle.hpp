@@ -9,7 +9,6 @@
 
 #include <Eigen/Core>
 
-#include <navigation_planning/planning_request.hpp>
 #include <navigation_planning/route_boundary.hpp>
 #include <navigation_common/time.hpp>
 

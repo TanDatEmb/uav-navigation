@@ -1843,13 +1843,16 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
       navigation_planning::CandidateBundleKind::kEmergencyBrake;
   const bool schedule_successor = has_active_bundle && !emergency_candidate;
   const auto activation_ns = schedule_successor
-      ? (now_ns > std::numeric_limits<std::int64_t>::max() -
-             static_cast<std::int64_t>(navigation_planning::PlanningTimingContract::kStitchDurationS * 1.0e9)
-          ? std::numeric_limits<std::int64_t>::max()
-          : now_ns + static_cast<std::int64_t>(
-                navigation_planning::PlanningTimingContract::kStitchDurationS * 1.0e9))
+      ? candidate->declared_start_ns
       : now_ns;
-  if (activation_ns <= 0 || activation_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns ||
+  const auto activation_guard_ns = static_cast<std::int64_t>(
+      navigation_planning::PlanningTimingContract::kCommitGuardS * 1.0e9);
+  if (activation_ns <= 0 ||
+      activation_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns ||
+      (schedule_successor &&
+       (activation_guard_ns <= 0 ||
+        now_ns > std::numeric_limits<std::int64_t>::max() - activation_guard_ns ||
+        activation_ns <= now_ns + activation_guard_ns)) ||
       candidate->valid_from_ns > activation_ns || candidate->declared_end_ns < activation_ns) {
     planner_->discardCommandCandidate();
     return false;
@@ -1858,6 +1861,21 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   candidate->valid_until_ns = std::min(
       candidate->declared_end_ns, activation_ns + maximum_age_ns);
   candidate->activation_stamp_ns = activation_ns;
+  const auto candidate_start_ns = navigation_common::secondsToNanoseconds(
+      candidate->start_wall_time_s);
+  if (schedule_successor &&
+      (!candidate_start_ns || *candidate_start_ns != activation_ns ||
+       candidate->declared_start_ns != activation_ns)) {
+    planner_->discardCommandCandidate();
+    RCLCPP_WARN(
+        get_logger(),
+        "execution boundary rejected successor with non-exact declared start "
+        "declared=%lld rounded=%lld activation=%lld",
+        static_cast<long long>(candidate->declared_start_ns),
+        candidate_start_ns ? static_cast<long long>(*candidate_start_ns) : 0LL,
+        static_cast<long long>(activation_ns));
+    return false;
+  }
   if (!candidate->valid()) {
     planner_->discardCommandCandidate();
     return false;
@@ -1931,8 +1949,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
       return false;
     }
   }
-  const double activation_wall_time_s = now().seconds() +
-      (schedule_successor ? navigation_planning::PlanningTimingContract::kStitchDurationS : 0.0);
+  const double activation_wall_time_s = static_cast<double>(activation_ns) * 1.0e-9;
   if (!navigation_planning::candidateHasRequiredMainReserve(
           *candidate_ptr, activation_wall_time_s)) {
     planner_->discardCommandCandidate();
@@ -3114,6 +3131,47 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planning_request.history.previous_velocity_world = execution_state.velocity_world;
   planning_request.world = pinned_world.view;
   planning_request.dynamics = mission_dynamic_limits_;
+  if (planning_request.key.start_mode ==
+      navigation_planning::PlanningStartMode::kCommittedFutureState) {
+    const auto activation_lead_ns = static_cast<std::int64_t>(
+        navigation_planning::PlanningTimingContract::kStitchDurationS * 1.0e9);
+    if (activation_lead_ns <= 0 ||
+        now_ns > std::numeric_limits<std::int64_t>::max() - activation_lead_ns) {
+      last_planning_outcome_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::CompletePlanningOutcome::kNoCompleteBundle),
+          std::memory_order_release);
+      last_planning_failure_stage_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::PlanningFailureStage::kCommitRecertification),
+          std::memory_order_release);
+      last_planning_failure_reason_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline),
+          std::memory_order_release);
+      return;
+    }
+    const auto activation_stamp_ns = now_ns + activation_lead_ns;
+    const auto anchor = command_bundle_store_.reserveAnchor(
+        execution_stamp_ns, activation_stamp_ns);
+    if (!anchor) {
+      last_planning_outcome_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::CompletePlanningOutcome::kNoCompleteBundle),
+          std::memory_order_release);
+      last_planning_failure_stage_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::PlanningFailureStage::kCommitRecertification),
+          std::memory_order_release);
+      last_planning_failure_reason_.store(
+          static_cast<std::uint8_t>(
+              navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline),
+          std::memory_order_release);
+      return;
+    }
+    planning_request.anchor = *anchor;
+    planning_request.activation_stamp_ns = activation_stamp_ns;
+  }
   planning_request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
       std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
           std::chrono::duration<double>(planner_->solveDeadlineSeconds()));

@@ -48,6 +48,7 @@
 #include <data_structure/backup_traj.h>
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/planning_outcome.hpp>
+#include <navigation_planning/planning_request.hpp>
 #include <navigation_mission/route_progress.hpp>
 #include <planner_core/route_yaw_reference.hpp>
 
@@ -146,6 +147,10 @@ namespace navigation_planning_backend {
         double on_backup_start_WT{-1}, on_backup_end_WT{-1};
 
         double planner_process_start_WT_;
+        // Set for one typed successor solve.  The execution timeline chooses
+        // this wall timestamp; the planner must not invent a different splice
+        // time after solving.
+        std::int64_t requested_activation_stamp_ns_{0};
 
         struct GoalInfo {
             Vec3f goal_p{0, 0, 0};

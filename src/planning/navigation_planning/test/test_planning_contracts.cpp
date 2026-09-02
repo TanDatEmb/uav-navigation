@@ -4,6 +4,7 @@
 
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/candidate_admission.hpp>
+#include <navigation_planning/execution_anchor.hpp>
 #include <navigation_planning/kinematic_state.hpp>
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/planning_request.hpp>
@@ -235,6 +236,65 @@ TEST(PlanningRequest, KeyPinsEveryMutableIdentityAndStartMode) {
   EXPECT_TRUE(key.valid());
   key.anchor_stamp_ns = 0;
   EXPECT_FALSE(key.valid());
+}
+
+TEST(ExecutionAnchor, RequiresAnImmutableFutureCommandBoundary) {
+  navigation_planning::ExecutionAnchor anchor;
+  anchor.active_bundle_generation = 11;
+  anchor.localization_epoch = 3;
+  anchor.goal_epoch = 7;
+  anchor.request_id = 9;
+  anchor.request_stamp_ns = 100;
+  anchor.activation_stamp_ns = 500;
+  anchor.active_main_end_ns = 900;
+  anchor.active_bundle_end_ns = 1000;
+  anchor.command_world = {3, 4, 8, 120};
+  EXPECT_TRUE(anchor.valid());
+
+  anchor.active_main_end_ns = 499;
+  EXPECT_FALSE(anchor.valid());
+}
+
+TEST(PlanningRequest, CommittedFutureStateCannotOmitOrMoveItsAnchor) {
+  navigation_planning::PlanningRequest request;
+  request.key.localization_epoch = 3;
+  request.key.goal_epoch = 7;
+  request.key.request_id = 9;
+  request.key.route_revision = 6;
+  request.key.committed_bundle_generation = 11;
+  request.key.pinned_world_generation = 4;
+  request.key.pinned_world_revision = 8;
+  request.key.start_mode =
+      navigation_planning::PlanningStartMode::kCommittedFutureState;
+  request.key.anchor_stamp_ns = 100;
+  request.key.dynamics_hash = 12;
+  request.goal.localization_epoch = 3;
+  request.goal.goal_epoch = 7;
+  request.goal.request_id = 9;
+  request.goal.mission_id = "mission";
+
+  EXPECT_FALSE(request.startModeContractValid());
+  EXPECT_FALSE(request.valid());
+
+  navigation_planning::ExecutionAnchor anchor;
+  anchor.active_bundle_generation = 11;
+  anchor.localization_epoch = 3;
+  anchor.goal_epoch = 7;
+  anchor.request_id = 9;
+  anchor.request_stamp_ns = 100;
+  anchor.activation_stamp_ns = 500;
+  anchor.active_main_end_ns = 900;
+  anchor.active_bundle_end_ns = 1000;
+  anchor.command_world = {3, 4, 8, 120};
+  request.anchor = anchor;
+  request.activation_stamp_ns = 500;
+  EXPECT_TRUE(request.startModeContractValid());
+  EXPECT_FALSE(request.valid());
+
+  request.activation_stamp_ns = 501;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.anchor->activation_stamp_ns = 501;
+  EXPECT_TRUE(request.startModeContractValid());
 }
 
 TEST(PlanningBudget, UsesSteadyClockAndCancellation) {

@@ -1,5 +1,35 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Bind successor planning to an execution-owned future anchor
+
+- **Owner/status:** planning request and execution timeline boundary,
+  `IMPLEMENTED`; focused contract/build evidence is green, while repeated SITL,
+  sanitizer, and command-to-PX4 evidence remain open.
+- **Scope:** `PlanningRequest` now carries an immutable `ExecutionAnchor` and
+  one producer-selected activation timestamp for every moving successor. The
+  execution store samples the anchor from the active MAIN lease; the planner
+  seeds P/V/A/J/yaw from that witness and emits a suffix whose declared start
+  is the same activation boundary. The old command is not concatenated into the
+  returned successor, and a missing/late anchor fails closed.
+- **Safety impact:** prevents planner-private trajectory history from being the
+  continuity authority and prevents a solve finishing after its intended splice
+  from being admitted at a new, implicitly recomputed time. Existing exact
+  anchor, world, route, dynamic, flatness, MAIN reserve, freshness, and
+  `0.25 m` tracking gates remain mandatory.
+- **Evidence:** `navigation_planning` contract tests cover immutable anchor
+  validity and the required future-successor metadata; all four affected
+  packages rebuild and their sourced-overlay CTest suites pass. No SITL or
+  sanitizer qualification is claimed.
+- **Removal/review condition:** remove only after the remaining planner-history
+  compatibility path is eliminated or proven to be warm-start-only, and after
+  repeated open/pass-through/obstacle runs show activation continuity. Do not
+  reintroduce moving `PlanFromRest`, old-prefix composition, or relaxed gates.
+- **Verification:** `colcon build --packages-select navigation_planning
+  navigation_execution navigation_planning_backend navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON`; sourced-overlay CTest for all four packages;
+  repeated 1/3/5 m/s SITL with anchor P/V/A/J/yaw residual and activation-margin
+  evidence.
+
 ### 2026-09-02 - Replace expired-endpoint replay with typed STOPPED_HOLD episodes
 
 - **Owner/status:** runtime execution lifecycle, `IMPLEMENTED`; focused tests and
