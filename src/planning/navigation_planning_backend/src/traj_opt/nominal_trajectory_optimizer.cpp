@@ -2300,9 +2300,17 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     out_traj.clear();
 
 
-    if (success && !std::isfinite(optimize(out_traj, cfg_.opt_accuracy))) {
-        cout << YELLOW << " -- [planner] Minco exp_traj opt failed." << RESET << endl;
-        success = false;
+    if (success) {
+        const double optimization_result = optimize(out_traj, cfg_.opt_accuracy);
+        // optimize() returns a numeric objective, but the baseline-only path
+        // historically returned bool false when no certified seed existed.
+        // Treat an empty output as failure as well; otherwise 0.0 is finite
+        // and generateExpTraj proceeds to yaw optimization with no position
+        // trajectory, obscuring the actual nominal-solve failure.
+        if (!std::isfinite(optimization_result) || out_traj.empty()) {
+            cout << YELLOW << " -- [planner] Minco exp_traj opt failed." << RESET << endl;
+            success = false;
+        }
     }
 
     penalty_log << opt_vars.penalty_log.transpose() << endl;
