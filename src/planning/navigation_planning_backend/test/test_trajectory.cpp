@@ -1090,6 +1090,7 @@ TEST(PlannerTrajectory, DiscontinuousOldToNewSpliceIsRejected) {
         bundle.start_wall_time_s, bundle.duration_s).value();
     bundle.valid_from_ns = bundle.declared_start_ns;
     bundle.valid_until_ns = bundle.declared_end_ns;
+    bundle.activation_stamp_ns = bundle.valid_from_ns;
     bundle.role = candidate_role;
     bundle.kind = candidate_role == navigation_planning::CandidateRole::kEmergency
         ? navigation_planning::CandidateBundleKind::kEmergencyBrake
@@ -1156,6 +1157,7 @@ TEST(PlannerTrajectory, ExpiredEmergencyMayRebaseOnlyAfterCertifiedStop) {
         bundle.start_wall_time_s, bundle.duration_s).value();
     bundle.valid_from_ns = bundle.declared_start_ns;
     bundle.valid_until_ns = bundle.declared_end_ns;
+    bundle.activation_stamp_ns = bundle.valid_from_ns;
     bundle.role = candidate_role;
     bundle.kind = candidate_role == navigation_planning::CandidateRole::kEmergency
         ? navigation_planning::CandidateBundleKind::kEmergencyBrake
@@ -1233,6 +1235,7 @@ TEST(PlannerTrajectory, ExpiredBackupSuffixMayRebaseOnlyAfterCertifiedStop) {
   previous.declared_end_ns = end_ns;
   previous.valid_from_ns = start_ns;
   previous.valid_until_ns = end_ns;
+  previous.activation_stamp_ns = previous.valid_from_ns;
   previous.role = navigation_planning::CandidateRole::kMain;
   previous.backup_available = true;
   previous.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
@@ -1267,6 +1270,7 @@ TEST(PlannerTrajectory, ExpiredBackupSuffixMayRebaseOnlyAfterCertifiedStop) {
       next.start_wall_time_s, next.duration_s).value();
   next.valid_from_ns = next.declared_start_ns;
   next.valid_until_ns = next.declared_end_ns;
+  next.activation_stamp_ns = next.valid_from_ns;
   next.role = navigation_planning::CandidateRole::kMain;
   next.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
   next.backup_available = false;

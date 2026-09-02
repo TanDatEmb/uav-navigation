@@ -68,68 +68,6 @@ double knownFreeGuideSupport(
     return support_m;
 }
 
-std::optional<double> firstRouteBoundaryEntryTime(
-        const Trajectory& trajectory,
-        const Eigen::Vector3d& boundary_point,
-        const double boundary_radius_m) {
-    if (trajectory.empty() || trajectory.getPieceNum() < 1 ||
-        !boundary_point.allFinite() || !std::isfinite(boundary_radius_m) ||
-        boundary_radius_m <= 0.0) {
-        return std::nullopt;
-    }
-
-    const double total_duration_s = trajectory.getTotalDuration();
-    if (!std::isfinite(total_duration_s) || total_duration_s <= 0.0) {
-        return std::nullopt;
-    }
-
-    // The execution contract uses the same axis-aligned acceptance volume as
-    // CandidateBundle export. A sphere here would reject a valid corner entry
-    // that is inside the controller's AABB, while a coarse sample alone could
-    // miss a short entry interval. Bracket the first actual outside->inside
-    // transition and refine its timestamp without manufacturing a junction.
-    const Eigen::Vector3d boundary_min = boundary_point -
-        Eigen::Vector3d::Constant(boundary_radius_m);
-    const Eigen::Vector3d boundary_max = boundary_point +
-        Eigen::Vector3d::Constant(boundary_radius_m);
-    const auto inside_boundary = [&](const double time_s) {
-        const Eigen::Vector3d position = trajectory.getPos(time_s);
-        return position.allFinite() &&
-            (position.array() >= boundary_min.array()).all() &&
-            (position.array() <= boundary_max.array()).all();
-    };
-    if (inside_boundary(0.0)) return 0.0;
-
-    constexpr double kBoundaryWitnessDtS = 0.005;
-    const double sample_count = std::ceil(total_duration_s / kBoundaryWitnessDtS);
-    if (!std::isfinite(sample_count) || sample_count > 10000000.0) {
-        return std::nullopt;
-    }
-    double previous_time_s = 0.0;
-    bool previous_inside = false;
-    for (std::uint64_t sample = 1U;
-         sample <= static_cast<std::uint64_t>(sample_count); ++sample) {
-        const double current_time_s = std::min(
-            total_duration_s,
-            static_cast<double>(sample) * kBoundaryWitnessDtS);
-        const bool current_inside = inside_boundary(current_time_s);
-        if (current_inside && !previous_inside) {
-            double lower = previous_time_s;
-            double upper = current_time_s;
-            for (int iteration = 0; iteration < 32; ++iteration) {
-                const double middle = 0.5 * (lower + upper);
-                if (inside_boundary(middle)) upper = middle;
-                else lower = middle;
-            }
-            return upper;
-        }
-        previous_time_s = current_time_s;
-        previous_inside = current_inside;
-        if (current_time_s >= total_duration_s) break;
-    }
-    return std::nullopt;
-}
-
 }  // namespace
 
     PlannerResultCode Planner::classifySolveFailure(
@@ -965,7 +903,16 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     }
                 }
                 const bool boundary_reached = boundary_entry_tt.has_value();
-                route_boundary_required = is_pass_through && boundary_reached;
+                // A pass-through witness is executable only while the command
+                // is still in MAIN.  If the first entry occurs after the
+                // selected BACKUP switch, this bundle is allowed to stop
+                // before the waypoint and be replanned; it must not advertise
+                // a boundary event for a suffix that owns the command.
+                const bool boundary_entry_before_backup = boundary_reached &&
+                    (!command.backup_suffix_available ||
+                     *boundary_entry_tt <= command.backup_start_tt + 1.0e-9);
+                route_boundary_required = is_pass_through &&
+                    boundary_entry_before_backup;
                 Eigen::Vector3d incoming = Eigen::Vector3d::Zero();
                 Eigen::Vector3d outgoing = Eigen::Vector3d::Zero();
                 for (const auto& segment : route_snapshot_->segments) {
@@ -996,27 +943,32 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     constraint.corner_speed_mps = command.terminal_stop ? 0.0 :
                         std::max(0.0, pass_through_next_target_.has_value()
                             ? nominal_exp_max_velocity_mps_ : 0.0);
-                    candidate.route_boundary_constraint = constraint;
-                    if (!boundary_entry_tt.has_value()) {
-                        planner_context_->warn(
-                            " -- [planner] endpoint is inside route boundary but no "
-                            "trajectory entry witness was found; rejecting metadata");
-                        return std::nullopt;
+                    const bool emit_boundary_event = boundary_entry_tt.has_value() &&
+                        (!is_pass_through || boundary_entry_before_backup);
+                    if (!emit_boundary_event) {
+                        if (is_pass_through && boundary_reached) {
+                            planner_context_->info(
+                                " -- [planner] pass-through entry is after BACKUP "
+                                "switch; omitting boundary event entry_tt={} backup_start_tt={}",
+                                *boundary_entry_tt, command.backup_start_tt);
+                        }
+                    } else {
+                        candidate.route_boundary_constraint = constraint;
+                        const auto boundary_entry_position = command.position.getPos(
+                            *boundary_entry_tt);
+                        const auto boundary_stamp_ns = navigation_common::secondsSumToNanoseconds(
+                            start_wall_time_s, *boundary_entry_tt);
+                        if (!boundary_entry_position.allFinite() || !boundary_stamp_ns) {
+                            return std::nullopt;
+                        }
+                        candidate.route_boundary_event = navigation_planning::RouteBoundaryEvent{
+                            command.terminal_stop
+                                ? navigation_planning::RouteBoundaryEventKind::kTerminalStop
+                                : navigation_planning::RouteBoundaryEventKind::kPassThrough,
+                            route_snapshot_->active_waypoint_index, *boundary_stamp_ns,
+                            boundary_entry_position, incoming, outgoing,
+                            constraint.corner_speed_mps};
                     }
-                    const auto boundary_entry_position = command.position.getPos(
-                        *boundary_entry_tt);
-                    const auto boundary_stamp_ns = navigation_common::secondsSumToNanoseconds(
-                        start_wall_time_s, *boundary_entry_tt);
-                    if (!boundary_entry_position.allFinite() || !boundary_stamp_ns) {
-                        return std::nullopt;
-                    }
-                    candidate.route_boundary_event = navigation_planning::RouteBoundaryEvent{
-                        command.terminal_stop
-                            ? navigation_planning::RouteBoundaryEventKind::kTerminalStop
-                            : navigation_planning::RouteBoundaryEventKind::kPassThrough,
-                        route_snapshot_->active_waypoint_index, *boundary_stamp_ns,
-                        boundary_entry_position, incoming, outgoing,
-                        constraint.corner_speed_mps};
                 }
             }
         }
@@ -3398,53 +3350,11 @@ std::optional<double> firstRouteBoundaryEntryTime(
         }
         auto temp_yaw_traj = new_traj;
 
-        // The route-boundary gate is enforced by the optimized MAIN
-        // corridor. Carry the first independently evaluated entry time into
-        // ExpTraj so a visibility/braking BACKUP suffix cannot become active
-        // before the vehicle has entered the mission acceptance ball. Without
-        // this certificate the composed command can expose a stop suffix on
-        // the incoming leg, even though the nominal MAIN itself crosses the
-        // waypoint.
-        if (route_lookahead_active && route_boundary_gate.has_value()) {
-            const auto route_boundary_time = firstRouteBoundaryEntryTime(
-                temp_exp_traj,
-                route_boundary_gate->point,
-                route_boundary_gate->radius_m);
-            if (!route_boundary_time.has_value()) {
-                double nearest_junction_distance_m =
-                    std::numeric_limits<double>::infinity();
-                int nearest_junction_index = -1;
-                for (int junction_index = 0;
-                     junction_index <= temp_exp_traj.getPieceNum();
-                     ++junction_index) {
-                    const Eigen::Vector3d position =
-                        temp_exp_traj.getJuncPos(junction_index);
-                    const double distance =
-                        (position - route_boundary_gate->point).norm();
-                    if (std::isfinite(distance) &&
-                        distance < nearest_junction_distance_m) {
-                        nearest_junction_distance_m = distance;
-                        nearest_junction_index = junction_index;
-                    }
-                }
-                planner_context_->error(
-                    " -- [planner] pass-through MAIN missing route-boundary "
-                    "entry witness point=({}, {}, {}) radius={} pieces={} "
-                    "nearest_junction_distance={} index={}",
-                    route_boundary_gate->point.x(), route_boundary_gate->point.y(),
-                    route_boundary_gate->point.z(), route_boundary_gate->radius_m,
-                    temp_exp_traj.getPieceNum(), nearest_junction_distance_m,
-                    nearest_junction_index);
-                return FAILED;
-            }
-            required_main_prefix_duration_TT = *route_boundary_time;
-            planner_context_->info(
-                " -- [planner] certified pass-through MAIN prefix before BACKUP: "
-                "duration={} boundary=({}, {}, {}) radius={}",
-                required_main_prefix_duration_TT,
-                route_boundary_gate->point.x(), route_boundary_gate->point.y(),
-                route_boundary_gate->point.z(), route_boundary_gate->radius_m);
-        }
+        // Route-boundary acceptance is recorded only from the composed command
+        // in exportStagedCommandCandidate().  It is not a BACKUP lower bound:
+        // a receding-horizon command may stop before the waypoint and be
+        // replanned safely.  The ExpTraj prefix field remains reserved for a
+        // genuine executable handoff, not for a future route crossing time.
 
         traj_opt::TrajectoryDynamicReport exp_dynamic_report;
         if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
@@ -3749,11 +3659,13 @@ std::optional<double> firstRouteBoundaryEntryTime(
             return OPT_FAILED;
         }
         // A measured-state rebase handoff is part of nominal EXP, not a
-        // disposable prefix.  Start BACKUP only after the complete connector
-        // has elapsed; the full candidate/world certificate still authorizes
-        // the connector and the suffix independently.
+        // disposable prefix.  Route-boundary crossing is deliberately not
+        // included here: it may occur after BACKUP starts, in which case this
+        // receding-horizon bundle simply stops before the waypoint.
+        const double minimum_executable_main_duration_TT =
+            required_main_prefix_duration_TT;
         const double backup_switch_lower_bound = std::max(
-                t0, required_main_prefix_duration_TT);
+                t0, minimum_executable_main_duration_TT);
         if (!std::isfinite(backup_switch_lower_bound) ||
             !(backup_switch_lower_bound < te)) {
             planner_context_->warn(
