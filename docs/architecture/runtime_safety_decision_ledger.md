@@ -1,5 +1,43 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Schedule SUPER-compatible successor activation in the execution timeline
+
+- **Owner/status:** navigation execution timeline and External Mode command
+  ingress, `IMPLEMENTED`; focused timeline/anchor tests, build, and repeated
+  SITL are required before qualification.
+- **Scope:** `ExecutionTimelineStore` now owns one immutable active bundle and
+  at most one pending successor. A moving successor reserves a future
+  activation timestamp (`0.40 s` lead), samples its `ExecutionAnchor` from
+  the active execution bundle, validates the analytic P/V/A/J/yaw boundary,
+  and remains pending until the 50 Hz command sampler atomically activates it.
+  Initial commands may activate immediately when no active bundle exists.
+- **Safety impact:** Prevents a planner completion from replacing the command
+  currently sent to PX4 and removes the old-past handoff proof. Active command
+  validity through activation, exact world/goal identity, complete candidate
+  certificates, and the existing tracking/dynamic/clearance/freshness gates
+  remain mandatory. World or goal advancement discards pending candidates;
+  missed activation cannot be executed.
+- **False-accept/false-reject consequences:** A candidate with a mismatched
+  future anchor, expired active lease, stale world, or changed goal is rejected
+  or discarded, leaving the active command in control when it remains valid.
+  If no active command can reach the reserved activation point, no successor
+  is staged and the existing fail-closed path remains authoritative.
+- **Evidence:** `test_committed_bundle_store` passes 22/22, including active
+  retention before activation, exact anchor matching, activation-time planner
+  finalization, sampler activation, and pending invalidation on world advance.
+  `navigation_runtime` builds and its focused tests pass on this branch;
+  repeated open-space, pass-through, and obstacle SITL evidence is not yet
+  available.
+- **Removal/review condition:** Revisit only after the runtime has one atomic
+  command/timeline authority and repeated command-to-PX4 transfer evidence
+  shows no activation loss. Do not replace the future anchor with measured
+  moving `PlanFromRest` or relax the `0.25 m` tracking gate.
+- **Verification:** `colcon test --packages-select navigation_execution
+  navigation_runtime --event-handlers console_direct+`; `colcon build
+  --packages-select navigation_planning_backend navigation_runtime`;
+  repeated 1/3/5 m/s SITL with activation margin and command-generation
+  continuity evidence.
+
 ### 2026-08-31 - Preserve the certified safety suffix across a pass-through handoff
 
 - **Owner/status:** PX4 External Mode mission-command ingress, `IMPLEMENTED`; focused

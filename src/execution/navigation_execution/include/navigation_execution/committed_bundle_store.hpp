@@ -7,9 +7,11 @@
 #include <mutex>
 #include <optional>
 #include <limits>
+#include <utility>
 
 #include <navigation_common/time.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_execution/execution_anchor.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 
 namespace navigation_execution {
@@ -34,14 +36,26 @@ enum class CommitDecision : std::uint8_t {
   kFinalizationFailed,
 };
 
+enum class StageDecision : std::uint8_t {
+  kStaged,
+  kNoActiveGoal,
+  kWorldAdvanced,
+  kGoalAdvanced,
+  kInvalidCandidate,
+  kInvalidAnchor,
+  kActivationTooLate,
+  kCancelled,
+  kFinalizationFailed,
+};
+
 // Sole owner of the product command candidate that is allowed to reach the
 // sampler. Candidate construction and validation happen before tryCommit();
 // the store critical section compares identities and swaps one shared pointer.
-class CommittedBundleStore final {
+class ExecutionTimelineStore final {
  public:
-  CommittedBundleStore() = default;
-  CommittedBundleStore(const CommittedBundleStore&) = delete;
-  CommittedBundleStore& operator=(const CommittedBundleStore&) = delete;
+  ExecutionTimelineStore() = default;
+  ExecutionTimelineStore(const ExecutionTimelineStore&) = delete;
+  ExecutionTimelineStore& operator=(const ExecutionTimelineStore&) = delete;
 
   bool setActiveGoalEpoch(std::uint64_t goal_epoch,
                           bool retain_committed_bundle = false) noexcept {
@@ -50,6 +64,8 @@ class CommittedBundleStore final {
     if (goal_epoch < active_goal_epoch_) return false;
     active_goal_epoch_ = goal_epoch;
     if (!retain_committed_bundle) committed_.reset();
+    pending_.reset();
+    pending_activation_ns_ = 0;
     return true;
   }
 
@@ -139,6 +155,10 @@ class CommittedBundleStore final {
       // clear it rather than retaining an uncertified command.
       committed_.reset();
     }
+    // A pending successor was certified against the previous immutable
+    // snapshot. It must be rebuilt after a world advance.
+    pending_.reset();
+    pending_activation_ns_ = 0;
     world_identity_ = identity;
     return true;
   }
@@ -147,6 +167,192 @@ class CommittedBundleStore final {
       const noexcept {
     std::lock_guard lock(mutex_);
     return committed_;
+  }
+
+  [[nodiscard]] std::shared_ptr<const navigation_planning::CandidateBundle>
+  loadPending() const noexcept {
+    std::lock_guard lock(mutex_);
+    return pending_;
+  }
+
+  [[nodiscard]] bool hasPending() const noexcept {
+    std::lock_guard lock(mutex_);
+    return static_cast<bool>(pending_);
+  }
+
+  [[nodiscard]] std::int64_t pendingActivationNs() const noexcept {
+    std::lock_guard lock(mutex_);
+    return pending_activation_ns_;
+  }
+
+  // Sample the execution-owned active command at a future splice point. The
+  // old command must remain valid through the point; otherwise the planner
+  // receives no anchor and the runtime fails closed.
+  [[nodiscard]] std::optional<ExecutionAnchor> reserveAnchor(
+      std::int64_t request_stamp_ns, std::int64_t activation_stamp_ns) const noexcept {
+    if (request_stamp_ns <= 0 || activation_stamp_ns < request_stamp_ns) return std::nullopt;
+    std::lock_guard lock(mutex_);
+    if (!committed_ || !world_identity_ ||
+        activation_stamp_ns < committed_->valid_from_ns ||
+        activation_stamp_ns > committed_->valid_until_ns) {
+      return std::nullopt;
+    }
+    const auto point = committed_->sample(activation_stamp_ns);
+    if (!point) return std::nullopt;
+    const auto end_ns = committed_->declared_end_ns > 0
+        ? committed_->declared_end_ns : committed_->valid_until_ns;
+    const auto main_end_ns = committed_->backup_available
+        ? navigation_common::secondsSumToNanoseconds(
+              committed_->start_wall_time_s, committed_->backup_start_time_s)
+        : std::optional<std::int64_t>{end_ns};
+    if (!main_end_ns || *main_end_ns < activation_stamp_ns || end_ns < activation_stamp_ns) {
+      return std::nullopt;
+    }
+    ExecutionAnchor anchor;
+    anchor.active_bundle_generation = committed_->bundle_generation;
+    anchor.localization_epoch = committed_->localization_epoch;
+    anchor.goal_epoch = committed_->goal_epoch;
+    anchor.request_id = committed_->request_id;
+    anchor.request_stamp_ns = request_stamp_ns;
+    anchor.activation_stamp_ns = activation_stamp_ns;
+    anchor.state = *point;
+    anchor.active_role = point->role;
+    anchor.active_main_end_ns = *main_end_ns;
+    anchor.active_bundle_end_ns = end_ns;
+    anchor.command_world = committed_->world_identity;
+    return anchor.valid() ? std::optional<ExecutionAnchor>{std::move(anchor)} : std::nullopt;
+  }
+
+  // Stage, but do not expose, a complete successor. The transaction watermark
+  // is consumed at staging so an older result cannot overwrite a newer
+  // pending command while activation is waiting for the reserved boundary.
+  StageDecision stagePending(
+      const CommitToken& expected, const ExecutionAnchor& anchor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate) noexcept {
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0U ||
+        expected.transaction_id == 0U) return StageDecision::kInvalidCandidate;
+    if (!anchor.valid() || candidate->valid_from_ns != anchor.activation_stamp_ns ||
+        candidate->activation_stamp_ns != anchor.activation_stamp_ns ||
+        candidate->localization_epoch != anchor.localization_epoch ||
+        candidate->goal_epoch != anchor.goal_epoch ||
+        candidate->request_id != anchor.request_id ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            candidate->world_identity, expected.world_identity)) {
+      return StageDecision::kInvalidAnchor;
+    }
+    std::lock_guard lock(mutex_);
+    if (active_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) return StageDecision::kGoalAdvanced;
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity)) return StageDecision::kWorldAdvanced;
+    if (expected.transaction_id <= last_transaction_id_) return StageDecision::kCancelled;
+    if (anchor.active_main_end_ns < anchor.activation_stamp_ns ||
+        candidate->valid_until_ns < anchor.activation_stamp_ns) {
+      return StageDecision::kActivationTooLate;
+    }
+    pending_ = std::move(candidate);
+    pending_activation_ns_ = anchor.activation_stamp_ns;
+    last_transaction_id_ = expected.transaction_id;
+    return StageDecision::kStaged;
+  }
+
+  template <typename FinalizeFn>
+  StageDecision stagePendingAndFinalize(
+      const CommitToken& expected, const ExecutionAnchor& anchor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
+      FinalizeFn&& finalize) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0U ||
+        expected.transaction_id == 0U) return StageDecision::kInvalidCandidate;
+    if (!anchor.valid() || candidate->valid_from_ns != anchor.activation_stamp_ns ||
+        candidate->activation_stamp_ns != anchor.activation_stamp_ns ||
+        candidate->localization_epoch != anchor.localization_epoch ||
+        candidate->goal_epoch != anchor.goal_epoch ||
+        candidate->request_id != anchor.request_id ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            candidate->world_identity, expected.world_identity)) {
+      return StageDecision::kInvalidAnchor;
+    }
+    if (active_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) return StageDecision::kGoalAdvanced;
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity)) return StageDecision::kWorldAdvanced;
+    if (expected.transaction_id <= last_transaction_id_) return StageDecision::kCancelled;
+    if (anchor.active_main_end_ns < anchor.activation_stamp_ns ||
+        candidate->valid_until_ns < anchor.activation_stamp_ns) {
+      return StageDecision::kActivationTooLate;
+    }
+    const auto previous_pending = pending_;
+    const auto previous_pending_activation = pending_activation_ns_;
+    const auto previous_transaction_id = last_transaction_id_;
+    pending_ = std::move(candidate);
+    pending_activation_ns_ = anchor.activation_stamp_ns;
+    last_transaction_id_ = expected.transaction_id;
+    bool finalized = false;
+    try {
+      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)());
+    } catch (...) {
+      finalized = false;
+    }
+    if (!finalized) {
+      pending_ = previous_pending;
+      pending_activation_ns_ = previous_pending_activation;
+      last_transaction_id_ = previous_transaction_id;
+      return StageDecision::kFinalizationFailed;
+    }
+    return StageDecision::kStaged;
+  }
+
+  // The command timer calls this operation before sampling. No callback or
+  // planner code can replace active outside this single atomic boundary.
+  template <typename FinalizeFn>
+  bool activatePendingIfDueAndFinalize(
+      std::int64_t now_ns, FinalizeFn&& finalize) const noexcept {
+    std::lock_guard lock(mutex_);
+    if (!pending_ || pending_activation_ns_ <= 0 || now_ns < pending_activation_ns_) {
+      return false;
+    }
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, pending_->world_identity) ||
+        active_goal_epoch_ != pending_->goal_epoch ||
+        now_ns > pending_->valid_until_ns) {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      return false;
+    }
+    const auto previous = committed_;
+    const auto successor = pending_;
+    committed_ = successor;
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    bool finalized = false;
+    try {
+      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)(
+          successor->bundle_generation));
+    } catch (...) {
+      finalized = false;
+    }
+    if (!finalized) {
+      committed_ = previous;
+      // The finalize callback owns an external transaction (planner history,
+      // for example). Once it rejects, retaining the pending pointer would
+      // leave an unfinalizable candidate parked ahead of future solves.
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      return false;
+    }
+    return true;
+  }
+
+  bool activatePendingIfDue(std::int64_t now_ns) const noexcept {
+    return activatePendingIfDueAndFinalize(now_ns, [](std::uint64_t) {
+      return true;
+    });
   }
 
   // Execute the exposure callback while the same transaction lock protects
@@ -200,6 +406,8 @@ class CommittedBundleStore final {
       return CommitDecision::kCancelled;
     }
     committed_ = std::move(candidate);
+    pending_.reset();
+    pending_activation_ns_ = 0;
     last_transaction_id_ = expected.transaction_id;
     return CommitDecision::kCommitted;
   }
@@ -236,8 +444,12 @@ class CommittedBundleStore final {
     }
 
     const auto previous = committed_;
+    const auto previous_pending = pending_;
+    const auto previous_pending_activation = pending_activation_ns_;
     const auto previous_transaction_id = last_transaction_id_;
     committed_ = std::move(candidate);
+    pending_.reset();
+    pending_activation_ns_ = 0;
     last_transaction_id_ = expected.transaction_id;
     bool finalized = false;
     try {
@@ -247,6 +459,8 @@ class CommittedBundleStore final {
     }
     if (!finalized) {
       committed_ = previous;
+      pending_ = previous_pending;
+      pending_activation_ns_ = previous_pending_activation;
       last_transaction_id_ = previous_transaction_id;
       return CommitDecision::kFinalizationFailed;
     }
@@ -256,6 +470,8 @@ class CommittedBundleStore final {
   void invalidate() noexcept {
     std::lock_guard lock(mutex_);
     committed_.reset();
+    pending_.reset();
+    pending_activation_ns_ = 0;
   }
 
  private:
@@ -274,7 +490,12 @@ class CommittedBundleStore final {
   std::uint64_t active_goal_epoch_{0};
   std::uint64_t last_transaction_id_{0};
   std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity_;
-  std::shared_ptr<const navigation_planning::CandidateBundle> committed_;
+  mutable std::shared_ptr<const navigation_planning::CandidateBundle> committed_;
+  mutable std::shared_ptr<const navigation_planning::CandidateBundle> pending_;
+  mutable std::int64_t pending_activation_ns_{0};
 };
+
+// Compatibility name for code that only consumes the active-command API.
+using CommittedBundleStore = ExecutionTimelineStore;
 
 }  // namespace navigation_execution

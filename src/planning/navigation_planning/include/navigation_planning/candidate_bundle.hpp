@@ -101,6 +101,10 @@ struct CandidateBundle {
   std::uint64_t bundle_generation{0};
   std::int64_t valid_from_ns{0};
   std::int64_t valid_until_ns{0};
+  // Future activation is distinct from the trajectory's analytic origin. A
+  // successor may retain historical polynomial metadata while execution must
+  // not expose it before this producer-declared splice instant.
+  std::int64_t activation_stamp_ns{0};
   CandidateRole role{CandidateRole::kMain};
   // Optional trajectory metadata used by execution diagnostics and handover
   // checks. The evaluator remains the only source for a sampled point.
@@ -215,6 +219,7 @@ struct CandidateBundle {
           kind == CandidateBundleKind::kMainWithBackup) &&
          certificates.terminal_stop);
     const bool endpoint_metadata_legacy = declared_start_ns == 0 && declared_end_ns == 0;
+    const bool activation_metadata_legacy = activation_stamp_ns == 0;
     const auto expected_start_ns = navigation_common::secondsToNanoseconds(start_wall_time_s);
     const auto expected_end_ns = navigation_common::secondsSumToNanoseconds(
         start_wall_time_s, duration_s);
@@ -222,11 +227,14 @@ struct CandidateBundle {
         (declared_start_ns > 0 && declared_end_ns >= declared_start_ns &&
          expected_start_ns.has_value() && expected_end_ns.has_value() &&
          declared_start_ns == *expected_start_ns && declared_end_ns == *expected_end_ns);
+    const bool activation_metadata_consistent = activation_metadata_legacy ||
+        activation_stamp_ns == valid_from_ns;
     return localization_epoch != 0 && goal_epoch != 0 && request_id != 0 &&
            bundle_generation != 0 && valid_from_ns > 0 &&
            valid_until_ns >= valid_from_ns && static_cast<bool>(evaluator) &&
            candidateRoleValid(role) && kind_contract && terminal_stop_contract &&
            certificates.completeFor(kind) && protected_region.valid() &&
+           activation_metadata_consistent &&
            endpoint_metadata_consistent &&
            roleScheduleValid() && (!quality || quality->finite()) &&
            pinned_world_identity.localization_epoch == localization_epoch &&
