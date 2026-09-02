@@ -695,18 +695,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
                 if (solve_cancelled_.load()) return false;
                 if (!cmd_traj_info_.canCommitCandidate(candidate)) return false;
-                // CmdTraj is a planner warm-start cache, not an executable
-                // command store.  The execution timeline owns publication;
-                // keeping this cache current at construction removes the
-                // old ACK transaction and makes a rejected successor harmless
-                // to the command sampler.
-                CandidateCommandBundle warm_start_candidate = candidate;
-                if (!cmd_traj_info_.commitCandidate(
-                        std::move(warm_start_candidate), certificate)) {
-                    return false;
-                }
                 staged_command_candidate_ = StagedCommandCandidate{
-                    std::move(candidate), certificate, cmd_traj_info_.generation(),
+                    std::move(candidate), certificate, cmd_traj_info_.nextGeneration(),
                     std::nullopt, false};
                 return true;
             });
@@ -724,10 +714,34 @@ std::optional<double> firstRouteBoundaryEntryTime(
         std::lock_guard<std::mutex> guard(solve_commit_mutex_);
         if (!staged_command_candidate_) return false;
         // The EXP trajectory is only a warm-start hint for the next solve.
-        // It is deliberately not consulted by execution sampling.
-        last_exp_traj_info_ = exp_traj;
-        gi_.new_goal = false;
+        // Promote it together with the execution timeline activation.
+        staged_command_candidate_->pending_exp_history = exp_traj;
+        staged_command_candidate_->clear_new_goal_on_ack = true;
         return true;
+    }
+
+    void Planner::onExecutionTimelineActivated(
+            const std::uint64_t generation) noexcept {
+        std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+        if (!staged_command_candidate_ ||
+            staged_command_candidate_->generation != generation) {
+            return;
+        }
+        auto staged = std::move(*staged_command_candidate_);
+        if (!cmd_traj_info_.commitCandidate(
+                std::move(staged.command), staged.certificate)) {
+            planner_context_->error(
+                " -- [planner] execution activated generation={} but warm-start "
+                "cache synchronization failed; execution remains authoritative",
+                generation);
+            staged_command_candidate_.reset();
+            return;
+        }
+        if (staged.pending_exp_history.has_value()) {
+            last_exp_traj_info_ = std::move(*staged.pending_exp_history);
+        }
+        if (staged.clear_new_goal_on_ack) gi_.new_goal = false;
+        staged_command_candidate_.reset();
     }
 
     void Planner::discardCommandCandidate() noexcept {

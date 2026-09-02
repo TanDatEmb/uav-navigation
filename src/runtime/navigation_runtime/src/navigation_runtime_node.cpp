@@ -2029,6 +2029,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   world_freshness_suspended_safety_suffix_active_.store(
       false, std::memory_order_release);
   if (!anchor) {
+    planner_->onExecutionTimelineActivated(candidate_ptr->bundle_generation);
     execution_episode_.commandCommitted(*candidate_ptr);
   }
   return true;
@@ -4490,6 +4491,7 @@ void NavigationRuntimeNode::publishCommand() {
       if (sample.planned_stop_hold) {
         execution_episode_.stoppedHold(sample.bundle->bundle_generation);
       } else {
+        planner_->onExecutionTimelineActivated(sample.bundle->bundle_generation);
         execution_episode_.roleObserved(
             sampled_role, sample.bundle->bundle_generation);
       }

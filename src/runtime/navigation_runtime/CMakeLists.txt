@@ -144,6 +144,10 @@ if(BUILD_TESTING)
   target_include_directories(test_kinematic_derivative_estimator PRIVATE include)
   target_link_libraries(test_kinematic_derivative_estimator
     navigation_planning::navigation_planning)
+  ament_add_gtest(test_execution_episode
+    test/test_execution_episode.cpp)
+  target_include_directories(test_execution_episode PRIVATE include)
+  ament_target_dependencies(test_execution_episode navigation_planning)
 endif()
 
 ament_package()

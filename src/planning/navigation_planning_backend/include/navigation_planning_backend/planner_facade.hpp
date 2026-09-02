@@ -41,6 +41,7 @@ class PlannerFacade final {
                           std::uint64_t goal_epoch,
                           std::uint64_t request_id);
   void discardCommandCandidate() noexcept;
+  void onExecutionTimelineActivated(std::uint64_t generation) noexcept;
   [[nodiscard]] bool hasStagedCommandCandidate() const;
   void setWorldModelView(navigation_world_model::WorldModelViewPtr world);
   void setGoalAcceptanceRadius(double radius_m) noexcept;

@@ -332,6 +332,10 @@ namespace navigation_planning_backend {
         }
 
         void discardCommandCandidate() noexcept;
+        // Synchronize the planner's warm-start cache after the execution
+        // timeline has already activated the immutable bundle. This is a
+        // one-way observation; it cannot veto or roll back execution.
+        void onExecutionTimelineActivated(std::uint64_t generation) noexcept;
         [[nodiscard]] bool hasStagedCommandCandidate() const {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
             return staged_command_candidate_.has_value();

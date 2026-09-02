@@ -233,6 +233,13 @@ void PlannerFacade::discardCommandCandidate() noexcept {
   if (impl_ && impl_->planner) impl_->planner->discardCommandCandidate();
 }
 
+void PlannerFacade::onExecutionTimelineActivated(
+    const std::uint64_t generation) noexcept {
+  if (impl_ && impl_->planner) {
+    impl_->planner->onExecutionTimelineActivated(generation);
+  }
+}
+
 bool PlannerFacade::hasStagedCommandCandidate() const {
   return impl_ && impl_->planner && impl_->planner->hasStagedCommandCandidate();
 }
