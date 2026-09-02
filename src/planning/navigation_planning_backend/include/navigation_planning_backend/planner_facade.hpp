@@ -43,6 +43,11 @@ class PlannerFacade final {
   void discardCommandCandidate() noexcept;
   void onExecutionTimelineActivated(std::uint64_t generation) noexcept;
   [[nodiscard]] bool hasStagedCommandCandidate() const;
+  [[nodiscard]] navigation_planning::TrajectoryValidationResult
+  validateStagedCommandCandidate(
+      const navigation_world_model::WorldModelViewPtr& world,
+      double authorization_wall_time_s,
+      std::uint64_t expected_generation) const;
   void setWorldModelView(navigation_world_model::WorldModelViewPtr world);
   void setGoalAcceptanceRadius(double radius_m) noexcept;
   [[nodiscard]] bool setRouteSnapshot(

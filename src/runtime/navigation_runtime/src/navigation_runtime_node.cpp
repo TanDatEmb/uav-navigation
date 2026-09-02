@@ -681,6 +681,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               planning_worker_->backendAccessMutex());
         }
         const auto expected_bundle = command_store->load();
+        const auto expected_pending = command_store->loadPending();
         std::optional<navigation_contracts::msg::NavigationGoal> expected_goal;
         if (expected_bundle) {
           std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
@@ -695,6 +696,52 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           }
         }
         bool retain_validated_bundle = false;
+        bool retain_validated_pending = false;
+        if (expected_pending && expected_pending->valid() &&
+            expected_pending->protected_region.valid() &&
+            expected_pending->world_identity.localization_epoch ==
+                result.snapshot->identity().localization_epoch &&
+            expected_pending->world_identity.generation ==
+                result.snapshot->identity().generation &&
+            expected_pending->world_identity.revision <
+                result.snapshot->identity().revision &&
+            !result.snapshot->changedRegionIntersectsSince(
+                expected_pending->world_identity,
+                expected_pending->protected_region)) {
+          retain_validated_pending = true;
+        }
+        if (expected_pending && expected_pending->valid() &&
+            !retain_validated_pending && planner_ &&
+            std::isfinite(expected_pending->start_wall_time_s)) {
+          // A full immutable sweep is required when the map exporter cannot
+          // prove that the changed region is disjoint from the pending
+          // command. The planner's staged polynomial is the authoritative
+          // executable representation here; the product CandidateBundle
+          // evaluator is intentionally not used to reconstruct safety.
+          const auto pending_validation = planner_->validateStagedCommandCandidate(
+              result.snapshot, expected_pending->start_wall_time_s,
+              expected_pending->bundle_generation);
+          retain_validated_pending = pending_validation.valid &&
+              navigation_world_model::sameWorldSnapshotIdentity(
+                  pending_validation.validated_world,
+                  result.snapshot->identity());
+          if (!retain_validated_pending) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "pending successor recertification rejected generation=%lu "
+                "on world revision=%lu at t=%.3f cell=%d position=(%.3f,%.3f,%.3f) "
+                "failure_code=%d role=%d samples=%zu segments=%zu",
+                static_cast<unsigned long>(expected_pending->bundle_generation),
+                static_cast<unsigned long>(result.snapshot->identity().revision),
+                pending_validation.first_blocked_time_s,
+                pending_validation.first_blocked_cell_state,
+                pending_validation.first_blocked_position.x(),
+                pending_validation.first_blocked_position.y(),
+                pending_validation.first_blocked_position.z(),
+                pending_validation.failure_code, pending_validation.blocked_role,
+                pending_validation.sample_count, pending_validation.segment_count);
+          }
+        }
         const auto terminal_generation = terminal_bundle_generation_.load(
             std::memory_order_acquire);
         const bool terminal_bundle_observed = expected_bundle &&
@@ -770,7 +817,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         // this snapshot; otherwise it is cleared fail-closed.
         const bool finalized = store->publishAndFinalize(
             result.snapshot,
-            [command_store, expected_bundle, retain_validated_bundle,
+            [command_store, expected_bundle, expected_pending,
+             retain_validated_bundle, retain_validated_pending,
              identity = result.snapshot->identity(),
              refreshed_valid_until_ns = [&] {
                const auto now_ns = ros_clock->now().nanoseconds();
@@ -779,9 +827,17 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                           ? std::numeric_limits<std::int64_t>::max()
                           : now_ns + data_freshness_window_ns_;
              }()] {
+              std::optional<std::shared_ptr<const navigation_planning::CandidateBundle>>
+                  recertified_pending;
+              if (retain_validated_pending && expected_pending) {
+                recertified_pending = command_store->recertifyPendingWorldIdentity(
+                    identity, expected_pending);
+              }
               return command_store->publishWorldIdentity(
                   identity, expected_bundle, retain_validated_bundle,
-                  refreshed_valid_until_ns);
+                  refreshed_valid_until_ns,
+                  recertified_pending ? *recertified_pending : nullptr,
+                  recertified_pending.has_value());
             });
         if (!finalized) {
           command_store->invalidate();
@@ -1762,9 +1818,38 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     const std::int64_t now_ns,
     const PlanningKey& scheduled_key,
     const std::optional<navigation_planning::CandidateBundle>& planned_candidate) {
+  // Keep rejection evidence in the same structured cycle record as planner
+  // evidence. These codes are diagnostics only: every non-success path below
+  // remains fail-closed and leaves the execution-owned active timeline in
+  // place.
+  enum : int {
+    kBoundaryAccepted = 0,
+    kInvalidArguments = 1,
+    kStaleIdentity = 2,
+    kInvalidFreshnessWindow = 3,
+    kCandidateExportFailed = 4,
+    kWorldNotFresh = 5,
+    kActivationWindow = 6,
+    kNonExactSuccessorStart = 7,
+    kInvalidCandidate = 8,
+    kAnchorUnavailable = 9,
+    kAnchorMismatch = 10,
+    kEndpointMetadata = 11,
+    kRouteBoundary = 12,
+    kMainReserve = 13,
+    kExecutionState = 14,
+    kTransactionIdExhausted = 15,
+    kStageOrCommitRejected = 16,
+  };
+  last_execution_boundary_rejection_.store(
+      kBoundaryAccepted, std::memory_order_release);
+  const auto reject = [this](const int reason) {
+    last_execution_boundary_rejection_.store(reason, std::memory_order_release);
+    return false;
+  };
   if (now_ns <= 0 || goal_epoch == 0U || localization_epoch == 0U ||
       goal.request_id == 0U) {
-    return false;
+    return reject(kInvalidArguments);
   }
   const auto latest_bundle_before_commit = command_bundle_store_.load();
   const auto latest_world_before_commit = world_snapshot_store_.load();
@@ -1796,11 +1881,11 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                 static_cast<unsigned long>(scheduled_key.route_revision),
                 static_cast<unsigned long>(scheduled_key.committed_bundle_generation),
                 static_cast<unsigned long>(scheduled_key.pinned_world_generation));
-    return false;
+    return reject(kStaleIdentity);
   }
   const auto maximum_age_ns = data_freshness_window_ns_;
   if (maximum_age_ns <= 0 || now_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns) {
-    return false;
+    return reject(kInvalidFreshnessWindow);
   }
   // Successors are admitted for a future splice. The active command remains
   // the only executable object until this activation boundary is reached.
@@ -1810,7 +1895,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   const bool has_active_bundle = static_cast<bool>(latest_bundle_before_commit);
   if (now_ns > std::numeric_limits<std::int64_t>::max() - maximum_age_ns) {
     planner_->discardCommandCandidate();
-    return false;
+    return reject(kInvalidFreshnessWindow);
   }
   auto candidate = planned_candidate.has_value()
       ? planned_candidate
@@ -1824,7 +1909,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                 goal.mission_id.c_str(), goal.waypoint_index,
                 static_cast<unsigned long>(goal.request_id),
                 static_cast<long long>(now_ns));
-    return false;
+    return reject(kCandidateExportFailed);
   }
   const auto latest_world = world_snapshot_store_.load();
   const auto world_freshness = latest_world
@@ -1837,7 +1922,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 1000,
         "execution boundary rejected candidate because the world snapshot is not fresh");
-    return false;
+    return reject(kWorldNotFresh);
   }
   const bool emergency_candidate = candidate->kind ==
       navigation_planning::CandidateBundleKind::kEmergencyBrake;
@@ -1855,7 +1940,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
         activation_ns <= now_ns + activation_guard_ns)) ||
       candidate->valid_from_ns > activation_ns || candidate->declared_end_ns < activation_ns) {
     planner_->discardCommandCandidate();
-    return false;
+    return reject(kActivationWindow);
   }
   candidate->valid_from_ns = activation_ns;
   candidate->valid_until_ns = std::min(
@@ -1874,11 +1959,11 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
         static_cast<long long>(candidate->declared_start_ns),
         candidate_start_ns ? static_cast<long long>(*candidate_start_ns) : 0LL,
         static_cast<long long>(activation_ns));
-    return false;
+    return reject(kNonExactSuccessorStart);
   }
   if (!candidate->valid()) {
     planner_->discardCommandCandidate();
-    return false;
+    return reject(kInvalidCandidate);
   }
   const auto candidate_ptr = std::make_shared<const navigation_planning::CandidateBundle>(
       *candidate);
@@ -1894,7 +1979,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                   "execution boundary rejected successor: active command cannot reach activation "
                   "now_ns=%lld activation_ns=%lld",
                   static_cast<long long>(now_ns), static_cast<long long>(activation_ns));
-      return false;
+      return reject(kAnchorUnavailable);
     }
     const auto anchor_match = navigation_execution::candidateMatchesAnchor(
         *candidate_ptr, *anchor);
@@ -1907,7 +1992,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                   static_cast<unsigned long>(anchor->active_bundle_generation),
                   static_cast<unsigned long>(candidate_ptr->bundle_generation),
                   static_cast<long long>(activation_ns));
-      return false;
+      return reject(kAnchorMismatch);
     }
   }
   const bool stop_goal = goal.behavior ==
@@ -1928,25 +2013,59 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
         "execution boundary rejected candidate without a valid declared endpoint "
         "for waypoint behavior=%s",
         stop_goal ? "STOP" : "PASS_THROUGH");
-    return false;
+    return reject(kEndpointMetadata);
   }
   if (pass_through_goal && candidate_ptr->route_boundary_event.has_value()) {
     const auto& boundary = *candidate_ptr->route_boundary_event;
     const auto& constraint = candidate_ptr->route_boundary_constraint;
     const auto endpoint = candidate_ptr->sampleAtDeclaredEnd();
-    if (!constraint || !constraint->valid() || !boundary.valid() ||
-        boundary.kind != navigation_planning::RouteBoundaryEventKind::kPassThrough ||
-        boundary.boundary_stamp_ns != candidate_ptr->declared_end_ns || !endpoint ||
-        !constraint->contains(endpoint->position_world)) {
+    const auto route_snapshot = decodeRouteSnapshot(goal);
+    const bool coincident_terminal_pass_through = route_snapshot.has_value() &&
+        navigation_mission::passThroughNextWaypointIsCoincidentStop(
+            *route_snapshot);
+    const bool constraint_valid = constraint && constraint->valid();
+    const bool boundary_valid = boundary.valid();
+    // A PASS_THROUGH immediately followed by a STOP at the same physical
+    // point is one terminal mission boundary. The planner intentionally emits
+    // a terminal event there to suppress outgoing velocity; accepting it here
+    // keeps the runtime and route-progress semantic contract aligned.
+    const auto expected_boundary_kind = coincident_terminal_pass_through
+        ? navigation_planning::RouteBoundaryEventKind::kTerminalStop
+        : navigation_planning::RouteBoundaryEventKind::kPassThrough;
+    const bool boundary_kind_valid =
+        boundary.kind == expected_boundary_kind;
+    const bool boundary_stamp_valid =
+        boundary.boundary_stamp_ns == candidate_ptr->declared_end_ns;
+    const bool endpoint_valid = endpoint && endpoint->finite();
+    const bool endpoint_contained = constraint_valid && endpoint_valid &&
+        constraint->contains(endpoint->position_world);
+    if (!constraint_valid || !boundary_valid || !boundary_kind_valid ||
+        !boundary_stamp_valid || !endpoint_valid || !endpoint_contained) {
       planner_->discardCommandCandidate();
       RCLCPP_WARN(get_logger(),
                   "execution boundary rejected pass-through without a hard route boundary "
-                  "junction=%zu endpoint=(%.3f,%.3f,%.3f)",
+                  "junction=%zu endpoint=(%.3f,%.3f,%.3f) constraint_valid=%d "
+                  "boundary_valid=%d kind=%d expected_kind=%d stamp_valid=%d endpoint_valid=%d "
+                  "contained=%d boundary_stamp=%lld declared_end=%lld "
+                  "volume_min=(%.3f,%.3f,%.3f) volume_max=(%.3f,%.3f,%.3f)",
                   boundary.junction_index,
                   endpoint ? endpoint->position_world.x() : 0.0,
                   endpoint ? endpoint->position_world.y() : 0.0,
-                  endpoint ? endpoint->position_world.z() : 0.0);
-      return false;
+                  endpoint ? endpoint->position_world.z() : 0.0,
+                  constraint_valid ? 1 : 0, boundary_valid ? 1 : 0,
+                  static_cast<int>(boundary.kind),
+                  static_cast<int>(expected_boundary_kind),
+                  boundary_stamp_valid ? 1 : 0,
+                  endpoint_valid ? 1 : 0, endpoint_contained ? 1 : 0,
+                  static_cast<long long>(boundary.boundary_stamp_ns),
+                  static_cast<long long>(candidate_ptr->declared_end_ns),
+                  constraint ? constraint->admissible_volume.minimum.x() : 0.0,
+                  constraint ? constraint->admissible_volume.minimum.y() : 0.0,
+                  constraint ? constraint->admissible_volume.minimum.z() : 0.0,
+                  constraint ? constraint->admissible_volume.maximum.x() : 0.0,
+                  constraint ? constraint->admissible_volume.maximum.y() : 0.0,
+                  constraint ? constraint->admissible_volume.maximum.z() : 0.0);
+      return reject(kRouteBoundary);
     }
   }
   const double activation_wall_time_s = static_cast<double>(activation_ns) * 1.0e-9;
@@ -1966,7 +2085,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
         navigation_planning::remainingMainHorizonAtCommit(
             *candidate_ptr, activation_wall_time_s),
         navigation_planning::PlanningTimingContract::kMinimumMainReserveS);
-    return false;
+    return reject(kMainReserve);
   }
   // A solve can finish after the state that seeded it has been replaced. Do
   // not admit a candidate whose first executable sample is detached from the
@@ -2021,7 +2140,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                 candidate_sample ? candidate_sample->position_world.x() : 0.0,
                 candidate_sample ? candidate_sample->position_world.y() : 0.0,
                 candidate_sample ? candidate_sample->position_world.z() : 0.0);
-    return false;
+    return reject(kExecutionState);
   }
   const auto transaction_id = advanceMonotonicId(execution_transaction_id_);
   if (!transaction_id) {
@@ -2030,20 +2149,22 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     planner_command_available_.store(false);
     planner_failure_latched_.store(true);
     RCLCPP_ERROR(get_logger(), "execution transaction id exhausted");
-    return false;
+    return reject(kTransactionIdExhausted);
   }
   const navigation_execution::CommitToken token{
       candidate_ptr->world_identity, goal_epoch, *transaction_id};
-  const bool staged = anchor
-      ? command_bundle_store_.stagePending(
-          token, *anchor, candidate_ptr) == navigation_execution::StageDecision::kStaged
-      : command_bundle_store_.tryCommit(
-          token, candidate_ptr) == navigation_execution::CommitDecision::kCommitted;
+  const auto stage_decision = anchor
+      ? static_cast<int>(command_bundle_store_.stagePending(token, *anchor, candidate_ptr))
+      : static_cast<int>(command_bundle_store_.tryCommit(token, candidate_ptr));
+  const bool staged = stage_decision == 0;
   if (!staged) {
     planner_->discardCommandCandidate();
+    last_execution_boundary_rejection_.store(
+        kStageOrCommitRejected * 100 + stage_decision, std::memory_order_release);
     RCLCPP_WARN(get_logger(),
-                "execution successor generation=%lu was not admitted; active command remains authoritative",
-                static_cast<unsigned long>(candidate_ptr->bundle_generation));
+                "execution successor generation=%lu was not admitted; active command remains authoritative "
+                "store_decision=%d",
+                static_cast<unsigned long>(candidate_ptr->bundle_generation), stage_decision);
     return false;
   }
   world_freshness_suspended_bundle_generation_.store(0U, std::memory_order_release);
@@ -4009,6 +4130,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     add_trace_value("candidate_result", static_cast<int>(result));
     add_trace_value("replan_code", replan_return_code);
     add_trace_value("commit_decision", commit_decision);
+    add_trace_value("execution_boundary_rejection",
+                    last_execution_boundary_rejection_.load(std::memory_order_acquire));
     add_trace_value("solve_stage", solve_stage);
     {
       diagnostic_msgs::msg::KeyValue item;
@@ -4317,6 +4440,29 @@ void NavigationRuntimeNode::publishCommand() {
     return;
   }
 
+  // The execution timeline owns the future splice. A successor is staged by
+  // the planning worker, then atomically becomes the active command at its
+  // producer-declared boundary before this callback samples the command. The
+  // captured pointer is the finalizer's identity witness; it avoids loading a
+  // second pointer while the store transaction is locked.
+  const auto pending_bundle = command_bundle_store_.loadPending();
+  if (pending_bundle && command_bundle_store_.pendingActivationNs() <=
+                           command_ros_time.nanoseconds()) {
+    const bool activated = command_bundle_store_.activatePendingIfDueAndFinalize(
+        command_ros_time.nanoseconds(), [this, pending_bundle](const std::uint64_t generation) {
+          if (pending_bundle->bundle_generation != generation) return false;
+          planner_->onExecutionTimelineActivated(generation);
+          execution_episode_.commandCommitted(*pending_bundle);
+          return true;
+        });
+    if (activated) {
+      RCLCPP_INFO(get_logger(),
+                  "execution timeline activated successor generation=%lu at ns=%lld",
+                  static_cast<unsigned long>(pending_bundle->bundle_generation),
+                  static_cast<long long>(command_ros_time.nanoseconds()));
+    }
+  }
+
   const std::uint64_t active_solve = active_planner_solve_generation_.load();
   if (active_solve != 0U) {
     const std::int64_t solve_age_ns =
@@ -4389,6 +4535,7 @@ void NavigationRuntimeNode::publishCommand() {
   bool safety_suffix_active = safety_suffix_active_.load();
   bool planner_failed = planner_failure_latched_.load();
   bool sampled_command_valid = false;
+  bool sampled_planned_stop_hold = false;
   if (!planner_command_available_.load() && !planner_failed &&
       command_execution_lease_failure_latch_.allowsCommandExposure()) return;
   std::optional<navigation_contracts::msg::NavigationGoal> command_goal;
@@ -4549,6 +4696,7 @@ void NavigationRuntimeNode::publishCommand() {
     } else {
       const auto point = *sample.point;
       bool planned_hold_valid = true;
+      sampled_planned_stop_hold = sample.planned_stop_hold;
       if (sample.planned_stop_hold) {
         const auto latest_terminal_world = world_snapshot_store_.load();
         const bool endpoint_known_free = latest_terminal_world &&
@@ -4632,10 +4780,17 @@ void NavigationRuntimeNode::publishCommand() {
       traj_finish = sample.planned_stop_hold || point.finished;
       sampled_command_valid = planned_hold_valid;
       if (traj_finish) {
+        const auto command_route_snapshot = command_goal
+            ? decodeRouteSnapshot(*command_goal) : std::nullopt;
+        const bool coincident_pass_through_stop = command_route_snapshot.has_value() &&
+            navigation_mission::passThroughNextWaypointIsCoincidentStop(
+                *command_route_snapshot);
+        const bool effective_terminal_goal = command_goal &&
+            (command_goal->behavior ==
+                 navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP ||
+             coincident_pass_through_stop);
         bool endpoint_reaches_goal = false;
-        if (command_goal &&
-            command_goal->behavior ==
-                navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP) {
+        if (effective_terminal_goal) {
           const auto& target_message = plannerTarget(*command_goal);
           const Eigen::Vector3d target_position{
               pointFromMessage(target_message, 0),
@@ -4646,9 +4801,8 @@ void NavigationRuntimeNode::publishCommand() {
               goalCompletionTolerance(*command_goal);
         }
         terminal_bundle_generation_.store(
-            endpoint_reaches_goal && sample.bundle->terminal_stop && command_goal &&
-                    command_goal->behavior ==
-                        navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
+            endpoint_reaches_goal &&
+                    (sample.bundle->terminal_stop || effective_terminal_goal)
                 ? sample.bundle->bundle_generation
                 : 0U,
             std::memory_order_release);
@@ -4711,8 +4865,13 @@ void NavigationRuntimeNode::publishCommand() {
       builtin_interfaces::msg::Time{});
   const bool emergency_braking = sampled_command_valid &&
       sampled_role == navigation_planning::CandidateRole::kEmergency;
+  // A validated STOPPED_HOLD is the explicit endpoint witness used while a
+  // terminal backup settles. Planner failure must not relabel that exact hold
+  // as REJECTED; doing so makes External Mode hand over before measured stop.
+  // The hold can only be marked valid after the known-free and near-execution
+  // checks above. No ordinary MAIN sample receives this exception.
   const bool main_trajectory_rejected = planner_failed && !on_backup_traj &&
-      !emergency_braking;
+      !emergency_braking && !(sampled_planned_stop_hold && sampled_command_valid);
   command.status = emergency_braking
                        ? navigation_contracts::msg::NavigationCommand::STATUS_BRAKING
                        : main_trajectory_rejected

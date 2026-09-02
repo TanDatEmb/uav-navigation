@@ -313,6 +313,10 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t command_execution_lease_terminal_latch_count_{0};
   navigation_execution::ExecutionStateFailureLatch command_execution_lease_failure_latch_;
   std::atomic_int command_execution_lease_reason_{0};
+  // Structured reason for the last candidate rejection at the execution
+  // boundary. This is observability only; a nonzero value never authorizes a
+  // candidate and the active timeline remains the sole command authority.
+  std::atomic_int last_execution_boundary_rejection_{0};
   std::atomic_int64_t command_execution_source_age_us_{0};
   std::atomic_int64_t command_execution_receive_age_us_{0};
   std::atomic_uint64_t map_update_exception_count_{0};

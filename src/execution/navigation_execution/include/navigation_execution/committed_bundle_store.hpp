@@ -114,7 +114,10 @@ class ExecutionTimelineStore final {
       const std::shared_ptr<const navigation_planning::CandidateBundle>&
           expected_bundle,
       bool retain_validated_bundle,
-      std::int64_t refreshed_valid_until_ns = 0) noexcept {
+      std::int64_t refreshed_valid_until_ns = 0,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>&
+          expected_pending = {},
+      bool retain_validated_pending = false) noexcept {
     if (identity.localization_epoch == 0 || identity.generation == 0 ||
         identity.revision == 0 || identity.observation_stamp_ns <= 0) {
       return false;
@@ -155,12 +158,52 @@ class ExecutionTimelineStore final {
       // clear it rather than retaining an uncertified command.
       committed_.reset();
     }
+    const bool pending_recertified = retain_validated_pending && expected_pending &&
+        pending_ && pending_.get() == expected_pending.get() &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            pending_->world_identity, identity) && pending_->valid();
     // A pending successor was certified against the previous immutable
-    // snapshot. It must be rebuilt after a world advance.
-    pending_.reset();
-    pending_activation_ns_ = 0;
+    // snapshot. It may survive only when the caller has proven that all
+    // changes in the new immutable snapshot are disjoint from its protected
+    // execution region and has already replaced its world identity.
+    if (!pending_recertified) {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+    }
     world_identity_ = identity;
     return true;
+  }
+
+  // Replace a pending successor's world identity after an external immutable
+  // snapshot has proved its protected region unchanged. The proof belongs to
+  // the world-view owner; this method only linearizes the exact pointer and
+  // identity transition so an older pending candidate cannot be relabelled.
+  std::optional<std::shared_ptr<const navigation_planning::CandidateBundle>>
+  recertifyPendingWorldIdentity(
+      const navigation_world_model::WorldSnapshotIdentity& identity,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>&
+          expected_pending) noexcept {
+    if (identity.localization_epoch == 0U || identity.generation == 0U ||
+        identity.revision == 0U || identity.observation_stamp_ns <= 0 ||
+        !expected_pending) {
+      return std::nullopt;
+    }
+    std::lock_guard lock(mutex_);
+    if (!world_identity_ || !pending_ || pending_.get() != expected_pending.get() ||
+        !pending_->valid() ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            pending_->world_identity, *world_identity_) ||
+        pending_->goal_epoch != active_goal_epoch_ ||
+        identity.localization_epoch != world_identity_->localization_epoch ||
+        identity.generation != world_identity_->generation ||
+        !advances(*world_identity_, identity)) {
+      return std::nullopt;
+    }
+    auto recertified = std::make_shared<navigation_planning::CandidateBundle>(*pending_);
+    recertified->world_identity = identity;
+    if (!recertified->valid()) return std::nullopt;
+    pending_ = std::move(recertified);
+    return pending_;
   }
 
   [[nodiscard]] std::shared_ptr<const navigation_planning::CandidateBundle> load()

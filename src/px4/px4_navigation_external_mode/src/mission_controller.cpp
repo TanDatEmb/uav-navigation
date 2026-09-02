@@ -310,6 +310,12 @@ void MissionController::onNativeTerminalHoldObserved() {
     // measured pass-through path, but the following STOP owns the hold. Do
     // not request an outgoing velocity for the zero-length boundary.
     terminal_hold_pending_ = true;
+    // onNativeSafetyTrajectoryObserved() deliberately clears generic
+    // readiness while BACKUP owns the command. Restore readiness only for
+    // this exact terminal witness so update() can perform the measured
+    // pass-through acceptance and publish the following STOP goal.
+    trajectory_ready_ = true;
+    checkpoint_valid_ = true;
     return;
   }
   if (active_waypoint_index_ == 0U ||
@@ -513,6 +519,11 @@ MissionControllerEvent MissionController::update(
 
   if (state_ == MissionControllerState::ExecutingWaypoint) {
     const bool pass_through = waypoint.behavior == MissionWaypoint::Behavior::PassThrough;
+    const bool coincident_terminal_stop = pass_through &&
+        navigation_mission::passThroughNextWaypointIsCoincidentStop(
+            route_progress_.snapshot(
+                mission_.id, mission_.frame, 1U, request_id_,
+                active_waypoint_index_));
     const bool inside = passThroughAcceptance();
     // Only the initial pass-through checkpoint may be accepted before the
     // first native trajectory is acknowledged.  This is the takeoff/mission
@@ -555,7 +566,14 @@ MissionControllerEvent MissionController::update(
       // bounded hold is still safe. A later generic readiness callback cannot
       // clear this latch while the active waypoint is a STOP; only measured
       // settling or a waypoint transition may release it.
-      if (inside && acceptance_ready) {
+      // A coincident PASS_THROUGH/STOP boundary is owned by the following
+      // STOP. Do not publish that STOP goal while the vehicle is still
+      // moving through the shared acceptance ball; runtime may still be
+      // draining the certified suffix and cannot safely replace its identity
+      // until the measured stop boundary.
+      const bool terminal_hold_ready = coincident_terminal_stop
+          ? slowEnough() : acceptance_ready;
+      if (inside && terminal_hold_ready) {
         terminal_hold_pending_ = false;
       } else {
         return {};

@@ -1,5 +1,30 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Activate staged successors at the execution timer boundary
+
+- **Owner/status:** execution timeline activation, `IMPLEMENTED`; focused direct
+  tests and build are green, repeated SITL verification remains open.
+- **Scope:** `publishCommand()` now calls
+  `activatePendingIfDueAndFinalize()` before sampling. The store atomically
+  promotes a staged successor at its producer-declared activation timestamp;
+  only then does the finalizer synchronize planner warm-start state and the
+  execution episode.
+- **Safety impact:** closes the missing lifecycle edge in which a valid
+  MAIN+BACKUP successor could remain pending forever while the old command
+  expired. Store world/goal/validity checks remain mandatory; activation does
+  not alter any dynamic, clearance, freshness, anchor, reserve, or PX4 gate.
+- **Evidence:** the previous SITL run produced planner-authorized successor
+  candidates but kept `bundle_id=1` and never activated a pending bundle;
+  direct `ExecutionTimelineStore` activation tests passed. A fresh full-build
+  SITL rerun must show generation promotion and continuous command samples.
+- **Removal/review condition:** retain until the execution timer or an
+  equivalent sole-owner scheduler is proven to service every pending activation;
+  remove only if that ownership boundary is replaced without reintroducing
+  planner-side command authority.
+- **Verification:** direct execution-timeline/runtime tests, `make build`,
+  and repeated open/pass-through/obstacle External Mode runs with activation,
+  generation, and mission-completion evidence.
+
 ### 2026-09-02 - Certify scheduled successors from their trajectory origin
 
 - **Owner/status:** successor BACKUP certificate scan, `IMPLEMENTED`; focused
@@ -17161,3 +17186,184 @@ release profiles must not use the former allowance.
   inspect emergency altitude-anchor logs, LIO/PX4/ground-truth altitude,
   command continuity, dynamic/world certificates, Hold transitions,
   completion, collision, and the unchanged `0.25 m` gate.
+## 2026-09-02 - Full recertification for pending successors across world revisions
+
+- **Owner/status:** Navigation runtime and planning backend; active until the
+  scheduled successor handoff is covered by repeated representative SITL.
+- **Scope:** When an execution-owned pending candidate cannot be retained by
+  immutable changed-region disjointness, the runtime asks the planner to sweep
+  the exact staged polynomial bundle against the new immutable world from its
+  analytic origin, including the complete MAIN and BACKUP role schedule. A
+  passing sweep only permits world-identity relabeling of that exact pending
+  pointer; it does not activate, widen, or bypass any execution gate.
+- **Safety impact:** Fail-closed. Missing/stale staged generation, invalid
+  geometry, blocked cells, invalid role schedule, or any validator failure
+  clears the pending candidate. The execution timeline remains the sole
+  command authority and activation still occurs only at the producer-declared
+  boundary.
+- **Evidence:** Successor planning was authorized with a complete bundle, but
+  frequent full-world map publications cleared pending before the activation
+  timer. Focused store and backend tests plus a scheduled SITL rerun are
+  required to verify retention and activation.
+- **Removal condition:** Remove only after mapping provenance can prove
+  disjointness for every supported update mode and repeated SITL demonstrates
+  equivalent pending retention/activation evidence.
+- **Verification:** `colcon build --packages-select navigation_execution
+  navigation_runtime --cmake-args -DBUILD_TESTING=ON`; direct execution-store
+  tests; `make build`; `make external-mode-check`.
+
+## 2026-09-02 - Preserve yaw-rate continuity in typed successor requests
+
+- **Owner/status:** Planning backend; active until repeated successor handoffs
+  show zero anchor yaw-rate rejection under representative External Mode runs.
+- **Scope:** Carry the yaw-rate component from `ExecutionAnchor` into the yaw
+  optimizer's initial state for the same future-activation solve. The product
+  `KinematicState` remains translational PVAJ plus yaw; this field closes the
+  separate yaw continuity witness without changing the yaw limits.
+- **Safety impact:** Fail-closed continuity repair. A non-finite or limit-
+  violating yaw trajectory remains rejected by the existing final yaw-rate,
+  yaw-acceleration, and execution anchor gates. No tolerance is relaxed.
+- **Evidence:** External Mode rejected successor generation 3 with
+  `AnchorMatchResult=9` (`kYawRateMismatch`) after generation 2 activated;
+  the request already contained the authoritative anchor yaw-rate.
+- **Removal condition:** Remove only if the typed anchor contract is replaced
+  by an equivalent explicit yaw-state transport with the same exact boundary
+  guarantee.
+- **Verification:** `make build`; planner/execution direct tests; repeated
+  `make external-mode-check` with zero successor yaw-rate mismatch.
+
+## 2026-09-02 - Align coincident pass-through/STOP boundary semantics
+
+- **Owner/status:** Runtime execution boundary; active until the open-route
+  scenario demonstrates completion through the coincident checkpoint.
+- **Scope:** When an immutable route declares a PASS_THROUGH waypoint followed
+  by a STOP at the same physical location, accept the planner's terminal
+  `RouteBoundaryEvent` for that single terminal boundary. Ordinary
+  PASS_THROUGH still requires a pass-through event; ordinary STOP keeps its
+  existing terminal contract.
+- **Safety impact:** No gate is relaxed. The event, constraint, exact endpoint
+  timestamp, finite endpoint, and volume containment remain mandatory; this
+  only selects the semantic event kind already declared by the route contract.
+- **Evidence:** SITL producer emitted `kind=kTerminalStop` at junction 3 with
+  valid constraint, timestamp, finite endpoint and `contained=1`, while the
+  runtime expected `kPassThrough` from the current waypoint behavior. The
+  route contract identifies this as a coincident terminal boundary.
+- **Removal condition:** Remove only if the producer stops emitting the
+  terminal event for coincident PASS_THROUGH/STOP routes and an equivalent
+  hard boundary contract is retained.
+- **Verification:** `make build`; direct runtime/planner tests; repeated
+  `make external-mode-check` with waypoint 3 and final STOP acceptance.
+
+## 2026-09-02 - Preserve validated terminal STOPPED_HOLD over planner failure
+
+- **Owner/status:** Runtime command publisher and PX4 External Mode handoff;
+  active until repeated coincident-boundary runs reach the final STOP.
+- **Scope:** When an expired bundle is converted by `CommandSampler` into an
+  explicit `STOPPED_HOLD`, retain `STATUS_COMPLETED` even if the nominal
+  planner failure latch is set. This applies only after runtime has validated
+  the endpoint as known-free and near the fresh execution state; ordinary MAIN
+  samples remain `STATUS_REJECTED` on planner failure.
+- **Safety impact:** Preserves a bounded, exact endpoint hold while measured
+  velocity settles. It does not extend the trajectory evaluator, clear the
+  planner failure, or bypass the recovery deadline; invalid hold validation
+  remains fail-closed to rejection and PX4 Hold.
+- **Evidence:** SITL runs reached the coincident PASS_THROUGH/STOP endpoint,
+  logged `terminal_hold_pending=true`, then immediately handed over because
+  the publisher classified the validated STOPPED_HOLD as a rejected MAIN path.
+- **Removal condition:** Remove only when the terminal hold is represented by
+  a separate typed command status with identical endpoint safety checks.
+- **Verification:** `make build`; direct runtime tests; repeated
+  `make external-mode-check` with final STOP completion and no premature Hold.
+
+## 2026-09-02 - Carry terminal witness across coincident PASS_THROUGH/STOP route
+
+- **Owner/status:** Runtime terminal recovery and immutable execution-certificate
+  handoff; active for routes whose PASS_THROUGH waypoint is coincident with the
+  following STOP waypoint.
+- **Scope:** Treat a completed bundle as a terminal witness when the active goal
+  is STOP or the route contract explicitly identifies a coincident
+  PASS_THROUGH/STOP boundary. The witness still requires the producer's
+  `terminal_stop` certificate and exact endpoint acceptance checks.
+- **Safety impact:** Prevents a valid terminal endpoint hold from being cleared
+  by ordinary map-revision recertification before measured stop/restart. It does
+  not retain a moving PASS_THROUGH command, bypass world validation, or alter
+  waypoint acceptance tolerances; a non-terminal or uncertified bundle remains
+  subject to normal recertification and fail-closed Hold.
+- **Evidence:** External Mode reached the coincident waypoint with
+  `terminal_hold_pending=true`, but runtime did not set
+  `terminal_bundle_generation` because the active goal enum was PASS_THROUGH;
+  the next map revision then rejected the expired command at `t=0`.
+- **Removal condition:** Remove only if mission generation emits a single
+  terminal STOP goal for this route shape and the equivalent terminal witness
+  remains explicit at the execution boundary.
+- **Verification:** `make build`; direct execution/FSM tests; repeated
+  `make external-mode-check` including final waypoint and STOP completion.
+
+## 2026-09-02 - Restore mission readiness for coincident terminal handoff
+
+- **Owner/status:** PX4 External Mode `MissionController`; active for a
+  coincident PASS_THROUGH waypoint followed by STOP.
+- **Scope:** After a certified native terminal hold follows
+  `onNativeSafetyTrajectoryObserved()`, restore `trajectory_ready` only for
+  this exact route boundary so measured pass-through acceptance can publish the
+  following STOP goal.
+- **Safety impact:** This does not accept a waypoint by command status alone:
+  the existing measured position, finite velocity, acceptance-radius, and
+  acceptance-speed checks remain mandatory. It only restores the readiness
+  witness after the runtime has supplied the certified terminal hold.
+- **Evidence:** SITL repeatedly held the coincident endpoint with measured speed
+  below the acceptance gate but never advanced because readiness had been
+  cleared by the preceding safety-trajectory callback.
+- **Removal condition:** Remove when mission generation emits a single STOP
+  goal for this route shape or when an equivalent typed terminal-readiness
+  witness replaces the callback sequence.
+- **Verification:** `make build`; `build/px4_navigation_external_mode/test_mission`;
+  repeated `make external-mode-check` with final waypoint and STOP completion.
+
+## 2026-09-02 - Require measured stop before coincident terminal goal publish
+
+- **Owner/status:** PX4 External Mode mission handoff; active for a
+  PASS_THROUGH waypoint coincident with its following STOP.
+- **Scope:** A terminal hold at this shared boundary may clear only when the
+  measured position is accepted and measured speed is at or below the existing
+  acceptance-speed gate. Non-coincident pass-through corners retain their
+  existing measured crossing behavior.
+- **Safety impact:** Prevents MissionController from publishing the next STOP
+  identity while the previous certified suffix is still moving. This avoids an
+  identity-rejection/no-command interval and does not relax any gate; it adds a
+  required measured-stop condition only to the terminal shared boundary.
+- **Evidence:** SITL showed the coincident pass-through accepted at 0.385 m/s,
+  immediately publishing STOP while runtime was still draining the old suffix;
+  PX4 then rejected old-identity commands before the new PlanFromRest candidate
+  was committed.
+- **Removal condition:** Remove only when runtime and PX4 expose an equivalent
+  atomic cross-identity terminal handoff with no command gap.
+- **Verification:** `make build`; `test_mission` including the high-speed
+  coincident-handoff regression; repeated `make external-mode-check` with final
+  STOP completion.
+
+## 2026-09-02 - Rebind inherited terminal witness to the active route contract
+
+- **Owner/status:** Runtime command publisher and execution-certificate
+  recertification; active when a physically coincident waypoint transition
+  inherits an already-expired certified suffix.
+- **Scope:** An expired, sampled, known-free endpoint may become the terminal
+  witness when the active route contract is STOP or coincident
+  PASS_THROUGH/STOP, even if the inherited bundle was produced before the new
+  waypoint identity carried its terminal metadata. The endpoint must still be
+  inside the active goal tolerance and the sample must pass the existing
+  near-execution validation.
+- **Safety impact:** Preserves only the exact bounded endpoint hold needed to
+  bridge a same-position waypoint identity transition. It does not retain a
+  moving trajectory, extend a lease, bypass world recertification, or authorize
+  mission completion without the existing measured MissionController gates.
+- **Evidence:** SITL showed the inherited BACKUP endpoint was accepted at the
+  coincident route position, but its pre-transition bundle had
+  `terminal_stop=false`; map recertification then cleared it and PX4 entered
+  Hold before the new STOP solve could commit.
+- **Removal condition:** Remove when execution-store goal rebinding carries an
+  explicit terminal witness for the new route identity, or when mission
+  generation emits a single terminal STOP goal without inherited suffixes.
+- **Verification:** `make build`; direct execution/FSM/mission tests; repeated
+  `make external-mode-check` with waypoint 3, final STOP, and no identity-gap
+  handover.

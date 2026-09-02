@@ -369,6 +369,38 @@ TEST(ExecutionTimelineStore, WorldAdvanceInvalidatesPendingSuccessor) {
   EXPECT_FALSE(store.load());
 }
 
+TEST(ExecutionTimelineStore, KeepsPendingSuccessorOnlyAfterExplicitWorldRecertification) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto successor = candidateFor(7, 1);
+  successor.valid_from_ns = 50;
+  successor.valid_until_ns = 90;
+  successor.activation_stamp_ns = 50;
+  auto successor_ptr = std::make_shared<const navigation_planning::CandidateBundle>(
+      successor);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successor_ptr),
+            navigation_execution::StageDecision::kStaged);
+
+  const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
+  EXPECT_FALSE(store.recertifyPendingWorldIdentity(next_world, nullptr));
+  const auto recertified_pending = store.recertifyPendingWorldIdentity(
+      next_world, successor_ptr);
+  ASSERT_TRUE(recertified_pending);
+  ASSERT_TRUE(store.publishWorldIdentity(
+      next_world, {}, false, 0, *recertified_pending, true));
+  const auto recertified = store.loadPending();
+  ASSERT_TRUE(recertified);
+  EXPECT_EQ(recertified->world_identity.revision, next_world.revision);
+}
+
 TEST(ExecutionTimelineStore, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
   navigation_execution::ExecutionTimelineStore store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};

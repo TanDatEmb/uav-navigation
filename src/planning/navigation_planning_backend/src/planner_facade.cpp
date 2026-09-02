@@ -244,6 +244,18 @@ bool PlannerFacade::hasStagedCommandCandidate() const {
   return impl_ && impl_->planner && impl_->planner->hasStagedCommandCandidate();
 }
 
+navigation_planning::TrajectoryValidationResult
+PlannerFacade::validateStagedCommandCandidate(
+    const navigation_world_model::WorldModelViewPtr& world,
+    const double authorization_wall_time_s,
+    const std::uint64_t expected_generation) const {
+  if (!impl_ || !impl_->planner) {
+    return {};
+  }
+  return impl_->planner->validateStagedCommandCandidate(
+      world, authorization_wall_time_s, expected_generation);
+}
+
 void PlannerFacade::setWorldModelView(navigation_world_model::WorldModelViewPtr world) {
   impl_->planner->setWorldModelView(std::move(world));
 }

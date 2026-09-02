@@ -622,6 +622,59 @@ mission:
   EXPECT_EQ(moving.waypoint_index, 2U);
 }
 
+TEST(MissionController, CoincidentPassThroughStopRestoresTerminalReadiness) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: coincident_terminal_readiness
+  frame: lio_odom
+  waypoints:
+    - id: origin
+      position: [0.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: checkpoint
+      position: [1.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: finish
+      position: [1.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.1);
+  ASSERT_TRUE(controller.update(0.2, Eigen::Vector3d{0.0, 0.0, 3.0}, true,
+                                Eigen::Vector3d::Zero()).waypoint_accepted);
+  controller.onTrajectory(true, 0.3);
+  controller.onNativeSafetyTrajectoryObserved();
+  controller.onNativeTerminalHoldObserved();
+
+  EXPECT_TRUE(controller.terminalHoldPending());
+  EXPECT_TRUE(controller.nativeTrajectoryReady());
+  const auto moving = controller.update(
+      0.4, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+      Eigen::Vector3d{1.0, 0.0, 0.0});
+  EXPECT_EQ(moving.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_TRUE(controller.terminalHoldPending());
+
+  const auto stop_goal = controller.update(
+      0.5, Eigen::Vector3d{1.0, 0.0, 3.0}, true, Eigen::Vector3d::Zero());
+  EXPECT_EQ(stop_goal.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(stop_goal, 1U);
+  EXPECT_EQ(stop_goal.waypoint_index, 2U);
+}
+
 TEST(MissionController, TerminalStopRequiresMeasuredPositionInsideAcceptanceRadius) {
   const auto path = writeMission(R"yaml(
 mission:

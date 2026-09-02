@@ -1472,6 +1472,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         setWorldModelView(request.world);
         if (!setState(request.start_state)) return finish();
         requested_activation_stamp_ns_ = 0;
+        requested_activation_yaw_rate_rad_s_ = 0.0;
         if (request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kCommittedFutureState) {
             if (!request.anchor.has_value()) return finish();
@@ -1487,6 +1488,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             anchor_state.jerk_estimated = false;
             if (!setState(anchor_state)) return finish();
             requested_activation_stamp_ns_ = request.activation_stamp_ns;
+            requested_activation_yaw_rate_rad_s_ = request.anchor->state.yaw_rate;
         }
         setCommandIdentity(CommandIdentity{
             request.key.localization_epoch, request.key.goal_epoch,
@@ -1511,6 +1513,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             : planSuccessorFromExecutionAnchor(
                 request.goal.target_world, 0.0, false);
         requested_activation_stamp_ns_ = 0;
+        requested_activation_yaw_rate_rad_s_ = 0.0;
         const auto status = result == SUCCESS || result == FINISH || result == NO_NEED
             ? navigation_planning::PlanningFailureStage::kNone
             : navigation_planning::PlanningFailureStage::kNominalRefinement;
@@ -1642,6 +1645,68 @@ std::optional<double> firstRouteBoundaryEntryTime(
             staged->command, staged->certificate, staged->generation,
             localization_epoch, goal_epoch, request_id,
             valid_from_ns, valid_until_ns);
+    }
+
+    navigation_planning::TrajectoryValidationResult
+    Planner::validateStagedCommandCandidate(
+            const navigation_world_model::WorldModelViewPtr& world,
+            const double authorization_wall_time_s,
+            const std::uint64_t expected_generation) const {
+        navigation_planning::TrajectoryValidationResult output;
+        if (!world || expected_generation == 0U ||
+            !std::isfinite(authorization_wall_time_s)) {
+            return output;
+        }
+
+        std::optional<StagedCommandCandidate> staged;
+        {
+            std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+            if (!staged_planner_candidate_ ||
+                staged_planner_candidate_->generation != expected_generation) {
+                return output;
+            }
+            staged = staged_planner_candidate_;
+        }
+
+        const auto& candidate = staged->command;
+        output.pinned_world = staged->certificate.pinned_world;
+        output.validated_world = world->identity();
+        if (candidate.position.empty() || candidate.yaw.empty() ||
+            !std::isfinite(candidate.start_wall_time)) {
+            return output;
+        }
+
+        // Validate from the analytic origin so a pending successor retains a
+        // complete MAIN+BACKUP certificate, including the portion before its
+        // future activation boundary. This is a re-certification only; the
+        // execution store still owns activation and all handover gates.
+        const auto certificate_policy = candidateCertificatePolicy(
+            candidate, unknownPolicy());
+        const auto validation = validateExecutableCandidate(
+            *world, candidate, authorization_wall_time_s, certificate_policy);
+        output.valid = validation.valid;
+        output.begin_time_s = validation.begin_tt;
+        output.first_blocked_time_s = validation.first_blocked_tt;
+        output.failure_code = static_cast<int>(validation.failure);
+        output.blocked_role = static_cast<int>(validation.blocked_role);
+        output.sample_count = validation.sample_count;
+        output.segment_count = validation.segment_count;
+        if (!validation.valid) {
+            output.first_blocked_position = validation.blocked_position;
+            if (!output.first_blocked_position.allFinite()) {
+                const double duration = candidate.position.getTotalDuration();
+                const double sample_time = std::clamp(
+                    validation.first_blocked_tt, 0.0, duration);
+                output.first_blocked_position = candidate.position.getPos(
+                    sample_time).template cast<double>();
+            }
+            if (output.first_blocked_position.allFinite()) {
+                output.first_blocked_cell_state = static_cast<int>(world->classify(
+                    output.first_blocked_position,
+                    navigation_world_model::GridLayer::kInflated));
+            }
+        }
+        return output;
     }
 
     bool Planner::commitEmergencyBrake(const StatePVAJ &initial_command_state,
@@ -1815,7 +1880,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
         certified_lookahead_m_ = std::numeric_limits<double>::quiet_NaN();
         lookahead_complete_ = false;
 
-        Vec4f init_yaw{solve_state_.yaw, 0, 0, 0};
+        const float initial_yaw_rate = requested_activation_stamp_ns_ > 0
+            ? static_cast<float>(requested_activation_yaw_rate_rad_s_) : 0.0F;
+        Vec4f init_yaw{solve_state_.yaw, initial_yaw_rate, 0, 0};
         // alias for last_exp_traj_info
         Trajectory guide_pos_traj, guide_yaw_traj, last_exp_traj;
 

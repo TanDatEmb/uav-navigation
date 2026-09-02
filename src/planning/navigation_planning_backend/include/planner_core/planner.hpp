@@ -151,6 +151,9 @@ namespace navigation_planning_backend {
         // this wall timestamp; the planner must not invent a different splice
         // time after solving.
         std::int64_t requested_activation_stamp_ns_{0};
+        // The product anchor carries yaw-rate continuity separately from the
+        // translational KinematicState. Preserve it for the same typed solve.
+        double requested_activation_yaw_rate_rad_s_{0.0};
 
         struct GoalInfo {
             Vec3f goal_p{0, 0, 0};
@@ -346,6 +349,15 @@ namespace navigation_planning_backend {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
             return staged_planner_candidate_.has_value();
         }
+        // Revalidate the complete staged MAIN+BACKUP command against the
+        // supplied immutable world. This is used only when changed-region
+        // provenance cannot prove that a pending execution candidate is
+        // unaffected by a world revision; it never promotes the candidate.
+        [[nodiscard]] navigation_planning::TrajectoryValidationResult
+        validateStagedCommandCandidate(
+            const navigation_world_model::WorldModelViewPtr& world,
+            double authorization_wall_time_s,
+            std::uint64_t expected_generation) const;
 
         // Runtime sets the immutable mission identity before a solve starts.
         // The identity is copied into the backend candidate and checked again
