@@ -2609,13 +2609,15 @@ double knownFreeGuideSupport(
             // route or for crossing the current pass-through waypoint.  The
             // measured controller acceptance gate remains authoritative at
             // execution time.
-            // A certified corner window gives MINCO geometric room to carry
-            // the outgoing leg through the waypoint.  The route-boundary
-            // speed witness is still exported and the complete polynomial
-            // remains subject to the strict dynamic/world/tracking gates.
-            // If no corner window is certified, the bounded acceptance-ball
-            // fillet below remains the fail-closed fallback.
-            if (corner_window_ready &&
+            // A long MINCO lookahead is safe for a straight pass-through
+            // boundary, but it is not a substitute for a bounded corner
+            // transition.  The route-boundary speed witness is consumed by
+            // downstream execution, while this planner must also shape the
+            // command before that witness is reached.  Keep a genuine corner
+            // in the acceptance-ball fillet below; the measured handoff then
+            // owns the outgoing leg and the strict tracking gate remains
+            // unchanged.
+            if (corner_window_ready && !effective_genuine_corner &&
                 passThroughOutgoingLookaheadEligible(
                 desired_lookahead, outgoing_distance, search_distance,
                 cfg_.resolution)) {
