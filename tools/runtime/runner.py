@@ -99,7 +99,11 @@ CANONICAL_SCENES = (
     "sanity_open", "structured_obstacle", "long_route", "tunnel", "clutter",
     "planner_negative", "navigation_generalization",
 )
-TEST_CASES = ("positive", "degenerate", "detour", "no_path", "comprehensive", "cross_obstacles")
+TEST_CASES = (
+    "positive", "degenerate", "detour", "no_path", "comprehensive",
+    "cross_obstacles", "three_pillars", "speed_benchmark",
+    "open_speed_calibration",
+)
 MOTION_PRESETS = ("nominal", "slow", "fast")
 
 # Keep the complete SITL stack off the default DDS domain and off the PX4

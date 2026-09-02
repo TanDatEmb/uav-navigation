@@ -17488,3 +17488,331 @@ release profiles must not use the former allowance.
 - **Verification:** `make build`; direct runtime/FSM/mission tests; repeated
   `make external-mode-check` with final waypoint acceptance, COMPLETE, and no
   terminal recertification rejection.
+
+## 2026-09-02 - Bind route-boundary witnesses to the executable endpoint
+
+- **Owner/status:** Planner candidate export and runtime route-boundary
+  admission; active for bounded local prefixes of distant mission goals.
+- **Scope:** A planner `connected_goal` flag may describe the endpoint of the
+  current local solve, not the distant mission waypoint. Emit the hard
+  `RouteBoundaryConstraint/Event` only when the actual candidate endpoint is
+  inside the mission waypoint acceptance volume. A bounded prefix continues
+  to require its existing world, dynamic, backup, and endpoint certificates,
+  but must not claim that the mission junction was reached.
+- **Safety impact:** Removes a false boundary claim without relaxing the route
+  contract. Mission progress still requires measured waypoint acceptance;
+  candidates that genuinely terminate in the acceptance volume retain the
+  same hard boundary-kind, timestamp, endpoint, and containment checks.
+- **Evidence:** The 48 m `long_three_pillars` route was reduced to a certified
+  14 m local prefix, but exported the waypoint-48 m boundary volume. Runtime
+  correctly rejected every candidate with `contained=0`, causing a premature
+  `PAUSED_SAFETY_STOP` despite zero collision and healthy localization.
+- **Removal condition:** Remove only when planner candidate metadata carries a
+  typed distinction between local-prefix completion and mission-boundary
+  completion, while preserving equivalent hard admission checks.
+- **Verification:** `make build`; direct planning/runtime tests; long-route
+  SITL with `MAP_SCENE=long_route TEST_CASE=three_pillars`, followed by the
+  cross-obstacle and comprehensive navigation scenarios.
+
+## 2026-09-02 - Keep distant-goal local prefixes continuously executable
+
+- **Owner/status:** Planner bounded-prefix trajectory generation; active when
+  a distant mission waypoint is replaced by a locally certified prefix.
+- **Scope:** A local prefix that is not the mission waypoint must not be
+  converted into a rest/`FINISH` command merely because its current visible
+  endpoint is finite. Preserve the certified continuation velocity and
+  require the existing MAIN/BACKUP completion path so the next execution
+  anchor can renew the suffix toward the same mission goal.
+- **Safety impact:** Prevents a false terminal rest and the resulting
+  stop-expire-PX4-Hold loop on long routes. It does not extend the command or
+  relax any world, swept-volume, dynamic, freshness, backup, route-boundary,
+  or measured waypoint gate; the bounded prefix remains fully certified.
+- **Evidence:** Long 48 m and 53 m missions repeatedly stopped at 14 m local
+  prefixes, returned `NO_NEED`/`main_minco` failure on renewal, and expired
+  before the next waypoint despite zero collision and healthy localization.
+- **Removal condition:** Remove when planner candidate metadata has a typed
+  local-prefix lifecycle and execution can renew it without relying on the
+  current boolean endpoint-adjusted state.
+- **Verification:** `make build`; direct planning/runtime tests; repeated
+  `MAP_SCENE=long_route TEST_CASE=three_pillars` and long-route nominal SITL,
+  followed by cross-obstacle and comprehensive navigation scenarios.
+
+## 2026-09-02 - Serialize execution-timeline activation through the planning worker
+
+- **Owner/status:** Navigation runtime planner-history synchronization; active
+  until repeated successor activations show no backend race or stale history.
+- **Scope:** The command timer only queues an immutable timeline-generation
+  activation. The single-owner `PlanningWorker` drains that queue before the
+  next planning transaction; immediate first-command activation remains inside
+  the worker-owned commit path.
+- **Safety impact:** No command, lease, world, dynamic, backup, route-boundary,
+  or PX4 gate is relaxed. The execution store remains authoritative, while
+  planner warm-start/history state can no longer be mutated concurrently by
+  the command timer and a solve. Queue failure leaves the execution timeline
+  unchanged and is observable as a synchronization failure.
+- **Evidence:** Long-route successor activation was followed by intermittent
+  `navigation_runtime_node` `SIGSEGV` while the worker and command timer could
+  enter `Planner::onExecutionTimelineActivated()` concurrently; the existing
+  worker contract already requires exclusive backend access.
+- **Removal condition:** Remove only when planner history becomes immutable or
+  activation is represented by a worker-owned typed control transaction with
+  equivalent serialization and fail-closed behavior.
+- **Verification:** `make build`; direct runtime/planning-worker tests; repeated
+  `MAP_SCENE=long_route TEST_CASE=three_pillars`, `cross_obstacles`, and
+  navigation-generalization SITL with no runtime crash and full mission
+  completion.
+
+## 2026-09-02 - Keep KNOWN_FREE visibility independent from long CIRI seeds
+
+- **Owner/status:** Planner BACKUP visibility and braking-hull certification;
+  active until repeated obstacle-route runs show stable backup renewal.
+- **Scope:** Use the inflated-grid `KNOWN_FREE` ray oracle to certify the
+  visible MAIN prefix. Construct a CIRI/SFC only for the executable braking
+  hull selected later, rather than requiring one long visibility polytope to
+  succeed first.
+- **Safety impact:** This removes a numerical dependency, not a safety gate.
+  The ray remains `RequireKnownFree`, and the selected BACKUP still requires
+  a dynamically valid braking hull, an aligned SFC when needed, strict swept
+  KNOWN_FREE validation, and final full-bundle authorization.
+- **Evidence:** On `long_three_pillars` at the diagnostic 1 m/s cap, the ray
+  was valid and anchor error was `0.135 m`, but a single 11 m CIRI visibility
+  seed failed near the first pillar and expired the finite command.
+- **Removal condition:** Remove when the visibility certificate and braking
+  certificate are represented by separate typed artifacts with no long-seed
+  numerical coupling.
+- **Verification:** `make build`; direct planning/runtime tests; repeated
+  long-route three-pillar, cross-obstacle, and navigation-generalization SITL
+  with no crash, collision, stale command, or loss of mission completion.
+
+## 2026-09-02 - Preserve a successor certificate across serialized activation
+
+- **Owner/status:** Navigation mapping-to-execution certificate transition;
+  active until repeated successor activations show no transient bundle loss.
+- **Scope:** When the execution timeline has activated a successor but the
+  worker-owned planner history has not yet applied the matching generation,
+  retain that exact bundle after either an immutable proof that its protected
+  region is unchanged since certification or a complete validation of the
+  exact staged MAIN+BACKUP polynomial on the new snapshot. The existing
+  backend-generation validation remains mandatory whenever planner history
+  already matches; any identity mismatch, invalid region, failed sweep, or
+  failed staged lookup still clears the bundle fail-closed.
+- **Safety impact:** This closes a synchronization gap without retaining an
+  uncertified trajectory. The proof is the immutable changed-region
+  disjointness contract already used for unaffected-world commits; it does not
+  relax swept-volume, known-free, dynamic, freshness, route, or PX4 gates.
+- **Evidence:** Long-route diagnostics showed successor generation 2 became
+  active, then a mapping callback observed planner generation 1 and cleared
+  the active bundle before the queued history activation ran; the next command
+  sample was empty and PX4 entered `STATUS_REJECTED`.
+- **Removal condition:** Remove when execution-timeline activation and planner
+  history are committed by one worker-owned typed transaction with no callback
+  visibility gap, preserving equivalent fail-closed certificate semantics.
+- **Verification:** `make build`; direct runtime/planning-worker tests; repeated
+  `MAP_SCENE=long_route TEST_CASE=three_pillars`, `cross_obstacles`, and
+  navigation-generalization SITL with no transient empty command and complete
+  mission evidence.
+
+## 2026-09-02 - Preserve an expired recovery endpoint for bounded hold
+
+- **Owner/status:** Navigation mapping-to-execution certificate transition;
+  active until repeated backup and emergency-stop runs show no endpoint witness
+  loss between the command timer and mapping callback.
+- **Scope:** If a non-terminal `MAIN+BACKUP` or `EMERGENCY_BRAKE` bundle has
+  passed its declared end before mapping recertification, retain only its
+  declared endpoint when the endpoint role is exact, finite, known-free, the
+  execution epoch matches, and fresh propagated odometry is within the existing
+  `0.75 m` command-anchor limit. The sampler converts that witness to a bounded
+  `STOPPED_HOLD`; the next cycle must wait for measured stop and restart the
+  active waypoint.
+- **Safety impact:** No trajectory lease is extended and no moving polynomial
+  is replayed after expiry. The endpoint is not mission completion; stale,
+  distant, unknown, occupied, wrong-role, or malformed endpoints remain
+  fail-closed to PX4 Hold.
+- **Evidence:** Nominal long-route SITL reached a certified emergency endpoint,
+  but a map callback arrived after the declared end and cleared the bundle with
+  `invalid_time_window` before `CommandSampler` could emit its existing bounded
+  hold path.
+- **Removal condition:** Remove when endpoint observation, mapping
+  recertification, and measured-stop transition share one typed execution
+  transaction with no callback-order gap.
+- **Verification:** `make build`; direct execution/FSM/mission tests; repeated
+  long-route three-pillar, cross-obstacle, and navigation-generalization SITL
+  with no empty command at recovery endpoint, no collision, and complete
+  measured waypoint evidence.
+
+## 2026-09-02 - Fail closed on degenerate corridor vertex enumeration
+
+- **Owner/status:** Geometry vertex enumeration used by nominal and backup
+  corridor optimization; active until obstacle-route runs show no process
+  crash on malformed or numerically degenerate polytopes.
+- **Scope:** Validate half-space dimensions, finite coefficients, non-zero
+  interior denominators, QuickHull index-buffer cardinality, finite hull
+  vertices, and non-empty filtered output before Eigen/QuickHull results are
+  consumed by corridor optimization. Invalid or degenerate input returns an
+  ordinary planner failure.
+- **Safety impact:** No planning or motion gate is relaxed. The change removes
+  undefined matrix operations and converts a geometry failure into the existing
+  fail-closed planner/recovery path; valid 3-D corridor enumeration is
+  unchanged.
+- **Evidence:** Long-route nominal SITL produced a reproducible `SIGSEGV` in
+  `geometry_utils::filterVs()` called by
+  `ExpTrajOpt::processCorridorWithGuideTraj()` while renewing around pillars.
+- **Removal condition:** Remove only if the upstream geometry API guarantees
+  the same total finite/non-degenerate contract at every call site.
+- **Verification:** `make build`; direct planning/runtime tests; repeated
+  long-route three-pillar, cross-obstacle, and navigation-generalization SITL
+  with no `SIGSEGV` and no unsafe command exposure.
+
+## 2026-09-02 - Rebuild a certified nominal seed after bounded dynamic stretch
+
+- **Owner/status:** SUPER-compatible nominal optimizer fallback; active until
+  representative detour routes repeatedly produce a certified continuation
+  without relying on a mutable out-of-corridor L-BFGS iterate.
+- **Scope:** When the nominal optimizer leaves the corridor or exceeds the
+  dynamic envelope, rebuild the original corridor-contained Hermite/Bézier
+  seed at one of the existing finite duration-reserve scales. Accept it only
+  after the independent corridor, boundary, route-boundary, P/V/A/J, and
+  flatness certificates all pass.
+- **Safety impact:** This adds a bounded certified fallback for difficult
+  detours; it does not accept an optimizer failure, relax a gate, extend a
+  lease, or change UNKNOWN/BACKUP policy. Failed reconstruction continues to
+  return the existing planner failure and safety recovery.
+- **Evidence:** The wide cross-obstacle SITL produced an optimizer candidate
+  with corridor cost `0.0212 > 0.01` and a fixed-duration seed peak velocity
+  of `11.36/5.0 m/s`, although the route geometry itself was certified.
+- **Removal condition:** Remove when the nominal optimizer itself reliably
+  returns a complete certified continuation for the representative detour
+  distribution, with equivalent bounded failure behavior.
+- **Verification:** `make build`; nominal optimizer and runtime tests; repeated
+  long-route three-pillar and cross-obstacle SITL with exact certificate and
+  mission-completion evidence.
+### Use bounded MAIN A* detours before BACKUP KNOWN_FREE admission
+
+- **Owner/status:** Planner pass-through continuation; active implementation.
+- **Scope:** A blocked direct chord from a pass-through waypoint to the next
+  mission target no longer suppresses bounded outgoing A* search. The current
+  waypoint boundary must still have KNOWN_FREE support; A* uses the configured
+  MAIN unknown-space policy and its returned route is re-certified before use.
+- **Safety impact:** This restores the separation between exploratory MAIN and
+  KNOWN_FREE BACKUP. No direct or A* edge bypasses inflated-map certification,
+  route-boundary checks, complete MAIN+BACKUP authorization, or dynamic gates.
+  If A* cannot produce a bounded route or no known-free braking suffix exists,
+  planning still fails closed and the runtime retains/holds the current safe
+  command.
+- **Evidence:** Cross-obstacle SITL showed `outgoing_known_free=false` at the
+  accepted pass-through waypoint, after which the old code created a terminal
+  stop without invoking outgoing A*. The first post-change run must show an A*
+  detour attempt and must be repeated before liveness is claimed.
+- **Removal condition:** Remove only if a typed route-continuation certificate
+  replaces this split without requiring a direct known-free chord.
+- **Verification:** `make build`; pass-through/corner unit tests; repeated
+  cross-obstacle, three-pillar, and unknown-frontier SITL with no collision,
+  no unsafe command, ordered waypoint completion, and complete BACKUP evidence.
+
+### 2026-09-02 - MAIN pass-through search is not gated by boundary KNOWN_FREE
+
+- **Owner/status:** SUPER-compatible planner continuation; supersedes the
+  boundary precondition in the preceding pass-through entry, active pending
+  representative SITL evidence.
+- **Scope:** The current pass-through waypoint still gets an explicit
+  route-boundary witness and measured execution acceptance, but MAIN A* may
+  search from that boundary when the configured MAIN policy permits UNKNOWN.
+  `outgoing_known_free` and boundary support remain diagnostics/admission
+  inputs for the strict BACKUP certificate only.
+- **Safety impact:** This restores a usable MAIN detour on a partially mapped
+  frontier without relaxing inflated-grid ray checks, route-boundary witness,
+  complete MAIN+BACKUP commit, dynamic limits, or PX4 acceptance. A failed
+  BACKUP certificate still rejects the replacement and enters the existing
+  fail-closed recovery path.
+- **Evidence:** Post-patch cross-obstacle SITL showed outgoing A* invoked with
+  `direct_outgoing_known_free=false`; the run remained safely BLOCKED because
+  no executable backup switch window was available. Mission liveness is not
+  claimed until the baseline ordering fix and repeated map runs pass.
+- **Removal condition:** Replace with a typed route-continuation certificate
+  that independently proves MAIN exploration and BACKUP known-free recovery.
+- **Verification:** `make build`; focused pass-through tests; repeated long,
+  wide, unknown-frontier, three-pillar, and cross-obstacle SITL with exact
+  MAIN+BACKUP certificate, collision, continuity, freshness, and mission
+  completion evidence.
+
+### 2026-09-02 - Complete baseline before optional nominal refinement
+
+- **Owner/status:** SUPER execution/planning boundary; active implementation,
+  pending repeated representative-map acceptance.
+- **Scope:** Initial stopped-state planning and any successor entered without a
+  previously staged baseline first run the deterministic corridor-contained
+  nominal seed and the backup stage. Optional L-BFGS refinement is allowed only
+  on a later successor cycle after a complete candidate has been staged.
+- **Safety impact:** This prevents an incomplete refined iterate from becoming
+  the first executable replacement. It does not accept a seed without the
+  existing MAIN, BACKUP, dynamic, flatness, world, endpoint, and execution
+  boundary certificates; seed failure remains fail-closed.
+- **Evidence:** Review P0-B identified that the prior pipeline could enter
+  optional refinement before a complete MAIN+BACKUP bundle existed. The
+  optimizer and planner now expose certified-seed status explicitly.
+- **Removal condition:** Remove only after a formally equivalent atomic
+  baseline/refinement transaction is implemented and verified on the same
+  route and obstacle distributions.
+- **Verification:** `make build`; focused planner/runtime tests; repeated
+  long/wide/obstacle SITL proving baseline-first ordering, complete reserve,
+  no collision, continuity, and mission completion.
+
+### 2026-09-02 - Route snapshot and candidate metadata are immutable contracts
+
+- **Owner/status:** PlanningRequest and execution-boundary ownership; active.
+- **Scope:** Every typed PlanningRequest carries the validated immutable route
+  snapshot and exact route identity. Candidate activation and declared
+  endpoint timestamps are mandatory exact metadata; zero-valued legacy fields
+  are rejected.
+- **Safety impact:** A queued solve cannot read a later mutable route, and an
+  execution callback cannot infer an endpoint or activation boundary from
+  missing metadata. This tightens validation only and does not relax any map,
+  dynamic, or tracking gate.
+- **Evidence:** Review P1-D/P1 request-contract findings; producer and test
+  fixtures were migrated to exact route, activation, start, and end metadata.
+- **Removal condition:** Remove only if the public typed request/candidate
+  schemas provide equivalent non-optional contracts.
+- **Verification:** `make build`; planning-contract, committed-bundle-store,
+  runtime FSM, and mission tests; route-boundary SITL with exact event stamps.
+
+### 2026-09-02 - Mapping recertification is independent of optimizer ownership
+
+- **Owner/status:** Mapping callback / execution-store transaction; active.
+- **Scope:** World recertification never holds the mutable planner backend
+  mutex across point-cloud processing or candidate validation. Retention is
+  allowed only through immutable changed-region proof, followed by the
+  execution-store finalization gate; an ambiguous pending or active bundle is
+  dropped.
+- **Safety impact:** Mapping latency cannot be coupled to optimizer latency;
+  concurrent replacements are retained only when their exact immutable
+  generation and world identity remain certified. Ambiguous races invalidate
+  the command fail-closed.
+- **Evidence:** Review P1-A and current mapping callback lock-wait path;
+  focused build/tests remain green after removing the cross-callback backend
+  lock.
+- **Removal condition:** Replace only with an equivalent immutable planner
+  snapshot API and preserve the same execution-store linearization proof.
+- **Verification:** `make build`; runtime/store tests; repeated mapping bursts
+  during long obstacle SITL with bounded callback latency and no stale command
+  exposure.
+
+### 2026-09-02 - ExecutionEpisode owns command authority transitions
+
+- **Owner/status:** Runtime execution lifecycle; active migration closure,
+  pending representative SITL acceptance.
+- **Scope:** `ExecutionEpisode` is the policy source for command availability,
+  failure latch, safety-suffix ownership, and restart-from-rest state.
+  `CommandSampler` is read-only with respect to pending activation; the
+  command publication path and execution-store transition own activation and
+  commit ordering. Legacy atomics remain compatibility mirrors/diagnostics.
+- **Safety impact:** A sampler or callback cannot independently activate a
+  pending bundle or resurrect a stale planner flag. Failures clear the typed
+  episode state and hand over to PX4 Hold; certified BACKUP/EMERGENCY suffixes
+  remain available only while their immutable execution identity is valid.
+- **Evidence:** Review P1-B/P1-E findings; runtime policy reads now consume
+  `ExecutionEpisodeSnapshot`, and activation is centralized in the publisher
+  or explicit store tests.
+- **Removal condition:** Remove compatibility mirrors only after all external
+  diagnostic consumers use the typed episode snapshot.
+- **Verification:** `make build`; execution-store, runtime FSM, and mission
+  tests; repeated timeout, world-refresh, hot-retarget, and terminal-race SITL.
