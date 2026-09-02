@@ -2181,6 +2181,7 @@ double knownFreeGuideSupport(
             }
             /// Ready for replan.
             out_exp_traj_info.setGoalConnectedFlag(false);
+            out_exp_traj_info.setPreserveIncomingRouteTangentFlag(false);
 
             // The guide is always sampled from the committed command. This is
             // required while a BACKUP suffix is active because planner history
@@ -2455,6 +2456,7 @@ double knownFreeGuideSupport(
         // MissionController advance the checkpoint while the same command is live.
         bool route_lookahead_active = false;
         bool route_lookahead_is_corner = false;
+        bool preserve_incoming_route_tangent = false;
         double route_terminal_speed_cap_mps =
             cfg_.exp_traj_cfg.max_vel * cfg_.exp_traj_cfg.optimization_dynamic_reserve_ratio;
         std::optional<CorridorGenerator::RouteBoundaryGate> route_boundary_gate;
@@ -2545,6 +2547,7 @@ double knownFreeGuideSupport(
                     current_endpoint, next_target, *mission_tangent);
             const bool effective_genuine_corner = genuine_corner ||
                 mission_geometry_corner;
+            preserve_incoming_route_tangent = effective_genuine_corner;
             const double required_lookahead_envelope =
                 passThroughCruiseLookaheadDistance(
                     cfg_.exp_traj_cfg.max_vel,
@@ -3254,6 +3257,8 @@ double knownFreeGuideSupport(
 
         Trajectory temp_exp_traj = out_traj;
         out_exp_traj_info.setSFC(sfc);
+        out_exp_traj_info.setPreserveIncomingRouteTangentFlag(
+            preserve_incoming_route_tangent);
         temp_exp_traj.start_WT = new_traj_WT;
         const auto generated_boundary_state = temp_exp_traj.getState(0.0);
         StatePVAJ expected_boundary_state = pos_init_state;

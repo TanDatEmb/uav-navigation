@@ -30,6 +30,7 @@ namespace navigation_planning_backend {
 
         /* some flags */
         bool flag_connected_goal_{false};
+        bool flag_preserve_incoming_route_tangent_{false};
         bool flag_empty_{true};
 
         /* some part of exp traj may belong to last backup, record this */
@@ -45,6 +46,8 @@ namespace navigation_planning_backend {
 
         void setEmpty() {
             flag_empty_ = true;
+            flag_connected_goal_ = false;
+            flag_preserve_incoming_route_tangent_ = false;
             required_main_prefix_duration_TT_ = 0.0;
         }
 
@@ -54,6 +57,10 @@ namespace navigation_planning_backend {
 
         bool connectedToGoal()const {
             return flag_connected_goal_;
+        }
+
+        bool preservesIncomingRouteTangent() const {
+            return flag_preserve_incoming_route_tangent_;
         }
 
         size_t getSFCSize() const {
@@ -121,6 +128,10 @@ namespace navigation_planning_backend {
 
         void setGoalConnectedFlag(const bool & _in) {
             flag_connected_goal_ = _in;
+        }
+
+        void setPreserveIncomingRouteTangentFlag(const bool preserve) {
+            flag_preserve_incoming_route_tangent_ = preserve;
         }
 
         const Trajectory & posTraj() const {

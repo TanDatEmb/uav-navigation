@@ -2218,7 +2218,7 @@ TEST(PlannerTrajectory, MainRouteRegressionCertificateKeepsIncomingTangentAtExac
       {1.0, 1.0}, {incoming, final_incoming});
   candidate.roles = {{0.0, 2.0,
                       navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
-  candidate.connected_goal = true;
+  candidate.preserve_incoming_route_tangent = true;
 
   // The second piece reaches the exact corner while its Y excursion would
   // look like a 0.75 m regression if the outgoing tangent were switched at

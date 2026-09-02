@@ -50,6 +50,7 @@ namespace navigation_planning_backend {
         bool backup_suffix_available{false};
         double backup_start_tt{0.0};
         bool connected_goal{false};
+        bool preserve_incoming_route_tangent{false};
         // CandidateBundleKind describes the executable role partition; it
         // cannot distinguish a terminal STOP with a braking suffix from an
         // ordinary moving MAIN+BACKUP command.
@@ -223,6 +224,8 @@ namespace navigation_planning_backend {
             Trajectory tmp_pos_traj, tmp_yaw_traj;
             CandidateCommandBundle candidate;
             candidate.connected_goal = exp_traj.connectedToGoal();
+            candidate.preserve_incoming_route_tangent =
+                exp_traj.preservesIncomingRouteTangent();
             candidate.terminal_stop = terminal_stop;
             candidate.backup_disposition = disposition;
             if (backup_traj != nullptr) {
