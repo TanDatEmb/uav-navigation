@@ -117,11 +117,10 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
       main_endpoint = candidate.position.getState(std::clamp(
           main_end_tt, 0.0, candidate.position.getTotalDuration())).col(0);
     }
-    const bool exact_waypoint_handoff =
-        (candidate.connected_goal || candidate.preserve_incoming_route_tangent) &&
-        main_endpoint.allFinite() && std::isfinite(acceptance_radius_m) &&
-        acceptance_radius_m > 0.0 &&
-        (main_endpoint - boundary).norm() <= acceptance_radius_m + 1.0e-6;
+    const bool exact_waypoint_handoff = candidate.preserve_incoming_route_tangent ||
+        (candidate.connected_goal && main_endpoint.allFinite() &&
+         std::isfinite(acceptance_radius_m) && acceptance_radius_m > 0.0 &&
+         (main_endpoint - boundary).norm() <= acceptance_radius_m + 1.0e-6);
     double closest_junction_distance_m = std::numeric_limits<double>::infinity();
     if (!exact_waypoint_handoff) {
       for (int piece_index = 0;

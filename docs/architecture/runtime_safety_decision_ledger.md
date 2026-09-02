@@ -34,8 +34,8 @@
 - **Owner/status:** navigation planning maintainers; `IMPLEMENTED`, focused
   regression/build and representative obstacle SITL verification remain open.
 - **Scope:** the MAIN route-regression certificate now keeps the incoming
-  tangent when a planner-owned exact-corner-handoff witness, or a
-  `connected_goal` candidate, ends inside the active pass-through waypoint
+  tangent when a planner-owned exact-corner-handoff witness is present, or a
+  `connected_goal` candidate ends inside the active pass-through waypoint
   acceptance region. It does not switch to the outgoing tangent unless the
   executable command continues beyond that boundary.
 - **Safety impact:** preserves the strict route backtrack tolerance while
@@ -45,9 +45,10 @@
 - **Evidence:** the exact-waypoint handoff has no executable MAIN geometry
   after the boundary. The direct-to-goal connectivity result can be false
   when the route reaches the waypoint through a certified detour, so the
-  planner now carries an explicit genuine-corner witness. The adversarial test
-  constructs a monotonic incoming X leg with an in-ball Y excursion that would
-  otherwise report a 0.75 m false regression after the tangent switch.
+  planner now carries an explicit genuine-corner witness and the certificate
+  consumes it directly. The adversarial test constructs a monotonic incoming
+  X leg with an in-ball Y excursion that would otherwise report a 0.75 m false
+  regression after the tangent switch.
 - **Removal/review condition:** remove only when an explicit planner-owned
   outgoing-geometry witness represents this handoff without relying on the
   endpoint identity.
