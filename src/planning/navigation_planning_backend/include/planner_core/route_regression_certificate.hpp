@@ -98,18 +98,43 @@ inline RouteRegressionCertificate certifyMainRouteRegression(
         route.waypoints[route.active_waypoint_index].position_enu;
     const double acceptance_radius_m =
         route.waypoints[route.active_waypoint_index].acceptance_radius_m;
+    // An exact-waypoint handoff is intentionally the terminal point of this
+    // MAIN command. Its final in-ball piece is still incoming geometry; do
+    // not reinterpret it as outgoing merely because an earlier piece entered
+    // the acceptance ball. The outgoing tangent is reserved for a command
+    // that actually continues beyond this boundary.
+    double main_end_tt = -std::numeric_limits<double>::infinity();
+    for (const auto& role : candidate.roles) {
+      if (role.role == CandidateTrajectoryRole::MAIN &&
+          std::isfinite(role.end_tt)) {
+        main_end_tt = std::max(main_end_tt, role.end_tt);
+      }
+    }
+    Eigen::Vector3d main_endpoint = Eigen::Vector3d::Constant(
+        std::numeric_limits<double>::quiet_NaN());
+    if (std::isfinite(main_end_tt) && main_end_tt >= 0.0 &&
+        main_end_tt <= candidate.position.getTotalDuration() + 1.0e-9) {
+      main_endpoint = candidate.position.getState(std::clamp(
+          main_end_tt, 0.0, candidate.position.getTotalDuration())).col(0);
+    }
+    const bool exact_waypoint_handoff = candidate.connected_goal &&
+        main_endpoint.allFinite() && std::isfinite(acceptance_radius_m) &&
+        acceptance_radius_m > 0.0 &&
+        (main_endpoint - boundary).norm() <= acceptance_radius_m + 1.0e-6;
     double closest_junction_distance_m = std::numeric_limits<double>::infinity();
-    for (int piece_index = 0;
-         piece_index + 1 < candidate.position.getPieceNum(); ++piece_index) {
-      const auto& piece = candidate.position[piece_index];
-      const Eigen::Vector3d junction = piece.getPos(piece.getDuration());
-      const double junction_distance_m = (junction - boundary).norm();
-      if (junction.allFinite() && std::isfinite(acceptance_radius_m) &&
-          acceptance_radius_m > 0.0 && std::isfinite(junction_distance_m) &&
-          junction_distance_m <= acceptance_radius_m + 1.0e-6 &&
-          junction_distance_m < closest_junction_distance_m) {
-        boundary_piece_index = piece_index;
-        closest_junction_distance_m = junction_distance_m;
+    if (!exact_waypoint_handoff) {
+      for (int piece_index = 0;
+           piece_index + 1 < candidate.position.getPieceNum(); ++piece_index) {
+        const auto& piece = candidate.position[piece_index];
+        const Eigen::Vector3d junction = piece.getPos(piece.getDuration());
+        const double junction_distance_m = (junction - boundary).norm();
+        if (junction.allFinite() && std::isfinite(acceptance_radius_m) &&
+            acceptance_radius_m > 0.0 && std::isfinite(junction_distance_m) &&
+            junction_distance_m <= acceptance_radius_m + 1.0e-6 &&
+            junction_distance_m < closest_junction_distance_m) {
+          boundary_piece_index = piece_index;
+          closest_junction_distance_m = junction_distance_m;
+        }
       }
     }
   }

@@ -2205,6 +2205,31 @@ TEST(PlannerTrajectory, MainRouteRegressionCertificateChangesTangentInsideAccept
   EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
 }
 
+TEST(PlannerTrajectory, MainRouteRegressionCertificateKeepsIncomingTangentAtExactWaypointHandoff) {
+  Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
+  incoming.row(0) << 19.4, 0.0;
+  incoming(2, 1) = 3.0;
+  Eigen::MatrixXd final_incoming = Eigen::MatrixXd::Zero(3, 3);
+  final_incoming.row(0) << 0.0, 0.6, 19.4;
+  final_incoming.row(1) << -3.0, 3.0, 0.0;
+  final_incoming(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory(
+      {1.0, 1.0}, {incoming, final_incoming});
+  candidate.roles = {{0.0, 2.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  candidate.connected_goal = true;
+
+  // The second piece reaches the exact corner while its Y excursion would
+  // look like a 0.75 m regression if the outgoing tangent were switched at
+  // the first in-ball junction. It is monotonic on the incoming X leg.
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeCornerActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
+}
+
 TEST(PlannerTrajectory, MainRouteRegressionCertificateRejectsFoldAfterCorner) {
   Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
   incoming.row(0) << 14.4, 5.0;

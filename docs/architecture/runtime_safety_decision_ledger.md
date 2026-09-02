@@ -29,6 +29,28 @@
   build, and repeated `long_three_pillars_multiwaypoint` SITL with mission
   completion, activation continuity, clearance, and collision evidence.
 
+### 2026-09-02 - Do not reinterpret an exact waypoint tail as outgoing geometry
+
+- **Owner/status:** navigation planning maintainers; `IMPLEMENTED`, focused
+  regression/build and representative obstacle SITL verification remain open.
+- **Scope:** the MAIN route-regression certificate now keeps the incoming
+  tangent when a `connected_goal` candidate ends inside the active
+  pass-through waypoint acceptance region. It does not switch to the outgoing
+  tangent unless the executable command continues beyond that boundary.
+- **Safety impact:** preserves the strict route backtrack tolerance while
+  preventing a false outgoing-phase classification of the final incoming
+  MINCO piece. Collision, dynamic, world, tracking, identity, freshness, and
+  handoff certificates remain unchanged.
+- **Evidence:** the exact-waypoint handoff has no executable MAIN geometry
+  after the boundary. The adversarial test constructs a monotonic incoming X
+  leg with an in-ball Y excursion that would otherwise report a 0.75 m false
+  regression after the tangent switch.
+- **Removal/review condition:** remove only when an explicit planner-owned
+  outgoing-geometry witness represents this handoff without relying on the
+  endpoint identity.
+- **Verification:** `test_trajectory` route-regression tests, affected-package
+  build, and nominal `long_three_pillars_multiwaypoint` SITL.
+
 ### 2026-09-02 - Synchronize emergency activation before bounded pass-through recovery
 
 - **Owner/status:** planning/runtime emergency handoff and route-progress recovery, `IMPLEMENTED`; focused regression/build and representative obstacle SITL verification remain open.
