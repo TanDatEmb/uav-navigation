@@ -611,10 +611,14 @@ double knownFreeGuideSupport(
                     navigation_world_model::WorldCommitDecision::kCandidateRejected));
                 planner_context_->warn(
                     " -- [planner] command rejected by MAIN route-regression "
-                    "certificate: maximum={} tolerance={} first_time={}",
+                    "certificate: maximum={} tolerance={} first_time={} "
+                    "connected_goal={} preserve_incoming_tangent={} terminal_stop={}",
                     route_certificate.maximum_regression_m,
                     route_regression_tolerance_m,
-                    route_certificate.first_violation_time_s);
+                    route_certificate.first_violation_time_s,
+                    candidate.connected_goal,
+                    candidate.preserve_incoming_route_tangent,
+                    candidate.terminal_stop);
                 return false;
             }
         }

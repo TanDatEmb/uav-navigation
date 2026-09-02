@@ -55,6 +55,20 @@
 - **Verification:** `test_trajectory` route-regression tests, affected-package
   build, and nominal `long_three_pillars_multiwaypoint` SITL.
 
+### 2026-09-02 - Preserve route-regression witness provenance in rejection logs
+
+- **Owner/status:** navigation planning observability; `IMPLEMENTED`.
+- **Scope:** route-regression rejection diagnostics now identify whether the
+  candidate was connected to the goal, carried the exact-corner incoming
+  tangent witness, and was a terminal STOP.
+- **Safety impact:** diagnostics only; no decision, tolerance, or execution
+  behavior changes.
+- **Evidence/removal condition:** required to distinguish a genuine MAIN fold
+  from a missing handoff witness during the multi-pillar SITL investigation;
+  remove after the route-boundary lifecycle is covered by a stable structured
+  event with equivalent provenance.
+- **Verification:** affected-package build and focused route-regression CTest.
+
 ### 2026-09-02 - Synchronize emergency activation before bounded pass-through recovery
 
 - **Owner/status:** planning/runtime emergency handoff and route-progress recovery, `IMPLEMENTED`; focused regression/build and representative obstacle SITL verification remain open.
