@@ -734,81 +734,33 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           const bool backend_matches_bundle =
               committed_before.generation == expected_bundle->bundle_generation;
           if (backend_matches_bundle) {
-            const auto now_ns = ros_clock->now().nanoseconds();
-            const auto declared_end_ns = expected_bundle->declared_end_ns > 0
-                ? std::optional<std::int64_t>{expected_bundle->declared_end_ns}
-                : navigation_common::secondsSumToNanoseconds(
-                      expected_bundle->start_wall_time_s,
-                      expected_bundle->duration_s);
-            const auto expired_endpoint = expected_bundle->sampleAtDeclaredEnd();
-            const bool command_expired = declared_end_ns.has_value() &&
-                now_ns >= *declared_end_ns;
-            const auto endpoint_state = expired_endpoint
-                ? result.snapshot->classify(
-                      expired_endpoint->position_world,
-                      navigation_world_model::GridLayer::kInflated)
-                : navigation_world_model::CellState::kOutOfMap;
-            const auto current_execution = execution_state_store_.load();
-            const auto endpoint_freshness = current_execution
-                ? navigation_contracts::evaluateExecutionStateFreshness(
-                      now_ns, current_execution->state.source_stamp_ns,
-                      navigation_common::steadyClockNowNanoseconds(),
-                      current_execution->state.receive_stamp_ns,
-                      data_freshness_window_s_)
-                : navigation_contracts::ExecutionStateFreshness{};
-            const bool endpoint_near_execution = expired_endpoint && current_execution &&
-                current_execution->state.finite() && endpoint_freshness.valid() &&
-                (expired_endpoint->position_world -
-                 current_execution->state.position_world).norm() <=
-                    navigation_contracts::kCommandAnchorErrorLimitM;
-            // An expired non-goal command is allowed to survive a map
-            // publication only as its exact, known-free endpoint while fresh
-            // odometry proves the vehicle is already there. This preserves the
-            // endpoint replay that lets runCycle observe trajectory_finished_
-            // and start PlanFromRest; it never republishes a future sample or
-            // extends a moving trajectory.
-            if (command_expired && expiredEndpointMayBeReplayed(
-                    expired_endpoint && expired_endpoint->finished &&
-                        expired_endpoint->finite(),
-                    navigation_world_model::isCellTraversable(
-                        endpoint_state,
-                        navigation_world_model::UnknownPolicy::kRequireKnownFree),
-                    endpoint_near_execution)) {
-              retain_validated_bundle = true;
-              RCLCPP_DEBUG(
-                  this->get_logger(),
-                  "retaining exact expired endpoint for generation=%lu on world revision=%lu",
-                  static_cast<unsigned long>(expected_bundle->bundle_generation),
-                  static_cast<unsigned long>(result.snapshot->identity().revision));
+            const auto validation = planner_->validateCommittedTrajectory(
+                result.snapshot, ros_clock->now().seconds());
+            if (validation.reused_unchanged_certificate) {
+              ++next.command_revalidation_fast_path_count;
             } else {
-              const auto validation = planner_->validateCommittedTrajectory(
-                  result.snapshot, ros_clock->now().seconds());
-              if (validation.reused_unchanged_certificate) {
-                ++next.command_revalidation_fast_path_count;
-              } else {
-                ++next.command_revalidation_full_count;
-              }
-              const auto committed_after = planner_->committedSnapshot();
-              retain_validated_bundle = validation.valid &&
-                  committed_after.generation == expected_bundle->bundle_generation &&
-                  navigation_world_model::sameWorldSnapshotIdentity(
-                      validation.validated_world, result.snapshot->identity());
-              if (!validation.valid) {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "command recertification rejected generation=%lu on world revision=%lu "
-                  "at t=%.3f cell=%d position=(%.3f,%.3f,%.3f) "
-                  "failure_code=%d role=%d samples=%zu segments=%zu",
-                    static_cast<unsigned long>(expected_bundle->bundle_generation),
-                    static_cast<unsigned long>(result.snapshot->identity().revision),
-                    validation.first_blocked_time_s,
-                    validation.first_blocked_cell_state,
-                    validation.first_blocked_position.x(),
-                    validation.first_blocked_position.y(),
-                    validation.first_blocked_position.z(),
-                    validation.failure_code, validation.blocked_role,
-                    validation.sample_count, validation.segment_count);
-              }
+              ++next.command_revalidation_full_count;
+            }
+            const auto committed_after = planner_->committedSnapshot();
+            retain_validated_bundle = validation.valid &&
+                committed_after.generation == expected_bundle->bundle_generation &&
+                navigation_world_model::sameWorldSnapshotIdentity(
+                    validation.validated_world, result.snapshot->identity());
+            if (!validation.valid) {
+              RCLCPP_WARN(
+                  this->get_logger(),
+                  "command recertification rejected generation=%lu on world revision=%lu "
+                "at t=%.3f cell=%d position=(%.3f,%.3f,%.3f) "
+                "failure_code=%d role=%d samples=%zu segments=%zu",
+                  static_cast<unsigned long>(expected_bundle->bundle_generation),
+                  static_cast<unsigned long>(result.snapshot->identity().revision),
+                  validation.first_blocked_time_s,
+                  validation.first_blocked_cell_state,
+                  validation.first_blocked_position.x(),
+                  validation.first_blocked_position.y(),
+                  validation.first_blocked_position.z(),
+                  validation.failure_code, validation.blocked_role,
+                  validation.sample_count, validation.segment_count);
             }
           }
         }
@@ -1278,6 +1230,7 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
     propagated_derivative_estimator_.reset();
   }
   execution_state_store_.resetForLocalizationEpoch(localization_epoch);
+  execution_episode_.reset(localization_epoch);
   command_bundle_store_.invalidate();
   last_registered_scan_epoch_.store(localization_epoch, std::memory_order_release);
   last_registered_scan_sequence_.store(0U, std::memory_order_release);
@@ -1714,6 +1667,10 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
         effective_hot_retarget ? ExecutionRecoveryState::kTrackMain
                                : ExecutionRecoveryState::kInitialHold,
         std::memory_order_release);
+    execution_episode_.beginGoal(
+        active_localization_epoch_.load(std::memory_order_acquire),
+        active_goal_epoch_.load(std::memory_order_acquire),
+        message->request_id, effective_hot_retarget);
   }
 }
 
@@ -2071,6 +2028,9 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   world_freshness_suspended_bundle_generation_.store(0U, std::memory_order_release);
   world_freshness_suspended_safety_suffix_active_.store(
       false, std::memory_order_release);
+  if (!anchor) {
+    execution_episode_.commandCommitted(*candidate_ptr);
+  }
   return true;
 }
 
@@ -2121,6 +2081,9 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
   // creates a fresh execution anchor.
   if (command_bundle_store_.hasPending()) return std::nullopt;
   const auto bundle = command_bundle_store_.load();
+  const auto episode = execution_episode_.snapshot();
+  safety_renewal = safety_renewal ||
+      episode.phase == ExecutionEpisodePhase::kTrackingBackup;
   PlanningKey key;
   key.localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
   key.goal_epoch = goal_epoch;
@@ -2129,7 +2092,9 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
   key.committed_bundle_generation = bundle ? bundle->bundle_generation : 0U;
   key.pinned_world_generation = world.identity.generation;
   key.pinned_world_revision = world.identity.revision;
-  key.start_mode = bundle && planner_command_available_.load(std::memory_order_acquire) &&
+  key.start_mode = bundle &&
+          (planner_command_available_.load(std::memory_order_acquire) ||
+           episode.command_available) &&
           !safety_renewal
       ? PlanningStartMode::kCommittedFutureState
       : PlanningStartMode::kStoppedMeasuredState;
@@ -3102,6 +3067,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planner_solve_started_steady_ns_.store(navigation_common::steadyClockNowNanoseconds());
   active_planner_solve_generation_.store(solve_generation);
   planner_->resetSolveCancellation();
+  execution_episode_.planningStarted();
   const auto solve_started_ros_ns = now().nanoseconds();
   const double execution_age_at_solve_ms =
       executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
@@ -4521,6 +4487,12 @@ void NavigationRuntimeNode::publishCommand() {
       sampled_role = sample.planned_stop_hold
           ? navigation_planning::CandidateRole::kMain : point.role;
       on_backup_traj = sampled_role != navigation_planning::CandidateRole::kMain;
+      if (sample.planned_stop_hold) {
+        execution_episode_.stoppedHold(sample.bundle->bundle_generation);
+      } else {
+        execution_episode_.roleObserved(
+            sampled_role, sample.bundle->bundle_generation);
+      }
       if (!sample.planned_stop_hold && point.role == navigation_planning::CandidateRole::kBackup) {
         execution_recovery_state_.store(
             transitionExecutionRecovery(

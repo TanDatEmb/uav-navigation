@@ -27,6 +27,7 @@
 #include <navigation_mapping/observation_accounting.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
+#include "navigation_runtime/execution_episode.hpp"
 #include "navigation_runtime/planning_worker.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
@@ -255,6 +256,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::mutex input_mutex_;
   std::mutex localization_transition_mutex_;
   navigation_execution::ExecutionStateStore execution_state_store_;
+  ExecutionEpisode execution_episode_;
   std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;
   // Sole runtime owner for a goal published while a moving BACKUP/EMERGENCY
   // suffix owns execution.  Do not add another pending optional.

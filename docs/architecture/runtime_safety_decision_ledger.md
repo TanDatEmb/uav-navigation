@@ -1,5 +1,29 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Replace expired-endpoint replay with typed STOPPED_HOLD episodes
+
+- **Owner/status:** runtime execution lifecycle, `IMPLEMENTED`; focused tests and
+  build pass, repeated SITL and sanitizer evidence remain open.
+- **Scope:** Expired analytic leases no longer use the old replay helper. The
+  sampler emits a typed `planned_stop_hold` only at the producer-declared
+  endpoint; runtime accepts it only with fresh KNOWN_FREE evidence and measured
+  proximity. `ExecutionEpisode` records goal, generation, planning, MAIN,
+  BACKUP, hold, and PX4-Hold transitions as one serialized lifecycle snapshot.
+- **Safety impact:** A finite command cannot be extended by sampling its
+  evaluator after expiry. Invalid endpoint evidence fails closed. The old
+  lifecycle atomics remain compatibility mirrors while callers migrate to the
+  episode snapshot; they do not authorize an evaluator sample.
+- **Evidence:** sourced-overlay CTest passes planning 1/1, execution 2/2, and
+  runtime 8/8, including explicit planned-hold and episode tests; all affected
+  packages rebuild successfully.
+- **Removal/review condition:** Finish migration of remaining runtime policy
+  branches from distributed lifecycle flags to `ExecutionEpisode`; qualify only
+  after repeated open, pass-through, and obstacle SITL plus sanitizer runs.
+- **Verification:** `colcon build --packages-select navigation_planning
+  navigation_execution navigation_planning_backend navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON`; sourced-overlay CTest for all affected
+  packages; repeated representative SITL with no expired evaluator samples.
+
 ### 2026-09-02 - Make planning requests typed and keep release BACKUP deterministic
 
 - **Owner/status:** navigation planning and execution boundary, `IMPLEMENTED`;

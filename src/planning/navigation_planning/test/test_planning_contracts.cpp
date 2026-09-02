@@ -189,6 +189,35 @@ TEST(PlanningOutcome, SuccessRequiresCandidateAndFailureDoesNotCarryOne) {
   EXPECT_TRUE(failure.valid());
   failure.candidate = validCandidate();
   EXPECT_FALSE(failure.valid());
+
+  navigation_planning::PlanningOutcome retained;
+  retained.outcome =
+      navigation_planning::CompletePlanningOutcome::kRetainedCommittedBundle;
+  retained.failure_stage = navigation_planning::PlanningFailureStage::kNone;
+  retained.failure_reason = navigation_planning::PlanningFailureReason::kNone;
+  EXPECT_TRUE(retained.valid());
+}
+
+TEST(RouteBoundary, RequiresExplicitVolumeEventAndUnitTangents) {
+  navigation_planning::RouteBoundaryConstraint constraint;
+  constraint.admissible_volume.minimum = Eigen::Vector3d(-1.0, -1.0, -1.0);
+  constraint.admissible_volume.maximum = Eigen::Vector3d(1.0, 1.0, 1.0);
+  constraint.incoming_tangent = Eigen::Vector3d::UnitX();
+  constraint.outgoing_tangent = Eigen::Vector3d::UnitY();
+  constraint.corner_speed_mps = 2.0;
+  EXPECT_TRUE(constraint.valid());
+  EXPECT_TRUE(constraint.contains(Eigen::Vector3d::Zero()));
+  EXPECT_FALSE(constraint.contains(Eigen::Vector3d(2.0, 0.0, 0.0)));
+
+  navigation_planning::RouteBoundaryEvent event;
+  event.boundary_stamp_ns = 100;
+  event.position_world = Eigen::Vector3d::Zero();
+  event.incoming_tangent = Eigen::Vector3d::UnitX();
+  event.outgoing_tangent = Eigen::Vector3d::UnitY();
+  event.corner_speed_mps = 2.0;
+  EXPECT_TRUE(event.valid());
+  event.outgoing_tangent = Eigen::Vector3d(2.0, 0.0, 0.0);
+  EXPECT_FALSE(event.valid());
 }
 
 TEST(PlanningRequest, KeyPinsEveryMutableIdentityAndStartMode) {

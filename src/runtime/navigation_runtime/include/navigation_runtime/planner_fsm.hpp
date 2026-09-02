@@ -528,29 +528,6 @@ inline bool stoppedPlanningTimeoutMayFailClosed(
          std::isfinite(timeout_s) && timeout_s > 0.0 && elapsed_s >= timeout_s;
 }
 
-// The publisher can miss the single wall-clock tick at which a finite bundle
-// returns its finished sample.  It may still publish that exact declared
-// endpoint after the execution interval, but only when the endpoint is a
-// finite, current known-free sample and remains inside the active goal
-// acceptance ball.  This authorizes no future trajectory sample.
-inline bool terminalEndpointHoldIsCertified(
-    bool endpoint_valid, bool endpoint_reaches_goal,
-    bool endpoint_known_free) noexcept {
-  return endpoint_valid && endpoint_reaches_goal && endpoint_known_free;
-}
-
-// A finite local trajectory may end at a known-free sensing frontier rather
-// than at the mission goal.  If the publisher misses its finished tick, it
-// may replay that exact endpoint only while the measured execution state is
-// still close enough to the endpoint for the command-anchor contract.  The
-// planner then observes completion and starts a new PlanFromRest; this does
-// not authorize any future sample or claim waypoint acceptance.
-inline bool expiredEndpointMayBeReplayed(
-    bool endpoint_valid, bool endpoint_known_free,
-    bool endpoint_near_execution_state) noexcept {
-  return endpoint_valid && endpoint_known_free && endpoint_near_execution_state;
-}
-
 // A stale world snapshot suspends command publication but does not mutate the
 // immutable committed bundle. Publication may resume without a replacement
 // solve only when that exact generation has subsequently been recertified on

@@ -474,20 +474,6 @@ TEST(PlannerFsm, FiveSecondTimeoutExistsOnlyWhileStationary) {
       ExecutionRecoveryState::kStoppedRecovery, true, 4.999, 5.0));
 }
 
-TEST(PlannerFsm, CertifiesMissedTerminalTickOnlyAtKnownFreeGoalEndpoint) {
-  EXPECT_TRUE(terminalEndpointHoldIsCertified(true, true, true));
-  EXPECT_FALSE(terminalEndpointHoldIsCertified(false, true, true));
-  EXPECT_FALSE(terminalEndpointHoldIsCertified(true, false, true));
-  EXPECT_FALSE(terminalEndpointHoldIsCertified(true, true, false));
-}
-
-TEST(PlannerFsm, ReplaysOnlyKnownFreeFrontierEndpointNearMeasuredState) {
-  EXPECT_TRUE(expiredEndpointMayBeReplayed(true, true, true));
-  EXPECT_FALSE(expiredEndpointMayBeReplayed(false, true, true));
-  EXPECT_FALSE(expiredEndpointMayBeReplayed(true, false, true));
-  EXPECT_FALSE(expiredEndpointMayBeReplayed(true, true, false));
-}
-
 TEST(PlannerFsm, ResumesOnlyExactFreshWorldRecertifiedGeneration) {
   EXPECT_TRUE(worldFreshnessSuspendedCommandMayResume(
       17U, 17U, 3U, 5U, 3U, 5U, 10'500, 10'000,
