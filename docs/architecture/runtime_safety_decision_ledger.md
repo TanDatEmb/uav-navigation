@@ -17825,3 +17825,29 @@ release profiles must not use the former allowance.
   diagnostic consumers use the typed episode snapshot.
 - **Verification:** `make build`; execution-store, runtime FSM, and mission
   tests; repeated timeout, world-refresh, hot-retarget, and terminal-race SITL.
+
+### 2026-09-02 - Corner handoff and route-boundary floating-point contract
+
+- **Owner/status:** SUPER planner and navigation execution boundary; active,
+  pending repeated representative-map acceptance.
+- **Scope:** A genuine pass-through heading change uses the existing bounded
+  acceptance-ball fillet and measured waypoint handoff instead of a long
+  single MINCO lookahead. Route-boundary AABB containment accepts only a
+  1e-6 m floating-point face-roundoff envelope; the physical acceptance
+  radius and all collision, dynamic, tracking, and route-regression gates are
+  unchanged. Boundary metadata reports the corner speed cap derived from the
+  same acceptance geometry and acceleration limit.
+- **Safety impact:** A sharp corner is not issued as an under-shaped high-speed
+  command, reducing anchor-tracking excursions at the waypoint. The bounded
+  containment tolerance prevents a numerically exact boundary crossing from
+  being rejected while still rejecting a 2e-6 m excursion in regression tests.
+- **Evidence:** Long multi-pillar SITL showed a 0.308 m anchor excursion at a
+  genuine corner and repeated boundary rejects at values rounded to an AABB
+  face. The focused route-boundary contract test passes after the change.
+- **Removal condition:** Remove only after the planner has an equivalent
+  continuous corner-speed certificate and repeated long/wide obstacle SITL
+  demonstrates stable handoff without the fillet path.
+- **Verification:** `make build`; `test_planning_contracts`, planner trajectory
+  tests; repeated `MAP_PROFILE=long_three_pillars_multiwaypoint` external-mode
+  SITL with route-boundary, tracking, collision, and mission-completion
+  evidence.

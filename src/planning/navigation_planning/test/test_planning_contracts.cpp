@@ -228,6 +228,8 @@ TEST(RouteBoundary, RequiresExplicitVolumeEventAndUnitTangents) {
   constraint.corner_speed_mps = 2.0;
   EXPECT_TRUE(constraint.valid());
   EXPECT_TRUE(constraint.contains(Eigen::Vector3d::Zero()));
+  EXPECT_TRUE(constraint.contains(Eigen::Vector3d(1.0 + 5.0e-7, 0.0, 0.0)));
+  EXPECT_FALSE(constraint.contains(Eigen::Vector3d(1.0 + 2.0e-6, 0.0, 0.0)));
   EXPECT_FALSE(constraint.contains(Eigen::Vector3d(2.0, 0.0, 0.0)));
 
   navigation_planning::RouteBoundaryEvent event;

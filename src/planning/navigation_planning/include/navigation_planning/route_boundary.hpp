@@ -52,9 +52,16 @@ struct RouteBoundaryConstraint final {
   double corner_speed_mps{0.0};
 
   [[nodiscard]] bool contains(const Eigen::Vector3d& point) const noexcept {
+    // The volume is constructed from the same floating-point waypoint and
+    // radius arithmetic as the producer's sphere test.  Accept only the
+    // bounded roundoff at the faces; this is not a geometric enlargement of
+    // the mission acceptance region.
+    constexpr double kBoundaryRoundoffM = 1.0e-6;
     return valid() && point.allFinite() &&
-           (point.array() >= admissible_volume.minimum.array()).all() &&
-           (point.array() <= admissible_volume.maximum.array()).all();
+           (point.array() >=
+            (admissible_volume.minimum.array() - kBoundaryRoundoffM)).all() &&
+           (point.array() <=
+            (admissible_volume.maximum.array() + kBoundaryRoundoffM)).all();
   }
 
   [[nodiscard]] bool valid() const noexcept {
