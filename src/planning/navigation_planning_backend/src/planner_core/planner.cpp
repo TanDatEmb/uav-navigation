@@ -83,52 +83,49 @@ std::optional<double> firstRouteBoundaryEntryTime(
         return std::nullopt;
     }
 
-    // The route contract is an entry into the mission acceptance ball, not a
-    // requirement that the optimizer place a polynomial junction exactly at
-    // the ball centre.  Check polynomial junctions first.  A fixed sampling
-    // grid alone is not a certificate: a fast trajectory can enter and leave
-    // the ball between two 10 ms samples even though the optimizer's hard
-    // route-boundary junction is valid.
-    double junction_time_s = 0.0;
-    for (int junction_index = 0;
-         junction_index <= trajectory.getPieceNum(); ++junction_index) {
-        const Eigen::Vector3d position = trajectory.getJuncPos(junction_index);
-        if (!position.allFinite()) return std::nullopt;
-        const double distance_m = (position - boundary_point).norm();
-        if (std::isfinite(distance_m) &&
-            distance_m <= boundary_radius_m + 1.0e-6) {
-            return junction_time_s;
-        }
-        if (junction_index < trajectory.getPieceNum()) {
-            const double duration_s = trajectory[junction_index].getDuration();
-            if (!std::isfinite(duration_s) || duration_s <= 0.0 ||
-                !std::isfinite(junction_time_s + duration_s)) {
-                return std::nullopt;
-            }
-            junction_time_s += duration_s;
-        }
-    }
+    // The execution contract uses the same axis-aligned acceptance volume as
+    // CandidateBundle export. A sphere here would reject a valid corner entry
+    // that is inside the controller's AABB, while a coarse sample alone could
+    // miss a short entry interval. Bracket the first actual outside->inside
+    // transition and refine its timestamp without manufacturing a junction.
+    const Eigen::Vector3d boundary_min = boundary_point -
+        Eigen::Vector3d::Constant(boundary_radius_m);
+    const Eigen::Vector3d boundary_max = boundary_point +
+        Eigen::Vector3d::Constant(boundary_radius_m);
+    const auto inside_boundary = [&](const double time_s) {
+        const Eigen::Vector3d position = trajectory.getPos(time_s);
+        return position.allFinite() &&
+            (position.array() >= boundary_min.array()).all() &&
+            (position.array() <= boundary_max.array()).all();
+    };
+    if (inside_boundary(0.0)) return 0.0;
 
-    // The junction check above covers the hard optimizer contract.  Keep a
-    // conservative fixed-time witness for a valid interior crossing in a
-    // trajectory representation that does not put the crossing at a junction.
-    constexpr double kBoundaryWitnessDtS = 0.01;
+    constexpr double kBoundaryWitnessDtS = 0.005;
     const double sample_count = std::ceil(total_duration_s / kBoundaryWitnessDtS);
     if (!std::isfinite(sample_count) || sample_count > 10000000.0) {
         return std::nullopt;
     }
-    for (std::uint64_t sample = 0;
+    double previous_time_s = 0.0;
+    bool previous_inside = false;
+    for (std::uint64_t sample = 1U;
          sample <= static_cast<std::uint64_t>(sample_count); ++sample) {
-        const double time_s = std::min(
+        const double current_time_s = std::min(
             total_duration_s,
             static_cast<double>(sample) * kBoundaryWitnessDtS);
-        const Eigen::Vector3d position = trajectory.getPos(time_s);
-        if (!position.allFinite()) return std::nullopt;
-        const double distance_m = (position - boundary_point).norm();
-        if (std::isfinite(distance_m) &&
-            distance_m <= boundary_radius_m + 1.0e-6) {
-            return time_s;
+        const bool current_inside = inside_boundary(current_time_s);
+        if (current_inside && !previous_inside) {
+            double lower = previous_time_s;
+            double upper = current_time_s;
+            for (int iteration = 0; iteration < 32; ++iteration) {
+                const double middle = 0.5 * (lower + upper);
+                if (inside_boundary(middle)) upper = middle;
+                else lower = middle;
+            }
+            return upper;
         }
+        previous_time_s = current_time_s;
+        previous_inside = current_inside;
+        if (current_time_s >= total_duration_s) break;
     }
     return std::nullopt;
 }
@@ -903,9 +900,72 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 route_snapshot_->waypoints[route_snapshot_->active_waypoint_index];
             const bool is_pass_through = waypoint.behavior ==
                 navigation_mission::MissionWaypoint::Behavior::PassThrough;
-            const bool boundary_reached = command.connected_goal || command.terminal_stop;
-            route_boundary_required = is_pass_through && boundary_reached;
-            if (boundary_reached && (is_pass_through || command.terminal_stop)) {
+            // ``connected_goal``/terminal_stop only enables the bounded
+            // witness search. The route event itself is emitted from the
+            // first actual trajectory entry into the acceptance volume, even
+            // when the executable endpoint continues beyond the waypoint.
+            const double radius = std::max(
+                navigation_world_model::kGoalCompletionToleranceM,
+                waypoint.acceptance_radius_m);
+            const Eigen::Vector3d boundary_min = waypoint.position_enu -
+                Eigen::Vector3d::Constant(radius);
+            const Eigen::Vector3d boundary_max = waypoint.position_enu +
+                Eigen::Vector3d::Constant(radius);
+            const bool boundary_candidate =
+                command.connected_goal || command.terminal_stop;
+            if (boundary_candidate && (is_pass_through || command.terminal_stop)) {
+                // The route event is the first actual trajectory entry into
+                // the acceptance volume.  Do not manufacture it at the
+                // declared endpoint: a long MAIN prefix can cross the
+                // waypoint and then continue toward the next leg before its
+                // BACKUP suffix begins.
+                std::optional<double> boundary_entry_tt;
+                const double total_duration = command.position.getTotalDuration();
+                const auto inside_boundary = [&] (const double time_s) {
+                    const auto point = command.position.getPos(time_s);
+                    return point.allFinite() &&
+                        (point.array() >= boundary_min.array()).all() &&
+                        (point.array() <= boundary_max.array()).all();
+                };
+                if (std::isfinite(total_duration) && total_duration >= 0.0) {
+                    double previous_t = 0.0;
+                    bool previous_inside = inside_boundary(previous_t);
+                    if (previous_inside) {
+                        boundary_entry_tt = previous_t;
+                    } else {
+                        // The witness is a safety boundary, not a plotting
+                        // sample.  A 20 ms probe could miss a short AABB
+                        // crossing when the composed MAIN/BACKUP trajectory
+                        // enters and exits between probes; keep the bracket
+                        // conservative and refine its timestamp below.
+                        constexpr double kBoundaryProbeDtS = 0.005;
+                        const std::size_t probe_count = static_cast<std::size_t>(
+                            std::ceil(total_duration / kBoundaryProbeDtS));
+                        if (probe_count > 10000000U) return std::nullopt;
+                        for (std::size_t probe = 1U; probe <= probe_count; ++probe) {
+                            const double current_t = std::min(
+                                total_duration,
+                                static_cast<double>(probe) * kBoundaryProbeDtS);
+                            const bool current_inside = inside_boundary(current_t);
+                            if (current_inside && !previous_inside) {
+                                double lower = previous_t;
+                                double upper = current_t;
+                                for (int iteration = 0; iteration < 32; ++iteration) {
+                                    const double middle = 0.5 * (lower + upper);
+                                    if (inside_boundary(middle)) upper = middle;
+                                    else lower = middle;
+                                }
+                                boundary_entry_tt = upper;
+                                break;
+                            }
+                            previous_t = current_t;
+                            previous_inside = current_inside;
+                            if (current_t >= total_duration) break;
+                        }
+                    }
+                }
+                const bool boundary_reached = boundary_entry_tt.has_value();
+                route_boundary_required = is_pass_through && boundary_reached;
                 Eigen::Vector3d incoming = Eigen::Vector3d::Zero();
                 Eigen::Vector3d outgoing = Eigen::Vector3d::Zero();
                 for (const auto& segment : route_snapshot_->segments) {
@@ -922,9 +982,6 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 }
                 if (incoming.norm() <= 1.0e-9) incoming = outgoing;
                 if (outgoing.norm() <= 1.0e-9) outgoing = incoming;
-                const double radius = std::max(
-                    navigation_world_model::kGoalCompletionToleranceM,
-                    waypoint.acceptance_radius_m);
                 if (incoming.norm() > 1.0e-9 && outgoing.norm() > 1.0e-9 &&
                     std::isfinite(radius) && radius > 0.0) {
                     navigation_planning::RouteBoundaryConstraint constraint;
@@ -940,12 +997,25 @@ std::optional<double> firstRouteBoundaryEntryTime(
                         std::max(0.0, pass_through_next_target_.has_value()
                             ? nominal_exp_max_velocity_mps_ : 0.0);
                     candidate.route_boundary_constraint = constraint;
+                    if (!boundary_entry_tt.has_value()) {
+                        planner_context_->warn(
+                            " -- [planner] endpoint is inside route boundary but no "
+                            "trajectory entry witness was found; rejecting metadata");
+                        return std::nullopt;
+                    }
+                    const auto boundary_entry_position = command.position.getPos(
+                        *boundary_entry_tt);
+                    const auto boundary_stamp_ns = navigation_common::secondsSumToNanoseconds(
+                        start_wall_time_s, *boundary_entry_tt);
+                    if (!boundary_entry_position.allFinite() || !boundary_stamp_ns) {
+                        return std::nullopt;
+                    }
                     candidate.route_boundary_event = navigation_planning::RouteBoundaryEvent{
                         command.terminal_stop
                             ? navigation_planning::RouteBoundaryEventKind::kTerminalStop
                             : navigation_planning::RouteBoundaryEventKind::kPassThrough,
-                        route_snapshot_->active_waypoint_index, *declared_end_ns,
-                        waypoint.position_enu, incoming, outgoing,
+                        route_snapshot_->active_waypoint_index, *boundary_stamp_ns,
+                        boundary_entry_position, incoming, outgoing,
                         constraint.corner_speed_mps};
                 }
             }
@@ -988,6 +1058,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                                          const double &goal_yaw,
                                          const bool &new_goal) {
         std::lock_guard<std::mutex> guard(replan_lock_);
+        baseline_candidate_ready_for_refinement_ = false;
         {
             std::lock_guard<std::mutex> state_guard(drone_state_mutex_);
             solve_state_ = robot_state_;
@@ -1071,7 +1142,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
         local_start_p_ = local_star_pt;
         ExpTraj previous_exp_snapshot = planner_previous_exp_;
         RET_CODE exp_ret_code = generateExpTraj(
-                previous_exp_snapshot, exp_traj_info, solve_deadline);
+                previous_exp_snapshot, exp_traj_info, solve_deadline,
+                true);
         //GenerateRestToRestExpTraj(local_star_pt, exp_traj_info);
         if (exp_ret_code == FAILED) {
             latest_replan.setRetCode(classifySolveFailure(
@@ -1132,6 +1204,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
                 return FAILED;
             }
+            baseline_candidate_ready_for_refinement_ = true;
 
             // For visualization
             {
@@ -1162,6 +1235,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
                 return FAILED;
             }
+            baseline_candidate_ready_for_refinement_ = true;
 
             // For visualization
             TimeConsuming t_viz("viz goal VisualizeCommitTrajectory", false);
@@ -1191,6 +1265,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                                               const bool &new_goal) {
         TimeConsuming replan_total_t("ReplanOnce", false);
         std::lock_guard<std::mutex> guard(replan_lock_);
+        if (new_goal) baseline_candidate_ready_for_refinement_ = false;
         {
             std::lock_guard<std::mutex> state_guard(drone_state_mutex_);
             solve_state_ = robot_state_;
@@ -1232,7 +1307,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
         TimeConsuming t_exp("t_exp", false);
         ExpTraj previous_exp_snapshot = planner_previous_exp_;
         RET_CODE exp_ret_code = generateExpTraj(
-                previous_exp_snapshot, exp_traj_info, solve_deadline);
+                previous_exp_snapshot, exp_traj_info, solve_deadline,
+                !baseline_candidate_ready_for_refinement_);
         time_consuming_[GENERATE_EXP_TRAJ] = t_exp.stop();
 
         if (exp_ret_code == FAILED) {
@@ -1370,6 +1446,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
                 return FAILED;
             }
+            baseline_candidate_ready_for_refinement_ = true;
 
             {
                 // For visualization
@@ -1398,6 +1475,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
                 return FAILED;
             }
+            baseline_candidate_ready_for_refinement_ = true;
 
 
             {
@@ -1427,6 +1505,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 latest_replan.setRetCode(PlannerResultCode::PLANNER_CANDIDATE_REJECTED);
                 return FAILED;
             }
+            baseline_candidate_ready_for_refinement_ = true;
 
             {
                 TimeConsuming t_viz("tviz", false);
@@ -1465,10 +1544,16 @@ std::optional<double> firstRouteBoundaryEntryTime(
         };
         if (!request.valid()) return finish();
 
-        // The request owns the immutable solve inputs. Route geometry is set
-        // by the runtime immediately before submission and is checked by the
-        // request key/goal identity; this call only binds the same world and
-        // kinematic snapshot to the backend solve.
+        last_nominal_solve_status_ = traj_opt::NominalSolveStatus::kFailed;
+        last_nominal_deadline_observed_ = false;
+
+        // The request owns the immutable solve inputs, including route
+        // geometry. Bind that value inside the serialized solve boundary so
+        // no queued solve can observe a later mutable route update.
+        if (!request.route_snapshot.has_value() ||
+            !setRouteSnapshot(*request.route_snapshot)) {
+            return finish();
+        }
         setWorldModelView(request.world);
         if (!setState(request.start_state)) return finish();
         requested_activation_stamp_ns_ = 0;
@@ -1514,9 +1599,44 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 request.goal.target_world, 0.0, false);
         requested_activation_stamp_ns_ = 0;
         requested_activation_yaw_rate_rad_s_ = 0.0;
-        const auto status = result == SUCCESS || result == FINISH || result == NO_NEED
-            ? navigation_planning::PlanningFailureStage::kNone
-            : navigation_planning::PlanningFailureStage::kNominalRefinement;
+        const auto classifyFailure = [&](const int planner_result) {
+            using Stage = navigation_planning::PlanningFailureStage;
+            using Reason = navigation_planning::PlanningFailureReason;
+            switch (planner_result) {
+                case PLANNER_NO_ODOM:
+                    return std::pair{Stage::kInput, Reason::kInvalidInput};
+                case PLANNER_NO_START_POINT:
+                    return std::pair{Stage::kInput, Reason::kAnchorOutOfMap};
+                case PLANNER_INVALID_ROUTE:
+                    return std::pair{Stage::kRouteWindow, Reason::kInvalidInput};
+                case PLANNER_SOLVE_TIMEOUT:
+                    return std::pair{Stage::kDeadline,
+                                     Reason::kNoCompleteBundleAtDeadline};
+                case PLANNER_SOLVE_CANCELLED:
+                    return std::pair{Stage::kDeadline, Reason::kSuperseded};
+                case PLANNER_BACKUP_NO_PATH:
+                    return std::pair{Stage::kBackupSeed,
+                                     Reason::kBackupKnownFreeInsufficient};
+                case PLANNER_BACKUP_INITIALIZATION_FAILED:
+                    return std::pair{Stage::kBackupSeed, Reason::kBackupDynamics};
+                case PLANNER_BACKUP_OPTIMIZATION_FAILED:
+                    return std::pair{Stage::kBackupRefinement, Reason::kBackupDynamics};
+                case PLANNER_BACKUP_FAILED:
+                    return std::pair{Stage::kBackupRefinement, Reason::kBackupDynamics};
+                case PLANNER_CANDIDATE_REJECTED:
+                    return std::pair{Stage::kCommitRecertification,
+                                     Reason::kWorldChanged};
+                case PLANNER_EXP_FAILED:
+                    return std::pair{
+                        last_nominal_solve_status_ ==
+                                traj_opt::NominalSolveStatus::kFailed
+                            ? Stage::kNominalSeed : Stage::kNominalRefinement,
+                        Reason::kNominalDynamics};
+                default:
+                    return std::pair{Stage::kNominalRefinement,
+                                     Reason::kNoCompleteBundleAtDeadline};
+            }
+        };
         if (result == NO_NEED) {
             outcome.outcome = navigation_planning::CompletePlanningOutcome::
                 kRetainedCommittedBundle;
@@ -1525,13 +1645,10 @@ std::optional<double> firstRouteBoundaryEntryTime(
             return finish();
         }
         if (result != SUCCESS && result != FINISH) {
-            outcome.outcome = result == EMER
-                ? navigation_planning::CompletePlanningOutcome::kNoCompleteBundle
-                : navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
-            outcome.failure_stage = status;
-            outcome.failure_reason = result == EMER
-                ? navigation_planning::PlanningFailureReason::kBackupDynamics
-                : navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline;
+            const auto [failure_stage, failure_reason] = classifyFailure(result);
+            outcome.outcome = navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+            outcome.failure_stage = failure_stage;
+            outcome.failure_reason = failure_reason;
             return finish();
         }
         const auto candidate = exportCommandCandidate(
@@ -1545,9 +1662,11 @@ std::optional<double> firstRouteBoundaryEntryTime(
             return finish();
         }
         outcome.candidate = *candidate;
-        outcome.outcome = result == SUCCESS
-            ? navigation_planning::CompletePlanningOutcome::kRefinedCompleteBundle
-            : navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle;
+        outcome.outcome = last_nominal_deadline_observed_
+            ? navigation_planning::CompletePlanningOutcome::kDeadlineWithCompleteBundle
+            : last_nominal_solve_status_ == traj_opt::NominalSolveStatus::kCertifiedSeed
+            ? navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle
+            : navigation_planning::CompletePlanningOutcome::kRefinedCompleteBundle;
         outcome.failure_stage = navigation_planning::PlanningFailureStage::kNone;
         outcome.failure_reason = navigation_planning::PlanningFailureReason::kNone;
         return finish();
@@ -1855,7 +1974,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
 
     RET_CODE Planner::generateExpTraj(
             ExpTraj &last_exp_traj_info, ExpTraj &out_exp_traj_info,
-            const AbsoluteDeadline &solve_deadline) {
+            const AbsoluteDeadline &solve_deadline,
+            const bool baseline_only) {
         /* 1) Log the exp traj frontend time*/
         TimeConsuming t_exp_frontend("t_exp_frontend", false);
 
@@ -2403,13 +2523,20 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 current_endpoint, next_target,
                 navigation_world_model::GridLayer::kInflated,
                 navigation_world_model::UnknownPolicy::kRequireKnownFree);
-            const bool pass_through_visibility_ready = boundary_known_free &&
-                outgoing_known_free;
-            if (!pass_through_visibility_ready) {
+            // The active waypoint boundary must be known-free, but the direct
+            // line to the next mission target is not a prerequisite for the
+            // exploratory MAIN route. A pillar may block that chord while a
+            // bounded A* detour remains executable. KNOWN_FREE is consumed by
+            // BACKUP candidate selection below, never used to suppress the
+            // MAIN route search before it runs.
+            const bool pass_through_boundary_ready = boundary_known_free;
+            if (!pass_through_boundary_ready || !outgoing_known_free) {
                 planner_context_->info(
-                    " -- [planner] defer pass-through lookahead: KNOWN_FREE "
-                    "support_to_boundary={:.3f}/{:.3f} outgoing_known_free={}",
-                    known_free_to_boundary_m, guide_length, outgoing_known_free);
+                    " -- [planner] pass-through outgoing route search: KNOWN_FREE "
+                    "support_to_boundary={:.3f}/{:.3f} direct_outgoing_known_free={} "
+                    "boundary_ready={}",
+                    known_free_to_boundary_m, guide_length, outgoing_known_free,
+                    pass_through_boundary_ready);
             }
             Eigen::Vector3d incoming_tangent = Eigen::Vector3d::Zero();
             for (std::size_t index = guide_path.size(); index > 1U; --index) {
@@ -2519,7 +2646,13 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // derivatives while preserving every collision and dynamic gate.
             const bool corner_window_ready = !effective_genuine_corner ||
                 corner_window.has_value();
-            if (pass_through_visibility_ready && corner_window_ready &&
+            // MAIN route construction follows the mission's configured
+            // unknown-space policy.  KNOWN_FREE is a BACKUP admission
+            // contract, not a prerequisite for discovering the outgoing
+            // route or for crossing the current pass-through waypoint.  The
+            // measured controller acceptance gate remains authoritative at
+            // execution time.
+            if (corner_window_ready &&
                 passThroughOutgoingLookaheadEligible(
                 desired_lookahead, outgoing_distance, search_distance,
                 cfg_.resolution)) {
@@ -3095,8 +3228,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // waypoint acceptance ball; exposing a moving endpoint would
             // force BACKUP to start before the checkpoint or require
             // KNOWN_FREE evidence beyond the available horizon.
-            if (!pass_through_next_target_.has_value() ||
-                !route_lookahead_active) {
+            if ((!pass_through_next_target_.has_value() ||
+                 !route_lookahead_active) && !goal_endpoint_adjusted_) {
                 pos_fina_state.col(1).setZero();
                 if (pass_through_next_target_.has_value()) {
                     planner_context_->info(
@@ -3177,10 +3310,13 @@ std::optional<double> firstRouteBoundaryEntryTime(
         exp_traj_opt_->setSolveBudget(
                 &solve_cancelled_, refinement_deadline_ns);
         const auto nominal_result = exp_traj_opt_->solve(
-                pos_init_state, pos_fina_state, guide_path, guide_stamp,
-                sfc, out_traj,
-                urgent_baseline || solve_deadline.conservativeRemaining(
-                    planner_context_->getSimTime()) <= cfg_.finalization_reserve_s);
+            pos_init_state, pos_fina_state, guide_path, guide_stamp,
+            sfc, out_traj,
+            urgent_baseline || solve_deadline.conservativeRemaining(
+                planner_context_->getSimTime()) <= cfg_.finalization_reserve_s,
+            baseline_only);
+        last_nominal_solve_status_ = nominal_result.status;
+        last_nominal_deadline_observed_ = nominal_result.deadline_observed;
         temp_ret = nominal_result.candidateAvailable();
         time_consuming_[EXP_TRAJ_OPT] = t_exp_opt.stop();
         {
@@ -3503,7 +3639,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         }
         if (all_traj_visible &&
             trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) &&
-            !candidate_terminal_stop_active_) {
+            !candidate_terminal_stop_active_ && !goal_endpoint_adjusted_) {
             // A main-only command is safe to complete only when every
             // remaining sample is known-free and its terminal PVAJ is a true
             // rest state. A terminal STOP still needs an independently
@@ -3574,8 +3710,10 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // corridor_segment_max_length_m here: that parameter subdivides sparse
         // guide edges, but using it as a second backup-distance cap limits an
         // open-space vehicle to a 3 m recovery prefix and forces a brake every
-        // few metres. GeneratePolytopeFromLine receives only the certified
-        // visibility segment; the full candidate validator remains mandatory.
+        // few metres. The strict KNOWN_FREE ray above is the visibility
+        // certificate; the optimizer corridor is rebuilt later from each
+        // braking-hull candidate so a single long CIRI line cannot strand the
+        // visible command prefix.
         if (!std::isfinite(seed_point_t) || !seed_point.allFinite() ||
             (seed_point - backup_origin).norm() <= cfg_.resolution) {
             planner_context_->warn(
@@ -3584,62 +3722,16 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     (seed_point - backup_origin).norm());
             return FAILED;
         }
-        Line line{backup_origin, seed_point};
-        Polytope temp_poly;
-        if (!cg_ptr_->GeneratePolytopeFromLine(line, temp_poly, &solve_deadline)) {
-            planner_context_->warn(" -- [planner] GeneratePolytopeFromLine failed, force return");
-            return FAILED;
-        }
-        Eigen::Vector3d inner;
-        Eigen::Matrix3Xd vPoly;
-        if (!geometry_utils::findInterior(temp_poly.GetPlanes(), inner)) {
-            planner_context_->warn(" -- [planner] Cannot generate feasible backup sfc, force return");
-            vec_Vec3f seed{back_traj_info.getRobotPos(), seed_point};
-            return FAILED;
-        }
-
-        if (cfg_.use_fov_cut) {
-            if (!fov_checker_->cutPolyByFov(solve_state_.p, solve_state_.q, seed_point,
-                                            temp_poly)) {
-                planner_context_->warn(" -- [planner] cutPolyByFov failed, force return");
-                return FAILED;
-            }
-        }
-        // cut by sensing horizon
-        if (cfg_.sensing_horizon_m > 0 &&
-            !fov_checker_->cutPolyBySensingHorizon(solve_state_.p, seed_point, cfg_.sensing_horizon_m,
-                                                   temp_poly)) {
-            planner_context_->warn(" -- [planner] cutPolyBySensingHorizon failed, force return");
-            vec_Vec3f seed{back_traj_info.getRobotPos(), seed_point};
-            return FAILED;
-        }
-
-        // Keep the visibility corridor separate from the optimizer corridor.
-        // The former certifies the EXP prefix up to the first invisible sample;
-        // the latter must certify the actual braking hull selected below.
-        const Polytope visibility_poly = temp_poly;
-
-//        Vec3f out_p = temp_point;
-//        double t_R = 0.0;
-        double eval_t = eval_ps.back().first + cfg_.sample_traj_dt_s;
-        last_pos = eval_ps.back().second;
-        while (visibility_poly.PointIsInside(eval_ps.back().second) && eval_t < total_dur) {
-            Vec3f cur_pos = ref_exp_traj.getPos(eval_t);
-
-            if ((cur_pos - last_pos).norm() < cfg_.resolution * 0.8) {
-                eval_t += cfg_.sample_traj_dt_s;
-                continue;
-            }
-            eval_ps.emplace_back(eval_t, cur_pos);
-            last_pos = cur_pos;
-            eval_t += cfg_.sample_traj_dt_s;
-        }
+        // The candidate samples were already certified by the same inflated
+        // grid KNOWN_FREE ray oracle above. Do not construct a second long
+        // CIRI visibility polytope here: CIRI can fail numerically near an
+        // obstacle even when the ray certificate is valid. The optimizer SFC
+        // is tied to the executable braking hull below.
         if (eval_ps.size() <= 1U) {
             planner_context_->warn(
                     " -- [planner] backup visibility produced no certified seed before first invisible sample");
             return FAILED;
         }
-        eval_ps.pop_back();
         seed_point = eval_ps.back().second;
         seed_point_t = eval_ps.back().first;
 
@@ -3742,6 +3834,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         };
         const double initial_switch_guess = heu_ts;
         const double backup_altitude_target_m = planning_goal_p_.z();
+        Polytope temp_poly;
         geometry_utils::Piece selected_braking_piece;
         bool selected_braking_piece_ready = false;
         const auto build_candidate_backup_sfc =
@@ -3786,7 +3879,10 @@ std::optional<double> firstRouteBoundaryEntryTime(
         for (double candidate_ts = heu_ts;;) {
             auto& certificate_diagnostics = backup_certificate_diagnostics_;
             ++certificate_diagnostics.switch_candidate_count;
-            Polytope candidate_sfc = visibility_poly;
+            // The visibility ray is a map certificate, not an optimizer
+            // corridor. Start empty and require a corridor aligned to the
+            // actual braking hull below.
+            Polytope candidate_sfc;
             bool candidate_aligned_sfc = false;
             switch_state = ref_exp_traj.posTraj().getState(candidate_ts);
             const double backup_altitude_target =

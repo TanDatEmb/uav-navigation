@@ -1196,6 +1196,30 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 //    cout << " -- [ExpOpt] waypoint_attractor_dead_d: " << opt_vars.waypoint_attractor_dead_d.transpose() << endl;
     // TimeConsuming ttt(" -- [ExpTrajOpt]", false);
     opt_vars.iter_num = 0;
+    if (baseline_only_) {
+        if (deterministic_seed_certificate.valid &&
+            !deterministic_nominal_seed.empty()) {
+            traj = deterministic_nominal_seed;
+            diagnostics_.used_certified_seed = true;
+            diagnostics_.last_candidate_maximum_velocity_mps =
+                    deterministic_seed_certificate.maximum_velocity_mps;
+            diagnostics_.last_candidate_maximum_acceleration_mps2 =
+                    deterministic_seed_certificate.maximum_acceleration_mps2;
+            diagnostics_.last_candidate_maximum_jerk_mps3 =
+                    deterministic_seed_certificate.maximum_jerk_mps3;
+            diagnostics_.final_duration_s = traj.getTotalDuration();
+            planner_context_->info(
+                    " -- [ExpOpt] complete baseline requested; returning certified "
+                    "nominal seed before optional refinement duration={}",
+                    diagnostics_.final_duration_s);
+            return true;
+        }
+        traj.clear();
+        planner_context_->warn(
+                " -- [ExpOpt] complete baseline requested but no certified nominal seed exists");
+        return false;
+    }
+
     int ret = run_lbfgs(false);
     if (ret == lbfgs::LBFGS_CANCELED) {
         diagnostics_.retry_stop_reason = 2;
@@ -1615,6 +1639,68 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                 reserved_duration_s.minCoeff() <= 0.0 || !free_duration_seed_s.allFinite() ||
                 free_duration_seed_s.size() == 0 || free_duration_seed_s.minCoeff() <= 0.0) {
                 continue;
+            }
+            // Rebuild the immutable corridor-contained Hermite/Bézier seed
+            // from the original guide geometry before trying the mutable
+            // L-BFGS point state. A rejected optimizer iterate can have points
+            // that are individually inside their cells but whose fixed
+            // endpoint derivatives make a time stretch leave the corridor.
+            // This retry remains subject to the complete hard certificate.
+            if (opt_vars.init_ts.size() == reserved_duration_s.size() &&
+                opt_vars.init_ps.size() == static_cast<std::size_t>(opt_vars.points.cols())) {
+                Mat3Df initial_points(3, opt_vars.init_ps.size());
+                bool initial_points_finite = true;
+                for (std::size_t index = 0; index < opt_vars.init_ps.size(); ++index) {
+                    initial_points.col(static_cast<Eigen::Index>(index)) =
+                            opt_vars.init_ps[index];
+                    initial_points_finite = initial_points_finite &&
+                            opt_vars.init_ps[index].allFinite();
+                }
+                if (initial_points_finite) {
+                    const auto stretched_seed =
+                            navigation_planning_backend::buildCorridorContainedBezierSeed(
+                                opt_vars.headPVAJ, opt_vars.tailPVAJ,
+                                initial_points, reserved_duration_s,
+                                opt_vars.hPolytopes, opt_vars.hPolyIdx,
+                                cfg_.max_vel * cfg_.optimization_dynamic_reserve_ratio,
+                                cfg_.corridor_plane_tolerance_m);
+                    if (stretched_seed.valid) {
+                        const auto stretched_certificate =
+                                navigation_planning_backend::certifyDeterministicNominalSeed(
+                                    stretched_seed.trajectory,
+                                    opt_vars.hPolytopes, opt_vars.hPolyIdx,
+                                    opt_vars.route_boundary_gates,
+                                    opt_vars.route_boundary_points,
+                                    opt_vars.route_boundary_radii,
+                                    opt_vars.headPVAJ, opt_vars.tailPVAJ, cfg_);
+                        if (stretched_certificate.valid) {
+                            deterministic_nominal_seed = stretched_seed.trajectory;
+                            deterministic_seed_certificate = stretched_certificate;
+                            deterministic_seed_uses_corridor_bezier = true;
+                            diagnostics_.corridor_seed_selected_mode = 3;
+                            diagnostics_.corridor_seed_selected_max_duration_scale =
+                                    duration_reserve_scale;
+                            traj = deterministic_nominal_seed;
+                            update_dynamic_extrema();
+                            diagnostics_.retry_duration_lower_bound_min_s =
+                                    reserved_duration_s.minCoeff();
+                            diagnostics_.retry_duration_lower_bound_max_s =
+                                    reserved_duration_s.maxCoeff();
+                            diagnostics_.retry_free_duration_seed_min_s =
+                                    free_duration_seed_s.minCoeff();
+                            diagnostics_.retry_free_duration_seed_max_s =
+                                    free_duration_seed_s.maxCoeff();
+                            planner_context_->warn(
+                                    " -- [ExpOpt] accepted certified corridor seed after "
+                                    "bounded time stretch: scale={} vel={}/{} acc={}/{} jerk={}/{}",
+                                    duration_reserve_scale, maximum_velocity, cfg_.max_vel,
+                                    maximum_acceleration, cfg_.max_acc,
+                                    maximum_jerk, cfg_.max_jerk);
+                            ret = lbfgs::LBFGS_STOP;
+                            return true;
+                        }
+                    }
+                }
             }
             if (!rebuildFeasibilitySeedCandidate() &&
                 (!rebuildInitialCandidate() || !position_constraint_satisfied())) {
@@ -2111,7 +2197,9 @@ ExpTrajOpt::~ExpTrajOpt() {
 bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                           const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
                           PolytopeVec &sfcs,
-                          Trajectory &out_traj) {
+                          Trajectory &out_traj,
+                          const bool baseline_only) {
+    baseline_only_ = baseline_only;
     /// Check if hot init is valid
     if (guide_path.empty() || guide_path.size() != guide_t.size()) {
         cout << YELLOW << " -- [TrajOpt] Error, the guide trajectory has wrong path and time stamp." << RESET
@@ -2240,6 +2328,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
             failed_traj_log << sfcs[i].GetPlanes() << endl;
         }
     }
+    baseline_only_ = false;
     return success;
 }
 
@@ -2247,9 +2336,12 @@ NominalSolveResult ExpTrajOpt::solve(
         const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
         PolytopeVec &sfcs, Trajectory &out_traj,
-        const bool deadline_observed) {
+        const bool deadline_observed,
+        const bool baseline_only) {
     const bool success = optimize(
-        headPVAJ, tailPVAJ, guide_path, guide_t, sfcs, out_traj);
+        headPVAJ, tailPVAJ, guide_path, guide_t, sfcs, out_traj,
+        baseline_only);
+    baseline_only_ = false;
     return classifyNominalSolveResult(success, diagnostics_, deadline_observed);
 }
 

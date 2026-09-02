@@ -596,8 +596,19 @@ bool geometry_utils::overlap(const Eigen::MatrixX4d& hPoly0,
 void geometry_utils::filterVs(const Eigen::Matrix3Xd& rV,
                               const double& epsilon,
                               Eigen::Matrix3Xd& fV) {
+    fV.resize(3, 0);
+    if (rV.rows() != 3 || rV.cols() <= 0 || !rV.allFinite() ||
+        !std::isfinite(epsilon) || epsilon <= 0.0) {
+        return;
+    }
     const double mag = std::max(fabs(rV.maxCoeff()), fabs(rV.minCoeff()));
-    const double res = mag * std::max(fabs(epsilon) / mag, DBL_EPSILON);
+    if (!std::isfinite(mag)) return;
+    // Avoid 0 * inf when a degenerate hull produces vertices at the origin.
+    // Such input is still rejected by enumerateVs() when it has no 3-D hull,
+    // but filtering itself must remain total and non-crashing.
+    const double scale = std::max(mag, 1.0);
+    const double res = scale * std::max(fabs(epsilon) / scale, DBL_EPSILON);
+    if (!std::isfinite(res) || res <= 0.0) return;
     std::set<Eigen::Vector3d, filterLess> filter;
     fV = rV;
     int offset = 0;
@@ -621,15 +632,26 @@ void geometry_utils::enumerateVs(const Eigen::MatrixX4d& hPoly,
                                  const Eigen::Vector3d& inner,
                                  Eigen::Matrix3Xd& vPoly,
                                  const double epsilon) {
+    vPoly.resize(3, 0);
+    if (hPoly.cols() != 4 || hPoly.rows() < 4 || !hPoly.allFinite() ||
+        !inner.allFinite() || !std::isfinite(epsilon) || epsilon <= 0.0) {
+        return;
+    }
     const Eigen::VectorXd b = -hPoly.rightCols<1>() - hPoly.leftCols<3>() * inner;
+    if (b.size() != hPoly.rows() || !b.allFinite() ||
+        (b.array().abs() <= DBL_EPSILON).any()) {
+        return;
+    }
     const Eigen::Matrix<double, 3, -1, Eigen::ColMajor> A =
         (hPoly.leftCols<3>().array().colwise() / b.array()).transpose();
+    if (A.cols() < 4 || !A.allFinite()) return;
 
     QuickHull<double> qh;
     const double qhullEps = std::min(epsilon, defaultEps<double>());
     // CCW is false because the normal in quickhull towards interior
     const auto cvxHull = qh.getConvexHull(A.data(), A.cols(), false, true, qhullEps);
     const auto& idBuffer = cvxHull.getIndexBuffer();
+    if (idBuffer.size() < 12U || idBuffer.size() % 3U != 0U) return;
     const int hNum = idBuffer.size() / 3;
     Eigen::Matrix3Xd rV(3, hNum);
     Eigen::Vector3d normal, point, edge0, edge1;
@@ -638,10 +660,22 @@ void geometry_utils::enumerateVs(const Eigen::MatrixX4d& hPoly,
         edge0 = point - A.col(idBuffer[3 * i]);
         edge1 = A.col(idBuffer[3 * i + 2]) - point;
         normal = edge0.cross(edge1); // cross in CW gives an outward normal
-        rV.col(i) = normal / normal.dot(point);
+        const double denominator = normal.dot(point);
+        if (!normal.allFinite() || !point.allFinite() ||
+            !std::isfinite(denominator) || fabs(denominator) <= DBL_EPSILON) {
+            vPoly.resize(3, 0);
+            return;
+        }
+        rV.col(i) = normal / denominator;
     }
+    if (!rV.allFinite()) return;
     filterVs(rV, epsilon, vPoly);
+    if (vPoly.cols() <= 0 || !vPoly.allFinite()) {
+        vPoly.resize(3, 0);
+        return;
+    }
     vPoly = (vPoly.array().colwise() + inner.array()).eval();
+    if (!vPoly.allFinite()) vPoly.resize(3, 0);
 }
 
 // Each row of hPoly is defined by h0, h1, h2, h3 as
@@ -650,10 +684,15 @@ void geometry_utils::enumerateVs(const Eigen::MatrixX4d& hPoly,
 bool geometry_utils::enumerateVs(const Eigen::MatrixX4d& hPoly,
                                  Eigen::Matrix3Xd& vPoly,
                                  const double epsilon) {
+    vPoly.resize(3, 0);
+    if (hPoly.cols() != 4 || hPoly.rows() < 4 || !hPoly.allFinite() ||
+        !std::isfinite(epsilon) || epsilon <= 0.0) {
+        return false;
+    }
     Eigen::Vector3d inner;
     if (findInterior(hPoly, inner)) {
         enumerateVs(hPoly, inner, vPoly, epsilon);
-        return true;
+        return vPoly.cols() > 0 && vPoly.allFinite();
     }
     return false;
 }

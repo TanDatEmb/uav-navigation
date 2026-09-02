@@ -178,6 +178,12 @@ namespace navigation_planning_backend {
         std::uint64_t backup_refinement_success_count_{0};
         std::uint64_t backup_refinement_fallback_count_{0};
         navigation_planning::BackupCertificateDiagnostics backup_certificate_diagnostics_{};
+        // A complete deterministic MAIN(+BACKUP) candidate must exist before
+        // an optional refinement is attempted on the next successor cycle.
+        bool baseline_candidate_ready_for_refinement_{false};
+        traj_opt::NominalSolveStatus last_nominal_solve_status_{
+            traj_opt::NominalSolveStatus::kFailed};
+        bool last_nominal_deadline_observed_{false};
 
         Vec3f latest_guide_start_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
         Vec3f latest_guide_end_{Vec3f::Constant(std::numeric_limits<double>::quiet_NaN())};
@@ -542,7 +548,8 @@ namespace navigation_planning_backend {
     private:
         RET_CODE generateExpTraj(ExpTraj &last_exp_traj_info,
                                  ExpTraj &out_exp_traj_info,
-                                 const AbsoluteDeadline &solve_deadline);
+                                 const AbsoluteDeadline &solve_deadline,
+                                 bool baseline_only = false);
 
         /* For Backup traj generation */
         RET_CODE generateBackupTrajectory(ExpTraj &ref_exp_traj,

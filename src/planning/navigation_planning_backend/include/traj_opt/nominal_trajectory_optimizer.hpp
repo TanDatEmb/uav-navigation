@@ -60,7 +60,7 @@ namespace traj_opt {
         int corridor_seed_retry_attempt_count{0};
         int corridor_seed_retry_build_valid_count{0};
         int corridor_seed_retry_last_certificate_stage{0};
-        int corridor_seed_selected_mode{0};  // 0=none, 1=initial, 2=piece, 3=uniform
+        int corridor_seed_selected_mode{0};  // 0=none, 1=initial, 2=piece, 3=uniform/certified stretch
         double corridor_seed_selected_max_duration_scale{
             std::numeric_limits<double>::quiet_NaN()};
         double initial_normalized_dynamic_violation{
@@ -329,13 +329,15 @@ namespace traj_opt {
         bool optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                       const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
                       PolytopeVec &sfcs,
-                      Trajectory &out_traj);
+                      Trajectory &out_traj,
+                      bool baseline_only = false);
 
         NominalSolveResult solve(
                       const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                       const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
                       PolytopeVec &sfcs, Trajectory &out_traj,
-                      bool deadline_observed = false);
+                      bool deadline_observed = false,
+                      bool baseline_only = false);
 
         void getInitValue(VecDf &ts, vec_Vec3f &ps) const {
             ts = opt_vars.init_ts;
@@ -347,6 +349,8 @@ namespace traj_opt {
                       const vec_Vec3f & init_ps,
                       const VecDf & init_ts,
                       Trajectory &out_traj);
+
+        bool baseline_only_{false};
 
     };
 }
