@@ -220,16 +220,14 @@ struct CandidateBundle {
          (kind == CandidateBundleKind::kTerminalStop ||
           kind == CandidateBundleKind::kMainWithBackup) &&
          certificates.terminal_stop);
-    const bool endpoint_metadata_legacy = declared_start_ns == 0 && declared_end_ns == 0;
-    const bool activation_metadata_legacy = activation_stamp_ns == 0;
     const auto expected_start_ns = navigation_common::secondsToNanoseconds(start_wall_time_s);
     const auto expected_end_ns = navigation_common::secondsSumToNanoseconds(
         start_wall_time_s, duration_s);
-    const bool endpoint_metadata_consistent = endpoint_metadata_legacy ||
+    const bool endpoint_metadata_consistent =
         (declared_start_ns > 0 && declared_end_ns >= declared_start_ns &&
          expected_start_ns.has_value() && expected_end_ns.has_value() &&
          declared_start_ns == *expected_start_ns && declared_end_ns == *expected_end_ns);
-    const bool activation_metadata_consistent = activation_metadata_legacy ||
+    const bool activation_metadata_consistent = activation_stamp_ns > 0 &&
         activation_stamp_ns == valid_from_ns;
     return localization_epoch != 0 && goal_epoch != 0 && request_id != 0 &&
            bundle_generation != 0 && valid_from_ns > 0 &&

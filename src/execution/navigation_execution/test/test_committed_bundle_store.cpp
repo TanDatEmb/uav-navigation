@@ -23,6 +23,11 @@ navigation_planning::CandidateBundle candidateFor(
   candidate.valid_until_ns = 100;
   candidate.start_wall_time_s = 1.0e-9;
   candidate.duration_s = 399.0e-9;
+  candidate.activation_stamp_ns = candidate.valid_from_ns;
+  candidate.declared_start_ns = *navigation_common::secondsToNanoseconds(
+      candidate.start_wall_time_s);
+  candidate.declared_end_ns = *navigation_common::secondsSumToNanoseconds(
+      candidate.start_wall_time_s, candidate.duration_s);
   candidate.backup_start_time_s = 0.0;
   candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
   candidate.certificates = {true, true, true, true};
@@ -187,6 +192,13 @@ TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
   auto candidate = candidateFor(7, 1);
   candidate.valid_from_ns = 100;
   candidate.valid_until_ns = 200;
+  candidate.activation_stamp_ns = 100;
+  candidate.start_wall_time_s = 100.0e-9;
+  candidate.duration_s = 300.0e-9;
+  candidate.declared_start_ns = 100;
+  candidate.declared_end_ns = 400;
+  candidate.role_schedule = {
+      {0.0, 300.0e-9, navigation_planning::CandidateRole::kMain}};
   candidate.evaluator = [&evaluations](
       std::int64_t stamp, navigation_planning::TrajectoryPoint& point) {
     ++evaluations;
@@ -287,6 +299,7 @@ TEST(ExecutionTimelineStore, StagesSuccessorUntilFutureAnchorActivation) {
 
   navigation_execution::CommandSampler sampler(store);
   EXPECT_EQ(sampler.sample(49, 7).bundle, active);
+  ASSERT_TRUE(store.activatePendingIfDue(50));
   const auto activated = sampler.sample(50, 7);
   ASSERT_TRUE(activated);
   EXPECT_EQ(activated.bundle, successor_ptr);
@@ -478,6 +491,9 @@ TEST(ExecutionTimelineStore, MissedActivationKeepsActiveCommandAndDropsSuccessor
   ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successor_ptr),
             navigation_execution::StageDecision::kStaged);
 
+  // Pending activation is an execution-store transition owned by the command
+  // publisher; CommandSampler must remain read-only.
+  EXPECT_FALSE(store.activatePendingIfDue(61));
   navigation_execution::CommandSampler sampler(store);
   const auto missed = sampler.sample(61, 7);
   ASSERT_TRUE(missed);

@@ -11,6 +11,7 @@ find_package(ament_cmake REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(navigation_common REQUIRED)
+find_package(navigation_mission REQUIRED)
 find_package(navigation_world_model REQUIRED)
 
 add_library(${PROJECT_NAME} INTERFACE)
@@ -21,6 +22,7 @@ target_include_directories(${PROJECT_NAME} INTERFACE
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
 target_link_libraries(${PROJECT_NAME} INTERFACE navigation_common::navigation_common)
+target_link_libraries(${PROJECT_NAME} INTERFACE navigation_mission::navigation_mission)
 target_link_libraries(${PROJECT_NAME} INTERFACE navigation_world_model::navigation_world_model)
 
 install(DIRECTORY include/ DESTINATION include)
@@ -31,7 +33,12 @@ install(EXPORT ${PROJECT_NAME}Targets
   DESTINATION share/${PROJECT_NAME}/cmake)
 
 ament_export_targets(${PROJECT_NAME}Targets)
-ament_export_dependencies(Eigen3 navigation_common navigation_world_model)
+ament_export_dependencies(
+  Eigen3
+  builtin_interfaces
+  navigation_common
+  navigation_mission
+  navigation_world_model)
 ament_export_include_directories(include)
 
 if(BUILD_TESTING)

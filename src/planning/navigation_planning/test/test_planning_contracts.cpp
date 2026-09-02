@@ -13,6 +13,14 @@
 
 namespace {
 
+void refreshEndpointMetadata(navigation_planning::CandidateBundle& candidate) {
+  candidate.declared_start_ns = *navigation_common::secondsToNanoseconds(
+      candidate.start_wall_time_s);
+  candidate.declared_end_ns = *navigation_common::secondsSumToNanoseconds(
+      candidate.start_wall_time_s, candidate.duration_s);
+  candidate.activation_stamp_ns = candidate.valid_from_ns;
+}
+
 navigation_planning::CandidateBundle validCandidate() {
   navigation_planning::CandidateBundle candidate;
   candidate.world_identity.localization_epoch = 4;
@@ -28,6 +36,7 @@ navigation_planning::CandidateBundle validCandidate() {
   candidate.valid_until_ns = 200;
   candidate.start_wall_time_s = 1.0e-7;
   candidate.duration_s = 1.0e-7;
+  refreshEndpointMetadata(candidate);
   candidate.backup_start_time_s = 0.0;
   candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
   candidate.certificates = {true, true, true, true};
@@ -123,6 +132,7 @@ TEST(PlanningCandidate, AdmissionRequiresEightHundredMillisecondsOfMain) {
   candidate.start_wall_time_s = 10.0;
   candidate.duration_s = 2.0;
   candidate.backup_start_time_s = 1.0;
+  refreshEndpointMetadata(candidate);
   candidate.backup_available = true;
   candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
   candidate.certificates.terminal_stop = false;

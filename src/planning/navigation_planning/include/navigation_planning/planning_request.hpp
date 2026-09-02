@@ -11,6 +11,7 @@
 #include <navigation_planning/execution_anchor.hpp>
 #include <navigation_planning/planning_budget.hpp>
 #include <navigation_planning/planning_limits.hpp>
+#include <navigation_mission/route_progress.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 
 namespace navigation_planning {
@@ -86,6 +87,9 @@ struct PlanningRequest {
   std::int64_t activation_stamp_ns{0};
   KinematicState start_state;
   PlanningHistory history;
+  // The route is part of the immutable solve snapshot. A planner solve must
+  // not read a separately mutable route member after this request is queued.
+  std::optional<navigation_mission::ImmutableRouteSnapshot> route_snapshot;
   navigation_world_model::WorldModelViewPtr world;
   DynamicLimits dynamics;
   PlanningBudget budget;
@@ -107,7 +111,13 @@ struct PlanningRequest {
   }
 
   [[nodiscard]] bool valid() const noexcept {
-    return key.valid() && goal.valid() && startModeContractValid() &&
+    const bool route_contract_valid = route_snapshot.has_value() &&
+        route_snapshot->valid() &&
+        route_snapshot->mission_id == goal.mission_id &&
+        route_snapshot->route_revision == key.route_revision &&
+        route_snapshot->request_id == goal.request_id &&
+        route_snapshot->active_waypoint_index == goal.waypoint_index;
+    return key.valid() && goal.valid() && route_contract_valid &&
            key.localization_epoch == goal.localization_epoch &&
            key.goal_epoch == goal.goal_epoch && key.request_id == goal.request_id &&
            key.anchor_stamp_ns == start_state.source_stamp_ns &&
