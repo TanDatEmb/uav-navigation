@@ -707,16 +707,43 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         }
         if (expected_pending && expected_pending->valid() &&
             !retain_validated_pending) {
-          // There is no mutable planner access in the mapping callback.  If
-          // changed-region provenance cannot prove that the pending immutable
-          // bundle is unaffected, drop it and let the execution store keep
-          // the current active timeline or fail closed.
-          RCLCPP_WARN(
-              this->get_logger(),
-              "pending successor recertification requires planner-owned immutable "
-              "validation; dropping generation=%lu on world revision=%lu",
-              static_cast<unsigned long>(expected_pending->bundle_generation),
-              static_cast<unsigned long>(result.snapshot->identity().revision));
+          // Changed-region provenance is only a fast path.  A pending
+          // successor has a planner-owned immutable candidate as well, so
+          // revalidate that exact generation before dropping it.  This keeps
+          // a valid scheduled handover alive when a LiDAR update touches the
+          // protected region but does not actually block the candidate.
+          if (planner_) {
+            const double authorization_wall_time_s = ros_clock->now().seconds();
+            const auto validation = planner_->validateStagedCommandCandidate(
+                result.snapshot, authorization_wall_time_s,
+                expected_pending->bundle_generation);
+            if (validation.valid) {
+              retain_validated_pending = true;
+              ++next.command_revalidation_full_count;
+              RCLCPP_DEBUG(
+                  this->get_logger(),
+                  "retaining pending generation=%lu after full immutable candidate "
+                  "revalidation samples=%lu",
+                  static_cast<unsigned long>(expected_pending->bundle_generation),
+                  static_cast<unsigned long>(validation.sample_count));
+            } else {
+              RCLCPP_WARN(
+                  this->get_logger(),
+                  "pending generation=%lu failed immutable candidate revalidation "
+                  "failure=%d blocked_role=%d samples=%lu; dropping on world revision=%lu",
+                  static_cast<unsigned long>(expected_pending->bundle_generation),
+                  validation.failure_code, validation.blocked_role,
+                  static_cast<unsigned long>(validation.sample_count),
+                  static_cast<unsigned long>(result.snapshot->identity().revision));
+            }
+          } else {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "pending successor has no planner validator; dropping generation=%lu "
+                "on world revision=%lu",
+                static_cast<unsigned long>(expected_pending->bundle_generation),
+                static_cast<unsigned long>(result.snapshot->identity().revision));
+          }
         }
         const auto terminal_generation = terminal_bundle_generation_.load(
             std::memory_order_acquire);
