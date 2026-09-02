@@ -102,6 +102,18 @@ class ExecutionEpisode final {
     state_.failure_latched = true;
   }
 
+  void suspendCommand() noexcept {
+    std::lock_guard lock(mutex_);
+    state_.command_available = false;
+  }
+
+  void clearGoal(std::uint64_t localization_epoch) noexcept {
+    std::lock_guard lock(mutex_);
+    state_ = {};
+    state_.localization_epoch = localization_epoch;
+    state_.phase = ExecutionEpisodePhase::kInitialHold;
+  }
+
  private:
   mutable std::mutex mutex_;
   ExecutionEpisodeSnapshot state_{};

@@ -49,4 +49,28 @@ TEST(ExecutionEpisode, FailClosedClearsCommandExposure) {
   EXPECT_TRUE(state.failure_latched);
 }
 
+TEST(ExecutionEpisode, SuspendAndClearDoNotRetainCommandIdentity) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(8U, 9U, 10U, true);
+  episode.commandCommitted(bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 31U));
+
+  episode.suspendCommand();
+  auto suspended = episode.snapshot();
+  EXPECT_FALSE(suspended.command_available);
+  EXPECT_EQ(suspended.active_generation, 31U);
+  EXPECT_EQ(suspended.goal_epoch, 9U);
+
+  episode.clearGoal(12U);
+  const auto cleared = episode.snapshot();
+  EXPECT_EQ(cleared.localization_epoch, 12U);
+  EXPECT_EQ(cleared.goal_epoch, 0U);
+  EXPECT_EQ(cleared.request_id, 0U);
+  EXPECT_EQ(cleared.active_generation, 0U);
+  EXPECT_FALSE(cleared.command_available);
+  EXPECT_FALSE(cleared.failure_latched);
+  EXPECT_EQ(cleared.phase,
+            navigation_runtime::ExecutionEpisodePhase::kInitialHold);
+}
+
 }  // namespace

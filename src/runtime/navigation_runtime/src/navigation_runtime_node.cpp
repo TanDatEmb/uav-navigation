@@ -1072,6 +1072,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   planning_worker_ = std::make_unique<
       PlanningWorker<navigation_planning_backend::PlannerFacade>>(
       std::move(planner), [this](std::exception_ptr failure) {
+        execution_episode_.failClosed();
         planner_failure_latched_.store(true, std::memory_order_release);
         planner_command_available_.store(false, std::memory_order_release);
         try {
@@ -2055,6 +2056,7 @@ void NavigationRuntimeNode::suspendCommandForWorldFreshness() {
   planner_failure_latched_.store(false, std::memory_order_release);
   safety_suffix_active_.store(false, std::memory_order_release);
   command_goal_epoch_.store(0U, std::memory_order_release);
+  execution_episode_.suspendCommand();
 }
 
 std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
@@ -2492,6 +2494,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           deferred_terminal_status_->request_id == goal->request_id) {
         if (planning_worker_) planning_worker_->cancelActive();
         active_goal_.reset();
+        execution_episode_.clearGoal(
+            active_localization_epoch_.load(std::memory_order_acquire));
         deferred_terminal_status_.reset();
         command_bundle_store_.invalidate();
         planner_command_available_.store(false, std::memory_order_release);
