@@ -2162,6 +2162,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                   "junction=%zu endpoint=(%.3f,%.3f,%.3f) constraint_valid=%d "
                   "boundary_valid=%d kind=%d expected_kind=%d stamp_valid=%d endpoint_valid=%d "
                   "contained=%d boundary_stamp=%lld declared_end=%lld "
+                  "boundary_sample=(%.9f,%.9f,%.9f) boundary_event=(%.9f,%.9f,%.9f) "
                   "volume_min=(%.3f,%.3f,%.3f) volume_max=(%.3f,%.3f,%.3f)",
                   boundary.junction_index,
                   endpoint ? endpoint->position_world.x() : 0.0,
@@ -2174,6 +2175,11 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                   endpoint_valid ? 1 : 0, boundary_crossing_contained ? 1 : 0,
                   static_cast<long long>(boundary.boundary_stamp_ns),
                   static_cast<long long>(candidate_ptr->declared_end_ns),
+                  boundary_sample ? boundary_sample->position_world.x() : 0.0,
+                  boundary_sample ? boundary_sample->position_world.y() : 0.0,
+                  boundary_sample ? boundary_sample->position_world.z() : 0.0,
+                  boundary.position_world.x(), boundary.position_world.y(),
+                  boundary.position_world.z(),
                   constraint ? constraint->admissible_volume.minimum.x() : 0.0,
                   constraint ? constraint->admissible_volume.minimum.y() : 0.0,
                   constraint ? constraint->admissible_volume.minimum.z() : 0.0,
