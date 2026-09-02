@@ -98,7 +98,8 @@ class PlannerFacade final {
   [[nodiscard]] navigation_planning::CommittedTrajectoryMetadata committedMetadata() const;
   [[nodiscard]] navigation_planning::TrajectoryValidationResult validateCommittedTrajectory(
       const navigation_world_model::WorldModelViewPtr& world,
-      double authorization_wall_time_s) const;
+      double authorization_wall_time_s,
+      std::uint64_t expected_generation = 0U) const;
   [[nodiscard]] std::uint64_t committedGeneration() const noexcept;
   [[nodiscard]] bool committedBackupAvailable() const noexcept;
   [[nodiscard]] double committedBackupStartTime() const noexcept;

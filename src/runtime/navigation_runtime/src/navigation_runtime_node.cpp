@@ -849,6 +849,45 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               this->get_logger(),
               "retaining generation=%lu on immutable disjoint-region proof",
               static_cast<unsigned long>(expected_bundle->bundle_generation));
+        } else if (expected_bundle && planner_) {
+          // The changed-region proof is a fast path, not the only safe path.
+          // LiDAR updates naturally touch the currently traversed corridor in
+          // open space, so rejecting every intersecting update would erase a
+          // still-safe command at the next observation.  Revalidate the exact
+          // execution generation against the new immutable snapshot before
+          // deciding whether the command must be removed.  Prefer the staged
+          // candidate while activation has not yet synchronized planner
+          // history; otherwise validate the exact committed planner copy.
+          const double authorization_wall_time_s = ros_clock->now().seconds();
+          const auto staged_validation = planner_->validateStagedCommandCandidate(
+              result.snapshot, authorization_wall_time_s,
+              expected_bundle->bundle_generation);
+          const auto committed_validation = staged_validation.valid
+              ? navigation_planning::TrajectoryValidationResult{}
+              : planner_->validateCommittedTrajectory(
+                    result.snapshot, authorization_wall_time_s,
+                    expected_bundle->bundle_generation);
+          const auto& validation = staged_validation.valid
+              ? staged_validation : committed_validation;
+          if (validation.valid) {
+            retain_validated_bundle = true;
+            ++next.command_revalidation_full_count;
+            RCLCPP_DEBUG(
+                this->get_logger(),
+                "retaining generation=%lu after full immutable candidate revalidation "
+                "stage=%d samples=%lu",
+                static_cast<unsigned long>(expected_bundle->bundle_generation),
+                staged_validation.valid ? 1 : 2,
+                static_cast<unsigned long>(validation.sample_count));
+          } else {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "active generation=%lu failed full immutable candidate revalidation "
+                "failure=%d blocked_role=%d samples=%lu",
+                static_cast<unsigned long>(expected_bundle->bundle_generation),
+                validation.failure_code, validation.blocked_role,
+                static_cast<unsigned long>(validation.sample_count));
+          }
         }
         // The immutable world publication and the dependent execution
         // certificate transition share one gate.  A retained bundle is copied

@@ -365,10 +365,12 @@ navigation_planning::CommittedTrajectoryMetadata PlannerFacade::committedMetadat
 
 navigation_planning::TrajectoryValidationResult PlannerFacade::validateCommittedTrajectory(
     const navigation_world_model::WorldModelViewPtr& world,
-    const double authorization_wall_time_s) const {
+    const double authorization_wall_time_s,
+    const std::uint64_t expected_generation) const {
   navigation_planning::TrajectoryValidationResult output;
   if (!world) return output;
   const auto snapshot = impl_->planner->committedTrajectorySnapshot();
+  if (expected_generation != 0U && snapshot.generation != expected_generation) return output;
   if (snapshot.empty || snapshot.position.empty() || snapshot.yaw.empty()) return output;
   output.pinned_world = snapshot.certificate.pinned_world;
   output.validated_world = world->identity();
