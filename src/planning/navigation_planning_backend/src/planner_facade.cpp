@@ -229,11 +229,6 @@ void PlannerFacade::setCommandIdentity(
       CommandIdentity{localization_epoch, goal_epoch, request_id});
 }
 
-bool PlannerFacade::acknowledgeCommandCandidate(const std::uint64_t generation) {
-  return impl_ && impl_->planner &&
-      impl_->planner->acknowledgeCommandCandidate(generation);
-}
-
 void PlannerFacade::discardCommandCandidate() noexcept {
   if (impl_ && impl_->planner) impl_->planner->discardCommandCandidate();
 }
@@ -268,16 +263,39 @@ void PlannerFacade::setRecoveryVelocityScale(const double scale) noexcept {
   if (impl_ && impl_->planner) impl_->planner->setRecoveryVelocityScale(scale);
 }
 
-navigation_planning::PlannerStatus PlannerFacade::planFromRest(
+navigation_planning::PlannerStatus PlannerFacade::planInitialFromStoppedState(
     const Eigen::Vector3d& target_world, const double target_yaw_rad, const bool new_goal) {
   const Vec3f target = target_world;
-  return toProductStatus(impl_->planner->PlanFromRest(target, target_yaw_rad, new_goal));
+  return toProductStatus(
+      impl_->planner->planInitialFromStoppedState(target, target_yaw_rad, new_goal));
+}
+
+navigation_planning::PlannerStatus PlannerFacade::planSuccessorFromExecutionAnchor(
+    const Eigen::Vector3d& target_world, const double target_yaw_rad, const bool new_goal) {
+  const Vec3f target = target_world;
+  return toProductStatus(
+      impl_->planner->planSuccessorFromExecutionAnchor(target, target_yaw_rad, new_goal));
+}
+
+navigation_planning::PlanningOutcome PlannerFacade::plan(
+    const navigation_planning::PlanningRequest& request) {
+  if (!impl_ || !impl_->planner) {
+    navigation_planning::PlanningOutcome outcome;
+    outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
+    outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
+    return outcome;
+  }
+  return impl_->planner->plan(request);
+}
+
+navigation_planning::PlannerStatus PlannerFacade::planFromRest(
+    const Eigen::Vector3d& target_world, const double target_yaw_rad, const bool new_goal) {
+  return planInitialFromStoppedState(target_world, target_yaw_rad, new_goal);
 }
 
 navigation_planning::PlannerStatus PlannerFacade::replanOnce(
     const Eigen::Vector3d& target_world, const double target_yaw_rad, const bool new_goal) {
-  const Vec3f target = target_world;
-  return toProductStatus(impl_->planner->ReplanOnce(target, target_yaw_rad, new_goal));
+  return planSuccessorFromExecutionAnchor(target_world, target_yaw_rad, new_goal);
 }
 
 std::optional<navigation_planning::CandidateBundle> PlannerFacade::exportCommandCandidate(

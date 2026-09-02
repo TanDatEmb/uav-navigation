@@ -695,8 +695,18 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
                 if (solve_cancelled_.load()) return false;
                 if (!cmd_traj_info_.canCommitCandidate(candidate)) return false;
+                // CmdTraj is a planner warm-start cache, not an executable
+                // command store.  The execution timeline owns publication;
+                // keeping this cache current at construction removes the
+                // old ACK transaction and makes a rejected successor harmless
+                // to the command sampler.
+                CandidateCommandBundle warm_start_candidate = candidate;
+                if (!cmd_traj_info_.commitCandidate(
+                        std::move(warm_start_candidate), certificate)) {
+                    return false;
+                }
                 staged_command_candidate_ = StagedCommandCandidate{
-                    std::move(candidate), certificate, cmd_traj_info_.nextGeneration(),
+                    std::move(candidate), certificate, cmd_traj_info_.generation(),
                     std::nullopt, false};
                 return true;
             });
@@ -713,52 +723,10 @@ std::optional<double> firstRouteBoundaryEntryTime(
         if (exp_traj.empty()) return false;
         std::lock_guard<std::mutex> guard(solve_commit_mutex_);
         if (!staged_command_candidate_) return false;
-        staged_command_candidate_->pending_exp_history = exp_traj;
-        staged_command_candidate_->clear_new_goal_on_ack = true;
-        return true;
-    }
-
-    bool Planner::acknowledgeCommandCandidate(const std::uint64_t generation) {
-        std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-        if (!staged_command_candidate_ ||
-            staged_command_candidate_->generation != generation) {
-            return false;
-        }
-        // The execution store has already performed the atomic world/goal
-        // check immediately before this ACK. Rechecking the authorizer here
-        // creates a race: a harmless world publication between the two
-        // stores turns a successful execution commit into a false ACK
-        // failure. A later world publication recertifies or invalidates the
-        // execution-store pointer; it must not erase planner history after a
-        // command was accepted by that store.
-        auto staged = std::move(*staged_command_candidate_);
-        const auto candidate_start = staged.command.start_wall_time;
-        const auto candidate_duration = staged.command.position.getTotalDuration();
-        const auto candidate_role_count = staged.command.roles.size();
-        const auto candidate_backup_start = staged.command.backup_start_tt;
-        const auto previous = cmd_traj_info_.snapshot();
-        if (!cmd_traj_info_.commitCandidate(
-                std::move(staged.command), staged.certificate)) {
-            planner_context_->error(
-                " -- [planner] command ACK rejected by CmdTraj generation={} "
-                "previous_generation={} candidate_start={} candidate_duration={} "
-                "candidate_roles={} candidate_backup_start={} previous_start={} "
-                "previous_duration={} previous_empty={}",
-                generation, previous.generation, candidate_start,
-                candidate_duration, candidate_role_count, candidate_backup_start,
-                previous.position.start_WT, previous.position.getTotalDuration(),
-                previous.empty);
-            staged_command_candidate_.reset();
-            return false;
-        }
-        // The execution store is now authoritative. Only this ACK point may
-        // advance planner history or consume new-goal state; a runtime
-        // rejection leaves both unchanged.
-        if (staged.pending_exp_history.has_value()) {
-            last_exp_traj_info_ = std::move(*staged.pending_exp_history);
-        }
-        if (staged.clear_new_goal_on_ack) gi_.new_goal = false;
-        staged_command_candidate_.reset();
+        // The EXP trajectory is only a warm-start hint for the next solve.
+        // It is deliberately not consulted by execution sampling.
+        last_exp_traj_info_ = exp_traj;
+        gi_.new_goal = false;
         return true;
     }
 
@@ -812,6 +780,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         candidate.goal_epoch = goal_epoch;
         candidate.request_id = request_id;
         candidate.bundle_generation = generation;
+        candidate.activation_stamp_ns = valid_from_ns;
         // The trajectory object is the authoritative producer of the wall
         // clock used by both the evaluator and the execution lease. Do not
         // copy the construction-time mirror: a stale/default mirror would
@@ -906,6 +875,58 @@ std::optional<double> firstRouteBoundaryEntryTime(
             }
             return true;
         };
+        if (route_snapshot_.has_value() &&
+            route_snapshot_->active_waypoint_index < route_snapshot_->waypoints.size()) {
+            const auto& waypoint =
+                route_snapshot_->waypoints[route_snapshot_->active_waypoint_index];
+            const bool is_pass_through = waypoint.behavior ==
+                navigation_mission::MissionWaypoint::Behavior::PassThrough;
+            const bool boundary_reached = command.connected_goal || command.terminal_stop;
+            if (boundary_reached && (is_pass_through || command.terminal_stop)) {
+                Eigen::Vector3d incoming = Eigen::Vector3d::Zero();
+                Eigen::Vector3d outgoing = Eigen::Vector3d::Zero();
+                for (const auto& segment : route_snapshot_->segments) {
+                    if (segment.end_waypoint_index ==
+                            route_snapshot_->active_waypoint_index &&
+                        segment.tangent.allFinite() && segment.tangent.norm() > 1.0e-9) {
+                        incoming = segment.tangent.normalized();
+                    }
+                    if (segment.start_waypoint_index ==
+                            route_snapshot_->active_waypoint_index &&
+                        segment.tangent.allFinite() && segment.tangent.norm() > 1.0e-9) {
+                        outgoing = segment.tangent.normalized();
+                    }
+                }
+                if (incoming.norm() <= 1.0e-9) incoming = outgoing;
+                if (outgoing.norm() <= 1.0e-9) outgoing = incoming;
+                const double radius = std::max(
+                    navigation_world_model::kGoalCompletionToleranceM,
+                    waypoint.acceptance_radius_m);
+                if (incoming.norm() > 1.0e-9 && outgoing.norm() > 1.0e-9 &&
+                    std::isfinite(radius) && radius > 0.0) {
+                    navigation_planning::RouteBoundaryConstraint constraint;
+                    constraint.admissible_volume.minimum = waypoint.position_enu -
+                        Eigen::Vector3d::Constant(radius);
+                    constraint.admissible_volume.maximum = waypoint.position_enu +
+                        Eigen::Vector3d::Constant(radius);
+                    constraint.junction_index =
+                        route_snapshot_->active_waypoint_index;
+                    constraint.incoming_tangent = incoming;
+                    constraint.outgoing_tangent = outgoing;
+                    constraint.corner_speed_mps = command.terminal_stop ? 0.0 :
+                        std::max(0.0, pass_through_next_target_.has_value()
+                            ? nominal_exp_max_velocity_mps_ : 0.0);
+                    candidate.route_boundary_constraint = constraint;
+                    candidate.route_boundary_event = navigation_planning::RouteBoundaryEvent{
+                        command.terminal_stop
+                            ? navigation_planning::RouteBoundaryEventKind::kTerminalStop
+                            : navigation_planning::RouteBoundaryEventKind::kPassThrough,
+                        route_snapshot_->active_waypoint_index, *declared_end_ns,
+                        waypoint.position_enu, incoming, outgoing,
+                        constraint.corner_speed_mps};
+                }
+            }
+        }
         return candidate.valid() ? std::optional<navigation_planning::CandidateBundle>{
             std::move(candidate)} : std::nullopt;
     }
@@ -932,9 +953,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
     }
 
     RET_CODE
-    Planner::PlanFromRest(const Vec3f &goal_p,
-                               const double &goal_yaw,
-                               const bool &new_goal) {
+    Planner::planInitialFromStoppedState(const Vec3f &goal_p,
+                                         const double &goal_yaw,
+                                         const bool &new_goal) {
         std::lock_guard<std::mutex> guard(replan_lock_);
         {
             std::lock_guard<std::mutex> state_guard(drone_state_mutex_);
@@ -1134,9 +1155,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
 
 
     RET_CODE
-    Planner::ReplanOnce(const Vec3f &goal_p,
-                             const double &goal_yaw,
-                             const bool &new_goal) {
+    Planner::planSuccessorFromExecutionAnchor(const Vec3f &goal_p,
+                                              const double &goal_yaw,
+                                              const bool &new_goal) {
         TimeConsuming replan_total_t("ReplanOnce", false);
         std::lock_guard<std::mutex> guard(replan_lock_);
         {
@@ -1397,6 +1418,99 @@ std::optional<double> firstRouteBoundaryEntryTime(
         latest_replan.setRetCode(classifySolveFailure(
             solve_deadline, false, classifyBackupResult(back_ret_code)));
         return FAILED;
+    }
+
+    navigation_planning::PlanningOutcome Planner::plan(
+            const navigation_planning::PlanningRequest& request) {
+        const auto started = std::chrono::steady_clock::now();
+        navigation_planning::PlanningOutcome outcome;
+        outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
+        outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
+        const auto finish = [&]() {
+            outcome.trace.elapsed_steady_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - started).count();
+            return outcome;
+        };
+        if (!request.valid()) return finish();
+
+        // The request owns the immutable solve inputs. Route geometry is set
+        // by the runtime immediately before submission and is checked by the
+        // request key/goal identity; this call only binds the same world and
+        // kinematic snapshot to the backend solve.
+        setWorldModelView(request.world);
+        if (!setState(request.start_state)) return finish();
+        setCommandIdentity(CommandIdentity{
+            request.key.localization_epoch, request.key.goal_epoch,
+            request.key.request_id});
+        const auto result = request.key.start_mode ==
+                navigation_planning::PlanningStartMode::kStoppedMeasuredState
+            ? planInitialFromStoppedState(
+                request.goal.target_world, 0.0, true)
+            : request.key.start_mode ==
+                navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake
+            ? ([&]() {
+                StatePVAJ measured = StatePVAJ::Zero();
+                measured.col(0) = request.start_state.position_world;
+                measured.col(1) = request.start_state.velocity_world;
+                measured.col(2) = request.start_state.acceleration_world;
+                measured.col(3) = request.start_state.jerk_world;
+                return commitEmergencyBrake(
+                    measured, request.start_state.yaw_rad, 0.0,
+                    planner_context_->getSimTime(), std::nullopt)
+                    ? RET_CODE::SUCCESS : RET_CODE::EMER;
+              })()
+            : planSuccessorFromExecutionAnchor(
+                request.goal.target_world, 0.0, false);
+        const auto status = result == SUCCESS || result == FINISH || result == NO_NEED
+            ? navigation_planning::PlanningFailureStage::kNone
+            : navigation_planning::PlanningFailureStage::kNominalRefinement;
+        if (result == NO_NEED) {
+            outcome.outcome = navigation_planning::CompletePlanningOutcome::
+                kRetainedCommittedBundle;
+            outcome.failure_stage = navigation_planning::PlanningFailureStage::kNone;
+            outcome.failure_reason = navigation_planning::PlanningFailureReason::kNone;
+            return finish();
+        }
+        if (result != SUCCESS && result != FINISH) {
+            outcome.outcome = result == EMER
+                ? navigation_planning::CompletePlanningOutcome::kNoCompleteBundle
+                : navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+            outcome.failure_stage = status;
+            outcome.failure_reason = result == EMER
+                ? navigation_planning::PlanningFailureReason::kBackupDynamics
+                : navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline;
+            return finish();
+        }
+        const auto candidate = exportCommandCandidate(
+            request.key.localization_epoch, request.key.goal_epoch,
+            request.key.request_id, request.key.anchor_stamp_ns,
+            std::numeric_limits<std::int64_t>::max());
+        if (!candidate) {
+            outcome.outcome = navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+            outcome.failure_stage = navigation_planning::PlanningFailureStage::kCommitRecertification;
+            outcome.failure_reason = navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline;
+            return finish();
+        }
+        outcome.candidate = *candidate;
+        outcome.outcome = result == SUCCESS
+            ? navigation_planning::CompletePlanningOutcome::kRefinedCompleteBundle
+            : navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle;
+        outcome.failure_stage = navigation_planning::PlanningFailureStage::kNone;
+        outcome.failure_reason = navigation_planning::PlanningFailureReason::kNone;
+        return finish();
+    }
+
+    RET_CODE Planner::PlanFromRest(const Vec3f &goal_p,
+                                   const double &goal_yaw,
+                                   const bool &new_goal) {
+        return planInitialFromStoppedState(goal_p, goal_yaw, new_goal);
+    }
+
+    RET_CODE Planner::ReplanOnce(const Vec3f &goal_p,
+                                 const double &goal_yaw,
+                                 const bool &new_goal) {
+        return planSuccessorFromExecutionAnchor(goal_p, goal_yaw, new_goal);
     }
 
     void Planner::getOneHeartbeatTime(double &start_WT_pos, bool &traj_finish) {
@@ -3769,20 +3883,23 @@ std::optional<double> firstRouteBoundaryEntryTime(
                     heu_dur * static_cast<double>(i) /
                     cfg_.back_traj_cfg.piece_num));
         }
-        back_traj_opt_->setSolveBudget(
-                &solve_cancelled_, solve_deadline.steadyDeadlineNanoseconds());
-        bool temp_ret = back_traj_opt_->optimize(ref_exp_traj.posTraj(),
-                                                 backup_switch_lower_bound,
-                                                 backup_switch_upper_bound,
-                                                 heu_ts,
-                                                 back_traj_info.getSFC(),
-                                                 seed_times,
-                                                 seed_points,
-                                                 temp_pos_traj,
-                                                 opt_ts);
+        bool temp_ret = false;
+        if (cfg_.backup_refinement_enabled) {
+            back_traj_opt_->setSolveBudget(
+                    &solve_cancelled_, solve_deadline.steadyDeadlineNanoseconds());
+            temp_ret = back_traj_opt_->optimize(ref_exp_traj.posTraj(),
+                                                backup_switch_lower_bound,
+                                                backup_switch_upper_bound,
+                                                heu_ts,
+                                                back_traj_info.getSFC(),
+                                                seed_times,
+                                                seed_points,
+                                                temp_pos_traj,
+                                                opt_ts);
+        }
         time_consuming_[BACK_TRAJ_OPT] = t_back_opt.stop();
 
-        {
+        if (cfg_.backup_refinement_enabled) {
             double init_ts;
             VecDf init_times;
             vec_Vec3f init_ps;

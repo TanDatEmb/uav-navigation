@@ -40,6 +40,10 @@ namespace navigation_planning_backend {
         bool use_fov_cut{false};
         bool print_log{false};
         bool preserve_backup_altitude{true};
+        // The deterministic minimum-snap BACKUP seed is the release safety
+        // artifact. Optional L-BFGS refinement is opt-in for experiments and
+        // can never be required for a complete candidate.
+        bool backup_refinement_enabled{false};
         navigation_world_model::UnknownPolicy unknown_space_policy{
             navigation_world_model::UnknownPolicy::kRequireKnownFree};
 
@@ -122,6 +126,8 @@ namespace navigation_planning_backend {
             }
             loader.LoadParam("planner/preserve_backup_altitude",
                              preserve_backup_altitude, true);
+            loader.LoadParam("planner/backup_refinement_enabled",
+                             backup_refinement_enabled, false);
             loader.LoadParam("planner/use_fov_cut", use_fov_cut, false);
             if (mission_limits.has_value()) {
                 unknown_space_policy =

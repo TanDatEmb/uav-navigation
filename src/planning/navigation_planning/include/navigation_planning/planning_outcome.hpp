@@ -12,6 +12,9 @@ enum class CompletePlanningOutcome : std::uint8_t {
   kRefinedCompleteBundle,
   kBaselineCompleteBundle,
   kDeadlineWithCompleteBundle,
+  // The active execution timeline remains authoritative; no replacement was
+  // produced and the caller must continue sampling the retained bundle.
+  kRetainedCommittedBundle,
   kMapEvidenceInsufficient,
   kNoCompleteBundle,
   kStaleResult,
@@ -63,6 +66,11 @@ enum class PlanningFailureReason : std::uint8_t {
          outcome == CompletePlanningOutcome::kDeadlineWithCompleteBundle;
 }
 
+[[nodiscard]] constexpr bool planningRetainedCommittedBundle(
+    CompletePlanningOutcome outcome) noexcept {
+  return outcome == CompletePlanningOutcome::kRetainedCommittedBundle;
+}
+
 struct PlanningTrace {
   std::uint32_t expanded_nodes{0};
   std::uint32_t optimizer_attempts{0};
@@ -78,13 +86,17 @@ struct PlanningOutcome {
 
   [[nodiscard]] bool valid() const noexcept {
     const bool success = completePlanningSucceeded(outcome);
-    const bool failure_is_clear = success
+    const bool retained = planningRetainedCommittedBundle(outcome);
+    const bool failure_is_clear = (success || retained)
         ? failure_stage == PlanningFailureStage::kNone &&
               failure_reason == PlanningFailureReason::kNone
         : failure_stage != PlanningFailureStage::kNone &&
               failure_reason != PlanningFailureReason::kNone;
     return trace.elapsed_steady_ns >= 0 && failure_is_clear &&
-           success == candidate.has_value() && (!candidate || candidate->valid());
+           ((success && candidate.has_value()) ||
+            (retained && !candidate.has_value()) ||
+            (!success && !retained && !candidate.has_value())) &&
+           (!candidate || candidate->valid());
   }
 };
 

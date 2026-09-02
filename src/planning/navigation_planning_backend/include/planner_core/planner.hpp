@@ -47,6 +47,7 @@
 #include <data_structure/cmd_traj.h>
 #include <data_structure/backup_traj.h>
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_planning/planning_outcome.hpp>
 #include <navigation_mission/route_progress.hpp>
 #include <planner_core/route_yaw_reference.hpp>
 
@@ -330,10 +331,6 @@ namespace navigation_planning_backend {
             solve_cancelled_.store(false);
         }
 
-        // The execution coordinator calls this only after its own atomic
-        // candidate commit succeeds. The committed trajectory then becomes planning history,
-        // never the source sampled by the command timer.
-        bool acknowledgeCommandCandidate(std::uint64_t generation);
         void discardCommandCandidate() noexcept;
         [[nodiscard]] bool hasStagedCommandCandidate() const {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
@@ -493,7 +490,24 @@ namespace navigation_planning_backend {
         void getModuleTimeConsuming(vector<double> &time);
         vector<double> moduleTimeConsumingSnapshot() const;
 
-        /* Tow type of replan strategy */
+        // The lifecycle names make the planner/execution boundary explicit:
+        // only the initial path may use a stopped-state seed; all renewal is
+        // a successor seeded from the execution timeline.
+        RET_CODE planInitialFromStoppedState(const Vec3f &goal_p,
+                                              const double &goal_yaw,
+                                              const bool &new_goal);
+
+        RET_CODE
+        planSuccessorFromExecutionAnchor(const Vec3f &goal_p,
+                                          const double &goal_yaw,
+                                          const bool &new_goal);
+
+        [[nodiscard]] navigation_planning::PlanningOutcome plan(
+            const navigation_planning::PlanningRequest& request);
+
+        // Compatibility entry points for non-runtime tools that have not
+        // migrated yet. They retain the old ABI while forwarding to the
+        // explicit lifecycle operations above.
         RET_CODE PlanFromRest(const Vec3f &goal_p,
                               const double &goal_yaw,
                               const bool &new_goal);

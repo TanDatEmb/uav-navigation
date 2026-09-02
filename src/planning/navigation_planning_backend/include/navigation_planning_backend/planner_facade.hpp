@@ -13,6 +13,8 @@
 #include <navigation_planning/kinematic_state.hpp>
 #include <navigation_planning/planner_diagnostics.hpp>
 #include <navigation_planning/planner_status.hpp>
+#include <navigation_planning/planning_outcome.hpp>
+#include <navigation_planning/planning_request.hpp>
 #include <navigation_planning/planning_limits.hpp>
 #include <navigation_mission/route_progress.hpp>
 #include <navigation_world_model/world_commit_authorizer.hpp>
@@ -38,7 +40,6 @@ class PlannerFacade final {
   void setCommandIdentity(std::uint64_t localization_epoch,
                           std::uint64_t goal_epoch,
                           std::uint64_t request_id);
-  bool acknowledgeCommandCandidate(std::uint64_t generation);
   void discardCommandCandidate() noexcept;
   [[nodiscard]] bool hasStagedCommandCandidate() const;
   void setWorldModelView(navigation_world_model::WorldModelViewPtr world);
@@ -50,8 +51,25 @@ class PlannerFacade final {
   bool setState(const navigation_planning::KinematicState& state);
   void setRecoveryVelocityScale(double scale) noexcept;
 
+  // Initial planning is valid only for a stopped/hold state. The runtime
+  // owns that gate; this API names the lifecycle contract explicitly.
+  [[nodiscard]] navigation_planning::PlannerStatus planInitialFromStoppedState(
+      const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
+  // All in-flight renewal is successor planning from the execution timeline.
+  [[nodiscard]] navigation_planning::PlannerStatus planSuccessorFromExecutionAnchor(
+      const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
+
+  // Product-facing planning transaction. The request is immutable for the
+  // solve and the outcome owns the only candidate handed to execution.
+  [[nodiscard]] navigation_planning::PlanningOutcome plan(
+      const navigation_planning::PlanningRequest& request);
+
+  // Source-compatibility aliases for tools that have not yet migrated. They
+  // are not used by the runtime lifecycle and do not authorize moving resets.
+  [[deprecated("use planInitialFromStoppedState")]]
   [[nodiscard]] navigation_planning::PlannerStatus planFromRest(
       const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
+  [[deprecated("use planSuccessorFromExecutionAnchor")]]
   [[nodiscard]] navigation_planning::PlannerStatus replanOnce(
       const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
 

@@ -6,6 +6,10 @@ planner:
   # terminal position toward the active waypoint altitude. The candidate is
   # used only when its exact dynamic and KNOWN_FREE certificates still pass.
   preserve_backup_altitude: true
+  # Release execution uses the certified minimum-snap BACKUP seed. Numerical
+  # refinement is diagnostic/experimental and must not consume the completion
+  # budget or become a prerequisite for a complete MAIN+BACKUP bundle.
+  backup_refinement_enabled: false
   # Keep the convex search box local to the collision-checked A* guide. A
   # 3 m half-width is clipped asymmetrically by the vertical map envelope at
   # nominal altitude, moving the initialization toward z~=2.1 m and feeding

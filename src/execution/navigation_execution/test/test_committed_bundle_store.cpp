@@ -215,6 +215,14 @@ TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
   ASSERT_TRUE(expired.bundle);
   EXPECT_FALSE(expired.awaiting_activation);
   EXPECT_EQ(evaluations, 1U);
+
+  const auto planned_hold = sampler.sample(401);
+  ASSERT_TRUE(static_cast<bool>(planned_hold));
+  EXPECT_TRUE(planned_hold.planned_stop_hold);
+  EXPECT_TRUE(planned_hold.point->finished);
+  // The sampler returns the endpoint only as a typed hold fallback; it does
+  // not evaluate the expired command again.
+  EXPECT_EQ(evaluations, 2U);
 }
 
 TEST(CommandSampler, SamplesDeclaredMainToBackupBundleAcrossRoleBoundary) {

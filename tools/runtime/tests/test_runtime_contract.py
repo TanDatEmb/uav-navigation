@@ -2749,7 +2749,7 @@ class RuntimeContractTest(unittest.TestCase):
             ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
         ).read_text(encoding="utf-8")
         self.assertIn("new_goal_", source)
-        self.assertIn("ReplanOnce", source)
+        self.assertIn("planSuccessorFromExecutionAnchor", source)
 
     def test_candidate_exposure_retains_pre_activation_lease(self) -> None:
         source = (

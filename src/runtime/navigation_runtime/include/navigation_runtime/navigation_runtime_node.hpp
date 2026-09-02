@@ -280,12 +280,13 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::mutex propagated_derivative_mutex_;
   KinematicDerivativeEstimator propagated_derivative_estimator_;
   bool new_goal_{false};
-  // PASS_THROUGH waypoint transitions retarget planner backend through ReplanOnce so the
+  // PASS_THROUGH waypoint transitions retarget planner backend through the
+  // execution-anchor successor path so the
   // committed polynomial supplies the future PVA initial state.
   bool hot_goal_transition_{false};
   bool restart_from_rest_{false};
   // planner backend's native FSM skips one replan timer callback immediately after a
-  // successful PlanFromRest.  Keep that state at the ROS adapter boundary so
+  // successful stopped-state plan. Keep that state at the ROS adapter boundary so
   // the first hot replan is not run against a trajectory that has just been
   // committed.
   std::atomic_bool skip_replan_once_{false};
@@ -324,7 +325,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t timed_out_planner_solve_generation_{0U};
   std::atomic_int64_t planner_solve_started_steady_ns_{0};
   // A local planner backend trajectory can end at a known-free frontier before the
-  // mission goal.  The FSM must call PlanFromRest again after that trajectory
+  // mission goal. The FSM must call the stopped-state planner again after that trajectory
   // finishes instead of holding the completed old trajectory forever.
   std::atomic_bool trajectory_finished_{false};
   std::atomic_bool trajectory_reaches_goal_{false};
@@ -351,7 +352,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::vector<double> end_to_end_samples_ms_;
 
   navigation_mapping::WorldSnapshotStore world_snapshot_store_;
-  navigation_execution::CommittedBundleStore command_bundle_store_;
+  navigation_execution::ExecutionTimelineStore command_bundle_store_;
   navigation_execution::CommandSampler command_sampler_;
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;
   std::shared_ptr<MappingLifecycleObserver> mapping_lifecycle_observer_;

@@ -1,5 +1,37 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Make planning requests typed and keep release BACKUP deterministic
+
+- **Owner/status:** navigation planning and execution boundary, `IMPLEMENTED`;
+  focused tests/build are green, while repeated SITL qualification remains open.
+- **Scope:** Runtime now submits an immutable `PlanningRequest` and consumes a
+  typed `PlanningOutcome`. The planner no longer exposes an ACK transaction to
+  the sampler; `CmdTraj`/EXP state is warm-start cache only and
+  `ExecutionTimelineStore` owns the executable pointer. Release configuration
+  constructs the complete minimum-snap BACKUP seed before any optional
+  refinement; `backup_refinement_enabled` defaults to false. Pass-through
+  candidates carry a typed `RouteBoundaryConstraint` and `RouteBoundaryEvent`.
+- **Safety impact:** A rejected or late planning result cannot become the
+  sampled command through planner history. Refinement timeout or numerical
+  failure cannot remove a certified MAIN+BACKUP candidate. Expired analytic
+  leases use an explicit bounded `STOPPED_HOLD` only after known-free and
+  measured-proximity checks; no evaluator endpoint is replayed as an extended
+  trajectory. Existing dynamic, flatness, world, tracking, freshness, and
+  identity gates remain mandatory.
+- **Evidence:** `navigation_execution` focused tests pass, including typed
+  planned-hold behavior; planning backend and runtime rebuild successfully.
+  Repeated open-space, pass-through, obstacle SITL and sanitizer evidence are
+  still required before qualification.
+- **Removal/review condition:** Revisit the release refinement switch only
+  after a measured repeated distribution proves it cannot threaten completion
+  reserve or candidate completeness. Never enable it as a prerequisite for
+  safety and never relax the `0.25 m` tracking gate.
+- **Verification:** `colcon build --packages-select navigation_planning
+  navigation_execution navigation_planning_backend navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON`; sourced-overlay CTest for all four packages;
+  repeated representative SITL with typed outcome, hold, route-boundary and
+  command-generation evidence.
+
 ### 2026-09-02 - Schedule SUPER-compatible successor activation in the execution timeline
 
 - **Owner/status:** navigation execution timeline and External Mode command

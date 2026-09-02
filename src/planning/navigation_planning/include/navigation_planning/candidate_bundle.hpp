@@ -10,6 +10,7 @@
 #include <Eigen/Core>
 
 #include <navigation_planning/planning_request.hpp>
+#include <navigation_planning/route_boundary.hpp>
 #include <navigation_common/time.hpp>
 
 namespace navigation_planning {
@@ -127,6 +128,8 @@ struct CandidateBundle {
   navigation_world_model::AxisAlignedBox protected_region{};
   std::vector<CandidateRoleInterval> role_schedule{};
   std::optional<CompleteCandidateQuality> quality{};
+  std::optional<RouteBoundaryConstraint> route_boundary_constraint{};
+  std::optional<RouteBoundaryEvent> route_boundary_event{};
   std::function<bool(std::int64_t, TrajectoryPoint&)> evaluator;
 
   [[nodiscard]] bool roleScheduleValid() const noexcept {
@@ -237,6 +240,9 @@ struct CandidateBundle {
            activation_metadata_consistent &&
            endpoint_metadata_consistent &&
            roleScheduleValid() && (!quality || quality->finite()) &&
+           (!route_boundary_constraint || route_boundary_constraint->valid()) &&
+           (!route_boundary_event || route_boundary_event->valid()) &&
+           (!route_boundary_constraint || route_boundary_event.has_value()) &&
            pinned_world_identity.localization_epoch == localization_epoch &&
            pinned_world_identity.generation != 0 &&
            pinned_world_identity.revision != 0 &&
