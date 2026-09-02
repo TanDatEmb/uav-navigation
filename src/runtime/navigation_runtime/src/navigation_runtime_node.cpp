@@ -2143,7 +2143,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
         boundary.boundary_stamp_ns >= candidate_ptr->declared_start_ns &&
         boundary.boundary_stamp_ns <= candidate_ptr->declared_end_ns;
     const auto boundary_sample = boundary_stamp_valid
-        ? candidate_ptr->sample(boundary.boundary_stamp_ns)
+        ? candidate_ptr->sampleAtDeclaredStamp(boundary.boundary_stamp_ns)
         : std::nullopt;
     const bool endpoint_valid = endpoint && endpoint->finite();
     const bool boundary_sample_valid = boundary_sample && boundary_sample->finite();

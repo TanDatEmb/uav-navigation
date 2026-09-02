@@ -270,6 +270,19 @@ struct CandidateBundle {
     if (!valid() || stamp_ns < valid_from_ns || stamp_ns > valid_until_ns) {
       return std::nullopt;
     }
+    return sampleAtDeclaredStamp(stamp_ns);
+  }
+
+  // Route-boundary certificates are analytic trajectory metadata.  Their
+  // producer timestamp may precede the short execution lease when a measured
+  // recovery candidate is admitted immediately after a solve.  Validate that
+  // metadata against the declared polynomial interval without turning the
+  // lease into a wider executable command interval.
+  [[nodiscard]] std::optional<TrajectoryPoint> sampleAtDeclaredStamp(
+      std::int64_t stamp_ns) const {
+    if (!valid() || stamp_ns < declared_start_ns || stamp_ns > declared_end_ns) {
+      return std::nullopt;
+    }
     TrajectoryPoint point;
     point.role = role;
     if (!evaluator(stamp_ns, point) || !point.finite() ||

@@ -63,6 +63,16 @@ TEST(PlanningCandidate, RejectsInvalidProvenanceAndNonFiniteSamples) {
   EXPECT_FALSE(candidate.valid());
 }
 
+TEST(PlanningCandidate, DeclaredBoundarySampleMayPrecedeExecutionLease) {
+  auto candidate = validCandidate();
+  candidate.valid_from_ns = 150;
+  candidate.valid_until_ns = 200;
+  candidate.activation_stamp_ns = 150;
+
+  EXPECT_FALSE(candidate.sample(100).has_value());
+  EXPECT_TRUE(candidate.sampleAtDeclaredStamp(100).has_value());
+}
+
 TEST(PlanningCandidate, RejectsEvaluatorRoleMutationAndUnknownRole) {
   auto candidate = validCandidate();
   candidate.evaluator = [](std::int64_t, navigation_planning::TrajectoryPoint& point) {
