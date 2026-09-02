@@ -69,6 +69,33 @@
   event with equivalent provenance.
 - **Verification:** affected-package build and focused route-regression CTest.
 
+### 2026-09-02 - Use a certified outgoing route window for sharp corners
+
+- **Owner/status:** pass-through corner planning; `IMPLEMENTED`, focused
+  regression/build and representative obstacle SITL verification remain open.
+- **Scope:** a genuine pass-through corner may again use the existing bounded
+  outgoing route window when its entry, exact waypoint, outgoing blend,
+  endpoint, and all connecting segments are certified by the inflated map.
+  The incoming-tangent witness is cleared for that candidate so the route
+  certificate switches progress phase only for actual outgoing geometry.
+  Without a certified window, the exact-waypoint measured handoff remains the
+  fail-closed fallback.
+- **Safety impact:** addresses observed `0.848 m` MAIN backtrack on the
+  incoming exact-handoff command by giving MINCO geometric room to rotate. No
+  route-regression tolerance, corridor cost, collision, dynamic, tracking,
+  identity, freshness, or publication gate is relaxed; the window remains
+  inside the mission acceptance ball and retains its route-boundary corridor.
+- **Evidence:** nominal long three-pillar SITL reached waypoint indices `0..3`
+  but rejected the exact incoming MAIN at `(50,-5)` after a measured fold;
+  prior route-window attempts exposed waypoint-order and fixed-endpoint issues,
+  now covered by the existing ordering and corner tests.
+- **Removal/review condition:** remove only after repeated representative
+  corner SITL shows continuous waypoint handoff and mission completion, or an
+  equivalent measured-state transition owns the turn without MAIN fold.
+- **Verification:** focused planner tests, full Release manifest build, and
+  repeated `long_three_pillars_multiwaypoint` SITL with mission completion,
+  waypoint coverage, continuity, clearance, and collision evidence.
+
 ### 2026-09-02 - Synchronize emergency activation before bounded pass-through recovery
 
 - **Owner/status:** planning/runtime emergency handoff and route-progress recovery, `IMPLEMENTED`; focused regression/build and representative obstacle SITL verification remain open.

@@ -2653,8 +2653,7 @@ double knownFreeGuideSupport(
             // in the acceptance-ball fillet below; the measured handoff then
             // owns the outgoing leg and the strict tracking gate remains
             // unchanged.
-            if (corner_window_ready && !effective_genuine_corner &&
-                passThroughOutgoingLookaheadEligible(
+            if (corner_window_ready && passThroughOutgoingLookaheadEligible(
                 desired_lookahead, outgoing_distance, search_distance,
                 cfg_.resolution)) {
                 vec_Vec3f next_path;
@@ -3262,7 +3261,7 @@ double knownFreeGuideSupport(
         Trajectory temp_exp_traj = out_traj;
         out_exp_traj_info.setSFC(sfc);
         out_exp_traj_info.setPreserveIncomingRouteTangentFlag(
-            preserve_incoming_route_tangent);
+            preserve_incoming_route_tangent && !route_lookahead_active);
         temp_exp_traj.start_WT = new_traj_WT;
         const auto generated_boundary_state = temp_exp_traj.getState(0.0);
         StatePVAJ expected_boundary_state = pos_init_state;
