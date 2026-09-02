@@ -293,6 +293,56 @@ TEST(ExecutionTimelineStore, StagesSuccessorUntilFutureAnchorActivation) {
   EXPECT_FALSE(store.hasPending());
 }
 
+TEST(ExecutionTimelineStore, RenewsSuccessorsWithoutAnExecutionPointerGap) {
+  navigation_execution::ExecutionTimelineStore store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+
+  auto initial = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, initial),
+            navigation_execution::CommitDecision::kCommitted);
+  navigation_execution::CommandSampler sampler(store);
+
+  const auto first_anchor = store.reserveAnchor(20, 50);
+  ASSERT_TRUE(first_anchor);
+  auto first_successor = candidateFor(7, 1);
+  first_successor.bundle_generation = 28;
+  first_successor.valid_from_ns = 50;
+  first_successor.valid_until_ns = 90;
+  first_successor.activation_stamp_ns = 50;
+  auto first_successor_ptr = std::make_shared<const navigation_planning::CandidateBundle>(
+      first_successor);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *first_anchor, first_successor_ptr),
+            navigation_execution::StageDecision::kStaged);
+  ASSERT_EQ(store.load(), initial);
+  ASSERT_TRUE(store.activatePendingIfDue(50));
+  ASSERT_EQ(store.load(), first_successor_ptr);
+
+  const auto second_anchor = store.reserveAnchor(60, 70);
+  ASSERT_TRUE(second_anchor);
+  auto second_successor = first_successor;
+  second_successor.bundle_generation = 29;
+  second_successor.valid_from_ns = 70;
+  second_successor.valid_until_ns = 95;
+  second_successor.activation_stamp_ns = 70;
+  auto second_successor_ptr = std::make_shared<const navigation_planning::CandidateBundle>(
+      second_successor);
+  ASSERT_EQ(store.stagePending({world, 7, 3}, *second_anchor, second_successor_ptr),
+            navigation_execution::StageDecision::kStaged);
+  EXPECT_EQ(store.load(), first_successor_ptr);
+  EXPECT_TRUE(store.hasPending());
+  ASSERT_TRUE(store.activatePendingIfDue(70));
+  EXPECT_EQ(store.load(), second_successor_ptr);
+  EXPECT_FALSE(store.hasPending());
+
+  const auto sampled = sampler.sample(70, 7);
+  ASSERT_TRUE(sampled);
+  EXPECT_EQ(sampled.bundle, second_successor_ptr);
+  EXPECT_EQ(sampled.point->position_world.x(), 70.0);
+}
+
 TEST(ExecutionTimelineStore, WorldAdvanceInvalidatesPendingSuccessor) {
   navigation_execution::ExecutionTimelineStore store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
