@@ -55,6 +55,7 @@ namespace traj_opt {
         bool cancelled{false};
         bool valid{false};
         bool used_certified_seed{false};
+        bool baseline_fallback_to_optimizer{false};
         int certified_seed_failure_stage{0};
         int corridor_seed_build_failure_stage{0};
         int corridor_seed_retry_attempt_count{0};

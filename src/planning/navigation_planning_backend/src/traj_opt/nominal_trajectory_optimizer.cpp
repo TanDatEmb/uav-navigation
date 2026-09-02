@@ -1214,10 +1214,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                     diagnostics_.final_duration_s);
             return true;
         }
-        traj.clear();
+        // A complete baseline is required before the planner can publish a
+        // command, but the deterministic seed is a preferred construction,
+        // not the only way to obtain one.  A moving stopped-state restart can
+        // legitimately make the immutable Hermite/Bernstein seed fail its
+        // certificate while a bounded spatial/time solve still has a
+        // certified solution.  Keep baseline_only_ as a solve-mode witness,
+        // then run the same bounded optimizer and independent hard gates used
+        // by the ordinary path.  No candidate is accepted here without those
+        // gates, and a failed solve still returns an empty trajectory.
+        diagnostics_.baseline_fallback_to_optimizer = true;
         planner_context_->warn(
-                " -- [ExpOpt] complete baseline requested but no certified nominal seed exists");
-        return false;
+                " -- [ExpOpt] complete baseline has no certified deterministic seed; "
+                "falling back to bounded certified optimizer seed_stage={}",
+                static_cast<int>(deterministic_seed_certificate.failure_stage));
     }
 
     int ret = run_lbfgs(false);

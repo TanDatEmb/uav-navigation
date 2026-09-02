@@ -336,6 +336,45 @@ TEST(ExpOptimizer, HighSpeedDetourCorridorSolveKeepsObstacleBypassCertified) {
   }
 }
 
+TEST(ExpOptimizer, BaselineFallsBackToBoundedCertifiedSolveWhenSeedFails) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.optimization_dynamic_reserve_ratio = 1.0;
+  config.max_vel = 8.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makeMovingPositionState(0.0, 8.0);
+  const auto tail = makePositionState(30.0);
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path;
+  guide_path.emplace_back(head.col(0));
+  guide_path.emplace_back(navigation_math::Vec3f(15.0, 0.0, 1.0));
+  guide_path.emplace_back(tail.col(0));
+  // Intentionally too short for the immutable seed's high-order dynamics;
+  // the bounded optimizer must stretch/re-shape it before acceptance.
+  const std::vector<double> guide_times{0.0, 0.25, 0.5};
+  geometry_utils::PolytopeVec corridors{makeBox(-100.0, 100.0, -100.0,
+                                                 100.0, 0.0, 10.0)};
+  geometry_utils::Trajectory trajectory;
+
+  ASSERT_TRUE(optimizer.optimize(
+      head, tail, guide_path, guide_times, corridors, trajectory, true));
+  const auto diagnostics = optimizer.diagnostics();
+  EXPECT_TRUE(diagnostics.baseline_fallback_to_optimizer);
+  EXPECT_FALSE(diagnostics.used_certified_seed);
+  ASSERT_FALSE(trajectory.empty());
+  EXPECT_LE(trajectory.getMaxVelRate(), config.max_vel);
+  EXPECT_LE(trajectory.getMaxAccRate(), config.max_acc);
+  EXPECT_LE(trajectory.getMaxJerRate(), config.max_jerk);
+  EXPECT_LE(
+      navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+          trajectory, corridors.front().GetPlanes()),
+      config.corridor_plane_tolerance_m);
+}
+
 TEST(DeterministicNominalSeed, RequiresExactPieceCorridorMappingAndPvajContinuity) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.max_vel = 5.0;

@@ -1,5 +1,14 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Bounded optimizer fallback when deterministic baseline seed is unavailable
+
+- **Owner/status:** EXP nominal baseline construction, `IMPLEMENTED`; focused regression/build and representative SITL verification remain open.
+- **Scope:** a `baseline_only` solve still returns an independently certified deterministic corridor seed immediately when one exists. When the moving-state seed cannot be certified, it falls through to the existing bounded L-BFGS and feasibility-retry path instead of failing before optimization.
+- **Safety impact:** this does not relax corridor, route-boundary, dynamic, flatness, cancellation, freshness, or publication gates. A candidate is publishable only after the same independent hard certificates pass; an unsuccessful fallback returns an empty trajectory and remains fail-closed.
+- **Evidence:** the long-map artifact stopped at `PlanFromRest` with `complete baseline requested but no certified nominal seed exists`; the optimizer was not entered. Add a regression for the fallback witness, rebuild, and rerun long obstacle SITL.
+- **Removal/review condition:** retain while stopped-state replanning can encounter a moving-state seed that is geometrically/dynamically uncertifiable but has a bounded certified solution; remove only if deterministic seed construction is proven complete for all accepted execution anchors.
+- **Verification:** `build/navigation_planning_backend/test_exp_optimizer_seed`, focused planner/runtime tests, full affected-package build, and repeated obstacle-map SITL with fallback diagnostics plus normal acceptance gates.
+
 ### 2026-09-02 - Activate staged successors at the execution timer boundary
 
 - **Owner/status:** execution timeline activation, `IMPLEMENTED`; focused direct
