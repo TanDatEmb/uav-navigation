@@ -1760,7 +1760,8 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     const std::uint64_t goal_epoch,
     const std::uint64_t localization_epoch,
     const std::int64_t now_ns,
-    const PlanningKey& scheduled_key) {
+    const PlanningKey& scheduled_key,
+    const std::optional<navigation_planning::CandidateBundle>& planned_candidate) {
   if (now_ns <= 0 || goal_epoch == 0U || localization_epoch == 0U ||
       goal.request_id == 0U) {
     return false;
@@ -1811,9 +1812,11 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     planner_->discardCommandCandidate();
     return false;
   }
-  auto candidate = planner_->exportCommandCandidate(
-      localization_epoch, goal_epoch, goal.request_id, now_ns,
-      now_ns + maximum_age_ns);
+  auto candidate = planned_candidate.has_value()
+      ? planned_candidate
+      : planner_->exportCommandCandidate(
+            localization_epoch, goal_epoch, goal.request_id, now_ns,
+            now_ns + maximum_age_ns);
   if (!candidate) {
     RCLCPP_WARN(get_logger(),
                 "execution boundary rejected candidate export mission=%s waypoint=%u "
@@ -3607,7 +3610,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       // command state untouched.
     }
     if (!commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
-                                now().nanoseconds(), effective_scheduled_key)) {
+                                now().nanoseconds(), effective_scheduled_key,
+                                planning_outcome.candidate)) {
       RCLCPP_WARN(get_logger(),
                   "execution boundary rejected planner candidate after solve; "
                   "retaining the previously exposed command when still current");

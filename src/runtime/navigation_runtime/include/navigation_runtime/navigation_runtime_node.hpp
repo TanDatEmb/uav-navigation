@@ -206,7 +206,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                              std::uint64_t goal_epoch,
                              std::uint64_t localization_epoch,
                              std::int64_t now_ns,
-                             const PlanningKey& scheduled_key);
+                             const PlanningKey& scheduled_key,
+                             const std::optional<navigation_planning::CandidateBundle>&
+                                 planned_candidate = std::nullopt);
   void suspendCommandForWorldFreshness();
   void resetForLocalizationEpochLocked(std::uint64_t localization_epoch);
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
