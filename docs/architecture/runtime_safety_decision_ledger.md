@@ -1,5 +1,31 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Certify scheduled successors from their trajectory origin
+
+- **Owner/status:** successor BACKUP certificate scan, `IMPLEMENTED`; focused
+  regression/build evidence is pending, SITL qualification remains open.
+- **Scope:** `generateBackupTrajectory()` clamps a future successor's negative
+  wall-clock offset to its own trajectory origin before visibility sampling,
+  switch-window derivation, and seed selection. An already-active candidate
+  keeps its positive elapsed offset. The execution anchor and producer-selected
+  activation timestamp remain unchanged.
+- **Safety impact:** prevents a pre-origin scan from manufacturing duplicate
+  boundary samples and rejecting the only complete MAIN+KNOWN_FREE BACKUP
+  window. No visibility policy, dynamic threshold, reserve, swept-volume, or
+  PX4 admission gate is relaxed; a candidate still fails closed if no certified
+  switch exists.
+- **Evidence:** SITL committed initial generation 1 and published 332
+  executable samples, then successor cycle 9 failed before any backup switch
+  candidate while the replacement started in the future. Focused tests/build
+  and a rerun must verify scheduled successor admission.
+- **Removal/review condition:** retain until repeated moving successor runs
+  prove origin-relative scan/activation continuity; remove only with an
+  equivalent explicit time-origin contract.
+- **Verification:** `colcon build --packages-select navigation_planning
+  navigation_execution navigation_planning_backend navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON`; sourced-overlay CTest for all four
+  packages; repeated open/pass-through SITL with anchor and switch evidence.
+
 ### 2026-09-02 - Separate initial producer start from measured-state freshness
 
 - **Owner/status:** planner candidate export boundary, `IMPLEMENTED`; focused

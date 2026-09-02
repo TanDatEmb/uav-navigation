@@ -3301,7 +3301,14 @@ std::optional<double> firstRouteBoundaryEntryTime(
             return NO_NEED;
         }
 
+        // A scheduled successor begins in the future while it is being
+        // certified, so start_t is negative until activation. Visibility and
+        // braking are properties of the candidate from its own trajectory
+        // origin; scanning the negative pre-origin interval duplicates the
+        // first point and can leave no valid switch window. Existing active
+        // candidates retain their positive elapsed-time offset.
         const double command_start_t = std::clamp(start_t, 0.0, total_dur);
+        const double visibility_start_t = command_start_t;
         const Vec3f command_start = ref_exp_traj.getPos(command_start_t);
         if (!command_start.allFinite() || !map_ptr_->contains(command_start) ||
             !map_ptr_->isSegmentTraversable(
@@ -3340,8 +3347,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // resolution. In that common open-space case one farthest-endpoint
         // ray is equivalent for occupied-grid visibility.
         vector<TimePosPair> candidate_ps;
-        Vec3f last_pos = ref_exp_traj.getPos(start_t);
-        for (out_t = start_t; out_t < total_dur; out_t += cfg_.sample_traj_dt_s) {
+        Vec3f last_pos = ref_exp_traj.getPos(visibility_start_t);
+        for (out_t = visibility_start_t; out_t < total_dur;
+             out_t += cfg_.sample_traj_dt_s) {
             temp_point = ref_exp_traj.getPos(out_t);
             if ((last_pos - temp_point).norm() < cfg_.resolution * 0.8) {
                 continue;
@@ -3470,7 +3478,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             all_traj_visible = false;
         }
         Vec3f invisible_p = eval_ps.back().second;
-        while (out_t > start_t) {
+        while (out_t > visibility_start_t) {
             out_t -= cfg_.sample_traj_dt_s;
             Vec3f out_p = ref_exp_traj.getPos(out_t);
             if ((out_p - invisible_p).norm() > cfg_.robot_r) {
@@ -3478,7 +3486,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             }
         }
 
-        double seed_point_t = std::max(start_t, out_t);
+        double seed_point_t = std::max(visibility_start_t, out_t);
 
         // Seed the backup corridor at the latest point that remains within
         // the visible command prefix and outside the robot-radius retreat
@@ -3570,8 +3578,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
 
         //        bool use_new{true};
         //        if (use_new) {
-        double t0 = planner_context_->getSimTime() -
-                    ref_exp_traj.getStartWallTime() + 0.01;
+        double t0 = visibility_start_t + 0.01;
         double te = seed_point_t;
         const double required_main_prefix_duration_TT =
             ref_exp_traj.getRequiredMainPrefixDuration();
