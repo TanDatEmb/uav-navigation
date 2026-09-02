@@ -94,13 +94,14 @@ namespace navigation_planning_backend {
             CandidateCommandBundle command;
             CommandCertificate certificate;
             std::uint64_t generation{0};
-            // Planner history is promoted only with the execution-store ACK.
+            // Planner history is promoted only after the execution timeline
+            // has activated the staged candidate.
             // A staged candidate may still be rejected by the runtime after
             // export, so history must not move ahead of command authority.
             std::optional<ExpTraj> pending_exp_history;
-            bool clear_new_goal_on_ack{false};
+            bool clear_new_goal_on_activation{false};
         };
-        std::optional<StagedCommandCandidate> staged_command_candidate_;
+        std::optional<StagedCommandCandidate> staged_planner_candidate_;
 
         Vec3f local_start_p_;
 
@@ -155,8 +156,8 @@ namespace navigation_planning_backend {
 
         FOVChecker::Ptr fov_checker_;
 
-        CmdTraj cmd_traj_info_;
-        ExpTraj last_exp_traj_info_;
+        CmdTraj planner_warm_start_;
+        ExpTraj planner_previous_exp_;
 
         vector<double> time_consuming_;
         // 0 idle, 1 setup, 2 A*, 3 corridor/CIRI, 4 main MINCO,
@@ -234,31 +235,31 @@ namespace navigation_planning_backend {
         // accessors keep backend trajectory ownership private while allowing the
         // mission/PX4 FSM to validate its optimized safety suffix.
         bool committedBackupTrajectoryAvailable() const {
-            return cmd_traj_info_.backupTrajectoryAvailable();
+            return planner_warm_start_.backupTrajectoryAvailable();
         }
 
         double getCommittedBackupStartTrajectoryTime() const {
-            return cmd_traj_info_.getBackupTrajStartTT();
+            return planner_warm_start_.getBackupTrajStartTT();
         }
 
         std::uint64_t getCommittedGeneration() const {
-            return cmd_traj_info_.generation();
+            return planner_warm_start_.generation();
         }
 
         CommandCertificate getCommittedCertificate() const {
-            return cmd_traj_info_.certificate();
+            return planner_warm_start_.certificate();
         }
 
         CommittedTrajectorySnapshot committedTrajectorySnapshot() const {
-            return cmd_traj_info_.snapshot();
+            return planner_warm_start_.snapshot();
         }
 
         std::uint64_t committedGenerationSnapshot() const {
-            return cmd_traj_info_.generationSnapshot();
+            return planner_warm_start_.generationSnapshot();
         }
 
         CommittedTrajectoryMetadata committedMetadataSnapshot() const {
-            return cmd_traj_info_.metadataSnapshot();
+            return planner_warm_start_.metadataSnapshot();
         }
 
         Vec3f latestGuideStart() const { return latest_guide_start_; }
@@ -338,7 +339,7 @@ namespace navigation_planning_backend {
         void onExecutionTimelineActivated(std::uint64_t generation) noexcept;
         [[nodiscard]] bool hasStagedCommandCandidate() const {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-            return staged_command_candidate_.has_value();
+            return staged_planner_candidate_.has_value();
         }
 
         // Runtime sets the immutable mission identity before a solve starts.
@@ -350,7 +351,7 @@ namespace navigation_planning_backend {
             }
             {
                 std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-                staged_command_candidate_.reset();
+                staged_planner_candidate_.reset();
             }
             std::lock_guard<std::mutex> guard(command_identity_mutex_);
             command_identity_ = identity;

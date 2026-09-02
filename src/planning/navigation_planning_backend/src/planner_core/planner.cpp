@@ -599,7 +599,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 // fold gate is bypassed only for this bounded STOP correction;
                 // world, dynamic, yaw, anchor, and handoff certificates still
                 // authorize the candidate independently.
-                const auto previous = cmd_traj_info_.snapshot();
+                const auto previous = planner_warm_start_.snapshot();
                 const bool previous_was_emergency =
                     !previous.empty && previous.emergency_brake &&
                     previous.identity.localization_epoch ==
@@ -694,9 +694,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 certificate.validated_world = commit_lease.identity;
                 std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
                 if (solve_cancelled_.load()) return false;
-                if (!cmd_traj_info_.canCommitCandidate(candidate)) return false;
-                staged_command_candidate_ = StagedCommandCandidate{
-                    std::move(candidate), certificate, cmd_traj_info_.nextGeneration(),
+                if (!planner_warm_start_.canCommitCandidate(candidate)) return false;
+                staged_planner_candidate_ = StagedCommandCandidate{
+                    std::move(candidate), certificate, planner_warm_start_.nextGeneration(),
                     std::nullopt, false};
                 return true;
             });
@@ -712,41 +712,41 @@ std::optional<double> firstRouteBoundaryEntryTime(
     bool Planner::stageCommandHistoryForCandidate(const ExpTraj& exp_traj) {
         if (exp_traj.empty()) return false;
         std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-        if (!staged_command_candidate_) return false;
+        if (!staged_planner_candidate_) return false;
         // The EXP trajectory is only a warm-start hint for the next solve.
         // Promote it together with the execution timeline activation.
-        staged_command_candidate_->pending_exp_history = exp_traj;
-        staged_command_candidate_->clear_new_goal_on_ack = true;
+        staged_planner_candidate_->pending_exp_history = exp_traj;
+        staged_planner_candidate_->clear_new_goal_on_activation = true;
         return true;
     }
 
     void Planner::onExecutionTimelineActivated(
             const std::uint64_t generation) noexcept {
         std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-        if (!staged_command_candidate_ ||
-            staged_command_candidate_->generation != generation) {
+        if (!staged_planner_candidate_ ||
+            staged_planner_candidate_->generation != generation) {
             return;
         }
-        auto staged = std::move(*staged_command_candidate_);
-        if (!cmd_traj_info_.commitCandidate(
+        auto staged = std::move(*staged_planner_candidate_);
+        if (!planner_warm_start_.commitCandidate(
                 std::move(staged.command), staged.certificate)) {
             planner_context_->error(
                 " -- [planner] execution activated generation={} but warm-start "
                 "cache synchronization failed; execution remains authoritative",
                 generation);
-            staged_command_candidate_.reset();
+            staged_planner_candidate_.reset();
             return;
         }
         if (staged.pending_exp_history.has_value()) {
-            last_exp_traj_info_ = std::move(*staged.pending_exp_history);
+            planner_previous_exp_ = std::move(*staged.pending_exp_history);
         }
-        if (staged.clear_new_goal_on_ack) gi_.new_goal = false;
-        staged_command_candidate_.reset();
+        if (staged.clear_new_goal_on_activation) gi_.new_goal = false;
+        staged_planner_candidate_.reset();
     }
 
     void Planner::discardCommandCandidate() noexcept {
         std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-        staged_command_candidate_.reset();
+        staged_planner_candidate_.reset();
     }
 
     std::optional<navigation_planning::CandidateBundle>
@@ -1060,9 +1060,9 @@ std::optional<double> firstRouteBoundaryEntryTime(
         /// 2) Generate Exp traj
         ExpTraj exp_traj_info;
         BackupTraj back_traj_info;
-        last_exp_traj_info_.setEmpty();
+        planner_previous_exp_.setEmpty();
         local_start_p_ = local_star_pt;
-        ExpTraj previous_exp_snapshot = last_exp_traj_info_;
+        ExpTraj previous_exp_snapshot = planner_previous_exp_;
         RET_CODE exp_ret_code = generateExpTraj(
                 previous_exp_snapshot, exp_traj_info, solve_deadline);
         //GenerateRestToRestExpTraj(local_star_pt, exp_traj_info);
@@ -1129,7 +1129,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // For visualization
             {
                 TimeConsuming t_viz("viz goal VisualizeCommitTrajectory", false);
-                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), cmd_traj_info_.getBackupTrajStartTT());
+                planner_context_->vizCommittedTraj(planner_warm_start_.posTraj(), planner_warm_start_.getBackupTrajStartTT());
                 time_consuming_[VISUALIZATION] += t_viz.stop();
                 latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS_WITH_BACKUP);
             }
@@ -1159,7 +1159,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             // For visualization
             TimeConsuming t_viz("viz goal VisualizeCommitTrajectory", false);
             {
-                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                planner_context_->vizCommittedTraj(planner_warm_start_.posTraj(), -1);
                 time_consuming_[VISUALIZATION] += t_viz.stop();
             }
             latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS_NO_BACKUP);
@@ -1223,7 +1223,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         /// 1) Replan EXP traj
         ExpTraj exp_traj_info;
         TimeConsuming t_exp("t_exp", false);
-        ExpTraj previous_exp_snapshot = last_exp_traj_info_;
+        ExpTraj previous_exp_snapshot = planner_previous_exp_;
         RET_CODE exp_ret_code = generateExpTraj(
                 previous_exp_snapshot, exp_traj_info, solve_deadline);
         time_consuming_[GENERATE_EXP_TRAJ] = t_exp.stop();
@@ -1322,17 +1322,17 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // belongs to a different command boundary; an active backup is kept
         // until its finite stop endpoint.
         const double command_time_now = planner_context_->getSimTime() -
-                cmd_traj_info_.getStartWallTime();
+                planner_warm_start_.getStartWallTime();
         const bool retain_backup_capable_command =
                 shouldRetainBackupCapableCommand(
-                    new_goal, cmd_traj_info_.backupTrajectoryAvailable());
+                    new_goal, planner_warm_start_.backupTrajectoryAvailable());
         if ((back_ret_code == NO_NEED || back_ret_code == FINISH) &&
             retain_backup_capable_command) {
             latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS);
             planner_context_->info(
                 " -- [planner] retaining backup-capable command instead of replacing it "
                 "with a main-only candidate elapsed={} backup_start={} result={}",
-                command_time_now, cmd_traj_info_.getBackupTrajStartTT(),
+                command_time_now, planner_warm_start_.getBackupTrajStartTT(),
                 RET_CODE_STR[back_ret_code].c_str());
             return NO_NEED;
         }
@@ -1367,7 +1367,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             {
                 // For visualization
                 TimeConsuming t_viz("tviz", false);
-                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), cmd_traj_info_.getBackupTrajStartTT());
+                planner_context_->vizCommittedTraj(planner_warm_start_.posTraj(), planner_warm_start_.getBackupTrajStartTT());
                 time_consuming_[VISUALIZATION] += t_viz.stop();
             }
 
@@ -1395,7 +1395,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
 
             {
                 TimeConsuming t_viz("tviz", false);
-                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                planner_context_->vizCommittedTraj(planner_warm_start_.posTraj(), -1);
                 time_consuming_[VISUALIZATION] += t_viz.stop();
 
             }
@@ -1423,7 +1423,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
 
             {
                 TimeConsuming t_viz("tviz", false);
-                planner_context_->vizCommittedTraj(cmd_traj_info_.posTraj(), -1);
+                planner_context_->vizCommittedTraj(planner_warm_start_.posTraj(), -1);
                 time_consuming_[VISUALIZATION] += t_viz.stop();
             }
 
@@ -1538,7 +1538,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
     }
 
     void Planner::getOneHeartbeatTime(double &start_WT_pos, bool &traj_finish) {
-        const auto committed = cmd_traj_info_.snapshot();
+        const auto committed = planner_warm_start_.snapshot();
         double eval_t = (planner_context_->getSimTime() -
                          committed.position.start_WT);
         traj_finish = false;
@@ -1551,11 +1551,11 @@ std::optional<double> firstRouteBoundaryEntryTime(
     }
 
     Trajectory Planner::getCommittedPositionTrajectory() {
-        return cmd_traj_info_.posTraj();
+        return planner_warm_start_.posTraj();
     }
 
     Trajectory Planner::getCommittedYawTrajectory() {
-        return cmd_traj_info_.yawTraj();
+        return planner_warm_start_.yawTraj();
     }
 
 
@@ -1574,7 +1574,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
 
     Planner::CommandSample Planner::sampleCommand() {
         CommandSample sample;
-        const auto committed = cmd_traj_info_.snapshot();
+        const auto committed = planner_warm_start_.snapshot();
         const double cur_t = planner_context_->getSimTime();
         const double cmd_start_WT = committed.position.start_WT;
         const double total_dur = committed.position.getTotalDuration();
@@ -1610,8 +1610,8 @@ std::optional<double> firstRouteBoundaryEntryTime(
         std::optional<StagedCommandCandidate> staged;
         {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-            if (!staged_command_candidate_) return std::nullopt;
-            staged = staged_command_candidate_;
+            if (!staged_planner_candidate_) return std::nullopt;
+            staged = staged_planner_candidate_;
         }
         return exportStagedCommandCandidate(
             staged->command, staged->certificate, staged->generation,
@@ -1807,7 +1807,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         // certificates remain valid; the bounded anchor-recovery supervisor
         // owns any explicit measured-state transition.
         if (!last_exp_traj_info.empty()) {
-            const auto committed = cmd_traj_info_.snapshot();
+            const auto committed = planner_warm_start_.snapshot();
             const double committed_start_WT = committed.position.start_WT;
             const double committed_duration = committed.position.getTotalDuration();
             const double committed_tt = std::clamp(
@@ -1911,13 +1911,13 @@ std::optional<double> firstRouteBoundaryEntryTime(
             replan_process_start_TT = -1;
             replan_state_TT = -1;
         } else {
-            guide_pos_traj = cmd_traj_info_.posTraj(); // last_exp_traj;
-            guide_yaw_traj = cmd_traj_info_.yawTraj(); //last_exp_traj_info.exp_yaw_traj;
+            guide_pos_traj = planner_warm_start_.posTraj(); // last_exp_traj;
+            guide_yaw_traj = planner_warm_start_.yawTraj(); //last_exp_traj_info.exp_yaw_traj;
             last_exp_traj = last_exp_traj_info.posTraj();
 
             replan_window = hotReplanWindow(
                     replan_process_start_WT, guide_pos_traj.start_WT,
-                    cfg_.replan_forward_dt_s, cmd_traj_info_.getTotalDuration());
+                    cfg_.replan_forward_dt_s, planner_warm_start_.getTotalDuration());
             if (!replan_window.valid) {
                 planner_context_->error(
                         " -- [generateExpTraj] invalid executable-command clock for hot replan");
@@ -1938,7 +1938,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             if (replan_window.reaches_command_end) {
                 out_exp_traj_info = last_exp_traj_info;
 
-                if (cmd_traj_info_.isTTOnBackupTraj(replan_process_start_TT)) {
+                if (planner_warm_start_.isTTOnBackupTraj(replan_process_start_TT)) {
                     if (cfg_.print_log)
                         planner_context_->warn(
                                 " -- [planner] Replan emergency stop; return FAILED and wait for a rest-state plan.");
@@ -1957,7 +1957,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                 // last_exp_traj_info is only the previous EXP planning
                 // history; it deliberately does not include the committed
                 // backup suffix.  Its endpoint can therefore be earlier than
-                // cmd_traj_info_'s executable endpoint.  Treating that
+                // planner_warm_start_'s executable endpoint.  Treating that
                 // historical endpoint as a completed command returns NO_NEED
                 // while a valid committed bundle is still running, preventing
                 // renewal of its finite command lease and causing a false
@@ -3035,7 +3035,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         TimeConsuming t_exp_opt("t_exp_opt", false);
         auto original_sfc = sfc;
         solve_stage_.store(4);
-        const auto committed_before_refinement = cmd_traj_info_.snapshot();
+        const auto committed_before_refinement = planner_warm_start_.snapshot();
         const double remaining_main_before_refinement_s =
             committed_before_refinement.empty
                 ? std::numeric_limits<double>::infinity()
@@ -3248,7 +3248,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
         double on_backup_end_TT{-1}, on_backup_start_TT{-1};
         if (!last_exp_traj_info.empty()) {
             const auto inherited_backup = inheritedBackupInterval(
-                    cmd_traj_info_.getBackupTrajStartTT(),
+                    planner_warm_start_.getBackupTrajStartTT(),
                     replan_window,
                     temp_exp_traj.getTotalDuration());
             if (!inherited_backup.valid) {
