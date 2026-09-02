@@ -81,6 +81,8 @@ class IkfomEstimator {
   [[nodiscard]] Eigen::VectorXd buildMeasurement(
       IkfomState& state, esekfom::dyn_share_datastruct<double>& data);
   [[nodiscard]] IkfomFilter::processnoisecovariance processNoise() const;
+  void enforceFixedGravity(IkfomState& state,
+                           IkfomFilter::cov& covariance) const;
 
   IkfomEstimatorConfig config_;
   ResidualBuilder residual_builder_;
@@ -97,6 +99,8 @@ class IkfomEstimator {
   Eigen::Quaterniond fixed_rotation_imu_lidar_{
       Eigen::Quaterniond::Identity()};
   Eigen::Vector3d fixed_position_imu_lidar_m_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d fixed_gravity_odom_m_s2_{0.0, 0.0, -9.80665};
+  bool gravity_initialized_{false};
 
   static thread_local IkfomEstimator* active_estimator_;
 };

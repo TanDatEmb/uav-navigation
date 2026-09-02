@@ -256,6 +256,55 @@ TEST(IkfomEstimatorTest, AcceptsFiniteTerminalIterateAtIterationLimit) {
             initial.position_odom_imu_m().z());
 }
 
+TEST(IkfomEstimatorTest, KeepsInitializedGravityFixedAcrossPredictionAndCorrection) {
+  IkfomEstimatorConfig config;
+  config.maximum_integration_step_ns = 20'000'000;
+  config.minimum_accepted_residuals = 5;
+  ResidualBuilderConfig residual_config;
+  residual_config.minimum_translation_observability_ratio = 0.0;
+  residual_config.correspondence_search.maximum_neighbor_distance_m = 1.0;
+  IkfomEstimator estimator(config, residual_config);
+  ManifoldState initial;
+  initial.set_gravity_odom_m_s2({0.02, -0.03, -9.80658});
+  estimator.initialize(initial);
+  const Eigen::Vector3d initialized_gravity =
+      estimator.stateView().gravity_odom_m_s2();
+
+  std::vector<ImuSample> samples(2);
+  samples[0].time = Timestamp(1);
+  samples[1].time = Timestamp(10'000'001);
+  for (auto& sample : samples) {
+    sample.linear_acceleration_imu_m_s2 = {0.1, -0.2, 9.80665};
+  }
+  ASSERT_TRUE(estimator.predict(samples, samples[0].time, samples[1].time).ok());
+
+  IkdTreeRegistrationMapConfig map_config;
+  map_config.voxel_size_m = 0.02;
+  IkdTreeRegistrationMap map(map_config);
+  std::vector<Eigen::Vector3d> plane;
+  for (int x = -4; x <= 4; ++x) {
+    for (int y = -4; y <= 4; ++y) plane.emplace_back(0.2 * x, 0.2 * y, 0.0);
+  }
+  ASSERT_GT(map.insert(plane), 0U);
+  const std::vector<Eigen::Vector3d> scan{
+      {-0.5, -0.5, 0.0}, {0.0, -0.5, 0.0}, {0.5, -0.5, 0.0},
+      {-0.5, 0.0, 0.0},  {0.0, 0.0, 0.0},  {0.5, 0.0, 0.0},
+      {-0.5, 0.5, 0.0},  {0.0, 0.5, 0.0},  {0.5, 0.5, 0.0},
+  };
+
+  const auto correction = estimator.correct(scan, map);
+
+  ASSERT_TRUE(correction.successful) << correction.reason;
+  EXPECT_LT((estimator.stateView().gravity_odom_m_s2() -
+             initialized_gravity)
+                .norm(),
+            1e-12);
+  const auto gravity_covariance_rows =
+      estimator.covariance().block<2, ManifoldState::kErrorStateDimension>(
+          ManifoldState::kGravityOffset, 0);
+  EXPECT_LT(gravity_covariance_rows.norm(), 2e-12);
+}
+
 TEST(IkfomEstimatorTest, CovarianceRemainsSymmetricAndPsdAcrossHundredsOfPredictions) {
   IkfomEstimatorConfig config;
   config.maximum_integration_step_ns = 20'000'000;

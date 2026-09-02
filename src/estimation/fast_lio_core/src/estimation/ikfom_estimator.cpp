@@ -175,14 +175,18 @@ IkfomEstimator::IkfomEstimator(IkfomEstimatorConfig config,
 void IkfomEstimator::initialize(const ManifoldState& state) {
   fixed_rotation_imu_lidar_ = state.rotation_imu_lidar();
   fixed_position_imu_lidar_m_ = state.position_imu_lidar_m();
+  fixed_gravity_odom_m_s2_ =
+      IkfomGravity{IkfomVector3{state.gravity_odom_m_s2()}}.get_vect();
+  gravity_initialized_ = true;
   IkfomState upstream_state = toIkfomState(state);
-  filter_.change_x(upstream_state);
   IkfomFilter::cov covariance =
       config_.initial_covariance * IkfomFilter::cov::Identity();
   covariance.block<3, 3>(6, 6) =
       1e-12 * Eigen::Matrix3d::Identity();
   covariance.block<3, 3>(9, 9) =
       1e-12 * Eigen::Matrix3d::Identity();
+  enforceFixedGravity(upstream_state, covariance);
+  filter_.change_x(upstream_state);
   filter_.change_P(covariance);
 }
 
@@ -193,6 +197,12 @@ void IkfomEstimator::rebase(
     const ManifoldState::Covariance& covariance) {
   IkfomState upstream_state = toIkfomState(state);
   IkfomFilter::cov upstream_covariance = covariance;
+  if (!gravity_initialized_) {
+    fixed_gravity_odom_m_s2_ =
+        IkfomGravity{IkfomVector3{state.gravity_odom_m_s2()}}.get_vect();
+    gravity_initialized_ = true;
+  }
+  enforceFixedGravity(upstream_state, upstream_covariance);
   filter_.change_x(upstream_state);
   filter_.change_P(upstream_covariance);
 }
@@ -362,7 +372,10 @@ IkfomCorrectionResult IkfomEstimator::correct(
   IkfomState fixed_state = filter_.get_x();
   fixed_state.offset_R_L_I = IkfomSo3{fixed_rotation_imu_lidar_};
   fixed_state.offset_T_L_I = fixed_position_imu_lidar_m_;
+  IkfomFilter::cov corrected_covariance = filter_.get_P();
+  enforceFixedGravity(fixed_state, corrected_covariance);
   filter_.change_x(fixed_state);
+  filter_.change_P(corrected_covariance);
   result.corrected_state = stateView();
   result.corrected_covariance = covariance();
   result.residual_diagnostics = last_residual_diagnostics_;
@@ -417,6 +430,22 @@ IkfomCorrectionResult IkfomEstimator::correct(
   active_points_ = {};
   active_map_ = nullptr;
   return result;
+}
+
+void IkfomEstimator::enforceFixedGravity(
+    IkfomState& state, IkfomFilter::cov& covariance) const {
+  if (!gravity_initialized_ || !fixed_gravity_odom_m_s2_.allFinite() ||
+      fixed_gravity_odom_m_s2_.squaredNorm() <= 1e-18) {
+    return;
+  }
+  state.grav = IkfomGravity{IkfomVector3{fixed_gravity_odom_m_s2_}};
+  covariance.block<2, IkfomState::DOF>(ManifoldState::kGravityOffset, 0)
+      .setZero();
+  covariance.block<IkfomState::DOF, 2>(0, ManifoldState::kGravityOffset)
+      .setZero();
+  covariance.block<2, 2>(ManifoldState::kGravityOffset,
+                         ManifoldState::kGravityOffset) =
+      1e-12 * Eigen::Matrix2d::Identity();
 }
 
 ManifoldState IkfomEstimator::stateView() const {
