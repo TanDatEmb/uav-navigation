@@ -1,5 +1,29 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Separate initial producer start from measured-state freshness
+
+- **Owner/status:** planner candidate export boundary, `IMPLEMENTED`; focused
+  regression/build evidence is pending, SITL qualification remains open.
+- **Scope:** an initial stopped-state candidate now uses its producer-declared
+  trajectory start as both `valid_from_ns` and activation metadata. The
+  request's measured execution stamp remains the freshness/identity witness;
+  scheduled successors still use the exact future activation reserved from
+  the execution-owned anchor.
+- **Safety impact:** fixes a false candidate rejection caused by solve latency
+  without extending an executable interval or moving a successor activation.
+  Candidate world, dynamic, flatness, route, MAIN reserve, freshness, and PX4
+  boundary gates remain unchanged.
+- **Evidence:** the SITL artifact showed A*/corridor and complete BACKUP seed
+  work before the metadata rejection; focused tests/build and a rerun must
+  verify initial candidate admission and command publication.
+- **Removal/review condition:** retain while initial and scheduled candidate
+  paths share the typed export boundary; remove only with a replacement that
+  preserves exact integer activation/validity metadata.
+- **Verification:** `colcon build --packages-select navigation_planning
+  navigation_execution navigation_planning_backend navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON`; sourced-overlay CTest for all four
+  packages; repeated representative SITL with candidate/activation evidence.
+
 ### 2026-09-02 - Keep initial planning history consistent with bundle identity
 
 - **Owner/status:** typed planning request ingress, `IMPLEMENTED`; focused

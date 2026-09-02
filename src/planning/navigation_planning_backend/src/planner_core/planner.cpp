@@ -794,7 +794,14 @@ std::optional<double> firstRouteBoundaryEntryTime(
         candidate.goal_epoch = goal_epoch;
         candidate.request_id = request_id;
         candidate.bundle_generation = generation;
-        candidate.activation_stamp_ns = valid_from_ns;
+        // For an initial command, the measured-state request's anchor stamp
+        // is an input freshness witness and can precede the trajectory's
+        // producer-declared start while the solve is running. A moving
+        // successor passes its exact future activation here, which is equal
+        // to start_ns by contract. Keep the candidate interval and its
+        // activation metadata on the same integer boundary in both cases.
+        const auto candidate_valid_from_ns = std::max(valid_from_ns, *start_ns);
+        candidate.activation_stamp_ns = candidate_valid_from_ns;
         // The trajectory object is the authoritative producer of the wall
         // clock used by both the evaluator and the execution lease. Do not
         // copy the construction-time mirror: a stale/default mirror would
@@ -840,7 +847,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
                         ? navigation_planning::CandidateRole::kBackup
                         : navigation_planning::CandidateRole::kMain});
         }
-        candidate.valid_from_ns = std::max(valid_from_ns, *start_ns);
+        candidate.valid_from_ns = candidate_valid_from_ns;
         candidate.valid_until_ns = std::min(valid_until_ns, *declared_end_ns);
         if (candidate.valid_until_ns < candidate.valid_from_ns) return std::nullopt;
         candidate.evaluator = [position = command.position,
