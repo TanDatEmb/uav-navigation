@@ -1,5 +1,49 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Keep initialized gravity fixed in the odom frame
+
+- **Owner/status:** FAST-LIO IKFoM estimator; `IMPLEMENTED`, SITL
+  revalidation required.
+- **Scope:** after estimator initialization, retain the initialized odom-frame
+  gravity vector through rebase, IMU prediction, and LiDAR correction. The
+  corresponding two-dimensional S2 covariance rows and columns are reset to a
+  near-zero deterministic prior so LiDAR residuals cannot move gravity through
+  state cross-covariance.
+- **Safety impact:** this removes an unphysical estimator degree of freedom;
+  it does not relax a safety gate, alter command generation, or use ground
+  truth. If the fixed state or covariance is invalid, existing estimator
+  validation remains fail-closed.
+- **Evidence:** the representative long multi-pillar run had zero IMU/LiDAR
+  drops and a persistent FAST-LIO attitude/vertical drift; the new diagnostic
+  showed the internal gravity state tilting during motion. Gravity is constant
+  in the initialized odom frame for this stationary-start product contract.
+- **Removal/review condition:** revisit only if a supported in-flight frame
+  reinitialization contract explicitly requires estimating gravity again and
+  supplies corresponding observability evidence.
+- **Verification:** `test_ikfom_estimator`, `test_ikfom_compact_equivalence`,
+  FAST-LIO core/ROS CTest, and repeated representative multi-obstacle SITL
+  with the gravity diagnostics recorded.
+
+### 2026-09-02 - Expose estimator gravity state for drift diagnosis
+
+- **Owner/status:** FAST-LIO ROS diagnostics; `IMPLEMENTED`, diagnosis remains
+  open.
+- **Scope:** the existing estimator health diagnostic snapshot now carries the
+  internal ENU gravity vector as three read-only key/value fields. The values
+  are not consumed by FAST-LIO, mapping, planning, PX4, or any safety gate.
+- **Safety impact:** observability only; no estimator update, covariance,
+  threshold, fallback, or command behavior changes. A malformed diagnostic
+  value cannot grant execution because typed health and runtime gates do not
+  consume these fields.
+- **Evidence:** the representative multi-pillar run showed smooth IMU and
+  LiDAR transport but a persistent FAST-LIO attitude/position drift. The
+  gravity state is needed to distinguish estimator gravity-state motion from
+  scan-registration bias before changing estimation behavior.
+- **Removal/review condition:** remove when the drift root cause is closed by a
+  permanent estimator diagnostic or an equivalent artifact-level state trace.
+- **Verification:** affected FAST-LIO ROS build/tests and a representative
+  multi-obstacle SITL artifact containing the three gravity fields.
+
 ### 2026-09-02 - Keep genuine pass-through corners on the measured handoff
 
 - **Owner/status:** pass-through route-window geometry, `IMPLEMENTED`; focused

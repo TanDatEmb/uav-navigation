@@ -88,6 +88,7 @@ class RosOutputPublisher {
     double translation_observability_max_eigenvalue{0.0};
     double translation_observability_ratio{0.0};
     bool translation_observability_valid{false};
+    Eigen::Vector3d gravity_odom_m_s2{Eigen::Vector3d::Zero()};
     std::int64_t measurement_model_us{0};
     std::int64_t ikfom_solver_only_us{0};
     std::size_t map_size_after_insert{0};

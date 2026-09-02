@@ -368,6 +368,7 @@ void RosOutputPublisher::publish(const ProcessResult& result,
       result.diagnostics.registration.translation_observability_ratio;
   health.translation_observability_valid =
       result.diagnostics.registration.translation_observability_valid;
+  health.gravity_odom_m_s2 = result.diagnostics.state.gravity_odom_m_s2;
   health.measurement_model_us = result.diagnostics.timing.measurement_model_us;
   health.ikfom_solver_only_us = result.diagnostics.timing.ikfom_solver_only_us;
   health.map_size_after_insert = result.diagnostics.map.map_size_after_insert;
@@ -650,6 +651,12 @@ void RosOutputPublisher::publishDiagnostics(const EstimatorHealthSnapshot& healt
                std::to_string(health.translation_observability_max_eigenvalue)),
       keyValue("translation_observability_ratio",
                std::to_string(health.translation_observability_ratio)),
+      keyValue("gravity_odom_x_m_s2",
+               std::to_string(health.gravity_odom_m_s2.x())),
+      keyValue("gravity_odom_y_m_s2",
+               std::to_string(health.gravity_odom_m_s2.y())),
+      keyValue("gravity_odom_z_m_s2",
+               std::to_string(health.gravity_odom_m_s2.z())),
       keyValue("observability_rejection_count",
                std::to_string(health.observability_rejection_count)),
       keyValue("last_failure_code", toString(health.failure_class)),
