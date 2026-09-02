@@ -674,8 +674,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         // the world identity; a concurrent planner commit is either retained
         // by its exact generation/protected-region proof or rejected on the
         // next immutable callback.
-        const auto expected_bundle = command_store->load();
-        const auto expected_pending = command_store->loadPending();
+        const auto execution_timeline = command_store->snapshot();
+        const auto expected_bundle = execution_timeline.active;
+        const auto expected_pending = execution_timeline.pending;
         std::optional<navigation_contracts::msg::NavigationGoal> expected_goal;
         if (expected_bundle) {
           std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
@@ -853,9 +854,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         // certificate transition share one gate.  A retained bundle is copied
         // with the new identity only when the exact pointer was validated on
         // this snapshot; otherwise it is cleared fail-closed.
-        const bool finalized = store->publishAndFinalize(
+        const auto publication_decision = store->publishAndFinalizeDecision(
             result.snapshot,
             [command_store, expected_bundle, expected_pending,
+             execution_timeline_version = execution_timeline.version,
              retain_validated_bundle, retain_validated_pending,
              identity = result.snapshot->identity(),
              refreshed_valid_until_ns = [&] {
@@ -865,19 +867,24 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                           ? std::numeric_limits<std::int64_t>::max()
                           : now_ns + data_freshness_window_ns_;
              }()] {
-              std::optional<std::shared_ptr<const navigation_planning::CandidateBundle>>
-                  recertified_pending;
-              if (retain_validated_pending && expected_pending) {
-                recertified_pending = command_store->recertifyPendingWorldIdentity(
-                    identity, expected_pending);
-              }
-              return command_store->publishWorldIdentity(
-                  identity, expected_bundle, retain_validated_bundle,
+              return command_store->publishWorldIdentityIfCurrent(
+                  identity, execution_timeline_version,
+                  expected_bundle, retain_validated_bundle,
                   refreshed_valid_until_ns,
-                  recertified_pending ? *recertified_pending : nullptr,
-                  recertified_pending.has_value());
+                  expected_pending, retain_validated_pending);
             });
-        if (!finalized) {
+        if (publication_decision == navigation_world_model::WorldCommitDecision::kSuperseded) {
+          next.map_update_us = result.map_update_us;
+          next.mapping_callback_total_us =
+              std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - callback_started).count();
+          telemetry->recordUpdate(std::move(next));
+          RCLCPP_DEBUG(
+              this->get_logger(),
+              "world refresh superseded by a newer execution timeline; preserving active/pending bundle");
+          return;
+        }
+        if (publication_decision != navigation_world_model::WorldCommitDecision::kCommitted) {
           command_store->invalidate();
           next.map_update_us = result.map_update_us;
           next.mapping_callback_total_us =
@@ -886,8 +893,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           telemetry->recordUpdate(std::move(next));
           RCLCPP_ERROR(
               this->get_logger(),
-              "world snapshot publication could not finalize the execution certificate; "
-              "mapping worker will fail-stop because the new world was not published");
+              "world snapshot publication could not finalize the execution certificate "
+              "decision=%d; mapping worker will fail-stop because the new world was not published",
+              static_cast<int>(publication_decision));
           throw std::runtime_error(
               "world snapshot publication could not finalize its execution certificate");
         }
@@ -4899,7 +4907,7 @@ void NavigationRuntimeNode::publishCommand() {
           get_logger(), *get_clock(), 1000,
           "command sampler returned no point stamp_ns=%lld goal_epoch=%lu "
           "active_bundle=%d active_generation=%lu pending=%d pending_generation=%lu "
-          "awaiting_activation=%d",
+          "awaiting_activation=%d status=%d timeline_version=%lu",
           static_cast<long long>(command_ros_time.nanoseconds()),
           static_cast<unsigned long>(goal_epoch_at_command),
           command_bundle_at_sample ? 1 : 0,
@@ -4908,7 +4916,9 @@ void NavigationRuntimeNode::publishCommand() {
               : 0UL,
           sample.bundle ? 1 : 0,
           sample.bundle ? static_cast<unsigned long>(sample.bundle->bundle_generation) : 0UL,
-          sample.awaiting_activation ? 1 : 0);
+          sample.awaiting_activation ? 1 : 0,
+          static_cast<int>(sample.status),
+          static_cast<unsigned long>(sample.timeline_version));
       if (sample.awaiting_activation) {
         // A committed candidate may start a few milliseconds after the
         // publication tick that committed it. Keep the immutable bundle and

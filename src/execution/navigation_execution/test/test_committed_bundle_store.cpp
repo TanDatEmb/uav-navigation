@@ -214,11 +214,14 @@ TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
   EXPECT_FALSE(static_cast<bool>(before_activation));
   ASSERT_TRUE(before_activation.bundle);
   EXPECT_TRUE(before_activation.awaiting_activation);
+  EXPECT_EQ(before_activation.status,
+            navigation_execution::SampleStatus::kAwaitingActivation);
   EXPECT_EQ(evaluations, 0U);
 
   const auto active = sampler.sample(100);
   ASSERT_TRUE(static_cast<bool>(active));
   EXPECT_FALSE(active.awaiting_activation);
+  EXPECT_EQ(active.status, navigation_execution::SampleStatus::kActiveSample);
   EXPECT_EQ(evaluations, 1U);
   EXPECT_DOUBLE_EQ(active.point->position_world.x(), 100.0);
 
@@ -226,11 +229,13 @@ TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
   EXPECT_FALSE(static_cast<bool>(expired));
   ASSERT_TRUE(expired.bundle);
   EXPECT_FALSE(expired.awaiting_activation);
+  EXPECT_EQ(expired.status, navigation_execution::SampleStatus::kExpiredLease);
   EXPECT_EQ(evaluations, 1U);
 
   const auto planned_hold = sampler.sample(401);
   ASSERT_TRUE(static_cast<bool>(planned_hold));
   EXPECT_TRUE(planned_hold.planned_stop_hold);
+  EXPECT_EQ(planned_hold.status, navigation_execution::SampleStatus::kStoppedHold);
   EXPECT_TRUE(planned_hold.point->finished);
   // The sampler returns the endpoint only as a typed hold fallback; it does
   // not evaluate the expired command again.
@@ -623,6 +628,66 @@ TEST(CommittedBundleStore, RecertificationMismatchOrGoalChangeClearsBundle) {
   const auto next_world = navigation_world_model::WorldSnapshotIdentity{3, 4, 2, 2};
   ASSERT_TRUE(store.publishWorldIdentity(next_world, unrelated_bundle, true));
   EXPECT_FALSE(store.load());
+}
+
+TEST(ExecutionTimelineStore, SupersededWorldRefreshPreservesNewCommit) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto first = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, first),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto old_timeline = store.snapshot();
+
+  auto replacement = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 2));
+  auto replacement_copy = std::make_shared<navigation_planning::CandidateBundle>(*replacement);
+  replacement_copy->world_identity = world;
+  replacement_copy->pinned_world_identity = world;
+  replacement = std::shared_ptr<const navigation_planning::CandidateBundle>(
+      std::move(replacement_copy));
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, replacement),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto next_world = navigation_world_model::WorldSnapshotIdentity{3, 4, 2, 2};
+  EXPECT_EQ(store.publishWorldIdentityIfCurrent(
+                next_world, old_timeline.version, old_timeline.active, true, 300),
+            navigation_world_model::WorldCommitDecision::kSuperseded);
+  EXPECT_EQ(store.load(), replacement);
+  EXPECT_EQ(store.snapshot().world_identity->revision, world.revision);
+}
+
+TEST(ExecutionTimelineStore, RefreshKeepsActiveWhenPendingIsInvalid) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto pending = candidateFor(7, 1);
+  pending.valid_from_ns = 50;
+  pending.valid_until_ns = 90;
+  pending.activation_stamp_ns = 50;
+  auto pending_ptr = std::make_shared<const navigation_planning::CandidateBundle>(pending);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, pending_ptr),
+            navigation_execution::StageDecision::kStaged);
+  const auto old_timeline = store.snapshot();
+  const auto next_world = navigation_world_model::WorldSnapshotIdentity{3, 4, 2, 2};
+
+  ASSERT_EQ(store.publishWorldIdentityIfCurrent(
+                next_world, old_timeline.version, old_timeline.active, true, 300,
+                old_timeline.pending, false),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+  ASSERT_TRUE(store.load());
+  EXPECT_NE(store.load(), active);
+  EXPECT_EQ(store.load()->valid_from_ns, active->valid_from_ns);
+  EXPECT_FALSE(store.loadPending());
+  EXPECT_EQ(store.snapshot().world_identity->revision, next_world.revision);
 }
 
 TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {

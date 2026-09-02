@@ -21,6 +21,10 @@ enum class WorldCommitDecision {
   kCommitted,
   kNoPublishedWorld,
   kWorldAdvanced,
+  // A dependent transaction was prepared from an older execution timeline.
+  // The immutable world must not be published by that attempt, and callers
+  // must preserve the newer execution state instead of invalidating it.
+  kSuperseded,
   kCancelled,
   kCandidateRejected,
 };

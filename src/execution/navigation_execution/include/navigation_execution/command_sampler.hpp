@@ -7,6 +7,16 @@
 
 namespace navigation_execution {
 
+enum class SampleStatus : std::uint8_t {
+  kNoActiveBundle,
+  kAwaitingActivation,
+  kActiveSample,
+  kStoppedHold,
+  kExpiredLease,
+  kGoalMismatch,
+  kEvaluatorFailure,
+};
+
 struct SampleResult {
   std::shared_ptr<const navigation_planning::CandidateBundle> bundle;
   std::optional<navigation_planning::TrajectoryPoint> point;
@@ -14,6 +24,8 @@ struct SampleResult {
   // The analytic lease ended. The point is a bounded STOPPED_HOLD fallback,
   // never an extension of the trajectory evaluator.
   bool planned_stop_hold{false};
+  SampleStatus status{SampleStatus::kNoActiveBundle};
+  std::uint64_t timeline_version{0};
 
   [[nodiscard]] explicit operator bool() const noexcept {
     return static_cast<bool>(bundle) && point.has_value();
@@ -40,20 +52,29 @@ class CommandSampler final {
   [[nodiscard]] SampleResult sampleActive(
       std::int64_t stamp_ns,
       std::uint64_t expected_goal_epoch) const noexcept {
-    auto bundle = store_.load();
+    const auto timeline = store_.snapshot();
+    auto bundle = timeline.active;
     if (!bundle) {
-      auto pending = store_.loadPending();
-      if (!pending || (expected_goal_epoch != 0U &&
-                       pending->goal_epoch != expected_goal_epoch)) return {};
-      return {std::move(pending), std::nullopt, true};
+      auto pending = timeline.pending;
+      if (!pending) return {nullptr, std::nullopt, false, false,
+                            SampleStatus::kNoActiveBundle, timeline.version};
+      if (expected_goal_epoch != 0U &&
+          pending->goal_epoch != expected_goal_epoch) {
+        return {std::move(pending), std::nullopt, false, false,
+                SampleStatus::kGoalMismatch, timeline.version};
+      }
+      return {std::move(pending), std::nullopt, true, false,
+              SampleStatus::kAwaitingActivation, timeline.version};
     }
     // A retained bundle may outlive a hot-retarget transition in the store.
     // Never let the runtime relabel that old trajectory as the new goal.
     if (expected_goal_epoch != 0U && bundle->goal_epoch != expected_goal_epoch) {
-      return {};
+      return {std::move(bundle), std::nullopt, false, false,
+              SampleStatus::kGoalMismatch, timeline.version};
     }
     if (stamp_ns < bundle->valid_from_ns) {
-      return {std::move(bundle), std::nullopt, true};
+      return {std::move(bundle), std::nullopt, true, false,
+              SampleStatus::kAwaitingActivation, timeline.version};
     }
     try {
       auto point = bundle->sample(stamp_ns);
@@ -68,14 +89,22 @@ class CommandSampler final {
         // known-free and measured-proximity checks.
         auto endpoint = bundle->sampleAtDeclaredEnd();
         if (endpoint) {
-          return {std::move(bundle), std::move(endpoint), false, true};
+          return {std::move(bundle), std::move(endpoint), false, true,
+                  SampleStatus::kStoppedHold, timeline.version};
         }
       }
-      return {std::move(bundle), std::move(point), false};
+      const auto status = point
+          ? SampleStatus::kActiveSample
+          : (stamp_ns > bundle->valid_until_ns
+                 ? SampleStatus::kExpiredLease
+                 : SampleStatus::kEvaluatorFailure);
+      return {std::move(bundle), std::move(point), false, false, status,
+              timeline.version};
     } catch (...) {
       // Preserve the bundle identity so the runtime can distinguish a
       // malformed/expired sample from a world-recertification gap.
-      return {std::move(bundle), std::nullopt, false};
+      return {std::move(bundle), std::nullopt, false, false,
+              SampleStatus::kEvaluatorFailure, timeline.version};
     }
   }
 

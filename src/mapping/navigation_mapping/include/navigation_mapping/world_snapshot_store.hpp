@@ -4,6 +4,7 @@
 #include <functional>
 #include <mutex>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 #include <navigation_world_model/world_model_view.hpp>
@@ -67,6 +68,19 @@ class WorldSnapshotStore final
   template <typename FinalizeFunction>
   bool publishAndFinalize(navigation_world_model::WorldModelViewPtr next,
                           FinalizeFunction&& finalize) {
+    return publishAndFinalizeDecision(std::move(next),
+                                      std::forward<FinalizeFunction>(finalize)) ==
+        navigation_world_model::WorldCommitDecision::kCommitted;
+  }
+
+  // Typed form of publishAndFinalize.  A stale dependent transaction is a
+  // normal optimistic-concurrency outcome, not a finalization failure: leave
+  // the old world visible and let the newer callback retry from a fresh
+  // execution snapshot.
+  template <typename FinalizeFunction>
+  navigation_world_model::WorldCommitDecision publishAndFinalizeDecision(
+      navigation_world_model::WorldModelViewPtr next,
+      FinalizeFunction&& finalize) {
     if (!next) throw std::invalid_argument("cannot publish a null WorldModel snapshot");
     const auto next_identity = next->identity();
     if (next_identity.localization_epoch == 0U || next_identity.generation == 0U ||
@@ -79,15 +93,24 @@ class WorldSnapshotStore final
       throw std::logic_error("WorldModel publication identity is not monotonic");
     }
     try {
-      if (!std::invoke(std::forward<FinalizeFunction>(finalize))) return false;
+      using FinalizeResult = std::decay_t<std::invoke_result_t<FinalizeFunction>>;
+      if constexpr (std::is_same_v<FinalizeResult,
+                                   navigation_world_model::WorldCommitDecision>) {
+        const auto decision = std::invoke(std::forward<FinalizeFunction>(finalize));
+        if (decision != navigation_world_model::WorldCommitDecision::kCommitted) {
+          return decision;
+        }
+      } else if (!std::invoke(std::forward<FinalizeFunction>(finalize))) {
+        return navigation_world_model::WorldCommitDecision::kCancelled;
+      }
     } catch (...) {
-      return false;
+      return navigation_world_model::WorldCommitDecision::kCancelled;
     }
     // Keep the old world visible until all dependent execution state has been
     // invalidated or recertified.  Readers therefore cannot observe a new
     // world while an old-world command is still the only available bundle.
     latest_.store(std::move(next), std::memory_order_release);
-    return true;
+    return navigation_world_model::WorldCommitDecision::kCommitted;
   }
 
   template <typename CommitFunction>

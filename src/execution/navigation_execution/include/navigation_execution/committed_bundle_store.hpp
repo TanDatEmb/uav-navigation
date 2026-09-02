@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -12,6 +13,7 @@
 #include <navigation_common/time.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_execution/execution_anchor.hpp>
+#include <navigation_world_model/world_commit_authorizer.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 
 namespace navigation_execution {
@@ -20,6 +22,14 @@ struct CommitToken {
   navigation_world_model::WorldSnapshotIdentity world_identity;
   std::uint64_t goal_epoch{0};
   std::uint64_t transaction_id{0};
+};
+
+struct ExecutionTimelineSnapshot {
+  std::uint64_t version{0};
+  std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity;
+  std::shared_ptr<const navigation_planning::CandidateBundle> active;
+  std::shared_ptr<const navigation_planning::CandidateBundle> pending;
+  std::int64_t pending_activation_ns{0};
 };
 
 enum class CommitDecision : std::uint8_t {
@@ -66,6 +76,7 @@ class ExecutionTimelineStore final {
     if (!retain_committed_bundle) committed_.reset();
     pending_.reset();
     pending_activation_ns_ = 0;
+    ++timeline_version_;
     return true;
   }
 
@@ -92,10 +103,12 @@ class ExecutionTimelineStore final {
     rebound->request_id = new_request_id;
     if (!rebound->valid()) {
       committed_.reset();
+      ++timeline_version_;
       return false;
     }
     committed_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
         std::move(rebound));
+    ++timeline_version_;
     return true;
   }
 
@@ -171,7 +184,85 @@ class ExecutionTimelineStore final {
       pending_activation_ns_ = 0;
     }
     world_identity_ = identity;
+    ++timeline_version_;
     return true;
+  }
+
+  // Apply a world refresh only if the exact execution timeline observed before
+  // validation is still current.  The active and pending pointers are
+  // checked independently: an invalid pending successor must not discard a
+  // valid active command.  A superseded refresh is a no-op.
+  navigation_world_model::WorldCommitDecision publishWorldIdentityIfCurrent(
+      const navigation_world_model::WorldSnapshotIdentity& identity,
+      std::uint64_t expected_timeline_version,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_bundle,
+      bool retain_validated_bundle,
+      std::int64_t refreshed_valid_until_ns = 0,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending = {},
+      bool retain_validated_pending = false) noexcept {
+    if (identity.localization_epoch == 0U || identity.generation == 0U ||
+        identity.revision == 0U || identity.observation_stamp_ns <= 0) {
+      return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+    }
+    std::lock_guard lock(mutex_);
+    if (timeline_version_ != expected_timeline_version) {
+      return navigation_world_model::WorldCommitDecision::kSuperseded;
+    }
+    if (world_identity_ && !advances(*world_identity_, identity)) {
+      return navigation_world_model::WorldCommitDecision::kWorldAdvanced;
+    }
+
+    const bool active_matches = retain_validated_bundle && expected_bundle && committed_ &&
+        committed_.get() == expected_bundle.get() && world_identity_ &&
+        active_goal_epoch_ == expected_bundle->goal_epoch &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected_bundle->world_identity);
+    if (active_matches) {
+      auto recertified = std::make_shared<navigation_planning::CandidateBundle>(*committed_);
+      recertified->world_identity = identity;
+      if (refreshed_valid_until_ns > recertified->valid_until_ns) {
+        auto renewed_until_ns = refreshed_valid_until_ns;
+        if (recertified->hasDeclaredEndpointMetadata()) {
+          const auto endpoint_ns = navigation_common::secondsSumToNanoseconds(
+              recertified->start_wall_time_s, recertified->duration_s);
+          if (!endpoint_ns || *endpoint_ns <= 0) {
+            return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+          }
+          renewed_until_ns = std::min(renewed_until_ns, *endpoint_ns);
+        }
+        recertified->valid_until_ns = renewed_until_ns;
+      }
+      if (!recertified->valid()) {
+        return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+      }
+      committed_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
+          std::move(recertified));
+    } else {
+      committed_.reset();
+    }
+
+    const bool pending_matches = retain_validated_pending && expected_pending && pending_ &&
+        pending_.get() == expected_pending.get() && pending_->valid() && world_identity_ &&
+        pending_->goal_epoch == active_goal_epoch_ &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            pending_->world_identity, *world_identity_);
+    if (pending_matches) {
+      auto recertified = std::make_shared<navigation_planning::CandidateBundle>(*pending_);
+      recertified->world_identity = identity;
+      if (!recertified->valid()) {
+        pending_.reset();
+        pending_activation_ns_ = 0;
+      } else {
+        pending_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
+            std::move(recertified));
+      }
+    } else {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+    }
+    world_identity_ = identity;
+    ++timeline_version_;
+    return navigation_world_model::WorldCommitDecision::kCommitted;
   }
 
   // Replace a pending successor's world identity after an external immutable
@@ -210,6 +301,12 @@ class ExecutionTimelineStore final {
       const noexcept {
     std::lock_guard lock(mutex_);
     return committed_;
+  }
+
+  [[nodiscard]] ExecutionTimelineSnapshot snapshot() const noexcept {
+    std::lock_guard lock(mutex_);
+    return {timeline_version_, world_identity_, committed_, pending_,
+            pending_activation_ns_};
   }
 
   [[nodiscard]] std::shared_ptr<const navigation_planning::CandidateBundle>
@@ -298,6 +395,7 @@ class ExecutionTimelineStore final {
     pending_ = std::move(candidate);
     pending_activation_ns_ = anchor.activation_stamp_ns;
     last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
     return StageDecision::kStaged;
   }
 
@@ -335,6 +433,7 @@ class ExecutionTimelineStore final {
     pending_ = std::move(candidate);
     pending_activation_ns_ = anchor.activation_stamp_ns;
     last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
     bool finalized = false;
     try {
       finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)());
@@ -345,6 +444,7 @@ class ExecutionTimelineStore final {
       pending_ = previous_pending;
       pending_activation_ns_ = previous_pending_activation;
       last_transaction_id_ = previous_transaction_id;
+      ++timeline_version_;
       return StageDecision::kFinalizationFailed;
     }
     return StageDecision::kStaged;
@@ -373,6 +473,7 @@ class ExecutionTimelineStore final {
     committed_ = successor;
     pending_.reset();
     pending_activation_ns_ = 0;
+    ++timeline_version_;
     bool finalized = false;
     try {
       finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)(
@@ -387,6 +488,7 @@ class ExecutionTimelineStore final {
       // leave an unfinalizable candidate parked ahead of future solves.
       pending_.reset();
       pending_activation_ns_ = 0;
+      ++timeline_version_;
       return false;
     }
     return true;
@@ -452,6 +554,7 @@ class ExecutionTimelineStore final {
     pending_.reset();
     pending_activation_ns_ = 0;
     last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
     return CommitDecision::kCommitted;
   }
 
@@ -494,6 +597,7 @@ class ExecutionTimelineStore final {
     pending_.reset();
     pending_activation_ns_ = 0;
     last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
     bool finalized = false;
     try {
       finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)());
@@ -505,6 +609,7 @@ class ExecutionTimelineStore final {
       pending_ = previous_pending;
       pending_activation_ns_ = previous_pending_activation;
       last_transaction_id_ = previous_transaction_id;
+      ++timeline_version_;
       return CommitDecision::kFinalizationFailed;
     }
     return CommitDecision::kCommitted;
@@ -515,6 +620,7 @@ class ExecutionTimelineStore final {
     committed_.reset();
     pending_.reset();
     pending_activation_ns_ = 0;
+    ++timeline_version_;
   }
 
  private:
@@ -531,6 +637,7 @@ class ExecutionTimelineStore final {
 
   mutable std::mutex mutex_;
   std::uint64_t active_goal_epoch_{0};
+  mutable std::uint64_t timeline_version_{0};
   std::uint64_t last_transaction_id_{0};
   std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity_;
   mutable std::shared_ptr<const navigation_planning::CandidateBundle> committed_;
