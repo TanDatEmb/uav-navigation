@@ -3128,7 +3128,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planning_request.start_state = execution_state;
   planning_request.history.previous_bundle_generation =
       transition_bundle ? transition_bundle->bundle_generation : 0U;
-  planning_request.history.previous_velocity_world = execution_state.velocity_world;
+  // PlanningHistory describes a prior executable bundle, not the measured
+  // start state. Keep it empty for the initial stopped-state request; putting
+  // the current velocity beside generation zero makes the request appear to
+  // reference a non-existent prior command and fails the typed contract.
+  planning_request.history.previous_velocity_world = transition_bundle
+      ? execution_state.velocity_world
+      : Eigen::Vector3d::Zero();
   planning_request.world = pinned_world.view;
   planning_request.dynamics = mission_dynamic_limits_;
   if (planning_request.key.start_mode ==

@@ -238,6 +238,15 @@ TEST(PlanningRequest, KeyPinsEveryMutableIdentityAndStartMode) {
   EXPECT_FALSE(key.valid());
 }
 
+TEST(PlanningHistory, ZeroGenerationCannotCarryPriorCommandVelocity) {
+  navigation_planning::PlanningHistory history;
+  history.previous_velocity_world = Eigen::Vector3d(0.2, 0.0, 0.0);
+  EXPECT_FALSE(history.valid());
+
+  history.previous_bundle_generation = 11;
+  EXPECT_TRUE(history.valid());
+}
+
 TEST(ExecutionAnchor, RequiresAnImmutableFutureCommandBoundary) {
   navigation_planning::ExecutionAnchor anchor;
   anchor.active_bundle_generation = 11;

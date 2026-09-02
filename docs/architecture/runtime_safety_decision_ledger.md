@@ -1,5 +1,29 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-02 - Keep initial planning history consistent with bundle identity
+
+- **Owner/status:** typed planning request ingress, `IMPLEMENTED`; focused
+  regression/build evidence is pending, SITL qualification remains open.
+- **Scope:** `PlanningHistory` now validates that a nonzero prior-command
+  velocity is accompanied by a nonzero prior bundle generation. Runtime sends
+  zero history for an initial request with no retained executable bundle; the
+  measured P/V/A/J start state remains in `PlanningRequest::start_state`.
+- **Safety impact:** removes a false `kInvalidRequest` fail-closed path that
+  prevented the first executable trajectory from ever reaching A*/corridor/
+  MINCO. It does not relax a trajectory, world, dynamic, freshness, or PX4
+  admission gate; prior-bundle history cannot be fabricated.
+- **Evidence:** regression test covers the zero-generation/history invariant.
+  Rebuild, focused CTest, and the same open-space SITL scenario are required
+  to verify that a complete MAIN+BACKUP candidate is actually planned and
+  admitted.
+- **Removal/review condition:** retain until request identity and execution
+  timeline migration is complete; remove only if `PlanningHistory` is retired
+  from the public request contract and its callers are migrated together.
+- **Verification:** `colcon build --packages-select navigation_planning
+  navigation_execution navigation_planning_backend navigation_runtime
+  --cmake-args -DBUILD_TESTING=ON`; sourced-overlay CTest for all four
+  packages; repeated representative SITL with candidate/activation evidence.
+
 ### 2026-09-02 - Bind successor planning to an execution-owned future anchor
 
 - **Owner/status:** planning request and execution timeline boundary,

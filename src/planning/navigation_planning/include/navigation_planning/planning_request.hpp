@@ -68,6 +68,15 @@ struct GoalIdentity {
 struct PlanningHistory {
   std::uint64_t previous_bundle_generation{0};
   Eigen::Vector3d previous_velocity_world{Eigen::Vector3d::Zero()};
+
+  // A zero generation means that there is no prior executable bundle. In
+  // that case the velocity field must not be interpreted as prior-command
+  // history; the measured start state is carried separately by the request.
+  [[nodiscard]] bool valid() const noexcept {
+    return previous_velocity_world.allFinite() &&
+           (previous_bundle_generation != 0 ||
+            previous_velocity_world.isZero(1.0e-12));
+  }
 };
 
 struct PlanningRequest {
@@ -108,9 +117,7 @@ struct PlanningRequest {
            world->identity().generation == key.pinned_world_generation &&
            world->identity().revision == key.pinned_world_revision &&
            world->identity().observation_stamp_ns > 0 &&
-           history.previous_velocity_world.allFinite() &&
-           (history.previous_bundle_generation != 0 ||
-            history.previous_velocity_world.isZero(1.0e-12)) &&
+           history.valid() &&
            dynamics.valid() &&
            !budget.exhausted();
   }
