@@ -49,6 +49,18 @@ TEST(ExecutionEpisode, FailClosedClearsCommandExposure) {
   EXPECT_TRUE(state.failure_latched);
 }
 
+TEST(ExecutionEpisode, StoppedHoldPreservesMeasuredRestartRequest) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, true);
+  episode.requestRestartFromRest();
+
+  episode.stoppedHold(4U);
+  const auto state = episode.snapshot();
+  EXPECT_EQ(state.phase, navigation_runtime::ExecutionEpisodePhase::kStoppedHold);
+  EXPECT_TRUE(state.command_available);
+  EXPECT_TRUE(state.restart_from_rest);
+}
+
 TEST(ExecutionEpisode, SuspendAndClearDoNotRetainCommandIdentity) {
   navigation_runtime::ExecutionEpisode episode;
   episode.beginGoal(8U, 9U, 10U, true);

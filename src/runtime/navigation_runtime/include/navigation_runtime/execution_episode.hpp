@@ -113,11 +113,17 @@ class ExecutionEpisode final {
 
   void stoppedHold(std::uint64_t generation) noexcept {
     std::lock_guard lock(mutex_);
+    // A stopped hold is also the command publisher's representation while a
+    // measured-state PlanFromRest retry is in flight.  Do not erase that
+    // lifecycle request from the 50 Hz hold samples; otherwise the next
+    // non-zero odometry sample is misclassified as motion without an
+    // authorized recovery and the node falls through to PX4 Hold.
+    const bool restart_requested = state_.restart_from_rest;
     state_.active_generation = generation;
     state_.phase = ExecutionEpisodePhase::kStoppedHold;
     state_.command_available = true;
     state_.safety_suffix_active = false;
-    state_.restart_from_rest = false;
+    state_.restart_from_rest = restart_requested;
   }
 
   void failClosed() noexcept {
