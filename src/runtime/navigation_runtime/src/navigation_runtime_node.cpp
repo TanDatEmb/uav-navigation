@@ -2246,6 +2246,21 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_value("command_execution_lease_failed",
             command_execution_lease_failure_latch_.latched() ? 1U : 0U);
   add_value("command_execution_lease_reason", command_execution_lease_reason_.load());
+  const auto episode = execution_episode_.snapshot();
+  add_value("execution_episode_phase",
+            static_cast<std::uint64_t>(episode.phase));
+  add_value("execution_episode_generation", episode.active_generation);
+  add_value("execution_episode_goal_epoch", episode.goal_epoch);
+  add_value("execution_episode_command_available",
+            episode.command_available ? 1U : 0U);
+  add_value("execution_episode_failure_latched",
+            episode.failure_latched ? 1U : 0U);
+  add_value("planning_outcome", static_cast<std::uint64_t>(
+      last_planning_outcome_.load(std::memory_order_acquire)));
+  add_value("planning_failure_stage", static_cast<std::uint64_t>(
+      last_planning_failure_stage_.load(std::memory_order_acquire)));
+  add_value("planning_failure_reason", static_cast<std::uint64_t>(
+      last_planning_failure_reason_.load(std::memory_order_acquire)));
   add_signed_value("command_execution_source_age_us",
                    command_execution_source_age_us_.load());
   add_signed_value("command_execution_receive_age_us",
@@ -3073,6 +3088,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   const double execution_age_at_solve_ms =
       executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
   navigation_planning::PlanningRequest planning_request;
+  // PlanningRequest::start_mode selects the explicit
+  // planSuccessorFromExecutionAnchor lifecycle for every moving renewal;
+  // only a stationary transition selects the initial stopped-state operation.
   planning_request.key = effective_scheduled_key;
   planning_request.key.start_mode = plan_from_rest_with_transition
       ? navigation_planning::PlanningStartMode::kStoppedMeasuredState
@@ -3092,8 +3110,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planning_request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
       std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
           std::chrono::duration<double>(planner_->solveDeadlineSeconds()));
+  navigation_planning::PlanningOutcome planning_outcome;
   try {
-    const auto planning_outcome = planner_->plan(planning_request);
+    planning_outcome = planner_->plan(planning_request);
     if (planning_outcome.outcome ==
             navigation_planning::CompletePlanningOutcome::kRetainedCommittedBundle) {
       result = navigation_planning::PlannerStatus::kNoNeed;
@@ -3106,7 +3125,19 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   } catch (const std::exception& error) {
     RCLCPP_ERROR(get_logger(), "planner backend planner exception: %s", error.what());
     result = navigation_planning::PlannerStatus::kEmergency;
+    planning_outcome.outcome =
+        navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+    planning_outcome.failure_stage =
+        navigation_planning::PlanningFailureStage::kInput;
+    planning_outcome.failure_reason =
+        navigation_planning::PlanningFailureReason::kInvalidInput;
   }
+  last_planning_outcome_.store(static_cast<int>(planning_outcome.outcome),
+                               std::memory_order_release);
+  last_planning_failure_stage_.store(
+      static_cast<int>(planning_outcome.failure_stage), std::memory_order_release);
+  last_planning_failure_reason_.store(
+      static_cast<int>(planning_outcome.failure_reason), std::memory_order_release);
   std::uint64_t expected_active_generation = solve_generation;
   active_planner_solve_generation_.compare_exchange_strong(
       expected_active_generation, 0U);

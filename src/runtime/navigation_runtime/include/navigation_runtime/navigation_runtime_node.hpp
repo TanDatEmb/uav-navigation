@@ -25,6 +25,7 @@
 #include <navigation_mapping/mapping_diagnostics.hpp>
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/observation_accounting.hpp>
+#include <navigation_planning/planning_outcome.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
 #include "navigation_runtime/execution_episode.hpp"
@@ -326,6 +327,12 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t active_planner_solve_generation_{0U};
   std::atomic_uint64_t timed_out_planner_solve_generation_{0U};
   std::atomic_int64_t planner_solve_started_steady_ns_{0};
+  std::atomic_int last_planning_outcome_{
+      static_cast<int>(navigation_planning::CompletePlanningOutcome::kInvalidRequest)};
+  std::atomic_int last_planning_failure_stage_{
+      static_cast<int>(navigation_planning::PlanningFailureStage::kInput)};
+  std::atomic_int last_planning_failure_reason_{
+      static_cast<int>(navigation_planning::PlanningFailureReason::kInvalidInput)};
   // A local planner backend trajectory can end at a known-free frontier before the
   // mission goal. The FSM must call the stopped-state planner again after that trajectory
   // finishes instead of holding the completed old trajectory forever.

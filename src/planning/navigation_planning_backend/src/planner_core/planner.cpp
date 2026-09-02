@@ -889,6 +889,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             }
             return true;
         };
+        bool route_boundary_required = false;
         if (route_snapshot_.has_value() &&
             route_snapshot_->active_waypoint_index < route_snapshot_->waypoints.size()) {
             const auto& waypoint =
@@ -896,6 +897,7 @@ std::optional<double> firstRouteBoundaryEntryTime(
             const bool is_pass_through = waypoint.behavior ==
                 navigation_mission::MissionWaypoint::Behavior::PassThrough;
             const bool boundary_reached = command.connected_goal || command.terminal_stop;
+            route_boundary_required = is_pass_through && boundary_reached;
             if (boundary_reached && (is_pass_through || command.terminal_stop)) {
                 Eigen::Vector3d incoming = Eigen::Vector3d::Zero();
                 Eigen::Vector3d outgoing = Eigen::Vector3d::Zero();
@@ -940,6 +942,14 @@ std::optional<double> firstRouteBoundaryEntryTime(
                         constraint.corner_speed_mps};
                 }
             }
+        }
+        if (route_boundary_required &&
+            (!candidate.route_boundary_constraint.has_value() ||
+             !candidate.route_boundary_event.has_value())) {
+            planner_context_->warn(
+                " -- [planner] pass-through endpoint reached without a complete "
+                "RouteBoundaryConstraint/Event; rejecting candidate");
+            return std::nullopt;
         }
         return candidate.valid() ? std::optional<navigation_planning::CandidateBundle>{
             std::move(candidate)} : std::nullopt;
