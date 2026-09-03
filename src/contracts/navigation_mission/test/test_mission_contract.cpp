@@ -46,14 +46,12 @@ mission:
       acceptance_radius_m: 0.5
       behavior: stop
   planning:
-    max_velocity_mps: 7.0
-    max_acceleration_mps2: 5.0
-    max_jerk_mps3: 12.0
+    requested_cruise_speed_mps: 7.0
     unknown_policy: allow_unknown
 )");
   const auto loaded = navigation_mission::loadMission(mission.string(), "lio_odom");
   EXPECT_EQ(loaded.id, "smoke");
-  EXPECT_DOUBLE_EQ(loaded.planning.max_velocity_mps, 7.0);
+  EXPECT_DOUBLE_EQ(loaded.planning.requested_cruise_speed_mps, 7.0);
   EXPECT_EQ(loaded.planning.unknown_policy,
             navigation_world_model::UnknownPolicy::kAllowUnknown);
 }

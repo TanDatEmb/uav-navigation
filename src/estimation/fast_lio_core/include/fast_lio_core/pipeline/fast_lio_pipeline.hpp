@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <optional>
 #include <mutex>
@@ -52,6 +53,10 @@ class FastLioPipeline {
   // Direct path for offline evaluation and deterministic unit tests. It uses
   // exactly the same estimator/map state as processNext().
   [[nodiscard]] ProcessResult process(const MeasurementGroup& group);
+
+  // Called by the single processing owner while ingress is idle. No synthetic
+  // scan is injected into the estimator to detect a LiDAR blackout.
+  void superviseLidarTimeout();
 
   void reset();
   [[nodiscard]] EstimatorStatus status() const noexcept;
@@ -111,6 +116,7 @@ class FastLioPipeline {
   std::deque<ImuSample> prior_imu_history_;
   std::optional<Timestamp> last_initialization_imu_time_;
   std::optional<Timestamp> last_correction_time_;
+  std::optional<std::chrono::steady_clock::time_point> last_lidar_arrival_;
   std::vector<Eigen::Vector3d> bootstrap_reference_points_odom_m_;
   EstimatorDiagnostics diagnostics_{};
   InitialStatePriorApplicator initial_prior_applicator_;

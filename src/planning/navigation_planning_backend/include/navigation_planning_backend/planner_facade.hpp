@@ -55,8 +55,6 @@ class PlannerFacade final {
   void setPassThroughNextTarget(
       const std::optional<Eigen::Vector3d>& next_target) noexcept;
   bool setState(const navigation_planning::KinematicState& state);
-  void setRecoveryVelocityScale(double scale) noexcept;
-
   // Initial planning is valid only for a stopped/hold state. The runtime
   // owns that gate; this API names the lifecycle contract explicitly.
   [[nodiscard]] navigation_planning::PlannerStatus planInitialFromStoppedState(

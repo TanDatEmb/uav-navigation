@@ -71,7 +71,7 @@ InitialPriorFallback parsePriorFallback(std::string_view value) {
 }
 
 void requireCanonicalFields(rclcpp::Node& node) {
-  static constexpr std::array<std::string_view, 33> kRequired{
+  static constexpr std::array<std::string_view, 37> kRequired{
       "frames.odom",
       "frames.base",
       "frames.imu",
@@ -96,6 +96,10 @@ void requireCanonicalFields(rclcpp::Node& node) {
       "tracking.maximum_recoverable_imu_gap_s",
       "tracking.recovery_confirmation_updates",
       "tracking.discontinuity_covariance_inflation",
+      "lifecycle.maximum_initial_map_registration_failures",
+      "lifecycle.lost_after_registration_failures",
+      "lifecycle.degraded_after_lidar_gap_s",
+      "lifecycle.lost_after_lidar_gap_s",
       "extrinsic.translation_imu_lidar",
       "extrinsic.rotation_imu_lidar_xyzw",
       "initialization.minimum_imu_samples",
@@ -222,6 +226,16 @@ RosParameters ParameterLoader::declareAndLoad(rclcpp::Node& node) {
   result.maximum_recoverable_imu_gap_s =
       node.declare_parameter<double>(
           "tracking.maximum_recoverable_imu_gap_s", 0.05);
+  result.maximum_initial_map_registration_failures =
+      node.declare_parameter<std::int64_t>(
+          "lifecycle.maximum_initial_map_registration_failures", 10);
+  result.lost_after_registration_failures =
+      node.declare_parameter<std::int64_t>(
+          "lifecycle.lost_after_registration_failures", 5);
+  result.degraded_after_lidar_gap_s = node.declare_parameter<double>(
+      "lifecycle.degraded_after_lidar_gap_s", 0.2);
+  result.lost_after_lidar_gap_s = node.declare_parameter<double>(
+      "lifecycle.lost_after_lidar_gap_s", 1.0);
   result.recovery_confirmation_updates =
       node.declare_parameter<std::int64_t>(
           "tracking.recovery_confirmation_updates", 3);
@@ -346,6 +360,16 @@ EstimatorProfile makeEstimatorProfile(const RosParameters& parameters) {
   config.tracking.maximum_recoverable_imu_gap_ns =
       ParameterLoader::durationNanosecondsFromSeconds(
           parameters.maximum_recoverable_imu_gap_s);
+  config.lifecycle.maximum_initial_map_registration_failures =
+      static_cast<std::size_t>(parameters.maximum_initial_map_registration_failures);
+  config.lifecycle.lost_after_registration_failures =
+      static_cast<std::size_t>(parameters.lost_after_registration_failures);
+  config.lifecycle.degraded_after_lidar_gap_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(
+          parameters.degraded_after_lidar_gap_s);
+  config.lifecycle.lost_after_lidar_gap_ns =
+      ParameterLoader::durationNanosecondsFromSeconds(
+          parameters.lost_after_lidar_gap_s);
   config.tracking.recovery_confirmation_updates =
       static_cast<std::size_t>(parameters.recovery_confirmation_updates);
   config.tracking.discontinuity_covariance_inflation =
@@ -555,6 +579,12 @@ void ParameterLoader::validate(const RosParameters& p) {
   if (!std::isfinite(p.maximum_imu_gap_s) || p.maximum_imu_gap_s <= 0.0 ||
       !std::isfinite(p.maximum_recoverable_imu_gap_s) ||
       p.maximum_recoverable_imu_gap_s <= 0.0 ||
+      p.maximum_initial_map_registration_failures <= 0 ||
+      p.lost_after_registration_failures <= 0 ||
+      !std::isfinite(p.degraded_after_lidar_gap_s) ||
+      p.degraded_after_lidar_gap_s <= 0.0 ||
+      !std::isfinite(p.lost_after_lidar_gap_s) ||
+      p.lost_after_lidar_gap_s <= 0.0 ||
       p.recovery_confirmation_updates <= 0 || p.minimum_imu_samples <= 0 ||
       p.maximum_registration_iterations <= 0 ||
       p.minimum_translation_observability_ratio < 0.0 ||
@@ -571,6 +601,17 @@ void ParameterLoader::validate(const RosParameters& p) {
     throw std::invalid_argument(
         "tracking.maximum_recoverable_imu_gap_s must be greater than or "
         "equal to timing.max_imu_gap_s");
+  }
+  if (p.lost_after_registration_failures >
+          p.maximum_initial_map_registration_failures ||
+      p.lost_after_lidar_gap_s < p.degraded_after_lidar_gap_s ||
+      !navigation_common::secondsToNanoseconds(
+           p.degraded_after_lidar_gap_s)
+           .has_value() ||
+      !navigation_common::secondsToNanoseconds(p.lost_after_lidar_gap_s)
+           .has_value()) {
+    throw std::invalid_argument(
+        "lifecycle thresholds must be representable and ordered");
   }
   if (!std::isfinite(p.discontinuity_covariance_inflation) ||
       p.discontinuity_covariance_inflation < 1.0 ||

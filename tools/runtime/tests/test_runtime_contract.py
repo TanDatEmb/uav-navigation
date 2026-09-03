@@ -609,8 +609,8 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(parameters["planner_rate_hz"], 5.0)
             self.assertEqual(parameters["mission_file"], str(mission.resolve()))
             self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
-            self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 2.0)
-            self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 6.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 12.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 30.0)
             self.assertEqual(
                 planner["traj_opt"]["exp_traj"]["objective"]["jerk_penalty_weight"], 0.0
             )
@@ -672,9 +672,7 @@ class RuntimeContractTest(unittest.TestCase):
                 "mission:\n"
                 "  planning:\n"
                 "    unknown_policy: blocked\n"
-                "    max_velocity_mps: 1.0\n"
-                "    max_acceleration_mps2: 2.0\n"
-                "    max_jerk_mps3: 6.0\n",
+                "    requested_cruise_speed_mps: 1.0\n",
                 encoding="utf-8",
             )
             target = runner._mapping_params(
@@ -697,12 +695,12 @@ class RuntimeContractTest(unittest.TestCase):
 
             resolved = runner._resolved_mission_file(session, source, 10.0)
             planning = runner._mission_planning(resolved)
-            self.assertEqual(planning["max_velocity_mps"], 10.0)
+            self.assertEqual(planning["requested_cruise_speed_mps"], 10.0)
             document = yaml.safe_load(resolved.read_text(encoding="utf-8"))
-            self.assertEqual(document["mission"]["planning"]["max_velocity_mps"], 10.0)
+            self.assertEqual(document["mission"]["planning"]["requested_cruise_speed_mps"], 10.0)
             self.assertEqual(
                 yaml.safe_load(source.read_text(encoding="utf-8"))["mission"]["planning"][
-                    "max_velocity_mps"
+                    "requested_cruise_speed_mps"
                 ],
                 5.0,
             )
@@ -714,7 +712,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(contract["source_path"], str(source.resolve()))
             self.assertEqual(contract["resolved_path"], str(resolved.resolve()))
             self.assertEqual(contract["speed_cap_mps"], 10.0)
-            self.assertEqual(contract["planning"]["max_velocity_mps"], 10.0)
+            self.assertEqual(contract["planning"]["requested_cruise_speed_mps"], 10.0)
 
             mapping = runner._mapping_params(
                 session,
@@ -796,9 +794,7 @@ class RuntimeContractTest(unittest.TestCase):
                 "mission:\n"
                 "  planning:\n"
                 "    unknown_policy: allow_unknown\n"
-                "    max_velocity_mps: 1.0\n"
-                "    max_acceleration_mps2: 2.0\n"
-                "    max_jerk_mps3: 6.0\n",
+                "    requested_cruise_speed_mps: 1.0\n",
                 encoding="utf-8",
             )
             target = runner._mapping_params(
@@ -823,9 +819,7 @@ class RuntimeContractTest(unittest.TestCase):
                 "mission:\n"
                 "  planning:\n"
                 "    unknown_policy: allow_unknown\n"
-                "    max_velocity_mps: 12.1\n"
-                "    max_acceleration_mps2: 12.0\n"
-                "    max_jerk_mps3: 30.0\n",
+                "    requested_cruise_speed_mps: 12.1\n",
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(ValueError, "exceeds X500 limit 12 m/s"):
@@ -870,8 +864,7 @@ class RuntimeContractTest(unittest.TestCase):
             mission_value = yaml.safe_load(mission.read_text(encoding="utf-8"))
             self.assertEqual(mission_value["mission"]["planning"]["unknown_policy"], "allow_unknown")
             planning = runner._mission_planning(mission)
-            self.assertEqual(planning["max_velocity_mps"], expected_velocity)
-            self.assertGreater(planning["max_acceleration_mps2"], 0.0)
+            self.assertEqual(planning["requested_cruise_speed_mps"], expected_velocity)
 
     def test_stress_profiles_have_ground_truth_collision_geometry(self) -> None:
         for profile in (
@@ -1077,7 +1070,7 @@ class RuntimeContractTest(unittest.TestCase):
         )["mission"]
         self.assertEqual(len(mission["waypoints"]), 2)
         self.assertEqual(mission["waypoints"][1]["position"], [140.0, 0.0, 3.0])
-        self.assertEqual(mission["planning"]["max_velocity_mps"], 5.0)
+        self.assertEqual(mission["planning"]["requested_cruise_speed_mps"], 5.0)
 
     def test_long_three_pillars_multiwaypoint_is_a_nine_checkpoint_speed_contract(self) -> None:
         descriptor = runner._map_registry()["long_three_pillars_multiwaypoint"]
@@ -1088,7 +1081,7 @@ class RuntimeContractTest(unittest.TestCase):
             (ROOT / "config/runtime/missions/long_three_pillars_multiwaypoint.yaml").read_text()
         )["mission"]
         self.assertEqual(len(mission["waypoints"]), 9)
-        self.assertEqual(mission["planning"]["max_velocity_mps"], 5.0)
+        self.assertEqual(mission["planning"]["requested_cruise_speed_mps"], 5.0)
         self.assertEqual(mission["waypoints"][-1]["behavior"], "stop")
 
     def test_simulator_uses_registry_world_for_multiwaypoint_profile(self) -> None:
@@ -1111,7 +1104,7 @@ class RuntimeContractTest(unittest.TestCase):
             (ROOT / "config/runtime/missions/long_cross_obstacles.yaml").read_text()
         )["mission"]
         self.assertEqual(len(mission["waypoints"]), 4)
-        self.assertEqual(mission["planning"]["max_velocity_mps"], 5.0)
+        self.assertEqual(mission["planning"]["requested_cruise_speed_mps"], 5.0)
         self.assertEqual(mission["waypoints"][-1]["behavior"], "stop")
         self.assertGreaterEqual(descriptor["benchmark"]["leg_length_m"], 40.0)
 
@@ -1526,9 +1519,7 @@ class RuntimeContractTest(unittest.TestCase):
         )
         planning = mission["mission"]["planning"]
         self.assertEqual(planning["unknown_policy"], "allow_unknown")
-        self.assertEqual(planning["max_velocity_mps"], 12.0)
-        self.assertEqual(planning["max_acceleration_mps2"], 12.0)
-        self.assertEqual(planning["max_jerk_mps3"], 30.0)
+        self.assertEqual(planning["requested_cruise_speed_mps"], 12.0)
 
     def test_dataset_raw_observers_use_reliable_product_capacity(self) -> None:
         config = runner.load_config("dataset.yaml")

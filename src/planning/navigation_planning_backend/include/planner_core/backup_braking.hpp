@@ -7,9 +7,38 @@
 
 #include <data_structure/base/piece.h>
 #include <navigation_planning/planning_limits.hpp>
+#include <navigation_planning/kinematic_state.hpp>
 #include <utils/header/eigen_alias.hpp>
 
 namespace navigation_planning_backend {
+
+enum class StopFailureReason : std::uint8_t {
+  kNone,
+  kInvalidState,
+  kInvalidDynamics,
+  kInsufficientSupport,
+};
+
+struct StopReachability {
+  bool feasible{false};
+  double stopping_time_s{0.0};
+  double stopping_distance_m{0.0};
+  double admissible_entry_speed_mps{0.0};
+  double latest_safe_switch_time_s{0.0};
+  Eigen::Vector3d stop_position{Eigen::Vector3d::Zero()};
+  StopFailureReason failure{StopFailureReason::kNone};
+};
+
+// Conservative full-state envelope shared by speed authorization and the
+// deterministic BACKUP builder. Positive acceleration along the current
+// velocity is retained; transverse acceleration is also charged through its
+// norm because the stop polynomial must inherit the complete PVAJ boundary.
+struct StopKinematicEnvelope {
+  double effective_speed_mps{0.0};
+  double acceleration_release_s{0.0};
+  double stopping_time_s{0.0};
+  double stopping_distance_m{0.0};
+};
 
 struct BackupBrakingSeed {
   double switch_time_s{0.0};
@@ -47,6 +76,77 @@ inline double jerkLimitedStopDistance(double speed_mps, double max_acc_mps2,
   return std::isfinite(stop_time_s)
              ? 0.5 * speed_mps * stop_time_s
              : std::numeric_limits<double>::infinity();
+}
+
+inline StopKinematicEnvelope stopKinematicEnvelope(
+    const navigation_math::StatePVAJ& state, double max_acc_mps2,
+    double max_jerk_mps3) noexcept {
+  StopKinematicEnvelope result;
+  if (!state.allFinite() || !std::isfinite(max_acc_mps2) ||
+      max_acc_mps2 <= 0.0 || !std::isfinite(max_jerk_mps3) ||
+      max_jerk_mps3 <= 0.0) {
+    result.stopping_time_s = std::numeric_limits<double>::infinity();
+    result.stopping_distance_m = std::numeric_limits<double>::infinity();
+    return result;
+  }
+  const Eigen::Vector3d velocity = state.col(1);
+  const double speed_mps = velocity.norm();
+  Eigen::Vector3d direction = Eigen::Vector3d::Zero();
+  if (speed_mps > 1.0e-9) direction = velocity / speed_mps;
+  const double longitudinal_acceleration =
+      std::max(0.0, state.col(2).dot(direction));
+  const double acceleration_norm = state.col(2).norm();
+  result.acceleration_release_s = acceleration_norm / max_jerk_mps3;
+  result.effective_speed_mps = speed_mps +
+      0.5 * acceleration_norm * result.acceleration_release_s +
+      0.5 * longitudinal_acceleration * result.acceleration_release_s;
+  result.stopping_time_s = result.acceleration_release_s +
+      jerkLimitedStopTime(result.effective_speed_mps, max_acc_mps2,
+                          max_jerk_mps3);
+  result.stopping_distance_m =
+      speed_mps * result.acceleration_release_s +
+      jerkLimitedStopDistance(result.effective_speed_mps, max_acc_mps2,
+                              max_jerk_mps3);
+  return result;
+}
+
+// `known_free_support_m` is the minimum certified support along the planned
+// stop direction/corridor. Geometry remains owned by the world model; this
+// function only combines that evidence with the same full-state stop model
+// used to construct BACKUP.
+inline StopReachability evaluateStopReachability(
+    const navigation_math::StatePVAJ& state,
+    const navigation_planning::DynamicLimits& dynamics,
+    double known_free_support_m) noexcept {
+  StopReachability result;
+  if (state.allFinite()) {
+    result.stop_position = state.col(0);
+  } else {
+    result.stop_position =
+        Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+  }
+  if (!state.allFinite()) {
+    result.failure = StopFailureReason::kInvalidState;
+    return result;
+  }
+  if (!dynamics.valid()) {
+    result.failure = StopFailureReason::kInvalidDynamics;
+    return result;
+  }
+  if (!std::isfinite(known_free_support_m) || known_free_support_m <= 0.0) {
+    result.failure = StopFailureReason::kInsufficientSupport;
+    return result;
+  }
+  const auto envelope = stopKinematicEnvelope(
+      state, dynamics.vehicle.maximum_acceleration_mps2,
+      dynamics.vehicle.maximum_jerk_mps3);
+  result.stopping_time_s = envelope.stopping_time_s;
+  result.stopping_distance_m = envelope.stopping_distance_m;
+  result.admissible_entry_speed_mps = envelope.effective_speed_mps;
+  result.feasible = std::isfinite(result.stopping_distance_m) &&
+      result.stopping_distance_m <= known_free_support_m;
+  if (!result.feasible) result.failure = StopFailureReason::kInsufficientSupport;
+  return result;
 }
 
 inline bool refinementDurationRespectsCertifiedFloor(
@@ -185,15 +285,12 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
   // braking polynomial never accelerates beyond the physically unavoidable
   // initial speed while retaining the normal mission cap for nominal states.
   result.allowed_peak_velocity_mps = std::max(speed_mps, max_velocity_mps);
-  const double acceleration_mps2 = switch_state.col(2).norm();
-  // Conservatively account for removing an arbitrary initial acceleration
-  // before the symmetric stopping phase. The polynomial below retains the
-  // exact PVAJ boundary and Piece's analytic extrema remain authoritative.
-  const double acceleration_release_s = acceleration_mps2 / max_jerk_mps3;
-  const double effective_speed_mps =
-      speed_mps + 0.5 * acceleration_mps2 * acceleration_release_s;
-  double duration_s = acceleration_release_s +
-      jerkLimitedStopTime(effective_speed_mps, max_acc_mps2, max_jerk_mps3);
+  // Keep speed authorization and BACKUP construction on the same full-state
+  // PVAJ envelope. The polynomial certificate below remains authoritative for
+  // the exact vector extrema.
+  const auto envelope = stopKinematicEnvelope(
+      switch_state, max_acc_mps2, max_jerk_mps3);
+  double duration_s = envelope.stopping_time_s;
   duration_s = std::max(4.0 * sample_traj_dt_s, 1.15 * duration_s);
 
   const double gate = 1.0 + feasibility_margin;

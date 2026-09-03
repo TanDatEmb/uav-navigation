@@ -55,6 +55,9 @@ namespace navigation_planning_backend {
         double visibility_horizon_cap_m{0.0};
         double visibility_horizon_floor_m{0.0};
         double visibility_horizon_m{0.0};
+        // Mission intent is a requested cruise speed, not a physical model
+        // limit. The immutable vehicle model remains in `DynamicLimits`.
+        double requested_cruise_speed_mps{0.0};
         // Zero disables the optional FOV cut; the unit is explicit.
         double sensing_horizon_m{0.0};
 
@@ -100,21 +103,27 @@ namespace navigation_planning_backend {
                     throw std::invalid_argument(
                         "mission dynamic limits or unknown-space policy are invalid");
                 }
-                if (limits.max_velocity_mps > exp_traj_cfg.max_vel + 1.0e-9 ||
-                    limits.max_acceleration_mps2 > exp_traj_cfg.max_acc + 1.0e-9 ||
-                    limits.max_jerk_mps3 > exp_traj_cfg.max_jerk + 1.0e-9 ||
-                    limits.max_velocity_mps > back_traj_cfg.max_vel + 1.0e-9 ||
-                    limits.max_acceleration_mps2 > back_traj_cfg.max_acc + 1.0e-9 ||
-                    limits.max_jerk_mps3 > back_traj_cfg.max_jerk + 1.0e-9) {
+                // The YAML velocity is an operational cruise cap and may be
+                // lower than the immutable physical model. A mission request
+                // must fit that cap; A/J remain physical-model checks.
+                if (limits.intent.requested_cruise_speed_mps >
+                        exp_traj_cfg.max_vel + 1.0e-9 ||
+                    limits.vehicle.maximum_acceleration_mps2 > exp_traj_cfg.max_acc + 1.0e-9 ||
+                    limits.vehicle.maximum_jerk_mps3 > exp_traj_cfg.max_jerk + 1.0e-9 ||
+                    limits.intent.requested_cruise_speed_mps >
+                        back_traj_cfg.max_vel + 1.0e-9 ||
+                    limits.vehicle.maximum_acceleration_mps2 > back_traj_cfg.max_acc + 1.0e-9 ||
+                    limits.vehicle.maximum_jerk_mps3 > back_traj_cfg.max_jerk + 1.0e-9) {
                     throw std::invalid_argument(
                         "mission dynamic limits exceed the product envelope");
                 }
-                exp_traj_cfg.max_vel = limits.max_velocity_mps;
-                exp_traj_cfg.max_acc = limits.max_acceleration_mps2;
-                exp_traj_cfg.max_jerk = limits.max_jerk_mps3;
-                back_traj_cfg.max_vel = limits.max_velocity_mps;
-                back_traj_cfg.max_acc = limits.max_acceleration_mps2;
-                back_traj_cfg.max_jerk = limits.max_jerk_mps3;
+                exp_traj_cfg.max_vel = limits.intent.requested_cruise_speed_mps;
+                exp_traj_cfg.max_acc = limits.vehicle.maximum_acceleration_mps2;
+                exp_traj_cfg.max_jerk = limits.vehicle.maximum_jerk_mps3;
+                back_traj_cfg.max_vel = limits.intent.requested_cruise_speed_mps;
+                back_traj_cfg.max_acc = limits.vehicle.maximum_acceleration_mps2;
+                back_traj_cfg.max_jerk = limits.vehicle.maximum_jerk_mps3;
+                requested_cruise_speed_mps = limits.intent.requested_cruise_speed_mps;
             }
             loader.LoadParam("planner/print_log", print_log, false);
             loader.LoadParam("planner/visualization_en", visualization_en, false);
@@ -142,6 +151,10 @@ namespace navigation_planning_backend {
                              visibility_horizon_floor_m,
                              visibility_horizon_cap_m);
             loader.LoadParam("planner/sensing_horizon_m", sensing_horizon_m, 0.0);
+            if (!std::isfinite(requested_cruise_speed_mps) ||
+                requested_cruise_speed_mps <= 0.0) {
+                requested_cruise_speed_mps = exp_traj_cfg.max_vel;
+            }
             loader.LoadParam("planner/replan_forward_dt_s", replan_forward_dt_s, 0.4);
             loader.LoadParam("astar/search_time_limit_s", astar_search_time_limit_s, 0.1);
             loader.LoadParam("astar/total_time_limit_s", astar_total_time_limit_s,
@@ -207,10 +220,10 @@ namespace navigation_planning_backend {
                       planning_margin_m;
 
             const double required_safety_horizon =
-                jerkLimitedStopDistance(exp_traj_cfg.max_vel,
-                                        back_traj_cfg.max_acc,
-                                        back_traj_cfg.max_jerk) +
-                2.0 * exp_traj_cfg.max_vel * replan_forward_dt_s + robot_r;
+                jerkLimitedStopDistance(requested_cruise_speed_mps,
+                                        exp_traj_cfg.max_acc,
+                                        exp_traj_cfg.max_jerk) +
+                2.0 * requested_cruise_speed_mps * replan_forward_dt_s + robot_r;
             visibility_horizon_m =
                 std::max(visibility_horizon_floor_m, required_safety_horizon);
             const bool sensing_horizon_enabled = sensing_horizon_m > 0.0;

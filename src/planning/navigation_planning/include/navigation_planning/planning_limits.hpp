@@ -12,16 +12,50 @@ namespace navigation_planning {
 // planning callers while preventing a second, silently divergent enum.
 using UnknownSpacePolicy = navigation_world_model::UnknownPolicy;
 
+struct VehicleDynamicModel {
+  double maximum_velocity_mps{12.0};
+  double maximum_acceleration_mps2{12.0};
+  double maximum_jerk_mps3{30.0};
+  double maximum_body_rate_rad_s{5.0};
+  double maximum_yaw_rate_rad_s{5.0};
+  double maximum_yaw_acceleration_rad_s2{0.3};
+  double minimum_thrust_n{6.0 * 1.64};
+  double maximum_thrust_n{25.0 * 1.64};
+  double mass_kg{1.64};
+
+  [[nodiscard]] bool valid() const noexcept {
+    return std::isfinite(maximum_velocity_mps) && maximum_velocity_mps > 0.0 &&
+           std::isfinite(maximum_acceleration_mps2) && maximum_acceleration_mps2 > 0.0 &&
+           std::isfinite(maximum_jerk_mps3) && maximum_jerk_mps3 > 0.0 &&
+           std::isfinite(maximum_body_rate_rad_s) && maximum_body_rate_rad_s > 0.0 &&
+           std::isfinite(maximum_yaw_rate_rad_s) && maximum_yaw_rate_rad_s > 0.0 &&
+           std::isfinite(maximum_yaw_acceleration_rad_s2) &&
+           maximum_yaw_acceleration_rad_s2 > 0.0 &&
+           std::isfinite(minimum_thrust_n) && minimum_thrust_n >= 0.0 &&
+           std::isfinite(maximum_thrust_n) && maximum_thrust_n > minimum_thrust_n &&
+           std::isfinite(mass_kg) && mass_kg > 0.0;
+  }
+};
+
+struct MotionIntent {
+  double requested_cruise_speed_mps{0.0};
+
+  [[nodiscard]] bool valid(const VehicleDynamicModel& model) const noexcept {
+    return model.valid() && std::isfinite(requested_cruise_speed_mps) &&
+           requested_cruise_speed_mps > 0.0 &&
+           requested_cruise_speed_mps <= model.maximum_velocity_mps;
+  }
+};
+
+// Solve-time bundle: the physical model is immutable authority; intent only
+// requests a cruise speed and never changes acceleration/jerk limits.
 struct DynamicLimits {
-  double max_velocity_mps{0.0};
-  double max_acceleration_mps2{0.0};
-  double max_jerk_mps3{0.0};
+  VehicleDynamicModel vehicle{};
+  MotionIntent intent{};
   UnknownSpacePolicy unknown_space_policy{UnknownSpacePolicy::kRequireKnownFree};
 
   [[nodiscard]] bool valid() const noexcept {
-    return std::isfinite(max_velocity_mps) && std::isfinite(max_acceleration_mps2) &&
-           std::isfinite(max_jerk_mps3) && max_velocity_mps > 0.0 &&
-           max_acceleration_mps2 > 0.0 && max_jerk_mps3 > 0.0 &&
+    return intent.valid(vehicle) &&
            (unknown_space_policy == UnknownSpacePolicy::kAllowUnknown ||
             unknown_space_policy == UnknownSpacePolicy::kRequireKnownFree);
   }

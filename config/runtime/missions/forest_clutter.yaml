@@ -6,4 +6,4 @@ mission:
     - {id: forest_start, position: [8.0, 0.0, 3.0], acceptance_radius_m: 0.8, behavior: pass_through}
     - {id: forest_mid, position: [20.0, 1.5, 3.0], acceptance_radius_m: 0.8, behavior: pass_through}
     - {id: forest_finish, position: [37.0, 0.0, 3.0], acceptance_radius_m: 0.8, behavior: stop, hold_s: 0.2}
-  planning: {max_velocity_mps: 1.5, max_acceleration_mps2: 2.0, max_jerk_mps3: 6.0, unknown_policy: allow_unknown}
+  planning: {requested_cruise_speed_mps: 1.5, unknown_policy: allow_unknown}

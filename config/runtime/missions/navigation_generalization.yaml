@@ -18,9 +18,7 @@ mission:
     - {id: hairpin_exit, position: [15.0, 50.0, 3.0], acceptance_radius_m: 1.5, behavior: pass_through}
     - {id: negative_y_finish, position: [15.0, 20.0, 3.0], acceptance_radius_m: 1.0, behavior: stop, hold_s: 0.5}
   planning:
-    max_velocity_mps: 5.0
-    max_acceleration_mps2: 2.0
-    max_jerk_mps3: 4.0
+    requested_cruise_speed_mps: 5.0
     unknown_policy: allow_unknown
   control:
     acceptance_speed_mps: 0.15

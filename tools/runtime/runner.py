@@ -518,10 +518,7 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
     planning = mission.get("planning", {}) if isinstance(mission, dict) else {}
     if not isinstance(planning, dict):
         raise ValueError("mission.planning must be a mapping")
-    allowed_keys = {
-        "max_velocity_mps", "max_acceleration_mps2",
-        "max_jerk_mps3", "unknown_policy",
-    }
+    allowed_keys = {"requested_cruise_speed_mps", "unknown_policy"}
     unknown_keys = sorted(set(planning) - allowed_keys)
     if unknown_keys:
         raise ValueError(f"unsupported mission planning fields: {', '.join(unknown_keys)}")
@@ -532,8 +529,7 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
         )
     result = {}
     result["unknown_policy"] = unknown_policy
-    for key in ("max_velocity_mps", "max_acceleration_mps2",
-                "max_jerk_mps3"):
+    for key in ("requested_cruise_speed_mps",):
         if key in planning:
             number = float(planning[key])
             if not math.isfinite(number) or number <= 0.0:
@@ -571,7 +567,7 @@ def _resolved_mission_file(
             or float(speed_cap_mps) <= 0.0
         ):
             raise ValueError("speed_cap_mps must be finite and positive")
-        planning["max_velocity_mps"] = float(speed_cap_mps)
+        planning["requested_cruise_speed_mps"] = float(speed_cap_mps)
 
     target = session.directory / "resolved_mission.yaml"
     target.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
@@ -998,11 +994,9 @@ def _mapping_params(
     # independently below.
     target_speed = speed_cap_mps
     if target_speed is None:
-        target_speed = planning.get("max_velocity_mps")
+        target_speed = planning.get("requested_cruise_speed_mps")
     boundary = planner.setdefault("traj_opt", {}).setdefault("boundary", {})
     product_max_velocity = float(boundary["max_vel"])
-    product_max_acceleration = float(boundary["max_acc"])
-    product_max_jerk = float(boundary["max_jerk"])
     if target_speed is not None:
         target_speed = float(target_speed)
         if not math.isfinite(target_speed) or target_speed <= 0.0:
@@ -1012,26 +1006,11 @@ def _mapping_params(
                 f"planner backend target speed exceeds X500 limit {product_max_velocity:g} m/s"
             )
         boundary["max_vel"] = target_speed
-    if "max_acceleration_mps2" in planning:
-        acceleration_limit = float(planning["max_acceleration_mps2"])
-        if acceleration_limit > product_max_acceleration:
-            raise ValueError(
-                "planner backend mission acceleration exceeds X500 limit "
-                f"{product_max_acceleration:g} m/s^2"
-            )
-        boundary["max_acc"] = acceleration_limit
+    # Acceleration and jerk are owned by the immutable vehicle model. Mission
+    # files contain intent only and cannot create per-mission dynamics.
     traj_opt = planner.setdefault("traj_opt", {})
     exp_traj = traj_opt.setdefault("exp_traj", {})
     backup_traj = traj_opt.setdefault("backup_traj", {})
-    if "max_jerk_mps3" in planning:
-        jerk_limit = float(planning["max_jerk_mps3"])
-        if not math.isfinite(jerk_limit) or jerk_limit <= 0.0:
-            raise ValueError("planner backend max jerk must be finite and positive")
-        if jerk_limit > product_max_jerk:
-            raise ValueError(
-                f"planner backend mission jerk exceeds X500 limit {product_max_jerk:g} m/s^3"
-            )
-        boundary["max_jerk"] = jerk_limit
         # Main-trajectory jerk remains an analytic hard gate because its larger
         # optimization problem became unstable with a high-order penalty. The
         # two-piece backup starts from a certified minimum-snap seed and must
@@ -1652,8 +1631,8 @@ def _run_sim_unlocked(
             "no_path": -1,
         }.get(map_profile, 3)
         planning = _mission_planning(mission_file)
-        if "max_velocity_mps" in planning:
-            scenario["expected_max_velocity_mps"] = planning["max_velocity_mps"]
+        if "requested_cruise_speed_mps" in planning:
+            scenario["expected_max_velocity_mps"] = planning["requested_cruise_speed_mps"]
         if speed_cap_mps is not None:
             if (
                 not isinstance(speed_cap_mps, (int, float))
@@ -1684,7 +1663,7 @@ def _run_sim_unlocked(
                         float(scenario.get("mission_timeout_s", 120.0)), timeout_budget
                     )
         required_speed = _required_measured_speed_mps(
-            map_profile, planning.get("max_velocity_mps"), speed_cap_mps
+            map_profile, planning.get("requested_cruise_speed_mps"), speed_cap_mps
         )
         if required_speed is not None:
             scenario["required_measured_speed_mps"] = required_speed

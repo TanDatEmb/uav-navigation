@@ -112,6 +112,10 @@ FastLioPipeline::FastLioPipeline(EstimatorConfig config)
       !config_.extrinsic.translation_imu_lidar_m.allFinite() ||
       config_.lifecycle.maximum_initial_map_registration_failures == 0U ||
       config_.lifecycle.lost_after_registration_failures == 0U ||
+      config_.lifecycle.degraded_after_lidar_gap_ns <= 0 ||
+      config_.lifecycle.lost_after_lidar_gap_ns <= 0 ||
+      config_.lifecycle.lost_after_lidar_gap_ns <
+          config_.lifecycle.degraded_after_lidar_gap_ns ||
       config_.tracking.maximum_recoverable_imu_gap_ns <= 0 ||
       config_.tracking.recovery_confirmation_updates == 0U ||
       !std::isfinite(config_.tracking.discontinuity_covariance_inflation) ||
@@ -230,8 +234,30 @@ Status FastLioPipeline::pushLidar(LidarScan scan) {
   }
   if (status.ok()) {
     ++diagnostics_.processing.buffer_accepted_lidar_count;
+    last_lidar_arrival_ = std::chrono::steady_clock::now();
   }
   return status;
+}
+
+void FastLioPipeline::superviseLidarTimeout() {
+  if (!last_lidar_arrival_.has_value() ||
+      (status_ != EstimatorStatus::kTracking &&
+       status_ != EstimatorStatus::kDegraded)) {
+    return;
+  }
+  const auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now() -
+                              *last_lidar_arrival_)
+                              .count();
+  if (status_ == EstimatorStatus::kTracking &&
+      elapsed_ns >= config_.lifecycle.degraded_after_lidar_gap_ns) {
+    transitionTo(EstimatorStatus::kDegraded,
+                 "LIDAR_TIMEOUT_DEGRADED_INERTIAL");
+  }
+  if (status_ == EstimatorStatus::kDegraded &&
+      elapsed_ns >= config_.lifecycle.lost_after_lidar_gap_ns) {
+    transitionTo(EstimatorStatus::kLost, "LIDAR_TIMEOUT_LOST");
+  }
 }
 
 std::optional<ProcessResult> FastLioPipeline::processNext() {
@@ -418,10 +444,56 @@ ProcessResult FastLioPipeline::processInternal(const MeasurementGroup& group,
   } else {
     if (!state_time_->sameClockDomain(group.propagation_start_time) ||
         state_time_->nanoseconds() != group.propagation_start_time.nanoseconds()) {
-      result.rejection_reason = "PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME";
-      diagnostics_.reason = result.rejection_reason;
-      recordUncorrectedUpdate(LidarUpdateFailureClass::kPrediction);
-      return finalizeResult(std::move(result));
+      const bool recoverable_forward_mismatch =
+          state_time_->sameClockDomain(group.propagation_start_time) &&
+          state_time_->nanoseconds() <
+              group.propagation_start_time.nanoseconds() &&
+          tracking_ever_confirmed_ &&
+          (status_ == EstimatorStatus::kDegraded ||
+           status_ == EstimatorStatus::kLost);
+      if (!recoverable_forward_mismatch) {
+        result.rejection_reason = "PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME";
+        diagnostics_.reason = result.rejection_reason;
+        recordUncorrectedUpdate(LidarUpdateFailureClass::kPrediction);
+        return finalizeResult(std::move(result));
+      }
+
+      // A failed prediction can leave the estimator at the previous committed
+      // state while the synchronizer has already consumed the current scan.
+      // Rebase only after the lifecycle has already failed closed; this keeps
+      // navigation invalid and freezes map insertion while restoring the
+      // exact synchronizer boundary for the current measurement group.
+      const auto propagation_gap = checkedDifference(
+          group.propagation_start_time, *state_time_);
+      const RecoveryCovarianceInflationResult inflation =
+          inflateRecoveryCovariance(
+              covariance_, config_.tracking.discontinuity_covariance_inflation);
+      diagnostics_.recovery_covariance_maximum_eigenvalue_before_clamp =
+          std::max(
+              diagnostics_.recovery_covariance_maximum_eigenvalue_before_clamp,
+              inflation.maximum_eigenvalue_before_clamp);
+      diagnostics_.recovery_covariance_maximum_eigenvalue_after_clamp =
+          std::max(
+              diagnostics_.recovery_covariance_maximum_eigenvalue_after_clamp,
+              inflation.maximum_eigenvalue_after_clamp);
+      if (inflation.clamped) {
+        ++diagnostics_.recovery_covariance_clamp_count;
+      }
+      if (!propagation_gap.ok() || !inflation.successful) {
+        result.rejection_reason =
+            "PROPAGATION_STATE_TIME_REBASE_FAILED";
+        diagnostics_.reason = result.rejection_reason;
+        recordUncorrectedUpdate(LidarUpdateFailureClass::kStateCorruption);
+        return finalizeResult(std::move(result));
+      }
+      estimator_.rebase(state_, covariance_);
+      state_time_ = group.propagation_start_time;
+      ++diagnostics_.propagation_discontinuity_count;
+      diagnostics_.last_propagation_gap_ns =
+          propagation_gap.value().nanoseconds();
+      diagnostics_.reason = "PROPAGATION_STATE_TIME_REBASED";
+      recordUncorrectedUpdate(
+          LidarUpdateFailureClass::kPropagationDiscontinuity);
     }
     propagation_start = *state_time_;
   }
@@ -811,6 +883,7 @@ void FastLioPipeline::reset() {
   state_time_.reset();
   last_initialization_imu_time_.reset();
   last_correction_time_.reset();
+  last_lidar_arrival_.reset();
   bootstrap_reference_points_odom_m_.clear();
   consecutive_registration_failures_ = 0U;
   initial_map_registration_failures_ = 0U;

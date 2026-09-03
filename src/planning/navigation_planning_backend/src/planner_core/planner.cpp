@@ -85,25 +85,6 @@ double knownFreeGuideSupport(
         return fallback;
     }
 
-    void Planner::setRecoveryVelocityScale(const double scale) noexcept {
-        const double bounded_scale =
-            std::isfinite(scale) && scale > 0.0 && scale <= 1.0 ? scale : 1.0;
-        const double exp_limit = nominal_exp_max_velocity_mps_ * bounded_scale;
-        const double backup_limit = nominal_backup_max_velocity_mps_ * bounded_scale;
-        if (!std::isfinite(exp_limit) || exp_limit <= 0.0 ||
-            !std::isfinite(backup_limit) || backup_limit <= 0.0) {
-            cfg_.exp_traj_cfg.max_vel = nominal_exp_max_velocity_mps_;
-            cfg_.back_traj_cfg.max_vel = nominal_backup_max_velocity_mps_;
-            exp_traj_opt_->setMaximumVelocity(nominal_exp_max_velocity_mps_);
-            back_traj_opt_->setMaximumVelocity(nominal_backup_max_velocity_mps_);
-            return;
-        }
-        cfg_.exp_traj_cfg.max_vel = exp_limit;
-        cfg_.back_traj_cfg.max_vel = backup_limit;
-        exp_traj_opt_->setMaximumVelocity(exp_limit);
-        back_traj_opt_->setMaximumVelocity(backup_limit);
-    }
-
     Vec3f Planner::resolveGoalForPlanning(const Vec3f& requested_goal) {
         requested_goal_p_ = requested_goal;
         planning_goal_p_ = requested_goal;
@@ -2948,9 +2929,24 @@ double knownFreeGuideSupport(
                 map_ptr_->geometry());
         const double route_support_m = geometry_utils::computePathLength(guide_path);
         const double known_free_support_m = knownFreeGuideSupport(*map_ptr_, guide_path);
+        navigation_math::StatePVAJ viability_state =
+            navigation_math::StatePVAJ::Zero();
+        viability_state.col(0) = solve_state_.p;
+        viability_state.col(1) = solve_state_.v;
+        viability_state.col(2) = solve_state_.a;
+        viability_state.col(3) = solve_state_.j;
+        navigation_planning::DynamicLimits viability_dynamics;
+        viability_dynamics.vehicle.maximum_velocity_mps =
+            cfg_.exp_traj_cfg.max_vel;
+        viability_dynamics.vehicle.maximum_acceleration_mps2 =
+            cfg_.exp_traj_cfg.max_acc;
+        viability_dynamics.vehicle.maximum_jerk_mps3 =
+            cfg_.exp_traj_cfg.max_jerk;
+        viability_dynamics.intent.requested_cruise_speed_mps =
+            cfg_.requested_cruise_speed_mps;
+        viability_dynamics.unknown_space_policy = cfg_.unknown_space_policy;
         const auto governed_speed = evidenceAwareSpeedLimit(
-            cfg_.exp_traj_cfg.max_vel,
-            cfg_.back_traj_cfg.max_acc, cfg_.back_traj_cfg.max_jerk,
+            viability_state, viability_dynamics,
             {navigation_planning::PlanningTimingContract::kLocalWindowM,
              directional_support.value_or(0.0), route_support_m,
              known_free_support_m});

@@ -30,9 +30,7 @@ mission:
   planning:
     # Use the available SITL control authority so the benchmark evaluates
     # continuity at flight speed rather than at a deliberately slow crawl.
-    max_velocity_mps: 3.0
-    max_acceleration_mps2: 2.0
-    max_jerk_mps3: 8.0
+    requested_cruise_speed_mps: 3.0
     # Do not force a 2.4 m/s endpoint on every 3--5 m rolling horizon.  That
     # endpoint condition makes the B-spline time scaler stretch the whole
     # local trajectory, so PX4 receives a long low-speed prefix and the UAV

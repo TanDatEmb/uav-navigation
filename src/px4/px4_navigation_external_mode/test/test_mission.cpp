@@ -35,9 +35,7 @@ mission:
       position: [2.0, 0.0, 3.0]
       acceptance_radius_m: 0.4
   planning:
-    max_velocity_mps: 1.0
-    max_acceleration_mps2: 2.0
-    max_jerk_mps3: 6.0
+    requested_cruise_speed_mps: 1.0
     unknown_policy: blocked
   control:
     acceptance_confirmation_s: 0.0
@@ -70,7 +68,7 @@ TEST(MissionLoader, LoadsCompatibleControlContract) {
   ASSERT_EQ(mission.waypoints.size(), 2U);
   EXPECT_DOUBLE_EQ(mission.waypoints[0].position_enu.x(), 1.0);
   EXPECT_DOUBLE_EQ(mission.waypoints[0].hold_s, 0.1);
-  EXPECT_DOUBLE_EQ(mission.planning.max_jerk_mps3, 6.0);
+  EXPECT_DOUBLE_EQ(mission.planning.requested_cruise_speed_mps, 1.0);
   EXPECT_EQ(mission.waypoints[0].behavior,
             px4_navigation_external_mode::MissionWaypoint::Behavior::Stop);
 }

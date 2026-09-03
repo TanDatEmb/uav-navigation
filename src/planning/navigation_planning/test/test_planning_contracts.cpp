@@ -372,10 +372,15 @@ TEST(KinematicState, QuaternionFiniteCheckIsStableForLargeFiniteCoefficients) {
 }
 
 TEST(DynamicLimits, HasOneProductOwnedValidationContract) {
-  const navigation_planning::DynamicLimits valid{7.0, 5.0, 12.0};
+  navigation_planning::DynamicLimits valid;
+  valid.vehicle.maximum_velocity_mps = 12.0;
+  valid.vehicle.maximum_acceleration_mps2 = 5.0;
+  valid.vehicle.maximum_jerk_mps3 = 30.0;
+  valid.intent.requested_cruise_speed_mps = 7.0;
   EXPECT_TRUE(valid.valid());
 
-  const navigation_planning::DynamicLimits invalid{7.0, 0.0, 12.0};
+  navigation_planning::DynamicLimits invalid = valid;
+  invalid.vehicle.maximum_acceleration_mps2 = 0.0;
   EXPECT_FALSE(invalid.valid());
 }
 

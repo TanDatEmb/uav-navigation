@@ -599,9 +599,15 @@ void FastLioNode::processingLoop() {
     InputMeasurement measurement;
     {
       std::unique_lock lock(input_mutex_);
-      input_ready_.wait(lock, [this] {
-        return stopping_ || !imu_queue_.empty() || !lidar_queue_.empty();
-      });
+      const bool input_ready = input_ready_.wait_for(
+          lock, std::chrono::milliseconds(20), [this] {
+            return stopping_ || !imu_queue_.empty() || !lidar_queue_.empty();
+          });
+      if (!input_ready) {
+        lock.unlock();
+        pipeline_.superviseLidarTimeout();
+        continue;
+      }
       if (stopping_ && imu_queue_.empty() && lidar_queue_.empty()) {
         return;
       }

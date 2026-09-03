@@ -571,9 +571,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         get_logger(),
         "Applying mission dynamics to planner backend before optimizer construction: "
         "velocity=%.3f acceleration=%.3f jerk=%.3f",
-        mission_limits->max_velocity_mps,
-        mission_limits->max_acceleration_mps2,
-        mission_limits->max_jerk_mps3);
+        mission_limits->intent.requested_cruise_speed_mps,
+        mission_limits->vehicle.maximum_acceleration_mps2,
+        mission_limits->vehicle.maximum_jerk_mps3);
   }
   // Dynamics are immutable after construction. This process-local identity is
   // sufficient for request supersession and is never used as a certificate.
@@ -3425,11 +3425,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   if (renewal_decision.reason == PlannerRenewalReason::kRenewalDue) {
     ++optimizer_renewal_due_count_;
   }
-  std::uint32_t failure_count_for_scale = 0U;
-  if (plan_from_rest_with_transition) {
-    std::lock_guard<std::mutex> lock(input_mutex_);
-    failure_count_for_scale = plan_from_rest_failure_budget_.failureCount();
-  }
   const double remaining_route_m = [&]() {
     const double euclidean_distance = execution_state.finite()
         ? (target - execution_state.position_world).norm()
@@ -3477,27 +3472,20 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }();
   const bool terminal_stop_approach_due = plannerTerminalStopApproachDue(
       stop_waypoint, remaining_route_m,
-      mission_dynamic_limits_.max_velocity_mps,
-      mission_dynamic_limits_.max_acceleration_mps2,
-      mission_dynamic_limits_.max_jerk_mps3);
-  const double recovery_scale = plan_from_rest_with_transition
-      ? plannerRecoveryVelocityScale(failure_count_for_scale) *
-            plannerTerminalStopVelocityScale(
-                stop_waypoint, terminal_stop_approach_due)
-      : 1.0;
+      mission_dynamic_limits_.intent.requested_cruise_speed_mps,
+      mission_dynamic_limits_.vehicle.maximum_acceleration_mps2,
+      mission_dynamic_limits_.vehicle.maximum_jerk_mps3);
   if (plan_from_rest_with_transition && stop_waypoint) {
     const double stop_distance = plannerTerminalStopBrakingDistanceM(
-        mission_dynamic_limits_.max_velocity_mps,
-        mission_dynamic_limits_.max_acceleration_mps2,
-        mission_dynamic_limits_.max_jerk_mps3);
+        mission_dynamic_limits_.intent.requested_cruise_speed_mps,
+        mission_dynamic_limits_.vehicle.maximum_acceleration_mps2,
+        mission_dynamic_limits_.vehicle.maximum_jerk_mps3);
     RCLCPP_INFO(
         get_logger(),
-        "terminal STOP phase remaining_route=%.3f braking_horizon=%.3f approach=%d scale=%.3f",
+        "terminal STOP phase remaining_route=%.3f braking_horizon=%.3f approach=%d",
         remaining_route_m, stop_distance,
-        terminal_stop_approach_due ? 1 : 0,
-        recovery_scale);
+        terminal_stop_approach_due ? 1 : 0);
   }
-  planner_->setRecoveryVelocityScale(recovery_scale);
   navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
   const auto solve_generation_value = advanceMonotonicId(planner_solve_generation_);
   if (!solve_generation_value) {

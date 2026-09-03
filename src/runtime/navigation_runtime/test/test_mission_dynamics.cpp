@@ -40,14 +40,12 @@ mission:
       acceptance_radius_m: 0.5
       behavior: stop
   planning:
-    max_velocity_mps: 7.0
-    max_acceleration_mps2: 5.0
-    max_jerk_mps3: 12.0
+    requested_cruise_speed_mps: 7.0
 )");
   const auto limits = navigation_runtime::loadMissionDynamicLimits(mission.path());
-  EXPECT_DOUBLE_EQ(limits.max_velocity_mps, 7.0);
-  EXPECT_DOUBLE_EQ(limits.max_acceleration_mps2, 5.0);
-  EXPECT_DOUBLE_EQ(limits.max_jerk_mps3, 12.0);
+  EXPECT_DOUBLE_EQ(limits.intent.requested_cruise_speed_mps, 7.0);
+  EXPECT_DOUBLE_EQ(limits.vehicle.maximum_acceleration_mps2, 12.0);
+  EXPECT_DOUBLE_EQ(limits.vehicle.maximum_jerk_mps3, 30.0);
 }
 
 TEST(MissionDynamics, RejectsNonPositiveLimits) {
@@ -62,7 +60,7 @@ mission:
       acceptance_radius_m: 0.5
       behavior: stop
   planning:
-    max_velocity_mps: 0.0
+    requested_cruise_speed_mps: 0.0
 )");
   EXPECT_THROW(navigation_runtime::loadMissionDynamicLimits(mission.path()),
                std::invalid_argument);
@@ -80,9 +78,7 @@ mission:
       acceptance_radius_m: 0.5
       behavior: stop
   planning:
-    max_velocity_mps: 7.0
-    max_acceleration_mps2: 5.0
-    max_jerk_mps3: 12.0
+    requested_cruise_speed_mps: 7.0
 )");
   EXPECT_THROW(navigation_runtime::loadMissionDynamicLimits(mission.path(), "lio_odom"),
                std::invalid_argument);

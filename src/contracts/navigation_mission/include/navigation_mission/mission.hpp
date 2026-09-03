@@ -29,9 +29,7 @@ struct MissionWaypoint {
 };
 
 struct MissionPlanningConfig {
-  double max_velocity_mps{1.0};
-  double max_acceleration_mps2{2.0};
-  double max_jerk_mps3{6.0};
+  double requested_cruise_speed_mps{1.0};
   navigation_world_model::UnknownPolicy unknown_policy{
       navigation_world_model::UnknownPolicy::kRequireKnownFree};
 };
@@ -53,10 +51,8 @@ struct Mission {
     if (schema_version != 1 || id.empty() || id.size() > kMaximumMissionIdLength ||
         frame.empty() || frame.size() > kMaximumMissionFrameLength ||
         waypoints.empty() || waypoints.size() > kMaximumMissionWaypoints ||
-        !std::isfinite(planning.max_velocity_mps) || planning.max_velocity_mps <= 0.0 ||
-        !std::isfinite(planning.max_acceleration_mps2) ||
-        planning.max_acceleration_mps2 <= 0.0 ||
-        !std::isfinite(planning.max_jerk_mps3) || planning.max_jerk_mps3 <= 0.0 ||
+        !std::isfinite(planning.requested_cruise_speed_mps) ||
+        planning.requested_cruise_speed_mps <= 0.0 ||
         (planning.unknown_policy != navigation_world_model::UnknownPolicy::kAllowUnknown &&
          planning.unknown_policy != navigation_world_model::UnknownPolicy::kRequireKnownFree) ||
         !std::isfinite(control.acceptance_speed_mps) || control.acceptance_speed_mps < 0.0 ||

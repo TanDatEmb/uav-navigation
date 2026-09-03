@@ -10,9 +10,7 @@ mission:
       acceptance_radius_m: 0.5
       behavior: stop
   planning:
-    max_velocity_mps: 12.0
-    max_acceleration_mps2: 12.0
-    max_jerk_mps3: 30.0
+    requested_cruise_speed_mps: 12.0
     # MAIN exploration is explicitly allowed to use UNKNOWN in this
     # planner-only benchmark. BACKUP certification remains KNOWN_FREE in the
     # planner verifier and is never relaxed by this mission policy.

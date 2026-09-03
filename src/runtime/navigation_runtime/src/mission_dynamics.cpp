@@ -13,11 +13,10 @@ navigation_planning::DynamicLimits loadMissionDynamicLimits(
     throw std::invalid_argument("planner backend mission file must not be empty");
   }
   const auto mission = navigation_mission::loadMission(mission_file.string(), expected_frame);
-  navigation_planning::DynamicLimits limits{
-      mission.planning.max_velocity_mps,
-      mission.planning.max_acceleration_mps2,
-      mission.planning.max_jerk_mps3,
-      mission.planning.unknown_policy};
+  navigation_planning::DynamicLimits limits;
+  limits.intent.requested_cruise_speed_mps =
+      mission.planning.requested_cruise_speed_mps;
+  limits.unknown_space_policy = mission.planning.unknown_policy;
   return limits;
 }
 

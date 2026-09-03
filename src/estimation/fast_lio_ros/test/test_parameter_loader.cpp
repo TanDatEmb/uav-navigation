@@ -109,6 +109,14 @@ void expectEstimatorConfigsEqual(const EstimatorConfig& direct,
             ros.tracking.recovery_confirmation_updates);
   EXPECT_DOUBLE_EQ(direct.tracking.discontinuity_covariance_inflation,
                    ros.tracking.discontinuity_covariance_inflation);
+  EXPECT_EQ(direct.lifecycle.maximum_initial_map_registration_failures,
+            ros.lifecycle.maximum_initial_map_registration_failures);
+  EXPECT_EQ(direct.lifecycle.lost_after_registration_failures,
+            ros.lifecycle.lost_after_registration_failures);
+  EXPECT_EQ(direct.lifecycle.degraded_after_lidar_gap_ns,
+            ros.lifecycle.degraded_after_lidar_gap_ns);
+  EXPECT_EQ(direct.lifecycle.lost_after_lidar_gap_ns,
+            ros.lifecycle.lost_after_lidar_gap_ns);
   EXPECT_EQ(direct.deskew.mode, ros.deskew.mode);
   EXPECT_DOUBLE_EQ(direct.preprocessing.point_filter.minimum_range_m,
                    ros.preprocessing.point_filter.minimum_range_m);
@@ -176,6 +184,10 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_TRUE(parameters.reject_timestamp_regression);
   EXPECT_DOUBLE_EQ(parameters.maximum_imu_gap_s, 0.02);
   EXPECT_DOUBLE_EQ(parameters.maximum_recoverable_imu_gap_s, 0.05);
+  EXPECT_EQ(parameters.maximum_initial_map_registration_failures, 10);
+  EXPECT_EQ(parameters.lost_after_registration_failures, 5);
+  EXPECT_DOUBLE_EQ(parameters.degraded_after_lidar_gap_s, 0.2);
+  EXPECT_DOUBLE_EQ(parameters.lost_after_lidar_gap_s, 1.0);
   EXPECT_EQ(parameters.recovery_confirmation_updates, 3);
   EXPECT_DOUBLE_EQ(parameters.discontinuity_covariance_inflation, 10.0);
   EXPECT_EQ(parameters.translation_imu_lidar_m,
@@ -192,6 +204,13 @@ TEST_F(ParameterLoaderTest, DatasetConfigUsesCanonicalSensorContract) {
   EXPECT_TRUE(parameters.publish_registered_points);
   EXPECT_EQ(parameters.imu_queue_capacity, 4096);
   EXPECT_EQ(parameters.lidar_queue_capacity, 16);
+  EXPECT_EQ(profile.estimator.lifecycle.maximum_initial_map_registration_failures,
+            10U);
+  EXPECT_EQ(profile.estimator.lifecycle.lost_after_registration_failures, 5U);
+  EXPECT_EQ(profile.estimator.lifecycle.degraded_after_lidar_gap_ns,
+            200'000'000);
+  EXPECT_EQ(profile.estimator.lifecycle.lost_after_lidar_gap_ns,
+            1'000'000'000);
   EXPECT_DOUBLE_EQ(parameters.maximum_processing_lag_s, 0.2);
   EXPECT_EQ(parameters.overload_policy, "fail");
   EXPECT_EQ(parameters.input_qos_reliability, "reliable");
@@ -304,6 +323,24 @@ TEST_F(ParameterLoaderTest, CanonicalConfigRequiresTrackingPolicyFields) {
                      "recovery_updates"},
            std::pair{"      discontinuity_covariance_inflation: 10.0\n",
                      "covariance_inflation"}}) {
+    const auto path = canonicalConfigWithout(line, suffix);
+    EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),
+                 std::invalid_argument);
+    std::filesystem::remove(path);
+  }
+}
+
+TEST_F(ParameterLoaderTest, CanonicalConfigRequiresLifecycleFields) {
+  for (const auto& [line, suffix] :
+       std::array<std::pair<std::string_view, std::string_view>, 4>{
+           std::pair{"      maximum_initial_map_registration_failures: 10\n",
+                     "initial_map_failures"},
+           std::pair{"      lost_after_registration_failures: 5\n",
+                     "registration_failures"},
+           std::pair{"      degraded_after_lidar_gap_s: 0.2\n",
+                     "degraded_lidar_gap"},
+           std::pair{"      lost_after_lidar_gap_s: 1.0\n",
+                     "lost_lidar_gap"}}) {
     const auto path = canonicalConfigWithout(line, suffix);
     EXPECT_THROW(loadCanonicalEstimatorProfile(path.string()),
                  std::invalid_argument);

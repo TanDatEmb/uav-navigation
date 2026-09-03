@@ -721,7 +721,10 @@ TEST(PlannerPassThrough, RepeatedGuideTimesUseNeighbouringTimeAnchors) {
 }
 
 TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
-  const navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
+  navigation_planning::DynamicLimits mission;
+  mission.intent.requested_cruise_speed_mps = 7.0;
+  mission.vehicle.maximum_acceleration_mps2 = 5.0;
+  mission.vehicle.maximum_jerk_mps3 = 12.0;
   navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
   const rog_map::Config map(PLANNER_PRODUCT_CONFIG_PATH);
   navigation_world_model::WorldGeometry world_geometry;
@@ -732,6 +735,7 @@ TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   world_geometry.effective_virtual_ground_m = -10.0;
   world_geometry.effective_virtual_ceiling_m = 10.0;
   planner.bindWorldGeometry(world_geometry);
+  EXPECT_DOUBLE_EQ(planner.requested_cruise_speed_mps, 7.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_vel, 7.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_acc, 5.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_jerk, 12.0);
@@ -740,12 +744,17 @@ TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   EXPECT_THROW(
       (navigation_planning_backend::Config(
           PLANNER_PRODUCT_CONFIG_PATH,
-          navigation_planning::DynamicLimits{12.1, 5.0, 12.0})),
+          [&] {
+            auto invalid = mission;
+            invalid.intent.requested_cruise_speed_mps = 12.1;
+            return invalid;
+          }())),
       std::invalid_argument);
 }
 
 TEST(PlannerProductConfig, RejectsUnknownMissionSpacePolicy) {
-  navigation_planning::DynamicLimits mission{7.0, 5.0, 12.0};
+  navigation_planning::DynamicLimits mission;
+  mission.intent.requested_cruise_speed_mps = 7.0;
   mission.unknown_space_policy =
       static_cast<navigation_planning::UnknownSpacePolicy>(255U);
   EXPECT_THROW(
@@ -942,6 +951,29 @@ TEST(PlannerBackupBraking, UsesJerkLimitedTriangularAndTrapezoidalProfiles) {
   EXPECT_NEAR(navigation_planning_backend::jerkLimitedStopTime(2.0, 2.0, 8.0), 1.25, 1.0e-12);
   EXPECT_NEAR(navigation_planning_backend::jerkLimitedStopDistance(2.0, 2.0, 8.0), 1.25,
               1.0e-12);
+}
+
+TEST(PlannerBackupBraking, FullStateStopRetainsAccelerationAtTheBoundary) {
+  navigation_math::StatePVAJ zero_acceleration =
+      navigation_math::StatePVAJ::Zero();
+  zero_acceleration.col(1).x() = 2.0;
+  auto positive_acceleration = zero_acceleration;
+  positive_acceleration.col(2).x() = 1.5;
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 5.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 2.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 8.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+
+  const auto stopped = navigation_planning_backend::evaluateStopReachability(
+      zero_acceleration, dynamics, 100.0);
+  const auto accelerating = navigation_planning_backend::evaluateStopReachability(
+      positive_acceleration, dynamics, 100.0);
+  ASSERT_TRUE(stopped.feasible);
+  ASSERT_TRUE(accelerating.feasible);
+  EXPECT_GT(accelerating.stopping_distance_m, stopped.stopping_distance_m);
+  EXPECT_GT(accelerating.admissible_entry_speed_mps,
+            stopped.admissible_entry_speed_mps);
 }
 
 TEST(PlannerBackupBraking, MinimumSnapSeedPreservesPVAJAndStopsWithinBounds) {

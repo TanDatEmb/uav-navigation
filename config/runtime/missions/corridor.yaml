@@ -28,8 +28,6 @@ mission:
       behavior: stop
       hold_s: 0.3
   planning:
-    max_velocity_mps: 1.0
-    max_acceleration_mps2: 2.0
-    max_jerk_mps3: 6.0
+    requested_cruise_speed_mps: 1.0
     unknown_policy: allow_unknown
   control:

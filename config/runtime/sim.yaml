@@ -29,6 +29,11 @@ fast_lio:
       maximum_recoverable_imu_gap_s: 0.05
       recovery_confirmation_updates: 3
       discontinuity_covariance_inflation: 10.0
+    lifecycle:
+      maximum_initial_map_registration_failures: 10
+      lost_after_registration_failures: 5
+      degraded_after_lidar_gap_s: 0.2
+      lost_after_lidar_gap_s: 1.0
     extrinsic:
       translation_imu_lidar: [-0.011, -0.02329, 0.04412]
       rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]

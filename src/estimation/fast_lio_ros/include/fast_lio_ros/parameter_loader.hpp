@@ -55,6 +55,10 @@ struct RosParameters {
   std::string livox_timestamp_policy;
   double maximum_imu_gap_s{};
   double maximum_recoverable_imu_gap_s{};
+  std::int64_t maximum_initial_map_registration_failures{};
+  std::int64_t lost_after_registration_failures{};
+  double degraded_after_lidar_gap_s{};
+  double lost_after_lidar_gap_s{};
   std::int64_t recovery_confirmation_updates{};
   double discontinuity_covariance_inflation{};
   bool reject_timestamp_regression{};

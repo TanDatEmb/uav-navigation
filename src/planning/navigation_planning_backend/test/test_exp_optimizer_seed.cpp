@@ -336,7 +336,7 @@ TEST(ExpOptimizer, HighSpeedDetourCorridorSolveKeepsObstacleBypassCertified) {
   }
 }
 
-TEST(ExpOptimizer, BaselineFallsBackToBoundedCertifiedSolveWhenSeedFails) {
+TEST(ExpOptimizer, BaselineUsesBoundedDurationRetryWhenSeedFails) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.optimization_dynamic_reserve_ratio = 1.0;
   config.max_vel = 8.0;
@@ -354,7 +354,7 @@ TEST(ExpOptimizer, BaselineFallsBackToBoundedCertifiedSolveWhenSeedFails) {
   guide_path.emplace_back(navigation_math::Vec3f(15.0, 0.0, 1.0));
   guide_path.emplace_back(tail.col(0));
   // Intentionally too short for the immutable seed's high-order dynamics;
-  // the bounded optimizer must stretch/re-shape it before acceptance.
+  // the bounded production retry must stretch it before acceptance.
   const std::vector<double> guide_times{0.0, 0.25, 0.5};
   geometry_utils::PolytopeVec corridors{makeBox(-100.0, 100.0, -100.0,
                                                  100.0, 0.0, 10.0)};
@@ -363,8 +363,9 @@ TEST(ExpOptimizer, BaselineFallsBackToBoundedCertifiedSolveWhenSeedFails) {
   ASSERT_TRUE(optimizer.optimize(
       head, tail, guide_path, guide_times, corridors, trajectory, true));
   const auto diagnostics = optimizer.diagnostics();
-  EXPECT_TRUE(diagnostics.baseline_fallback_to_optimizer);
-  EXPECT_FALSE(diagnostics.used_certified_seed);
+  EXPECT_FALSE(diagnostics.baseline_fallback_to_optimizer);
+  EXPECT_TRUE(diagnostics.used_certified_seed);
+  EXPECT_GT(diagnostics.corridor_seed_selected_max_duration_scale, 1.0);
   ASSERT_FALSE(trajectory.empty());
   EXPECT_LE(trajectory.getMaxVelRate(), config.max_vel);
   EXPECT_LE(trajectory.getMaxAccRate(), config.max_acc);

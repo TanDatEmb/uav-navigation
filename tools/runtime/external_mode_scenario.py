@@ -1112,8 +1112,7 @@ class ExternalModeScenario:
                     raise ValueError("mission planning/control must be mappings")
                 _reject_unknown_keys(
                     planning,
-                    {"max_velocity_mps", "max_acceleration_mps2",
-                     "max_jerk_mps3", "unknown_policy"},
+                    {"requested_cruise_speed_mps", "unknown_policy"},
                     "mission.planning",
                 )
                 _reject_unknown_keys(
@@ -1121,7 +1120,7 @@ class ExternalModeScenario:
                     {"acceptance_speed_mps", "acceptance_confirmation_s"},
                     "mission.control",
                 )
-                for name in ("max_velocity_mps", "max_acceleration_mps2", "max_jerk_mps3"):
+                for name in ("requested_cruise_speed_mps",):
                     if name in planning:
                         value = float(planning[name])
                         if not math.isfinite(value) or value <= 0.0:

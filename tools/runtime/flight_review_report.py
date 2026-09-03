@@ -86,7 +86,7 @@ def _mission_target_speed_mps(session: Path) -> float | None:
     document = _yaml_mapping(session / "resolved_mission.yaml")
     mission = document.get("mission", {}) if isinstance(document.get("mission"), dict) else {}
     planning = mission.get("planning", {}) if isinstance(mission.get("planning"), dict) else {}
-    target = finite(planning.get("max_velocity_mps"))
+    target = finite(planning.get("requested_cruise_speed_mps"))
     if target is not None:
         return target
     scenario = _yaml_mapping(session / "scenario_config.yaml").get("scenario", {})

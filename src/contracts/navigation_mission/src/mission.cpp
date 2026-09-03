@@ -127,21 +127,13 @@ Mission loadMission(const std::string& path, const std::string& expected_frame) 
 
     if (node["planning"]) {
       requireMap(node["planning"], "planning");
-      rejectUnknownKeys(node["planning"], {"max_velocity_mps", "max_acceleration_mps2",
-                                            "max_jerk_mps3", "unknown_policy"},
+      rejectUnknownKeys(node["planning"], {"requested_cruise_speed_mps", "unknown_policy"},
                         "planning");
       const auto planning = node["planning"];
-      if (planning["max_velocity_mps"]) {
-        mission.planning.max_velocity_mps = finiteScalar(
-            planning["max_velocity_mps"], "planning.max_velocity_mps", 0.0);
-      }
-      if (planning["max_acceleration_mps2"]) {
-        mission.planning.max_acceleration_mps2 = finiteScalar(
-            planning["max_acceleration_mps2"], "planning.max_acceleration_mps2", 0.0);
-      }
-      if (planning["max_jerk_mps3"]) {
-        mission.planning.max_jerk_mps3 = finiteScalar(
-            planning["max_jerk_mps3"], "planning.max_jerk_mps3", 0.0);
+      if (planning["requested_cruise_speed_mps"]) {
+        mission.planning.requested_cruise_speed_mps = finiteScalar(
+            planning["requested_cruise_speed_mps"],
+            "planning.requested_cruise_speed_mps", 0.0);
       }
       if (planning["unknown_policy"]) {
         const auto policy = planning["unknown_policy"].as<std::string>();

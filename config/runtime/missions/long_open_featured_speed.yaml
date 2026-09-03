@@ -13,11 +13,9 @@ mission:
       behavior: stop
       hold_s: 0.5
   planning:
-    max_velocity_mps: 5.0
+    requested_cruise_speed_mps: 5.0
     # Conservative calibration baseline retained until repeated speed-ladder
     # evidence proves a larger PX4 tracking envelope.
-    max_acceleration_mps2: 2.0
-    max_jerk_mps3: 4.0
     unknown_policy: allow_unknown
   control:
     acceptance_speed_mps: 0.15

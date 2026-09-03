@@ -569,7 +569,6 @@ namespace navigation_planning_backend {
         bool setState(const navigation_planning::KinematicState &state);
         // Planning-thread-only recovery envelope. A value below one is a
         // conservative speed request, never a relaxation of V/A/J limits.
-        void setRecoveryVelocityScale(double scale) noexcept;
 
         bool isEasyGoal(const Vec3f &goal_position);
 

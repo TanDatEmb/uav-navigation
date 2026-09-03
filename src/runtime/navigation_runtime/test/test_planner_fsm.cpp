@@ -157,15 +157,7 @@ TEST(PlannerFsm, TerminalStopAcceptsCertifiedBackupEndpointButNotEmergency) {
       navigation_planning::CandidateRole::kBackup));
 }
 
-TEST(PlannerFsm, UsesBoundedSlowerVelocityEnvelopeAfterRestFailures) {
-  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(0U), 1.0);
-  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(1U), 0.75);
-  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(2U), 0.50);
-  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(3U), 0.35);
-  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(100U), 0.35);
-}
-
-TEST(PlannerFsm, UsesHalfSpeedEnvelopeOnlyInsideTerminalStopApproach) {
+TEST(PlannerFsm, UsesStopDistanceOnlyForTerminalStopApproach) {
   const double braking_distance = plannerTerminalStopBrakingDistanceM(5.0, 2.0, 4.0);
   EXPECT_NEAR(braking_distance, 8.75, 1.0e-12);
   EXPECT_FALSE(plannerTerminalStopApproachDue(
@@ -174,9 +166,6 @@ TEST(PlannerFsm, UsesHalfSpeedEnvelopeOnlyInsideTerminalStopApproach) {
       true, 140.0, 5.0, 2.0, 4.0));
   EXPECT_TRUE(plannerTerminalStopApproachDue(
       true, braking_distance, 5.0, 2.0, 4.0));
-  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(true, false), 1.0);
-  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(true, true), 0.5);
-  EXPECT_DOUBLE_EQ(plannerTerminalStopVelocityScale(false, true), 1.0);
 }
 
 TEST(PlannerFsm, RenewsBeforeMainCanReachBackupDuringSchedulingAndSolve) {
@@ -237,8 +226,6 @@ TEST(PlannerFsm, StoppedRecoveryFailureRemainsRetryableWithoutCommand) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFailed,
                                   true, false, false),
             PlannerResultDisposition::RetryFromRest);
-  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(1U), 0.75);
-  EXPECT_DOUBLE_EQ(plannerRecoveryVelocityScale(2U), 0.50);
 }
 
 TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {

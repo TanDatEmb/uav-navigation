@@ -1,5 +1,23 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-03 - Share the full-state stop envelope between authorization and BACKUP
+
+- **Owner/status:** navigation planning stop reachability; `IMPLEMENTED`, representative planner/SITL verification remains open.
+- **Scope:** speed authorization and deterministic BACKUP seed construction now use one PVAJ-aware stopping envelope. The envelope retains boundary acceleration (including transverse acceleration conservatively), jerk release time, and the resulting stopping distance; support remains supplied by the immutable world/corridor certificate.
+- **Safety impact:** conservative candidate construction only. No tracking, jerk, reserve, freshness, KNOWN_FREE, swept-volume, handoff, or localization gate is relaxed. Exact polynomial V/A/J and world certificates remain authoritative.
+- **Evidence:** focused `PlannerBackupBraking.FullStateStopRetainsAccelerationAtTheBoundary` regression and `test_planner_config` build/run passed; integrated timing and obstacle evidence are still required.
+- **Removal/review condition:** retain until the complete baseline benchmark proves the shared envelope is conservative for the supported PVAJ boundary distribution; revisit only with recorded-data evidence and a replacement primitive used by both authorization and BACKUP.
+- **Verification:** `cmake --build build/navigation_planning_backend --target test_planner_config -j2` and `./build/navigation_planning_backend/test_planner_config --gtest_filter='PlannerBackupBraking.*'`, followed by repeated representative planner/SITL runs.
+
+### 2026-09-03 - Separate mission cruise intent from vehicle dynamics
+
+- **Owner/status:** mission contract and planner runtime configuration; `IMPLEMENTED`, dependency-overlay and representative SITL verification remain open.
+- **Scope:** mission YAML and runtime tooling now accept `requested_cruise_speed_mps`; acceleration and jerk are no longer mission fields. Solve-time `DynamicLimits` carries one `VehicleDynamicModel` plus `MotionIntent`, and planner safety-horizon sizing uses requested speed while physical A/J remain model-owned.
+- **Safety impact:** legacy mission A/J definitions are rejected instead of silently creating per-mission vehicle profiles. Requested speed is validated against the model maximum; no tracking, reserve, freshness, KNOWN_FREE, collision, or handoff gate is relaxed.
+- **Evidence:** mission contract direct tests passed `17/17`; runtime tooling tests passed `213/213`; the ROS overlay rebuild is blocked by missing Python `ament_package`/`ament_cmake_test` in the environment.
+- **Removal/review condition:** retain until all deployed mission producers use the new schema and the product vehicle model is loaded from one validated vehicle configuration rather than compatibility construction at solve boundaries.
+- **Verification:** direct mission/runtime tests, `python3 -m unittest discover -s tools/runtime/tests -p 'test_*.py'`, full dependency build, and repeated representative SITL with resolved mission provenance.
+
 ### 2026-09-02 - Trace desired, executing, and timeline identities
 
 - **Owner/status:** navigation runtime decision trace; `IMPLEMENTED`, runtime
@@ -18101,3 +18119,125 @@ release profiles must not use the former allowance.
   a new bounded corner handoff design has repeated representative-map proof.
 - **Verification:** `git show a87f76d`; rebuild after the revert; rerun focused
   planner/FSM/trajectory tests and representative obstacle-map SITL.
+
+### 2026-09-03 - Supervise LiDAR blackout from the FAST-LIO owner loop
+
+- **Owner/status:** FAST-LIO lifecycle, `IMPLEMENTED`; runtime integration and
+  representative dropout evidence remain required.
+- **Scope:** The pipeline records the monotonic wall-clock arrival of accepted
+  LiDAR scans. The single processing owner supervises idle ingress and moves
+  `TRACKING -> DEGRADED` and then `DEGRADED -> LOST` at explicit lifecycle
+  timeouts, without injecting synthetic scans or changing estimator timestamps.
+  Canonical YAML/ROS lifecycle durations are expressed as `*_s` and the ROS
+  loader converts them once into the core's internal `*_ns` fields; the core
+  does not treat an unbound nanosecond default as product configuration.
+- **Safety impact:** A silent LiDAR transport blackout can no longer leave the
+  last estimator state looking continuously healthy. The transition is
+  fail-closed and keeps the existing planner/runtime freshness gates in force;
+  no acceptance threshold was relaxed.
+- **Evidence:** New configuration validation and direct FAST-LIO core tests/build
+  are required. ROS package build is currently subject to the host's missing
+  `ament_package`/`ament_cmake_test` Python environment.
+- **Removal condition:** Remove only when an equivalent independently-owned
+  transport watchdog publishes a typed lifecycle event with the same or
+  stronger fail-closed semantics and repeated dropout/reacquisition artifacts.
+- **Verification:** `test_fast_lio_pipeline`; `test_fast_lio_ros`; repeated
+  short-gap/long-gap recorded-data and SITL runs checking degraded, lost,
+  reinitialization epoch, mapping freeze/invalidation, and planner hold.
+
+### 2026-09-03 - Remove discrete planner recovery velocity profiles
+
+- **Owner/status:** planner/runtime continuous replanning, `IMPLEMENTED`;
+  representative timing and tracking evidence remains required.
+- **Scope:** Removed the failure-count velocity scales and terminal half-speed
+  optimizer mutation. Terminal braking distance remains a certificate/phase
+  predicate, while the optimizer receives one mission cruise request and one
+  physical A/J model.
+- **Safety impact:** No physical limit or acceptance gate was relaxed. Failed
+  solves continue through the existing retained-command/retry/fail-closed
+  state machine; no hidden profile switch changes the command envelope.
+- **Evidence:** Focused planner FSM and planner-config tests/build pass after
+  the removal; SITL must still demonstrate continuity and speed recovery.
+- **Removal condition:** N/A; this is the target behavior. Reintroduce no
+  failure-count speed table without a new ledger review and distributional
+  evidence.
+- **Verification:** `test_planner_fsm`; `test_planner_config`; repeated
+  long-route and obstacle-map SITL with continuous MAIN/BACKUP handoff.
+
+### 2026-09-03 - Recover a forward FAST-LIO state-time mismatch only after fail-closed degradation
+
+- **Owner/status:** FAST-LIO prediction/lifecycle owner; `IMPLEMENTED`,
+  representative SITL recovery evidence required.
+- **Scope:** If a prediction failure leaves the estimator at an older committed
+  state while the synchronizer has already advanced to a later measurement
+  boundary, recovery is permitted only after `tracking_ever_confirmed` and in
+  `DEGRADED` or `LOST`. The estimator rebases at the exact synchronizer
+  boundary with the existing discontinuity covariance inflation, records a
+  propagation discontinuity, and continues the current group. `TRACKING`,
+  clock-domain mismatches, backward mismatches, invalid covariance, and failed
+  duration checks remain hard rejects.
+- **Safety impact:** This prevents a recoverable lifecycle failure from
+  permanently poisoning every subsequent scan's propagation start. The
+  rebase does not restore navigation validity: degraded/lost status, covariance
+  inflation, map-insertion freeze, freshness, epoch, and planner hold gates
+  remain authoritative. A rebase failure remains fail-closed.
+- **Evidence:** Long-route SITL artifact
+  `external-mode-check-20260903T023457-48232` reproduced the permanent
+  `PROPAGATION_START_DOES_NOT_MATCH_STATE_TIME` cascade after three accepted
+  corrections; focused FAST-LIO tests and a rerun after this change are
+  required to verify recovery without stale odometry publication.
+- **Removal condition:** Remove only after the synchronizer/process boundary
+  is made transactional so an uncommitted group cannot advance its epoch.
+- **Verification:** `test_fast_lio_pipeline`; `make build`; long-route SITL and
+  LiDAR dropout/reacquisition artifacts checking the rebase counter,
+  navigation-validity gate, map freeze, localization epoch, and no stale
+  command activation.
+
+### 2026-09-03 - Allow bounded duration stretch for short nominal guide segments
+
+- **Owner/status:** nominal planner seed construction, `IMPLEMENTED`; repeated
+  representative-map timing and tracking evidence remains required.
+- **Scope:** When the immutable corridor Bézier seed fails only its complete
+  V/A/J certificate, the production retry caller may use per-piece and uniform
+  duration scales up to `16.0`. The generic helper default remains `4.0` for
+  compatibility. Endpoint P/V/A/J, physical limits, and acceptance gates are
+  unchanged.
+- **Safety impact:** This addresses a deterministic short-segment jerk spike by
+  allocating more time before optimization. Every retry is still rebuilt and
+  re-certified; an uncertified candidate remains rejected and the runtime
+  fail-closed path is unchanged. No safety gate was relaxed.
+- **Evidence:** Long-route artifact
+  `external-mode-check-20260903T024500-56648` measured an initial jerk of
+  approximately `75598 m/s^3` on a `0.00833 s` first piece against the physical
+  `30 m/s^3` limit; the prior `4.0` bound could not cover that ratio.
+- **Removal condition:** Remove or reduce the caller-specific bound after the
+  guide allocator guarantees a physically feasible minimum duration for every
+  route segment, with repeated long-route and obstacle-map evidence.
+- **Verification:** `test_exp_optimizer_seed`; `test_planner_config`; `make
+  build`; repeated long-route and obstacle-map SITL checking the full dynamic
+  certificate, mission completion, tracking error, and continuous command
+  handoff.
+
+### 2026-09-03 - Bind FAST-LIO lifecycle gap durations at the seconds boundary
+
+- **Owner/status:** FAST-LIO ROS parameter loader and lifecycle owner,
+  `IMPLEMENTED`; runtime dropout/reacquisition evidence remains required.
+- **Scope:** Product YAML/ROS exposes lifecycle durations as
+  `lifecycle.degraded_after_lidar_gap_s` and
+  `lifecycle.lost_after_lidar_gap_s`. The loader declares, validates, and
+  converts them once to the core's internal nanosecond fields. Registration
+  failure counts are also declared and loaded from the same lifecycle block;
+  no `_ns` parameter is accepted as a product setting.
+- **Safety impact:** The watchdog thresholds are now effective configuration
+  rather than unused core defaults. Ordering, positivity, integer
+  representability, and the existing `TRACKING -> DEGRADED -> LOST`
+  fail-closed behavior remain enforced. No timeout was relaxed.
+- **Evidence:** `test_parameter_loader` now checks canonical presence,
+  seconds-to-nanoseconds conversion, direct-vs-ROS equivalence, and both
+  `sim.yaml` and `dataset.yaml`; full CTest passed after the change.
+- **Removal condition:** Remove only if lifecycle timing ownership moves to an
+  equivalent typed boundary that still exposes human-readable seconds and
+  preserves the same fail-closed contract.
+- **Verification:** `test_parameter_loader`; `make test`; repeated LiDAR
+  dropout/reacquisition SITL or recorded-data artifacts checking the effective
+  thresholds and lifecycle transitions.

@@ -276,23 +276,6 @@ inline bool terminalStopEndpointContractValid(
          endpoint_role_valid;
 }
 
-// A failed rest-to-rest solve is retried with a slower velocity envelope.
-// This never relaxes physical limits; it gives the same jerk/acceleration
-// certificate more time to satisfy tight geometry. The failure budget remains
-// the authority for terminal handover.
-inline double plannerRecoveryVelocityScale(
-    const std::uint32_t failure_count) noexcept {
-  switch (failure_count) {
-    case 0U:
-      return 1.0;
-    case 1U:
-      return 0.75;
-    case 2U:
-      return 0.50;
-    default:
-      return 0.35;
-  }
-}
 
 // Return a conservative upper bound for the distance needed to stop from the
 // configured cruise speed. The jerk term deliberately over-approximates the
@@ -326,11 +309,6 @@ inline bool plannerTerminalStopApproachDue(
   if (!std::isfinite(stopping_distance)) return true;
   if (!std::isfinite(remaining_route_m) || remaining_route_m < 0.0) return true;
   return remaining_route_m <= stopping_distance;
-}
-
-inline double plannerTerminalStopVelocityScale(
-    bool terminal_stop, bool terminal_stop_approach_due) noexcept {
-  return terminal_stop && terminal_stop_approach_due ? 0.5 : 1.0;
 }
 
 // World recertification and command sampling remain active independently of

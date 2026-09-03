@@ -1062,10 +1062,16 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             // only failure is V/A/J, rebuild it with a finite set of uniform
             // duration reserves.  Endpoint P/V/A/J remain immutable, so every
             // rebuilt candidate still requires the complete certificate.
+            // Sparse routes can contain a millisecond-scale first guide
+            // segment.  Allow that segment to receive enough bounded time for
+            // the physical jerk envelope, while keeping the compatibility
+            // helper default conservative for callers and tests.
+            constexpr double kMaximumBaselineDurationScale = 16.0;
             std::vector<std::pair<int, VecDf>> retry_duration_candidates;
             const VecDf piece_scales = navigation_planning_backend::
                     boundedPieceDurationRetryScales(
-                        corridor_seed_result.trajectory, cfg_);
+                        corridor_seed_result.trajectory, cfg_,
+                        kMaximumBaselineDurationScale);
             if (piece_scales.size() == opt_vars.times.size() &&
                 piece_scales.allFinite() && piece_scales.maxCoeff() > 1.0) {
                 retry_duration_candidates.emplace_back(
@@ -1073,7 +1079,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
             }
             const auto retry_scales = navigation_planning_backend::
                     boundedDynamicDurationRetryScales(
-                        deterministic_seed_certificate, cfg_);
+                        deterministic_seed_certificate, cfg_,
+                        kMaximumBaselineDurationScale);
             for (const double duration_scale : retry_scales) {
                 retry_duration_candidates.emplace_back(
                     3, opt_vars.times * duration_scale);

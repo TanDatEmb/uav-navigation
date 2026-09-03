@@ -342,7 +342,7 @@ rog_map:
         with tempfile.TemporaryDirectory() as directory:
             session = Path(directory)
             (session / "resolved_mission.yaml").write_text(
-                "mission:\n  planning:\n    max_velocity_mps: 8.0\n",
+                "mission:\n  planning:\n    requested_cruise_speed_mps: 8.0\n",
                 encoding="utf-8",
             )
             self.assertEqual(_mission_target_speed_mps(session), 8.0)
