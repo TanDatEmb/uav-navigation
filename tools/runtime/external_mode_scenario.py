@@ -59,6 +59,14 @@ def _json_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _json_xyz(value: Any) -> list[float | None]:
+    """Serialize a ROS Point/Vector3 while preserving diagnostic NaN sentinels."""
+    try:
+        return _json_vector([value.x, value.y, value.z])
+    except (AttributeError, TypeError, ValueError):
+        return [None, None, None]
+
+
 def _heading_from_quaternion(quaternion: Any) -> float | None:
     """Return ENU yaw from a ROS quaternion without trusting its scale."""
     try:
@@ -739,6 +747,24 @@ class ExternalModeScenario:
             "projected_tracking_certificate_exceeded": bool(getattr(message, "projected_tracking_certificate_exceeded", False)),
             "emergency_authorization_reason": int(getattr(message, "emergency_authorization_reason", 0)),
             "causal_planning_cycle_id": int(getattr(message, "causal_planning_cycle_id", 0)),
+            "causal_timestamp_ns": int(getattr(message, "causal_timestamp_ns", 0)),
+            "emergency_candidate_commit_result": int(getattr(message, "emergency_candidate_commit_result", 0)),
+            "evaluation_now_ns": int(getattr(message, "evaluation_now_ns", 0)),
+            "execution_state_source_stamp_ns": int(getattr(message, "execution_state_source_stamp_ns", 0)),
+            "execution_state_receive_stamp_ns": int(getattr(message, "execution_state_receive_stamp_ns", 0)),
+            "execution_state_source_age_ms": _json_number(getattr(message, "execution_state_source_age_ms", float("nan"))),
+            "execution_state_receive_age_ms": _json_number(getattr(message, "execution_state_receive_age_ms", float("nan"))),
+            "committed_bundle_start_stamp_ns": int(getattr(message, "committed_bundle_start_stamp_ns", 0)),
+            "measured_position_at_state_source": _json_xyz(getattr(message, "measured_position_at_state_source", None)),
+            "measured_velocity_at_state_source": _json_xyz(getattr(message, "measured_velocity_at_state_source", None)),
+            "committed_command_position_at_now": _json_xyz(getattr(message, "committed_command_position_at_now", None)),
+            "committed_command_velocity_at_now": _json_xyz(getattr(message, "committed_command_velocity_at_now", None)),
+            "committed_command_position_at_state_source": _json_xyz(getattr(message, "committed_command_position_at_state_source", None)),
+            "committed_command_velocity_at_state_source": _json_xyz(getattr(message, "committed_command_velocity_at_state_source", None)),
+            "anchor_error_raw_m": _json_number(getattr(message, "anchor_error_raw_m", float("nan"))),
+            "anchor_error_time_aligned_m": _json_number(getattr(message, "anchor_error_time_aligned_m", float("nan"))),
+            "command_motion_over_state_age_m": _json_number(getattr(message, "command_motion_over_state_age_m", float("nan"))),
+            "velocity_residual_time_aligned_mps": _json_number(getattr(message, "velocity_residual_time_aligned_mps", float("nan"))),
             "localization_epoch": int(message.localization_epoch),
             "goal_epoch": int(message.goal_epoch),
             "world_generation": int(message.world_generation),

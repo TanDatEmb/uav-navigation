@@ -63,3 +63,24 @@ uint8 EMERGENCY_AUTHORIZATION_PROJECTED_MAIN_ONLY_CERTIFICATE_EXCEEDED=2
 uint8 EMERGENCY_AUTHORIZATION_OTHER_INVALID=3
 uint8 emergency_authorization_reason
 uint64 causal_planning_cycle_id
+uint64 causal_timestamp_ns
+uint8 emergency_candidate_commit_result
+
+# Temporal-alignment evidence. These fields are diagnostic-only and are not
+# consumed by command admission, recovery, or PX4 control.
+uint64 evaluation_now_ns
+uint64 execution_state_source_stamp_ns
+uint64 execution_state_receive_stamp_ns
+float64 execution_state_source_age_ms
+float64 execution_state_receive_age_ms
+uint64 committed_bundle_start_stamp_ns
+geometry_msgs/Point measured_position_at_state_source
+geometry_msgs/Vector3 measured_velocity_at_state_source
+geometry_msgs/Point committed_command_position_at_now
+geometry_msgs/Vector3 committed_command_velocity_at_now
+geometry_msgs/Point committed_command_position_at_state_source
+geometry_msgs/Vector3 committed_command_velocity_at_state_source
+float64 anchor_error_raw_m
+float64 anchor_error_time_aligned_m
+float64 command_motion_over_state_age_m
+float64 velocity_residual_time_aligned_mps

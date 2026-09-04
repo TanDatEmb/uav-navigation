@@ -3919,6 +3919,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // used by command publication; a stale receive must not rescue a retained
     // or emergency command.
     const auto retained_execution_state = execution_state_store_.load();
+    const auto retained_validation_now_ns = now().nanoseconds();
     const auto retained_state_freshness = retained_execution_state
         ? navigation_contracts::evaluateExecutionStateFreshness(
               now().nanoseconds(), retained_execution_state->state.source_stamp_ns,
@@ -3931,6 +3932,106 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const bool fresh_vehicle_state = retained_execution_state &&
                                      retained_execution_state->state.finite() &&
                                      retained_state_freshness.valid();
+    // Diagnostic-only temporal decomposition. The recovery predicates below
+    // intentionally continue to use command_anchor_sample/anchor_error_m,
+    // preserving the production evidence-phase decision. These samples use
+    // the same immutable committed evaluator at the two exact timestamps and
+    // do not widen the executable lease.
+    navigation_planning::TrajectoryPoint command_sample_at_now;
+    navigation_planning::TrajectoryPoint command_sample_at_state_source;
+    const auto sampleCommittedBundleAtDeclaredStamp =
+        [&](const std::int64_t stamp_ns,
+            navigation_planning::TrajectoryPoint& output) {
+          if (!committed || stamp_ns <= 0) return false;
+          const auto sample = committed_bundle->sampleAtDeclaredStamp(stamp_ns);
+          if (!sample) return false;
+          output = *sample;
+          return true;
+        };
+    const bool temporal_command_now_valid =
+        sampleCommittedBundleAtDeclaredStamp(
+            retained_validation_now_ns, command_sample_at_now);
+    const bool temporal_command_source_valid = retained_execution_state &&
+        sampleCommittedBundleAtDeclaredStamp(
+            retained_execution_state->state.source_stamp_ns,
+            command_sample_at_state_source);
+    const bool temporal_state_valid = retained_execution_state &&
+        retained_execution_state->state.position_world.allFinite() &&
+        retained_execution_state->state.velocity_world.allFinite();
+    const double anchor_error_raw_m = temporal_command_now_valid && temporal_state_valid
+        ? (command_sample_at_now.position_world -
+           retained_execution_state->state.position_world).norm()
+        : std::numeric_limits<double>::quiet_NaN();
+    const double anchor_error_time_aligned_m =
+        temporal_command_source_valid && temporal_state_valid
+        ? (command_sample_at_state_source.position_world -
+           retained_execution_state->state.position_world).norm()
+        : std::numeric_limits<double>::quiet_NaN();
+    const double command_motion_over_state_age_m =
+        temporal_command_now_valid && temporal_command_source_valid
+        ? (command_sample_at_now.position_world -
+           command_sample_at_state_source.position_world).norm()
+        : std::numeric_limits<double>::quiet_NaN();
+    const double velocity_residual_time_aligned_mps =
+        temporal_command_source_valid && temporal_state_valid
+        ? (command_sample_at_state_source.velocity_world -
+           retained_execution_state->state.velocity_world).norm()
+        : std::numeric_limits<double>::quiet_NaN();
+    causal_evaluation_now_ns_.store(retained_validation_now_ns, std::memory_order_release);
+    causal_execution_state_source_stamp_ns_.store(
+        retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,
+        std::memory_order_release);
+    causal_execution_state_receive_stamp_ns_.store(
+        retained_execution_state ? retained_execution_state->state.receive_stamp_ns : 0,
+        std::memory_order_release);
+    causal_execution_state_source_age_ms_.store(
+        retained_state_freshness.source_age_ms, std::memory_order_release);
+    causal_execution_state_receive_age_ms_.store(
+        retained_state_freshness.receive_age_ms, std::memory_order_release);
+    causal_committed_bundle_start_stamp_ns_.store(
+        committed ? committed_bundle->declared_start_ns : 0,
+        std::memory_order_release);
+    const auto storeVector = [](const Eigen::Vector3d& value,
+                                std::atomic<double>& x,
+                                std::atomic<double>& y,
+                                std::atomic<double>& z) {
+      x.store(value.x(), std::memory_order_release);
+      y.store(value.y(), std::memory_order_release);
+      z.store(value.z(), std::memory_order_release);
+    };
+    const Eigen::Vector3d nan_vector =
+        Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+    storeVector(temporal_state_valid
+                    ? retained_execution_state->state.position_world : nan_vector,
+                causal_measured_position_x_, causal_measured_position_y_,
+                causal_measured_position_z_);
+    storeVector(temporal_state_valid
+                    ? retained_execution_state->state.velocity_world : nan_vector,
+                causal_measured_velocity_x_, causal_measured_velocity_y_,
+                causal_measured_velocity_z_);
+    storeVector(temporal_command_now_valid
+                    ? command_sample_at_now.position_world : nan_vector,
+                causal_command_now_position_x_, causal_command_now_position_y_,
+                causal_command_now_position_z_);
+    storeVector(temporal_command_now_valid
+                    ? command_sample_at_now.velocity_world : nan_vector,
+                causal_command_now_velocity_x_, causal_command_now_velocity_y_,
+                causal_command_now_velocity_z_);
+    storeVector(temporal_command_source_valid
+                    ? command_sample_at_state_source.position_world : nan_vector,
+                causal_command_source_position_x_, causal_command_source_position_y_,
+                causal_command_source_position_z_);
+    storeVector(temporal_command_source_valid
+                    ? command_sample_at_state_source.velocity_world : nan_vector,
+                causal_command_source_velocity_x_, causal_command_source_velocity_y_,
+                causal_command_source_velocity_z_);
+    causal_anchor_error_raw_m_.store(anchor_error_raw_m, std::memory_order_release);
+    causal_anchor_error_time_aligned_m_.store(
+        anchor_error_time_aligned_m, std::memory_order_release);
+    causal_command_motion_over_state_age_m_.store(
+        command_motion_over_state_age_m, std::memory_order_release);
+    causal_velocity_residual_time_aligned_mps_.store(
+        velocity_residual_time_aligned_mps, std::memory_order_release);
     const double latest_vehicle_state_age_s = retained_execution_state
         ? retained_state_freshness.source_age_ms * 1.0e-3
         : std::numeric_limits<double>::infinity();
@@ -4750,6 +4851,50 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                     causal_timestamp_ns_.load(std::memory_order_acquire));
     add_trace_value("emergency_candidate_commit_result",
                     causal_emergency_candidate_commit_result_.load(std::memory_order_acquire));
+    add_trace_value("evaluation_now_ns",
+                    causal_evaluation_now_ns_.load(std::memory_order_acquire));
+    add_trace_value("execution_state_source_stamp_ns",
+                    causal_execution_state_source_stamp_ns_.load(std::memory_order_acquire));
+    add_trace_value("execution_state_receive_stamp_ns",
+                    causal_execution_state_receive_stamp_ns_.load(std::memory_order_acquire));
+    add_trace_value("execution_state_source_age_ms",
+                    causal_execution_state_source_age_ms_.load(std::memory_order_acquire));
+    add_trace_value("execution_state_receive_age_ms",
+                    causal_execution_state_receive_age_ms_.load(std::memory_order_acquire));
+    add_trace_value("committed_bundle_start_stamp_ns",
+                    causal_committed_bundle_start_stamp_ns_.load(std::memory_order_acquire));
+    add_trace_vector("measured_position_at_state_source", Eigen::Vector3d{
+      causal_measured_position_x_.load(std::memory_order_acquire),
+      causal_measured_position_y_.load(std::memory_order_acquire),
+      causal_measured_position_z_.load(std::memory_order_acquire)});
+    add_trace_vector("measured_velocity_at_state_source", Eigen::Vector3d{
+      causal_measured_velocity_x_.load(std::memory_order_acquire),
+      causal_measured_velocity_y_.load(std::memory_order_acquire),
+      causal_measured_velocity_z_.load(std::memory_order_acquire)});
+    add_trace_vector("committed_command_position_at_now", Eigen::Vector3d{
+      causal_command_now_position_x_.load(std::memory_order_acquire),
+      causal_command_now_position_y_.load(std::memory_order_acquire),
+      causal_command_now_position_z_.load(std::memory_order_acquire)});
+    add_trace_vector("committed_command_velocity_at_now", Eigen::Vector3d{
+      causal_command_now_velocity_x_.load(std::memory_order_acquire),
+      causal_command_now_velocity_y_.load(std::memory_order_acquire),
+      causal_command_now_velocity_z_.load(std::memory_order_acquire)});
+    add_trace_vector("committed_command_position_at_state_source", Eigen::Vector3d{
+      causal_command_source_position_x_.load(std::memory_order_acquire),
+      causal_command_source_position_y_.load(std::memory_order_acquire),
+      causal_command_source_position_z_.load(std::memory_order_acquire)});
+    add_trace_vector("committed_command_velocity_at_state_source", Eigen::Vector3d{
+      causal_command_source_velocity_x_.load(std::memory_order_acquire),
+      causal_command_source_velocity_y_.load(std::memory_order_acquire),
+      causal_command_source_velocity_z_.load(std::memory_order_acquire)});
+    add_trace_value("anchor_error_raw_m",
+                    causal_anchor_error_raw_m_.load(std::memory_order_acquire));
+    add_trace_value("anchor_error_time_aligned_m",
+                    causal_anchor_error_time_aligned_m_.load(std::memory_order_acquire));
+    add_trace_value("command_motion_over_state_age_m",
+                    causal_command_motion_over_state_age_m_.load(std::memory_order_acquire));
+    add_trace_value("velocity_residual_time_aligned_mps",
+                    causal_velocity_residual_time_aligned_mps_.load(std::memory_order_acquire));
     add_trace_value("solve_stage", solve_stage);
     {
       diagnostic_msgs::msg::KeyValue item;
@@ -5577,6 +5722,65 @@ void NavigationRuntimeNode::publishCommand() {
       causal_emergency_authorization_reason_.load(std::memory_order_acquire);
   command.causal_planning_cycle_id =
       causal_planning_cycle_id_.load(std::memory_order_acquire);
+  command.causal_timestamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_timestamp_ns_.load(std::memory_order_acquire)));
+  command.emergency_candidate_commit_result = static_cast<std::uint8_t>(std::clamp(
+      causal_emergency_candidate_commit_result_.load(std::memory_order_acquire), 0, 255));
+  command.evaluation_now_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_evaluation_now_ns_.load(std::memory_order_acquire)));
+  command.execution_state_source_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_execution_state_source_stamp_ns_.load(std::memory_order_acquire)));
+  command.execution_state_receive_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_execution_state_receive_stamp_ns_.load(std::memory_order_acquire)));
+  command.execution_state_source_age_ms =
+      causal_execution_state_source_age_ms_.load(std::memory_order_acquire);
+  command.execution_state_receive_age_ms =
+      causal_execution_state_receive_age_ms_.load(std::memory_order_acquire);
+  command.committed_bundle_start_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+      0, causal_committed_bundle_start_stamp_ns_.load(std::memory_order_acquire)));
+  command.measured_position_at_state_source.x =
+      causal_measured_position_x_.load(std::memory_order_acquire);
+  command.measured_position_at_state_source.y =
+      causal_measured_position_y_.load(std::memory_order_acquire);
+  command.measured_position_at_state_source.z =
+      causal_measured_position_z_.load(std::memory_order_acquire);
+  command.measured_velocity_at_state_source.x =
+      causal_measured_velocity_x_.load(std::memory_order_acquire);
+  command.measured_velocity_at_state_source.y =
+      causal_measured_velocity_y_.load(std::memory_order_acquire);
+  command.measured_velocity_at_state_source.z =
+      causal_measured_velocity_z_.load(std::memory_order_acquire);
+  command.committed_command_position_at_now.x =
+      causal_command_now_position_x_.load(std::memory_order_acquire);
+  command.committed_command_position_at_now.y =
+      causal_command_now_position_y_.load(std::memory_order_acquire);
+  command.committed_command_position_at_now.z =
+      causal_command_now_position_z_.load(std::memory_order_acquire);
+  command.committed_command_velocity_at_now.x =
+      causal_command_now_velocity_x_.load(std::memory_order_acquire);
+  command.committed_command_velocity_at_now.y =
+      causal_command_now_velocity_y_.load(std::memory_order_acquire);
+  command.committed_command_velocity_at_now.z =
+      causal_command_now_velocity_z_.load(std::memory_order_acquire);
+  command.committed_command_position_at_state_source.x =
+      causal_command_source_position_x_.load(std::memory_order_acquire);
+  command.committed_command_position_at_state_source.y =
+      causal_command_source_position_y_.load(std::memory_order_acquire);
+  command.committed_command_position_at_state_source.z =
+      causal_command_source_position_z_.load(std::memory_order_acquire);
+  command.committed_command_velocity_at_state_source.x =
+      causal_command_source_velocity_x_.load(std::memory_order_acquire);
+  command.committed_command_velocity_at_state_source.y =
+      causal_command_source_velocity_y_.load(std::memory_order_acquire);
+  command.committed_command_velocity_at_state_source.z =
+      causal_command_source_velocity_z_.load(std::memory_order_acquire);
+  command.anchor_error_raw_m = causal_anchor_error_raw_m_.load(std::memory_order_acquire);
+  command.anchor_error_time_aligned_m =
+      causal_anchor_error_time_aligned_m_.load(std::memory_order_acquire);
+  command.command_motion_over_state_age_m =
+      causal_command_motion_over_state_age_m_.load(std::memory_order_acquire);
+  command.velocity_residual_time_aligned_mps =
+      causal_velocity_residual_time_aligned_mps_.load(std::memory_order_acquire);
   command.state_source_stamp = execution_state
       ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(
           builtin_interfaces::msg::Time{})

@@ -1,5 +1,27 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-04 - Add immutable retained-command temporal-alignment telemetry
+
+- **Owner/status:** navigation runtime evidence collection; `IMPLEMENTED`,
+  H7 replay verification remains open.
+- **Scope:** serialize the validation evaluation timestamp, execution source
+  and receive timestamps/ages, measured source-time P/V, and exact immutable
+  committed-polynomial P/V samples at evaluation and source timestamps. Derived
+  raw/aligned anchor errors and command motion are diagnostic-only.
+- **Safety impact:** observability only. The existing raw anchor value and all
+  retained-suffix, tracking, emergency, recovery, timing, and command-admission
+  predicates remain unchanged. No timestamp correction is applied at runtime.
+- **Evidence:** the existing E5 replay contained only a wall-time command
+  sample and could not determine whether its 0.482191 m anchor error was
+  temporally aligned; the missing fields are explicitly marked
+  `NOT_RECORDED` by the offline analyzer.
+- **Removal/review condition:** remove after H7 is closed with a retained raw
+  artifact containing exact immutable samples and the raw-vs-aligned predicate
+  replay; do not replace the raw recovery predicate in this evidence change.
+- **Verification:** direct interface/runtime tests, Release build, offline
+  legacy-artifact analysis, and one minimum straight-flight/replay run with
+  temporal telemetry and regenerated plots/report.
+
 ### 2026-09-04 - Add causal retained-command telemetry and gated failure stimuli
 
 - **Owner/status:** navigation runtime evidence collection; `IMPLEMENTED`,
