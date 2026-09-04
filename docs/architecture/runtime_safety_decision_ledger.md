@@ -9,7 +9,8 @@
   into DECISION_TRACE and NavigationCommand. The gated stimuli can fail one
   safe hot replan, fail a safe PASS_THROUGH handoff solve, repeat replacement
   failures until the retained command boundary, or repeat PlanFromRest
-  failures. All hooks are disabled by default.
+  failures only after the observed execution state is `StoppedRecovery`. All
+  hooks are disabled by default.
 - **Safety impact:** observability and test stimulation only. The hooks are
   applied after the real planner returns and only replace the reported result;
   they do not alter predicates, certificates, timing constants, recovery FSM,

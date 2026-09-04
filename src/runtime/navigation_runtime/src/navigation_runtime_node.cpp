@@ -3689,7 +3689,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       execution_freshness == navigation_execution::TimestampFreshness::VALID &&
       planner_->validateCommittedTrajectory(latest_world.view, now().seconds()).valid;
   const bool repeated_plan_from_rest_failure = inject_failed_plan_from_rest_repeated_ &&
-      plan_from_rest_with_transition;
+      plan_from_rest_with_transition &&
+      execution_recovery_state_.load(std::memory_order_acquire) ==
+          ExecutionRecoveryState::kStoppedRecovery;
   const bool injected_failure = injected_replan_failure || safe_margin_injection ||
       handoff_safe_margin_injection || repeated_replan_failure ||
       repeated_plan_from_rest_failure;
@@ -4655,7 +4657,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     add_trace_value("planning_cycle_id", cycle_count_);
     add_trace_value("bundle_id", committed_generation);
     add_trace_value("solve_generation", solve_generation);
-    add_trace_value("injected_replan_failure", injected_replan_failure ? 1 : 0);
+    add_trace_value("injected_replan_failure", injected_failure ? 1 : 0);
     add_trace_value("commit_observed_this_cycle", commit_observed_this_cycle ? 1 : 0);
     add_trace_value("execution_stamp_ns", execution_stamp_ns);
     add_trace_value("state_age_at_solve_ms",
