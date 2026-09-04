@@ -36,6 +36,20 @@
       "px4_delta_v_p95_mps": 2.8713140913460546,
       "px4_delta_a_p95_mps2": 2.8259550537880265,
       "valid_segment": true
+    },
+    {
+      "run_id": "external-mode-check-20260904T145448-98065",
+      "scenario": "S_DYNAMIC_ID",
+      "run_path": ".artifacts/runtime/external-mode-check-20260904T145448-98065",
+      "requested_speed_mps": 2.0,
+      "tracking_p95_m": 0.760255242829242,
+      "tracking_max_m": 0.8643150412807306,
+      "planner_velocity_p95_mps": 1.9602994283544173,
+      "planner_acceleration_p95_mps2": 2.0765451476198002,
+      "planner_jerk_p95_mps3": 4.668923929975071,
+      "px4_delta_v_p95_mps": 3.170552501017096,
+      "px4_delta_a_p95_mps2": 3.71415154940709,
+      "valid_segment": false
     }
   ],
   "v_closed_loop_nominal_max": null,
