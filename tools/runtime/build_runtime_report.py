@@ -77,9 +77,12 @@ def markdown(runs: list[dict[str, Any]], report: dict[str, Any]) -> str:
     lines += ["", "## 2. Environment", ""]
     if runs:
         metadata = runs[0].get("metadata", {})
-        lines += [f"- repository commit: `{metadata.get('repo_commit', 'UNKNOWN')}`",
-                  f"- PX4 version: `{metadata.get('px4_version', 'UNKNOWN')}`",
-                  f"- ROS version: `{metadata.get('ros_version', 'UNKNOWN')}`",
+        commits = sorted({str(run.get("metadata", {}).get("repo_commit", "UNKNOWN")) for run in runs})
+        px4_versions = sorted({str(run.get("metadata", {}).get("px4_version", "UNKNOWN")) for run in runs})
+        ros_versions = sorted({str(run.get("metadata", {}).get("ros_version", "UNKNOWN")) for run in runs})
+        lines += [f"- repository commit(s): `{', '.join(commits)}`",
+                  f"- PX4 version(s): `{', '.join(px4_versions)}`",
+                  f"- ROS version(s): `{', '.join(ros_versions)}`",
                   f"- timing constants: planner={metadata.get('planner_rate_hz', 'UNKNOWN')} Hz, command={metadata.get('command_rate_hz', 'UNKNOWN')} Hz, replan_forward={metadata.get('replan_forward_s', 'UNKNOWN')} s, stitch={metadata.get('stitch_duration_s', 'UNKNOWN')} s, deadline={metadata.get('solve_deadline_s', 'UNKNOWN')} s", ""]
     else:
         lines.append("No per-run report was available.")

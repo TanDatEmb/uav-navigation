@@ -16,9 +16,9 @@ This report contains only measurements present in retained per-run JSONL evidenc
 
 ## 2. Environment
 
-- repository commit: `37e8dc7f9967990ef4c1401475e0d15abef14360`
-- PX4 version: `deaff86ee335dd697677bcfc2415a23878e1b895`
-- ROS version: `jazzy`
+- repository commit(s): `37e8dc7f9967990ef4c1401475e0d15abef14360, 4b03d39b2d89d7f97dec29780f136f611a77190e, cf5dcf093ecc6addd56a844bc60fc201d0d5d27f`
+- PX4 version(s): `deaff86ee335dd697677bcfc2415a23878e1b895`
+- ROS version(s): `jazzy`
 - timing constants: planner=5.0 Hz, command=50.0 Hz, replan_forward=0.4 s, stitch=0.4 s, deadline=0.18 s
 
 ## 3. Experiment matrix
