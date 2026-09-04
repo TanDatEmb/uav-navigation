@@ -1,0 +1,6 @@
+1788517382.0802898 [INFO] [launch]: All log files can be found below /home/letandat/.codex/runtime/external-mode-check-20260904T102252-97221/logs/2026-09-04-17-23-02-079403-letandat-Legion-5-Pro-16IAH7H-98153
+1788517382.0803981 [INFO] [launch]: Default logging verbosity is set to INFO
+1788517382.1325867 [INFO] [px4_navigation_external_mode_node-1]: process started with pid [98209]
+1788517427.6366954 [WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+1788517427.6375124 [INFO] [px4_navigation_external_mode_node-1]: sending signal 'SIGINT' to process[px4_navigation_external_mode_node-1]
+1788517427.6394663 [ERROR] [px4_navigation_external_mode_node-1]: process has died [pid 98209, exit code -2, cmd '/home/letandat/Dev/uav-navigation/install/px4_navigation_external_mode/lib/px4_navigation_external_mode/px4_navigation_external_mode_node --ros-args -r __node:=px4_navigation_external_mode --params-file /home/letandat/.codex/runtime/external-mode-check-20260904T102252-97221/external_mode_params.yaml --params-file /tmp/launch_params_dj39y8pr'].

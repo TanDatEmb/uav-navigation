@@ -1,0 +1,2 @@
+[INFO] [1788516972.459545161] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[INFO] [1788516972.460369246] [gz_visibility_bridge]: visibility_bridge_metrics received=388 replaced=0 published=388 malformed=0

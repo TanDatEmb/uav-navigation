@@ -1,0 +1,32 @@
+[INFO] [1788516813.583993867] [rosbag2_recorder]: Press SPACE for pausing/resuming
+[INFO] [1788516813.584002381] [rosbag2_recorder]: Event publisher thread: Started
+[INFO] [1788516813.591862656] [rosbag2_recorder]: Starting recording to '/home/letandat/.codex/runtime/external-mode-check-20260904T101326-84964/rosbag'
+[INFO] [1788516813.593950567] [rosbag2_storage]: Opened database '/home/letandat/.codex/runtime/external-mode-check-20260904T101326-84964/rosbag/rosbag_0.db3' for READ_WRITE.
+[INFO] [1788516813.602818389] [rosbag2_recorder]: Subscribed to topic '/navigation/diagnostics'
+[INFO] [1788516813.603042691] [rosbag2_recorder]: Listening for topics...
+[INFO] [1788516813.603074042] [rosbag2_recorder]: Recording...
+[INFO] [1788516813.603077230] [rosbag2_recorder]: Topics discovery started.
+[INFO] [1788516813.625536435] [rosbag2_recorder]: Subscribed to topic '/fmu/in/vehicle_visual_odometry'
+[INFO] [1788516813.628443439] [rosbag2_recorder]: Subscribed to topic '/lidar/points'
+[INFO] [1788516813.658085167] [rosbag2_recorder]: Subscribed to topic '/navigation/navigation_command'
+[INFO] [1788516813.692020036] [rosbag2_recorder]: Subscribed to topic '/lio/odometry_corrected'
+[INFO] [1788516813.692922121] [rosbag2_recorder]: Subscribed to topic '/lio/odometry_propagated'
+[INFO] [1788516813.694659005] [rosbag2_recorder]: Subscribed to topic '/lio/diagnostics'
+[INFO] [1788516814.017995681] [rosbag2_recorder]: Subscribed to topic '/clock'
+[INFO] [1788516814.021660589] [rosbag2_recorder]: Subscribed to topic '/lidar/imu'
+[INFO] [1788516816.747592596] [rosbag2_recorder]: Subscribed to topic '/fmu/in/trajectory_setpoint'
+[INFO] [1788516816.750910352] [rosbag2_recorder]: Subscribed to topic '/navigation/mode_status'
+[INFO] [1788516816.752170288] [rosbag2_recorder]: Subscribed to topic '/navigation/goal'
+[INFO] [1788516816.755655232] [rosbag2_recorder]: Subscribed to topic '/navigation/mission_complete'
+[INFO] [1788516818.501097189] [rosbag2_recorder]: Subscribed to topic '/fmu/out/vehicle_status_v1'
+[INFO] [1788516818.502269145] [rosbag2_recorder]: Subscribed to topic '/fmu/out/vehicle_local_position_v1'
+[INFO] [1788516818.502850401] [rosbag2_recorder]: Subscribed to topic '/fmu/out/vehicle_odometry'
+[INFO] [1788516818.503754357] [rosbag2_recorder]: Subscribed to topic '/fmu/out/vehicle_local_position_setpoint'
+[INFO] [1788516818.504573859] [rosbag2_recorder]: Subscribed to topic '/fmu/out/vehicle_thrust_setpoint'
+[INFO] [1788516818.505458392] [rosbag2_recorder]: Subscribed to topic '/fmu/out/vehicle_attitude'
+[INFO] [1788516818.508418256] [rosbag2_recorder]: Subscribed to topic '/fmu/out/actuator_motors'
+[INFO] [1788516876.287220978] [rosbag2_recorder]: Topics discovery stopped.
+[INFO] [1788516876.293557659] [rosbag2_recorder]: Pausing recording.
+[INFO] [1788516876.293605217] [rosbag2_cpp]: Writing remaining messages from cache to the bag. It may take a while
+[INFO] [1788516876.301735469] [rosbag2_recorder]: Recording stopped
+[WARN] [1788516876.301768165] [rosbag2_recorder]: Number of messages lost on the transport layer: 19

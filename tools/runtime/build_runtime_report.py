@@ -15,6 +15,9 @@ HYPOTHESES = (
     ("H2_replanning_timing", "H2 — Replanning timing"),
     ("H3_pass_through_continuation", "H3 — PASS_THROUGH continuation"),
     ("H4_failed_replan_safety_takeover", "H4 — Failed replan causes premature safety takeover"),
+    ("H4a_planning_failure_alone_changes_ownership", "H4a — Planning failure alone changes execution ownership"),
+    ("H4b_tracking_certificate_exhaustion_authorizes_emergency", "H4b — Tracking-certificate exhaustion authorizes emergency"),
+    ("H4c_backup_ownership_begins_at_declared_switch", "H4c — BACKUP ownership begins at declared switch"),
     ("H5_corner_overconstraint", "H5 — Route/corner overconstraint"),
     ("H6_px4_controller_mismatch", "H6 — Planner vs PX4 controller mismatch"),
 )
@@ -83,10 +86,18 @@ def markdown(runs: list[dict[str, Any]], report: dict[str, Any]) -> str:
         lines.append("")
     lines += ["## 3. Experiment matrix", "", "| Experiment | Speed | Result | Data quality | Notes |", "| ---------- | ----: | ------ | ------------ | ----- |"]
     lines += ["| " + " | ".join(row) + " |" for row in (run_row(run) for run in runs)] or ["| none | | NOT_TESTED | NONE | no run reports |"]
+    section_numbers = {
+        "H1_splice_continuity": "4", "H2_replanning_timing": "5",
+        "H3_pass_through_continuation": "6", "H4_failed_replan_safety_takeover": "7",
+        "H5_corner_overconstraint": "8", "H6_px4_controller_mismatch": "9",
+    }
     for key, title in HYPOTHESES:
-        lines += ["", f"## {int(key[1]) + 3}. {title}", "", f"Status: **{report['hypotheses'][key]['status']}**.", ""]
+        heading = f"## {section_numbers[key]}. {title}" if key in section_numbers else f"### {title}"
+        lines += ["", heading, "", f"Status: **{report['hypotheses'][key]['status']}**.", ""]
         if key == "H4_failed_replan_safety_takeover":
             lines.append("Failure timelines below are emitted from the injected planner trace and adjacent command samples:")
+            lines.append("- E5 Task A causal trace: `runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5/e5_causal_trace.csv`; the original artifact measured C3=`backup_available=True` and `time_to_backup_start_s=1.8774401711603277`, while C1/C2/C4/C5 remain `NOT_IDENTIFIABLE_FROM_OLD_ARTIFACT`.")
+            lines.append("- Supplemental instrumented replay: `runtime_evidence/2026-09-04/E05_causal_replay_instrumented/e5_instrumented_replay_addendum.md` measured actual-anchor certificate exhaustion, but was not a valid safe-margin injection.")
             for run in runs:
                 for item in run.get("metrics", {}).get("failure_timelines", []):
                     lines.append(
@@ -98,6 +109,17 @@ def markdown(runs: list[dict[str, Any]], report: dict[str, Any]) -> str:
                         f"premature={item.get('premature_safety_takeover_before_backup')}; "
                         f"later_nominal_retry={item.get('later_nominal_retry_observed')}"
                     )
+        elif key.startswith("H4"):
+            lines.append("This sub-hypothesis uses only causal telemetry from valid failure-injection runs; blocked stimuli remain inconclusive.")
+            for run in runs:
+                metrics = run.get("metrics", {})
+                if key == "H4a_planning_failure_alone_changes_ownership":
+                    detail = f"safe-margin injections={metrics.get('safe_margin_injected_failure_count', 0)}"
+                elif key == "H4b_tracking_certificate_exhaustion_authorizes_emergency":
+                    detail = f"injected failures={metrics.get('causal_injected_failure_count', 0)}"
+                else:
+                    detail = f"backup ownership transitions={len(metrics.get('backup_ownership_transitions', []))}"
+                lines.append(f"- {run.get('run')}: {detail}")
         elif key == "H3_pass_through_continuation":
             lines.append("Route boundary evidence is reported as `NO_ROUTE_BOUNDARY_EVENT` when no producer-declared event was captured.")
         elif key == "H6_px4_controller_mismatch":
@@ -109,7 +131,8 @@ def markdown(runs: list[dict[str, Any]], report: dict[str, Any]) -> str:
     lines.append("Counts are taken from captured command fields; absent command data is not treated as zero.")
     for run in runs:
         lines.append(f"- {run.get('run')}: roles={json.dumps(run.get('metrics', {}).get('command_roles', {}), sort_keys=True)}; states={json.dumps(run.get('metrics', {}).get('recovery_states', {}), sort_keys=True)}")
-    lines += ["", "## 11. Stationary-hold transitions", "", "No transition is claimed without a captured `navigation_mode_status` event.", "", "## 12. Ranked findings", "", "- **P0**: H4 is runtime-confirmed in E05: one injected failed replacement was followed by EMERGENCY before the old MAIN bundle's backup boundary.", "- No P1/P2 finding is ranked from the current incomplete matrix.", "", "## 13. Proposed next actions", "", "- Execute E3 angle/acceptance sweeps with dedicated free-space mission fixtures.", "- Execute E6 with a handoff-scoped one-shot failure, E7 with repeated-failure injection, and E10 with PlanFromRest-specific failure injection.", "- Keep all safety gates and planner/recovery behavior unchanged while collecting the missing evidence.", "", "Blocked/inconclusive runs: E3, E6, E7, E8, E9, E10, E11 were not executed with their required controlled stimuli; H1, H2, H3, H5, and H6 remain INCONCLUSIVE.", ""]
+    h4_status = report["hypotheses"].get("H4_failed_replan_safety_takeover", {}).get("status", "NOT_TESTED")
+    lines += ["", "## 11. Stationary-hold transitions", "", "No transition is claimed without a captured `navigation_mode_status` event.", "", "## 12. Ranked findings", "", f"- **P0**: H4 status is **{h4_status}** from captured failure timelines; no causal root cause is claimed unless H4a/H4b evidence is valid.", "- No P1/P2 finding is ranked without a valid controlled witness.", "", "## 13. Proposed next actions", "", "- Re-run E5b/E7/E6 using a fixture that preserves a valid committed MAIN across the failure boundary.", "- Re-run E10 only after a captured StoppedRecovery transition, then compare failure-count and timeout predicates.", "- Keep all safety gates and planner/recovery behavior unchanged while collecting the missing evidence.", "", "Blocked/inconclusive runs are listed in the experiment matrix and raw run directories; blocked SITL is not treated as a pass.", ""]
     return "\n".join(lines)
 
 

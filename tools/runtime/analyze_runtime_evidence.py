@@ -9,6 +9,7 @@ they are never replaced by inferred events.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 from pathlib import Path
@@ -76,6 +77,14 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             records.append(item)
     return records
+
+
+def read_csv(path: Path) -> list[dict[str, Any]]:
+    try:
+        with path.open(newline="", encoding="utf-8") as stream:
+            return [dict(row) for row in csv.DictReader(stream)]
+    except OSError:
+        return []
 
 
 def time_s(record: dict[str, Any]) -> float | None:
@@ -152,6 +161,56 @@ def state_name(value: Any) -> str:
         return mapping.get(int(value), str(value))
     except (TypeError, ValueError):
         return "UNKNOWN"
+
+
+def bool_value(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def causal_transition_plot(out: Path, cmds: list[dict[str, Any]],
+                           traces: list[dict[str, Any]]) -> str | None:
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return None
+    points = []
+    for item in traces:
+        t = item.get("time_s")
+        values = item.get("values", {})
+        if t is None or not isinstance(values, dict):
+            continue
+        anchor = finite(values.get("anchor_error_m"))
+        projected = finite(values.get("projected_anchor_error_m"))
+        limit = finite(values.get("retained_tracking_limit_m"))
+        if anchor is not None or projected is not None or limit is not None:
+            points.append((t, anchor, projected, limit,
+                           int(values.get("injected_replan_failure", 0) or 0),
+                           int(values.get("emergency_authorization_reason", 0) or 0)))
+    if not points:
+        return None
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "plot_H_causal_transition.png"
+    plt.figure(figsize=(12, 5))
+    plt.plot([p[0] for p in points], [p[1] for p in points], marker=".", label="anchor error")
+    plt.plot([p[0] for p in points], [p[2] for p in points], marker=".", label="projected anchor error")
+    plt.plot([p[0] for p in points], [p[3] for p in points], linestyle="--", label="retained tracking limit")
+    for t, _, _, _, injected, reason in points:
+        if injected:
+            plt.axvline(t, color="tab:orange", alpha=.7, label="injected failure")
+        if reason:
+            plt.axvline(t, color="tab:red", alpha=.7, label="emergency authorization")
+    plt.xlabel("time [s]"); plt.ylabel("error [m]")
+    plt.title("H — causal tracking certificate and emergency authorization")
+    handles, labels = plt.gca().get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    plt.legend(unique.values(), unique.keys())
+    plt.tight_layout(); plt.savefig(path, dpi=130); plt.close()
+    return str(path)
 
 
 def nearest_command(items: list[dict[str, Any]], stamp: float | None) -> dict[str, Any] | None:
@@ -286,6 +345,9 @@ def make_plots(out: Path, cmds: list[dict[str, Any]], traces: list[dict[str, Any
     if traces:
         plt.figure(figsize=(11, 4)); tt = [x["time_s"] for x in traces if x["time_s"] is not None]; ll = [finite(trace_value(x, "planning_latency_ms")) for x in traces if x["time_s"] is not None]
         plt.plot(tt, ll, marker="."); plt.xlabel("time [s]"); plt.ylabel("solve latency [ms]"); plt.title("G — optimizer/recovery timing"); save("plot_G_optimizer_timing.png")
+        causal_plot = causal_transition_plot(out, cmds, traces)
+        if causal_plot:
+            paths.append(causal_plot)
     return paths
 
 
@@ -314,7 +376,9 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
                      key=lambda item: item["time_s"], default=None)
         after = min((item for item in cmds if item["time_s"] > (failure_time or 0.0)),
                     key=lambda item: item["time_s"], default=None)
-        backup_time = finite(before.get("time_to_backup_start_s")) if before else None
+        backup_time = finite(trace_value(failure, "time_to_backup_start_s"))
+        if backup_time is None and before:
+            backup_time = finite(before.get("time_to_backup_start_s"))
         premature = bool(after and after.get("safety_suffix_active") and backup_time is not None and backup_time > 0.0)
         later_nominal_retry = any(
             item.get("time_s") is not None and item["time_s"] > (failure_time or 0.0) and
@@ -334,6 +398,18 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
             "time_to_backup_start_s_before_failure": backup_time,
             "premature_safety_takeover_before_backup": premature,
             "later_nominal_retry_observed": later_nominal_retry,
+            "injected_failure": bool_value(trace_value(failure, "injected_replan_failure", 0)),
+            "anchor_error_m": finite(trace_value(failure, "anchor_error_m")),
+            "projected_anchor_error_m": finite(trace_value(failure, "projected_anchor_error_m")),
+            "retained_tracking_limit_m": finite(trace_value(failure, "retained_tracking_limit_m")),
+            "relative_anchor_speed_mps": finite(trace_value(failure, "relative_anchor_speed_mps")),
+            "committed_suffix_usable": bool_value(trace_value(failure, "committed_suffix_usable")),
+            "sampled_path_clear": bool_value(trace_value(failure, "sampled_path_clear")),
+            "tracking_certificate_exceeded": bool_value(trace_value(failure, "tracking_certificate_exceeded")),
+            "projected_tracking_certificate_exceeded": bool_value(trace_value(failure, "projected_tracking_certificate_exceeded")),
+            "backup_available": bool_value(trace_value(failure, "backup_available")),
+            "emergency_authorization_reason": trace_value(failure, "emergency_authorization_reason"),
+            "emergency_candidate_commit_result": trace_value(failure, "emergency_candidate_commit_result"),
         })
     route_events = [item for item in traces if int(trace_value(item, "route_boundary_event_present", 0) or 0) == 1]
     px4 = planner_px4_metrics(cmds, samples)
@@ -342,13 +418,46 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
     quality = {"scenario_records": len(scenario), "monitor_samples": len(samples), "planner_traces": len(traces),
                "commands": len(cmds), "rosbag_present": bool(bag_files),
                "missing": [name for name, count in (("scenario.jsonl", len(scenario)), ("samples.jsonl", len(samples))) if count == 0]}
-    hypothesis_status = {key: "INCONCLUSIVE" for key in ("H1_splice_continuity", "H2_replanning_timing", "H3_pass_through_continuation", "H4_failed_replan_safety_takeover", "H5_corner_overconstraint", "H6_px4_controller_mismatch")}
+    hypothesis_keys = ("H1_splice_continuity", "H2_replanning_timing", "H3_pass_through_continuation", "H4_failed_replan_safety_takeover", "H4a_planning_failure_alone_changes_ownership", "H4b_tracking_certificate_exhaustion_authorizes_emergency", "H4c_backup_ownership_begins_at_declared_switch", "H5_corner_overconstraint", "H6_px4_controller_mismatch")
+    hypothesis_status = {key: "INCONCLUSIVE" for key in hypothesis_keys}
     if any(item["premature_safety_takeover_before_backup"] for item in failure_timelines):
         hypothesis_status["H4_failed_replan_safety_takeover"] = "CONFIRMED"
     hypothesis_evidence = {key: [] for key in hypothesis_status}
     if hypothesis_status["H4_failed_replan_safety_takeover"] == "CONFIRMED":
         hypothesis_evidence["H4_failed_replan_safety_takeover"].append(
             "Injected failure was followed by a safety-suffix command while the prior command still had positive time_to_backup_start_s."
+        )
+    injected_timelines = [item for item in failure_timelines if item.get("injected_failure")]
+    safe_injected = [item for item in injected_timelines
+                     if item.get("anchor_error_m") is not None and
+                     item.get("retained_tracking_limit_m") is not None and
+                     item["anchor_error_m"] <= 0.40 * item["retained_tracking_limit_m"] and
+                     item.get("projected_anchor_error_m") is not None and
+                     item["projected_anchor_error_m"] <= 0.60 * item["retained_tracking_limit_m"]]
+    if safe_injected:
+        hypothesis_status["H4a_planning_failure_alone_changes_ownership"] = (
+            "CONFIRMED" if any(item.get("premature_safety_takeover_before_backup") for item in safe_injected) else "REJECTED")
+        hypothesis_status["H4b_tracking_certificate_exhaustion_authorizes_emergency"] = "REJECTED"
+        hypothesis_evidence["H4a_planning_failure_alone_changes_ownership"].append(
+            f"{len(safe_injected)} injected failure(s) satisfied the requested large-margin preconditions."
+        )
+    cert_exhausted = [item for item in injected_timelines if item.get("tracking_certificate_exceeded")]
+    if cert_exhausted:
+        hypothesis_status["H4b_tracking_certificate_exhaustion_authorizes_emergency"] = "CONFIRMED"
+        hypothesis_evidence["H4b_tracking_certificate_exhaustion_authorizes_emergency"].append(
+            f"{len(cert_exhausted)} failure trace(s) recorded tracking_certificate_exceeded=true."
+        )
+    backup_transitions = []
+    for previous_cmd, current_cmd in zip(cmds, cmds[1:]):
+        if role_name(previous_cmd.get("analytic_sample_role")) == "MAIN" and role_name(current_cmd.get("analytic_sample_role")) == "BACKUP":
+            declared = finite(current_cmd.get("backup_start_time_s"))
+            transition = finite(current_cmd.get("trajectory_time_s"))
+            if declared is not None and transition is not None:
+                backup_transitions.append({"time_s": current_cmd["time_s"], "declared_backup_start_time_s": declared, "delta_ms": (float(transition) - declared) * 1000.0})
+    if backup_transitions:
+        hypothesis_status["H4c_backup_ownership_begins_at_declared_switch"] = "CONFIRMED" if all(item["delta_ms"] >= -1.0 for item in backup_transitions) else "REJECTED"
+        hypothesis_evidence["H4c_backup_ownership_begins_at_declared_switch"].append(
+            f"{len(backup_transitions)} MAIN-to-BACKUP command transition(s) were compared with declared backup_start_time_s."
         )
     return {
         "schema_version": 1, "run": input_dir.name, "metadata": metadata,
@@ -359,6 +468,9 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
                      "analytic_splice_residuals": {key: summary(values) for key, values in analytic_residuals.items()},
                      "planner_failure_count": len(failures), "injected_failure_count": sum(int(trace_value(x, "injected_replan_failure", 0) or 0) for x in failures),
                      "failure_timelines": failure_timelines,
+                     "causal_injected_failure_count": len(injected_timelines),
+                     "safe_margin_injected_failure_count": len(safe_injected),
+                     "backup_ownership_transitions": backup_transitions,
                      "route_boundary_event_count": len(route_events), "route_boundary_status": "PRESENT" if route_events else "NO_ROUTE_BOUNDARY_EVENT",
                      "px4": px4, "command_roles": {role: sum(role_name(x.get("analytic_sample_role")) == role for x in cmds) for role in ("MAIN", "BACKUP", "EMERGENCY", "UNKNOWN")},
                      "recovery_states": {state_name(x.get("execution_recovery_state")): sum(state_name(y.get("execution_recovery_state")) == state_name(x.get("execution_recovery_state")) for y in cmds) for x in cmds}},

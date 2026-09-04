@@ -1,0 +1,6 @@
+1788517378.4174113 [INFO] [launch]: All log files can be found below /home/letandat/.codex/runtime/external-mode-check-20260904T102252-97221/logs/2026-09-04-17-22-58-416501-letandat-Legion-5-Pro-16IAH7H-97640
+1788517378.4175410 [INFO] [launch]: Default logging verbosity is set to INFO
+1788517378.4764135 [INFO] [navigation_runtime_node-1]: process started with pid [97876]
+1788517427.9652829 [WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+1788517427.9663270 [INFO] [navigation_runtime_node-1]: sending signal 'SIGINT' to process[navigation_runtime_node-1]
+1788517427.9736750 [ERROR] [navigation_runtime_node-1]: process has died [pid 97876, exit code -2, cmd '/home/letandat/Dev/uav-navigation/install/navigation_runtime/lib/navigation_runtime/navigation_runtime_node --ros-args -r __node:=navigation_runtime_node --params-file /home/letandat/.codex/runtime/external-mode-check-20260904T102252-97221/navigation_runtime_params.yaml --params-file /tmp/launch_params_si87wgs0'].

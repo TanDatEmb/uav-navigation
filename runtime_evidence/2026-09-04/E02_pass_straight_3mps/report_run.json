@@ -43,6 +43,18 @@
       ],
       "status": "CONFIRMED"
     },
+    "H4a_planning_failure_alone_changes_ownership": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H4b_tracking_certificate_exhaustion_authorizes_emergency": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H4c_backup_ownership_begins_at_declared_switch": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
     "H5_corner_overconstraint": {
       "evidence": [],
       "status": "INCONCLUSIVE"
@@ -166,6 +178,8 @@
         "rms": 0.002195
       }
     },
+    "backup_ownership_transitions": [],
+    "causal_injected_failure_count": 0,
     "command_roles": {
       "BACKUP": 0,
       "EMERGENCY": 51,
@@ -177,16 +191,28 @@
       {
         "analytic_role_after_failure": "EMERGENCY",
         "analytic_role_before_failure": "MAIN",
+        "anchor_error_m": null,
+        "backup_available": null,
+        "committed_suffix_usable": null,
+        "emergency_authorization_reason": null,
+        "emergency_candidate_commit_result": null,
         "failure_time_s": 32.96,
+        "injected_failure": false,
         "later_nominal_retry_observed": false,
         "premature_safety_takeover_before_backup": true,
+        "projected_anchor_error_m": null,
+        "projected_tracking_certificate_exceeded": null,
         "recovery_state_after": "EMERGENCY_BRAKE",
         "recovery_state_before": "TRACK_MAIN",
+        "relative_anchor_speed_mps": null,
+        "retained_tracking_limit_m": null,
         "role_after_failure": "EMERGENCY",
         "role_before_failure": "MAIN",
         "safety_suffix_after": true,
         "safety_suffix_before": false,
-        "time_to_backup_start_s_before_failure": 0.9164707114546665
+        "sampled_path_clear": null,
+        "time_to_backup_start_s_before_failure": 0.9164707114546665,
+        "tracking_certificate_exceeded": null
       }
     ],
     "generation_transitions": [
@@ -442,7 +468,8 @@
       "TRACK_MAIN": 430
     },
     "route_boundary_event_count": 0,
-    "route_boundary_status": "NO_ROUTE_BOUNDARY_EVENT"
+    "route_boundary_status": "NO_ROUTE_BOUNDARY_EVENT",
+    "safe_margin_injected_failure_count": 0
   },
   "run": "E02_pass_straight_3mps",
   "runtime_reasons": [

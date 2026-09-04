@@ -1,0 +1,262 @@
+planner:
+  visualization_en: false
+  use_fov_cut: false
+  print_log: false
+  # A strict backup stop keeps the measured handover PVAJ but biases its free
+  # terminal position toward the active waypoint altitude. The candidate is
+  # used only when its exact dynamic and KNOWN_FREE certificates still pass.
+  preserve_backup_altitude: true
+  # Release execution uses the certified minimum-snap BACKUP seed. Numerical
+  # refinement is diagnostic/experimental and must not consume the completion
+  # budget or become a prerequisite for a complete MAIN+BACKUP bundle.
+  backup_refinement_enabled: false
+  # Keep the convex search box local to the collision-checked A* guide. A
+  # 3 m half-width is clipped asymmetrically by the vertical map envelope at
+  # nominal altitude, moving the initialization toward z~=2.1 m and feeding
+  # that drift into the next receding-horizon prefix. 1.5 m still leaves more
+  # than three vehicle radii around the guide while removing unused volume.
+  corridor_bound_distance_m: 1.5
+  corridor_segment_max_length_m: 3.0
+  # This parameter bounds the visibility horizon before choosing the backup
+  # switch point. Config validation requires it to cover braking distance,
+  # one replan interval and the full safety envelope.
+  # At the 12 m/s product ceiling, jerk-limited stopping needs 8.4 m; two
+  # 0.2 s replan cycles add 4.8 m and the complete safety envelope adds 0.8 m.
+  # The product envelope reaches 12 m/s. With the speed benchmark's lower
+  # 5 m/s^2 acceleration and 12 m/s^3 jerk limits, a fail-closed stop plus two
+  # replan-forward intervals and the 0.8 m body/error tube requires 22.5 m.
+  visibility_horizon_cap_m: 23.0
+  # Keep the low-speed optimization problem at the repeatedly measured 14 m
+  # floor. Config raises the effective horizon from the mission's jerk-limited
+  # stopping/replan envelope when speed requires it, up to the 23 m product
+  # cap. The immutable global route remains the long-range backbone.
+  visibility_horizon_floor_m: 14.0
+  # One CIRI pass already separates every occupied point from the seed line.
+    # Additional passes only enlarge the inscribed volume and create an
+    # unbounded latency tail near dense obstacle surfaces.
+    # Temporary performance policy TB-003; dataset snapshot A/B is required.
+  iris_iter_num: 1
+  # Replan from a short future state to preserve PVA continuity without
+  # committing the vehicle to a one-second blind prefix near obstacles.
+  # The retained-prefix handoff must cover the complete 0.4 s stitch contract;
+  # using 0.2 s left only ~20 ms after a solve at the 180 ms deadline for
+  # recertification and atomic command publication.
+  replan_forward_dt_s: 0.4
+  # One absolute budget spans A*, corridor, EXP, yaw and backup validation.
+  solve_deadline_s: 0.18
+  # Stop optional nominal refinement early enough to construct and certify the
+  # complete yaw+BACKUP bundle. This is the locked initial value; increases
+  # require a measured p99 distribution, never a single run.
+  finalization_reserve_s: 0.04
+  # The route horizon includes a bounded pass-through look-ahead segment, not
+  # only the active waypoint. This preserves geometric room for PX4-style
+  # continuous handoff while remaining bounded by the rolling map extent.
+  local_window_m: 20.0
+  # planner backend convention: a non-positive value disables the explicit sensing
+  # horizon/FOV cut. Backup visibility is still bounded by the safe corridor
+  # limit below and checked against known-free map evidence.
+  sensing_horizon_m: 0.0
+  # Preserve a short dynamically continuous prefix, then rebuild the route
+  # from current map evidence. A long/infinite retained prefix recreates the
+  # stale normal-path behaviour seen after contact or optimizer drift.
+  receding_distance_m: 3.0
+  # Planning envelope is derived from physical vehicle size and independent
+  # tracking/localization/mapping budgets. Keep this equal to their sum; the
+  # planner backend config validator rejects silent safety-radius drift.
+  vehicle_radius_m: 0.35
+  tracking_error_budget_m: 0.25
+  localization_error_budget_m: 0.05
+  mapping_error_budget_m: 0.10
+  planning_margin_m: 0.05
+  # Conservative initial envelope below PX4 upstream autonomous defaults
+  # (60 deg/s, 20 deg/s^2). Acceptance still requires the runner to capture
+  # the active vehicle parameters; these are not hardware certification.
+  yaw_rate_max_rad_s: 1.0
+  yaw_acceleration_max_rad_s2: 0.3
+  route_yaw:
+    minimum_lookahead_m: 2.0
+    maximum_lookahead_m: 12.0
+    lookahead_time_s: 1.5
+    minimum_horizontal_speed_mps: 0.3
+    minimum_horizontal_support_m: 0.5
+    reversal_threshold_rad: 2.6179938779914944
+  # Rebase a hot trajectory when measured yaw no longer follows its committed
+  # yaw anchor. This is a continuity recovery envelope, not a safety/waypoint
+  # acceptance threshold; calibrate it from repeated tracking distributions.
+  yaw_tracking_error_budget_rad: 0.35
+
+traj_opt:
+  switch:
+    save_log_en: false
+    print_optimizer_log: false
+  boundary:
+    # X500 product envelope, intentionally below planner backend's aggressive research
+    # defaults. Missions may lower these values but never raise them.
+    max_vel: 12.0
+    max_acc: 12.0
+    max_jerk: 30.0
+    max_omg: 5.0
+    max_acc_thr: 25.0
+    min_acc_thr: 6.0
+  exp_traj:
+    # Parameterize nominal MINCO control points inside the generated SFC.
+    # Direct waypoint variables (type=1) only apply a soft plane penalty and
+    # can leave the corridor between optimizer iterations; the independent
+    # continuous corridor certificate then rejects the whole candidate.
+    pos_constraint_type: 2
+    block_energy_cost: false
+    opt_accuracy: 5.0e-6
+    # Bound L-BFGS history to reduce per-iteration O(history * variables)
+    # work. This only shapes the numerical search; independent hard
+    # corridor/dynamic/flatness/world certificates remain authoritative.
+    lbfgs_memory_size: 32
+    # Feasibility retries disable relative-cost stopping but remain bounded;
+    # hard V/A/J and flatness gates remain the only acceptance authority.
+    feasibility_retry_max_iterations: 64
+    integral_reso: 15
+    smooth_eps: 0.01
+    # HG-002 NUMERICAL_TOLERANCE: normalized corridor-plane violation in metres.
+    # Kept separate from L-BFGS smoothing so optimizer tuning cannot relax the
+    # geometric certificate. This provisional value requires dataset/SITL A/B.
+    corridor_plane_tolerance_m: 0.01
+    # Route-reference quality objective. These weights are independent of the
+    # corridor/dynamic feasibility penalties; they are not safety certificates.
+    # The route objective is deliberately anisotropic: vertical tracking is
+    # much more sensitive to PX4 command quality than lateral guide shaping.
+    # These terms only condition the MINCO search; corridor, dynamic, flatness
+    # and world certificates remain independent authorities.
+    route_reference:
+      lateral_weight: 1.0
+      vertical_weight: 10.0
+      lateral_deadband_m: 0.05
+      vertical_deadband_m: 0.05
+    # Interior search target only; the independent physical V/A/J certificate
+    # remains at the mission limits and cannot be relaxed by this value.
+    optimization_dynamic_reserve_ratio: 0.98
+    # Objective weights shape numerical search only. Hard corridor and dynamic
+    # certificates are evaluated independently.
+    objective:
+      time_weight: 12000.0
+      position_penalty_weight: 5.0e+8
+      # Jerk remains outside the nominal objective because its high-order
+      # gradient destabilizes hot replans; the hard gate remains authoritative.
+      velocity_penalty_weight: 5.0e+5
+      acceleration_penalty_weight: 5.0e+5
+      # Zero disables the optional high-order jerk objective; the analytic
+      # jerk certificate remains authoritative.
+      jerk_penalty_weight: 0.0
+      # Zero disables the corridor-center attraction term.
+      waypoint_attraction_weight: 0.0
+      angular_rate_penalty_weight: 1.0e+5
+      thrust_penalty_weight: 1.0e+5
+  backup_traj:
+    uniform_time_en: true
+    pos_constraint_type: 1
+    piece_num: 2
+    block_energy_cost: true
+    opt_accuracy: 1.0e-6
+    # Keep backup optimization bounded by the same measured history budget.
+    # A backup candidate still requires the strict known-free certificate.
+    lbfgs_memory_size: 32
+    integral_reso: 12
+    smooth_eps: 0.01
+    corridor_plane_tolerance_m: 0.01
+    objective:
+      time_weight: 1200.0
+      terminal_time_weight: 1.0e+5
+      position_penalty_weight: 1.0e+10
+      velocity_penalty_weight: 1.0e+5
+      acceleration_penalty_weight: 1.0e+5
+    # Backup has only two pieces and starts from a certified minimum-snap seed;
+    # keep jerk in its objective so L-BFGS cannot shorten a feasible stop into
+    # a trajectory that is rejected only by the post-solve hard gate.
+      jerk_penalty_weight: 1.0e+5
+      angular_rate_penalty_weight: 1.0e+5
+      thrust_penalty_weight: 1.0e+5
+  flatness:
+    mass: 1.64
+    dh: 0.35
+    dv: 0.35
+    cp: 0.001
+    v_eps: 0.0001
+    grav: 9.81
+
+astar:
+  # The search window is derived from the immutable world geometry and the
+  # active search horizon. A* owns only sparse nodes that the current search
+  # actually touches; no second voxel-count geometry is configured here.
+  # Weighted A* bounds obstacle-search latency. Collision checks and corridor
+  # verification are unchanged, so the weight trades geometric optimality for
+  # deterministic real-time search without weakening safety.
+  heuristic_weight: 1.5
+  # PathSearch can retry once on the probabilistic map. Give each bounded
+  # attempt enough time to route around a newly revealed obstacle while keeping
+  # both attempts inside the single 0.12 s A* stage budget.
+  search_time_limit_s: 0.06
+  # Preferred-altitude and unrestricted fallback share this stage budget. The
+  # remaining 0.06 s of the 0.18 s solve deadline is reserved for corridor,
+  # MINCO, yaw, backup construction and final certification.
+  total_time_limit_s: 0.12
+  visual_process: false
+  allow_diag: true
+  heu_type: 2
+  debug_visualization_en: false
+
+rog_map:
+  # The registered cloud is voxelized at 0.20 m. Keep measured occupancy at
+  # that evidence resolution; a denser grid creates thousands of duplicate
+  # surface constraints and gives CIRI quadratic work without adding geometry.
+  # ROG-Map requires the inflated grid to be no finer than measured occupancy;
+  # both layers therefore share this evidence resolution.
+  resolution: 0.2
+  inflation_resolution: 0.2
+  # Baseline inflated grid. The grid-to-CIRI clearance contract is diagnosed
+  # explicitly; increasing inflation must not be used as a substitute for
+  # resolving an oracle/quantization mismatch.
+  inflation_step: 4
+  # ROG-Map storage is the locked axis-aligned ENU evidence window. Planner
+  # startup validates every discretized axis against this product geometry;
+  # route-direction and known-free support remain independent runtime gates.
+  map_size: [50, 50, 8]
+  fix_map_origin: [0, 0, 1.5]
+  # lio_odom is initialized from the estimator trajectory, so zero is not a
+  # physical ground datum and a valid mission may descend below it.  Keep the
+  # upstream plane feature available, but disable it for this product frame.
+  # Observed/inflated occupancy remains authoritative. Points outside the
+  # finite sliding-map window remain OUT_OF_MAP; UNKNOWN inside that window
+  # still follows the planner's explicit unknown policy. The values below are
+  # inert defaults while the absolute planes are disabled.
+  virtual_ground_ceiling_en: false
+  virtual_ceil_height: 5.8
+  virtual_ground_height: -1.1
+  map_sliding:
+    enable: true
+    # Must stay comfortably below the smallest local-map half extent (3 m in
+    # Z).  A 3 m threshold let the vehicle reach the old map ceiling before a
+    # slide, so A* produced seeds outside CIRI's local domain.
+    threshold: 1.5
+  intensity_thresh: -10
+  point_filt_num: 1
+  raycasting:
+    # Backup certification requires observed-free evidence from the sensor
+    # origin to the endpoint. Endpoint-only updates cannot produce that
+    # certificate: UNKNOWN is permitted only on the exploratory MAIN prefix,
+    # never on the committed BACKUP suffix.
+    enable: true
+    batch_update_size: 1
+    # Keep the raycasting update box synchronized with the complete evidence
+    # window; startup/product tests compare all three discretized axes.
+    local_update_box: [50, 50, 8]
+    # Reject returns from the airframe before occupancy insertion. This only
+    # affects the planning map; the estimator keeps its own registered cloud.
+    # The minimum ray range is also the body-clear radius. It must cover the
+    # complete planner safety envelope so a strict BACKUP swept tube cannot
+    # enter an artificial UNKNOWN ring around the execution anchor.
+    ray_range: [0.8, 100]
+    p_min: 0.12
+    p_miss: 0.49
+    p_free: 0.499
+    p_occ: 0.85
+    p_hit: 0.9
+    p_max: 0.98
+    unk_thresh: 1.0

@@ -1,0 +1,52 @@
+[INFO] [1788516700.521650046] [px4_navigation_external_mode]: External Mode timing contract: command_stream=0.10s state_age=0.20s initial_hold=5.0s stopped_recovery=5.0s
+[INFO] [1788516700.525624618] [px4_navigation_external_mode]: External Mode command contract: planner backend PVA
+[DEBUG] [1788516700.528761141] [px4_navigation_external_mode]: Waiting for FMU...
+[DEBUG] [1788516703.694546046] [px4_navigation_external_mode]: Checking message compatibility...
+[DEBUG] [1788516703.695612707] [px4_navigation_external_mode]: Subscriber found, continuing
+[DEBUG] [1788516703.695757852] [px4_navigation_external_mode]: Publisher found, continuing
+[DEBUG] [1788516704.190971901] [px4_navigation_external_mode]: Registering 'Avoidance Mission' (arming check: 1, mode: 1, mode executor: 1)
+[DEBUG] [1788516704.191009747] [px4_navigation_external_mode]: Subscriber found, continuing
+[DEBUG] [1788516704.191036587] [px4_navigation_external_mode]: Publisher found, continuing
+[DEBUG] [1788516704.203867050] [px4_navigation_external_mode]: Got RegisterExtComponentReply
+[WARN] [1788516704.204069105] [rcl.logging_rosout]: Publisher already registered for node name: 'px4_navigation_external_mode'. If this is due to multiple nodes with the same name then all logs for the logger named 'px4_navigation_external_mode' will go out over the existing publisher. As soon as any node with that name is destructed it will unregister the publisher, preventing any further logs for that name from being published on the rosout topic.
+[INFO] [1788516704.211777966] [px4_navigation_external_mode]: External Mode state inputs use an independent single-thread receiver node
+[INFO] [1788516704.211991222] [px4_navigation_external_mode]: Mission gate: wp=0 request=0 state=0 position_error_m=-1.000 radius_m=0.700 speed_mps=-1.000 acceptance_speed_mps=0.150 airborne=false trajectory_ready=false terminal_hold_pending=false
+[DEBUG] [1788516704.219139639] [px4_navigation_external_mode]: Arming check request (id=1, only printed once)
+[INFO] [1788516705.477199038] [px4_navigation_external_mode]: Mission gate: wp=0 request=0 state=0 position_error_m=3.010 radius_m=0.700 speed_mps=0.003 acceptance_speed_mps=0.150 airborne=false trajectory_ready=false terminal_hold_pending=false
+[INFO] [1788516706.727196675] [px4_navigation_external_mode]: Mission gate: wp=0 request=0 state=0 position_error_m=3.011 radius_m=0.700 speed_mps=0.005 acceptance_speed_mps=0.150 airborne=false trajectory_ready=false terminal_hold_pending=false
+[INFO] [1788516707.977198956] [px4_navigation_external_mode]: Mission gate: wp=0 request=0 state=0 position_error_m=3.011 radius_m=0.700 speed_mps=0.002 acceptance_speed_mps=0.150 airborne=false trajectory_ready=false terminal_hold_pending=false
+[INFO] [1788516709.227195484] [px4_navigation_external_mode]: Mission gate: wp=0 request=0 state=0 position_error_m=3.011 radius_m=0.700 speed_mps=0.003 acceptance_speed_mps=0.150 airborne=false trajectory_ready=false terminal_hold_pending=false
+[INFO] [1788516710.477182591] [px4_navigation_external_mode]: Mission gate: wp=0 request=0 state=0 position_error_m=3.011 radius_m=0.700 speed_mps=0.003 acceptance_speed_mps=0.150 airborne=false trajectory_ready=false terminal_hold_pending=false
+[DEBUG] [1788516710.759064688] [px4_navigation_external_mode]: Mode executor 'Avoidance Mission' activated
+[INFO] [1788516710.759105650] [px4_navigation_external_mode]: Avoidance Mission executor activated
+[DEBUG] [1788516710.774572810] [px4_navigation_external_mode]: Mode 'Avoidance Mission' activated
+[INFO] [1788516710.774727185] [px4_navigation_external_mode]: external_mode_metrics odom_callbacks=0 odom_max_gap_us=0 trajectory_received=0 trajectory_accepted=0 trajectory_rejected=0 waypoint_handoffs_retaining_command=0 setpoint_updates=1 setpoint_max_gap_us=0 last_state_age_s=-1.000000 stale_state_failures=0 velocity_command_enu=(0.000,0.000,0.000) forward_guard_count=0
+[DEBUG] [1788516711.064392225] [px4_navigation_external_mode]: Mode executor 'Avoidance Mission' deactivated (1)
+[DEBUG] [1788516711.064447462] [px4_navigation_external_mode]: Owned navigation mode was deactivated by mode handover
+[INFO] [1788516711.064466923] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+[DEBUG] [1788516711.064472981] [px4_navigation_external_mode]: Mode 'Avoidance Mission' deactivated
+[DEBUG] [1788516725.834162975] [px4_navigation_external_mode]: Mode executor 'Avoidance Mission' activated
+[INFO] [1788516725.834196944] [px4_navigation_external_mode]: Avoidance Mission executor activated
+[DEBUG] [1788516725.849355037] [px4_navigation_external_mode]: Mode 'Avoidance Mission' activated
+[INFO] [1788516725.849432186] [px4_navigation_external_mode]: Mission gate: wp=0 request=0 state=1 position_error_m=0.335 radius_m=0.700 speed_mps=0.093 acceptance_speed_mps=0.150 airborne=true trajectory_ready=false terminal_hold_pending=false
+[INFO] [1788516725.849527877] [px4_navigation_external_mode]: Published mission waypoint 0 (open_start) behavior=0 next_target=(3.000,0.000,3.000)
+[INFO] [1788516725.849542165] [px4_navigation_external_mode]: external_mode_metrics odom_callbacks=0 odom_max_gap_us=0 trajectory_received=0 trajectory_accepted=0 trajectory_rejected=0 waypoint_handoffs_retaining_command=0 setpoint_updates=1 setpoint_max_gap_us=0 last_state_age_s=-1.000000 stale_state_failures=0 velocity_command_enu=(0.000,0.000,0.000) forward_guard_count=0
+[INFO] [1788516725.869316609] [px4_navigation_external_mode]: PX4 local frame aligned to LIO: translation_ned=(0.164,0.155,0.010)
+[INFO] [1788516725.877209732] [px4_navigation_external_mode]: Mission waypoint accepted: wp=0 position_error_m=0.334 speed_mps=0.091 next_wp=1 next_request=2
+[INFO] [1788516725.877323390] [px4_navigation_external_mode]: Published mission waypoint 1 (open_east) behavior=0 next_target=(6.000,0.000,3.000)
+[INFO] [1788516727.109685919] [px4_navigation_external_mode]: external_mode_metrics odom_callbacks=50 odom_max_gap_us=20000 trajectory_received=54 trajectory_accepted=54 trajectory_rejected=0 waypoint_handoffs_retaining_command=0 setpoint_updates=64 setpoint_max_gap_us=16000 last_state_age_s=-1.000000 stale_state_failures=0 velocity_command_enu=(0.164,0.028,0.035) forward_guard_count=0
+[INFO] [1788516727.127187693] [px4_navigation_external_mode]: Mission gate: wp=1 request=2 state=2 position_error_m=3.222 radius_m=0.700 speed_mps=0.099 acceptance_speed_mps=0.150 airborne=true trajectory_ready=true terminal_hold_pending=false
+[INFO] [1788516728.369677466] [px4_navigation_external_mode]: external_mode_metrics odom_callbacks=101 odom_max_gap_us=20000 trajectory_received=117 trajectory_accepted=117 trajectory_rejected=0 waypoint_handoffs_retaining_command=0 setpoint_updates=127 setpoint_max_gap_us=16000 last_state_age_s=-1.000000 stale_state_failures=0 velocity_command_enu=(0.725,0.036,0.015) forward_guard_count=0
+[INFO] [1788516728.377231193] [px4_navigation_external_mode]: Mission gate: wp=1 request=2 state=2 position_error_m=2.793 radius_m=0.700 speed_mps=0.833 acceptance_speed_mps=0.150 airborne=true trajectory_ready=true terminal_hold_pending=false
+[INFO] [1788516729.627197258] [px4_navigation_external_mode]: Mission gate: wp=1 request=2 state=2 position_error_m=1.850 radius_m=0.700 speed_mps=0.917 acceptance_speed_mps=0.150 airborne=true trajectory_ready=true terminal_hold_pending=false
+[INFO] [1788516729.629686638] [px4_navigation_external_mode]: external_mode_metrics odom_callbacks=151 odom_max_gap_us=20000 trajectory_received=180 trajectory_accepted=180 trajectory_rejected=0 waypoint_handoffs_retaining_command=0 setpoint_updates=190 setpoint_max_gap_us=16000 last_state_age_s=-1.000000 stale_state_failures=0 velocity_command_enu=(0.927,0.053,0.004) forward_guard_count=0
+[INFO] [1788516730.877219287] [px4_navigation_external_mode]: Mission gate: wp=1 request=2 state=2 position_error_m=1.110 radius_m=0.700 speed_mps=0.640 acceptance_speed_mps=0.150 airborne=true trajectory_ready=true terminal_hold_pending=false
+[INFO] [1788516730.889662866] [px4_navigation_external_mode]: external_mode_metrics odom_callbacks=201 odom_max_gap_us=20000 trajectory_received=243 trajectory_accepted=243 trajectory_rejected=0 waypoint_handoffs_retaining_command=0 setpoint_updates=253 setpoint_max_gap_us=16000 last_state_age_s=-1.000000 stale_state_failures=0 velocity_command_enu=(0.666,0.058,0.010) forward_guard_count=0
+[INFO] [1788516731.727185445] [px4_navigation_external_mode]: Mission waypoint accepted: wp=1 position_error_m=0.697 speed_mps=0.632 next_wp=2 next_request=3
+[INFO] [1788516731.727266735] [px4_navigation_external_mode]: Published mission waypoint 2 (open_north) behavior=0 next_target=(7.000,0.000,3.000)
+[WARN] [1788516731.831823595] [px4_navigation_external_mode]: planner backend command rejected before acceptance validation: valid=0 command_present=1
+[ERROR] [1788516731.949735674] [px4_navigation_external_mode]: planner backend PVA command stale; safety hold then handover to PX4 Hold
+[WARN] [1788516731.949789538] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+[DEBUG] [1788516731.949802389] [px4_navigation_external_mode]: Owned navigation mode was deactivated by mode handover
+[DEBUG] [1788516731.983967980] [px4_navigation_external_mode]: Mode 'Avoidance Mission' deactivated
+[INFO] [1788516743.343050400] [rclcpp]: signal_handler(SIGINT/SIGTERM)

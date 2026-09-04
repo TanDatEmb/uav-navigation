@@ -47,6 +47,20 @@
       "evidence": [],
       "status": "INCONCLUSIVE"
     },
+    "H4a_planning_failure_alone_changes_ownership": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H4b_tracking_certificate_exhaustion_authorizes_emergency": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H4c_backup_ownership_begins_at_declared_switch": {
+      "evidence": [
+        "1 MAIN-to-BACKUP command transition(s) were compared with declared backup_start_time_s."
+      ],
+      "status": "CONFIRMED"
+    },
     "H5_corner_overconstraint": {
       "evidence": [],
       "status": "INCONCLUSIVE"
@@ -170,6 +184,14 @@
         "rms": 0.013686
       }
     },
+    "backup_ownership_transitions": [
+      {
+        "declared_backup_start_time_s": 1.6000539211773868,
+        "delta_ms": 15.946078822613341,
+        "time_s": 31.584000000000003
+      }
+    ],
+    "causal_injected_failure_count": 0,
     "command_roles": {
       "BACKUP": 52,
       "EMERGENCY": 44,
@@ -181,30 +203,54 @@
       {
         "analytic_role_after_failure": "EMERGENCY",
         "analytic_role_before_failure": "EMERGENCY",
+        "anchor_error_m": null,
+        "backup_available": null,
+        "committed_suffix_usable": null,
+        "emergency_authorization_reason": null,
+        "emergency_candidate_commit_result": null,
         "failure_time_s": 26.928,
+        "injected_failure": false,
         "later_nominal_retry_observed": false,
         "premature_safety_takeover_before_backup": false,
+        "projected_anchor_error_m": null,
+        "projected_tracking_certificate_exceeded": null,
         "recovery_state_after": "EMERGENCY_BRAKE",
         "recovery_state_before": "EMERGENCY_BRAKE",
+        "relative_anchor_speed_mps": null,
+        "retained_tracking_limit_m": null,
         "role_after_failure": "EMERGENCY",
         "role_before_failure": "EMERGENCY",
         "safety_suffix_after": true,
         "safety_suffix_before": true,
-        "time_to_backup_start_s_before_failure": -0.016
+        "sampled_path_clear": null,
+        "time_to_backup_start_s_before_failure": -0.016,
+        "tracking_certificate_exceeded": null
       },
       {
         "analytic_role_after_failure": "MAIN",
         "analytic_role_before_failure": "MAIN",
+        "anchor_error_m": null,
+        "backup_available": null,
+        "committed_suffix_usable": null,
+        "emergency_authorization_reason": null,
+        "emergency_candidate_commit_result": null,
         "failure_time_s": 30.612000000000002,
+        "injected_failure": false,
         "later_nominal_retry_observed": false,
         "premature_safety_takeover_before_backup": false,
+        "projected_anchor_error_m": null,
+        "projected_tracking_certificate_exceeded": null,
         "recovery_state_after": "TRACK_BACKUP",
         "recovery_state_before": "TRACK_MAIN",
+        "relative_anchor_speed_mps": null,
+        "retained_tracking_limit_m": null,
         "role_after_failure": "MAIN",
         "role_before_failure": "MAIN",
         "safety_suffix_after": false,
         "safety_suffix_before": false,
-        "time_to_backup_start_s_before_failure": 0.9600539211773867
+        "sampled_path_clear": null,
+        "time_to_backup_start_s_before_failure": 0.9600539211773867,
+        "tracking_certificate_exceeded": null
       }
     ],
     "generation_transitions": [
@@ -657,7 +703,8 @@
       "TRACK_MAIN": 243
     },
     "route_boundary_event_count": 0,
-    "route_boundary_status": "NO_ROUTE_BOUNDARY_EVENT"
+    "route_boundary_status": "NO_ROUTE_BOUNDARY_EVENT",
+    "safe_margin_injected_failure_count": 0
   },
   "run": "E01_straight_3mps",
   "runtime_reasons": [

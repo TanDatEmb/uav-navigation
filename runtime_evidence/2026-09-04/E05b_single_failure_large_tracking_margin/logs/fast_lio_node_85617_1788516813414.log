@@ -1,0 +1,3 @@
+[WARN] [1788516813.633039127] []: Invalid frame ID "base_link" passed to canTransform argument target_frame - frame does not exist
+[INFO] [1788516813.654536520] [fast_lio]: Publishing corrected and propagated odometry in lio_odom -> base_link; dynamic TF owner=propagated; static geometry resolved from base_link -> livox_imu_frame; runtime diagnostics are available on /lio/diagnostics
+[INFO] [1788516875.508008299] [rclcpp]: signal_handler(SIGINT/SIGTERM)

@@ -1,0 +1,27 @@
+navigation_runtime_node:
+  ros__parameters:
+    navigation_runtime:
+      registered_scan_topic: /lio/mapping_observation
+      propagated_odometry_topic: /lio/odometry_propagated
+      goal_topic: /navigation/goal
+      status_topic: /navigation/mode_status
+      command_topic: /navigation/navigation_command
+      planning_frame: lio_odom
+      body_frame_id: base_link
+      deployment_profile: sitl
+      # The planner solve budget is 180 ms; 5 Hz gives one 200 ms scheduling
+      # period without overlapping the next planning deadline. Command
+      # sampling remains high-rate and independent below.
+      planner_rate_hz: 5.0
+      command_rate_hz: 50.0
+      # Export immutable world snapshots at the 5 Hz planner cadence while
+      # keeping mutable map updates latest-only. This coalesces the canonical
+      # ~10 Hz sensor stream and remains below the 0.50 s freshness window.
+      mapping_snapshot_publication_period_s: 0.10
+      data_freshness_window_s: 0.5
+      # A candidate/world lease never substitutes for the high-rate command
+      # stream. Missing moving commands fail closed after five command periods.
+      command_stream_timeout_s: 0.10
+      planner_watchdog_timeout_s: 1.0
+      stopped_recovery_timeout_s: 5.0
+      max_plan_from_rest_failures: 3

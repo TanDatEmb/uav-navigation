@@ -1,0 +1,138 @@
+planner:
+  visualization_en: false
+  use_fov_cut: false
+  print_log: false
+  preserve_backup_altitude: true
+  backup_refinement_enabled: false
+  corridor_bound_distance_m: 1.5
+  corridor_segment_max_length_m: 3.0
+  visibility_horizon_cap_m: 23.0
+  visibility_horizon_floor_m: 14.0
+  iris_iter_num: 1
+  replan_forward_dt_s: 0.4
+  solve_deadline_s: 0.18
+  finalization_reserve_s: 0.04
+  local_window_m: 20.0
+  sensing_horizon_m: 0.0
+  receding_distance_m: 3.0
+  vehicle_radius_m: 0.35
+  tracking_error_budget_m: 0.25
+  localization_error_budget_m: 0.05
+  mapping_error_budget_m: 0.1
+  planning_margin_m: 0.05
+  yaw_rate_max_rad_s: 1.0
+  yaw_acceleration_max_rad_s2: 0.3
+  route_yaw:
+    minimum_lookahead_m: 2.0
+    maximum_lookahead_m: 12.0
+    lookahead_time_s: 1.5
+    minimum_horizontal_speed_mps: 0.3
+    minimum_horizontal_support_m: 0.5
+    reversal_threshold_rad: 2.6179938779914944
+  yaw_tracking_error_budget_rad: 0.35
+traj_opt:
+  switch:
+    save_log_en: false
+    print_optimizer_log: false
+  boundary:
+    max_vel: 1.0
+    max_acc: 12.0
+    max_jerk: 30.0
+    max_omg: 5.0
+    max_acc_thr: 25.0
+    min_acc_thr: 6.0
+  exp_traj:
+    pos_constraint_type: 2
+    block_energy_cost: false
+    opt_accuracy: 5.0e-06
+    lbfgs_memory_size: 32
+    feasibility_retry_max_iterations: 64
+    integral_reso: 15
+    smooth_eps: 0.01
+    corridor_plane_tolerance_m: 0.01
+    route_reference:
+      lateral_weight: 1.0
+      vertical_weight: 10.0
+      lateral_deadband_m: 0.05
+      vertical_deadband_m: 0.05
+    optimization_dynamic_reserve_ratio: 0.98
+    objective:
+      time_weight: 12000.0
+      position_penalty_weight: 500000000.0
+      velocity_penalty_weight: 500000.0
+      acceleration_penalty_weight: 500000.0
+      jerk_penalty_weight: 0.0
+      waypoint_attraction_weight: 0.0
+      angular_rate_penalty_weight: 100000.0
+      thrust_penalty_weight: 100000.0
+  backup_traj:
+    uniform_time_en: true
+    pos_constraint_type: 1
+    piece_num: 2
+    block_energy_cost: true
+    opt_accuracy: 1.0e-06
+    lbfgs_memory_size: 32
+    integral_reso: 12
+    smooth_eps: 0.01
+    corridor_plane_tolerance_m: 0.01
+    objective:
+      time_weight: 1200.0
+      terminal_time_weight: 100000.0
+      position_penalty_weight: 10000000000.0
+      velocity_penalty_weight: 100000.0
+      acceleration_penalty_weight: 100000.0
+      jerk_penalty_weight: 100000.0
+      angular_rate_penalty_weight: 100000.0
+      thrust_penalty_weight: 100000.0
+  flatness:
+    mass: 1.64
+    dh: 0.35
+    dv: 0.35
+    cp: 0.001
+    v_eps: 0.0001
+    grav: 9.81
+astar:
+  heuristic_weight: 1.5
+  search_time_limit_s: 0.06
+  total_time_limit_s: 0.12
+  visual_process: false
+  allow_diag: true
+  heu_type: 2
+  debug_visualization_en: false
+rog_map:
+  resolution: 0.2
+  inflation_resolution: 0.2
+  inflation_step: 4
+  map_size:
+  - 50
+  - 50
+  - 8
+  fix_map_origin:
+  - 0
+  - 0
+  - 1.5
+  virtual_ground_ceiling_en: false
+  virtual_ceil_height: 5.8
+  virtual_ground_height: -1.1
+  map_sliding:
+    enable: true
+    threshold: 1.5
+  intensity_thresh: -10
+  point_filt_num: 1
+  raycasting:
+    enable: true
+    batch_update_size: 1
+    local_update_box:
+    - 50
+    - 50
+    - 8
+    ray_range:
+    - 0.8
+    - 100
+    p_min: 0.12
+    p_miss: 0.49
+    p_free: 0.499
+    p_occ: 0.85
+    p_hit: 0.9
+    p_max: 0.98
+    unk_thresh: 1.0

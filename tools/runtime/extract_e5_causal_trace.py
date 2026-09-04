@@ -226,6 +226,39 @@ def extract(root: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return rows, measured
 
 
+def write_boundary_plot(root: Path, rows: list[dict[str, Any]]) -> None:
+    """Generate a boundary-aligned role plot without filling missing fields."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+    points = []
+    for row in rows:
+        stamp = row.get("timestamp_ns", "NOT_RECORDED")
+        if stamp == "NOT_RECORDED":
+            stamp = row.get("source_trace_timestamp_ns", "NOT_RECORDED")
+        try:
+            stamp_s = float(stamp) * 1.0e-9
+        except (TypeError, ValueError):
+            continue
+        role = {"MAIN": 0, "BACKUP": 1, "EMERGENCY": 2}.get(
+            row.get("navigation_command_role"), float("nan"))
+        points.append((row.get("boundary", "UNKNOWN"), stamp_s, role))
+    if not points:
+        return
+    output = root / "figures" / "plot_E5_causal_boundaries.png"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    plt.figure(figsize=(11, 4))
+    plt.step([item[1] for item in points], [item[2] for item in points], where="post")
+    for label, stamp, _ in points:
+        plt.axvline(stamp, color="gray", alpha=.35)
+        plt.text(stamp, 2.1, label.split("_", 1)[0], rotation=90, va="bottom", ha="right")
+    plt.yticks([0, 1, 2], ["MAIN", "BACKUP", "EMERGENCY"])
+    plt.xlabel("time [s]"); plt.ylabel("command role")
+    plt.title("E5 — causal boundary-aligned command role")
+    plt.tight_layout(); plt.savefig(output, dpi=130); plt.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
@@ -238,6 +271,7 @@ def main() -> int:
         writer = csv.DictWriter(stream, fieldnames=FIELDS)
         writer.writeheader()
         writer.writerows(rows)
+    write_boundary_plot(args.input, rows)
     injected = measured["injected_trace"]
     t0 = measured["t0"]
     t4 = measured["t4"]
