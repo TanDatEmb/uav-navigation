@@ -13,6 +13,7 @@
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <px4_ros2/components/mode.hpp>
 #include <px4_ros2/components/mode_executor.hpp>
 #include <px4_ros2/components/health_and_arming_checks.hpp>
@@ -69,6 +70,12 @@ class NavigationMode final : public px4_ros2::ModeBase {
   void safetyStopNavigation(const char* reason);
   void failNavigation(const char* reason, bool automatic_recovery = false);
   void logRuntimeMetrics(const rclcpp::Time& now);
+  void publishPx4InputTrace(
+      const std::optional<navigation_contracts::msg::NavigationCommand>& command,
+      const std::optional<Eigen::Vector3f>& position_ned,
+      const std::optional<Eigen::Vector3f>& velocity_ned,
+      const std::optional<Eigen::Vector3f>& acceleration_ned,
+      float yaw_ned, float yaw_rate_ned);
   void publishStatus(std::uint8_t state, std::uint8_t reason,
                      const MissionControllerEvent* event = nullptr);
 
@@ -84,6 +91,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   rclcpp::Publisher<navigation_contracts::msg::NavigationGoal>::SharedPtr goal_publisher_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationModeStatus>::SharedPtr
       status_publisher_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+      px4_input_trace_publisher_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr mission_complete_publisher_;
   rclcpp::TimerBase::SharedPtr mission_timer_;
   std::mutex trajectory_mutex_;
@@ -170,6 +179,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   double last_state_age_s_{-1.0};
   Eigen::Vector3d last_velocity_command_enu_{Eigen::Vector3d::Zero()};
   std::uint64_t last_forward_guard_count_{0U};
+  std::uint64_t px4_input_trace_sequence_{0U};
 };
 
 class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {

@@ -1,0 +1,45 @@
+{
+  "criterion": {
+    "nominal_p95_tracking_error_m_max": 0.1,
+    "maximum_tracking_error_m_max": 0.175,
+    "no_emergency_or_recovery": true,
+    "estimator_health_valid": true
+  },
+  "scenario": "S_DYNAMIC_ID",
+  "status": "NOT_TESTED",
+  "reason": "No valid increasing-demand segment without recovery/emergency was captured; no closed-loop envelope is claimed.",
+  "runs": [
+    {
+      "run_id": "external-mode-check-20260904T140416-66041",
+      "scenario": "S_DYNAMIC_ID",
+      "run_path": ".artifacts/runtime/external-mode-check-20260904T140416-66041",
+      "requested_speed_mps": 1.0,
+      "tracking_p95_m": 0.10625348477461562,
+      "tracking_max_m": 0.10687240651316947,
+      "planner_velocity_p95_mps": 0.9416182074699176,
+      "planner_acceleration_p95_mps2": 0.6130265613737356,
+      "planner_jerk_p95_mps3": 0.6879709978143359,
+      "px4_delta_v_p95_mps": 1.1427015673423462,
+      "px4_delta_a_p95_mps2": 0.9774632926410197,
+      "valid_segment": true
+    },
+    {
+      "run_id": "external-mode-check-20260904T140614-67910",
+      "scenario": "S_DYNAMIC_ID",
+      "run_path": ".artifacts/runtime/external-mode-check-20260904T140614-67910",
+      "requested_speed_mps": 2.0,
+      "tracking_p95_m": 0.22334784796129126,
+      "tracking_max_m": 0.25013474474302716,
+      "planner_velocity_p95_mps": 1.9541851905423144,
+      "planner_acceleration_p95_mps2": 1.574044111036977,
+      "planner_jerk_p95_mps3": 6.25561441716893,
+      "px4_delta_v_p95_mps": 2.8713140913460546,
+      "px4_delta_a_p95_mps2": 2.8259550537880265,
+      "valid_segment": true
+    }
+  ],
+  "v_closed_loop_nominal_max": null,
+  "a_closed_loop_nominal_max": null,
+  "j_closed_loop_nominal_max": null,
+  "a_lateral_closed_loop_nominal_max": null
+}

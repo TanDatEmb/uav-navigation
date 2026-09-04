@@ -227,6 +227,12 @@
       "injected": 0,
       "time_s": 26.66,
       "type": "planner_failure"
+    },
+    {
+      "type": "H10_exact_e5_observability_run",
+      "run_id": "external-mode-check-20260904T142605-80003",
+      "injected_failure_observed": false,
+      "T_cross_ns": "29800000000"
     }
   ],
   "hypotheses": {
@@ -543,6 +549,39 @@
         "E10_stopped_recovery_plan_from_rest_failure_budget: /home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/E10_stopped_recovery_plan_from_rest_failure_budget/report_run.json"
       ],
       "status": "INCONCLUSIVE"
+    },
+    "H10a_planner_demand_exceeds_usable_closed_loop_envelope": {
+      "status": "INCONCLUSIVE",
+      "evidence": [
+        "Scenario-scoped H10 evidence is incomplete: the selected run has PX4_INPUT_SETPOINT and independent ground truth, but no injected_replan_failure=1 marker and no valid increasing-demand S_DYNAMIC_ID segment meeting the stated envelope criterion.",
+        ".artifacts/runtime/external-mode-check-20260904T142605-80003/h10_exact_e5_closed_loop.csv",
+        "runtime_evidence/2026-09-04/h10_dynamic_envelope.json"
+      ]
+    },
+    "H10b_px4_controller_materially_reshapes_command": {
+      "status": "INCONCLUSIVE",
+      "evidence": [
+        ".artifacts/runtime/external-mode-check-20260904T142605-80003/h10_exact_e5_closed_loop.csv",
+        "PX4 effective setpoint and exact External Mode input are recorded, but no clean injected-E5 boundary isolates causal reshaping."
+      ]
+    },
+    "H10c_lio_estimator_material_contributor": {
+      "status": "INCONCLUSIVE",
+      "evidence": [
+        "LIO-vs-ground-truth position is recorded for the exact scenario; attribution is not isolated from vehicle/controller response."
+      ]
+    },
+    "H10d_px4_estimator_material_contributor": {
+      "status": "INCONCLUSIVE",
+      "evidence": [
+        "PX4-vs-ground-truth position is recorded; exact-run velocity estimator attribution is NOT_RECORDED."
+      ]
+    },
+    "H10e_vehicle_cannot_follow_px4_effective_setpoint": {
+      "status": "INCONCLUSIVE",
+      "evidence": [
+        "PX4 effective setpoint, measured state, and ground truth are present, but no clean dynamic-ID segment separates plant limitation from command reshaping."
+      ]
     }
   },
   "runs": [
@@ -30214,7 +30253,368 @@
       ],
       "runtime_verdict": "BLOCKED",
       "schema_version": 1
+    },
+    {
+      "experiment": "H10_S_BAD_E5_EXACT",
+      "scenario": "S_BAD_E5",
+      "run_id": "external-mode-check-20260904T142605-80003",
+      "path": ".artifacts/runtime/external-mode-check-20260904T142605-80003",
+      "result": "INCONCLUSIVE",
+      "data_quality": "PARTIAL_VALID_LAYERS_NO_INJECTED_MARKER",
+      "metrics": {
+        "tracking_error": {
+          "count": 485,
+          "rms": 0.219755114881367,
+          "p50": 0.08207905508540778,
+          "p95": 0.44838248643528783,
+          "p99": 0.9034746759775208,
+          "max": 0.9326030255222632
+        },
+        "lio_gt_position_error": {
+          "count": 497,
+          "rms": 0.1462523526216567,
+          "p50": 0.14579004742570686,
+          "p95": 0.1667927637589658,
+          "p99": 0.17134808066683518,
+          "max": 0.17349606468547263
+        },
+        "px4_gt_position_error": {
+          "count": 497,
+          "rms": 0.1819048872700632,
+          "p50": 0.18014453373021025,
+          "p95": 0.2449790363730274,
+          "p99": 0.25655658315988084,
+          "max": 0.2644041170747711
+        },
+        "frame_velocity_residual": {
+          "count": 497,
+          "rms": 0.3518058497162175,
+          "p50": 0.030595321808271955,
+          "p95": 0.9542125097410509,
+          "p99": 1.243926134967204,
+          "max": 1.2654685555705616
+        },
+        "planner_velocity": {
+          "count": 485,
+          "rms": 0.9781558893366428,
+          "p50": 0.5970425941834805,
+          "p95": 2.4428272734515444,
+          "p99": 2.7970053746505137,
+          "max": 2.8349862887285995
+        },
+        "planner_acceleration": {
+          "count": 485,
+          "rms": 1.5582277375701006,
+          "p50": 0.21342901813052187,
+          "p95": 3.7423418329720235,
+          "p99": 6.371840383261483,
+          "max": 6.4968210247314
+        },
+        "planner_lateral_acceleration": {
+          "count": 485,
+          "rms": 0.042767344363714856,
+          "p50": 0.01251695691462913,
+          "p95": 0.09331852615233109,
+          "p99": 0.12168319716080166,
+          "max": 0.1476615063726509
+        },
+        "planner_jerk": {
+          "count": 485,
+          "rms": 5.9530051342693024,
+          "p50": 0.3137007909701187,
+          "p95": 18.065568665848712,
+          "p99": 24.196850255020635,
+          "max": 24.47518569135113
+        },
+        "px4_delta_v": {
+          "count": 485,
+          "rms": 1.3797913507192914,
+          "p50": 0.8200271165288984,
+          "p95": 3.519856850491304,
+          "p99": 3.9583865012044486,
+          "max": 4.1439215324023655
+        },
+        "px4_delta_a": {
+          "count": 485,
+          "rms": 3.020716745452548,
+          "p50": 0.2663344378724332,
+          "p95": 6.3676374074927296,
+          "p99": 12.556490845160797,
+          "max": 12.85493022557812
+        }
+      }
+    },
+    {
+      "experiment": "H10_S_OPEN_CONTROL",
+      "scenario": "S_OPEN_CONTROL",
+      "run_id": "external-mode-check-20260904T140220-64377",
+      "path": ".artifacts/runtime/external-mode-check-20260904T140220-64377",
+      "result": "INCONCLUSIVE",
+      "data_quality": "VALID_LAYERS",
+      "metrics": {
+        "tracking_error": {
+          "count": 485,
+          "rms": 0.21660919586618585,
+          "p50": 0.07148692358774755,
+          "p95": 0.46712365500499065,
+          "p99": 0.8987628764217126,
+          "max": 0.9115805161662376
+        },
+        "lio_gt_position_error": {
+          "count": 497,
+          "rms": 0.14836360462858503,
+          "p50": 0.1488233518361632,
+          "p95": 0.1627264064355332,
+          "p99": 0.1727932972913558,
+          "max": 0.1747898792689254
+        },
+        "px4_gt_position_error": {
+          "count": 497,
+          "rms": 0.15741517194311508,
+          "p50": 0.1511425482352699,
+          "p95": 0.20410819686560913,
+          "p99": 0.2157873052949213,
+          "max": 0.2213926134948847
+        },
+        "planner_acceleration": {
+          "count": 485,
+          "rms": 1.5684898860716825,
+          "p50": 0.20576435571912174,
+          "p95": 3.824620605435933,
+          "p99": 6.375910948212765,
+          "max": 6.507464951280076
+        },
+        "planner_lateral_acceleration": {
+          "count": 485,
+          "rms": 0.08562282564514019,
+          "p50": 0.020668479021862994,
+          "p95": 0.1743269073535,
+          "p99": 0.33302131276689095,
+          "max": 0.34389617046567766
+        },
+        "planner_jerk": {
+          "count": 485,
+          "rms": 6.06728890062073,
+          "p50": 0.3056922771978467,
+          "p95": 18.08467926135224,
+          "p99": 24.24218541887178,
+          "max": 24.494666656971347
+        },
+        "px4_delta_v": {
+          "count": 485,
+          "rms": 1.365683221187944,
+          "p50": 0.7956224259523739,
+          "p95": 3.4786121098899154,
+          "p99": 3.9681318178949563,
+          "max": 4.124395662027808
+        },
+        "px4_delta_a": {
+          "count": 485,
+          "rms": 3.057981838766767,
+          "p50": 0.2651180744260955,
+          "p95": 7.392377192203414,
+          "p99": 12.403636799719031,
+          "max": 12.700351782895519
+        }
+      }
     }
   ],
-  "schema_version": 1
+  "schema_version": 1,
+  "h10": {
+    "envelope": {
+      "criterion": {
+        "nominal_p95_tracking_error_m_max": 0.1,
+        "maximum_tracking_error_m_max": 0.175,
+        "no_emergency_or_recovery": true,
+        "estimator_health_valid": true
+      },
+      "scenario": "S_DYNAMIC_ID",
+      "status": "NOT_TESTED",
+      "reason": "No valid increasing-demand segment without recovery/emergency was captured; no closed-loop envelope is claimed.",
+      "runs": [
+        {
+          "run_id": "external-mode-check-20260904T140416-66041",
+          "scenario": "S_DYNAMIC_ID",
+          "run_path": ".artifacts/runtime/external-mode-check-20260904T140416-66041",
+          "requested_speed_mps": 1.0,
+          "tracking_p95_m": 0.10625348477461562,
+          "tracking_max_m": 0.10687240651316947,
+          "planner_velocity_p95_mps": 0.9416182074699176,
+          "planner_acceleration_p95_mps2": 0.6130265613737356,
+          "planner_jerk_p95_mps3": 0.6879709978143359,
+          "px4_delta_v_p95_mps": 1.1427015673423462,
+          "px4_delta_a_p95_mps2": 0.9774632926410197,
+          "valid_segment": true
+        },
+        {
+          "run_id": "external-mode-check-20260904T140614-67910",
+          "scenario": "S_DYNAMIC_ID",
+          "run_path": ".artifacts/runtime/external-mode-check-20260904T140614-67910",
+          "requested_speed_mps": 2.0,
+          "tracking_p95_m": 0.22334784796129126,
+          "tracking_max_m": 0.25013474474302716,
+          "planner_velocity_p95_mps": 1.9541851905423144,
+          "planner_acceleration_p95_mps2": 1.574044111036977,
+          "planner_jerk_p95_mps3": 6.25561441716893,
+          "px4_delta_v_p95_mps": 2.8713140913460546,
+          "px4_delta_a_p95_mps2": 2.8259550537880265,
+          "valid_segment": true
+        }
+      ],
+      "v_closed_loop_nominal_max": null,
+      "a_closed_loop_nominal_max": null,
+      "j_closed_loop_nominal_max": null,
+      "a_lateral_closed_loop_nominal_max": null
+    },
+    "exact_e5_metrics": {
+      "tracking_error": {
+        "count": 485,
+        "rms": 0.219755114881367,
+        "p50": 0.08207905508540778,
+        "p95": 0.44838248643528783,
+        "p99": 0.9034746759775208,
+        "max": 0.9326030255222632
+      },
+      "lio_gt_position_error": {
+        "count": 497,
+        "rms": 0.1462523526216567,
+        "p50": 0.14579004742570686,
+        "p95": 0.1667927637589658,
+        "p99": 0.17134808066683518,
+        "max": 0.17349606468547263
+      },
+      "px4_gt_position_error": {
+        "count": 497,
+        "rms": 0.1819048872700632,
+        "p50": 0.18014453373021025,
+        "p95": 0.2449790363730274,
+        "p99": 0.25655658315988084,
+        "max": 0.2644041170747711
+      },
+      "frame_velocity_residual": {
+        "count": 497,
+        "rms": 0.3518058497162175,
+        "p50": 0.030595321808271955,
+        "p95": 0.9542125097410509,
+        "p99": 1.243926134967204,
+        "max": 1.2654685555705616
+      },
+      "planner_velocity": {
+        "count": 485,
+        "rms": 0.9781558893366428,
+        "p50": 0.5970425941834805,
+        "p95": 2.4428272734515444,
+        "p99": 2.7970053746505137,
+        "max": 2.8349862887285995
+      },
+      "planner_acceleration": {
+        "count": 485,
+        "rms": 1.5582277375701006,
+        "p50": 0.21342901813052187,
+        "p95": 3.7423418329720235,
+        "p99": 6.371840383261483,
+        "max": 6.4968210247314
+      },
+      "planner_lateral_acceleration": {
+        "count": 485,
+        "rms": 0.042767344363714856,
+        "p50": 0.01251695691462913,
+        "p95": 0.09331852615233109,
+        "p99": 0.12168319716080166,
+        "max": 0.1476615063726509
+      },
+      "planner_jerk": {
+        "count": 485,
+        "rms": 5.9530051342693024,
+        "p50": 0.3137007909701187,
+        "p95": 18.065568665848712,
+        "p99": 24.196850255020635,
+        "max": 24.47518569135113
+      },
+      "px4_delta_v": {
+        "count": 485,
+        "rms": 1.3797913507192914,
+        "p50": 0.8200271165288984,
+        "p95": 3.519856850491304,
+        "p99": 3.9583865012044486,
+        "max": 4.1439215324023655
+      },
+      "px4_delta_a": {
+        "count": 485,
+        "rms": 3.020716745452548,
+        "p50": 0.2663344378724332,
+        "p95": 6.3676374074927296,
+        "p99": 12.556490845160797,
+        "max": 12.85493022557812
+      }
+    },
+    "open_control_metrics": {
+      "tracking_error": {
+        "count": 485,
+        "rms": 0.21660919586618585,
+        "p50": 0.07148692358774755,
+        "p95": 0.46712365500499065,
+        "p99": 0.8987628764217126,
+        "max": 0.9115805161662376
+      },
+      "lio_gt_position_error": {
+        "count": 497,
+        "rms": 0.14836360462858503,
+        "p50": 0.1488233518361632,
+        "p95": 0.1627264064355332,
+        "p99": 0.1727932972913558,
+        "max": 0.1747898792689254
+      },
+      "px4_gt_position_error": {
+        "count": 497,
+        "rms": 0.15741517194311508,
+        "p50": 0.1511425482352699,
+        "p95": 0.20410819686560913,
+        "p99": 0.2157873052949213,
+        "max": 0.2213926134948847
+      },
+      "planner_acceleration": {
+        "count": 485,
+        "rms": 1.5684898860716825,
+        "p50": 0.20576435571912174,
+        "p95": 3.824620605435933,
+        "p99": 6.375910948212765,
+        "max": 6.507464951280076
+      },
+      "planner_lateral_acceleration": {
+        "count": 485,
+        "rms": 0.08562282564514019,
+        "p50": 0.020668479021862994,
+        "p95": 0.1743269073535,
+        "p99": 0.33302131276689095,
+        "max": 0.34389617046567766
+      },
+      "planner_jerk": {
+        "count": 485,
+        "rms": 6.06728890062073,
+        "p50": 0.3056922771978467,
+        "p95": 18.08467926135224,
+        "p99": 24.24218541887178,
+        "max": 24.494666656971347
+      },
+      "px4_delta_v": {
+        "count": 485,
+        "rms": 1.365683221187944,
+        "p50": 0.7956224259523739,
+        "p95": 3.4786121098899154,
+        "p99": 3.9681318178949563,
+        "max": 4.124395662027808
+      },
+      "px4_delta_a": {
+        "count": 485,
+        "rms": 3.057981838766767,
+        "p50": 0.2651180744260955,
+        "p95": 7.392377192203414,
+        "p99": 12.403636799719031,
+        "max": 12.700351782895519
+      }
+    },
+    "event_csv": "runtime_evidence/2026-09-04/h10_exact_e5_events.csv",
+    "figures": "runtime_evidence/2026-09-04/h10_figures"
+  }
 }

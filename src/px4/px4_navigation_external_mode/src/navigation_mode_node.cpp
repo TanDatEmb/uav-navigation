@@ -4,9 +4,14 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <diagnostic_msgs/msg/key_value.hpp>
 
 #include <navigation_common/frame_conventions.hpp>
 #include <navigation_common/time.hpp>
@@ -161,6 +166,8 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
     }
     status_publisher_ = node.create_publisher<navigation_contracts::msg::NavigationModeStatus>(
         status_topic, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable().transient_local());
+    px4_input_trace_publisher_ = node.create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+        "/navigation/diagnostics", rclcpp::QoS{rclcpp::KeepLast{50}}.reliable());
     const auto mission_complete_topic = node.declare_parameter<std::string>(
         "navigation.mission_complete_topic", "/navigation/mission_complete");
     if (mission_complete_topic.empty()) {
@@ -335,6 +342,73 @@ void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason,
   }
   status_publisher_->publish(status);
   last_status_state_ = state;
+}
+
+void NavigationMode::publishPx4InputTrace(
+    const std::optional<navigation_contracts::msg::NavigationCommand>& command,
+    const std::optional<Eigen::Vector3f>& position_ned,
+    const std::optional<Eigen::Vector3f>& velocity_ned,
+    const std::optional<Eigen::Vector3f>& acceleration_ned,
+    const float yaw_ned, const float yaw_rate_ned) {
+  if (!px4_input_trace_publisher_) return;
+  diagnostic_msgs::msg::DiagnosticArray array;
+  const auto now = node().get_clock()->now();
+  array.header.stamp = now;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "navigation_external_mode/PX4_INPUT_SETPOINT";
+  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = "PX4_INPUT_SETPOINT";
+  const auto add = [&status](const std::string& key, const std::string& value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = value;
+    status.values.push_back(std::move(item));
+  };
+  const auto add_i64 = [&add](const std::string& key, const std::int64_t value) {
+    add(key, std::to_string(value));
+  };
+  const auto add_u64 = [&add](const std::string& key, const std::uint64_t value) {
+    add(key, std::to_string(value));
+  };
+  const auto add_vector = [&add](const std::string& key,
+                                 const std::optional<Eigen::Vector3f>& value) {
+    if (!value.has_value()) {
+      add(key, "NOT_RECORDED");
+      return;
+    }
+    std::ostringstream stream;
+    stream << std::setprecision(9) << '[' << value->x() << ',' << value->y() << ','
+           << value->z() << ']';
+    add(key, stream.str());
+  };
+  add_i64("trace_timestamp_ns", now.nanoseconds());
+  add_i64("trace_steady_timestamp_ns",
+          navigation_common::steadyClockNowNanoseconds());
+  add_u64("trace_sequence", ++px4_input_trace_sequence_);
+  if (command.has_value()) {
+    add("mission_id", command->mission_id);
+    add_u64("waypoint_index", command->waypoint_index);
+    add_u64("request_id", command->request_id);
+    add_u64("goal_epoch", command->goal_epoch);
+    add_u64("bundle_generation", command->bundle_generation);
+    add_u64("sample_id", command->sample_id);
+    add("role", std::to_string(command->role));
+  } else {
+    add("mission_id", "NOT_RECORDED");
+    add("waypoint_index", "NOT_RECORDED");
+    add("request_id", "NOT_RECORDED");
+    add("goal_epoch", "NOT_RECORDED");
+    add("bundle_generation", "NOT_RECORDED");
+    add("sample_id", "NOT_RECORDED");
+    add("role", "NOT_RECORDED");
+  }
+  add_vector("position_ned", position_ned);
+  add_vector("velocity_ned", velocity_ned);
+  add_vector("acceleration_ned", acceleration_ned);
+  add("yaw_ned", std::to_string(yaw_ned));
+  add("yaw_rate_ned", std::to_string(yaw_rate_ned));
+  array.status.push_back(std::move(status));
+  px4_input_trace_publisher_->publish(std::move(array));
 }
 
 void NavigationMode::onActivate() {
@@ -1475,6 +1549,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         }
       }
     }
+    publishPx4InputTrace(navigation_command, std::nullopt, Eigen::Vector3f::Zero(),
+                         Eigen::Vector3f::Zero(), setpoint.yaw_ned_rad.value_or(NAN),
+                         setpoint.yaw_rate_ned_rad_s.value_or(NAN));
     trajectory_setpoint_->update(setpoint);
   };
   const auto publishPositionHold = [&](const Eigen::Vector3d& position_enu) {
@@ -1503,6 +1580,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         }
       }
     }
+    publishPx4InputTrace(navigation_command, position_ned, Eigen::Vector3f::Zero(),
+                         std::nullopt, setpoint.yaw_ned_rad.value_or(NAN),
+                         setpoint.yaw_rate_ned_rad_s.value_or(NAN));
     trajectory_setpoint_->update(setpoint);
     return true;
   };
@@ -1802,6 +1882,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         .withAcceleration(*acceleration_ned)
         .withYaw(px4_ros2::yawEnuToNed(static_cast<float>(command.yaw)))
         .withYawRate(px4_ros2::yawRateEnuToNed(static_cast<float>(command.yaw_rate)));
+    publishPx4InputTrace(navigation_command, position_ned, velocity_ned,
+                         acceleration_ned, setpoint.yaw_ned_rad.value_or(NAN),
+                         setpoint.yaw_rate_ned_rad_s.value_or(NAN));
     trajectory_setpoint_->update(setpoint);
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);

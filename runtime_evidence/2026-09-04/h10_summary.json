@@ -1,0 +1,265 @@
+{
+  "scenario_scope": {
+    "S_BAD_E5": {
+      "run": ".artifacts/runtime/external-mode-check-20260904T142605-80003",
+      "map": "sanity_open",
+      "route": "external_mode_open_route",
+      "speed_mps": 3.0
+    },
+    "S_OPEN_CONTROL": {
+      "run": ".artifacts/runtime/external-mode-check-20260904T140220-64377",
+      "map": "sanity_open",
+      "route": "external_mode_open_route",
+      "speed_mps": 3.0
+    },
+    "S_DYNAMIC_ID": {
+      "runs": [
+        ".artifacts/runtime/external-mode-check-20260904T140416-66041",
+        ".artifacts/runtime/external-mode-check-20260904T140614-67910"
+      ]
+    }
+  },
+  "exact_e5": {
+    "sample_count": 497,
+    "T_cross_ns": 29800000000,
+    "T_cross_row": {
+      "timestamp_ns": 29800000000,
+      "bundle_generation": 2,
+      "trajectory_time_s": 0.304,
+      "analytic_role": "MAIN",
+      "NavigationCommand_role": "MAIN",
+      "recovery_state": "TRACK_MAIN",
+      "safety_suffix_active": false,
+      "planner_position": "[3.0359222019388374,-0.008979514794736845,2.99918903867772]",
+      "planner_velocity": "[1.3339060777225422,0.02673341115326208,-0.009755016000088738]",
+      "planner_acceleration": "[2.4353626627449207,-0.01275908554282068,0.013599686272750074]",
+      "planner_jerk": "[4.07539323581971,-0.10393399372586486,0.30839632059663086]",
+      "LIO_position": "[2.792312462640717,-0.06218868725485629,3.0233047747384223]",
+      "LIO_velocity": "[0.8722835206853992,0.045973193085541646,0.3028891923302688]",
+      "PX4_input_trajectory_position": "[3.24126673,0.128026575,3.00704265]",
+      "PX4_input_trajectory_velocity": "[1.33390605,0.0267334115,-0.0097550163]",
+      "PX4_input_trajectory_acceleration": "[2.43536258,-0.0127590857,0.0135996863]",
+      "PX4_effective_position_setpoint": "[3.2343566020329795,0.12788299967845282,3.007095535596212]",
+      "PX4_effective_velocity_setpoint": "[1.5020350813865662,0.03371657431125641,-0.022050566350420315]",
+      "PX4_effective_acceleration_setpoint": "[3.720197637875875,-0.027524472835163277,-0.35334210594495136]",
+      "PX4_position": "[3.1174850463867188,0.12343158572912216,3.019650459289551]",
+      "PX4_velocity": "[1.005198359489441,0.039225365966558456,0.05969233810901642]",
+      "aligned_lio_tracking_error_m": 0.25051644624762326,
+      "px4_tracking_error_m": 0.15685619805995246,
+      "frame_position_residual_m": 0.25118594902082453,
+      "frame_velocity_residual_mps": 0.27423613368091787,
+      "delta_v_px4_controller_mps": 1.9667280844190733,
+      "delta_a_px4_controller_mps2": 4.485109123895141,
+      "command_gap_ms": 16.0,
+      "setpoint_gap_ms": 16.0,
+      "external_mode_output_state": "TRACK_TRAJECTORY",
+      "external_mode_reason": "NONE",
+      "lio_source_age_ms": 12.0,
+      "ground_truth_source_age_ms": 20.0,
+      "px4_state_source_age_ms": 20.0,
+      "px4_setpoint_source_age_ms": 20.0,
+      "planner_speed_mps": 1.3342096011475064,
+      "planner_acceleration_mps2": 2.4354340567592128,
+      "planner_lateral_acceleration_mps2": 0.06910111374568854,
+      "planner_jerk_mps3": 4.088366494356198,
+      "lio_gt_position_error_m": 0.14944578103527323,
+      "lio_gt_velocity_error_mps": 0.05679511838699224,
+      "px4_gt_position_error_m": 0.25118594902082453,
+      "px4_gt_velocity_error_mps": 0.27423613368091787,
+      "relative_time_from_T_cross_s": 0.0
+    },
+    "metrics": {
+      "tracking": {
+        "count": 485,
+        "rms": 0.219755114881367,
+        "p50": 0.08207905508540778,
+        "p95": 0.44838248643528783,
+        "p99": 0.9034746759775208,
+        "max": 0.9326030255222632
+      },
+      "planner_speed": {
+        "count": 485,
+        "rms": 0.9781558893366428,
+        "p50": 0.5970425941834805,
+        "p95": 2.4428272734515444,
+        "p99": 2.7970053746505137,
+        "max": 2.8349862887285995
+      },
+      "planner_acceleration": {
+        "count": 485,
+        "rms": 1.5582277375701006,
+        "p50": 0.21342901813052187,
+        "p95": 3.7423418329720235,
+        "p99": 6.371840383261483,
+        "max": 6.4968210247314
+      },
+      "planner_lateral_acceleration": {
+        "count": 485,
+        "rms": 0.042767344363714856,
+        "p50": 0.01251695691462913,
+        "p95": 0.09331852615233109,
+        "p99": 0.12168319716080166,
+        "max": 0.1476615063726509
+      },
+      "planner_jerk": {
+        "count": 485,
+        "rms": 5.9530051342693024,
+        "p50": 0.3137007909701187,
+        "p95": 18.065568665848712,
+        "p99": 24.196850255020635,
+        "max": 24.47518569135113
+      },
+      "delta_v_px4": {
+        "count": 485,
+        "rms": 1.3797913507192914,
+        "p50": 0.8200271165288984,
+        "p95": 3.519856850491304,
+        "p99": 3.9583865012044486,
+        "max": 4.1439215324023655
+      },
+      "delta_a_px4": {
+        "count": 485,
+        "rms": 3.020716745452548,
+        "p50": 0.2663344378724332,
+        "p95": 6.3676374074927296,
+        "p99": 12.556490845160797,
+        "max": 12.85493022557812
+      },
+      "lio_gt_position": {
+        "count": 497,
+        "rms": 0.1462523526216567,
+        "p50": 0.14579004742570686,
+        "p95": 0.1667927637589658,
+        "p99": 0.17134808066683518,
+        "max": 0.17349606468547263
+      },
+      "lio_gt_velocity": {
+        "count": 497,
+        "rms": 0.051459066157689255,
+        "p50": 0.02522097507134652,
+        "p95": 0.10515373151635038,
+        "p99": 0.18566053777244088,
+        "max": 0.24325453068017294
+      },
+      "px4_gt_position": {
+        "count": 497,
+        "rms": 0.1819048872700632,
+        "p50": 0.18014453373021025,
+        "p95": 0.2449790363730274,
+        "p99": 0.25655658315988084,
+        "max": 0.2644041170747711
+      },
+      "px4_gt_velocity": {
+        "count": 497,
+        "rms": 0.3518058497162175,
+        "p50": 0.030595321808271955,
+        "p95": 0.9542125097410509,
+        "p99": 1.243926134967204,
+        "max": 1.2654685555705616
+      },
+      "frame_position": {
+        "count": 497,
+        "rms": 0.1819048872700632,
+        "p50": 0.18014453373021025,
+        "p95": 0.2449790363730274,
+        "p99": 0.25655658315988084,
+        "max": 0.2644041170747711
+      },
+      "frame_velocity": {
+        "count": 497,
+        "rms": 0.3518058497162175,
+        "p50": 0.030595321808271955,
+        "p95": 0.9542125097410509,
+        "p99": 1.243926134967204,
+        "max": 1.2654685555705616
+      }
+    }
+  },
+  "open_control": {
+    "sample_count": 497,
+    "metrics": {
+      "tracking": {
+        "count": 485,
+        "rms": 0.21660919586618585,
+        "p50": 0.07148692358774755,
+        "p95": 0.46712365500499065,
+        "p99": 0.8987628764217126,
+        "max": 0.9115805161662376
+      },
+      "planner_acceleration": {
+        "count": 485,
+        "rms": 1.5684898860716825,
+        "p50": 0.20576435571912174,
+        "p95": 3.824620605435933,
+        "p99": 6.375910948212765,
+        "max": 6.507464951280076
+      },
+      "planner_lateral_acceleration": {
+        "count": 485,
+        "rms": 0.08562282564514019,
+        "p50": 0.020668479021862994,
+        "p95": 0.1743269073535,
+        "p99": 0.33302131276689095,
+        "max": 0.34389617046567766
+      },
+      "planner_jerk": {
+        "count": 485,
+        "rms": 6.06728890062073,
+        "p50": 0.3056922771978467,
+        "p95": 18.08467926135224,
+        "p99": 24.24218541887178,
+        "max": 24.494666656971347
+      },
+      "delta_v_px4": {
+        "count": 485,
+        "rms": 1.365683221187944,
+        "p50": 0.7956224259523739,
+        "p95": 3.4786121098899154,
+        "p99": 3.9681318178949563,
+        "max": 4.124395662027808
+      },
+      "delta_a_px4": {
+        "count": 485,
+        "rms": 3.057981838766767,
+        "p50": 0.2651180744260955,
+        "p95": 7.392377192203414,
+        "p99": 12.403636799719031,
+        "max": 12.700351782895519
+      },
+      "lio_gt_position": {
+        "count": 497,
+        "rms": 0.14836360462858503,
+        "p50": 0.1488233518361632,
+        "p95": 0.1627264064355332,
+        "p99": 0.1727932972913558,
+        "max": 0.1747898792689254
+      },
+      "px4_gt_position": {
+        "count": 0,
+        "rms": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null
+      }
+    }
+  },
+  "figures": [
+    "h10_fig1_velocity_layers.png",
+    "h10_fig2_acceleration_layers.png",
+    "h10_fig3_estimator_gt_error.png",
+    "h10_fig4_command_gt_error.png",
+    "h10_fig5_controller_correction_vs_error.png",
+    "h10_fig6_dynamic_demand_vs_error.png",
+    "h10_fig7_lio_px4_consistency.png",
+    "h10_fig8_exact_e5_causal_timeline.png"
+  ],
+  "H10a": "INCONCLUSIVE",
+  "H10b": "INCONCLUSIVE",
+  "H10c": "INCONCLUSIVE",
+  "H10d": "INCONCLUSIVE",
+  "H10e": "INCONCLUSIVE",
+  "ground_truth_authority": "/sim/ground_truth/odometry; independent Gazebo ENU/FLU",
+  "exact_injected_failure_observed": false,
+  "note": "Selected E5 observability run must not be treated as a valid injected-failure reproduction unless injected_replan_failure=1 is present in the retained trace."
+}

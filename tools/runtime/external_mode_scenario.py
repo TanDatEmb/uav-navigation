@@ -881,6 +881,13 @@ class ExternalModeScenario:
             "accepted_waypoint_index": int(message.accepted_waypoint_index),
             "acceptance_position_error_m": float(message.acceptance_position_error_m),
             "acceptance_speed_mps": float(message.acceptance_speed_mps),
+            "external_mode_state": int(getattr(message, "external_mode_state", 255)),
+            "external_mode_state_name": {
+                0: "TRACK_TRAJECTORY", 1: "WAIT_AIRBORNE", 2: "WAIT_HEALTH",
+                3: "WAIT_FIRST_COMMAND", 4: "MISSION_HOLD", 5: "COMPLETED_HOLD",
+                6: "RECOVERY_HOLD", 7: "FAILSAFE_HOLD", 8: "HANDOVER_HOLD",
+            }.get(int(getattr(message, "external_mode_state", 255)), "NOT_RECORDED"),
+            "external_mode_reason": str(getattr(message, "external_mode_reason", "NOT_RECORDED")),
         }
         if (
             record["state"] == int(self.NavigationModeStatus.FAILED)

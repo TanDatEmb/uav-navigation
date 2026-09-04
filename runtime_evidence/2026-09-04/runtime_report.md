@@ -288,3 +288,16 @@ No transition is claimed without a captured `navigation_mode_status` event.
 - Keep all safety gates and planner/recovery behavior unchanged while collecting the missing evidence.
 
 Blocked/inconclusive runs are listed in the experiment matrix and raw run directories; blocked SITL is not treated as a pass.
+
+## 14. H10 — Closed-loop attribution and usable dynamic envelope
+
+H10 evidence is scenario-separated. `S_BAD_E5` is the partial-but-layer-valid new-observability run `external-mode-check-20260904T142605-80003`; `S_OPEN_CONTROL` is `external-mode-check-20260904T140220-64377`; `S_DYNAMIC_ID` contains only the two exploratory 1.0/2.0 m/s runs. Raw layers and event table are in `h10_exact_e5_closed_loop.csv`, `h10_open_control.csv`, `h10_dynamic_identification.csv`, and `h10_exact_e5_events.csv`.
+
+- `S_BAD_E5` first synchronized LIO-command crossing of the 0.25 m certificate: `29.800 s` simulation time. At that sample: command/LIO error `0.250516 m`, planner speed `1.334 m/s`, planner acceleration `2.435 m/s²`, PX4 effective speed `1.503 m/s`, effective acceleration `3.737 m/s²`.
+- The selected run recorded `PX4_INPUT_SETPOINT` immediately before External Mode publication and independent Gazebo ground truth. It did not record `injected_replan_failure=1`; its later natural planner failure/emergency is not an injected-failure witness.
+- H10a: **INCONCLUSIVE**; H10b: **INCONCLUSIVE**; H10c: **INCONCLUSIVE**; H10d: **INCONCLUSIVE**; H10e: **INCONCLUSIVE**. The two exploratory dynamic runs do not satisfy the no-recovery, increasing-demand criterion, so no closed-loop envelope is claimed.
+- The matched control remains separate: command/LIO tracking P95 is `0.448382 m` for `S_BAD_E5` versus `0.467124 m` for `S_OPEN_CONTROL`; LIO-GT position P95 is `0.166793 m` versus `0.162726 m`; PX4-GT position P95 is `0.244979 m` versus `0.204108 m`.
+
+The H10 causal conclusion is limited to ordering: tracking degradation and the 0.25 m crossing precede the natural planner failure/emergency. The report does not claim that a planning failure caused the loss. No behavior, threshold, timing, gain, or production envelope was changed.
+
+See [h10_analysis.md](/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/h10_analysis.md), [runtime_report.json](/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/runtime_report.json), and the generated figures under `/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/h10_figures/`.
