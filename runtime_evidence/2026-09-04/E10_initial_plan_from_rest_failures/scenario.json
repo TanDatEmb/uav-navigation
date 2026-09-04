@@ -1,0 +1,233 @@
+{
+  "actual_min_clearance_m": null,
+  "armed": true,
+  "automatic_recovery_count": 0,
+  "automatic_recovery_pending": false,
+  "collision_count": 0,
+  "collision_event_count": 0,
+  "command_ack_count": 10,
+  "command_acks": [
+    {
+      "command": 211,
+      "result": 0
+    },
+    {
+      "command": 100001,
+      "result": 0
+    },
+    {
+      "command": 400,
+      "result": 1
+    },
+    {
+      "command": 400,
+      "result": 0
+    },
+    {
+      "command": 100001,
+      "result": 0
+    },
+    {
+      "command": 100001,
+      "result": 0
+    },
+    {
+      "command": 22,
+      "result": 0
+    },
+    {
+      "command": 100001,
+      "result": 0
+    },
+    {
+      "command": 100001,
+      "result": 0
+    },
+    {
+      "command": 100001,
+      "result": 0
+    }
+  ],
+  "disarm_successful": false,
+  "duration_s": 25.004,
+  "events": [
+    {
+      "mode_id": 26,
+      "name": "external_mode_discovered"
+    },
+    {
+      "command": 100001,
+      "name": "activate_external_mode",
+      "param1": 26.0,
+      "param7": 0.0
+    },
+    {
+      "mode_id": 26,
+      "name": "external_mode_entered"
+    },
+    {
+      "command": 400,
+      "name": "arm",
+      "param1": 1.0,
+      "param7": 0.0
+    },
+    {
+      "command": 400,
+      "name": "arm",
+      "param1": 1.0,
+      "param7": 0.0
+    },
+    {
+      "command": 100001,
+      "name": "prepare_takeoff_hold",
+      "param1": 4.0,
+      "param7": 0.0
+    },
+    {
+      "name": "external_mode_exit_observed",
+      "nav_state": 4
+    },
+    {
+      "command": 22,
+      "name": "takeoff",
+      "param7": 13.209935188293457
+    },
+    {
+      "command": 100001,
+      "name": "activate_external_mode",
+      "param1": 26.0,
+      "param7": 0.0
+    },
+    {
+      "mode_id": 26,
+      "name": "external_mode_entered"
+    }
+  ],
+  "expected_outcome": "complete",
+  "external_mode_entered": true,
+  "external_mode_exit_observed": false,
+  "external_mode_id": 26,
+  "failsafe_seen": false,
+  "failures": [
+    "no valid planner backend PVA command observed",
+    "mission completion event was not observed",
+    "waypoint acceptance coverage incomplete: expected [0, 1, 2, 3, 4], got [0]"
+  ],
+  "fallback_latency_ms": {
+    "count": 0,
+    "max": null,
+    "p50": null
+  },
+  "finite_setpoint_count": 328,
+  "goal_indices": [
+    0,
+    1
+  ],
+  "goal_publish_count": 0,
+  "goal_received_count": 2,
+  "grounded_observed": true,
+  "land_requested": false,
+  "land_requested_sim_ns": null,
+  "land_trigger": null,
+  "land_trigger_detail": {},
+  "landed_detector_current": false,
+  "latest_goal": {
+    "frame_id": "lio_odom",
+    "mission_id": "external_mode_open_route",
+    "request_id": 2,
+    "waypoint_index": 1,
+    "x": 3.0,
+    "y": 0.0,
+    "z": 3.0
+  },
+  "latest_pva_command": {},
+  "latest_trajectory": {},
+  "localization_watchdog": {
+    "fail_closed_trigger_m": 0.5,
+    "failure": false,
+    "first_divergence": null,
+    "max_position_residual_m": 0.016046548877828977,
+    "max_velocity_residual_m_s": 0.026374014975678123,
+    "mission_complete_sim_ns": null,
+    "origin_offset_m": [
+      -0.09309800003849196,
+      -0.08973305553473371,
+      -0.023271383860787864
+    ],
+    "p95_position_residual_m": 0.013034489857925607,
+    "post_completion_max_position_residual_m": 0.0,
+    "post_completion_sample_count": 0
+  },
+  "manual_takeoff": false,
+  "map_seed": 0,
+  "minimum_collision_clearance_m": 9.523785807120454,
+  "minimum_collision_obstacle_name": "open_wall_north",
+  "mission_complete_observed": false,
+  "mission_unexpected_exit_observed": false,
+  "mode_completion_result": null,
+  "mode_failure_observed": false,
+  "mode_status_reason": 1,
+  "mode_status_reason_name": "SAFETY_STOP",
+  "mode_status_state": 2,
+  "mode_status_state_name": "PAUSED",
+  "obstacle_evidence": {
+    "raw_lidar_observation_count": 243,
+    "raw_lidar_roi_max_points": 407,
+    "raw_lidar_roi_scan_count": 243,
+    "raw_lidar_scan_count": 243
+  },
+  "outcome": "PAUSED_SAFETY_STOP",
+  "pre_flight_checks_pass": true,
+  "pva_command_failure_count": 42,
+  "pva_command_received": 42,
+  "pva_command_success_count": 0,
+  "px4_hold_handover_requested_sim_ns": null,
+  "px4_hold_handover_trigger": null,
+  "px4_hold_observed": true,
+  "reason": "PAUSED_SAFETY_STOP",
+  "safety_stop_observed": true,
+  "safety_stop_reason_name": "SAFETY_STOP",
+  "safety_stop_sim_ns": 29916000000,
+  "safety_to_handover_ms": null,
+  "setpoint_count": 328,
+  "speed_metrics": {
+    "measured_mps": {
+      "count": 1169,
+      "maximum": 0.886128496865117,
+      "p50": 0.038676312656027265,
+      "p95": 0.8208968872737759
+    },
+    "setpoint_mps": {
+      "count": 328,
+      "maximum": 0.0,
+      "p50": 0.0,
+      "p95": 0.0
+    }
+  },
+  "takeoff_observed": true,
+  "takeoff_requested": true,
+  "trajectory_failure_count": 0,
+  "trajectory_history": [],
+  "trajectory_received": 0,
+  "trajectory_records": [],
+  "trajectory_success_count": 0,
+  "unexpected_rtl": false,
+  "wall_elapsed_s": 31.331035031000283,
+  "warnings": [],
+  "waypoint_acceptance_events": [
+    {
+      "acceptance_position_error_m": 0.3450910414726943,
+      "acceptance_speed_mps": 0.08076567646391432,
+      "accepted_waypoint_index": 0,
+      "mission_id": "external_mode_open_route",
+      "reason": 0,
+      "reason_name": "NONE",
+      "request_id": 2,
+      "state": 0,
+      "state_name": "ACTIVE",
+      "waypoint_accepted": true,
+      "waypoint_index": 1
+    }
+  ],
+  "yaw_controlled_setpoint_count": 328
+}

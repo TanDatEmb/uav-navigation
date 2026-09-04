@@ -1,0 +1,161 @@
+{
+  "processes": [
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec /usr/bin/python3 /home/letandat/Dev/uav-navigation/tools/runtime/monitor.py --output /home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630 --workflow sim --config /home/letandat/Dev/uav-navigation/config/runtime/sim.yaml"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/monitor.log",
+      "pgid": 91810,
+      "pid": 91810,
+      "role": "monitor",
+      "start_ticks": 1563796,
+      "started_at": 1788517195.803755
+    },
+    {
+      "command": [
+        "bash",
+        "/home/letandat/Dev/uav-navigation/tools/simulation/run_px4_mid360.sh"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/px4_gazebo.log",
+      "pgid": 91811,
+      "pid": 91811,
+      "role": "px4_gazebo",
+      "start_ticks": 1563796,
+      "started_at": 1788517195.8044956
+    },
+    {
+      "command": [
+        "MicroXRCEAgent",
+        "udp4",
+        "-p",
+        "8892"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/xrce_agent.log",
+      "pgid": 92007,
+      "pid": 92007,
+      "role": "xrce_agent",
+      "start_ticks": 1564264,
+      "started_at": 1788517200.4794872
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec ros2 run ros_gz_bridge parameter_bridge --ros-args -r __node:=px4_mid360_control_bridge -p config_file:=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/px4_mid360_control_bridge.yaml"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/bridge.log",
+      "pgid": 92008,
+      "pid": 92008,
+      "role": "bridge",
+      "start_ticks": 1564264,
+      "started_at": 1788517200.4831824
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec ros2 run uav_simulation gz_lidar_bridge --ros-args -r __node:=px4_mid360_lidar_bridge -p input_topic:=/sim/mid360/scan/points -p ros_topic:=/lidar/points"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/bridge_lidar.log",
+      "pgid": 92009,
+      "pid": 92009,
+      "role": "bridge_lidar",
+      "start_ticks": 1564264,
+      "started_at": 1788517200.4837968
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec ros2 bag record --storage sqlite3 --output /home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/rosbag /clock /lidar/points /lidar/imu /lio/odometry_corrected /lio/odometry_propagated /lio/diagnostics /navigation/diagnostics /navigation/navigation_command /navigation/mode_status /navigation/goal /navigation/mission_complete /fmu/in/trajectory_setpoint /fmu/in/vehicle_visual_odometry /fmu/out/vehicle_local_position_v1 /fmu/out/vehicle_local_position_setpoint /fmu/out/vehicle_odometry /fmu/out/vehicle_attitude /fmu/out/vehicle_attitude_setpoint /fmu/out/vehicle_thrust_setpoint /fmu/out/actuator_motors /fmu/out/vehicle_status_v1 /fmu/out/estimator_status"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/rosbag.log",
+      "pgid": 92011,
+      "pid": 92011,
+      "role": "rosbag",
+      "start_ticks": 1564264,
+      "started_at": 1788517200.4844146
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec ros2 run uav_simulation gz_visibility_bridge --ros-args -p input_topic:=/lidar/points -p ros_topic:=/lidar/free_space_endpoints -p expected_frame:=livox_frame -p maximum_endpoints:=4096 -p horizontal_count:=720 -p vertical_count:=28 -p horizontal_angle_min_rad:=-3.141592653589793 -p horizontal_angle_max_rad:=3.141592653589793 -p vertical_angle_min_rad:=-0.122173047639603 -p vertical_angle_max_rad:=0.907571211037051 -p range_max_m:=40.0"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/visibility_bridge.log",
+      "pgid": 92019,
+      "pid": 92019,
+      "role": "visibility_bridge",
+      "start_ticks": 1564264,
+      "started_at": 1788517200.4850535
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec ros2 run px4_odometry_bridge px4_odometry_bridge_node --ros-args --params-file /home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/fast_lio_params.yaml -p use_sim_time:=true"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/px4_ingress.log",
+      "pgid": 92021,
+      "pid": 92021,
+      "role": "px4_ingress",
+      "start_ticks": 1564264,
+      "started_at": 1788517200.4856656
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec ros2 launch navigation_bringup navigation_runtime.launch.py config_file:=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/navigation_runtime_params.yaml use_sim_time:=true mission_file:=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/resolved_mission.yaml"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/mapping.log",
+      "pgid": 92024,
+      "pid": 92024,
+      "role": "mapping",
+      "start_ticks": 1564265,
+      "started_at": 1788517200.4864287
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec ros2 launch navigation_bringup fast_lio.launch.py config_file:=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/fast_lio_params.yaml use_sim_time:=true enable_external_odometry:=true publish_sensor_frames:=true 'livox_mount_xyz:=0 0 0.28' 'livox_mount_rpy:=0 0 0' 'livox_lidar_to_imu_xyz:=0.010999999999999999 0.023290000000000002 -0.044119999999999999' 'livox_lidar_to_imu_rpy:=0 -0 0'"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/lio.log",
+      "pgid": 92030,
+      "pid": 92030,
+      "role": "lio",
+      "start_ticks": 1564265,
+      "started_at": 1788517200.48731
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec /usr/bin/python3 /home/letandat/Dev/uav-navigation/tools/runtime/external_mode_scenario.py --output /home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/scenario.json --config /home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/scenario_config.yaml"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/external_mode_scenario.log",
+      "pgid": 92536,
+      "pid": 92536,
+      "role": "external_mode_scenario",
+      "start_ticks": 1564635,
+      "started_at": 1788517204.1918519
+    },
+    {
+      "command": [
+        "bash",
+        "-lc",
+        "export ENABLE_RVIZ=0 RVIZ_ENABLE=0 DISABLE_RVIZ=1 NAVIGATION_NO_RVIZ=1 ROS_DOMAIN_ID=42 PX4_UXRCE_DDS_PORT=8892 ROS_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs RCUTILS_LOGGING_DIRECTORY=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs GZ_LOG_DIR=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs; source /opt/ros/jazzy/setup.bash; source /home/letandat/Dev/uav-navigation/install/setup.bash; exec ros2 launch navigation_bringup px4_external_mode.launch.py config_file:=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/external_mode_params.yaml use_sim_time:=true mission_file:=/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/resolved_mission.yaml"
+      ],
+      "log": "/home/letandat/.codex/runtime/external-mode-check-20260904T101955-91630/logs/external_mode.log",
+      "pgid": 92538,
+      "pid": 92538,
+      "role": "external_mode",
+      "start_ticks": 1564635,
+      "started_at": 1788517204.1945596
+    }
+  ],
+  "schema_version": 1
+}

@@ -1,0 +1,11 @@
+{
+  "expected_outcome": "mission_complete",
+  "motion_preset": "nominal",
+  "profile": "open",
+  "scene": "legacy",
+  "seed": 0,
+  "stochastic": false,
+  "test_case": "positive",
+  "world": "open",
+  "world_sha256": "ea5943e3d08e25b05d36fa3c7dafbbfb82d8ce1c92ded91afcd0efc6a9f6b2a4"
+}

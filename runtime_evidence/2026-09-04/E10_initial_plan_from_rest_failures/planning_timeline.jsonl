@@ -1,0 +1,96 @@
+{"record": {"kind": "map_evidence", "payload": {"frame_id": "livox_frame", "kind": "raw_lidar_obstacle_roi", "points": 405}, "sim_time_ns": 5304000000}, "schema_version": 1, "sequence": 24770, "time_ns": 5304000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 6760000000}, "schema_version": 1, "sequence": 24787, "time_ns": 6760000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 6784000000}, "schema_version": 1, "sequence": 24788, "time_ns": 6784000000}
+{"record": {"kind": "command_ack", "payload": {"command": 211, "result": 0}, "sim_time_ns": 7368000000}, "schema_version": 1, "sequence": 24795, "time_ns": 7368000000}
+{"record": {"kind": "event", "payload": {"mode_id": 26, "name": "external_mode_discovered"}, "sim_time_ns": 7596000000}, "schema_version": 1, "sequence": 24798, "time_ns": 7596000000}
+{"record": {"kind": "command", "payload": {"command": 100001, "name": "activate_external_mode", "param1": 26.0, "param7": 0.0}, "sim_time_ns": 7608000000}, "schema_version": 1, "sequence": 24800, "time_ns": 7608000000}
+{"record": {"kind": "command_ack", "payload": {"command": 100001, "result": 0}, "sim_time_ns": 7656000000}, "schema_version": 1, "sequence": 24801, "time_ns": 7656000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 7784000000}, "schema_version": 1, "sequence": 24803, "time_ns": 7784000000}
+{"record": {"kind": "event", "payload": {"mode_id": 26, "name": "external_mode_entered"}, "sim_time_ns": 7796000000}, "schema_version": 1, "sequence": 24804, "time_ns": 7796000000}
+{"record": {"kind": "command", "payload": {"command": 400, "name": "arm", "param1": 1.0, "param7": 0.0}, "sim_time_ns": 7808000000}, "schema_version": 1, "sequence": 24807, "time_ns": 7808000000}
+{"record": {"kind": "command_ack", "payload": {"command": 400, "result": 1}, "sim_time_ns": 7860000000}, "schema_version": 1, "sequence": 24808, "time_ns": 7860000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 8784000000}, "schema_version": 1, "sequence": 24818, "time_ns": 8784000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 9784000000}, "schema_version": 1, "sequence": 24829, "time_ns": 9784000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 10784000000}, "schema_version": 1, "sequence": 24840, "time_ns": 10784000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 11784000000}, "schema_version": 1, "sequence": 24851, "time_ns": 11784000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 12784000000}, "schema_version": 1, "sequence": 24862, "time_ns": 12784000000}
+{"record": {"kind": "command", "payload": {"command": 400, "name": "arm", "param1": 1.0, "param7": 0.0}, "sim_time_ns": 12812000000}, "schema_version": 1, "sequence": 24864, "time_ns": 12812000000}
+{"record": {"kind": "command_ack", "payload": {"command": 400, "result": 0}, "sim_time_ns": 12852000000}, "schema_version": 1, "sequence": 24865, "time_ns": 12852000000}
+{"record": {"kind": "command_ack", "payload": {"command": 100001, "result": 0}, "sim_time_ns": 12864000000}, "schema_version": 1, "sequence": 24866, "time_ns": 12864000000}
+{"record": {"kind": "command", "payload": {"command": 100001, "name": "prepare_takeoff_hold", "param1": 4.0, "param7": 0.0}, "sim_time_ns": 12868000000}, "schema_version": 1, "sequence": 24869, "time_ns": 12868000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 12872000000}, "schema_version": 1, "sequence": 24870, "time_ns": 12872000000}
+{"record": {"kind": "command_ack", "payload": {"command": 100001, "result": 0}, "sim_time_ns": 12876000000}, "schema_version": 1, "sequence": 24871, "time_ns": 12876000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 12984000000}, "schema_version": 1, "sequence": 24873, "time_ns": 12984000000}
+{"record": {"kind": "event", "payload": {"name": "external_mode_exit_observed", "nav_state": 4}, "sim_time_ns": 13060000000}, "schema_version": 1, "sequence": 24875, "time_ns": 13060000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 13184000000}, "schema_version": 1, "sequence": 24879, "time_ns": 13184000000}
+{"record": {"kind": "command", "payload": {"command": 22, "name": "takeoff", "param7": 13.209935188293457}, "sim_time_ns": 13868000000}, "schema_version": 1, "sequence": 24887, "time_ns": 13868000000}
+{"record": {"kind": "command_ack", "payload": {"command": 22, "result": 0}, "sim_time_ns": 13880000000}, "schema_version": 1, "sequence": 24888, "time_ns": 13880000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": true, "maybe_landed": true}, "sim_time_ns": 14064000000}, "schema_version": 1, "sequence": 24892, "time_ns": 14064000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": true, "landed": false, "maybe_landed": false}, "sim_time_ns": 14616000000}, "schema_version": 1, "sequence": 24899, "time_ns": 14616000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 14816000000}, "schema_version": 1, "sequence": 24902, "time_ns": 14816000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 15816000000}, "schema_version": 1, "sequence": 24912, "time_ns": 15816000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 16824000000}, "schema_version": 1, "sequence": 24922, "time_ns": 16824000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 16916000000}, "schema_version": 1, "sequence": 24925, "time_ns": 16916000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 17912000000}, "schema_version": 1, "sequence": 24934, "time_ns": 17912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 18912000000}, "schema_version": 1, "sequence": 24945, "time_ns": 18912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 19912000000}, "schema_version": 1, "sequence": 24956, "time_ns": 19912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 20912000000}, "schema_version": 1, "sequence": 24968, "time_ns": 20912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 21912000000}, "schema_version": 1, "sequence": 24980, "time_ns": 21912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 22912000000}, "schema_version": 1, "sequence": 24989, "time_ns": 22912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 23912000000}, "schema_version": 1, "sequence": 25000, "time_ns": 23912000000}
+{"record": {"kind": "command", "payload": {"command": 100001, "name": "activate_external_mode", "param1": 26.0, "param7": 0.0}, "sim_time_ns": 24868000000}, "schema_version": 1, "sequence": 25011, "time_ns": 24868000000}
+{"record": {"kind": "command_ack", "payload": {"command": 100001, "result": 0}, "sim_time_ns": 24876000000}, "schema_version": 1, "sequence": 25012, "time_ns": 24876000000}
+{"record": {"kind": "event", "payload": {"mode_id": 26, "name": "external_mode_entered"}, "sim_time_ns": 24888000000}, "schema_version": 1, "sequence": 25013, "time_ns": 24888000000}
+{"record": {"kind": "event", "payload": {"name": "ground_truth_watchdog_started"}, "sim_time_ns": 24888000000}, "schema_version": 1, "sequence": 25015, "time_ns": 24888000000}
+{"record": {"kind": "command_ack", "payload": {"command": 100001, "result": 0}, "sim_time_ns": 24896000000}, "schema_version": 1, "sequence": 25016, "time_ns": 24896000000}
+{"record": {"kind": "goal", "payload": {"frame_id": "lio_odom", "mission_id": "external_mode_open_route", "request_id": 1, "waypoint_index": 0, "x": 0.0, "y": 0.0, "z": 3.0}, "sim_time_ns": 24900000000}, "schema_version": 1, "sequence": 25017, "time_ns": 24900000000}
+{"record": {"kind": "goal", "payload": {"frame_id": "lio_odom", "mission_id": "external_mode_open_route", "request_id": 2, "waypoint_index": 1, "x": 3.0, "y": 0.0, "z": 3.0}, "sim_time_ns": 24908000000}, "schema_version": 1, "sequence": 25020, "time_ns": 24908000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 24912000000}, "schema_version": 1, "sequence": 25023, "time_ns": 24912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 25912000000}, "schema_version": 1, "sequence": 25035, "time_ns": 25912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 26916000000}, "schema_version": 1, "sequence": 25047, "time_ns": 26916000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 27912000000}, "schema_version": 1, "sequence": 25059, "time_ns": 27912000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 28912000000}, "schema_version": 1, "sequence": 25072, "time_ns": 28912000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 1}, "sim_time_ns": 29260000000}, "schema_version": 1, "sequence": 25076, "time_ns": 29260000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 2}, "sim_time_ns": 29272000000}, "schema_version": 1, "sequence": 25077, "time_ns": 29272000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 3}, "sim_time_ns": 29288000000}, "schema_version": 1, "sequence": 25078, "time_ns": 29288000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 4}, "sim_time_ns": 29304000000}, "schema_version": 1, "sequence": 25079, "time_ns": 29304000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 5}, "sim_time_ns": 29316000000}, "schema_version": 1, "sequence": 25081, "time_ns": 29316000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 6}, "sim_time_ns": 29320000000}, "schema_version": 1, "sequence": 25082, "time_ns": 29320000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 7}, "sim_time_ns": 29352000000}, "schema_version": 1, "sequence": 25083, "time_ns": 29352000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 8}, "sim_time_ns": 29372000000}, "schema_version": 1, "sequence": 25084, "time_ns": 29372000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 9}, "sim_time_ns": 29388000000}, "schema_version": 1, "sequence": 25085, "time_ns": 29388000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 10}, "sim_time_ns": 29400000000}, "schema_version": 1, "sequence": 25086, "time_ns": 29400000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 11}, "sim_time_ns": 29416000000}, "schema_version": 1, "sequence": 25088, "time_ns": 29416000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 12}, "sim_time_ns": 29420000000}, "schema_version": 1, "sequence": 25089, "time_ns": 29420000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 13}, "sim_time_ns": 29452000000}, "schema_version": 1, "sequence": 25090, "time_ns": 29452000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 14}, "sim_time_ns": 29468000000}, "schema_version": 1, "sequence": 25091, "time_ns": 29468000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 15}, "sim_time_ns": 29480000000}, "schema_version": 1, "sequence": 25093, "time_ns": 29480000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 16}, "sim_time_ns": 29496000000}, "schema_version": 1, "sequence": 25094, "time_ns": 29496000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 17}, "sim_time_ns": 29512000000}, "schema_version": 1, "sequence": 25096, "time_ns": 29512000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 18}, "sim_time_ns": 29516000000}, "schema_version": 1, "sequence": 25097, "time_ns": 29516000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 19}, "sim_time_ns": 29548000000}, "schema_version": 1, "sequence": 25098, "time_ns": 29548000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 20}, "sim_time_ns": 29564000000}, "schema_version": 1, "sequence": 25099, "time_ns": 29564000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 21}, "sim_time_ns": 29580000000}, "schema_version": 1, "sequence": 25100, "time_ns": 29580000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 22}, "sim_time_ns": 29596000000}, "schema_version": 1, "sequence": 25101, "time_ns": 29596000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 23}, "sim_time_ns": 29608000000}, "schema_version": 1, "sequence": 25102, "time_ns": 29608000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 24}, "sim_time_ns": 29616000000}, "schema_version": 1, "sequence": 25104, "time_ns": 29616000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 25}, "sim_time_ns": 29640000000}, "schema_version": 1, "sequence": 25105, "time_ns": 29640000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 26}, "sim_time_ns": 29656000000}, "schema_version": 1, "sequence": 25106, "time_ns": 29656000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 27}, "sim_time_ns": 29676000000}, "schema_version": 1, "sequence": 25107, "time_ns": 29676000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 28}, "sim_time_ns": 29692000000}, "schema_version": 1, "sequence": 25108, "time_ns": 29692000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 29}, "sim_time_ns": 29704000000}, "schema_version": 1, "sequence": 25109, "time_ns": 29704000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 30}, "sim_time_ns": 29716000000}, "schema_version": 1, "sequence": 25111, "time_ns": 29716000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 31}, "sim_time_ns": 29740000000}, "schema_version": 1, "sequence": 25112, "time_ns": 29740000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 32}, "sim_time_ns": 29752000000}, "schema_version": 1, "sequence": 25113, "time_ns": 29752000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 33}, "sim_time_ns": 29772000000}, "schema_version": 1, "sequence": 25114, "time_ns": 29772000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 34}, "sim_time_ns": 29788000000}, "schema_version": 1, "sequence": 25115, "time_ns": 29788000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 35}, "sim_time_ns": 29804000000}, "schema_version": 1, "sequence": 25116, "time_ns": 29804000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 36}, "sim_time_ns": 29816000000}, "schema_version": 1, "sequence": 25118, "time_ns": 29816000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 37}, "sim_time_ns": 29820000000}, "schema_version": 1, "sequence": 25119, "time_ns": 29820000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 38}, "sim_time_ns": 29852000000}, "schema_version": 1, "sequence": 25120, "time_ns": 29852000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 39}, "sim_time_ns": 29868000000}, "schema_version": 1, "sequence": 25121, "time_ns": 29868000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 40}, "sim_time_ns": 29884000000}, "schema_version": 1, "sequence": 25122, "time_ns": 29884000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 41}, "sim_time_ns": 29900000000}, "schema_version": 1, "sequence": 25123, "time_ns": 29900000000}
+{"record": {"kind": "land_detected", "payload": {"ground_contact": false, "landed": false, "maybe_landed": false}, "sim_time_ns": 29912000000}, "schema_version": 1, "sequence": 25124, "time_ns": 29912000000}
+{"record": {"kind": "pva_command_failure", "payload": {"sample_id": 42}, "sim_time_ns": 29916000000}, "schema_version": 1, "sequence": 25126, "time_ns": 29916000000}
+{"record": {"kind": "command_ack", "payload": {"command": 100001, "result": 0}, "sim_time_ns": 29920000000}, "schema_version": 1, "sequence": 25128, "time_ns": 29920000000}

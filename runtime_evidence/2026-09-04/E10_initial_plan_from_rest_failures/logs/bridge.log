@@ -1,0 +1,4 @@
+[INFO] [1788517202.263401109] [px4_mid360_control_bridge]: Creating GZ->ROS Bridge: [/world/open/clock (gz.msgs.Clock) -> /clock (rosgraph_msgs/msg/Clock)] (Lazy 0)
+[INFO] [1788517202.265176599] [px4_mid360_control_bridge]: Creating GZ->ROS Bridge: [/sim/mid360/imu (gz.msgs.IMU) -> /lidar/imu (sensor_msgs/msg/Imu)] (Lazy 0)
+[INFO] [1788517202.267308045] [px4_mid360_control_bridge]: Creating GZ->ROS Bridge: [/model/x500_mid360/odometry_with_covariance (gz.msgs.OdometryWithCovariance) -> /sim/ground_truth/odometry (nav_msgs/msg/Odometry)] (Lazy 0)
+[INFO] [1788517243.179893628] [rclcpp]: signal_handler(SIGINT/SIGTERM)

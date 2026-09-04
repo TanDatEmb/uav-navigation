@@ -1,0 +1,1549 @@
+{
+  "acceptance": {
+    "cross_track_error_p95_m": null,
+    "cross_track_sample_count": 0,
+    "enabled": true,
+    "expected_outcome": "complete",
+    "goal_indices": [],
+    "max_cross_track_p95_m": 0.5,
+    "mission_complete_observed": null,
+    "mission_waypoint_count": 5,
+    "reasons": [
+      "mission completion event was not observed",
+      "waypoint acceptance evidence is unavailable",
+      "tracking cross-track p95 is unavailable",
+      "mission did not reach COMPLETE outcome: UNKNOWN"
+    ],
+    "waypoint_acceptance_complete": false,
+    "waypoint_acceptance_indices": []
+  },
+  "conversion_contract": {
+    "angular_velocity": {
+      "count": 0,
+      "maximum": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "rmse": null
+    },
+    "attitude": {
+      "count": 0,
+      "maximum": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "rmse": null
+    },
+    "body_transform": "x_frd=x_flu; y_frd=-y_flu; z_frd=-z_flu",
+    "frame_contract_violation_count": 0,
+    "matched_sample_count": 0,
+    "maximum_timestamp_delta_ms": null,
+    "mean_timestamp_delta_ms": null,
+    "p95_timestamp_delta_ms": null,
+    "pose_frame": "PX4 POSE_FRAME_NED",
+    "position": {
+      "count": 0,
+      "maximum": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "rmse": null
+    },
+    "source": "lio/propagated_odometry -> px4/external_odometry",
+    "timestamp_alignment": "absolute ROS header stamp vs PX4 timestamp_sample",
+    "unmatched_sample_count": 0,
+    "velocity": {
+      "count": 0,
+      "maximum": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "rmse": null
+    },
+    "velocity_frame": "PX4 VELOCITY_FRAME_NED",
+    "world_transform": "x_px4_ned=y_lio_enu; y_px4_ned=x_lio_enu; z_px4_ned=-z_lio_enu"
+  },
+  "experimental_bypasses": {},
+  "external_mode": {},
+  "gazebo_native_diagnostics": {},
+  "ground_truth_residuals": {
+    "body_transform": "x_frd=x_flu; y_frd=-y_flu; z_frd=-z_flu",
+    "external_matched_sample_count": 0,
+    "external_ned_vs_ground_truth": {
+      "angular_velocity_rad_s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "attitude_rad": {
+        "count": 0,
+        "maximum": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "rmse": null
+      },
+      "initial_attitude_error_rad": null,
+      "origin_alignment": "first matched position removed after ENU->NED conversion",
+      "position_m": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "required_pose_frame": 1,
+      "required_velocity_frame": 1,
+      "velocity_m_s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      }
+    },
+    "external_timestamp_delta_ms": {
+      "maximum": null,
+      "mean": null,
+      "p95": null
+    },
+    "ground_truth_child_frame_ids": [],
+    "ground_truth_frame_ids": [],
+    "ground_truth_sample_count": 0,
+    "lio_matched_sample_count": 0,
+    "lio_timestamp_delta_ms": {
+      "maximum": null,
+      "mean": null,
+      "p95": null
+    },
+    "lio_vs_ground_truth": {
+      "angular_velocity_rad_s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "ate": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "attitude_rad": {
+        "count": 0,
+        "maximum": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "rmse": null
+      },
+      "initial_attitude_error_rad": null,
+      "origin_alignment": "first matched position removed",
+      "position_m": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "rpe_1s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "rpe_5m": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "velocity_m_s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      }
+    },
+    "maximum_synchronization_tolerance_ms": 20.0,
+    "px4_matched_sample_count": 0,
+    "px4_ned_vs_ground_truth": {
+      "angular_velocity_rad_s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "attitude_rad": {
+        "count": 0,
+        "maximum": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "rmse": null
+      },
+      "initial_attitude_error_rad": null,
+      "matched_sample_count": 0,
+      "origin_alignment": "first matched position removed after ENU->NED conversion",
+      "position_m": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "required_pose_frame": 1,
+      "required_velocity_frame": 1,
+      "velocity_m_s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      }
+    },
+    "px4_timestamp_delta_ms": {
+      "maximum": null,
+      "mean": null,
+      "p95": null
+    },
+    "source": "Gazebo /sim/ground_truth/odometry (ENU/FLU)",
+    "timestamp_alignment": "absolute simulation timestamp; no stream epoch normalization",
+    "world_transform": "x_ned=y_enu; y_ned=x_enu; z_ned=-z_enu"
+  },
+  "infrastructure": {
+    "classification": "INFRASTRUCTURE_INVALID",
+    "qualification_eligible": false,
+    "reasons": [
+      "simulation clock was not observed"
+    ],
+    "simulation_clock_active_wall_gap_count": 0,
+    "simulation_clock_maximum_active_wall_gap_ms": null,
+    "valid": false
+  },
+  "lio": {
+    "map_maintenance": {
+      "absolute_guard_recovery_failure_count": 0,
+      "absolute_guard_trigger_count": 0,
+      "maximum_maintenance_us": null
+    },
+    "map_point_count": {
+      "final": null,
+      "maximum": null,
+      "mean": null,
+      "minimum": null,
+      "p95": null,
+      "sample_count": 0
+    },
+    "navigation_valid": false,
+    "observability_min": null,
+    "observability_p05": null,
+    "observability_rejection_count": "NOT_AVAILABLE",
+    "observability_summary": {
+      "accepted_residual_ratio": null,
+      "invalid_sample_count": 0,
+      "maximum_ratio": null,
+      "maximum_rejection_burst_s": 0.0,
+      "minimum_ratio": null,
+      "p05_ratio": null,
+      "rejection_burst_count": 0,
+      "rejection_count": 0,
+      "tracking_coverage": null
+    },
+    "rotational_information_spectrum": {
+      "product_health_gate": "translation_observability",
+      "status": "diagnostic_only"
+    },
+    "state": "NOT_AVAILABLE",
+    "tracking_coverage": null,
+    "tracking_observed": false,
+    "translation_observability_max_eigenvalue": "NOT_AVAILABLE",
+    "translation_observability_min_eigenvalue": "NOT_AVAILABLE",
+    "translation_observability_ratio": "NOT_AVAILABLE",
+    "translation_observability_valid": false
+  },
+  "map": {
+    "expected_outcome": "mission_complete",
+    "motion_preset": "nominal",
+    "profile": "open",
+    "scene": "legacy",
+    "seed": 0,
+    "stochastic": false,
+    "test_case": "positive",
+    "world": "open",
+    "world_sha256": "ea5943e3d08e25b05d36fa3c7dafbbfb82d8ce1c92ded91afcd0efc6a9f6b2a4"
+  },
+  "navigation_mapping": {
+    "mean_rate_hz": 0.0,
+    "output_topics": [
+      "/navigation/navigation_command",
+      "/navigation/diagnostics"
+    ],
+    "sample_count": 0,
+    "status_level": "NOT_AVAILABLE",
+    "status_message": "NOT_AVAILABLE",
+    "timing_distributions": {
+      "mapping_callback_total_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "mapping_filter_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "mapping_inflation_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "mapping_probability_update_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "mapping_raycast_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "mapping_slide_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "mapping_total_update_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "observation_pair_wait_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "ros_pointcloud_decode_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "transform_to_odom_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      },
+      "world_snapshot_export_us": {
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0
+      }
+    },
+    "topic": "/navigation/diagnostics"
+  },
+  "offboard": {},
+  "planning": {
+    "backup_frontend_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "backup_opt_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "execution": {
+      "available": false
+    },
+    "exp_frontend_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "exp_opt_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "mapping_input_lock_wait_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "planning_corridor_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "planning_path_search_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "planning_scheduling_gap_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "planning_total_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "planning_trajectory_optimization_us": {
+      "max": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "sample_count": 0
+    },
+    "rolling_bundle_trace": {
+      "complete_record_count": 0,
+      "exp_certified_seed_failure_stage_counts": {},
+      "exp_certified_seed_used_count": 0,
+      "exp_corridor_seed_build_failure_stage_counts": {},
+      "exp_corridor_seed_retry_attempt_total": 0,
+      "exp_corridor_seed_retry_build_valid_total": 0,
+      "exp_corridor_seed_retry_last_certificate_stage_counts": {},
+      "exp_corridor_seed_selected_mode_counts": {},
+      "fields_are_runtime_supplied": true,
+      "missing_data_policy": "omitted, never inferred from request/trajectory IDs or aggregate counters",
+      "partial_record_count": 0,
+      "record_count": 0,
+      "records": []
+    }
+  },
+  "provenance": {
+    "legacy_git_observation": {
+      "navigation_commit": "4b03d39b2d89d7f97dec29780f136f611a77190e",
+      "navigation_dirty": true,
+      "px4_commit": "deaff86ee335dd697677bcfc2415a23878e1b895",
+      "px4_dirty": true,
+      "px4_msgs_commit": "86d8239e962f6939e05c3737784f60c02fa884db"
+    },
+    "reason": "session has no validated authoritative build provenance",
+    "status": "INVALID"
+  },
+  "px4": {
+    "controller_telemetry": {
+      "actuator_motors_samples": 0,
+      "attitude_setpoint_samples": 0,
+      "interpretation": "diagnostic-only PX4 post-controller and actuator telemetry; absence does not change the product acceptance verdict",
+      "local_position_setpoint_samples": 0,
+      "setpoint_vs_state": {
+        "actuator_saturation": {
+          "maximum_saturated_control_count": null,
+          "sample_count": 0,
+          "samples_with_saturation": 0
+        },
+        "interpretation": "diagnostic-only: compares PX4 post-controller setpoint to local state and reports actuator saturation; no acceptance gate",
+        "setpoint_state_matched_sample_count": 0,
+        "setpoint_state_timestamp_tolerance_ms": 20.0,
+        "setpoint_vs_local_position_m": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "setpoint_vs_local_velocity_m_s": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "thrust_setpoint_samples": 0
+    },
+    "dead_reckoning_events": 0,
+    "estimator_fault_events": 0,
+    "estimator_initialized": false,
+    "external_vision_position_control_enabled": false,
+    "external_vision_status_interpretation": "PX4 control-status observation only; not per-sample fusion proof",
+    "external_vision_velocity_control_enabled": false,
+    "external_vision_yaw_control_enabled": false,
+    "local_position_valid": false,
+    "local_velocity_valid": false
+  },
+  "qualification_eligible": false,
+  "qualification_timelines": {
+    "complete": false,
+    "execution": {
+      "event_count": 0,
+      "path": "execution_timeline.jsonl"
+    },
+    "perception": {
+      "event_count": 0,
+      "path": "perception_timeline.jsonl"
+    },
+    "planning": {
+      "event_count": 0,
+      "path": "planning_timeline.jsonl"
+    },
+    "schema_version": 1
+  },
+  "reasons": [
+    "runtime did not capture a validated authoritative Release build manifest",
+    "simulation_clock has no samples",
+    "imu has no samples",
+    "lidar has no samples",
+    "corrected_odometry has no samples",
+    "propagated_odometry has no samples",
+    "ground_truth_odometry has no samples",
+    "external_odometry has no samples",
+    "px4_odometry has no samples",
+    "local_position has no samples",
+    "estimator_status_flags has no samples",
+    "external odometry rate below contract",
+    "LIO did not finish in TRACKING",
+    "build provenance: workspace source fingerprint differs from the installed product build",
+    "mission completion event was not observed",
+    "waypoint acceptance evidence is unavailable",
+    "tracking cross-track p95 is unavailable",
+    "mission did not reach COMPLETE outcome: UNKNOWN"
+  ],
+  "residuals": {
+    "attitude": {
+      "count": 0,
+      "maximum": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "rmse": null
+    },
+    "circular_comparison": true,
+    "first_external_sample_time_ns": null,
+    "first_px4_sample_time_ns": null,
+    "frame_alignment": "first matched pose; LIO FRD aligned to PX4 pose frame",
+    "fusion_enabled": "OBSERVED_ONLY",
+    "initial_stream_epoch_offset_ms": null,
+    "matched_sample_count": 0,
+    "maximum_synchronization_tolerance_ms": 20.0,
+    "maximum_timestamp_delta_ms": null,
+    "mean_timestamp_delta_ms": null,
+    "origin_alignment": "first matched position removed from both streams",
+    "p95_timestamp_delta_ms": null,
+    "position": {
+      "count": 0,
+      "maximum": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "rmse": null
+    },
+    "pre_fusion": "NOT_AVAILABLE",
+    "source": "lio/external_odometry_input vs px4/estimator_odometry",
+    "timestamp_alignment": "absolute timestamp_sample; no per-stream epoch normalization",
+    "unmatched_sample_count": 0,
+    "velocity": {
+      "count": 0,
+      "maximum": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "rmse": null
+    },
+    "yaw": {
+      "count": 0,
+      "maximum": null,
+      "mean": null,
+      "p50": null,
+      "p95": null,
+      "rmse": null
+    }
+  },
+  "schema_version": 1,
+  "session": "/home/letandat/.codex/runtime/external-mode-check-20260904T102903-101246",
+  "streams": {
+    "corrected_odometry": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "estimator_status_flags": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "external_odometry": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "ground_truth_odometry": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "imu": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "lidar": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "local_position": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "propagated_odometry": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "px4_actuator_motors": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "px4_attitude_setpoint": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "px4_local_position_setpoint": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "px4_odometry": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "px4_thrust_setpoint": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "simulation_clock": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    },
+    "vehicle_status": {
+      "active_callback_stall_count": 0,
+      "active_wall_arrival_gap_count": 0,
+      "arrival_gap_evidence_valid": true,
+      "invalid_covariance_count": 0,
+      "invalid_quaternion_count": 0,
+      "invalid_source_timestamp_count": 0,
+      "maximum_active_wall_arrival_gap_ms": null,
+      "maximum_gap_ms": 0.0,
+      "maximum_observer_dispatch_source_gap_ms": null,
+      "mean_rate_hz": 0.0,
+      "minimum_window_rate_hz": 0.0,
+      "nonfinite_message_count": 0,
+      "observer_dispatch_stall_count": 0,
+      "p95_interval_ms": null,
+      "sample_count": 0,
+      "sampled_nonfinite_point_count": 0,
+      "source_stale_event_count": 0,
+      "stale_event_count": 0,
+      "stale_event_times_ns": [],
+      "timestamp_duplicate_count": 0,
+      "timestamp_epoch_discard_count": 0,
+      "timestamp_regression_count": 0
+    }
+  },
+  "tracking": {
+    "coverage": null,
+    "lio_vs_ground_truth": {
+      "angular_velocity_rad_s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "ate": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "attitude_rad": {
+        "count": 0,
+        "maximum": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "rmse": null
+      },
+      "initial_attitude_error_rad": null,
+      "origin_alignment": "first matched position removed",
+      "position_m": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "rpe_1s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "rpe_5m": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      },
+      "velocity_m_s": {
+        "norm": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "x": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "y": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        },
+        "z": {
+          "count": 0,
+          "maximum": null,
+          "mean": null,
+          "p50": null,
+          "p95": null,
+          "rmse": null
+        }
+      }
+    },
+    "planner_reference_vs_px4": {
+      "available": false,
+      "candidate_matched_commit_count": 0,
+      "eligible_commit_count": 0,
+      "execution_matched_commit_count": 0,
+      "invalid_pose_frame_count": 0,
+      "maximum_synchronization_tolerance_ms": 20.0,
+      "source": "planner commit trace vs px4/estimator_odometry",
+      "timestamp_alignment": "execution_stamp_ns and candidate_start_wall_time_s vs PX4 timestamp_sample"
+    },
+    "reference_vs_ground_truth": "NOT_AVAILABLE",
+    "reference_vs_lio": "NOT_AVAILABLE"
+  },
+  "verdict": "FAIL",
+  "workflow": "external-mode"
+}
