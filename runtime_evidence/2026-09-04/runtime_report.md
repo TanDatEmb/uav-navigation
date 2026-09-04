@@ -382,3 +382,7 @@ No H10 hypothesis is promoted to CONFIRMED by an invalid injection or a recovery
 - Preserve unchanged: 0.25 m retained-command certificate, fail-closed recovery, estimator/world freshness and validity gates, backup/emergency safety checks, planner timing, and mission acceptance rules.
 - Exact E5 regression: rerun the same map/route/speed and require exactly one `injected_replan_failure=1`, then verify demand/tracking/error ordering and that the selected fix removes unwanted loss without weakening the certificate.
 - Matched open-control regression: same vehicle, PX4 parameters, planner/command rates, map, route, and speed; compare tracking and controller-correction distributions separately; no easier control run may invalidate an E5 finding.
+
+## Closed-loop characterization harness
+
+See `closed_loop_characterization.md` and `closed_loop_characterization.json` for the isolated MODE_PX4_LOCAL evidence package. The production fix remains recommendation-only; no production behavior was changed.

@@ -1,0 +1,1101 @@
+{
+  "envelope": {
+    "a_lateral_nominal_max_mps2": {
+      "run_id": "sim-check-20260904T160837-159859",
+      "segment_id": "LONG_01",
+      "value": 0.0
+    },
+    "a_long_nominal_max_mps2": {
+      "run_id": "sim-check-20260904T160837-159859",
+      "segment_id": "LONG_01",
+      "value": 0.2165062314375
+    },
+    "criterion": {
+      "estimator_health_valid": true,
+      "gt_tracking_max_m": 0.175,
+      "gt_tracking_p95_m": 0.1,
+      "no_recovery": true
+    },
+    "decel_nominal_max_mps2": {
+      "run_id": "sim-check-20260904T160837-159859",
+      "segment_id": "LONG_01",
+      "value": 0.21650369681250065
+    },
+    "jerk_nominal_max_mps3": {
+      "run_id": "sim-check-20260904T160837-159859",
+      "segment_id": "LONG_01",
+      "value": 0.2804066718750005
+    },
+    "profile": "longitudinal",
+    "run_id": "sim-check-20260904T160837-159859",
+    "segments": [
+      {
+        "estimator_health_valid": true,
+        "lio_health_observed": true,
+        "metrics": {
+          "delta_a_px4_controller_mps2": {
+            "count": 500,
+            "max": 0.1409831313038133,
+            "p95": 0.12602958925015184,
+            "rms": 0.07940591478343449
+          },
+          "delta_v_px4_controller_mps": {
+            "count": 500,
+            "max": 0.07634437070476871,
+            "p95": 0.07436449562918307,
+            "rms": 0.05095253019762477
+          },
+          "gt_tracking_error_m": {
+            "count": 500,
+            "max": 0.12870057360270296,
+            "p95": 0.12741975187922375,
+            "rms": 0.09073118920892168
+          },
+          "lio_position_error_gt_horizontal_m": {
+            "count": 500,
+            "max": 0.036335584674059736,
+            "p95": 0.03280199383751174,
+            "rms": 0.029530297430218795
+          },
+          "lio_position_error_gt_m": {
+            "count": 500,
+            "max": 0.04252475027058727,
+            "p95": 0.03444056673030067,
+            "rms": 0.03182733715663591
+          },
+          "lio_velocity_error_gt_horizontal_mps": {
+            "count": 500,
+            "max": 0.02974151535584306,
+            "p95": 0.01922370241674364,
+            "rms": 0.013076036173529362
+          },
+          "lio_velocity_error_gt_mps": {
+            "count": 500,
+            "max": 0.03359561442033672,
+            "p95": 0.022465252326302032,
+            "rms": 0.014717582957735748
+          },
+          "planner_acceleration_mps2": {
+            "count": 500,
+            "max": 0.0721687438125,
+            "p95": 0.07195330603125018,
+            "rms": 0.051754916951152065
+          },
+          "planner_deceleration_mps2": {
+            "count": 500,
+            "max": 0.07216789893750022,
+            "p95": 0.07134647849999974,
+            "rms": 0.0365962520154355
+          },
+          "planner_jerk_mps3": {
+            "count": 500,
+            "max": 0.09346889062499991,
+            "p95": 0.07979873437499994,
+            "rms": 0.041926169762413645
+          },
+          "planner_lateral_acceleration_mps2": {
+            "count": 500,
+            "max": 0.0,
+            "p95": 0.0,
+            "rms": 0.0
+          },
+          "planner_speed_mps": {
+            "count": 500,
+            "max": 0.18749962500018758,
+            "p95": 0.18652963409643744,
+            "rms": 0.11952286093343938
+          },
+          "px4_effective_setpoint_error_gt_m": {
+            "count": 500,
+            "max": 0.12808958721138683,
+            "p95": 0.12646034508401233,
+            "rms": 0.08957041607815874
+          },
+          "px4_effective_tracking_error_m": {
+            "count": 500,
+            "max": 0.06076890482583974,
+            "p95": 0.05804812268724597,
+            "rms": 0.03778397913280719
+          },
+          "px4_position_error_gt_m": {
+            "count": 500,
+            "max": 0.08898524968455278,
+            "p95": 0.08740153015087068,
+            "rms": 0.06312167864682212
+          },
+          "px4_velocity_error_gt_mps": {
+            "count": 500,
+            "max": 0.3106667522567525,
+            "p95": 0.3074807005574816,
+            "rms": 0.20237034510252683
+          }
+        },
+        "quality": "MARGINAL",
+        "requested_radius_m": null,
+        "requested_speed_mps": null,
+        "sample_count": 500,
+        "segment_id": "LONG_00",
+        "segment_kind": "longitudinal"
+      },
+      {
+        "estimator_health_valid": true,
+        "lio_health_observed": true,
+        "metrics": {
+          "delta_a_px4_controller_mps2": {
+            "count": 500,
+            "max": 0.15700882359610838,
+            "p95": 0.1347162733591933,
+            "rms": 0.08502017547031862
+          },
+          "delta_v_px4_controller_mps": {
+            "count": 500,
+            "max": 0.04590565685930005,
+            "p95": 0.04194557165796401,
+            "rms": 0.027474399030259836
+          },
+          "gt_tracking_error_m": {
+            "count": 500,
+            "max": 0.09442378060048531,
+            "p95": 0.0927760180465981,
+            "rms": 0.06683589242543525
+          },
+          "lio_position_error_gt_horizontal_m": {
+            "count": 500,
+            "max": 0.04343155680589885,
+            "p95": 0.041443923749136725,
+            "rms": 0.03505943796504264
+          },
+          "lio_position_error_gt_m": {
+            "count": 500,
+            "max": 0.04410471262135229,
+            "p95": 0.04234076114068607,
+            "rms": 0.03578685554300292
+          },
+          "lio_velocity_error_gt_horizontal_mps": {
+            "count": 500,
+            "max": 0.02300729521691416,
+            "p95": 0.016735531299551413,
+            "rms": 0.01158696324146099
+          },
+          "lio_velocity_error_gt_mps": {
+            "count": 500,
+            "max": 0.023191587551928856,
+            "p95": 0.017983358934303497,
+            "rms": 0.01278499423522253
+          },
+          "planner_acceleration_mps2": {
+            "count": 500,
+            "max": 0.2165062314375,
+            "p95": 0.2158599180937505,
+            "rms": 0.15526475085345617
+          },
+          "planner_deceleration_mps2": {
+            "count": 500,
+            "max": 0.21650369681250065,
+            "p95": 0.21403943549999915,
+            "rms": 0.10978875604630652
+          },
+          "planner_jerk_mps3": {
+            "count": 500,
+            "max": 0.2804066718750005,
+            "p95": 0.23939620312499982,
+            "rms": 0.12577850928724094
+          },
+          "planner_lateral_acceleration_mps2": {
+            "count": 500,
+            "max": 0.0,
+            "p95": 0.0,
+            "rms": 0.0
+          },
+          "planner_speed_mps": {
+            "count": 500,
+            "max": 0.5624988750005627,
+            "p95": 0.5595889022893124,
+            "rms": 0.35856858280031806
+          },
+          "px4_effective_setpoint_error_gt_m": {
+            "count": 500,
+            "max": 0.09491475124096654,
+            "p95": 0.09326323803989714,
+            "rms": 0.06354228378431868
+          },
+          "px4_effective_tracking_error_m": {
+            "count": 500,
+            "max": 0.029181362331464615,
+            "p95": 0.02703610445278625,
+            "rms": 0.018515606201778386
+          },
+          "px4_position_error_gt_m": {
+            "count": 500,
+            "max": 0.07941149859841676,
+            "p95": 0.0781988603927235,
+            "rms": 0.05553607655945554
+          },
+          "px4_velocity_error_gt_mps": {
+            "count": 500,
+            "max": 0.8015169045797521,
+            "p95": 0.7976483376525287,
+            "rms": 0.5127976551277416
+          }
+        },
+        "quality": "GOOD",
+        "requested_radius_m": null,
+        "requested_speed_mps": null,
+        "sample_count": 500,
+        "segment_id": "LONG_01",
+        "segment_kind": "longitudinal"
+      },
+      {
+        "estimator_health_valid": true,
+        "lio_health_observed": true,
+        "metrics": {
+          "delta_a_px4_controller_mps2": {
+            "count": 375,
+            "max": 0.26902963073161645,
+            "p95": 0.23659357734039416,
+            "rms": 0.1463794181681338
+          },
+          "delta_v_px4_controller_mps": {
+            "count": 375,
+            "max": 0.08446092828897113,
+            "p95": 0.07662679747737518,
+            "rms": 0.0441545498725241
+          },
+          "gt_tracking_error_m": {
+            "count": 375,
+            "max": 0.27554481385468876,
+            "p95": 0.26249490323447516,
+            "rms": 0.17811639057647954
+          },
+          "lio_position_error_gt_horizontal_m": {
+            "count": 375,
+            "max": 0.07108958487031747,
+            "p95": 0.07009817138757371,
+            "rms": 0.054686710486332224
+          },
+          "lio_position_error_gt_m": {
+            "count": 375,
+            "max": 0.09356162225613658,
+            "p95": 0.09227711517870237,
+            "rms": 0.06754502077139005
+          },
+          "lio_velocity_error_gt_horizontal_mps": {
+            "count": 375,
+            "max": 0.027878691902790697,
+            "p95": 0.025913768750828965,
+            "rms": 0.017212066680625235
+          },
+          "lio_velocity_error_gt_mps": {
+            "count": 375,
+            "max": 0.029470806181777005,
+            "p95": 0.02707143171944069,
+            "rms": 0.01874728588454003
+          },
+          "planner_acceleration_mps2": {
+            "count": 375,
+            "max": 0.8018753728395053,
+            "p95": 0.7994733175308653,
+            "rms": 0.5750546328019931
+          },
+          "planner_deceleration_mps2": {
+            "count": 375,
+            "max": 0.8018753728395053,
+            "p95": 0.7923460118518518,
+            "rms": 0.4066249987812553
+          },
+          "planner_jerk_mps3": {
+            "count": 375,
+            "max": 1.3833370370370406,
+            "p95": 1.1810200000000002,
+            "rms": 0.62112723317121
+          },
+          "planner_lateral_acceleration_mps2": {
+            "count": 375,
+            "max": 0.0,
+            "p95": 0.0,
+            "rms": 0.0
+          },
+          "planner_speed_mps": {
+            "count": 375,
+            "max": 1.5624944444493831,
+            "p95": 1.5543141069481479,
+            "rms": 0.9960238411119946
+          },
+          "px4_effective_setpoint_error_gt_m": {
+            "count": 375,
+            "max": 0.25074157142870285,
+            "p95": 0.22586570783441118,
+            "rms": 0.1551436369768292
+          },
+          "px4_effective_tracking_error_m": {
+            "count": 375,
+            "max": 0.04477656929540288,
+            "p95": 0.03906739479981151,
+            "rms": 0.025744175552065186
+          },
+          "px4_position_error_gt_m": {
+            "count": 375,
+            "max": 0.23183866005566178,
+            "p95": 0.21274312833980052,
+            "rms": 0.14268512482730483
+          },
+          "px4_velocity_error_gt_mps": {
+            "count": 375,
+            "max": 2.2275412737422426,
+            "p95": 2.2135063550310505,
+            "rms": 1.4164630545028372
+          }
+        },
+        "quality": "UNUSABLE",
+        "requested_radius_m": null,
+        "requested_speed_mps": null,
+        "sample_count": 375,
+        "segment_id": "LONG_02",
+        "segment_kind": "longitudinal"
+      },
+      {
+        "estimator_health_valid": true,
+        "lio_health_observed": true,
+        "metrics": {
+          "delta_a_px4_controller_mps2": {
+            "count": 312,
+            "max": 0.8312746695631197,
+            "p95": 0.7286696162351433,
+            "rms": 0.3401929576936941
+          },
+          "delta_v_px4_controller_mps": {
+            "count": 312,
+            "max": 0.15856537881511332,
+            "p95": 0.15028815773851403,
+            "rms": 0.09058117995974811
+          },
+          "gt_tracking_error_m": {
+            "count": 312,
+            "max": 0.5393514427748846,
+            "p95": 0.5157288281119438,
+            "rms": 0.3410135137122404
+          },
+          "lio_position_error_gt_horizontal_m": {
+            "count": 312,
+            "max": 0.12005453612262106,
+            "p95": 0.11900158065953198,
+            "rms": 0.09557891231615918
+          },
+          "lio_position_error_gt_m": {
+            "count": 312,
+            "max": 0.19280154339973343,
+            "p95": 0.19111305079340885,
+            "rms": 0.14213557692450127
+          },
+          "lio_velocity_error_gt_horizontal_mps": {
+            "count": 312,
+            "max": 0.058438670466089755,
+            "p95": 0.055285144935863645,
+            "rms": 0.03618497384053305
+          },
+          "lio_velocity_error_gt_mps": {
+            "count": 312,
+            "max": 0.0653380394131526,
+            "p95": 0.0618413847246394,
+            "rms": 0.0418401574436686
+          },
+          "planner_acceleration_mps2": {
+            "count": 312,
+            "max": 1.847492385177602,
+            "p95": 1.8419394517401617,
+            "rms": 1.325987230907624
+          },
+          "planner_deceleration_mps2": {
+            "count": 312,
+            "max": 1.847492385177602,
+            "p95": 1.8254061659750396,
+            "rms": 0.9376145627415532
+          },
+          "planner_jerk_mps3": {
+            "count": 312,
+            "max": 3.784836710399999,
+            "p95": 3.244369182719993,
+            "rms": 1.7117763584714378
+          },
+          "planner_lateral_acceleration_mps2": {
+            "count": 312,
+            "max": 0.0,
+            "p95": 0.0,
+            "rms": 0.0
+          },
+          "planner_speed_mps": {
+            "count": 312,
+            "max": 2.999938560314574,
+            "p95": 2.9840349287507553,
+            "rms": 1.913897505875406
+          },
+          "px4_effective_setpoint_error_gt_m": {
+            "count": 312,
+            "max": 0.49576920771871347,
+            "p95": 0.45189548331811297,
+            "rms": 0.2962929473838967
+          },
+          "px4_effective_tracking_error_m": {
+            "count": 312,
+            "max": 0.08901383226748624,
+            "p95": 0.08040452311314045,
+            "rms": 0.05055375796497247
+          },
+          "px4_position_error_gt_m": {
+            "count": 312,
+            "max": 0.4661726890499751,
+            "p95": 0.4203420453231428,
+            "rms": 0.2793505236811574
+          },
+          "px4_velocity_error_gt_mps": {
+            "count": 312,
+            "max": 4.068358362368647,
+            "p95": 4.050250742655932,
+            "rms": 2.696268500259788
+          }
+        },
+        "quality": "UNUSABLE",
+        "requested_radius_m": null,
+        "requested_speed_mps": null,
+        "sample_count": 312,
+        "segment_id": "LONG_03",
+        "segment_kind": "longitudinal"
+      }
+    ],
+    "status": "IDENTIFIED",
+    "v_nominal_max_mps": {
+      "run_id": "sim-check-20260904T160837-159859",
+      "segment_id": "LONG_01",
+      "value": 0.5624988750005627
+    }
+  },
+  "figures": [
+    "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/CLOSED_LOOP_CHARACTERIZATION/final_v2_longitudinal_analysis/figures/longitudinal_demand_vs_gt_tracking.png",
+    "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/CLOSED_LOOP_CHARACTERIZATION/final_v2_longitudinal_analysis/figures/longitudinal_input_vs_effective_velocity.png",
+    "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/CLOSED_LOOP_CHARACTERIZATION/final_v2_longitudinal_analysis/figures/longitudinal_input_vs_effective_acceleration.png",
+    "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/CLOSED_LOOP_CHARACTERIZATION/final_v2_longitudinal_analysis/figures/longitudinal_estimator_errors_gt.png",
+    "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/CLOSED_LOOP_CHARACTERIZATION/final_v2_longitudinal_analysis/figures/longitudinal_demand_vs_gt_tracking_scatter.png"
+  ],
+  "initial_frames": {
+    "initial_gt_enu": [
+      4.593988854232003e-18,
+      -1.5079822286876213e-18,
+      -0.01300286499496861
+    ],
+    "initial_lio_enu": [
+      -0.0013392560161672312,
+      -0.01681333492035749,
+      -0.0005206031306520531
+    ],
+    "initial_px4_local_ned": [
+      -0.00013785441115032881,
+      3.973383172706235e-06,
+      0.00011839198123198003
+    ]
+  },
+  "profile": "longitudinal",
+  "run_id": "sim-check-20260904T160837-159859",
+  "sample_count": 3767,
+  "segments": [
+    {
+      "estimator_health_valid": true,
+      "lio_health_observed": true,
+      "metrics": {
+        "delta_a_px4_controller_mps2": {
+          "count": 500,
+          "max": 0.1409831313038133,
+          "p95": 0.12602958925015184,
+          "rms": 0.07940591478343449
+        },
+        "delta_v_px4_controller_mps": {
+          "count": 500,
+          "max": 0.07634437070476871,
+          "p95": 0.07436449562918307,
+          "rms": 0.05095253019762477
+        },
+        "gt_tracking_error_m": {
+          "count": 500,
+          "max": 0.12870057360270296,
+          "p95": 0.12741975187922375,
+          "rms": 0.09073118920892168
+        },
+        "lio_position_error_gt_horizontal_m": {
+          "count": 500,
+          "max": 0.036335584674059736,
+          "p95": 0.03280199383751174,
+          "rms": 0.029530297430218795
+        },
+        "lio_position_error_gt_m": {
+          "count": 500,
+          "max": 0.04252475027058727,
+          "p95": 0.03444056673030067,
+          "rms": 0.03182733715663591
+        },
+        "lio_velocity_error_gt_horizontal_mps": {
+          "count": 500,
+          "max": 0.02974151535584306,
+          "p95": 0.01922370241674364,
+          "rms": 0.013076036173529362
+        },
+        "lio_velocity_error_gt_mps": {
+          "count": 500,
+          "max": 0.03359561442033672,
+          "p95": 0.022465252326302032,
+          "rms": 0.014717582957735748
+        },
+        "planner_acceleration_mps2": {
+          "count": 500,
+          "max": 0.0721687438125,
+          "p95": 0.07195330603125018,
+          "rms": 0.051754916951152065
+        },
+        "planner_deceleration_mps2": {
+          "count": 500,
+          "max": 0.07216789893750022,
+          "p95": 0.07134647849999974,
+          "rms": 0.0365962520154355
+        },
+        "planner_jerk_mps3": {
+          "count": 500,
+          "max": 0.09346889062499991,
+          "p95": 0.07979873437499994,
+          "rms": 0.041926169762413645
+        },
+        "planner_lateral_acceleration_mps2": {
+          "count": 500,
+          "max": 0.0,
+          "p95": 0.0,
+          "rms": 0.0
+        },
+        "planner_speed_mps": {
+          "count": 500,
+          "max": 0.18749962500018758,
+          "p95": 0.18652963409643744,
+          "rms": 0.11952286093343938
+        },
+        "px4_effective_setpoint_error_gt_m": {
+          "count": 500,
+          "max": 0.12808958721138683,
+          "p95": 0.12646034508401233,
+          "rms": 0.08957041607815874
+        },
+        "px4_effective_tracking_error_m": {
+          "count": 500,
+          "max": 0.06076890482583974,
+          "p95": 0.05804812268724597,
+          "rms": 0.03778397913280719
+        },
+        "px4_position_error_gt_m": {
+          "count": 500,
+          "max": 0.08898524968455278,
+          "p95": 0.08740153015087068,
+          "rms": 0.06312167864682212
+        },
+        "px4_velocity_error_gt_mps": {
+          "count": 500,
+          "max": 0.3106667522567525,
+          "p95": 0.3074807005574816,
+          "rms": 0.20237034510252683
+        }
+      },
+      "quality": "MARGINAL",
+      "requested_radius_m": null,
+      "requested_speed_mps": null,
+      "sample_count": 500,
+      "segment_id": "LONG_00",
+      "segment_kind": "longitudinal"
+    },
+    {
+      "estimator_health_valid": true,
+      "lio_health_observed": true,
+      "metrics": {
+        "delta_a_px4_controller_mps2": {
+          "count": 500,
+          "max": 0.15700882359610838,
+          "p95": 0.1347162733591933,
+          "rms": 0.08502017547031862
+        },
+        "delta_v_px4_controller_mps": {
+          "count": 500,
+          "max": 0.04590565685930005,
+          "p95": 0.04194557165796401,
+          "rms": 0.027474399030259836
+        },
+        "gt_tracking_error_m": {
+          "count": 500,
+          "max": 0.09442378060048531,
+          "p95": 0.0927760180465981,
+          "rms": 0.06683589242543525
+        },
+        "lio_position_error_gt_horizontal_m": {
+          "count": 500,
+          "max": 0.04343155680589885,
+          "p95": 0.041443923749136725,
+          "rms": 0.03505943796504264
+        },
+        "lio_position_error_gt_m": {
+          "count": 500,
+          "max": 0.04410471262135229,
+          "p95": 0.04234076114068607,
+          "rms": 0.03578685554300292
+        },
+        "lio_velocity_error_gt_horizontal_mps": {
+          "count": 500,
+          "max": 0.02300729521691416,
+          "p95": 0.016735531299551413,
+          "rms": 0.01158696324146099
+        },
+        "lio_velocity_error_gt_mps": {
+          "count": 500,
+          "max": 0.023191587551928856,
+          "p95": 0.017983358934303497,
+          "rms": 0.01278499423522253
+        },
+        "planner_acceleration_mps2": {
+          "count": 500,
+          "max": 0.2165062314375,
+          "p95": 0.2158599180937505,
+          "rms": 0.15526475085345617
+        },
+        "planner_deceleration_mps2": {
+          "count": 500,
+          "max": 0.21650369681250065,
+          "p95": 0.21403943549999915,
+          "rms": 0.10978875604630652
+        },
+        "planner_jerk_mps3": {
+          "count": 500,
+          "max": 0.2804066718750005,
+          "p95": 0.23939620312499982,
+          "rms": 0.12577850928724094
+        },
+        "planner_lateral_acceleration_mps2": {
+          "count": 500,
+          "max": 0.0,
+          "p95": 0.0,
+          "rms": 0.0
+        },
+        "planner_speed_mps": {
+          "count": 500,
+          "max": 0.5624988750005627,
+          "p95": 0.5595889022893124,
+          "rms": 0.35856858280031806
+        },
+        "px4_effective_setpoint_error_gt_m": {
+          "count": 500,
+          "max": 0.09491475124096654,
+          "p95": 0.09326323803989714,
+          "rms": 0.06354228378431868
+        },
+        "px4_effective_tracking_error_m": {
+          "count": 500,
+          "max": 0.029181362331464615,
+          "p95": 0.02703610445278625,
+          "rms": 0.018515606201778386
+        },
+        "px4_position_error_gt_m": {
+          "count": 500,
+          "max": 0.07941149859841676,
+          "p95": 0.0781988603927235,
+          "rms": 0.05553607655945554
+        },
+        "px4_velocity_error_gt_mps": {
+          "count": 500,
+          "max": 0.8015169045797521,
+          "p95": 0.7976483376525287,
+          "rms": 0.5127976551277416
+        }
+      },
+      "quality": "GOOD",
+      "requested_radius_m": null,
+      "requested_speed_mps": null,
+      "sample_count": 500,
+      "segment_id": "LONG_01",
+      "segment_kind": "longitudinal"
+    },
+    {
+      "estimator_health_valid": true,
+      "lio_health_observed": true,
+      "metrics": {
+        "delta_a_px4_controller_mps2": {
+          "count": 375,
+          "max": 0.26902963073161645,
+          "p95": 0.23659357734039416,
+          "rms": 0.1463794181681338
+        },
+        "delta_v_px4_controller_mps": {
+          "count": 375,
+          "max": 0.08446092828897113,
+          "p95": 0.07662679747737518,
+          "rms": 0.0441545498725241
+        },
+        "gt_tracking_error_m": {
+          "count": 375,
+          "max": 0.27554481385468876,
+          "p95": 0.26249490323447516,
+          "rms": 0.17811639057647954
+        },
+        "lio_position_error_gt_horizontal_m": {
+          "count": 375,
+          "max": 0.07108958487031747,
+          "p95": 0.07009817138757371,
+          "rms": 0.054686710486332224
+        },
+        "lio_position_error_gt_m": {
+          "count": 375,
+          "max": 0.09356162225613658,
+          "p95": 0.09227711517870237,
+          "rms": 0.06754502077139005
+        },
+        "lio_velocity_error_gt_horizontal_mps": {
+          "count": 375,
+          "max": 0.027878691902790697,
+          "p95": 0.025913768750828965,
+          "rms": 0.017212066680625235
+        },
+        "lio_velocity_error_gt_mps": {
+          "count": 375,
+          "max": 0.029470806181777005,
+          "p95": 0.02707143171944069,
+          "rms": 0.01874728588454003
+        },
+        "planner_acceleration_mps2": {
+          "count": 375,
+          "max": 0.8018753728395053,
+          "p95": 0.7994733175308653,
+          "rms": 0.5750546328019931
+        },
+        "planner_deceleration_mps2": {
+          "count": 375,
+          "max": 0.8018753728395053,
+          "p95": 0.7923460118518518,
+          "rms": 0.4066249987812553
+        },
+        "planner_jerk_mps3": {
+          "count": 375,
+          "max": 1.3833370370370406,
+          "p95": 1.1810200000000002,
+          "rms": 0.62112723317121
+        },
+        "planner_lateral_acceleration_mps2": {
+          "count": 375,
+          "max": 0.0,
+          "p95": 0.0,
+          "rms": 0.0
+        },
+        "planner_speed_mps": {
+          "count": 375,
+          "max": 1.5624944444493831,
+          "p95": 1.5543141069481479,
+          "rms": 0.9960238411119946
+        },
+        "px4_effective_setpoint_error_gt_m": {
+          "count": 375,
+          "max": 0.25074157142870285,
+          "p95": 0.22586570783441118,
+          "rms": 0.1551436369768292
+        },
+        "px4_effective_tracking_error_m": {
+          "count": 375,
+          "max": 0.04477656929540288,
+          "p95": 0.03906739479981151,
+          "rms": 0.025744175552065186
+        },
+        "px4_position_error_gt_m": {
+          "count": 375,
+          "max": 0.23183866005566178,
+          "p95": 0.21274312833980052,
+          "rms": 0.14268512482730483
+        },
+        "px4_velocity_error_gt_mps": {
+          "count": 375,
+          "max": 2.2275412737422426,
+          "p95": 2.2135063550310505,
+          "rms": 1.4164630545028372
+        }
+      },
+      "quality": "UNUSABLE",
+      "requested_radius_m": null,
+      "requested_speed_mps": null,
+      "sample_count": 375,
+      "segment_id": "LONG_02",
+      "segment_kind": "longitudinal"
+    },
+    {
+      "estimator_health_valid": true,
+      "lio_health_observed": true,
+      "metrics": {
+        "delta_a_px4_controller_mps2": {
+          "count": 312,
+          "max": 0.8312746695631197,
+          "p95": 0.7286696162351433,
+          "rms": 0.3401929576936941
+        },
+        "delta_v_px4_controller_mps": {
+          "count": 312,
+          "max": 0.15856537881511332,
+          "p95": 0.15028815773851403,
+          "rms": 0.09058117995974811
+        },
+        "gt_tracking_error_m": {
+          "count": 312,
+          "max": 0.5393514427748846,
+          "p95": 0.5157288281119438,
+          "rms": 0.3410135137122404
+        },
+        "lio_position_error_gt_horizontal_m": {
+          "count": 312,
+          "max": 0.12005453612262106,
+          "p95": 0.11900158065953198,
+          "rms": 0.09557891231615918
+        },
+        "lio_position_error_gt_m": {
+          "count": 312,
+          "max": 0.19280154339973343,
+          "p95": 0.19111305079340885,
+          "rms": 0.14213557692450127
+        },
+        "lio_velocity_error_gt_horizontal_mps": {
+          "count": 312,
+          "max": 0.058438670466089755,
+          "p95": 0.055285144935863645,
+          "rms": 0.03618497384053305
+        },
+        "lio_velocity_error_gt_mps": {
+          "count": 312,
+          "max": 0.0653380394131526,
+          "p95": 0.0618413847246394,
+          "rms": 0.0418401574436686
+        },
+        "planner_acceleration_mps2": {
+          "count": 312,
+          "max": 1.847492385177602,
+          "p95": 1.8419394517401617,
+          "rms": 1.325987230907624
+        },
+        "planner_deceleration_mps2": {
+          "count": 312,
+          "max": 1.847492385177602,
+          "p95": 1.8254061659750396,
+          "rms": 0.9376145627415532
+        },
+        "planner_jerk_mps3": {
+          "count": 312,
+          "max": 3.784836710399999,
+          "p95": 3.244369182719993,
+          "rms": 1.7117763584714378
+        },
+        "planner_lateral_acceleration_mps2": {
+          "count": 312,
+          "max": 0.0,
+          "p95": 0.0,
+          "rms": 0.0
+        },
+        "planner_speed_mps": {
+          "count": 312,
+          "max": 2.999938560314574,
+          "p95": 2.9840349287507553,
+          "rms": 1.913897505875406
+        },
+        "px4_effective_setpoint_error_gt_m": {
+          "count": 312,
+          "max": 0.49576920771871347,
+          "p95": 0.45189548331811297,
+          "rms": 0.2962929473838967
+        },
+        "px4_effective_tracking_error_m": {
+          "count": 312,
+          "max": 0.08901383226748624,
+          "p95": 0.08040452311314045,
+          "rms": 0.05055375796497247
+        },
+        "px4_position_error_gt_m": {
+          "count": 312,
+          "max": 0.4661726890499751,
+          "p95": 0.4203420453231428,
+          "rms": 0.2793505236811574
+        },
+        "px4_velocity_error_gt_mps": {
+          "count": 312,
+          "max": 4.068358362368647,
+          "p95": 4.050250742655932,
+          "rms": 2.696268500259788
+        }
+      },
+      "quality": "UNUSABLE",
+      "requested_radius_m": null,
+      "requested_speed_mps": null,
+      "sample_count": 312,
+      "segment_id": "LONG_03",
+      "segment_kind": "longitudinal"
+    }
+  ],
+  "summary": {
+    "duration_s": 62.004,
+    "failures": [],
+    "harness_isolation": "direct analytic PX4-local reference; no NavigationRuntime command source",
+    "initial_gt_enu": [
+      4.593988854232003e-18,
+      -1.5079822286876213e-18,
+      -0.01300286499496861
+    ],
+    "initial_lio_enu": [
+      -0.0013392560161672312,
+      -0.01681333492035749,
+      -0.0005206031306520531
+    ],
+    "initial_px4_local_ned": [
+      -0.00013785441115032881,
+      3.973383172706235e-06,
+      0.00011839198123198003
+    ],
+    "land_commanded": true,
+    "mode": "MODE_PX4_LOCAL",
+    "profile": "longitudinal",
+    "reason": "COMPLETE",
+    "segments": [
+      {
+        "duration_s": 4.0,
+        "id": "INIT_HOLD",
+        "kind": "hold",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "offset_z": 0.0,
+        "start_s": 0.0
+      },
+      {
+        "duration_s": 8.0,
+        "id": "TAKEOFF",
+        "kind": "takeoff",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "offset_z": 0.0,
+        "start_s": 4.0
+      },
+      {
+        "duration_s": 3.0,
+        "id": "AIRBORNE_HOLD",
+        "kind": "hold",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "start_s": 12.0
+      },
+      {
+        "distance_m": 0.8,
+        "duration_s": 8.0,
+        "id": "LONG_00",
+        "kind": "longitudinal",
+        "offset_x": 0.0,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "origin_offset_x": 0.0,
+        "start_s": 15.0
+      },
+      {
+        "duration_s": 2.0,
+        "id": "LONG_00_HOLD",
+        "kind": "hold",
+        "offset_x": 0.8,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "start_s": 23.0
+      },
+      {
+        "distance_m": 2.4,
+        "duration_s": 8.0,
+        "id": "LONG_01",
+        "kind": "longitudinal",
+        "offset_x": 0.8,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "origin_offset_x": 0.8,
+        "start_s": 25.0
+      },
+      {
+        "duration_s": 2.0,
+        "id": "LONG_01_HOLD",
+        "kind": "hold",
+        "offset_x": 3.2,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "start_s": 33.0
+      },
+      {
+        "distance_m": 5.0,
+        "duration_s": 6.0,
+        "id": "LONG_02",
+        "kind": "longitudinal",
+        "offset_x": 3.2,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "origin_offset_x": 3.2,
+        "start_s": 35.0
+      },
+      {
+        "duration_s": 2.0,
+        "id": "LONG_02_HOLD",
+        "kind": "hold",
+        "offset_x": 8.2,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "start_s": 41.0
+      },
+      {
+        "distance_m": 8.0,
+        "duration_s": 5.0,
+        "id": "LONG_03",
+        "kind": "longitudinal",
+        "offset_x": 8.2,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "origin_offset_x": 8.2,
+        "start_s": 43.0
+      },
+      {
+        "duration_s": 2.0,
+        "id": "LONG_03_HOLD",
+        "kind": "hold",
+        "offset_x": 16.2,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "start_s": 48.0
+      },
+      {
+        "duration_s": 4.0,
+        "id": "CHARACTERIZATION_HOLD",
+        "kind": "hold",
+        "offset_x": 16.2,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "start_s": 50.0
+      },
+      {
+        "duration_s": 8.0,
+        "id": "LAND",
+        "kind": "land",
+        "offset_x": 16.2,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "start_s": 54.0
+      },
+      {
+        "duration_s": 2.0,
+        "id": "DONE",
+        "kind": "done",
+        "offset_x": 16.2,
+        "offset_y": 0.0,
+        "offset_z": -2.0,
+        "start_s": 62.0
+      }
+    ],
+    "status": {
+      "arming_state": 2,
+      "failsafe": false,
+      "nav_state": 18,
+      "timestamp_us": 64976000
+    },
+    "wall_elapsed_s": 77.62679575400034
+  },
+  "trace": "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/CLOSED_LOOP_CHARACTERIZATION/final_v2_longitudinal_analysis/longitudinal_derived.csv"
+}

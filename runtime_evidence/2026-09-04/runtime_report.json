@@ -31855,5 +31855,452 @@
       "first_fix": "PLANNER_CLOSED_LOOP_ENVELOPE",
       "confidence": "PROVISIONAL"
     }
+  },
+  "closed_loop_characterization": {
+    "attribution": {
+      "DYN-LAT": {
+        "CLC-A": "CONFIRMED",
+        "CLC-B": "CONFIRMED",
+        "CLC-C": "CONFIRMED",
+        "CLC-D": "CONFIRMED",
+        "CLC-E": "CONFIRMED"
+      },
+      "DYN-LONG": {
+        "CLC-A": "CONFIRMED",
+        "CLC-B": "CONFIRMED",
+        "CLC-C": "REJECTED",
+        "CLC-D": "CONFIRMED",
+        "CLC-E": "CONFIRMED"
+      },
+      "S_BAD_E5": {
+        "CLC-A": "INCONCLUSIVE",
+        "CLC-B": "INCONCLUSIVE",
+        "CLC-C": "INCONCLUSIVE",
+        "CLC-D": "INCONCLUSIVE",
+        "CLC-E": "CONFIRMED"
+      }
+    },
+    "envelope": {
+      "a_lateral_nominal_max_mps2": {
+        "radius_m": 5.0,
+        "run_id": "sim-check-20260904T161026-161202",
+        "segment_id": "LAT_00",
+        "value": 0.012500000000000008
+      },
+      "a_long_nominal_max_mps2": {
+        "run_id": "sim-check-20260904T160837-159859",
+        "segment_id": "LONG_01",
+        "value": 0.2165062314375
+      },
+      "criterion": {
+        "estimator_health_valid": true,
+        "gt_tracking_max_m_max": 0.175,
+        "gt_tracking_p95_m_max": 0.1,
+        "no_recovery": true
+      },
+      "decel_nominal_max_mps2": {
+        "run_id": "sim-check-20260904T160837-159859",
+        "segment_id": "LONG_01",
+        "value": 0.21650369681250065
+      },
+      "evidence": {
+        "DYN-LAT": [
+          {
+            "estimator_health_valid": true,
+            "lio_health_observed": true,
+            "metrics": {
+              "delta_a_px4_controller_mps2": {
+                "count": 672,
+                "max": 0.44425939132569997,
+                "p95": 0.2879642158613195,
+                "rms": 0.13898218877574278
+              },
+              "delta_v_px4_controller_mps": {
+                "count": 672,
+                "max": 0.07667759705277533,
+                "p95": 0.05670092283807101,
+                "rms": 0.03619042020398214
+              },
+              "gt_tracking_error_m": {
+                "count": 672,
+                "max": 0.10148052910908899,
+                "p95": 0.09287822107174992,
+                "rms": 0.06395325826605641
+              },
+              "lio_position_error_gt_horizontal_m": {
+                "count": 672,
+                "max": 0.045863542799671184,
+                "p95": 0.03432774895119125,
+                "rms": 0.027615087232397407
+              },
+              "lio_position_error_gt_m": {
+                "count": 672,
+                "max": 0.0855958564602216,
+                "p95": 0.08044430919369527,
+                "rms": 0.061435015282859495
+              },
+              "lio_velocity_error_gt_horizontal_mps": {
+                "count": 672,
+                "max": 0.0777296878284803,
+                "p95": 0.05458224431532156,
+                "rms": 0.03769250209403874
+              },
+              "lio_velocity_error_gt_mps": {
+                "count": 672,
+                "max": 0.07788263431258809,
+                "p95": 0.054641962944464266,
+                "rms": 0.03813167466081561
+              },
+              "planner_acceleration_mps2": {
+                "count": 672,
+                "max": 0.6249282954482642,
+                "p95": 0.470261446473479,
+                "rms": 0.14928266287726197
+              },
+              "planner_deceleration_mps2": {
+                "count": 672,
+                "max": 0.014057399733818221,
+                "p95": 0.0124924785391906,
+                "rms": 0.01137211577321153
+              },
+              "planner_jerk_mps3": {
+                "count": 672,
+                "max": 2.565120795424519,
+                "p95": 2.1796600570467866,
+                "rms": 0.6875056346098674
+              },
+              "planner_lateral_acceleration_mps2": {
+                "count": 672,
+                "max": 0.012500000000000008,
+                "p95": 0.012500000000000006,
+                "rms": 0.011875983258468606
+              },
+              "planner_speed_mps": {
+                "count": 672,
+                "max": 0.25000000000000006,
+                "p95": 0.25,
+                "rms": 0.23913400487783534
+              },
+              "px4_effective_setpoint_error_gt_m": {
+                "count": 672,
+                "max": 0.09821842715626124,
+                "p95": 0.08701564088273557,
+                "rms": 0.0603733303696843
+              },
+              "px4_effective_tracking_error_m": {
+                "count": 672,
+                "max": 0.053486171994616846,
+                "p95": 0.04632821257025518,
+                "rms": 0.027438810971633035
+              },
+              "px4_position_error_gt_m": {
+                "count": 672,
+                "max": 0.07093204163662925,
+                "p95": 0.06649183293664147,
+                "rms": 0.05372648141064359
+              },
+              "px4_velocity_error_gt_mps": {
+                "count": 672,
+                "max": 0.5180888378581295,
+                "p95": 0.4325515509035625,
+                "rms": 0.3529308899971154
+              }
+            },
+            "quality": "GOOD",
+            "requested_radius_m": 5.0,
+            "requested_speed_mps": 0.25,
+            "sample_count": 672,
+            "segment_id": "LAT_00",
+            "segment_kind": "arc"
+          }
+        ],
+        "DYN-LONG": [
+          {
+            "estimator_health_valid": true,
+            "lio_health_observed": true,
+            "metrics": {
+              "delta_a_px4_controller_mps2": {
+                "count": 500,
+                "max": 0.15700882359610838,
+                "p95": 0.1347162733591933,
+                "rms": 0.08502017547031862
+              },
+              "delta_v_px4_controller_mps": {
+                "count": 500,
+                "max": 0.04590565685930005,
+                "p95": 0.04194557165796401,
+                "rms": 0.027474399030259836
+              },
+              "gt_tracking_error_m": {
+                "count": 500,
+                "max": 0.09442378060048531,
+                "p95": 0.0927760180465981,
+                "rms": 0.06683589242543525
+              },
+              "lio_position_error_gt_horizontal_m": {
+                "count": 500,
+                "max": 0.04343155680589885,
+                "p95": 0.041443923749136725,
+                "rms": 0.03505943796504264
+              },
+              "lio_position_error_gt_m": {
+                "count": 500,
+                "max": 0.04410471262135229,
+                "p95": 0.04234076114068607,
+                "rms": 0.03578685554300292
+              },
+              "lio_velocity_error_gt_horizontal_mps": {
+                "count": 500,
+                "max": 0.02300729521691416,
+                "p95": 0.016735531299551413,
+                "rms": 0.01158696324146099
+              },
+              "lio_velocity_error_gt_mps": {
+                "count": 500,
+                "max": 0.023191587551928856,
+                "p95": 0.017983358934303497,
+                "rms": 0.01278499423522253
+              },
+              "planner_acceleration_mps2": {
+                "count": 500,
+                "max": 0.2165062314375,
+                "p95": 0.2158599180937505,
+                "rms": 0.15526475085345617
+              },
+              "planner_deceleration_mps2": {
+                "count": 500,
+                "max": 0.21650369681250065,
+                "p95": 0.21403943549999915,
+                "rms": 0.10978875604630652
+              },
+              "planner_jerk_mps3": {
+                "count": 500,
+                "max": 0.2804066718750005,
+                "p95": 0.23939620312499982,
+                "rms": 0.12577850928724094
+              },
+              "planner_lateral_acceleration_mps2": {
+                "count": 500,
+                "max": 0.0,
+                "p95": 0.0,
+                "rms": 0.0
+              },
+              "planner_speed_mps": {
+                "count": 500,
+                "max": 0.5624988750005627,
+                "p95": 0.5595889022893124,
+                "rms": 0.35856858280031806
+              },
+              "px4_effective_setpoint_error_gt_m": {
+                "count": 500,
+                "max": 0.09491475124096654,
+                "p95": 0.09326323803989714,
+                "rms": 0.06354228378431868
+              },
+              "px4_effective_tracking_error_m": {
+                "count": 500,
+                "max": 0.029181362331464615,
+                "p95": 0.02703610445278625,
+                "rms": 0.018515606201778386
+              },
+              "px4_position_error_gt_m": {
+                "count": 500,
+                "max": 0.07941149859841676,
+                "p95": 0.0781988603927235,
+                "rms": 0.05553607655945554
+              },
+              "px4_velocity_error_gt_mps": {
+                "count": 500,
+                "max": 0.8015169045797521,
+                "p95": 0.7976483376525287,
+                "rms": 0.5127976551277416
+              }
+            },
+            "quality": "GOOD",
+            "requested_radius_m": null,
+            "requested_speed_mps": null,
+            "sample_count": 500,
+            "segment_id": "LONG_01",
+            "segment_kind": "longitudinal"
+          }
+        ]
+      },
+      "excluded_segments": {
+        "DYN-LAT": [
+          "LAT_01",
+          "LAT_02",
+          "LAT_03"
+        ],
+        "DYN-LONG": [
+          "LONG_00",
+          "LONG_02",
+          "LONG_03"
+        ]
+      },
+      "jerk_nominal_max_mps3": {
+        "run_id": "sim-check-20260904T160837-159859",
+        "segment_id": "LONG_01",
+        "value": 0.2804066718750005
+      },
+      "status": "IDENTIFIED",
+      "v_nominal_max_mps": {
+        "run_id": "sim-check-20260904T160837-159859",
+        "segment_id": "LONG_01",
+        "value": 0.5624988750005627
+      }
+    },
+    "estimator_observability": {
+      "DYN-LAT": {
+        "good_segment_horizontal_position_error_m": {
+          "count": 672,
+          "max": 0.045863542799671184,
+          "p95": 0.03432774895119125,
+          "rms": 0.027615087232397407
+        },
+        "good_segment_position_error_m": {
+          "count": 672,
+          "max": 0.0855958564602216,
+          "p95": 0.08044430919369527,
+          "rms": 0.061435015282859495
+        },
+        "good_segment_velocity_error_mps": {
+          "count": 672,
+          "max": 0.07788263431258809,
+          "p95": 0.054641962944464266,
+          "rms": 0.03813167466081561
+        },
+        "init_hold_position_error_m": {
+          "count": 72,
+          "max": 0.0,
+          "p95": 0.0,
+          "rms": 0.0
+        },
+        "init_hold_velocity_error_mps": {
+          "count": 72,
+          "max": 0.005479798623642757,
+          "p95": 0.005479798623642757,
+          "rms": 0.005479798623642757
+        }
+      },
+      "DYN-LONG": {
+        "good_segment_horizontal_position_error_m": {
+          "count": 500,
+          "max": 0.04343155680589885,
+          "p95": 0.041443923749136725,
+          "rms": 0.03505943796504264
+        },
+        "good_segment_position_error_m": {
+          "count": 500,
+          "max": 0.04410471262135229,
+          "p95": 0.04234076114068607,
+          "rms": 0.03578685554300292
+        },
+        "good_segment_velocity_error_mps": {
+          "count": 500,
+          "max": 0.023191587551928856,
+          "p95": 0.017983358934303497,
+          "rms": 0.01278499423522253
+        },
+        "init_hold_position_error_m": {
+          "count": 141,
+          "max": 2.0148407176845406e-06,
+          "p95": 2.0148407176845406e-06,
+          "rms": 1.814122183271375e-06
+        },
+        "init_hold_velocity_error_mps": {
+          "count": 141,
+          "max": 0.0026809969834497164,
+          "p95": 0.0026809969834497164,
+          "rms": 0.0026809213511731155
+        }
+      }
+    },
+    "exact_e5_demand_to_envelope_ratios": {
+      "planner_acceleration_mps2": 16.121327706987056,
+      "planner_deceleration_mps2": 0.0,
+      "planner_jerk_mps3": 36.232964669534276,
+      "planner_lateral_acceleration_mps2": 13.288942878941608,
+      "planner_speed_mps": 4.967444405950419
+    },
+    "exact_e5_generation_2_demand": {
+      "bundle_generation": "2",
+      "planner_acceleration_mps2": {
+        "count": 60,
+        "max": 3.490367907608721,
+        "p95": 3.478761792522354,
+        "rms": 2.5323047150886966
+      },
+      "planner_deceleration_mps2": {
+        "count": 60,
+        "max": 0.0
+      },
+      "planner_jerk_mps3": {
+        "count": 60,
+        "max": 10.159965035148584,
+        "p95": 10.079834674146575,
+        "rms": 6.657182199035461
+      },
+      "planner_lateral_acceleration_mps2": {
+        "count": 60,
+        "max": 0.1661117859867702,
+        "p95": 0.16212245464544545,
+        "rms": 0.12242660029001064
+      },
+      "planner_speed_mps": {
+        "count": 60,
+        "max": 2.794181889974949,
+        "p95": 2.731002752123798,
+        "rms": 1.771540055445884
+      },
+      "run_id": "S_BAD_E5",
+      "sample_count": 60,
+      "time_end_ns": "30140000000",
+      "time_start_ns": "29196000000"
+    },
+    "figures": [
+      "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/closed_loop_characterization_figures/input_vs_px4_effective_velocity.png",
+      "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/closed_loop_characterization_figures/input_vs_px4_effective_acceleration.png",
+      "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/closed_loop_characterization_figures/estimator_errors_relative_gt.png",
+      "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/closed_loop_characterization_figures/longitudinal_demand_vs_gt_tracking.png",
+      "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/closed_loop_characterization_figures/lateral_acceleration_vs_gt_tracking.png",
+      "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/closed_loop_characterization_figures/nominal_marginal_unusable_envelope.png"
+    ],
+    "harness": {
+      "ground_truth_topic": "/sim/ground_truth/odometry",
+      "lio_diagnostics_topic": "/lio/diagnostics",
+      "mode": "MODE_PX4_LOCAL",
+      "navigation_runtime_used": false,
+      "production_behavior_changed": false,
+      "reference_authority": "analytic reference in fixed initial PX4 local NED"
+    },
+    "limitations": [
+      "one deterministic DYN-LONG run and one deterministic DYN-LAT run",
+      "MODE_LIO_REFERENCED not run",
+      "no command-rate A/B",
+      "exact E5 remains a navigation regression artifact and is not rerun here",
+      "LIO 3D position error is reported separately from horizontal error; INIT_HOLD establishes the fixed transform bias baseline"
+    ],
+    "production_planner_limits": {
+      "max_acc_mps2": 12.0,
+      "max_jerk_mps3": 30.0,
+      "max_vel_mps": 12.0,
+      "source": "S_BAD_E5 planner.yaml traj_opt/boundary snapshot"
+    },
+    "runs": {
+      "DYN-LAT": {
+        "analysis": "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/CLOSED_LOOP_CHARACTERIZATION/final_v2_lateral_analysis/analysis.json",
+        "raw_run": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/sim-check-20260904T161026-161202",
+        "run_id": "sim-check-20260904T161026-161202"
+      },
+      "DYN-LONG": {
+        "analysis": "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/CLOSED_LOOP_CHARACTERIZATION/final_v2_longitudinal_analysis/analysis.json",
+        "raw_run": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/sim-check-20260904T160837-159859",
+        "run_id": "sim-check-20260904T160837-159859"
+      },
+      "S_BAD_E5": {
+        "bundle_generation": "2",
+        "evidence": "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/H10_FINAL/S_BAD_E5/h10_exact_e5_final.csv"
+      }
+    }
   }
 }

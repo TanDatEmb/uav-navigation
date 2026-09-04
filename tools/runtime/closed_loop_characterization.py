@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Test-only closed-loop PX4 characterization harness.
+
+This node is deliberately independent of NavigationRuntime.  It publishes a
+smooth analytic reference directly in PX4 local NED through the normal SITL
+Offboard interface and records all evaluation layers.  It is diagnostic
+tooling, not a production navigation controller.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from pathlib import Path
+import signal
+import time
+from typing import Any
+
+
+def _stamp_ns(value: Any) -> int:
+    return int(getattr(value, "sec", 0)) * 1_000_000_000 + int(getattr(value, "nanosec", 0))
+
+
+def _finite(value: Any) -> float | None:
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _vec(values: Any, length: int = 3) -> list[float | None]:
+    return [_finite(values[index]) if index < len(values) else None for index in range(length)]
+
+
+def _norm(values: list[float | None] | None) -> float | None:
+    if values is None or any(value is None for value in values):
+        return None
+    return math.sqrt(sum(float(value) * float(value) for value in values))
+
+
+def _smooth(u: float) -> tuple[float, float, float, float]:
+    """Quintic smoothstep and its first three normalized derivatives."""
+    u = max(0.0, min(1.0, u))
+    return (
+        10.0 * u**3 - 15.0 * u**4 + 6.0 * u**5,
+        30.0 * u**2 - 60.0 * u**3 + 30.0 * u**4,
+        60.0 * u - 180.0 * u**2 + 120.0 * u**3,
+        60.0 - 360.0 * u + 360.0 * u**2,
+    )
+
+
+def _quintic_motion(start: float, displacement: float, duration: float, elapsed: float) -> tuple[float, float, float, float]:
+    s, ds, dds, ddds = _smooth(elapsed / duration)
+    return (
+        start + displacement * s,
+        displacement * ds / duration,
+        displacement * dds / duration**2,
+        displacement * ddds / duration**3,
+    )
+
+
+def _rot_enu_to_ned(values: list[float | None] | None) -> list[float | None] | None:
+    if values is None or any(value is None for value in values):
+        return None
+    return [float(values[1]), float(values[0]), -float(values[2])]
+
+
+class Characterization:
+    """Direct PX4-local reference generator and synchronized recorder."""
+
+    def __init__(self, output: Path, profile: str, mode: str, timeout_s: float) -> None:
+        import rclpy
+        from nav_msgs.msg import Odometry
+        from px4_msgs.msg import (
+            OffboardControlMode,
+            TrajectorySetpoint,
+            VehicleCommand,
+            VehicleLocalPosition,
+            VehicleLocalPositionSetpoint,
+            VehicleStatus,
+        )
+        from diagnostic_msgs.msg import DiagnosticArray
+        from rclpy.node import Node
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        from rosgraph_msgs.msg import Clock
+
+        try:
+            from navigation_contracts.msg import PropagatedOdometry
+        except ImportError:
+            PropagatedOdometry = Odometry
+
+        self.rclpy = rclpy
+        self.output = output
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        self.trace = output.with_suffix(".jsonl").open("w", encoding="utf-8")
+        self.events = output.with_name(output.stem + "_events.jsonl").open("w", encoding="utf-8")
+        self.profile = profile
+        self.mode = mode
+        self.timeout_s = timeout_s
+        self.wall_start = time.monotonic()
+        self.sim_now_ns = 0
+        self.sim_start_ns: int | None = None
+        self.finished = False
+        self.failure = ""
+        self.landed_seen = False
+        self.land_commanded = False
+        self.arm_sent_ns = -10**18
+        self.last_segment = ""
+        self.latest_px4: dict[str, Any] | None = None
+        self.latest_px4_sp: dict[str, Any] | None = None
+        self.latest_gt: dict[str, Any] | None = None
+        self.latest_lio: dict[str, Any] | None = None
+        self.latest_status: dict[str, Any] = {}
+        self.latest_lio_diagnostics: dict[str, Any] | None = None
+        self.initial_px4: list[float] | None = None
+        self.initial_gt: list[float] | None = None
+        self.initial_lio: list[float] | None = None
+        self.segments = self._build_segments()
+
+        self.node = Node("closed_loop_characterization")
+        qos = QoSProfile(depth=50, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.mode_pub = self.node.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", qos)
+        self.setpoint_pub = self.node.create_publisher(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", qos)
+        self.command_pub = self.node.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", qos)
+        self.node.create_subscription(Clock, "/clock", self._clock, qos)
+        self.node.create_subscription(VehicleStatus, "/fmu/out/vehicle_status_v1", self._status, qos)
+        self.node.create_subscription(VehicleLocalPosition, "/fmu/out/vehicle_local_position_v1", self._px4_state, qos)
+        self.node.create_subscription(VehicleLocalPositionSetpoint, "/fmu/out/vehicle_local_position_setpoint", self._px4_sp, qos)
+        self.node.create_subscription(Odometry, "/sim/ground_truth/odometry", self._ground_truth, qos)
+        self.node.create_subscription(PropagatedOdometry, "/lio/odometry_propagated", self._lio_state, qos)
+        self.node.create_subscription(DiagnosticArray, "/lio/diagnostics", self._lio_diagnostics, qos)
+        self.timer = self.node.create_timer(0.02, self._tick)
+
+    def _build_segments(self) -> list[dict[str, Any]]:
+        segments: list[dict[str, Any]] = [
+            {"id": "INIT_HOLD", "kind": "hold", "duration_s": 4.0},
+            {"id": "TAKEOFF", "kind": "takeoff", "duration_s": 8.0},
+            {"id": "AIRBORNE_HOLD", "kind": "hold", "duration_s": 3.0},
+        ]
+        if self.profile == "longitudinal":
+            for index, (distance, duration) in enumerate(((0.8, 8.0), (2.4, 8.0), (5.0, 6.0), (8.0, 5.0)), 0):
+                segments.append({"id": f"LONG_{index:02d}", "kind": "longitudinal", "duration_s": duration, "distance_m": distance})
+                segments.append({"id": f"LONG_{index:02d}_HOLD", "kind": "hold", "duration_s": 2.0})
+        else:
+            for index, (radius, speed) in enumerate(((5.0, 0.25), (5.0, 0.5), (5.0, 1.0), (5.0, 1.5)), 0):
+                ramp = 0.75
+                angle = 0.5
+                steady = max(0.0, angle * radius / speed - ramp)
+                segments.append({"id": f"LAT_{index:02d}", "kind": "arc", "duration_s": 2.0 * ramp + steady, "radius_m": radius, "speed_mps": speed, "ramp_s": ramp, "steady_s": steady, "angle_rad": angle})
+                segments.append({"id": f"LAT_{index:02d}_HOLD", "kind": "hold", "duration_s": 2.0})
+        segments.extend([
+            {"id": "CHARACTERIZATION_HOLD", "kind": "hold", "duration_s": 4.0},
+            {"id": "LAND", "kind": "land", "duration_s": 8.0},
+            {"id": "DONE", "kind": "done", "duration_s": 2.0},
+        ])
+        elapsed = 0.0
+        offset_x = 0.0
+        offset_y = 0.0
+        offset_z = 0.0
+        for segment in segments:
+            segment["start_s"] = elapsed
+            segment["offset_x"] = offset_x
+            segment["offset_y"] = offset_y
+            segment["offset_z"] = offset_z
+            if segment["kind"] == "takeoff":
+                offset_z = -2.0
+            elif segment["kind"] == "longitudinal":
+                segment["origin_offset_x"] = offset_x
+                offset_x += float(segment["distance_m"])
+            elif segment["kind"] == "arc":
+                radius = float(segment["radius_m"])
+                segment["center_offset_x"] = offset_x - radius
+                segment["center_offset_y"] = offset_y
+                offset_x = segment["center_offset_x"]
+                offset_y = segment["center_offset_y"] + radius
+            elapsed += float(segment["duration_s"])
+        return segments
+
+    def _record(self, kind: str, payload: dict[str, Any]) -> None:
+        self.trace.write(json.dumps({"kind": kind, "timestamp_ns": self.sim_now_ns, "payload": payload}, sort_keys=True, allow_nan=False) + "\n")
+        self.trace.flush()
+
+    def _event(self, name: str, **payload: Any) -> None:
+        row = {"event": name, "timestamp_ns": self.sim_now_ns, **payload}
+        self.events.write(json.dumps(row, sort_keys=True, allow_nan=False) + "\n")
+        self.events.flush()
+        self._record("event", row)
+
+    def _clock(self, message: Any) -> None:
+        self.sim_now_ns = _stamp_ns(message.clock)
+        if self.sim_now_ns and self.sim_start_ns is None:
+            self.sim_start_ns = self.sim_now_ns
+
+    def _status(self, message: Any) -> None:
+        self.latest_status = {"timestamp_us": int(message.timestamp), "arming_state": int(message.arming_state), "nav_state": int(message.nav_state), "failsafe": bool(message.failsafe)}
+
+    def _px4_state(self, message: Any) -> None:
+        self.latest_px4 = {"source_stamp_ns": int(message.timestamp_sample) * 1000, "receive_stamp_ns": self.sim_now_ns, "position_ned": _vec([message.x, message.y, message.z]), "velocity_ned": _vec([message.vx, message.vy, message.vz]), "xy_valid": bool(message.xy_valid), "z_valid": bool(message.z_valid), "v_xy_valid": bool(message.v_xy_valid), "v_z_valid": bool(message.v_z_valid)}
+
+    def _px4_sp(self, message: Any) -> None:
+        self.latest_px4_sp = {"source_stamp_ns": int(message.timestamp) * 1000, "receive_stamp_ns": self.sim_now_ns, "position_ned": _vec([message.x, message.y, message.z]), "velocity_ned": _vec([message.vx, message.vy, message.vz]), "acceleration_ned": _vec(getattr(message, "acceleration", []))}
+
+    @staticmethod
+    def _odom(message: Any) -> dict[str, Any]:
+        odometry = getattr(message, "odometry", message)
+        pose = getattr(getattr(odometry, "pose", None), "pose", getattr(odometry, "pose", None))
+        twist = getattr(getattr(odometry, "twist", None), "twist", getattr(odometry, "twist", None))
+        return {"source_stamp_ns": _stamp_ns(getattr(odometry, "header", None).stamp), "position": _vec([pose.position.x, pose.position.y, pose.position.z]), "velocity": _vec([twist.linear.x, twist.linear.y, twist.linear.z])}
+
+    def _ground_truth(self, message: Any) -> None:
+        self.latest_gt = self._odom(message) | {"receive_stamp_ns": self.sim_now_ns}
+
+    def _lio_state(self, message: Any) -> None:
+        self.latest_lio = self._odom(message) | {"receive_stamp_ns": self.sim_now_ns}
+
+    def _lio_diagnostics(self, message: Any) -> None:
+        statuses = []
+        for status in getattr(message, "status", []):
+            values = {str(item.key): str(item.value) for item in getattr(status, "values", [])}
+            level = status.level
+            if isinstance(level, (bytes, bytearray)):
+                level = level[0] if level else 0
+            statuses.append({"name": str(status.name), "level": int(level), "message": str(status.message), "values": values})
+        self.latest_lio_diagnostics = {"source_stamp_ns": _stamp_ns(getattr(message, "header", None).stamp), "receive_stamp_ns": self.sim_now_ns, "status": statuses}
+
+    def elapsed_s(self) -> float:
+        if self.sim_start_ns is None:
+            return 0.0
+        return max(0.0, (self.sim_now_ns - self.sim_start_ns) / 1e9)
+
+    def _segment(self, elapsed: float) -> tuple[dict[str, Any], float]:
+        for segment in self.segments:
+            if elapsed < float(segment["start_s"]) + float(segment["duration_s"]):
+                return segment, max(0.0, elapsed - float(segment["start_s"]))
+        return self.segments[-1], float(self.segments[-1]["duration_s"])
+
+    def _source_in_px4_local(self, source: list[float | None] | None, source_initial: list[float] | None) -> list[float | None] | None:
+        if source is None or source_initial is None or self.initial_px4 is None:
+            return None
+        converted = _rot_enu_to_ned(source)
+        initial_converted = _rot_enu_to_ned(source_initial)
+        if converted is None or initial_converted is None:
+            return None
+        return [self.initial_px4[i] + float(converted[i]) - float(initial_converted[i]) for i in range(3)]
+
+    def _reference(self, elapsed: float, segment: dict[str, Any], local_elapsed: float) -> tuple[list[float], list[float], list[float], list[float], dict[str, Any]]:
+        if self.initial_px4 is None:
+            raise RuntimeError("PX4 local initialization is not available")
+        p = [self.initial_px4[0] + float(segment.get("offset_x", 0.0)), self.initial_px4[1] + float(segment.get("offset_y", 0.0)), self.initial_px4[2] + float(segment.get("offset_z", 0.0))]
+        v = [0.0, 0.0, 0.0]
+        a = [0.0, 0.0, 0.0]
+        j = [0.0, 0.0, 0.0]
+        kind = str(segment["kind"])
+        if kind == "takeoff":
+            p[2], v[2], a[2], j[2] = _quintic_motion(self.initial_px4[2], -2.0, float(segment["duration_s"]), local_elapsed)
+        elif kind == "longitudinal":
+            p[0], v[0], a[0], j[0] = _quintic_motion(self.initial_px4[0] + float(segment.get("origin_offset_x", 0.0)), float(segment["distance_m"]), float(segment["duration_s"]), local_elapsed)
+        elif kind == "arc":
+            # Each arc starts from rest at the previous endpoint.  The steady
+            # middle has exact radius/speed; ramp portions remain smooth.
+            radius = float(segment["radius_m"])
+            speed = float(segment["speed_mps"])
+            ramp = float(segment["ramp_s"])
+            steady = float(segment["steady_s"])
+            angle = float(segment["angle_rad"])
+            omega = speed / radius
+            if local_elapsed < ramp:
+                u = local_elapsed / ramp
+                s, ds, dds, ddds = _smooth(u)
+                theta = omega * ramp * (2.5 * u**4 - 3.0 * u**5 + u**6)
+                w = omega * s
+                alpha = omega * ds / ramp
+                beta = omega * dds / ramp**2
+            elif local_elapsed < ramp + steady:
+                theta = omega * ramp / 2.0 + omega * (local_elapsed - ramp)
+                w, alpha, beta = omega, 0.0, 0.0
+            else:
+                u = min(1.0, (local_elapsed - ramp - steady) / ramp)
+                s, ds, dds, ddds = _smooth(u)
+                theta = omega * ramp / 2.0 + omega * steady + omega * ramp * (u - (2.5 * u**4 - 3.0 * u**5 + u**6))
+                w = omega * (1.0 - s)
+                alpha = -omega * ds / ramp
+                beta = -omega * dds / ramp**2
+            # The angle is carried in the segment metadata so the trace can
+            # be checked against the analytic reference.  ``steady_s`` was
+            # derived from this same value above; no production behavior is
+            # involved.
+            _ = angle
+            cx = self.initial_px4[0] + float(segment["center_offset_x"])
+            cy = self.initial_px4[1] + float(segment["center_offset_y"])
+            ct, st = math.cos(theta), math.sin(theta)
+            p[0], p[1] = cx + radius * ct, cy + radius * st
+            d1 = [-radius * st, radius * ct]
+            d2 = [-radius * ct, -radius * st]
+            d3 = [radius * st, -radius * ct]
+            v[0], v[1] = d1[0] * w, d1[1] * w
+            a[0], a[1] = d2[0] * w**2 + d1[0] * alpha, d2[1] * w**2 + d1[1] * alpha
+            j[0], j[1] = d3[0] * w**3 + 3.0 * d2[0] * w * alpha + d1[0] * beta, d3[1] * w**3 + 3.0 * d2[1] * w * alpha + d1[1] * beta
+        elif kind == "land":
+            p[2], v[2], a[2], j[2] = _quintic_motion(self.initial_px4[2] - 2.0, 2.0, float(segment["duration_s"]), local_elapsed)
+        return p, v, a, j, {"segment_id": segment["id"], "segment_kind": kind, "radius_m": segment.get("radius_m"), "requested_speed_mps": segment.get("speed_mps")}
+
+    def _publish_command(self, p: list[float], v: list[float], a: list[float], j: list[float], meta: dict[str, Any]) -> None:
+        from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint
+        mode = OffboardControlMode()
+        mode.timestamp = self.sim_now_ns // 1000
+        mode.position, mode.velocity, mode.acceleration = True, True, True
+        self.mode_pub.publish(mode)
+        setpoint = TrajectorySetpoint()
+        setpoint.timestamp = self.sim_now_ns // 1000
+        setpoint.position, setpoint.velocity, setpoint.acceleration, setpoint.jerk = p, v, a, j
+        setpoint.yaw, setpoint.yawspeed = 0.0, 0.0
+        self.setpoint_pub.publish(setpoint)
+        self._record("sample", {"mode": self.mode, "segment_id": meta["segment_id"], "segment_kind": meta["segment_kind"], "radius_m": meta.get("radius_m"), "requested_speed_mps": meta.get("requested_speed_mps"), "reference_position_ned": p, "reference_velocity_ned": v, "reference_acceleration_ned": a, "reference_jerk_ned": j, "px4_input_trace_timestamp_ns": self.sim_now_ns, "px4_input_trace_steady_ns": time.monotonic_ns(), "px4_input_position_ned": p, "px4_input_velocity_ned": v, "px4_input_acceleration_ned": a, "px4_input_yaw_rad": 0.0, "px4_input_yaw_rate_radps": 0.0, "px4_state": self.latest_px4, "px4_effective_setpoint": self.latest_px4_sp, "ground_truth": self.latest_gt, "lio": self.latest_lio, "lio_diagnostics": self.latest_lio_diagnostics, "initial_px4_local_ned": self.initial_px4, "initial_gt_enu": self.initial_gt, "initial_lio_enu": self.initial_lio, "status": self.latest_status, "source_age_ms": {name: ((self.sim_now_ns - int(item.get("source_stamp_ns", 0))) / 1e6 if item and item.get("source_stamp_ns") else None) for name, item in (("px4", self.latest_px4), ("px4_effective_sp", self.latest_px4_sp), ("ground_truth", self.latest_gt), ("lio", self.latest_lio), ("lio_diagnostics", self.latest_lio_diagnostics))}})
+
+    def _command(self, command: int, p1: float = 0.0, p2: float = 0.0) -> None:
+        from px4_msgs.msg import VehicleCommand
+        message = VehicleCommand()
+        message.timestamp = self.sim_now_ns // 1000
+        message.command, message.param1, message.param2 = command, p1, p2
+        message.target_system = message.source_system = 1
+        message.target_component = message.source_component = 1
+        message.from_external = True
+        self.command_pub.publish(message)
+
+    def _tick(self) -> None:
+        if self.finished:
+            return
+        if time.monotonic() - self.wall_start > self.timeout_s:
+            self.failure = "characterization wall timeout"
+            self.finish("WALL_TIMEOUT")
+            return
+        if self.sim_start_ns is None or self.latest_px4 is None:
+            return
+        if (self.initial_px4 is None and all(value is not None for value in self.latest_px4["position_ned"])
+                and self.latest_gt and all(value is not None for value in self.latest_gt["position"])
+                and self.latest_lio and all(value is not None for value in self.latest_lio["position"])):
+            self.initial_px4 = [float(value) for value in self.latest_px4["position_ned"]]
+            self.initial_gt = [float(value) for value in self.latest_gt["position"]]
+            self.initial_lio = [float(value) for value in self.latest_lio["position"]]
+            self._event("fixed_frame_initialized", initial_px4_local_ned=self.initial_px4, initial_gt_enu=self.initial_gt, initial_lio_enu=self.initial_lio, mode=self.mode)
+        elapsed = self.elapsed_s()
+        segment, local_elapsed = self._segment(elapsed)
+        if str(segment["id"]) != self.last_segment:
+            self.last_segment = str(segment["id"])
+            self._event("segment_start", segment_id=segment["id"], kind=segment["kind"], parameters={key: value for key, value in segment.items() if key not in {"start_s"}})
+        p, v, a, j, meta = self._reference(elapsed, segment, local_elapsed)
+        self._publish_command(p, v, a, j, meta)
+        if elapsed >= 1.5 and self.sim_now_ns - self.arm_sent_ns >= 1_000_000_000 and segment["kind"] not in {"land", "done"}:
+            from px4_msgs.msg import VehicleCommand
+            self._command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+            self._command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
+            self.arm_sent_ns = self.sim_now_ns
+            self._event("offboard_arm_request")
+        if segment["kind"] == "land" and not self.land_commanded:
+            from px4_msgs.msg import VehicleCommand
+            self._command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            self.land_commanded = True
+            self._event("land_request")
+        if segment["kind"] == "done":
+            self.finish("COMPLETE")
+
+    def finish(self, reason: str) -> None:
+        if self.finished:
+            return
+        self.finished = True
+        summary = {"reason": reason, "profile": self.profile, "mode": self.mode, "duration_s": self.elapsed_s(), "wall_elapsed_s": time.monotonic() - self.wall_start, "initial_px4_local_ned": self.initial_px4, "initial_gt_enu": self.initial_gt, "initial_lio_enu": self.initial_lio, "segments": self.segments, "status": self.latest_status, "land_commanded": self.land_commanded, "failures": [self.failure] if self.failure else [], "harness_isolation": "direct analytic PX4-local reference; no NavigationRuntime command source"}
+        self.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self._event("finish", reason=reason, failures=summary["failures"])
+        self.trace.close()
+        self.events.close()
+
+
+def run(output: Path, profile: str, mode: str, timeout_s: float) -> int:
+    import rclpy
+    rclpy.init(args=[])
+    harness = Characterization(output, profile, mode, timeout_s)
+
+    def stop(_signum: int, _frame: Any) -> None:
+        harness.failure = "characterization interrupted"
+        harness.finish("INTERRUPTED")
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    try:
+        while rclpy.ok() and not harness.finished:
+            rclpy.spin_once(harness.node, timeout_sec=0.1)
+    finally:
+        if not harness.finished:
+            harness.finish("INTERRUPTED")
+        harness.node.destroy_node()
+        rclpy.shutdown()
+    summary = json.loads(output.read_text(encoding="utf-8"))
+    return 0 if not summary.get("failures") else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--profile", choices=("longitudinal", "lateral"), required=True)
+    parser.add_argument("--mode", choices=("MODE_PX4_LOCAL",), default="MODE_PX4_LOCAL")
+    parser.add_argument("--wall-timeout-s", type=float, default=180.0)
+    args = parser.parse_args()
+    return run(args.output.resolve(), args.profile, args.mode, args.wall_timeout_s)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

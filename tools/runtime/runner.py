@@ -912,6 +912,7 @@ def _world_name_for_profile(map_profile: str) -> str:
         "long_open_featured_core_60_pv": "long_open_featured_speed",
         "single_pillar_speed": "long_three_pillars_speed",
         "single_pillar_speed_pv": "long_three_pillars_speed",
+        "closed_loop_characterization": "closed_loop_characterization",
     }.get(map_profile, map_profile)
 
 
@@ -997,6 +998,7 @@ def _resolve_map_descriptor(session: Session, map_profile: str, map_seed: int) -
             "long_open_featured_core_60_pv": "long_open_featured_speed",
             "single_pillar_speed": "long_three_pillars_speed",
             "single_pillar_speed_pv": "long_three_pillars_speed",
+            "closed_loop_characterization": "closed_loop_characterization",
         }.get(map_profile, map_profile)
         world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
         descriptor = {
@@ -1689,9 +1691,20 @@ def _run_sim_unlocked(
     inject_failed_replan_after_handoff: bool = False,
     inject_failed_replan_repeated: bool = False,
     inject_failed_plan_from_rest_repeated: bool = False,
+    characterization_profile: str | None = None,
+    characterization_mode: str = "MODE_PX4_LOCAL",
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
+    if characterization_profile is not None:
+        if control_interface != "offboard":
+            raise ValueError("closed-loop characterization requires the direct offboard interface")
+        if characterization_profile not in {"longitudinal", "lateral"}:
+            raise ValueError(f"unsupported characterization profile: {characterization_profile}")
+        if characterization_mode != "MODE_PX4_LOCAL":
+            raise ValueError("only MODE_PX4_LOCAL is implemented for the primary characterization")
+        # The test harness owns the reference and has no mission/planner path.
+        map_profile, map_scene, mission_file = "closed_loop_characterization", None, None
     map_profile, scene_descriptor = _resolve_scene_profile(
         map_scene, test_case, motion_preset, map_profile
     )
@@ -1971,6 +1984,21 @@ def _run_sim_unlocked(
         ros_domain_id=isolated_domain,
         xrce_port=isolated_xrce_port,
     )
+    if characterization_profile:
+        metadata_path = session.directory / "metadata.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["experiment_id"] = experiment_id or f"CLC_{characterization_profile.upper()}"
+        metadata["requested_cruise_speed_mps"] = None
+        metadata["characterization"] = {
+            "profile": characterization_profile,
+            "mode": characterization_mode,
+            "reference_authority": "analytic reference in PX4 local NED",
+            "navigation_runtime_reference": False,
+            "planner_recovery_mission_path": False,
+        }
+        metadata["raw_evidence"]["characterization_trace"] = str((session.directory / "scenario.jsonl").resolve())
+        metadata["raw_evidence"]["characterization_events"] = str((session.directory / "scenario_events.jsonl").resolve())
+        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     _write_runtime(
         session,
         workflow=workflow,
@@ -2008,7 +2036,7 @@ def _run_sim_unlocked(
         return 1
     try:
         ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml")
-        mapping_config = _mapping_params(
+        mapping_config = None if characterization_profile else _mapping_params(
             session,
             RUNTIME_CONFIG / "mapping.yaml",
             mission_file=mission_file,
@@ -2093,7 +2121,8 @@ def _run_sim_unlocked(
             "-p", "ros_topic:=/lidar/points",
         ], enable_rviz=not headless), cwd=ROOT)
         _start_runtime_evidence_bag(session)
-        session.start("visibility_bridge", _ros_shell([
+        if not characterization_profile:
+            session.start("visibility_bridge", _ros_shell([
             "ros2", "run", "uav_simulation", "gz_visibility_bridge", "--ros-args",
             "-p", "input_topic:=/lidar/points",
             "-p", "ros_topic:=/lidar/free_space_endpoints",
@@ -2106,23 +2135,25 @@ def _run_sim_unlocked(
             "-p", "vertical_angle_min_rad:=-0.122173047639603",
             "-p", "vertical_angle_max_rad:=0.907571211037051",
             "-p", "range_max_m:=40.0",
-        ], enable_rviz=not headless), cwd=ROOT)
-        session.start("px4_ingress", _ros_shell([
-            "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",
-            "--params-file", str(ros_config), "-p", "use_sim_time:=true",
-        ], enable_rviz=not headless), cwd=ROOT)
-        session.start(
-            "mapping",
-            _ros_shell(
-                _navigation_runtime_launch_command(mapping_config, mission_file),
-                enable_rviz=not headless,
-            ),
-            cwd=ROOT,
-        )
+            ], enable_rviz=not headless), cwd=ROOT)
+        if not characterization_profile:
+            session.start("px4_ingress", _ros_shell([
+                "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",
+                "--params-file", str(ros_config), "-p", "use_sim_time:=true",
+            ], enable_rviz=not headless), cwd=ROOT)
+        if not characterization_profile:
+            session.start(
+                "mapping",
+                _ros_shell(
+                    _navigation_runtime_launch_command(mapping_config, mission_file),
+                    enable_rviz=not headless,
+                ),
+                cwd=ROOT,
+            )
         session.start("lio", _ros_shell([
             "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
             f"config_file:={ros_config}", "use_sim_time:=true",
-            "enable_external_odometry:=true", "publish_sensor_frames:=true",
+            f"enable_external_odometry:={'false' if characterization_profile else 'true'}", "publish_sensor_frames:=true",
             "livox_mount_xyz:=0 0 0.28", "livox_mount_rpy:=0 0 0",
             f"livox_lidar_to_imu_xyz:={lidar_to_imu_xyz}",
             f"livox_lidar_to_imu_rpy:={lidar_to_imu_rpy}",
@@ -2143,10 +2174,12 @@ def _run_sim_unlocked(
             _start_rviz(session, use_sim_time=True)
         _wait_until(session, lambda snapshot: _stream_count(session, "imu") > 0 and _stream_count(session, "lidar") > 0, float(config["runtime"]["timeouts"]["startup_s"]), "simulated sensor streams")
         _wait_until(session, lambda snapshot: str(snapshot.get("diagnostics", {}).get("state", "")).upper() == "TRACKING", float(config["runtime"]["timeouts"]["lio_tracking_s"]), "LIO TRACKING")
-        _wait_until(session, lambda snapshot: _stream_count(session, "external_odometry") > 0, float(config["runtime"]["timeouts"]["external_odometry_s"]), "PX4 external odometry")
-        _wait_until(session, _mapping_ready,
-                    float(config["runtime"]["timeouts"].get("mapping_ready_s", config["runtime"]["timeouts"]["external_odometry_s"])),
-                    "mapping output and visualization")
+        if not characterization_profile:
+            _wait_until(session, lambda snapshot: _stream_count(session, "external_odometry") > 0, float(config["runtime"]["timeouts"]["external_odometry_s"]), "PX4 external odometry")
+        if not characterization_profile:
+            _wait_until(session, _mapping_ready,
+                        float(config["runtime"]["timeouts"].get("mapping_ready_s", config["runtime"]["timeouts"]["external_odometry_s"])),
+                        "mapping output and visualization")
         _write_runtime(session, startup_complete=True)
         if headless or auto_scenario:
             if auto_scenario:
@@ -2168,14 +2201,21 @@ def _run_sim_unlocked(
             # navigation without relaxing any in-flight freshness gate.
             if headless or auto_scenario:
                 _write_runtime(session, navigation_start_wall_ns=time.time_ns())
-            scenario = session.start(
-                scenario_role,
-                _ros_shell([
+            if characterization_profile:
+                scenario_role = "closed_loop_characterization"
+                scenario_command = [
+                    str(CANONICAL_PYTHON), str(ROOT / "tools/runtime/closed_loop_characterization.py"),
+                    "--output", str(session.directory / "scenario.json"),
+                    "--profile", characterization_profile,
+                    "--mode", characterization_mode,
+                    "--wall-timeout-s", str(float(scenario_config["scenario"].get("wall_timeout_s", 180.0))),
+                ]
+            else:
+                scenario_command = [
                     str(CANONICAL_PYTHON), str(ROOT / "tools/runtime" / scenario_name),
                     "--output", str(session.directory / "scenario.json"), "--config", str(scenario_config_path),
-                ]),
-                cwd=ROOT,
-            )
+                ]
+            scenario = session.start(scenario_role, _ros_shell(scenario_command), cwd=ROOT)
             if control_interface == "external_mode":
                 external_mode_args = _external_mode_launch_command(
                     _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml"),
@@ -2567,6 +2607,19 @@ def main() -> int:
         help="bounded dataset shadow-planning goal distance; 0 disables planning",
     )
     sub.add_parser("sim-check")
+    characterization = sub.add_parser(
+        "characterization-check",
+        help="run the test-only closed-loop PX4 characterization harness",
+    )
+    characterization.add_argument(
+        "--profile", choices=("longitudinal", "lateral"), required=True,
+    )
+    characterization.add_argument(
+        "--mode", choices=("MODE_PX4_LOCAL",), default="MODE_PX4_LOCAL",
+    )
+    characterization.add_argument("--ros-domain-id", type=int, default=None)
+    characterization.add_argument("--xrce-port", type=int, default=None)
+    characterization.add_argument("--experiment-id", default=None)
     external_mode = sub.add_parser("external-mode-check")
     external_mode.add_argument(
         "--map-profile",
@@ -2734,6 +2787,17 @@ def main() -> int:
         )
     if args.command == "sim-check":
         return run_sim(True)
+    if args.command == "characterization-check":
+        return run_sim(
+            True,
+            control_interface="offboard",
+            map_profile="open",
+            ros_domain_id=args.ros_domain_id,
+            xrce_port=args.xrce_port,
+            experiment_id=args.experiment_id or f"CLC_{args.profile.upper()}",
+            characterization_profile=args.profile,
+            characterization_mode=args.mode,
+        )
     if args.command == "external-mode-check":
         return run_sim(
             True,
