@@ -4032,6 +4032,24 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         command_motion_over_state_age_m, std::memory_order_release);
     causal_velocity_residual_time_aligned_mps_.store(
         velocity_residual_time_aligned_mps, std::memory_order_release);
+    causal_retained_elapsed_s_.store(elapsed_s, std::memory_order_release);
+    causal_committed_bundle_duration_s_.store(total_duration_s, std::memory_order_release);
+    causal_validate_without_new_commit_.store(
+        validate_without_new_commit, std::memory_order_release);
+    causal_retained_fresh_vehicle_state_.store(
+        fresh_vehicle_state, std::memory_order_release);
+    causal_retained_committed_command_available_.store(
+        committed, std::memory_order_release);
+    causal_retained_command_anchor_valid_.store(
+        command_anchor_valid, std::memory_order_release);
+    causal_retained_safety_trajectory_available_.store(
+        backup_available, std::memory_order_release);
+    causal_retained_terminal_stop_.store(
+        transition_bundle && transition_bundle->terminal_stop,
+        std::memory_order_release);
+    causal_retained_committed_role_.store(
+        committed_bundle ? static_cast<int>(committed_bundle->role) : -1,
+        std::memory_order_release);
     const double latest_vehicle_state_age_s = retained_execution_state
         ? retained_state_freshness.source_age_ms * 1.0e-3
         : std::numeric_limits<double>::infinity();
@@ -4049,6 +4067,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             current_vehicle_position,
             navigation_world_model::GridLayer::kInflated) ==
             navigation_world_model::CellState::kKnownFree;
+    causal_current_vehicle_state_known_free_.store(
+        current_vehicle_state_known_free, std::memory_order_release);
     bool sampled_path_clear = committed;
     double first_blocked_sample_s = std::numeric_limits<double>::quiet_NaN();
     Eigen::Vector3d first_blocked_sample = Eigen::Vector3d::Constant(
@@ -4084,6 +4104,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const double safety_transition_s = backup_available
                                            ? std::max(backup_start_s, clamped_elapsed_s)
                                            : clamped_elapsed_s;
+    causal_committed_safety_transition_time_s_.store(
+        safety_transition_s, std::memory_order_release);
     const double relative_anchor_speed_mps =
         command_anchor_valid && fresh_vehicle_state
             ? (command_anchor_sample.velocity_world - current_vehicle_velocity).norm()
@@ -5781,6 +5803,27 @@ void NavigationRuntimeNode::publishCommand() {
       causal_command_motion_over_state_age_m_.load(std::memory_order_acquire);
   command.velocity_residual_time_aligned_mps =
       causal_velocity_residual_time_aligned_mps_.load(std::memory_order_acquire);
+  command.retained_elapsed_s = causal_retained_elapsed_s_.load(std::memory_order_acquire);
+  command.committed_bundle_duration_s =
+      causal_committed_bundle_duration_s_.load(std::memory_order_acquire);
+  command.committed_safety_transition_time_s =
+      causal_committed_safety_transition_time_s_.load(std::memory_order_acquire);
+  command.retained_validate_without_new_commit =
+      causal_validate_without_new_commit_.load(std::memory_order_acquire);
+  command.retained_fresh_vehicle_state =
+      causal_retained_fresh_vehicle_state_.load(std::memory_order_acquire);
+  command.retained_committed_command_available =
+      causal_retained_committed_command_available_.load(std::memory_order_acquire);
+  command.retained_command_anchor_valid =
+      causal_retained_command_anchor_valid_.load(std::memory_order_acquire);
+  command.current_vehicle_state_known_free =
+      causal_current_vehicle_state_known_free_.load(std::memory_order_acquire);
+  command.retained_safety_trajectory_available =
+      causal_retained_safety_trajectory_available_.load(std::memory_order_acquire);
+  command.retained_terminal_stop =
+      causal_retained_terminal_stop_.load(std::memory_order_acquire);
+  command.retained_committed_role = static_cast<std::int8_t>(std::clamp(
+      causal_retained_committed_role_.load(std::memory_order_acquire), -128, 127));
   command.state_source_stamp = execution_state
       ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(
           builtin_interfaces::msg::Time{})

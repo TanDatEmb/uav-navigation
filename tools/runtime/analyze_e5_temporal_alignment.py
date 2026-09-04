@@ -29,7 +29,11 @@ FIELDS = [
     "tracking_certificate_exceeded", "projected_tracking_certificate_exceeded",
     "planner_result", "planning_failure_stage_reason", "emergency_authorization_reason",
     "emergency_candidate_commit_result", "analytic_sample_role", "navigation_command_role",
-    "execution_recovery_state", "source_record",
+    "execution_recovery_state", "retained_elapsed_s", "committed_bundle_duration_s",
+    "committed_safety_transition_time_s", "validate_without_new_commit",
+    "fresh_vehicle_state", "committed_command_available", "command_anchor_valid",
+    "current_vehicle_state_known_free", "safety_trajectory_available", "terminal_stop",
+    "committed_role", "source_record",
 ]
 
 
@@ -172,6 +176,17 @@ def direct_row(command: dict[str, Any]) -> dict[str, Any]:
         "analytic_sample_role": role(val("analytic_sample_role"), True),
         "navigation_command_role": role(val("trajectory_flag")),
         "execution_recovery_state": state(val("execution_recovery_state")),
+        "retained_elapsed_s": val("retained_elapsed_s"),
+        "committed_bundle_duration_s": val("committed_bundle_duration_s"),
+        "committed_safety_transition_time_s": val("committed_safety_transition_time_s"),
+        "validate_without_new_commit": val("retained_validate_without_new_commit"),
+        "fresh_vehicle_state": val("retained_fresh_vehicle_state"),
+        "committed_command_available": val("retained_committed_command_available"),
+        "command_anchor_valid": val("retained_command_anchor_valid"),
+        "current_vehicle_state_known_free": val("current_vehicle_state_known_free"),
+        "safety_trajectory_available": val("retained_safety_trajectory_available"),
+        "terminal_stop": val("retained_terminal_stop"),
+        "committed_role": role(val("retained_committed_role")),
         "source_record": "scenario.pva_command",
     }
 
@@ -239,20 +254,56 @@ def hypothetical_predicates(row: dict[str, Any], planning_period_s: float = 0.2)
     limit = finite(row.get("retained_tracking_limit_m"))
     raw = finite(row.get("raw_anchor_error_m"))
     aligned = finite(row.get("time_aligned_anchor_error_m"))
-    clear = row.get("sampled_path_clear") is True or str(row.get("sampled_path_clear")) == "1"
-    backup = row.get("backup_available") is True or str(row.get("backup_available")) == "1"
-    current_raw_usable = row.get("committed_suffix_usable") is True or \
-        str(row.get("committed_suffix_usable")) == "1"
+    boolean = lambda key: row.get(key) is True or str(row.get(key)) == "1"
+    clear = boolean("sampled_path_clear")
+    backup = boolean("backup_available")
+    exact_inputs = all(row.get(key) != "NOT_RECORDED" for key in (
+        "validate_without_new_commit", "fresh_vehicle_state",
+        "committed_command_available", "command_anchor_valid",
+        "current_vehicle_state_known_free", "safety_trajectory_available",
+        "terminal_stop", "committed_role", "retained_elapsed_s",
+        "committed_bundle_duration_s", "committed_safety_transition_time_s"))
+    current_raw_usable = boolean("committed_suffix_usable")
     raw_exceeded = raw is not None and limit is not None and raw > limit
     aligned_exceeded = aligned is not None and limit is not None and aligned > limit
     # Exact runtime admission also depends on freshness, command availability,
     # role, and validity inputs. Those are not present in the legacy artifact;
     # retain the measured raw decision and expose the aligned branch as a
     # conditional replay of the same non-error inputs.
-    aligned_suffix_usable_conditional = (
+    elapsed = finite(row.get("retained_elapsed_s"))
+    duration = finite(row.get("committed_bundle_duration_s"))
+    transition = finite(row.get("committed_safety_transition_time_s"))
+    common_contract = (elapsed is not None and duration is not None and
+                       transition is not None and elapsed >= 0.0 and
+                       duration > elapsed and limit is not None and limit > 0.0 and clear)
+    aligned_suffix_usable = common_contract and aligned is not None and aligned <= limit and (
+        abs(transition - elapsed) <= 1.0e-9 if not backup else
+        transition >= elapsed and transition <= duration)
+    aligned_suffix_usable_conditional = aligned_suffix_usable if exact_inputs else (
         aligned is not None and limit is not None and aligned <= limit and clear and
         ((backup and finite(row.get("time_to_backup_start_s")) is not None) or
          (not backup and current_raw_usable)))
+    fresh = boolean("fresh_vehicle_state")
+    available = boolean("committed_command_available")
+    anchor_valid = boolean("command_anchor_valid")
+    recovery_main = row.get("execution_recovery_state") == "TRACK_MAIN"
+    committed_role_main = row.get("committed_role") == "MAIN"
+    validate = boolean("validate_without_new_commit")
+    known_free = boolean("current_vehicle_state_known_free")
+    safety_available = boolean("safety_trajectory_available")
+    raw_actual_branch = (not validate and fresh and available and anchor_valid and
+                         raw_exceeded and recovery_main and committed_role_main)
+    aligned_actual_branch = (not validate and fresh and available and anchor_valid and
+                             aligned_exceeded and recovery_main and committed_role_main)
+    raw_projected_branch = (not validate and fresh and available and anchor_valid and
+                            known_free and not safety_available and recovery_main and
+                            committed_role_main and not raw_exceeded)
+    aligned_projected = ((aligned if aligned is not None else float("nan")) +
+                         (finite(row.get("relative_anchor_speed_mps")) or float("nan")) * planning_period_s)
+    aligned_projected_exceeded = finite(aligned_projected) is not None and limit is not None and aligned_projected > limit
+    aligned_projected_branch = (not validate and fresh and available and anchor_valid and
+                                known_free and not safety_available and recovery_main and
+                                committed_role_main and not aligned_exceeded and aligned_projected_exceeded)
     actual_raw_authorized = row.get("emergency_authorization_reason") not in (
         "NOT_RECORDED", None, 0, "0") and raw_exceeded
     actual_aligned_authorized = aligned_exceeded and not aligned_suffix_usable_conditional
@@ -261,9 +312,14 @@ def hypothetical_predicates(row: dict[str, Any], planning_period_s: float = 0.2)
         "aligned_retained_suffix_usable_conditional": aligned_suffix_usable_conditional,
         "raw_tracking_certificate_exceeded": raw_exceeded,
         "aligned_tracking_certificate_exceeded": aligned_exceeded,
-        "raw_emergency_authorized": actual_raw_authorized,
-        "aligned_emergency_authorized_actual_anchor_branch": actual_aligned_authorized,
-        "predicate_replay_exact": False,
+        "raw_emergency_authorized": actual_raw_authorized if not exact_inputs else (raw_actual_branch or raw_projected_branch),
+        "aligned_emergency_authorized": actual_aligned_authorized if not exact_inputs else (aligned_actual_branch or aligned_projected_branch),
+        "raw_actual_anchor_branch": raw_actual_branch,
+        "aligned_actual_anchor_branch": aligned_actual_branch,
+        "raw_projected_main_only_branch": raw_projected_branch,
+        "aligned_projected_main_only_branch": aligned_projected_branch,
+        "aligned_projected_anchor_error_m": aligned_projected,
+        "predicate_replay_exact": exact_inputs,
     }
 
 

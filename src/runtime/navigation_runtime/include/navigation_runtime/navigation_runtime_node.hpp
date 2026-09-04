@@ -396,6 +396,17 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic<double> causal_anchor_error_time_aligned_m_{std::numeric_limits<double>::quiet_NaN()};
   std::atomic<double> causal_command_motion_over_state_age_m_{std::numeric_limits<double>::quiet_NaN()};
   std::atomic<double> causal_velocity_residual_time_aligned_mps_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic<double> causal_retained_elapsed_s_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic<double> causal_committed_bundle_duration_s_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic<double> causal_committed_safety_transition_time_s_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic_bool causal_validate_without_new_commit_{false};
+  std::atomic_bool causal_retained_fresh_vehicle_state_{false};
+  std::atomic_bool causal_retained_committed_command_available_{false};
+  std::atomic_bool causal_retained_command_anchor_valid_{false};
+  std::atomic_bool causal_current_vehicle_state_known_free_{false};
+  std::atomic_bool causal_retained_safety_trajectory_available_{false};
+  std::atomic_bool causal_retained_terminal_stop_{false};
+  std::atomic_int causal_retained_committed_role_{-1};
   std::atomic<ExecutionRecoveryState> execution_recovery_state_{
       ExecutionRecoveryState::kInitialHold};
   std::atomic_uint64_t planner_solve_generation_{0U};
