@@ -1,5 +1,31 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-05 - Bound nominal MAIN planning by a provisional closed-loop envelope
+
+- **Owner/status:** navigation planning maintainers; `IMPLEMENTED`, exact E5
+  before/after regression required before treating the profile as sufficient.
+- **Scope:** `planner/control_envelope` is the single nominal MAIN V/A/J
+  authority. The deliberately conservative
+  `P0_PROVISIONAL_CLOSED_LOOP_PROFILE` is used only to evaluate the selected
+  first fix. Mission `requested_cruise_speed_mps` remains intent and is
+  reported separately from the effective MAIN speed.
+- **Safety impact:** nominal MAIN limits are tightened by explicit
+  configuration and validated against the existing hard `traj_opt/boundary`
+  physical limits. BACKUP and EMERGENCY continue to use their existing hard
+  physical/safety envelope; tracking, world, KNOWN_FREE, stop, freshness, and
+  PX4 gates are unchanged.
+- **Evidence:** the isolated MODE_PX4_LOCAL characterization measured this
+  profile as a GOOD operating point, while exact E5 generation-2 demand
+  exceeded it in multiple dynamic quantities. One-run evidence is not a final
+  vehicle capability certification.
+- **Removal/review condition:** replace only after repeated corrected
+  characterization and exact E5 regression establish a larger nominal region;
+  do not silently promote the provisional values to actuator or physical
+  limits.
+- **Verification:** control-envelope unit/config tests, Release build, CTest,
+  runtime contract tests, exact E5 Stage A/B, and matched open-control
+  regression with candidate V/A/J compliance and unchanged safety invariants.
+
 ### 2026-09-04 - Add immutable retained-command temporal-alignment telemetry
 
 - **Owner/status:** navigation runtime evidence collection; `IMPLEMENTED`,

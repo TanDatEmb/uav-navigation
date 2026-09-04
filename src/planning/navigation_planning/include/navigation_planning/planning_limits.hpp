@@ -37,6 +37,26 @@ struct VehicleDynamicModel {
   }
 };
 
+// Nominal closed-loop envelope for the MAIN trajectory.  This is deliberately
+// separate from VehicleDynamicModel: the latter remains the hard physical and
+// safety feasibility authority used by BACKUP and EMERGENCY trajectories.
+struct VehicleControlEnvelope {
+  double maximum_velocity_mps{0.0};
+  double maximum_acceleration_mps2{0.0};
+  double maximum_jerk_mps3{0.0};
+
+  [[nodiscard]] bool valid(const VehicleDynamicModel& physical) const noexcept {
+    return std::isfinite(maximum_velocity_mps) && maximum_velocity_mps > 0.0 &&
+           std::isfinite(maximum_acceleration_mps2) &&
+           maximum_acceleration_mps2 > 0.0 &&
+           std::isfinite(maximum_jerk_mps3) && maximum_jerk_mps3 > 0.0 &&
+           physical.valid() &&
+           maximum_velocity_mps <= physical.maximum_velocity_mps &&
+           maximum_acceleration_mps2 <= physical.maximum_acceleration_mps2 &&
+           maximum_jerk_mps3 <= physical.maximum_jerk_mps3;
+  }
+};
+
 struct MotionIntent {
   double requested_cruise_speed_mps{0.0};
 

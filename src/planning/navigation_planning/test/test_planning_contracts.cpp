@@ -13,6 +13,24 @@
 
 namespace {
 
+TEST(VehicleControlEnvelope, RequiresPositiveValuesInsidePhysicalModel) {
+  navigation_planning::VehicleDynamicModel physical;
+  navigation_planning::VehicleControlEnvelope control;
+  control.maximum_velocity_mps = 5.0;
+  control.maximum_acceleration_mps2 = 4.0;
+  control.maximum_jerk_mps3 = 8.0;
+  EXPECT_TRUE(control.valid(physical));
+
+  control.maximum_velocity_mps = 0.0;
+  EXPECT_FALSE(control.valid(physical));
+  control.maximum_velocity_mps = 5.0;
+  control.maximum_acceleration_mps2 = physical.maximum_acceleration_mps2 + 1.0;
+  EXPECT_FALSE(control.valid(physical));
+  control.maximum_acceleration_mps2 = 4.0;
+  control.maximum_jerk_mps3 = physical.maximum_jerk_mps3 + 1.0;
+  EXPECT_FALSE(control.valid(physical));
+}
+
 void refreshEndpointMetadata(navigation_planning::CandidateBundle& candidate) {
   candidate.declared_start_ns = *navigation_common::secondsToNanoseconds(
       candidate.start_wall_time_s);
