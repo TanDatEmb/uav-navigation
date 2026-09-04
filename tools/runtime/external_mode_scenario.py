@@ -776,6 +776,7 @@ class ExternalModeScenario:
             "retained_safety_trajectory_available": bool(getattr(message, "retained_safety_trajectory_available", False)),
             "retained_terminal_stop": bool(getattr(message, "retained_terminal_stop", False)),
             "retained_committed_role": int(getattr(message, "retained_committed_role", -1)),
+            "retained_recovery_state_before": int(getattr(message, "retained_recovery_state_before", 0)),
             "localization_epoch": int(message.localization_epoch),
             "goal_epoch": int(message.goal_epoch),
             "world_generation": int(message.world_generation),

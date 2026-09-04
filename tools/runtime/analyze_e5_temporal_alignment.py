@@ -24,7 +24,7 @@ FIELDS = [
     "measured_velocity_at_source", "command_position_at_now", "command_velocity_at_now",
     "command_position_at_source", "command_velocity_at_source", "raw_anchor_error_m",
     "time_aligned_anchor_error_m", "command_motion_during_state_age_m",
-    "velocity_residual_time_aligned_mps", "backup_available", "time_to_backup_start_s",
+    "velocity_residual_time_aligned_mps", "relative_anchor_speed_mps", "backup_available", "time_to_backup_start_s",
     "retained_tracking_limit_m", "sampled_path_clear", "committed_suffix_usable",
     "tracking_certificate_exceeded", "projected_tracking_certificate_exceeded",
     "planner_result", "planning_failure_stage_reason", "emergency_authorization_reason",
@@ -33,7 +33,7 @@ FIELDS = [
     "committed_safety_transition_time_s", "validate_without_new_commit",
     "fresh_vehicle_state", "committed_command_available", "command_anchor_valid",
     "current_vehicle_state_known_free", "safety_trajectory_available", "terminal_stop",
-    "committed_role", "source_record",
+    "committed_role", "recovery_state_before", "source_record",
 ]
 
 
@@ -162,6 +162,7 @@ def direct_row(command: dict[str, Any]) -> dict[str, Any]:
         "time_aligned_anchor_error_m": aligned,
         "command_motion_during_state_age_m": motion,
         "velocity_residual_time_aligned_mps": velocity_residual,
+        "relative_anchor_speed_mps": val("relative_anchor_speed_mps"),
         "backup_available": val("backup_available"),
         "time_to_backup_start_s": val("time_to_backup_start_s"),
         "retained_tracking_limit_m": val("retained_tracking_limit_m"),
@@ -187,6 +188,7 @@ def direct_row(command: dict[str, Any]) -> dict[str, Any]:
         "safety_trajectory_available": val("retained_safety_trajectory_available"),
         "terminal_stop": val("retained_terminal_stop"),
         "committed_role": role(val("retained_committed_role")),
+        "recovery_state_before": state(val("retained_recovery_state_before")),
         "source_record": "scenario.pva_command",
     }
 
@@ -262,7 +264,8 @@ def hypothetical_predicates(row: dict[str, Any], planning_period_s: float = 0.2)
         "committed_command_available", "command_anchor_valid",
         "current_vehicle_state_known_free", "safety_trajectory_available",
         "terminal_stop", "committed_role", "retained_elapsed_s",
-        "committed_bundle_duration_s", "committed_safety_transition_time_s"))
+        "committed_bundle_duration_s", "committed_safety_transition_time_s",
+        "relative_anchor_speed_mps", "recovery_state_before"))
     current_raw_usable = boolean("committed_suffix_usable")
     raw_exceeded = raw is not None and limit is not None and raw > limit
     aligned_exceeded = aligned is not None and limit is not None and aligned > limit
@@ -286,7 +289,7 @@ def hypothetical_predicates(row: dict[str, Any], planning_period_s: float = 0.2)
     fresh = boolean("fresh_vehicle_state")
     available = boolean("committed_command_available")
     anchor_valid = boolean("command_anchor_valid")
-    recovery_main = row.get("execution_recovery_state") == "TRACK_MAIN"
+    recovery_main = row.get("recovery_state_before", row.get("execution_recovery_state")) == "TRACK_MAIN"
     committed_role_main = row.get("committed_role") == "MAIN"
     validate = boolean("validate_without_new_commit")
     known_free = boolean("current_vehicle_state_known_free")
@@ -422,7 +425,7 @@ def write_outputs(root: Path, csv_path: Path, md_path: Path) -> None:
             f"- source age: `{emergency.get('source_age_ms')}` ms; receive age: `{emergency.get('receive_age_ms')}` ms",
             "",
             "## Offline predicate replay", "",
-            "The runtime predicate remains unchanged. The aligned branch below is conditional only where legacy artifacts omit freshness/lease/role inputs; it is not presented as an exact runtime authorization decision unless all inputs are recorded.", "",
+            "The runtime predicate remains unchanged. Where all retained predicate inputs are serialized, this is an exact offline replay with only the anchor-error input substituted; legacy artifacts remain explicitly non-replayable.", "",
             f"```json\n{json.dumps(predicate, indent=2, sort_keys=True)}\n```", "",
         ]
     md_path.parent.mkdir(parents=True, exist_ok=True)

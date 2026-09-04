@@ -95,3 +95,4 @@ bool current_vehicle_state_known_free
 bool retained_safety_trajectory_available
 bool retained_terminal_stop
 int8 retained_committed_role
+uint8 retained_recovery_state_before

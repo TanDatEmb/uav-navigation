@@ -407,6 +407,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_bool causal_retained_safety_trajectory_available_{false};
   std::atomic_bool causal_retained_terminal_stop_{false};
   std::atomic_int causal_retained_committed_role_{-1};
+  std::atomic_uint8_t causal_retained_recovery_state_before_{0U};
   std::atomic<ExecutionRecoveryState> execution_recovery_state_{
       ExecutionRecoveryState::kInitialHold};
   std::atomic_uint64_t planner_solve_generation_{0U};

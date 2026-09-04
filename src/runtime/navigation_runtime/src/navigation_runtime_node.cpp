@@ -4050,6 +4050,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     causal_retained_committed_role_.store(
         committed_bundle ? static_cast<int>(committed_bundle->role) : -1,
         std::memory_order_release);
+    causal_retained_recovery_state_before_.store(
+        static_cast<std::uint8_t>(execution_recovery_state_.load(
+            std::memory_order_acquire)), std::memory_order_release);
     const double latest_vehicle_state_age_s = retained_execution_state
         ? retained_state_freshness.source_age_ms * 1.0e-3
         : std::numeric_limits<double>::infinity();
@@ -5824,6 +5827,8 @@ void NavigationRuntimeNode::publishCommand() {
       causal_retained_terminal_stop_.load(std::memory_order_acquire);
   command.retained_committed_role = static_cast<std::int8_t>(std::clamp(
       causal_retained_committed_role_.load(std::memory_order_acquire), -128, 127));
+  command.retained_recovery_state_before =
+      causal_retained_recovery_state_before_.load(std::memory_order_acquire);
   command.state_source_stamp = execution_state
       ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(
           builtin_interfaces::msg::Time{})
