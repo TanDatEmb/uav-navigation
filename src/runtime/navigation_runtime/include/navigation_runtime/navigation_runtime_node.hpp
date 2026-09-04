@@ -247,6 +247,11 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::int64_t planner_watchdog_timeout_ns_{1'000'000'000};
   double stopped_recovery_timeout_s_{5.0};
   std::uint32_t max_plan_from_rest_failures_{3U};
+  // Diagnostic-only deterministic failure injection. Zero disables it; when
+  // matched, exactly one solve is converted to a failed result after the
+  // backend returns, leaving the prior committed bundle untouched.
+  std::uint64_t inject_failed_replan_cycle_id_{0U};
+  bool inject_failed_replan_once_{false};
   std::uint64_t dynamics_hash_{1U};
   navigation_planning::DynamicLimits mission_dynamic_limits_{};
 

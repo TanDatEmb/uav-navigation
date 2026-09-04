@@ -18241,3 +18241,32 @@ release profiles must not use the former allowance.
 - **Verification:** `test_parameter_loader`; `make test`; repeated LiDAR
   dropout/reacquisition SITL or recorded-data artifacts checking the effective
   thresholds and lifecycle transitions.
+
+### 2026-09-04 - Add behavior-neutral runtime evidence instrumentation
+
+- **Owner/status:** navigation runtime and External Mode observability owner,
+  `DIAGNOSTIC_ONLY`; no qualification claim is made from the partial evidence
+  batch.
+- **Scope:** Publish sampled analytic command role, backup/recovery context,
+  External Mode state labels, route-boundary diagnostic fields, rosbag2 topic
+  capture, and reproducible JSON/Markdown analysis. A one-shot failed-replan
+  injection is available only when the explicit debug parameters
+  `navigation_runtime.inject_failed_replan_cycle_id` and
+  `navigation_runtime.inject_failed_replan_once` are set; defaults are off and
+  the hook is applied after the planner returns, without changing the retained
+  bundle.
+- **Safety impact:** Default command admission, planner policy, recovery FSM,
+  timing constants, PX4 gains, and safety gates are unchanged. When explicitly
+  enabled, the hook intentionally creates a failed replacement for evidence
+  collection and must never be used as flight behavior.
+- **Evidence:** `runtime_evidence/2026-09-04/` contains E01, E02, and E05
+  raw JSONL/rosbag artifacts. E05 records exactly one injected failure and the
+  subsequent premature safety takeover before the prior backup boundary.
+- **Removal condition:** Remove the injection hook after deterministic failure
+  testing is complete; retain the passive fields and report pipeline while
+  runtime acceptance evidence still requires them.
+- **Verification:** `python3 tools/runtime/build.py --mode release build`;
+  targeted release CTest for six packages; `python3 -m unittest
+  tools.runtime.tests.test_runtime_contract`; per-run
+  `tools/runtime/analyze_runtime_evidence.py`; aggregate
+  `tools/runtime/build_runtime_report.py`.

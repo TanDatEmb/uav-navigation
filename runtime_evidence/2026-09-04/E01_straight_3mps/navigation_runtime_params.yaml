@@ -1,0 +1,21 @@
+navigation_runtime_node:
+  ros__parameters:
+    navigation_runtime:
+      registered_scan_topic: /lio/mapping_observation
+      propagated_odometry_topic: /lio/odometry_propagated
+      goal_topic: /navigation/goal
+      status_topic: /navigation/mode_status
+      command_topic: /navigation/navigation_command
+      planning_frame: lio_odom
+      body_frame_id: base_link
+      deployment_profile: sitl
+      planner_rate_hz: 5.0
+      command_rate_hz: 50.0
+      mapping_snapshot_publication_period_s: 0.1
+      data_freshness_window_s: 0.5
+      command_stream_timeout_s: 0.1
+      planner_watchdog_timeout_s: 1.0
+      stopped_recovery_timeout_s: 5.0
+      max_plan_from_rest_failures: 3
+      mission_file: /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091230-38933/resolved_mission.yaml
+      config_path: /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091230-38933/planner.yaml

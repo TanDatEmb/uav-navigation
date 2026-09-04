@@ -1,0 +1,45 @@
+[1;33mWarning [Utils.cc:132][0m [/sdf/model[@name="x500_base"]/link[@name="base_link"]/sensor[@name="air_pressure_sensor"]/gz_frame_id:/home/letandat/Dev/Autopilot/Tools/simulation/gz/models/x500_base/model.sdf:L219]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].
+[1;33mWarning [Utils.cc:132][0m [/sdf/model[@name="x500_base"]/link[@name="base_link"]/sensor[@name="magnetometer_sensor"]/gz_frame_id:/home/letandat/Dev/Autopilot/Tools/simulation/gz/models/x500_base/model.sdf:L233]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].
+[1;33mWarning [Utils.cc:132][0m [/sdf/model[@name="x500_base"]/link[@name="base_link"]/sensor[@name="imu_sensor"]/gz_frame_id:/home/letandat/Dev/Autopilot/Tools/simulation/gz/models/x500_base/model.sdf:L259]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].
+[1;33mWarning [Utils.cc:132][0m [/sdf/model[@name="x500_base"]/link[@name="base_link"]/sensor[@name="navsat_sensor"]/gz_frame_id:/home/letandat/Dev/Autopilot/Tools/simulation/gz/models/x500_base/model.sdf:L311]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].
+[1;33mWarning [Utils.cc:132][0m [/sdf/model[@name="lidar_mid360"]/link[@name="livox_frame"]/sensor[@name="lidar"]/gz_frame_id:/home/letandat/Dev/uav-navigation/src/uav_simulation/models/lidar_mid360/model.sdf:L37]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].
+[1;33mWarning [Utils.cc:132][0m [/sdf/model[@name="lidar_mid360"]/link[@name="livox_frame"]/sensor[@name="mid360_imu"]/gz_frame_id:/home/letandat/Dev/uav-navigation/src/uav_simulation/models/lidar_mid360/model.sdf:L62]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].
+[1;31m[Err] [MulticopterMotorModel.cc:569] [0m[1;31mAliasing on motor [[0m[1;31m0[0m[1;31m] might occur. Consider making smaller simulation time steps or raising the rotorVelocitySlowdownSim param.[0m
+[1;31m[Err] [MulticopterMotorModel.cc:569] [0m[1;31mAliasing on motor [[0m[1;31m1[0m[1;31m] might occur. Consider making smaller simulation time steps or raising the rotorVelocitySlowdownSim param.[0m
+
+ODE INTERNAL ERROR 1: assertion "aabbBound >= dMinIntExact && aabbBound < dMaxIntExact" failed in collide() [collision_space.cpp:460]
+Stack trace (most recent call last):
+#31   Object "/lib/x86_64-linux-gnu/libc.so.6", at 0x727ff062a1c9, in 
+#30   Object "gz sim -r -s /home/letandat/Dev/uav-navigation/src/uav_simulation/worlds/open.sdf", at 0x57b6e8d6e186, in 
+#29   Object "/lib/x86_64-linux-gnu/libruby-3.2.so.3.2", at 0x727ff0ab9152, in ruby_run_node
+#28   Object "/lib/x86_64-linux-gnu/libruby-3.2.so.3.2", at 0x727ff0ab4e2b, in 
+#27   Object "/lib/x86_64-linux-gnu/libruby-3.2.so.3.2", at 0x727ff0c57b49, in rb_vm_exec
+#26   Object "/lib/x86_64-linux-gnu/libruby-3.2.so.3.2", at 0x727ff0c5462b, in 
+#25   Object "/lib/x86_64-linux-gnu/libruby-3.2.so.3.2", at 0x727ff0c5013e, in 
+#24   Object "/lib/x86_64-linux-gnu/libruby-3.2.so.3.2", at 0x727ff0c4d92f, in 
+#23   Object "/usr/lib/x86_64-linux-gnu/ruby/3.2.0/fiddle.so", at 0x727ff05d7b13, in 
+#22   Object "/lib/x86_64-linux-gnu/libruby-3.2.so.3.2", at 0x727ff0c1637b, in rb_nogvl
+#21   Object "/usr/lib/x86_64-linux-gnu/ruby/3.2.0/fiddle.so", at 0x727ff05d743b, in 
+#20   Object "/lib/x86_64-linux-gnu/libffi.so.8", at 0x727feff7a0bd, in ffi_call
+#19   Object "/lib/x86_64-linux-gnu/libffi.so.8", at 0x727feff773ee, in 
+#18   Object "/lib/x86_64-linux-gnu/libffi.so.8", at 0x727feff7ab15, in 
+#17   Object "/usr/lib/x86_64-linux-gnu/libgz-sim8-gz.so.8.15.0", at 0x727feadd43ec, in runServer
+#16   Object "/lib/x86_64-linux-gnu/libgz-sim8.so.8", at 0x727fea758dbc, in 
+#15   Object "/lib/x86_64-linux-gnu/libgz-sim8.so.8", at 0x727fea763b9e, in gz::sim::v8::SimulationRunner::Run(unsigned long)
+#14   Object "/lib/x86_64-linux-gnu/libgz-sim8.so.8", at 0x727fea76b6f5, in gz::sim::v8::SimulationRunner::Step(gz::sim::v8::UpdateInfo const&)
+#13   Object "/lib/x86_64-linux-gnu/libgz-sim8.so.8", at 0x727fea762adc, in gz::sim::v8::SimulationRunner::UpdateSystems()
+#12   Object "/usr/lib/x86_64-linux-gnu/gz-sim-8/plugins/libgz-sim-physics-system.so", at 0x727fdaf0353f, in gz::sim::v8::systems::Physics::Update(gz::sim::v8::UpdateInfo const&, gz::sim::v8::EntityComponentManager&)
+#11   Object "/usr/lib/x86_64-linux-gnu/gz-sim-8/plugins/libgz-sim-physics-system.so", at 0x727fdaef8535, in gz::sim::v8::systems::PhysicsPrivate::Step(std::chrono::duration<long, std::ratio<1l, 1000000000l> > const&)
+#10   Object "/usr/lib/x86_64-linux-gnu/gz-physics-7/engine-plugins/libgz-physics-dartsim-plugin.so", at 0x727fc9636d95, in gz::physics::dartsim::SimulationFeatures::WorldForwardStep(gz::physics::Identity const&, gz::physics::SpecifyData<gz::physics::RequireData<gz::physics::WorldPoses>, gz::physics::ExpectData<gz::physics::ChangedWorldPoses, gz::physics::Contacts, gz::physics::JointPositions> >&, gz::physics::CompositeData&, gz::physics::ExpectData<gz::physics::ApplyExternalForceTorques, gz::physics::ApplyGeneralizedForces, gz::physics::VelocityControlCommands, gz::physics::ServoControlCommands, std::chrono::duration<long, std::ratio<1l, 1000000000l> > > const&)
+#9    Object "/lib/x86_64-linux-gnu/libdart.so.6.13", at 0x727fc91a966c, in dart::simulation::World::step(bool)
+#8    Object "/lib/x86_64-linux-gnu/libdart.so.6.13", at 0x727fc918f3d5, in dart::constraint::ConstraintSolver::solve()
+#7    Object "/lib/x86_64-linux-gnu/libdart.so.6.13", at 0x727fc918d970, in dart::constraint::ConstraintSolver::updateConstraints()
+#6    Object "/usr/lib/x86_64-linux-gnu/gz-physics-7/engine-plugins/libgz-physics-dartsim-plugin.so", at 0x727fc95fe0cb, in dart::collision::GzOdeCollisionDetector::collide(dart::collision::CollisionGroup*, dart::collision::CollisionOption const&, dart::collision::CollisionResult*)
+#5    Object "/lib/x86_64-linux-gnu/libdart-collision-ode.so.6.13", at 0x727fca76622c, in dart::collision::OdeCollisionDetector::collide(dart::collision::CollisionGroup*, dart::collision::CollisionOption const&, dart::collision::CollisionResult*)
+#4    Object "/lib/x86_64-linux-gnu/libode.so.8", at 0x727fc8d21259, in dxHashSpace::collide(void*, void (*)(void*, dxGeom*, dxGeom*))
+#3    Object "/lib/x86_64-linux-gnu/libode.so.8", at 0x727fc8d20037, in dDebug
+#2    Object "/lib/x86_64-linux-gnu/libc.so.6", at 0x727ff06288fe, in abort
+#1    Object "/lib/x86_64-linux-gnu/libc.so.6", at 0x727ff064527d, in gsignal
+#0    Object "/lib/x86_64-linux-gnu/libc.so.6", at 0x727ff069ec0c, in pthread_kill
+Aborted (Signal sent by tkill() 39141 1000)
+/home/letandat/Dev/uav-navigation/tools/simulation/run_px4_mid360.sh: line 59: 39141 Aborted                 (core dumped) env -u GZ_CONFIG_PATH "${GZ_COMMAND}" "$@"

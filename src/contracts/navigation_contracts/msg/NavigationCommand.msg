@@ -38,3 +38,14 @@ geometry_msgs/Vector3 jerk
 float64 yaw
 float64 yaw_rate
 float64 trajectory_time_s
+
+# Diagnostic-only execution evidence. These fields do not participate in
+# command admission or PX4 control; they preserve the sampled polynomial role
+# and recovery context before the transport-facing role is classified.
+uint8 ANALYTIC_ROLE_UNKNOWN=255
+uint8 analytic_sample_role
+bool backup_available
+float64 backup_start_time_s
+float64 time_to_backup_start_s
+bool safety_suffix_active
+uint8 execution_recovery_state

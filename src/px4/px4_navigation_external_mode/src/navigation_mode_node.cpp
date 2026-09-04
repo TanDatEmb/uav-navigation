@@ -266,6 +266,66 @@ void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason,
   status.request_id = mission_controller_->activeRequestId();
   status.state = state;
   status.reason = reason;
+  // This is an observational projection of the already-selected mode state.
+  // Keep it derived here so the evidence stream records why External Mode is
+  // waiting/holding without introducing a second control state machine.
+  if (state == navigation_contracts::msg::NavigationModeStatus::COMPLETE) {
+    status.external_mode_state =
+        navigation_contracts::msg::NavigationModeStatus::COMPLETED_HOLD;
+  } else if (state == navigation_contracts::msg::NavigationModeStatus::FAILED) {
+    status.external_mode_state =
+        navigation_contracts::msg::NavigationModeStatus::FAILSAFE_HOLD;
+  } else if (state == navigation_contracts::msg::NavigationModeStatus::BRAKING) {
+    status.external_mode_state =
+        navigation_contracts::msg::NavigationModeStatus::RECOVERY_HOLD;
+  } else if (state == navigation_contracts::msg::NavigationModeStatus::PAUSED) {
+    status.external_mode_state = reason ==
+            navigation_contracts::msg::NavigationModeStatus::OPERATOR_TAKEOVER
+        ? navigation_contracts::msg::NavigationModeStatus::HANDOVER_HOLD
+        : navigation_contracts::msg::NavigationModeStatus::RECOVERY_HOLD;
+  } else {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    if (mission_controller_->waitingForAirborne()) {
+      status.external_mode_state =
+          navigation_contracts::msg::NavigationModeStatus::WAIT_AIRBORNE;
+    } else if (!typed_health_seen_ || !lio_health_valid_) {
+      status.external_mode_state =
+          navigation_contracts::msg::NavigationModeStatus::WAIT_HEALTH;
+    } else if (!navigation_command_.has_value()) {
+      status.external_mode_state =
+          navigation_contracts::msg::NavigationModeStatus::WAIT_FIRST_COMMAND;
+    } else {
+      status.external_mode_state =
+          navigation_contracts::msg::NavigationModeStatus::TRACK_TRAJECTORY;
+    }
+  }
+  switch (reason) {
+    case navigation_contracts::msg::NavigationModeStatus::SAFETY_STOP:
+      status.external_mode_reason = "SAFETY_STOP";
+      break;
+    case navigation_contracts::msg::NavigationModeStatus::OPERATOR_TAKEOVER:
+      status.external_mode_reason = "OPERATOR_TAKEOVER";
+      break;
+    case navigation_contracts::msg::NavigationModeStatus::ODOMETRY_STALE:
+      status.external_mode_reason = "ODOMETRY_STALE";
+      break;
+    case navigation_contracts::msg::NavigationModeStatus::TRAJECTORY_INVALID:
+      status.external_mode_reason = "TRAJECTORY_INVALID";
+      break;
+    default:
+      status.external_mode_reason =
+          status.external_mode_state ==
+                  navigation_contracts::msg::NavigationModeStatus::WAIT_AIRBORNE
+              ? "WAIT_AIRBORNE"
+              : status.external_mode_state ==
+                        navigation_contracts::msg::NavigationModeStatus::WAIT_HEALTH
+                    ? "WAIT_HEALTH"
+                    : status.external_mode_state ==
+                              navigation_contracts::msg::NavigationModeStatus::WAIT_FIRST_COMMAND
+                          ? "WAIT_FIRST_COMMAND"
+                          : "NONE";
+      break;
+  }
   if (event != nullptr && event->waypoint_accepted) {
     status.waypoint_accepted = true;
     status.accepted_waypoint_index =

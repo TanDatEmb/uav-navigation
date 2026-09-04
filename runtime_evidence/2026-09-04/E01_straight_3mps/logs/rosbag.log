@@ -1,0 +1,2 @@
+[WARN] [ros2bag]: Positional "topics" argument deprecated. Please use optional "--topics" argument instead.
+[ERROR] [ros2bag]: Output folder '/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091230-38933/rosbag' already exists.

@@ -1,0 +1,407 @@
+{
+  "critical_events": [
+    {
+      "candidate_result": 4,
+      "injected": 1,
+      "time_s": 20.472,
+      "type": "planner_failure"
+    }
+  ],
+  "data_quality": {
+    "commands": 120,
+    "missing": [],
+    "monitor_samples": 26551,
+    "planner_traces": 15,
+    "rosbag_present": true,
+    "scenario_records": 410
+  },
+  "figures": [
+    "runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5/figures/plot_A_velocity_continuity.png",
+    "runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5/figures/plot_B_command_roles.png",
+    "runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5/figures/plot_C_pass_through_handoff.png",
+    "runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5/figures/plot_D_planner_px4_velocity.png",
+    "runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5/figures/plot_E_planner_px4_acceleration.png",
+    "runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5/figures/plot_F_frame_residual.png",
+    "runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5/figures/plot_G_optimizer_timing.png"
+  ],
+  "hypotheses": {
+    "H1_splice_continuity": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H2_replanning_timing": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H3_pass_through_continuation": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H4_failed_replan_safety_takeover": {
+      "evidence": [
+        "Injected failure was followed by a safety-suffix command while the prior command still had positive time_to_backup_start_s."
+      ],
+      "status": "CONFIRMED"
+    },
+    "H5_corner_overconstraint": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H6_px4_controller_mismatch": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    }
+  },
+  "metadata": {
+    "build_timestamp_ns": 1788513702763102096,
+    "command_rate_hz": 50.0,
+    "created_at_utc": "2026-09-04T09:21:42Z",
+    "environment": {
+      "map_profile": "open",
+      "px4_dir": "/home/letandat/Dev/Autopilot",
+      "ros_domain_id": 42,
+      "xrce_port": 8892
+    },
+    "experiment_id": "E05_single_hot_replan_failure_cycle5",
+    "instrumentation": {
+      "behavior_neutral": true,
+      "failure_injection_default": "off"
+    },
+    "mission_file": "/home/letandat/.codex/runtime/external-mode-check-20260904T092142-49584/resolved_mission.yaml",
+    "mission_planning": {
+      "requested_cruise_speed_mps": 3.0,
+      "unknown_policy": "allow_unknown"
+    },
+    "planner_config": "/home/letandat/Dev/uav-navigation/src/runtime/navigation_runtime/config/planner.yaml",
+    "planner_rate_hz": 5.0,
+    "px4_msgs_version": "86d8239e962f6939e05c3737784f60c02fa884db",
+    "px4_version": "deaff86ee335dd697677bcfc2415a23878e1b895",
+    "raw_evidence": {
+      "monitor_samples": "/home/letandat/.codex/runtime/external-mode-check-20260904T092142-49584/samples.jsonl",
+      "rosbag": "/home/letandat/.codex/runtime/external-mode-check-20260904T092142-49584/rosbag",
+      "scenario_events": "/home/letandat/.codex/runtime/external-mode-check-20260904T092142-49584/scenario.jsonl"
+    },
+    "replan_forward_s": 0.4,
+    "repo_commit": "37e8dc7f9967990ef4c1401475e0d15abef14360",
+    "repo_dirty": true,
+    "requested_cruise_speed_mps": 3.0,
+    "ros_version": "jazzy",
+    "run_id": "external-mode-check-20260904T092142-49584",
+    "schema_version": 1,
+    "solve_deadline_s": 0.18,
+    "stitch_duration_s": 0.4,
+    "topics": [
+      "/clock",
+      "/lidar/points",
+      "/lidar/imu",
+      "/lio/odometry_corrected",
+      "/lio/odometry_propagated",
+      "/lio/diagnostics",
+      "/navigation/diagnostics",
+      "/navigation/navigation_command",
+      "/navigation/mode_status",
+      "/navigation/goal",
+      "/navigation/mission_complete",
+      "/fmu/in/trajectory_setpoint",
+      "/fmu/in/vehicle_visual_odometry",
+      "/fmu/out/vehicle_local_position_v1",
+      "/fmu/out/vehicle_local_position_setpoint",
+      "/fmu/out/vehicle_odometry",
+      "/fmu/out/vehicle_attitude",
+      "/fmu/out/vehicle_attitude_setpoint",
+      "/fmu/out/vehicle_thrust_setpoint",
+      "/fmu/out/actuator_motors",
+      "/fmu/out/vehicle_status_v1",
+      "/fmu/out/estimator_status"
+    ]
+  },
+  "metrics": {
+    "analytic_splice_residuals": {
+      "splice_acceleration_residual_mps2": {
+        "count": 1,
+        "max": 4.002966,
+        "p50": 4.002966,
+        "p95": 4.002966,
+        "p99": 4.002966,
+        "rms": 4.002966
+      },
+      "splice_jerk_residual_mps3": {
+        "count": 1,
+        "max": 1.053082,
+        "p50": 1.053082,
+        "p95": 1.053082,
+        "p99": 1.053082,
+        "rms": 1.053082
+      },
+      "splice_position_residual_m": {
+        "count": 1,
+        "max": 0.299279,
+        "p50": 0.299279,
+        "p95": 0.299279,
+        "p99": 0.299279,
+        "rms": 0.299279
+      },
+      "splice_velocity_residual_mps": {
+        "count": 1,
+        "max": 0.921748,
+        "p50": 0.921748,
+        "p95": 0.921748,
+        "p99": 0.921748,
+        "rms": 0.921748
+      },
+      "splice_yaw_rate_residual_radps": {
+        "count": 1,
+        "max": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "rms": 0.0
+      },
+      "splice_yaw_residual_rad": {
+        "count": 1,
+        "max": -0.010017,
+        "p50": -0.010017,
+        "p95": -0.010017,
+        "p99": -0.010017,
+        "rms": 0.010017
+      }
+    },
+    "command_roles": {
+      "BACKUP": 0,
+      "EMERGENCY": 38,
+      "MAIN": 82,
+      "UNKNOWN": 0
+    },
+    "commit_count": 1,
+    "failure_timelines": [
+      {
+        "analytic_role_after_failure": "EMERGENCY",
+        "analytic_role_before_failure": "MAIN",
+        "failure_time_s": 20.472,
+        "later_nominal_retry_observed": false,
+        "premature_safety_takeover_before_backup": true,
+        "recovery_state_after": "EMERGENCY_BRAKE",
+        "recovery_state_before": "TRACK_MAIN",
+        "role_after_failure": "EMERGENCY",
+        "role_before_failure": "MAIN",
+        "safety_suffix_after": true,
+        "safety_suffix_before": false,
+        "time_to_backup_start_s_before_failure": 1.8774401711603277
+      }
+    ],
+    "generation_transitions": [
+      {
+        "command": {
+          "acceleration": [
+            0.011851171841421324,
+            0.0017104069793925669,
+            0.00038488047110075323
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 2.517440171160328,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 3,
+          "jerk": [
+            1.4583585669200818,
+            0.21032283667960378,
+            0.04715324085325848
+          ],
+          "localization_epoch": 12151364888883,
+          "position": [
+            -0.18619277208965987,
+            -0.2596018232321853,
+            2.9234051397101606
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 1,
+          "time_s": 19.82,
+          "time_to_backup_start_s": 2.501440171160328,
+          "trajectory_flag": 0,
+          "trajectory_generation": 1,
+          "trajectory_id": 1,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.016,
+          "vel_norm": 0.0,
+          "velocity": [
+            0.007198062263966899,
+            0.010051697563989302,
+            0.05308460641759294
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 19700000000,
+          "world_revision": 149,
+          "yaw": -0.0007144403740218288,
+          "yaw_rate": 0.0
+        },
+        "from": null,
+        "time_s": 19.82,
+        "to": 1
+      },
+      {
+        "command": {
+          "acceleration": [
+            -0.010131336321265288,
+            -0.0016583891807992383,
+            -0.04691911855924644
+          ],
+          "analytic_sample_role": 2,
+          "backup_available": true,
+          "backup_start_time_s": 0.0,
+          "executable": true,
+          "execution_recovery_state": 3,
+          "goal_epoch": 3,
+          "jerk": [
+            -1.6550538548548641,
+            -0.27091425252267165,
+            -7.524896269839747
+          ],
+          "localization_epoch": 12151364888883,
+          "position": [
+            -0.16829616015733323,
+            -0.26077011705349523,
+            2.979431359025956
+          ],
+          "safety_suffix_active": true,
+          "sample_id": 41,
+          "time_s": 20.484,
+          "time_to_backup_start_s": -0.012,
+          "trajectory_flag": 2,
+          "trajectory_generation": 2,
+          "trajectory_id": 41,
+          "trajectory_status": 2,
+          "trajectory_time_s": 0.012,
+          "vel_norm": 0.0,
+          "velocity": [
+            0.5723793634846678,
+            0.09369225476439223,
+            0.3094136615400657
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 20400000000,
+          "world_revision": 156,
+          "yaw": -0.010731514085577468,
+          "yaw_rate": 0.0
+        },
+        "from": 1,
+        "time_s": 20.484,
+        "to": 2
+      },
+      {
+        "command": {
+          "acceleration": [
+            0.036621483945104054,
+            0.0020475569962996086,
+            0.0003253383187995945
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 3.729871646512446,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 3,
+          "jerk": [
+            4.478216760141184,
+            0.2505440132759809,
+            0.03974814812756064
+          ],
+          "localization_epoch": 12151364888883,
+          "position": [
+            0.6942041261287902,
+            -0.15177165337420256,
+            2.945710840303376
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 81,
+          "time_s": 21.124000000000002,
+          "time_to_backup_start_s": 3.713871646512446,
+          "trajectory_flag": 0,
+          "trajectory_generation": 3,
+          "trajectory_id": 81,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.016,
+          "vel_norm": 0.0,
+          "velocity": [
+            0.1371640727547835,
+            -0.010618885040171586,
+            0.03131064180919245
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 21000000000,
+          "world_revision": 162,
+          "yaw": 0.00532494335394899,
+          "yaw_rate": -6.459572693255061e-07
+        },
+        "from": 2,
+        "time_s": 21.124000000000002,
+        "to": 3
+      }
+    ],
+    "injected_failure_count": 1,
+    "planner_failure_count": 1,
+    "px4": {
+      "command_to_px4_position": {
+        "count": 120,
+        "max": 1.603210667668359,
+        "p50": 0.3273854774993482,
+        "p95": 1.326463383626187,
+        "p99": 1.5316062157372599,
+        "rms": 0.6456917943334726
+      },
+      "delta_a_px4": {
+        "count": 120,
+        "max": 12.632793180166777,
+        "p50": 5.179530605143537,
+        "p95": 12.23987907845898,
+        "p99": 12.627768644602497,
+        "rms": 6.6221545899661445
+      },
+      "delta_v_px4": {
+        "count": 120,
+        "max": 4.563907102432874,
+        "p50": 0.6679402447371459,
+        "p95": 3.944474541583639,
+        "p99": 4.403628507126926,
+        "rms": 1.6031789159535623
+      },
+      "frame_position_residual": {
+        "count": 120,
+        "max": 0.9096643678745467,
+        "p50": 0.4416414969449564,
+        "p95": 0.8031361024276285,
+        "p99": 0.8053697734995076,
+        "rms": 0.5376444172552333
+      },
+      "frame_velocity_residual": {
+        "count": 120,
+        "max": 2.47678693258201,
+        "p50": 0.6912812998479969,
+        "p95": 2.383551819987168,
+        "p99": 2.4752612710005963,
+        "rms": 1.1821412806542406
+      },
+      "sample_counts": {
+        "commands": 120,
+        "local_position": 1572,
+        "propagated_lio": 1550,
+        "setpoints": 1572
+      }
+    },
+    "recovery_states": {
+      "EMERGENCY_BRAKE": 40,
+      "TRACK_MAIN": 80
+    },
+    "route_boundary_event_count": 0,
+    "route_boundary_status": "NO_ROUTE_BOUNDARY_EVENT"
+  },
+  "run": "E05_single_hot_replan_failure_cycle5",
+  "runtime_reasons": [
+    "External Mode exited before mission completion",
+    "mission completion event was not observed",
+    "waypoint acceptance coverage incomplete: expected [0, 1, 2, 3, 4], got [0]",
+    "mission did not reach COMPLETE outcome: PAUSED_SAFETY_STOP"
+  ],
+  "runtime_verdict": "BLOCKED",
+  "schema_version": 1
+}

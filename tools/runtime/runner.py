@@ -16,7 +16,7 @@ import shlex
 import signal
 import socket
 import subprocess
-from shutil import which
+from shutil import copy2, which
 import sys
 import time
 from functools import wraps
@@ -115,6 +115,31 @@ MOTION_PRESETS = ("nominal", "slow", "fast")
 DEFAULT_ROS_DOMAIN_ID = 42
 DEFAULT_DATASET_ROS_DOMAIN_ID = 43
 DEFAULT_XRCE_PORT = 8892
+
+RUNTIME_EVIDENCE_TOPICS = (
+    "/clock",
+    "/lidar/points",
+    "/lidar/imu",
+    "/lio/odometry_corrected",
+    "/lio/odometry_propagated",
+    "/lio/diagnostics",
+    "/navigation/diagnostics",
+    "/navigation/navigation_command",
+    "/navigation/mode_status",
+    "/navigation/goal",
+    "/navigation/mission_complete",
+    "/fmu/in/trajectory_setpoint",
+    "/fmu/in/vehicle_visual_odometry",
+    "/fmu/out/vehicle_local_position_v1",
+    "/fmu/out/vehicle_local_position_setpoint",
+    "/fmu/out/vehicle_odometry",
+    "/fmu/out/vehicle_attitude",
+    "/fmu/out/vehicle_attitude_setpoint",
+    "/fmu/out/vehicle_thrust_setpoint",
+    "/fmu/out/actuator_motors",
+    "/fmu/out/vehicle_status_v1",
+    "/fmu/out/estimator_status",
+)
 
 
 class RuntimeBusyError(RuntimeError):
@@ -457,6 +482,20 @@ def _write_runtime(session: Session, **values: Any) -> None:
     path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _git(cwd: Path, *args: str) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            text=True,
+            capture_output=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip()
+
+
 def _capture_build_provenance(session: Session, px4_dir: Path | None = None) -> dict[str, Any]:
     evidence = validate_manifest(ROOT, ROOT / "install")
     if px4_dir is not None:
@@ -475,6 +514,93 @@ def _capture_build_provenance(session: Session, px4_dir: Path | None = None) -> 
         }
     _write_runtime(session, build_provenance=evidence)
     return evidence
+
+
+def _write_runtime_evidence_metadata(
+    session: Session,
+    *,
+    experiment_id: str,
+    map_profile: str,
+    mission_file: Path | None,
+    scenario_config_path: Path,
+    px4_dir: Path,
+    requested_cruise_speed_mps: float | None,
+    ros_domain_id: int,
+    xrce_port: int,
+) -> None:
+    """Write a self-contained run manifest without changing runtime policy."""
+    snapshot = session.directory / "config_snapshot"
+    snapshot.mkdir(parents=True, exist_ok=True)
+    sources = {
+        "sim.yaml": RUNTIME_CONFIG / "sim.yaml",
+        "mapping.yaml": RUNTIME_CONFIG / "mapping.yaml",
+        "external_mode.yaml": RUNTIME_CONFIG / "external_mode.yaml",
+        "scenario_config.yaml": scenario_config_path,
+        "planner.yaml": ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
+    }
+    if mission_file is not None:
+        sources["mission.yaml"] = mission_file
+    for name, source in sources.items():
+        if source.is_file():
+            copy2(source, snapshot / name)
+    px4_head = _git(px4_dir, "rev-parse", "HEAD")
+    px4_msgs_head = _git(ROOT / "src/external/px4_msgs", "rev-parse", "HEAD")
+    planner = _mission_planning(mission_file)
+    metadata = {
+        "schema_version": 1,
+        "experiment_id": experiment_id,
+        "run_id": session.directory.name,
+        "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "build_timestamp_ns": time.time_ns(),
+        "repo_commit": _git(ROOT, "rev-parse", "HEAD"),
+        "repo_dirty": bool(_git(ROOT, "status", "--porcelain")),
+        "px4_version": px4_head,
+        "px4_msgs_version": px4_msgs_head,
+        "ros_version": os.environ.get("ROS_DISTRO", "jazzy"),
+        "mission_file": str(mission_file.resolve()) if mission_file else None,
+        "planner_config": str((ROOT / "src/runtime/navigation_runtime/config/planner.yaml").resolve()),
+        "planner_rate_hz": 5.0,
+        "command_rate_hz": 50.0,
+        "replan_forward_s": 0.4,
+        "stitch_duration_s": 0.4,
+        "solve_deadline_s": 0.18,
+        "requested_cruise_speed_mps": requested_cruise_speed_mps,
+        "environment": {
+            "map_profile": map_profile,
+            "ros_domain_id": ros_domain_id,
+            "xrce_port": xrce_port,
+            "px4_dir": str(px4_dir.resolve()),
+        },
+        "mission_planning": planner,
+        "topics": list(RUNTIME_EVIDENCE_TOPICS),
+        "raw_evidence": {
+            "rosbag": str((session.directory / "rosbag").resolve()),
+            "monitor_samples": str((session.directory / "samples.jsonl").resolve()),
+            "scenario_events": str((session.directory / "scenario.jsonl").resolve()),
+        },
+        "instrumentation": {
+            "behavior_neutral": True,
+            "failure_injection_default": "off",
+        },
+    }
+    (session.directory / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _start_runtime_evidence_bag(session: Session) -> subprocess.Popen[Any]:
+    """Record the cross-layer evidence topics; the recorder is not an authority."""
+    bag_dir = session.directory / "rosbag"
+    # ros2 bag creates the output directory itself and refuses an existing
+    # directory, so leave this path absent until the recorder starts.
+    return session.start(
+        "rosbag",
+        _ros_shell([
+            "ros2", "bag", "record", "--storage", "sqlite3",
+            "--output", str(bag_dir), *RUNTIME_EVIDENCE_TOPICS,
+        ]),
+        cwd=ROOT,
+    )
 
 
 def _resolve_isolation_value(value: int | None, env_name: str, default: int, *, low: int, high: int) -> int:
@@ -963,6 +1089,8 @@ def _mapping_params(
     *,
     mission_file: Path | None = None,
     speed_cap_mps: float | None = None,
+    inject_failed_replan_cycle_id: int | None = None,
+    inject_failed_replan_once: bool = False,
 ) -> Path:
     """Create the only ROS parameter file used by native planner backend navigation."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -988,6 +1116,11 @@ def _mapping_params(
         # the controller and planner with different mission identities and
         # makes runtime provenance unable to prove which limits were active.
         planner_parameters["mission_file"] = str(mission_file.resolve())
+    if inject_failed_replan_cycle_id is not None:
+        if int(inject_failed_replan_cycle_id) <= 0:
+            raise ValueError("inject_failed_replan_cycle_id must be positive")
+        planner_parameters["inject_failed_replan_cycle_id"] = int(inject_failed_replan_cycle_id)
+        planner_parameters["inject_failed_replan_once"] = bool(inject_failed_replan_once)
     # The canonical planner profile owns map evidence production. Do not
     # silently disable sensor-origin raycasting here: BACKUP certification
     # requires KNOWN_FREE evidence, while MAIN unknown-space policy is applied
@@ -1537,6 +1670,9 @@ def _run_sim_unlocked(
     manual_takeoff: bool = False,
     speed_cap_mps: float | None = None,
     gazebo_native_diagnostic: bool = False,
+    experiment_id: str | None = None,
+    inject_failed_replan_cycle_id: int | None = None,
+    inject_failed_replan_once: bool = False,
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
@@ -1803,6 +1939,22 @@ def _run_sim_unlocked(
             "complete" if registry_outcome == "mission_complete" else registry_outcome
         )
     scenario_config_path.write_text(yaml.safe_dump(scenario_config, sort_keys=False), encoding="utf-8")
+    planning = _mission_planning(mission_file)
+    requested_cruise_speed_mps = (
+        float(planning["requested_cruise_speed_mps"])
+        if planning.get("requested_cruise_speed_mps") is not None else None
+    )
+    _write_runtime_evidence_metadata(
+        session,
+        experiment_id=experiment_id or map_profile,
+        map_profile=map_profile,
+        mission_file=mission_file,
+        scenario_config_path=scenario_config_path,
+        px4_dir=px4_dir,
+        requested_cruise_speed_mps=requested_cruise_speed_mps,
+        ros_domain_id=isolated_domain,
+        xrce_port=isolated_xrce_port,
+    )
     _write_runtime(
         session,
         workflow=workflow,
@@ -1822,7 +1974,14 @@ def _run_sim_unlocked(
     )
     prereq = _sim_prerequisites(px4_dir, gz_command)
     try:
-        _capture_build_provenance(session, px4_dir)
+        build_provenance = _capture_build_provenance(session, px4_dir)
+        metadata_path = session.directory / "metadata.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["build_timestamp_ns"] = build_provenance.get("validated_wall_ns")
+        metadata["build_provenance"] = build_provenance
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     except Exception as error:
         prereq.append(f"build provenance: {error}")
     if prereq:
@@ -1840,6 +1999,8 @@ def _run_sim_unlocked(
             # The mission file above already owns the resolved speed contract.
             # Do not create a second planner-only source of truth here.
             speed_cap_mps=None if mission_file is not None else speed_cap_mps,
+            inject_failed_replan_cycle_id=inject_failed_replan_cycle_id,
+            inject_failed_replan_once=inject_failed_replan_once,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
@@ -1911,6 +2072,7 @@ def _run_sim_unlocked(
             "-p", "input_topic:=/sim/mid360/scan/points",
             "-p", "ros_topic:=/lidar/points",
         ], enable_rviz=not headless), cwd=ROOT)
+        _start_runtime_evidence_bag(session)
         session.start("visibility_bridge", _ros_shell([
             "ros2", "run", "uav_simulation", "gz_visibility_bridge", "--ros-args",
             "-p", "input_topic:=/lidar/points",
@@ -2428,6 +2590,18 @@ def main() -> int:
         "--gazebo-native-diagnostic", action="store_true",
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
+    external_mode.add_argument(
+        "--experiment-id", default=None,
+        help="evidence experiment label stored in metadata.json",
+    )
+    external_mode.add_argument(
+        "--inject-failed-replan-cycle-id", type=int, default=None,
+        help="diagnostic-only one-shot hot-replan failure cycle; off by default",
+    )
+    external_mode.add_argument(
+        "--inject-failed-replan-once", action="store_true",
+        help="enable the diagnostic-only one-shot failure hook",
+    )
     sub.add_parser("sim")
     external_mode_gui = sub.add_parser(
         "external-mode-gui",
@@ -2480,6 +2654,18 @@ def main() -> int:
         "--manual-takeoff", action="store_true",
         help="do not send ARM/TAKEOFF; wait for the operator before activating External Mode",
     )
+    external_mode_gui.add_argument(
+        "--experiment-id", default=None,
+        help="evidence experiment label stored in metadata.json",
+    )
+    external_mode_gui.add_argument(
+        "--inject-failed-replan-cycle-id", type=int, default=None,
+        help="diagnostic-only one-shot hot-replan failure cycle; off by default",
+    )
+    external_mode_gui.add_argument(
+        "--inject-failed-replan-once", action="store_true",
+        help="enable the diagnostic-only one-shot failure hook",
+    )
     sub.add_parser("status")
     sub.add_parser("stop")
     sub.add_parser("clean")
@@ -2509,6 +2695,9 @@ def main() -> int:
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
+            experiment_id=args.experiment_id,
+            inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
+            inject_failed_replan_once=args.inject_failed_replan_once,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -2527,6 +2716,9 @@ def main() -> int:
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
+            experiment_id=args.experiment_id,
+            inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
+            inject_failed_replan_once=args.inject_failed_replan_once,
         )
     if args.command == "status":
         return status()

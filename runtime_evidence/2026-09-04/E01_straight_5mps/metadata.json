@@ -1,0 +1,63 @@
+{
+  "build_timestamp_ns": 1788513435323575435,
+  "command_rate_hz": 50.0,
+  "created_at_utc": "2026-09-04T09:17:15Z",
+  "environment": {
+    "map_profile": "open",
+    "px4_dir": "/home/letandat/Dev/Autopilot",
+    "ros_domain_id": 42,
+    "xrce_port": 8892
+  },
+  "experiment_id": "E01_straight_5mps",
+  "instrumentation": {
+    "behavior_neutral": true,
+    "failure_injection_default": "off"
+  },
+  "mission_file": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091715-43792/resolved_mission.yaml",
+  "mission_planning": {
+    "requested_cruise_speed_mps": 5.0,
+    "unknown_policy": "allow_unknown"
+  },
+  "planner_config": "/home/letandat/Dev/uav-navigation/src/runtime/navigation_runtime/config/planner.yaml",
+  "planner_rate_hz": 5.0,
+  "px4_msgs_version": "86d8239e962f6939e05c3737784f60c02fa884db",
+  "px4_version": "deaff86ee335dd697677bcfc2415a23878e1b895",
+  "raw_evidence": {
+    "monitor_samples": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091715-43792/samples.jsonl",
+    "rosbag": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091715-43792/rosbag",
+    "scenario_events": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091715-43792/scenario.jsonl"
+  },
+  "replan_forward_s": 0.4,
+  "repo_commit": "37e8dc7f9967990ef4c1401475e0d15abef14360",
+  "repo_dirty": true,
+  "requested_cruise_speed_mps": 5.0,
+  "ros_version": "jazzy",
+  "run_id": "external-mode-check-20260904T091715-43792",
+  "schema_version": 1,
+  "solve_deadline_s": 0.18,
+  "stitch_duration_s": 0.4,
+  "topics": [
+    "/clock",
+    "/lidar/points",
+    "/lidar/imu",
+    "/lio/odometry_corrected",
+    "/lio/odometry_propagated",
+    "/lio/diagnostics",
+    "/navigation/diagnostics",
+    "/navigation/navigation_command",
+    "/navigation/mode_status",
+    "/navigation/goal",
+    "/navigation/mission_complete",
+    "/fmu/in/trajectory_setpoint",
+    "/fmu/in/vehicle_visual_odometry",
+    "/fmu/out/vehicle_local_position_v1",
+    "/fmu/out/vehicle_local_position_setpoint",
+    "/fmu/out/vehicle_odometry",
+    "/fmu/out/vehicle_attitude",
+    "/fmu/out/vehicle_attitude_setpoint",
+    "/fmu/out/vehicle_thrust_setpoint",
+    "/fmu/out/actuator_motors",
+    "/fmu/out/vehicle_status_v1",
+    "/fmu/out/estimator_status"
+  ]
+}

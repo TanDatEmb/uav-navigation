@@ -1,0 +1,116 @@
+scenario:
+  execution: mission
+  mission_file: /home/letandat/.codex/runtime/external-mode-check-20260904T092309-51391/resolved_mission.yaml
+  mission_waypoint_count: 5
+  pillar_waypoint_index: -1
+  wall_timeout_s: 360.0
+  activation_timeout_s: 30.0
+  takeoff_altitude_m: 3.0
+  takeoff_timeout_s: 220.0
+  takeoff_stable_s: 2.0
+  takeoff_stable_speed_mps: 0.15
+  takeoff_mode_settle_s: 1.0
+  pre_activation_odometry_max_age_s: 0.1
+  pre_activation_odometry_stable_s: 1.0
+  mission_timeout_s: 127.0
+  trajectory_publish_period_s: 0.5
+  command_retry_period_s: 1.0
+  arm_retry_period_s: 5.0
+  hold_handover_timeout_s: 5.0
+  manual_takeoff: false
+  planning_frame: lio_odom
+  pillar_center_enu:
+  - -4.5
+  - 2.5
+  - 3.0
+  pillar_radius_m: 0.55
+  pillar_clearance_m: 0.8
+  minimum_collision_clearance_m: 0.1
+  map_profile: open
+  map_scene: legacy
+  test_case: positive
+  motion_preset: nominal
+  interactive_handover: false
+  vehicle_collision_radius_m: 0.35
+  collision_obstacles:
+  - name: open_wall_east
+    type: box
+    center:
+    - 10.0
+    - 0.0
+    - 2.5
+    half_extents:
+    - 0.125
+    - 10.0
+    - 2.5
+  - name: open_wall_north
+    type: box
+    center:
+    - 0.0
+    - 10.0
+    - 2.5
+    half_extents:
+    - 10.0
+    - 0.125
+    - 2.5
+  map_seed: 0
+  require_map_observability: false
+  allow_initial_pass_through_skip: true
+  expected_max_velocity_mps: 3.0
+  route_obstacles: []
+  route_segment_waypoints: []
+  map_descriptor: /home/letandat/.codex/runtime/external-mode-check-20260904T092309-51391/map_descriptor.json
+  expected_outcome: complete
+runtime:
+  monitor_queue_depth: 100
+  thresholds:
+    minimum_rate_fraction: 0.9
+    maximum_synchronization_tolerance_ms: 20.0
+    stale_after_s: 1.0
+    replay_tail_grace_s: 0.5
+  streams:
+    simulation_clock:
+      expected_hz: 100.0
+      stale_after_s: 0.5
+    imu:
+      expected_hz: 200.0
+      stale_after_s: 0.1
+    lidar:
+      expected_hz: 10.0
+      stale_after_s: 0.5
+    corrected_odometry:
+      expected_hz: 10.0
+      stale_after_s: 1.0
+    propagated_odometry:
+      expected_hz: 50.0
+      stale_after_s: 0.5
+    mapping_diagnostics:
+      expected_hz: 2.0
+      stale_after_s: 2.0
+    external_odometry:
+      expected_hz: 50.0
+      stale_after_s: 0.2
+    ground_truth_odometry:
+      expected_hz: 50.0
+      stale_after_s: 0.5
+    px4_odometry:
+      expected_hz: 30.0
+      stale_after_s: 1.0
+    vehicle_status:
+      expected_hz: 10.0
+      stale_after_s: 1.0
+    local_position:
+      expected_hz: 30.0
+      stale_after_s: 1.0
+    estimator_status_flags:
+      expected_hz: 1.0
+      stale_after_s: 2.5
+  timeouts:
+    startup_s: 90
+    lio_tracking_s: 90
+    external_odometry_s: 45
+    mapping_ready_s: 180
+    replay_s: 900
+    drain_s: 120
+    post_flight_monitor_s: 5
+_path: /home/letandat/Dev/uav-navigation/config/runtime/external_mode_scenario.yaml

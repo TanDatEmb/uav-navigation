@@ -478,6 +478,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.stopped_recovery_timeout_s", 5.0);
   const auto max_plan_from_rest_failures = declare_parameter(
       "navigation_runtime.max_plan_from_rest_failures", std::int64_t{3});
+  const auto inject_failed_replan_cycle_id = declare_parameter(
+      "navigation_runtime.inject_failed_replan_cycle_id", std::int64_t{0});
+  inject_failed_replan_cycle_id_ = inject_failed_replan_cycle_id > 0
+      ? static_cast<std::uint64_t>(inject_failed_replan_cycle_id) : 0U;
+  inject_failed_replan_once_ = declare_parameter(
+      "navigation_runtime.inject_failed_replan_once", false);
   planner_config_path_ = declare_parameter("navigation_runtime.config_path", std::string{});
   const auto mission_file =
       declare_parameter("navigation_runtime.mission_file", std::string{});
@@ -3620,6 +3626,25 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     planning_outcome.failure_reason =
         navigation_planning::PlanningFailureReason::kInvalidInput;
   }
+  // Test/debug-only observability hook. It is deliberately applied after the
+  // real planner call and before admission, so the old committed bundle is
+  // still available to the normal retained-command path. With the default
+  // cycle id of zero this branch is unreachable in product operation.
+  const bool injected_replan_failure = inject_failed_replan_once_ &&
+      inject_failed_replan_cycle_id_ != 0U &&
+      cycle_count_ == inject_failed_replan_cycle_id_ &&
+      !plan_from_rest_with_transition;
+  if (injected_replan_failure) {
+    inject_failed_replan_once_ = false;
+    result = navigation_planning::PlannerStatus::kFailed;
+    planning_outcome.outcome =
+        navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+    planning_outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
+    planning_outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
+    RCLCPP_WARN(get_logger(),
+                "diagnostic injection converted planning cycle=%lu to one failed replan",
+                static_cast<unsigned long>(cycle_count_));
+  }
   last_planning_outcome_.store(static_cast<int>(planning_outcome.outcome),
                                std::memory_order_release);
   last_planning_failure_stage_.store(
@@ -4491,6 +4516,32 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     add_bundle_identity("pending_execution", timeline_trace.pending);
     add_trace_value("active_execution_timeline_version", timeline_trace.version);
     add_trace_value("pending_activation_ns", timeline_trace.pending_activation_ns);
+    const auto& active_bundle = timeline_trace.active;
+    const bool route_boundary_event_present = active_bundle &&
+        active_bundle->route_boundary_event.has_value();
+    add_trace_value("route_boundary_event_present", route_boundary_event_present ? 1 : 0);
+    if (route_boundary_event_present) {
+      const auto& boundary = *active_bundle->route_boundary_event;
+      add_trace_value("route_boundary_stamp_ns", boundary.boundary_stamp_ns);
+      add_trace_value("route_boundary_kind", static_cast<int>(boundary.kind));
+      add_trace_value("route_boundary_constraint_valid",
+                      active_bundle->route_boundary_constraint.has_value() &&
+                          active_bundle->route_boundary_constraint->valid() ? 1 : 0);
+      const auto boundary_sample = active_bundle->sampleAtDeclaredStamp(
+          boundary.boundary_stamp_ns);
+      add_trace_value("boundary_command_speed_mps",
+                      boundary_sample ? boundary_sample->velocity_world.norm() : 0.0);
+      add_trace_value("boundary_remaining_main_horizon_s",
+                      boundary_sample
+                          ? std::max(0.0, active_bundle->duration_s -
+                                boundary_sample->trajectory_time_s)
+                          : 0.0);
+      add_trace_value("terminal_velocity_mps",
+                      active_bundle->terminal_stop
+                          ? active_bundle->sampleAtDeclaredStamp(active_bundle->declared_end_ns)
+                                .value_or(navigation_planning::TrajectoryPoint{}).velocity_world.norm()
+                          : 0.0);
+    }
     add_trace_value("planning_outcome",
                     last_planning_outcome_.load(std::memory_order_acquire));
     add_trace_value("planning_failure_stage",
@@ -4500,6 +4551,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     add_trace_value("planning_cycle_id", cycle_count_);
     add_trace_value("bundle_id", committed_generation);
     add_trace_value("solve_generation", solve_generation);
+    add_trace_value("injected_replan_failure", injected_replan_failure ? 1 : 0);
     add_trace_value("commit_observed_this_cycle", commit_observed_this_cycle ? 1 : 0);
     add_trace_value("execution_stamp_ns", execution_stamp_ns);
     add_trace_value("state_age_at_solve_ms",
@@ -5362,6 +5414,17 @@ void NavigationRuntimeNode::publishCommand() {
   }
   command.sample_id = *command_id;
   command.trajectory_time_s = trajectory_time_s;
+  command.analytic_sample_role = sampled_command_valid
+      ? static_cast<std::uint8_t>(sampled_role)
+      : navigation_contracts::msg::NavigationCommand::ANALYTIC_ROLE_UNKNOWN;
+  command.backup_available = sampled_bundle && sampled_bundle->backup_available;
+  command.backup_start_time_s = command.backup_available
+      ? sampled_bundle->backup_start_time_s : 0.0;
+  command.time_to_backup_start_s = command.backup_available
+      ? sampled_bundle->backup_start_time_s - trajectory_time_s : 0.0;
+  command.safety_suffix_active = safety_suffix_active;
+  command.execution_recovery_state = static_cast<std::uint8_t>(
+      execution_recovery_state_.load(std::memory_order_acquire));
   command.state_source_stamp = execution_state
       ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(
           builtin_interfaces::msg::Time{})

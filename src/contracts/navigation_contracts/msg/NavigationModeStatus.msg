@@ -18,6 +18,20 @@ uint8 ODOMETRY_STALE=3
 uint8 TRAJECTORY_INVALID=4
 uint8 reason
 
+# Diagnostic-only External Mode state classification. This is a published
+# state label; it does not alter mode transitions or PX4 handover behavior.
+uint8 TRACK_TRAJECTORY=0
+uint8 WAIT_AIRBORNE=1
+uint8 WAIT_HEALTH=2
+uint8 WAIT_FIRST_COMMAND=3
+uint8 MISSION_HOLD=4
+uint8 COMPLETED_HOLD=5
+uint8 RECOVERY_HOLD=6
+uint8 FAILSAFE_HOLD=7
+uint8 HANDOVER_HOLD=8
+uint8 external_mode_state
+string external_mode_reason
+
 # Explicit waypoint acceptance evidence.  A rolling horizon completion or a
 # goal publication is not itself waypoint acceptance; these fields are set
 # only when MissionController has measured the vehicle inside the acceptance

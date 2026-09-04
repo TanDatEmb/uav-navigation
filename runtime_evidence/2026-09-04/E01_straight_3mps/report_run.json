@@ -1,0 +1,689 @@
+{
+  "critical_events": [
+    {
+      "candidate_result": 4,
+      "injected": 0,
+      "time_s": 26.928,
+      "type": "planner_failure"
+    },
+    {
+      "candidate_result": 4,
+      "injected": 0,
+      "time_s": 30.612000000000002,
+      "type": "planner_failure"
+    }
+  ],
+  "data_quality": {
+    "commands": 533,
+    "missing": [],
+    "monitor_samples": 46242,
+    "planner_traces": 815,
+    "rosbag_present": false,
+    "scenario_records": 2406
+  },
+  "figures": [
+    "runtime_evidence/2026-09-04/E01_straight_3mps/figures/plot_A_velocity_continuity.png",
+    "runtime_evidence/2026-09-04/E01_straight_3mps/figures/plot_B_command_roles.png",
+    "runtime_evidence/2026-09-04/E01_straight_3mps/figures/plot_C_pass_through_handoff.png",
+    "runtime_evidence/2026-09-04/E01_straight_3mps/figures/plot_D_planner_px4_velocity.png",
+    "runtime_evidence/2026-09-04/E01_straight_3mps/figures/plot_E_planner_px4_acceleration.png",
+    "runtime_evidence/2026-09-04/E01_straight_3mps/figures/plot_F_frame_residual.png",
+    "runtime_evidence/2026-09-04/E01_straight_3mps/figures/plot_G_optimizer_timing.png"
+  ],
+  "hypotheses": {
+    "H1_splice_continuity": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H2_replanning_timing": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H3_pass_through_continuation": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H4_failed_replan_safety_takeover": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H5_corner_overconstraint": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    },
+    "H6_px4_controller_mismatch": {
+      "evidence": [],
+      "status": "INCONCLUSIVE"
+    }
+  },
+  "metadata": {
+    "build_timestamp_ns": 1788513150288427046,
+    "command_rate_hz": 50.0,
+    "created_at_utc": "2026-09-04T09:12:30Z",
+    "environment": {
+      "map_profile": "open",
+      "px4_dir": "/home/letandat/Dev/Autopilot",
+      "ros_domain_id": 42,
+      "xrce_port": 8892
+    },
+    "experiment_id": "E01_straight_3mps",
+    "instrumentation": {
+      "behavior_neutral": true,
+      "failure_injection_default": "off"
+    },
+    "mission_file": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091230-38933/resolved_mission.yaml",
+    "mission_planning": {
+      "requested_cruise_speed_mps": 3.0,
+      "unknown_policy": "allow_unknown"
+    },
+    "planner_config": "/home/letandat/Dev/uav-navigation/src/runtime/navigation_runtime/config/planner.yaml",
+    "planner_rate_hz": 5.0,
+    "px4_msgs_version": "86d8239e962f6939e05c3737784f60c02fa884db",
+    "px4_version": "deaff86ee335dd697677bcfc2415a23878e1b895",
+    "raw_evidence": {
+      "monitor_samples": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091230-38933/samples.jsonl",
+      "rosbag": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091230-38933/rosbag",
+      "scenario_events": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T091230-38933/scenario.jsonl"
+    },
+    "replan_forward_s": 0.4,
+    "repo_commit": "37e8dc7f9967990ef4c1401475e0d15abef14360",
+    "repo_dirty": true,
+    "requested_cruise_speed_mps": 3.0,
+    "ros_version": "jazzy",
+    "run_id": "external-mode-check-20260904T091230-38933",
+    "schema_version": 1,
+    "solve_deadline_s": 0.18,
+    "stitch_duration_s": 0.4,
+    "topics": [
+      "/clock",
+      "/lidar/points",
+      "/lidar/imu",
+      "/lio/odometry_corrected",
+      "/lio/odometry_propagated",
+      "/lio/diagnostics",
+      "/navigation/diagnostics",
+      "/navigation/navigation_command",
+      "/navigation/mode_status",
+      "/navigation/goal",
+      "/navigation/mission_complete",
+      "/fmu/in/trajectory_setpoint",
+      "/fmu/in/vehicle_visual_odometry",
+      "/fmu/out/vehicle_local_position_v1",
+      "/fmu/out/vehicle_local_position_setpoint",
+      "/fmu/out/vehicle_odometry",
+      "/fmu/out/vehicle_attitude",
+      "/fmu/out/vehicle_attitude_setpoint",
+      "/fmu/out/vehicle_thrust_setpoint",
+      "/fmu/out/actuator_motors",
+      "/fmu/out/vehicle_status_v1",
+      "/fmu/out/estimator_status"
+    ]
+  },
+  "metrics": {
+    "analytic_splice_residuals": {
+      "splice_acceleration_residual_mps2": {
+        "count": 1,
+        "max": 2.803511,
+        "p50": 2.803511,
+        "p95": 2.803511,
+        "p99": 2.803511,
+        "rms": 2.803511
+      },
+      "splice_jerk_residual_mps3": {
+        "count": 1,
+        "max": 14.718913,
+        "p50": 14.718913,
+        "p95": 14.718913,
+        "p99": 14.718913,
+        "rms": 14.718913
+      },
+      "splice_position_residual_m": {
+        "count": 1,
+        "max": 0.516874,
+        "p50": 0.516874,
+        "p95": 0.516874,
+        "p99": 0.516874,
+        "rms": 0.516874
+      },
+      "splice_velocity_residual_mps": {
+        "count": 1,
+        "max": 1.773546,
+        "p50": 1.773546,
+        "p95": 1.773546,
+        "p99": 1.773546,
+        "rms": 1.773546
+      },
+      "splice_yaw_rate_residual_radps": {
+        "count": 1,
+        "max": -0.0,
+        "p50": -0.0,
+        "p95": -0.0,
+        "p99": -0.0,
+        "rms": 0.0
+      },
+      "splice_yaw_residual_rad": {
+        "count": 1,
+        "max": -0.013686,
+        "p50": -0.013686,
+        "p95": -0.013686,
+        "p99": -0.013686,
+        "rms": 0.013686
+      }
+    },
+    "command_roles": {
+      "BACKUP": 52,
+      "EMERGENCY": 44,
+      "MAIN": 436,
+      "UNKNOWN": 1
+    },
+    "commit_count": 1,
+    "failure_timelines": [
+      {
+        "analytic_role_after_failure": "EMERGENCY",
+        "analytic_role_before_failure": "EMERGENCY",
+        "failure_time_s": 26.928,
+        "later_nominal_retry_observed": false,
+        "premature_safety_takeover_before_backup": false,
+        "recovery_state_after": "EMERGENCY_BRAKE",
+        "recovery_state_before": "EMERGENCY_BRAKE",
+        "role_after_failure": "EMERGENCY",
+        "role_before_failure": "EMERGENCY",
+        "safety_suffix_after": true,
+        "safety_suffix_before": true,
+        "time_to_backup_start_s_before_failure": -0.016
+      },
+      {
+        "analytic_role_after_failure": "MAIN",
+        "analytic_role_before_failure": "MAIN",
+        "failure_time_s": 30.612000000000002,
+        "later_nominal_retry_observed": false,
+        "premature_safety_takeover_before_backup": false,
+        "recovery_state_after": "TRACK_BACKUP",
+        "recovery_state_before": "TRACK_MAIN",
+        "role_after_failure": "MAIN",
+        "role_before_failure": "MAIN",
+        "safety_suffix_after": false,
+        "safety_suffix_before": false,
+        "time_to_backup_start_s_before_failure": 0.9600539211773867
+      }
+    ],
+    "generation_transitions": [
+      {
+        "command": {
+          "acceleration": [
+            0.002303947336637959,
+            0.00532304859514487,
+            0.0005245731734534263
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 7.421289667836152,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 2,
+          "jerk": [
+            0.28150494608244125,
+            0.6494891450780551,
+            0.063953076004086
+          ],
+          "localization_epoch": 11598806111765,
+          "position": [
+            -0.21534985462775172,
+            -0.23436935267184839,
+            2.899243920033231
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 1,
+          "time_s": 23.904,
+          "time_to_backup_start_s": 7.405289667836152,
+          "trajectory_flag": 0,
+          "trajectory_generation": 1,
+          "trajectory_id": 1,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.016,
+          "vel_norm": 0.0,
+          "velocity": [
+            0.01289678842916668,
+            0.019882085413683134,
+            0.07411035127598305
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 23800000000,
+          "world_revision": 204,
+          "yaw": -0.0015288293155319378,
+          "yaw_rate": 0.0
+        },
+        "from": null,
+        "time_s": 23.904,
+        "to": 1
+      },
+      {
+        "command": {
+          "acceleration": [
+            0.35582388522493535,
+            0.46535962609265635,
+            0.025418958289015955
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 2.758532918249237,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 3,
+          "jerk": [
+            -0.5483106231313228,
+            -2.788842266379259,
+            -0.36142470858187126
+          ],
+          "localization_epoch": 11598806111765,
+          "position": [
+            -0.18108076783054736,
+            -0.16727973406141353,
+            2.9447198612050745
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 35,
+          "time_s": 24.424000000000003,
+          "time_to_backup_start_s": 2.758532918249237,
+          "trajectory_flag": 0,
+          "trajectory_generation": 2,
+          "trajectory_id": 35,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.0,
+          "vel_norm": 0.0,
+          "velocity": [
+            0.15240636145848557,
+            0.28627362321555,
+            0.09714601700236922
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 24300000000,
+          "world_revision": 209,
+          "yaw": -0.0015288293155319378,
+          "yaw_rate": 0.0
+        },
+        "from": 1,
+        "time_s": 24.424000000000003,
+        "to": 2
+      },
+      {
+        "command": {
+          "acceleration": [
+            1.8448297553387913,
+            -0.37603947589091646,
+            -0.08176447579050727
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 1.6562544319248225,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 3,
+          "jerk": [
+            -7.2992993660972445,
+            0.5156671263779384,
+            0.24377586909000426
+          ],
+          "localization_epoch": 11598806111765,
+          "position": [
+            0.988427269406953,
+            0.05821793903753767,
+            3.0030980078965506
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 95,
+          "time_s": 25.408,
+          "time_to_backup_start_s": 1.6562544319248225,
+          "trajectory_flag": 0,
+          "trajectory_generation": 3,
+          "trajectory_id": 95,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.0,
+          "vel_norm": 0.0,
+          "velocity": [
+            2.6546197977508967,
+            0.057672436655440834,
+            0.006345908989557128
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 25300000000,
+          "world_revision": 219,
+          "yaw": -0.0012136395596669312,
+          "yaw_rate": 0.0007745772018097341
+        },
+        "from": 2,
+        "time_s": 25.408,
+        "to": 3
+      },
+      {
+        "command": {
+          "acceleration": [
+            -0.021998179083423608,
+            -0.1096539124585037,
+            0.010523199783347927
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 2.5480051168619315,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 3,
+          "jerk": [
+            -0.19055349500534957,
+            0.5085184066750552,
+            0.07896936566914618
+          ],
+          "localization_epoch": 11598806111765,
+          "position": [
+            2.366919363842708,
+            0.05281798502379002,
+            3.001085851618987
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 125,
+          "time_s": 25.888,
+          "time_to_backup_start_s": 2.5480051168619315,
+          "trajectory_flag": 0,
+          "trajectory_generation": 4,
+          "trajectory_id": 125,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.0,
+          "vel_norm": 0.0,
+          "velocity": [
+            2.9390006973651612,
+            -0.05853413953319115,
+            -0.007117748899728273
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 25800000000,
+          "world_revision": 224,
+          "yaw": -0.0008061110504140287,
+          "yaw_rate": 0.0009474554681219161
+        },
+        "from": 3,
+        "time_s": 25.888,
+        "to": 4
+      },
+      {
+        "command": {
+          "acceleration": [
+            -5.855303670057793,
+            0.05638460429212295,
+            0.011127007699050282
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 1.9044119728647575,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 4,
+          "jerk": [
+            -6.740680333860812,
+            0.19553400563532258,
+            -0.036287446354757204
+          ],
+          "localization_epoch": 11598806111765,
+          "position": [
+            3.5827104027113457,
+            0.019914689102441065,
+            2.9994535840849474
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 155,
+          "time_s": 26.368000000000002,
+          "time_to_backup_start_s": 1.9044119728647575,
+          "trajectory_flag": 0,
+          "trajectory_generation": 5,
+          "trajectory_id": 155,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.0,
+          "vel_norm": 0.0,
+          "velocity": [
+            1.593953616246612,
+            -0.0653262105016234,
+            0.0002112248689065164
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 26300000000,
+          "world_revision": 229,
+          "yaw": -0.000384122784464282,
+          "yaw_rate": 0.0007575757335871458
+        },
+        "from": 4,
+        "time_s": 26.368000000000002,
+        "to": 5
+      },
+      {
+        "command": {
+          "acceleration": [
+            1.4780791565418128,
+            0.08290358303895136,
+            -0.0037680000720831707
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 1.4492625391707026,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 4,
+          "jerk": [
+            18.256207615672,
+            -0.03786899607202816,
+            -0.01318261466137777
+          ],
+          "localization_epoch": 11598806111765,
+          "position": [
+            3.834453220826904,
+            -0.002837241533351741,
+            3.0001539926905205
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 185,
+          "time_s": 26.844,
+          "time_to_backup_start_s": 1.4492625391707026,
+          "trajectory_flag": 0,
+          "trajectory_generation": 6,
+          "trajectory_id": 185,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.0,
+          "vel_norm": 0.0,
+          "velocity": [
+            0.11437382717495395,
+            -0.027531742128341925,
+            0.0014679324821655908
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 26700000000,
+          "world_revision": 233,
+          "yaw": -7.171369902867e-05,
+          "yaw_rate": 0.00047132198233157396
+        },
+        "from": 5,
+        "time_s": 26.844,
+        "to": 6
+      },
+      {
+        "command": {
+          "acceleration": [
+            0.027826666339871638,
+            -0.0025024890925505233,
+            0.07741753444869504
+          ],
+          "analytic_sample_role": 2,
+          "backup_available": true,
+          "backup_start_time_s": 0.0,
+          "executable": true,
+          "execution_recovery_state": 3,
+          "goal_epoch": 4,
+          "jerk": [
+            3.3980646764180613,
+            -0.3055924732289239,
+            9.265116060994037
+          ],
+          "localization_epoch": 11598806111765,
+          "position": [
+            4.323048373874248,
+            -0.1357123774862119,
+            3.057513141202178
+          ],
+          "safety_suffix_active": true,
+          "sample_id": 191,
+          "time_s": 26.92,
+          "time_to_backup_start_s": -0.016,
+          "trajectory_flag": 2,
+          "trajectory_generation": 7,
+          "trajectory_id": 191,
+          "trajectory_status": 2,
+          "trajectory_time_s": 0.016,
+          "vel_norm": 0.0,
+          "velocity": [
+            -1.3534089998651915,
+            0.12171387037725837,
+            -0.6558199194757034
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 26800000000,
+          "world_revision": 234,
+          "yaw": -0.013712680074303657,
+          "yaw_rate": 0.0004591476989946296
+        },
+        "from": 6,
+        "time_s": 26.92,
+        "to": 7
+      },
+      {
+        "command": {
+          "acceleration": [
+            0.013436628209414422,
+            0.0017505628589403518,
+            0.0003472421636954109
+          ],
+          "analytic_sample_role": 0,
+          "backup_available": true,
+          "backup_start_time_s": 1.6000539211773868,
+          "executable": true,
+          "execution_recovery_state": 1,
+          "goal_epoch": 4,
+          "jerk": [
+            1.6522751995420524,
+            0.21499003222009125,
+            0.042598434837404324
+          ],
+          "localization_epoch": 11598806111765,
+          "position": [
+            3.489347560801146,
+            -0.14524347956005743,
+            2.875001932837041
+          ],
+          "safety_suffix_active": false,
+          "sample_id": 381,
+          "time_s": 29.984,
+          "time_to_backup_start_s": 1.5840539211773867,
+          "trajectory_flag": 0,
+          "trajectory_generation": 8,
+          "trajectory_id": 381,
+          "trajectory_status": 1,
+          "trajectory_time_s": 0.016,
+          "vel_norm": 0.0,
+          "velocity": [
+            -0.05709479851314098,
+            -0.04257667111682171,
+            0.07490295154892371
+          ],
+          "world_generation": 2,
+          "world_observation_stamp_ns": 29900000000,
+          "world_revision": 264,
+          "yaw": 0.01066748668367526,
+          "yaw_rate": -1.2818400259232329e-05
+        },
+        "from": 7,
+        "time_s": 29.984,
+        "to": 8
+      }
+    ],
+    "injected_failure_count": 0,
+    "planner_failure_count": 2,
+    "px4": {
+      "command_to_px4_position": {
+        "count": 533,
+        "max": 11.634066204653367,
+        "p50": 5.3395155572941855,
+        "p95": 10.537683600682177,
+        "p99": 11.4257549848104,
+        "rms": 5.693357045124322
+      },
+      "delta_a_px4": {
+        "count": 533,
+        "max": 12.131283571676503,
+        "p50": 2.3918360960294325,
+        "p95": 8.217770290007032,
+        "p99": 11.819921053413882,
+        "rms": 4.329245376689424
+      },
+      "delta_v_px4": {
+        "count": 533,
+        "max": 4.652268365586931,
+        "p50": 0.9276024929599533,
+        "p95": 4.436380755187207,
+        "p99": 4.6109831788739175,
+        "rms": 2.4152003823623187
+      },
+      "frame_position_residual": {
+        "count": 533,
+        "max": 12.340317951255841,
+        "p50": 5.151310254727087,
+        "p95": 10.608110727504194,
+        "p99": 11.995248689137558,
+        "rms": 5.646840395098122
+      },
+      "frame_velocity_residual": {
+        "count": 533,
+        "max": 5.604679002607297,
+        "p50": 1.3438944420855086,
+        "p95": 5.252022691653141,
+        "p99": 5.57576780183874,
+        "rms": 2.7534254109188265
+      },
+      "sample_counts": {
+        "commands": 533,
+        "local_position": 2675,
+        "propagated_lio": 2346,
+        "setpoints": 2675
+      }
+    },
+    "recovery_states": {
+      "EMERGENCY_BRAKE": 190,
+      "TRACK_BACKUP": 100,
+      "TRACK_MAIN": 243
+    },
+    "route_boundary_event_count": 0,
+    "route_boundary_status": "NO_ROUTE_BOUNDARY_EVENT"
+  },
+  "run": "E01_straight_3mps",
+  "runtime_reasons": [
+    "runtime did not capture a validated authoritative Release build manifest",
+    "simulation_clock timestamp/freshness/validity violation",
+    "imu timestamp/freshness/validity violation",
+    "lidar timestamp/freshness/validity violation",
+    "corrected_odometry timestamp/freshness/validity violation",
+    "propagated_odometry timestamp/freshness/validity violation",
+    "ground_truth_odometry timestamp/freshness/validity violation",
+    "external_odometry timestamp/freshness/validity violation",
+    "px4_odometry timestamp/freshness/validity violation",
+    "local_position timestamp/freshness/validity violation",
+    "estimator_status_flags timestamp/freshness/validity violation",
+    "scenario interrupted",
+    "PX4 reported failsafe during External Mode acceptance",
+    "LOCALIZATION_DIVERGENCE watchdog terminated the mission",
+    "mission completion event was not observed",
+    "waypoint acceptance coverage incomplete: expected [0, 1, 2, 3, 4], got [0, 1, 2, 3]",
+    "LIO position residual exceeded 0.5 m watchdog",
+    "ground-truth vehicle clearance fell below configured safety margin",
+    "ground-truth vehicle collision envelope was breached",
+    "unexpected terminal outcome: INTERRUPTED",
+    "tracking cross-track p95 exceeded 0.500 m (observed 296.032 m)",
+    "mission did not reach COMPLETE outcome: INTERRUPTED"
+  ],
+  "runtime_verdict": "FAIL",
+  "schema_version": 1
+}
