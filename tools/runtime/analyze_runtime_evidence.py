@@ -462,17 +462,24 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
             figures.append(str(temporal_path))
     temporal_rows = read_csv(input_dir / "e5_temporal_alignment.csv")
     h7_status, h7_evidence, h7_metrics = temporal_alignment_metrics(temporal_rows)
+    root_cause = read_json(input_dir / "e5_tracking_root_cause.json", {})
     bag_files = list((input_dir / "rosbag").glob("*.db3")) if (input_dir / "rosbag").is_dir() else []
     quality = {"scenario_records": len(scenario), "monitor_samples": len(samples), "planner_traces": len(traces),
                "commands": len(cmds), "rosbag_present": bool(bag_files),
                "missing": [name for name, count in (("scenario.jsonl", len(scenario)), ("samples.jsonl", len(samples))) if count == 0]}
-    hypothesis_keys = ("H1_splice_continuity", "H2_replanning_timing", "H3_pass_through_continuation", "H4_failed_replan_safety_takeover", "H4a_planning_failure_alone_changes_ownership", "H4b_tracking_certificate_exhaustion_authorizes_emergency", "H4c_backup_ownership_begins_at_declared_switch", "H5_corner_overconstraint", "H6_px4_controller_mismatch", "H7_temporal_anchor_alignment")
-    hypothesis_status = {key: "INCONCLUSIVE" for key in hypothesis_keys}
+    hypothesis_keys = ("H1_splice_continuity", "H2_replanning_timing", "H3_pass_through_continuation", "H4_failed_replan_safety_takeover", "H4a_planning_failure_alone_changes_ownership", "H4b_tracking_certificate_exhaustion_authorizes_emergency", "H4c_backup_ownership_begins_at_declared_switch", "H5_corner_overconstraint", "H6_px4_controller_mismatch", "H7_temporal_anchor_alignment", "H8a_command_discontinuity", "H8b_dynamic_tracking_insufficiency", "H8c_px4_control_reshaping", "H8d_px4_lio_state_divergence", "H8e_command_setpoint_interruption")
+    hypothesis_status = {key: ("NOT_TESTED" if key.startswith("H8") else "INCONCLUSIVE") for key in hypothesis_keys}
     hypothesis_status["H7_temporal_anchor_alignment"] = h7_status
     if any(item["premature_safety_takeover_before_backup"] for item in failure_timelines):
         hypothesis_status["H4_failed_replan_safety_takeover"] = "CONFIRMED"
     hypothesis_evidence = {key: [] for key in hypothesis_status}
     hypothesis_evidence["H7_temporal_anchor_alignment"] = h7_evidence
+    for key, item in root_cause.get("h8", {}).items():
+        if key in hypothesis_status:
+            hypothesis_status[key] = item.get("status", "INCONCLUSIVE")
+            hypothesis_evidence[key] = [
+                f"Exact scenario scope: {root_cause.get('scenario_scope', {}).get('experiment_id', input_dir.name)}; run={root_cause.get('scenario_scope', {}).get('run_id', 'NOT_RECORDED')}; map={root_cause.get('scenario_scope', {}).get('map', 'NOT_RECORDED')}."
+            ] + [str(value) for value in item.get("evidence", [])]
     if hypothesis_status["H4_failed_replan_safety_takeover"] == "CONFIRMED":
         hypothesis_evidence["H4_failed_replan_safety_takeover"].append(
             "Injected failure was followed by a safety-suffix command while the prior command still had positive time_to_backup_start_s."
@@ -523,6 +530,7 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
                      "backup_ownership_transitions": backup_transitions,
                      "route_boundary_event_count": len(route_events), "route_boundary_status": "PRESENT" if route_events else "NO_ROUTE_BOUNDARY_EVENT",
                      "px4": px4, "temporal_alignment": h7_metrics,
+                     "tracking_root_cause": root_cause,
                      "command_roles": {role: sum(role_name(x.get("analytic_sample_role")) == role for x in cmds) for role in ("MAIN", "BACKUP", "EMERGENCY", "UNKNOWN")},
                      "recovery_states": {state_name(x.get("execution_recovery_state")): sum(state_name(y.get("execution_recovery_state")) == state_name(x.get("execution_recovery_state")) for y in cmds) for x in cmds}},
         "hypotheses": {key: {"status": hypothesis_status[key], "evidence": hypothesis_evidence[key]} for key in hypothesis_status},

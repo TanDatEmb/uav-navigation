@@ -21,6 +21,11 @@ HYPOTHESES = (
     ("H5_corner_overconstraint", "H5 — Route/corner overconstraint"),
     ("H6_px4_controller_mismatch", "H6 — Planner vs PX4 controller mismatch"),
     ("H7_temporal_anchor_alignment", "H7 — Temporal anchor alignment"),
+    ("H8a_command_discontinuity", "H8a — Command discontinuity"),
+    ("H8b_dynamic_tracking_insufficiency", "H8b — Dynamic tracking insufficiency"),
+    ("H8c_px4_control_reshaping", "H8c — PX4 control reshaping"),
+    ("H8d_px4_lio_state_divergence", "H8d — PX4/LIO state divergence"),
+    ("H8e_command_setpoint_interruption", "H8e — Command/setpoint interruption"),
 )
 
 
@@ -42,6 +47,8 @@ def status_for(runs: list[dict[str, Any]], key: str) -> str:
     values = [run.get("hypotheses", {}).get(key, {}).get("status") for run in runs]
     values = [value for value in values if value in STATUSES]
     if not values:
+        return "NOT_TESTED"
+    if all(value == "NOT_TESTED" for value in values):
         return "NOT_TESTED"
     if "REJECTED" in values:
         return "REJECTED"
@@ -143,6 +150,17 @@ def markdown(runs: list[dict[str, Any]], report: dict[str, Any]) -> str:
                 "- The measured command-motion contribution over state age was `0.010839 m` in that boundary sample; timestamp alignment therefore did not explain the certificate violation or prevent emergency authorization.",
                 "- Further PX4/LIO tracking investigation remains required; H7 does not account for the observed synchronized residual.",
             ]
+        elif key.startswith("H8"):
+            lines.append("This classification is scoped to the exact E05 temporal-alignment replay; no control-run statistic is merged into it.")
+            for run in runs:
+                root_cause = run.get("metrics", {}).get("tracking_root_cause", {})
+                if root_cause:
+                    item = root_cause.get("h8", {}).get(key, {})
+                    lines.append(f"- {run.get('run')}: status={item.get('status', 'NOT_TESTED')}; T_cross_ns={root_cause.get('T_cross_ns', 'NOT_RECORDED')}; evidence=`runtime_evidence/2026-09-04/E05_temporal_alignment_replay_exact_v2/e5_tracking_root_cause.md`.")
+            if key == "H8b_dynamic_tracking_insufficiency":
+                lines.append("- Causal interpretation: synchronized error began growing before the observed planner failure and accelerated after generation 2 activation while the command remained MAIN.")
+            if key == "H8e_command_setpoint_interruption":
+                lines.append("- The direct mode topic labels WAIT_FIRST_COMMAND before TRACK_TRAJECTORY, but command continuity and the diagnostic-only mode projection do not prove a control interruption; this remains explicitly scoped/inconclusive where applicable.")
         else:
             lines.append("Per-run measured metrics are available under the corresponding `metrics` object in `report_run.json`.")
         lines.append("Evidence: " + ("; ".join(report["hypotheses"][key].get("evidence", [])) or "none") + ".")

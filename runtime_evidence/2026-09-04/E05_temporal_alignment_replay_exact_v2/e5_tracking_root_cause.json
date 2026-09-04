@@ -1,0 +1,656 @@
+{
+  "T_cross_ns": 29319484858,
+  "control": {
+    "delta_a": {
+      "count": 0,
+      "max": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "rms": null
+    },
+    "delta_v": {
+      "count": 0,
+      "max": null,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "rms": null
+    },
+    "external_mode": "NOT_RECORDED",
+    "frame_position": {
+      "count": 533,
+      "max": 0.3431134702903209,
+      "p50": 0.15395643667399866,
+      "p95": 0.2977420404301454,
+      "p99": 0.3412445984669487,
+      "rms": 0.17932143681803647
+    },
+    "frame_velocity": {
+      "count": 533,
+      "max": 0.8343636903339098,
+      "p50": 0.2031091699183854,
+      "p95": 0.48924192333748934,
+      "p99": 0.7490116809658073,
+      "rms": 0.26023695590397045
+    },
+    "input_timestamp": "NOT_RECORDED",
+    "run": "runtime_evidence/2026-09-04/E01_straight_3mps",
+    "scenario_scope": "E01_straight_3mps open/legacy control; not merged with E5",
+    "tracking_error": {
+      "count": 533,
+      "max": 1.1694578274048657,
+      "p50": 0.2642935076279274,
+      "p95": 0.6402835039246093,
+      "p99": 0.9261476340085686,
+      "rms": 0.3659181962336282
+    }
+  },
+  "data_limitations": [
+    "/fmu/in/trajectory_setpoint is present in the rosbag but every PX4 message timestamp is zero; input layer is NOT_RECORDED in common simulation time.",
+    "Planner solve start is NOT_RECORDED; the trace records failure return/decision timestamp and planning latency, but this analysis does not back-calculate a solve start.",
+    "No injected_replan_failure=1 is present at the observed failure trace in this exact-v2 artifact; failure is reported as observed planner failure, not asserted as injected."
+  ],
+  "error_growth_rates_mps": {
+    "26.0_to_28.5_s": 0.014167034761644003,
+    "28.5_to_gen2_activation": 0.03809694116720457,
+    "gen2_activation_to_T_cross": 0.43445373391010655
+  },
+  "event_rows": [
+    {
+      "NavigationCommand_role": "MAIN",
+      "PX4_effective_acceleration_setpoint": [
+        -0.04044101946055889,
+        -0.018940630368888378,
+        0.18516910076141357
+      ],
+      "PX4_effective_velocity_setpoint": [
+        -0.004380231723189354,
+        -0.005767316557466984,
+        -0.0006227493286132812
+      ],
+      "aligned_LIO_tracking_error_m": 4.232395941161326e-05,
+      "analytic_role": "MAIN",
+      "command_gap_ms": "NOT_RECORDED",
+      "delta_a_px4_controller_mps2": 0.19049155072957585,
+      "delta_v_px4_controller_mps": 0.03927583584912618,
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": "NOT_RECORDED",
+      "event": "bundle_activation_first",
+      "external_mode_output_state": "WAIT_FIRST_COMMAND",
+      "frame_position_residual_m": 0.0,
+      "frame_velocity_residual_mps": 0.012810894666068206,
+      "planner_acceleration_norm_mps2": 0.00017108999393727314,
+      "planner_result": "NOT_RECORDED",
+      "planner_velocity_norm_mps": 0.03730201149683061,
+      "planning_failure_reason": "NOT_RECORDED",
+      "planning_failure_stage": "NOT_RECORDED",
+      "px4_tracking_error_m": 4.232395941161326e-05,
+      "recovery_state": "TRACK_MAIN",
+      "safety_suffix_active": false,
+      "setpoint_gap_ms": "NOT_RECORDED",
+      "timestamp_ns": 23064000000
+    },
+    {
+      "NavigationCommand_role": "MAIN",
+      "PX4_effective_acceleration_setpoint": [
+        0.020617577712982893,
+        2.2993972301483154,
+        0.17716047167778015
+      ],
+      "PX4_effective_velocity_setpoint": [
+        0.05742369964718819,
+        0.7492741197347641,
+        -0.0016578389331698418
+      ],
+      "aligned_LIO_tracking_error_m": 0.13391529046791872,
+      "analytic_role": "MAIN",
+      "command_gap_ms": 28.0,
+      "delta_a_px4_controller_mps2": 0.5699315065963939,
+      "delta_v_px4_controller_mps": 0.01705240414063086,
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": "NOT_RECORDED",
+      "event": "gen2_activation",
+      "external_mode_output_state": "TRACK_TRAJECTORY",
+      "frame_position_residual_m": 0.09068095541653026,
+      "frame_velocity_residual_mps": 0.12704739382778624,
+      "planner_acceleration_norm_mps2": 1.7409691824486044,
+      "planner_result": "NOT_RECORDED",
+      "planner_velocity_norm_mps": 0.7564397593978365,
+      "planning_failure_reason": "NOT_RECORDED",
+      "planning_failure_stage": "NOT_RECORDED",
+      "px4_tracking_error_m": 0.0479478934997001,
+      "recovery_state": "TRACK_MAIN",
+      "safety_suffix_active": false,
+      "setpoint_gap_ms": 40.0,
+      "timestamp_ns": 29048000000
+    },
+    {
+      "NavigationCommand_role": "MAIN",
+      "PX4_effective_acceleration_setpoint": [
+        -0.059106916189193726,
+        -0.10463270545005798,
+        -0.018720222637057304
+      ],
+      "PX4_effective_velocity_setpoint": [
+        0.032286979258060455,
+        0.5913597345352173,
+        -0.020482877269387245
+      ],
+      "aligned_LIO_tracking_error_m": 0.1007906480874,
+      "analytic_role": "MAIN",
+      "command_gap_ms": 4.0,
+      "delta_a_px4_controller_mps2": 0.0883495792029275,
+      "delta_v_px4_controller_mps": 0.020408431441880332,
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": "NOT_RECORDED",
+      "event": "sustained_error_growth_start",
+      "external_mode_output_state": "WAIT_FIRST_COMMAND",
+      "frame_position_residual_m": 0.07718820403587413,
+      "frame_velocity_residual_mps": 0.028477071622084377,
+      "planner_acceleration_norm_mps2": 0.17372388835607458,
+      "planner_result": "NOT_RECORDED",
+      "planner_velocity_norm_mps": 0.5817395762773667,
+      "planning_failure_reason": "NOT_RECORDED",
+      "planning_failure_stage": "NOT_RECORDED",
+      "px4_tracking_error_m": 0.035146231401463786,
+      "recovery_state": "TRACK_MAIN",
+      "safety_suffix_active": false,
+      "setpoint_gap_ms": 0.0,
+      "timestamp_ns": 27515487170
+    },
+    {
+      "NavigationCommand_role": "MAIN",
+      "PX4_effective_acceleration_setpoint": [
+        -0.059106916189193726,
+        -0.10463270545005798,
+        -0.018720222637057304
+      ],
+      "PX4_effective_velocity_setpoint": [
+        0.032286979258060455,
+        0.5913597345352173,
+        -0.020482877269387245
+      ],
+      "aligned_LIO_tracking_error_m": 0.1007906480874,
+      "analytic_role": "MAIN",
+      "command_gap_ms": 4.0,
+      "delta_a_px4_controller_mps2": 0.0883495792029275,
+      "delta_v_px4_controller_mps": 0.020408431441880332,
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": "NOT_RECORDED",
+      "event": "tracking_error_0.10_m",
+      "external_mode_output_state": "WAIT_FIRST_COMMAND",
+      "frame_position_residual_m": 0.07718820403587413,
+      "frame_velocity_residual_mps": 0.028477071622084377,
+      "planner_acceleration_norm_mps2": 0.17372388835607458,
+      "planner_result": "NOT_RECORDED",
+      "planner_velocity_norm_mps": 0.5817395762773667,
+      "planning_failure_reason": "NOT_RECORDED",
+      "planning_failure_stage": "NOT_RECORDED",
+      "px4_tracking_error_m": 0.035146231401463786,
+      "recovery_state": "TRACK_MAIN",
+      "safety_suffix_active": false,
+      "setpoint_gap_ms": 0.0,
+      "timestamp_ns": 27515487170
+    },
+    {
+      "NavigationCommand_role": "MAIN",
+      "PX4_effective_acceleration_setpoint": [
+        0.03192336577922106,
+        2.5355259577433267,
+        0.30992791056632996
+      ],
+      "PX4_effective_velocity_setpoint": [
+        0.058630780006448426,
+        1.0766542553901672,
+        0.02154593386997779
+      ],
+      "aligned_LIO_tracking_error_m": 0.19916569462911893,
+      "analytic_role": "MAIN",
+      "command_gap_ms": 8.0,
+      "delta_a_px4_controller_mps2": 0.8494374740407955,
+      "delta_v_px4_controller_mps": 0.04743489369408797,
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": "NOT_RECORDED",
+      "event": "tracking_error_0.20_m",
+      "external_mode_output_state": "TRACK_TRAJECTORY",
+      "frame_position_residual_m": 0.1089265179324412,
+      "frame_velocity_residual_mps": 0.11641700235152042,
+      "planner_acceleration_norm_mps2": 1.7291157519575548,
+      "planner_result": "NOT_RECORDED",
+      "planner_velocity_norm_mps": 1.034543418035072,
+      "planning_failure_reason": "NOT_RECORDED",
+      "planning_failure_stage": "NOT_RECORDED",
+      "px4_tracking_error_m": 0.09700436783791581,
+      "recovery_state": "TRACK_MAIN",
+      "safety_suffix_active": false,
+      "setpoint_gap_ms": 0.0,
+      "timestamp_ns": 29216250989
+    },
+    {
+      "NavigationCommand_role": "MAIN",
+      "PX4_effective_acceleration_setpoint": [
+        0.0002789387945085764,
+        3.096526563167572,
+        0.3385385200381279
+      ],
+      "PX4_effective_velocity_setpoint": [
+        0.057435741648077965,
+        1.2913189828395844,
+        0.034058280289173126
+      ],
+      "aligned_LIO_tracking_error_m": 0.2520867060914677,
+      "analytic_role": "MAIN",
+      "command_gap_ms": 4.0,
+      "delta_a_px4_controller_mps2": 0.9135386312622598,
+      "delta_v_px4_controller_mps": 0.044546032954632796,
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": "NOT_RECORDED",
+      "event": "T_cross",
+      "external_mode_output_state": "TRACK_TRAJECTORY",
+      "frame_position_residual_m": 0.11547568741995373,
+      "frame_velocity_residual_mps": 0.10509008876073063,
+      "planner_acceleration_norm_mps2": 2.242222688289597,
+      "planner_result": "NOT_RECORDED",
+      "planner_velocity_norm_mps": 1.2560701249194615,
+      "planning_failure_reason": "NOT_RECORDED",
+      "planning_failure_stage": "NOT_RECORDED",
+      "px4_tracking_error_m": 0.14617934364896212,
+      "recovery_state": "TRACK_MAIN",
+      "safety_suffix_active": false,
+      "setpoint_gap_ms": 0.0,
+      "timestamp_ns": 29319484858
+    },
+    {
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": "NOT_RECORDED",
+      "event": "injected_solve_start",
+      "planner_result": "NOT_RECORDED",
+      "planning_failure_reason": "NOT_RECORDED",
+      "planning_failure_stage": "NOT_RECORDED",
+      "timestamp_ns": "NOT_RECORDED"
+    },
+    {
+      "NavigationCommand_role": "MAIN",
+      "PX4_effective_acceleration_setpoint": [
+        -0.1709267497062683,
+        2.7445544004440308,
+        0.46188222616910934
+      ],
+      "PX4_effective_velocity_setpoint": [
+        -0.004977271077223122,
+        3.039713501930237,
+        0.09444373473525047
+      ],
+      "aligned_LIO_tracking_error_m": "0.4428736168588373",
+      "analytic_role": "MAIN",
+      "command_gap_ms": 4.0,
+      "delta_a_px4_controller_mps2": 1.314583565781229,
+      "delta_v_px4_controller_mps": 0.3475186566961197,
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": "NOT_RECORDED",
+      "event": "planner_failure_return",
+      "external_mode_output_state": "TRACK_TRAJECTORY",
+      "frame_position_residual_m": 0.08973983156927438,
+      "frame_velocity_residual_mps": 0.17506423356585937,
+      "planner_acceleration_norm_mps2": 1.5344367413610973,
+      "planner_result": 4,
+      "planner_velocity_norm_mps": 2.706758756054234,
+      "planning_failure_reason": 12,
+      "planning_failure_stage": 7,
+      "projected_tracking_certificate_exceeded": "True",
+      "px4_tracking_error_m": 0.3840723639724445,
+      "raw_retained_anchor_error_m": "0.4532910267671672",
+      "recovery_state": "TRACK_MAIN",
+      "retained_suffix_usable": "False",
+      "safety_suffix_active": false,
+      "setpoint_gap_ms": 0.0,
+      "time_aligned_retained_anchor_error_m": "0.4428736168588373",
+      "timestamp_ns": 29932000000,
+      "tracking_certificate_exceeded": "True"
+    },
+    {
+      "NavigationCommand_role": "MAIN",
+      "PX4_effective_acceleration_setpoint": [
+        -0.1709267497062683,
+        2.7445544004440308,
+        0.46188222616910934
+      ],
+      "PX4_effective_velocity_setpoint": [
+        -0.004977271077223122,
+        3.039713501930237,
+        0.09444373473525047
+      ],
+      "aligned_LIO_tracking_error_m": "0.4428736168588373",
+      "analytic_role": "MAIN",
+      "command_gap_ms": 4.0,
+      "delta_a_px4_controller_mps2": 1.314583565781229,
+      "delta_v_px4_controller_mps": 0.3475186566961197,
+      "emergency_authorization_reason": 1,
+      "emergency_candidate_commit_result": 1,
+      "event": "emergency_authorization",
+      "external_mode_output_state": "TRACK_TRAJECTORY",
+      "frame_position_residual_m": 0.08973983156927438,
+      "frame_velocity_residual_mps": 0.17506423356585937,
+      "planner_acceleration_norm_mps2": 1.5344367413610973,
+      "planner_result": 4,
+      "planner_velocity_norm_mps": 2.706758756054234,
+      "planning_failure_reason": 12,
+      "planning_failure_stage": 7,
+      "projected_tracking_certificate_exceeded": "True",
+      "px4_tracking_error_m": 0.3840723639724445,
+      "raw_retained_anchor_error_m": "0.4532910267671672",
+      "recovery_state": "TRACK_MAIN",
+      "retained_suffix_usable": "False",
+      "safety_suffix_active": false,
+      "setpoint_gap_ms": 0.0,
+      "time_aligned_retained_anchor_error_m": "0.4428736168588373",
+      "timestamp_ns": 29932000000,
+      "tracking_certificate_exceeded": "True"
+    },
+    {
+      "NavigationCommand_role": "EMERGENCY",
+      "PX4_effective_acceleration_setpoint": [
+        -0.17042246460914612,
+        2.709178924560547,
+        0.45369432866573334
+      ],
+      "PX4_effective_velocity_setpoint": [
+        -0.005465398309752345,
+        3.046847105026245,
+        0.0944574698805809
+      ],
+      "aligned_LIO_tracking_error_m": 0.044469641594378176,
+      "analytic_role": "EMERGENCY",
+      "command_gap_ms": 4.0,
+      "delta_a_px4_controller_mps2": 2.772303875654192,
+      "delta_v_px4_controller_mps": 0.2583372019340987,
+      "emergency_authorization_reason": "NOT_RECORDED",
+      "emergency_candidate_commit_result": 1,
+      "event": "emergency_activation",
+      "external_mode_output_state": "TRACK_TRAJECTORY",
+      "frame_position_residual_m": 0.08966745221312934,
+      "frame_velocity_residual_mps": 0.17767970982572484,
+      "planner_acceleration_norm_mps2": 0.023581886342196556,
+      "planner_result": "NOT_RECORDED",
+      "planner_velocity_norm_mps": 2.7934727904279417,
+      "planning_failure_reason": "NOT_RECORDED",
+      "planning_failure_stage": "NOT_RECORDED",
+      "px4_tracking_error_m": 0.07112218070621902,
+      "recovery_state": "EMERGENCY_BRAKE",
+      "safety_suffix_active": true,
+      "setpoint_gap_ms": 0.0,
+      "timestamp_ns": 29924000000
+    }
+  ],
+  "event_times": {
+    "T_cross": 29319484858,
+    "bundle_activation_first": 23064000000,
+    "emergency_activation": 29924000000,
+    "emergency_authorization": 29932000000,
+    "gen2_activation": 29048000000,
+    "injected_solve_start": null,
+    "planner_failure_return": 29932000000,
+    "sustained_error_growth_start": 27515487170,
+    "tracking_error_0.10_m": 27515487170,
+    "tracking_error_0.20_m": 29216250989
+  },
+  "figures": [
+    "runtime_evidence/2026-09-04/E05_temporal_alignment_replay_exact_v2/figures/plot_E5_tracking_divergence.png",
+    "runtime_evidence/2026-09-04/E05_temporal_alignment_replay_exact_v2/figures/plot_E5_controller_correction.png",
+    "runtime_evidence/2026-09-04/E05_temporal_alignment_replay_exact_v2/figures/plot_E5_velocity_layers.png",
+    "runtime_evidence/2026-09-04/E05_temporal_alignment_replay_exact_v2/figures/plot_E5_acceleration_layers.png",
+    "runtime_evidence/2026-09-04/E05_temporal_alignment_replay_exact_v2/figures/plot_E5_controller_correction_vs_tracking_error.png",
+    "runtime_evidence/2026-09-04/E05_temporal_alignment_replay_exact_v2/figures/plot_E5_lio_px4_consistency.png",
+    "runtime_evidence/2026-09-04/E05_temporal_alignment_replay_exact_v2/figures/plot_E5_generation_mode_timeline.png"
+  ],
+  "generation_boundary_deltas": [
+    {
+      "delta_acceleration": 0.06705020515422436,
+      "delta_jerk": 4.800665643599643,
+      "delta_position": 0.01187713846332408,
+      "delta_velocity": 0.028492384047986964,
+      "from_generation": 1,
+      "timestamp_ns": 29048000000,
+      "to_generation": 2
+    },
+    {
+      "delta_acceleration": 0.08414227767305582,
+      "delta_jerk": 0.11826564498133235,
+      "delta_position": 0.04084575150104724,
+      "delta_velocity": 0.03159716417308524,
+      "from_generation": 2,
+      "timestamp_ns": 29848000000,
+      "to_generation": 3
+    },
+    {
+      "delta_acceleration": 1.556521603127011,
+      "delta_jerk": 1.7657398721095448,
+      "delta_position": 0.4104937697510442,
+      "delta_velocity": 0.12351337677190562,
+      "from_generation": 3,
+      "timestamp_ns": 29924000000,
+      "to_generation": 4
+    }
+  ],
+  "h8": {
+    "H8a_command_discontinuity": {
+      "evidence": [
+        "Before T_cross, observed generation boundaries have no large P/V/A jump; the first boundary sharply preceding growth has \u0394P=0.011877 m, \u0394V=0.028492 m/s, \u0394A=0.067050 m/s\u00b2. The emergency boundary is post-crossing and is therefore not an initiating cause."
+      ],
+      "generation_boundary_deltas": [
+        {
+          "delta_acceleration": 0.06705020515422436,
+          "delta_jerk": 4.800665643599643,
+          "delta_position": 0.01187713846332408,
+          "delta_velocity": 0.028492384047986964,
+          "from_generation": 1,
+          "timestamp_ns": 29048000000,
+          "to_generation": 2
+        },
+        {
+          "delta_acceleration": 0.08414227767305582,
+          "delta_jerk": 0.11826564498133235,
+          "delta_position": 0.04084575150104724,
+          "delta_velocity": 0.03159716417308524,
+          "from_generation": 2,
+          "timestamp_ns": 29848000000,
+          "to_generation": 3
+        },
+        {
+          "delta_acceleration": 1.556521603127011,
+          "delta_jerk": 1.7657398721095448,
+          "delta_position": 0.4104937697510442,
+          "delta_velocity": 0.12351337677190562,
+          "from_generation": 3,
+          "timestamp_ns": 29924000000,
+          "to_generation": 4
+        }
+      ],
+      "status": "REJECTED"
+    },
+    "H8b_dynamic_tracking_insufficiency": {
+      "error_growth_rates_mps": {
+        "26.0_to_28.5_s": 0.014167034761644003,
+        "28.5_to_gen2_activation": 0.03809694116720457,
+        "gen2_activation_to_T_cross": 0.43445373391010655
+      },
+      "evidence": [
+        "Synchronized LIO error grows before planner failure, with a measured slope of 0.43445373391010655 m/s after gen2 activation versus 0.014167034761644003 m/s earlier; the command remains MAIN and continuous while requesting a rapid speed ramp and multi-m/s\u00b2 acceleration in the exact E5 window."
+      ],
+      "planner_acceleration": {
+        "count": 392,
+        "max": 2.1671909239795384,
+        "p50": 0.18149400356768977,
+        "p95": 1.51204249327242,
+        "p99": 1.8657597555449903,
+        "rms": 0.4769523558274435
+      },
+      "planner_velocity": {
+        "count": 392,
+        "max": 1.2208261396980808,
+        "p50": 0.5588670300125242,
+        "p95": 0.7837467870370491,
+        "p99": 1.0919620704253967,
+        "rms": 0.5774829646933275
+      },
+      "status": "CONFIRMED",
+      "tracking_error": {
+        "count": 392,
+        "max": 0.23588372014741762,
+        "p50": 0.08319817826095534,
+        "p95": 0.12722852520142286,
+        "p99": 0.21246194480857505,
+        "rms": 0.09010142545887567
+      }
+    },
+    "H8c_px4_control_reshaping": {
+      "delta_a": {
+        "count": 392,
+        "max": 1.0034138287799685,
+        "p50": 0.09785150321753534,
+        "p95": 0.48692159582932454,
+        "p99": 0.8494374740407955,
+        "rms": 0.21393255892242377
+      },
+      "delta_v": {
+        "count": 392,
+        "max": 0.08386214519989947,
+        "p50": 0.022601083445649053,
+        "p95": 0.05026387520536173,
+        "p99": 0.056330411434903395,
+        "rms": 0.028088439325702656
+      },
+      "evidence": [
+        "PX4 effective setpoints are available and controller deltas are computed, but no predeclared quantitative threshold establishes that reshaping is significant enough to be causal."
+      ],
+      "status": "INCONCLUSIVE"
+    },
+    "H8d_px4_lio_state_divergence": {
+      "evidence": [
+        "Using the fixed first-active-sample transform and rotating the recorded body twist by q_xyzw, frame residuals remain small/stable relative to the 0.25 m planner-to-state loss before T_cross; no residual growth explains the crossing."
+      ],
+      "frame_position": {
+        "count": 392,
+        "max": 0.11450271313513967,
+        "p50": 0.056604389190264344,
+        "p95": 0.08645454337417305,
+        "p99": 0.11150631749898783,
+        "rms": 0.060160423087846186
+      },
+      "frame_velocity": {
+        "count": 392,
+        "max": 0.1651353693434377,
+        "p50": 0.019047030748423042,
+        "p95": 0.051413748928087165,
+        "p99": 0.15429196871974998,
+        "rms": 0.03566172945837849
+      },
+      "status": "REJECTED"
+    },
+    "H8e_command_setpoint_interruption": {
+      "command_gap": {
+        "count": 391,
+        "max": 44.0,
+        "p50": 16.0,
+        "p95": 32.0,
+        "p99": 36.0,
+        "rms": 17.758827638087034
+      },
+      "evidence": [
+        "A non-track External Mode state appears before T_cross; causality requires further event correlation.",
+        "No pre-cross command gap >=100 ms was observed."
+      ],
+      "external_mode_states_pre_cross": [
+        "TRACK_TRAJECTORY",
+        "WAIT_FIRST_COMMAND"
+      ],
+      "setpoint_gap": {
+        "count": 391,
+        "max": 48.0,
+        "p50": 16.0,
+        "p95": 40.0,
+        "p99": 40.0,
+        "rms": 19.87377045047463
+      },
+      "status": "INCONCLUSIVE"
+    }
+  },
+  "raw_evidence_preserved": true,
+  "scenario_scope": {
+    "command_rate_hz": 50.0,
+    "experiment_id": "E05_temporal_alignment_replay_exact",
+    "map": "open/sanity_open",
+    "mission_config_sha256": "166104b3b50832a8e285d8fa78953f6c2be6f22b2e0509b8d667fb02fcde796d",
+    "mission_file": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T125955-39028/resolved_mission.yaml",
+    "planner_config_path": "/home/letandat/Dev/uav-navigation/src/runtime/navigation_runtime/config/planner.yaml",
+    "planner_config_sha256": "1814cc0f5bb73a0a29b3662afcf198923628ef0a987e70c3ac1baf883bbd20b2",
+    "planner_rate_hz": 5.0,
+    "recorded_repo_commit": "cac82aad20771b13f42cf11bd1af93616e51b44b",
+    "recorded_repo_dirty": true,
+    "requested_speed_mps": 3.0,
+    "route": "external_mode_open_route: pass_through [0,0,3]->[3,0,3]->[6,0,3]->[7,0,3], terminal stop",
+    "run_id": "external-mode-check-20260904T125955-39028",
+    "scenario_config_sha256": "976aa13f01b2bb69eb552bdfbcfa54065e249a1bbda66390b9b8f4bd69ed1905",
+    "tracking_limit_m": 0.25
+  },
+  "stats_pre_cross": {
+    "delta_a": {
+      "count": 392,
+      "max": 1.0034138287799685,
+      "p50": 0.09785150321753534,
+      "p95": 0.48692159582932454,
+      "p99": 0.8494374740407955,
+      "rms": 0.21393255892242377
+    },
+    "delta_v": {
+      "count": 392,
+      "max": 0.08386214519989947,
+      "p50": 0.022601083445649053,
+      "p95": 0.05026387520536173,
+      "p99": 0.056330411434903395,
+      "rms": 0.028088439325702656
+    },
+    "frame_position": {
+      "count": 392,
+      "max": 0.11450271313513967,
+      "p50": 0.056604389190264344,
+      "p95": 0.08645454337417305,
+      "p99": 0.11150631749898783,
+      "rms": 0.060160423087846186
+    },
+    "frame_velocity": {
+      "count": 392,
+      "max": 0.1651353693434377,
+      "p50": 0.019047030748423042,
+      "p95": 0.051413748928087165,
+      "p99": 0.15429196871974998,
+      "rms": 0.03566172945837849
+    },
+    "px4_tracking_error": {
+      "count": 392,
+      "max": 0.12987117882669744,
+      "p50": 0.029856364441749463,
+      "p95": 0.060063553562720716,
+      "p99": 0.1080776083532277,
+      "rms": 0.038689104842868145
+    },
+    "tracking_error": {
+      "count": 392,
+      "max": 0.23588372014741762,
+      "p50": 0.08319817826095534,
+      "p95": 0.12722852520142286,
+      "p99": 0.21246194480857505,
+      "rms": 0.09010142545887567
+    }
+  },
+  "transform": {
+    "lio_velocity": "recorded body twist rotated with q_xyzw before ENU->NED",
+    "offset_m": [
+      0.17189057034194707,
+      0.13237223465488202,
+      -0.009499036596539945
+    ],
+    "position": "PX4_NED = [LIO_y,LIO_x,-LIO_z] + fixed offset"
+  }
+}
