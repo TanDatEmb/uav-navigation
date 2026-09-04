@@ -1,5 +1,29 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-04 - Add causal retained-command telemetry and gated failure stimuli
+
+- **Owner/status:** navigation runtime evidence collection; `IMPLEMENTED`,
+  E5b/E7/E6/E10 verification remains open.
+- **Scope:** serialize retained-command anchor/certificate inputs,
+  emergency authorization reason, and deterministic test-only failure modes
+  into DECISION_TRACE and NavigationCommand. The gated stimuli can fail one
+  safe hot replan, fail a safe PASS_THROUGH handoff solve, repeat replacement
+  failures until the retained command boundary, or repeat PlanFromRest
+  failures. All hooks are disabled by default.
+- **Safety impact:** observability and test stimulation only. The hooks are
+  applied after the real planner returns and only replace the reported result;
+  they do not alter predicates, certificates, timing constants, recovery FSM,
+  PX4 behavior, or command admission. Test runs must not be used as flight
+  acceptance.
+- **Evidence:** the pre-telemetry E5 artifact lacked the fields needed to
+  separate actual-anchor exhaustion from planning-failure ownership; the new
+  fields are required before causal H4 conclusions.
+- **Removal/review condition:** remove after H4a/H4b/H4c and E10 authority
+  are closed by retained raw artifacts with equivalent causal provenance.
+- **Verification:** affected Release build, focused runtime/contract tests,
+  `extract_e5_causal_trace.py`, and controlled E5b/E7/E6/E10 runs with all
+  failure parameters recorded in per-run configuration snapshots.
+
 ### 2026-09-03 - Share the full-state stop envelope between authorization and BACKUP
 
 - **Owner/status:** navigation planning stop reachability; `IMPLEMENTED`, representative planner/SITL verification remains open.

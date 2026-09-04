@@ -484,6 +484,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       ? static_cast<std::uint64_t>(inject_failed_replan_cycle_id) : 0U;
   inject_failed_replan_once_ = declare_parameter(
       "navigation_runtime.inject_failed_replan_once", false);
+  inject_failed_replan_when_safe_ = declare_parameter(
+      "navigation_runtime.inject_failed_replan_when_safe", false);
+  inject_failed_replan_after_handoff_ = declare_parameter(
+      "navigation_runtime.inject_failed_replan_after_handoff", false);
+  inject_failed_replan_repeated_ = declare_parameter(
+      "navigation_runtime.inject_failed_replan_repeated", false);
+  inject_failed_plan_from_rest_repeated_ = declare_parameter(
+      "navigation_runtime.inject_failed_plan_from_rest_repeated", false);
   planner_config_path_ = declare_parameter("navigation_runtime.config_path", std::string{});
   const auto mission_file =
       declare_parameter("navigation_runtime.mission_file", std::string{});
@@ -3634,15 +3642,69 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       inject_failed_replan_cycle_id_ != 0U &&
       cycle_count_ == inject_failed_replan_cycle_id_ &&
       !plan_from_rest_with_transition;
-  if (injected_replan_failure) {
-    inject_failed_replan_once_ = false;
+  const bool safe_margin_injection = inject_failed_replan_when_safe_ &&
+      inject_failed_replan_once_ && !plan_from_rest_with_transition &&
+      execution_recovery_state_.load(std::memory_order_acquire) ==
+          ExecutionRecoveryState::kTrackMain &&
+      transition_bundle && transition_sample &&
+      transition_role == navigation_planning::CandidateRole::kMain &&
+      !execution_episode_.snapshot().safety_suffix_active &&
+      transition_bundle->backup_available &&
+      std::isfinite(transition_elapsed_s) &&
+      transition_bundle->backup_start_time_s - transition_elapsed_s >= 1.5 &&
+      std::isfinite(retained_tracking_limit_m) &&
+      retained_tracking_limit_m > 0.0 &&
+      std::isfinite(transition_anchor_error_m) &&
+      transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&
+      latest_world && world_freshness == navigation_execution::TimestampFreshness::VALID &&
+      execution_freshness == navigation_execution::TimestampFreshness::VALID &&
+      planner_->validateCommittedTrajectory(latest_world.view, now().seconds()).valid;
+  const bool handoff_safe_margin_injection = inject_failed_replan_after_handoff_ &&
+      inject_failed_replan_once_ && !plan_from_rest_with_transition &&
+      replan_for_new_goal && execution_recovery_state_.load(std::memory_order_acquire) ==
+          ExecutionRecoveryState::kTrackMain &&
+      transition_bundle && transition_sample &&
+      transition_role == navigation_planning::CandidateRole::kMain &&
+      !execution_episode_.snapshot().safety_suffix_active &&
+      transition_bundle->backup_available &&
+      std::isfinite(transition_elapsed_s) &&
+      transition_bundle->backup_start_time_s - transition_elapsed_s >= 1.5 &&
+      std::isfinite(retained_tracking_limit_m) && retained_tracking_limit_m > 0.0 &&
+      std::isfinite(transition_anchor_error_m) &&
+      transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&
+      latest_world && world_freshness == navigation_execution::TimestampFreshness::VALID &&
+      execution_freshness == navigation_execution::TimestampFreshness::VALID &&
+      planner_->validateCommittedTrajectory(latest_world.view, now().seconds()).valid;
+  const bool repeated_replan_failure = inject_failed_replan_repeated_ &&
+      !plan_from_rest_with_transition && transition_bundle && transition_sample &&
+      transition_role == navigation_planning::CandidateRole::kMain &&
+      execution_recovery_state_.load(std::memory_order_acquire) ==
+          ExecutionRecoveryState::kTrackMain &&
+      !execution_episode_.snapshot().safety_suffix_active &&
+      transition_bundle->backup_available && std::isfinite(transition_elapsed_s) &&
+      transition_elapsed_s < transition_bundle->backup_start_time_s &&
+      std::isfinite(transition_anchor_error_m) &&
+      transition_anchor_error_m <= retained_tracking_limit_m && latest_world &&
+      world_freshness == navigation_execution::TimestampFreshness::VALID &&
+      execution_freshness == navigation_execution::TimestampFreshness::VALID &&
+      planner_->validateCommittedTrajectory(latest_world.view, now().seconds()).valid;
+  const bool repeated_plan_from_rest_failure = inject_failed_plan_from_rest_repeated_ &&
+      plan_from_rest_with_transition;
+  const bool injected_failure = injected_replan_failure || safe_margin_injection ||
+      handoff_safe_margin_injection || repeated_replan_failure ||
+      repeated_plan_from_rest_failure;
+  if (injected_failure) {
+    if (!inject_failed_replan_repeated_ &&
+        !inject_failed_plan_from_rest_repeated_) {
+      inject_failed_replan_once_ = false;
+    }
     result = navigation_planning::PlannerStatus::kFailed;
     planning_outcome.outcome =
         navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
     planning_outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
     planning_outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
     RCLCPP_WARN(get_logger(),
-                "diagnostic injection converted planning cycle=%lu to one failed replan",
+                "diagnostic injection converted planning cycle=%lu to a failed planning result",
                 static_cast<unsigned long>(cycle_count_));
   }
   last_planning_outcome_.store(static_cast<int>(planning_outcome.outcome),
@@ -3951,9 +4013,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const bool projected_tracking_certificate_exceeded =
         std::isfinite(projected_anchor_error_m) &&
         projected_anchor_error_m > retained_tracking_limit_m;
-    if (measuredStateEmergencyMayReplaceCommittedCommand(
-            validate_without_new_commit, use_safety_suffix,
-            fresh_vehicle_state, committed, command_anchor_valid,
+    const bool emergency_authorized = measuredStateEmergencyMayReplaceCommittedCommand(
+        validate_without_new_commit, use_safety_suffix,
+        fresh_vehicle_state, committed, command_anchor_valid,
             tracking_certificate_exceeded,
             execution_recovery_state_.load(std::memory_order_acquire),
             committed_bundle
@@ -3962,7 +4024,47 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             projected_tracking_certificate_exceeded,
             current_vehicle_state_known_free,
             backup_available,
-            transition_bundle && transition_bundle->terminal_stop)) {
+            transition_bundle && transition_bundle->terminal_stop);
+    std::uint8_t emergency_authorization_reason =
+        navigation_contracts::msg::NavigationCommand::EMERGENCY_AUTHORIZATION_NONE;
+    if (emergency_authorized) {
+      if (!use_safety_suffix && tracking_certificate_exceeded) {
+        emergency_authorization_reason = navigation_contracts::msg::NavigationCommand::
+            EMERGENCY_AUTHORIZATION_ACTUAL_ANCHOR_CERTIFICATE_EXCEEDED;
+      } else if (!tracking_certificate_exceeded &&
+                 projected_tracking_certificate_exceeded) {
+        emergency_authorization_reason = navigation_contracts::msg::NavigationCommand::
+            EMERGENCY_AUTHORIZATION_PROJECTED_MAIN_ONLY_CERTIFICATE_EXCEEDED;
+      } else {
+        emergency_authorization_reason = navigation_contracts::msg::NavigationCommand::
+            EMERGENCY_AUTHORIZATION_OTHER_INVALID;
+      }
+    }
+    causal_anchor_error_m_.store(anchor_error_m, std::memory_order_release);
+    causal_projected_anchor_error_m_.store(projected_anchor_error_m,
+                                           std::memory_order_release);
+    causal_retained_tracking_limit_m_.store(retained_tracking_limit_m,
+                                             std::memory_order_release);
+    causal_relative_anchor_speed_mps_.store(relative_anchor_speed_mps,
+                                            std::memory_order_release);
+    causal_backup_available_.store(backup_available, std::memory_order_release);
+    causal_time_to_backup_start_s_.store(
+        backup_available ? backup_start_s - elapsed_s : std::numeric_limits<double>::quiet_NaN(),
+        std::memory_order_release);
+    causal_committed_suffix_usable_.store(use_safety_suffix,
+                                          std::memory_order_release);
+    causal_sampled_path_clear_.store(sampled_path_clear,
+                                     std::memory_order_release);
+    causal_tracking_certificate_exceeded_.store(tracking_certificate_exceeded,
+                                                std::memory_order_release);
+    causal_projected_tracking_certificate_exceeded_.store(
+        projected_tracking_certificate_exceeded, std::memory_order_release);
+    causal_emergency_authorization_reason_.store(
+        emergency_authorization_reason, std::memory_order_release);
+    causal_planning_cycle_id_.store(cycle_count_, std::memory_order_release);
+    causal_timestamp_ns_.store(now().nanoseconds(), std::memory_order_release);
+    causal_emergency_candidate_commit_result_.store(0, std::memory_order_release);
+    if (emergency_authorized) {
       // This is the only measured-state moving transition. Propagated P/V and
       // Propagated odometry does not expose measured A/J. Keep P/V and yaw
       // continuous, but do not promote finite-difference estimates into the
@@ -4005,6 +4107,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             emergency_command, now().seconds(), terminal_altitude_m);
       }
       use_safety_suffix = emergency_brake_committed;
+      causal_emergency_candidate_commit_result_.store(
+          emergency_brake_committed ? 1 : 2, std::memory_order_release);
       if (projected_tracking_certificate_exceeded && !tracking_certificate_exceeded) {
         RCLCPP_WARN(get_logger(),
                     "planner backend projected retained-command anchor beyond the "
@@ -4616,6 +4720,34 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     add_trace_value("commit_decision", commit_decision);
     add_trace_value("execution_boundary_rejection",
                     last_execution_boundary_rejection_.load(std::memory_order_acquire));
+    add_trace_value("anchor_error_m", causal_anchor_error_m_.load(std::memory_order_acquire));
+    add_trace_value("projected_anchor_error_m",
+                    causal_projected_anchor_error_m_.load(std::memory_order_acquire));
+    add_trace_value("retained_tracking_limit_m",
+                    causal_retained_tracking_limit_m_.load(std::memory_order_acquire));
+    add_trace_value("relative_anchor_speed_mps",
+                    causal_relative_anchor_speed_mps_.load(std::memory_order_acquire));
+    add_trace_value("committed_suffix_usable",
+                    causal_committed_suffix_usable_.load(std::memory_order_acquire) ? 1 : 0);
+    add_trace_value("sampled_path_clear",
+                    causal_sampled_path_clear_.load(std::memory_order_acquire) ? 1 : 0);
+    add_trace_value("tracking_certificate_exceeded",
+                    causal_tracking_certificate_exceeded_.load(std::memory_order_acquire) ? 1 : 0);
+    add_trace_value("projected_tracking_certificate_exceeded",
+                    causal_projected_tracking_certificate_exceeded_.load(
+                        std::memory_order_acquire) ? 1 : 0);
+    add_trace_value("backup_available",
+                    causal_backup_available_.load(std::memory_order_acquire) ? 1 : 0);
+    add_trace_value("time_to_backup_start_s",
+                    causal_time_to_backup_start_s_.load(std::memory_order_acquire));
+    add_trace_value("emergency_authorization_reason",
+                    causal_emergency_authorization_reason_.load(std::memory_order_acquire));
+    add_trace_value("causal_planning_cycle_id",
+                    causal_planning_cycle_id_.load(std::memory_order_acquire));
+    add_trace_value("causal_timestamp_ns",
+                    causal_timestamp_ns_.load(std::memory_order_acquire));
+    add_trace_value("emergency_candidate_commit_result",
+                    causal_emergency_candidate_commit_result_.load(std::memory_order_acquire));
     add_trace_value("solve_stage", solve_stage);
     {
       diagnostic_msgs::msg::KeyValue item;
@@ -5425,6 +5557,24 @@ void NavigationRuntimeNode::publishCommand() {
   command.safety_suffix_active = safety_suffix_active;
   command.execution_recovery_state = static_cast<std::uint8_t>(
       execution_recovery_state_.load(std::memory_order_acquire));
+  command.anchor_error_m = causal_anchor_error_m_.load(std::memory_order_acquire);
+  command.projected_anchor_error_m =
+      causal_projected_anchor_error_m_.load(std::memory_order_acquire);
+  command.retained_tracking_limit_m =
+      causal_retained_tracking_limit_m_.load(std::memory_order_acquire);
+  command.relative_anchor_speed_mps =
+      causal_relative_anchor_speed_mps_.load(std::memory_order_acquire);
+  command.committed_suffix_usable =
+      causal_committed_suffix_usable_.load(std::memory_order_acquire);
+  command.sampled_path_clear = causal_sampled_path_clear_.load(std::memory_order_acquire);
+  command.tracking_certificate_exceeded =
+      causal_tracking_certificate_exceeded_.load(std::memory_order_acquire);
+  command.projected_tracking_certificate_exceeded =
+      causal_projected_tracking_certificate_exceeded_.load(std::memory_order_acquire);
+  command.emergency_authorization_reason =
+      causal_emergency_authorization_reason_.load(std::memory_order_acquire);
+  command.causal_planning_cycle_id =
+      causal_planning_cycle_id_.load(std::memory_order_acquire);
   command.state_source_stamp = execution_state
       ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(
           builtin_interfaces::msg::Time{})

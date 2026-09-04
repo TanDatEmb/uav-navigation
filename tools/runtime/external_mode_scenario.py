@@ -50,6 +50,15 @@ def _json_vector(values: Any) -> list[float | None]:
     return result
 
 
+def _json_number(value: Any) -> float | None:
+    """Keep intentional scalar NaN sentinel values JSON-serializable."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _heading_from_quaternion(quaternion: Any) -> float | None:
     """Return ENU yaw from a ROS quaternion without trusting its scale."""
     try:
@@ -720,6 +729,16 @@ class ExternalModeScenario:
             "time_to_backup_start_s": float(getattr(message, "time_to_backup_start_s", 0.0)),
             "safety_suffix_active": bool(getattr(message, "safety_suffix_active", False)),
             "execution_recovery_state": int(getattr(message, "execution_recovery_state", 0)),
+            "anchor_error_m": _json_number(getattr(message, "anchor_error_m", float("nan"))),
+            "projected_anchor_error_m": _json_number(getattr(message, "projected_anchor_error_m", float("nan"))),
+            "retained_tracking_limit_m": _json_number(getattr(message, "retained_tracking_limit_m", float("nan"))),
+            "relative_anchor_speed_mps": _json_number(getattr(message, "relative_anchor_speed_mps", float("nan"))),
+            "committed_suffix_usable": bool(getattr(message, "committed_suffix_usable", False)),
+            "sampled_path_clear": bool(getattr(message, "sampled_path_clear", False)),
+            "tracking_certificate_exceeded": bool(getattr(message, "tracking_certificate_exceeded", False)),
+            "projected_tracking_certificate_exceeded": bool(getattr(message, "projected_tracking_certificate_exceeded", False)),
+            "emergency_authorization_reason": int(getattr(message, "emergency_authorization_reason", 0)),
+            "causal_planning_cycle_id": int(getattr(message, "causal_planning_cycle_id", 0)),
             "localization_epoch": int(message.localization_epoch),
             "goal_epoch": int(message.goal_epoch),
             "world_generation": int(message.world_generation),
@@ -754,6 +773,16 @@ class ExternalModeScenario:
                 "analytic_sample_role": int(getattr(
                     message, "analytic_sample_role",
                     self.NavigationCommand.ANALYTIC_ROLE_UNKNOWN)),
+                "anchor_error_m": _json_number(getattr(message, "anchor_error_m", float("nan"))),
+                "projected_anchor_error_m": _json_number(getattr(message, "projected_anchor_error_m", float("nan"))),
+                "retained_tracking_limit_m": _json_number(getattr(message, "retained_tracking_limit_m", float("nan"))),
+                "relative_anchor_speed_mps": _json_number(getattr(message, "relative_anchor_speed_mps", float("nan"))),
+                "committed_suffix_usable": bool(getattr(message, "committed_suffix_usable", False)),
+                "sampled_path_clear": bool(getattr(message, "sampled_path_clear", False)),
+                "tracking_certificate_exceeded": bool(getattr(message, "tracking_certificate_exceeded", False)),
+                "projected_tracking_certificate_exceeded": bool(getattr(message, "projected_tracking_certificate_exceeded", False)),
+                "emergency_authorization_reason": int(getattr(message, "emergency_authorization_reason", 0)),
+                "causal_planning_cycle_id": int(getattr(message, "causal_planning_cycle_id", 0)),
                 "trajectory_status": int(message.status),
                 "trajectory_generation": int(getattr(message, "bundle_generation", 0)),
                 "trajectory_time_s": float(getattr(message, "trajectory_time_s", 0.0)),

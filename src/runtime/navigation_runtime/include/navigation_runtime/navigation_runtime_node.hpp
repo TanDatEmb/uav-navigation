@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <chrono>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -252,6 +253,10 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // backend returns, leaving the prior committed bundle untouched.
   std::uint64_t inject_failed_replan_cycle_id_{0U};
   bool inject_failed_replan_once_{false};
+  bool inject_failed_replan_when_safe_{false};
+  bool inject_failed_replan_after_handoff_{false};
+  bool inject_failed_replan_repeated_{false};
+  bool inject_failed_plan_from_rest_repeated_{false};
   std::uint64_t dynamics_hash_{1U};
   navigation_planning::DynamicLimits mission_dynamic_limits_{};
 
@@ -346,6 +351,23 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_bool planner_command_available_{false};
   std::atomic_bool planner_failure_latched_{false};
   std::atomic_bool safety_suffix_active_{false};
+  // Diagnostic-only retained-command causal evidence. These values are
+  // written by the planner decision boundary and copied into the command
+  // stream; they are never consumed by admission or recovery predicates.
+  std::atomic<double> causal_anchor_error_m_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic<double> causal_projected_anchor_error_m_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic<double> causal_retained_tracking_limit_m_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic<double> causal_relative_anchor_speed_mps_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic_bool causal_backup_available_{false};
+  std::atomic<double> causal_time_to_backup_start_s_{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic_bool causal_committed_suffix_usable_{false};
+  std::atomic_bool causal_sampled_path_clear_{false};
+  std::atomic_bool causal_tracking_certificate_exceeded_{false};
+  std::atomic_bool causal_projected_tracking_certificate_exceeded_{false};
+  std::atomic_uint8_t causal_emergency_authorization_reason_{0U};
+  std::atomic_uint64_t causal_planning_cycle_id_{0U};
+  std::atomic_int64_t causal_timestamp_ns_{0};
+  std::atomic_int causal_emergency_candidate_commit_result_{0};
   std::atomic<ExecutionRecoveryState> execution_recovery_state_{
       ExecutionRecoveryState::kInitialHold};
   std::atomic_uint64_t planner_solve_generation_{0U};

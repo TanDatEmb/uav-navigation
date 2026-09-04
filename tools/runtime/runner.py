@@ -1091,6 +1091,10 @@ def _mapping_params(
     speed_cap_mps: float | None = None,
     inject_failed_replan_cycle_id: int | None = None,
     inject_failed_replan_once: bool = False,
+    inject_failed_replan_when_safe: bool = False,
+    inject_failed_replan_after_handoff: bool = False,
+    inject_failed_replan_repeated: bool = False,
+    inject_failed_plan_from_rest_repeated: bool = False,
 ) -> Path:
     """Create the only ROS parameter file used by native planner backend navigation."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -1121,6 +1125,14 @@ def _mapping_params(
             raise ValueError("inject_failed_replan_cycle_id must be positive")
         planner_parameters["inject_failed_replan_cycle_id"] = int(inject_failed_replan_cycle_id)
         planner_parameters["inject_failed_replan_once"] = bool(inject_failed_replan_once)
+    planner_parameters["inject_failed_replan_when_safe"] = bool(inject_failed_replan_when_safe)
+    planner_parameters["inject_failed_replan_after_handoff"] = bool(
+        inject_failed_replan_after_handoff
+    )
+    planner_parameters["inject_failed_replan_repeated"] = bool(inject_failed_replan_repeated)
+    planner_parameters["inject_failed_plan_from_rest_repeated"] = bool(
+        inject_failed_plan_from_rest_repeated
+    )
     # The canonical planner profile owns map evidence production. Do not
     # silently disable sensor-origin raycasting here: BACKUP certification
     # requires KNOWN_FREE evidence, while MAIN unknown-space policy is applied
@@ -1673,6 +1685,10 @@ def _run_sim_unlocked(
     experiment_id: str | None = None,
     inject_failed_replan_cycle_id: int | None = None,
     inject_failed_replan_once: bool = False,
+    inject_failed_replan_when_safe: bool = False,
+    inject_failed_replan_after_handoff: bool = False,
+    inject_failed_replan_repeated: bool = False,
+    inject_failed_plan_from_rest_repeated: bool = False,
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
@@ -2001,6 +2017,10 @@ def _run_sim_unlocked(
             speed_cap_mps=None if mission_file is not None else speed_cap_mps,
             inject_failed_replan_cycle_id=inject_failed_replan_cycle_id,
             inject_failed_replan_once=inject_failed_replan_once,
+            inject_failed_replan_when_safe=inject_failed_replan_when_safe,
+            inject_failed_replan_after_handoff=inject_failed_replan_after_handoff,
+            inject_failed_replan_repeated=inject_failed_replan_repeated,
+            inject_failed_plan_from_rest_repeated=inject_failed_plan_from_rest_repeated,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
@@ -2602,6 +2622,22 @@ def main() -> int:
         "--inject-failed-replan-once", action="store_true",
         help="enable the diagnostic-only one-shot failure hook",
     )
+    external_mode.add_argument(
+        "--inject-failed-replan-when-safe", action="store_true",
+        help="arm one diagnostic failure only when retained MAIN margin preconditions hold",
+    )
+    external_mode.add_argument(
+        "--inject-failed-replan-after-handoff", action="store_true",
+        help="arm one diagnostic failure only on a safe PASS_THROUGH hot handoff",
+    )
+    external_mode.add_argument(
+        "--inject-failed-replan-repeated", action="store_true",
+        help="repeat diagnostic replacement failures while retained MAIN remains valid",
+    )
+    external_mode.add_argument(
+        "--inject-failed-plan-from-rest-repeated", action="store_true",
+        help="repeat diagnostic PlanFromRest failures in StoppedRecovery",
+    )
     sub.add_parser("sim")
     external_mode_gui = sub.add_parser(
         "external-mode-gui",
@@ -2666,6 +2702,22 @@ def main() -> int:
         "--inject-failed-replan-once", action="store_true",
         help="enable the diagnostic-only one-shot failure hook",
     )
+    external_mode_gui.add_argument(
+        "--inject-failed-replan-when-safe", action="store_true",
+        help="arm one diagnostic failure only when retained MAIN margin preconditions hold",
+    )
+    external_mode_gui.add_argument(
+        "--inject-failed-replan-after-handoff", action="store_true",
+        help="arm one diagnostic failure only on a safe PASS_THROUGH hot handoff",
+    )
+    external_mode_gui.add_argument(
+        "--inject-failed-replan-repeated", action="store_true",
+        help="repeat diagnostic replacement failures while retained MAIN remains valid",
+    )
+    external_mode_gui.add_argument(
+        "--inject-failed-plan-from-rest-repeated", action="store_true",
+        help="repeat diagnostic PlanFromRest failures in StoppedRecovery",
+    )
     sub.add_parser("status")
     sub.add_parser("stop")
     sub.add_parser("clean")
@@ -2698,6 +2750,10 @@ def main() -> int:
             experiment_id=args.experiment_id,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
             inject_failed_replan_once=args.inject_failed_replan_once,
+            inject_failed_replan_when_safe=args.inject_failed_replan_when_safe,
+            inject_failed_replan_after_handoff=args.inject_failed_replan_after_handoff,
+            inject_failed_replan_repeated=args.inject_failed_replan_repeated,
+            inject_failed_plan_from_rest_repeated=args.inject_failed_plan_from_rest_repeated,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -2719,6 +2775,10 @@ def main() -> int:
             experiment_id=args.experiment_id,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
             inject_failed_replan_once=args.inject_failed_replan_once,
+            inject_failed_replan_when_safe=args.inject_failed_replan_when_safe,
+            inject_failed_replan_after_handoff=args.inject_failed_replan_after_handoff,
+            inject_failed_replan_repeated=args.inject_failed_replan_repeated,
+            inject_failed_plan_from_rest_repeated=args.inject_failed_plan_from_rest_repeated,
         )
     if args.command == "status":
         return status()
