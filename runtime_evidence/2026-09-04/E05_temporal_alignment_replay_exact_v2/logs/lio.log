@@ -1,0 +1,23 @@
+[INFO] [launch]: All log files can be found below /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T125955-39028/logs/2026-09-04-20-00-02-236892-letandat-Legion-5-Pro-16IAH7H-39468
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [robot_state_publisher-1]: process started with pid [39711]
+[INFO] [fast_lio_node-2]: process started with pid [39712]
+[INFO] [px4_odometry_bridge_external_node-3]: process started with pid [39713]
+[robot_state_publisher-1] [INFO] [1788526802.452194322] [robot_state_publisher]: Robot initialized
+[fast_lio_node-2] [WARN] [1788526802.481650492] []: Invalid frame ID "base_link" passed to canTransform argument target_frame - frame does not exist
+[fast_lio_node-2] [INFO] [1788526802.636898965] [fast_lio]: Publishing corrected and propagated odometry in lio_odom -> base_link; dynamic TF owner=propagated; static geometry resolved from base_link -> livox_imu_frame; runtime diagnostics are available on /lio/diagnostics
+[px4_odometry_bridge_external_node-3] [INFO] [1788526804.781423354] [px4_external_odometry_bridge]: external odometry gate transitioned to READY: previous_gate_reason=GATE_CLOSED current_gate_reason=READY publication_active=true lio_valid=true lio_status_fresh=true odometry_sample_age_ms=0 transport_ready=true timestamp_ready=true covariance_ready=true frame_valid=true public_generation=2459640654171 generation_valid=true geometric_jump_latched=false jump_reason=NO_BASELINE published_count=0 gated_count=0
+[px4_odometry_bridge_external_node-3] [INFO] [1788526804.781525199] [px4_external_odometry_bridge]: external odometry publication resumed: previous_gate_reason=GATE_CLOSED current_gate_reason=READY publication_active=true lio_valid=true lio_status_fresh=true odometry_sample_age_ms=0 transport_ready=true timestamp_ready=true covariance_ready=true frame_valid=true public_generation=2459640654171 generation_valid=true geometric_jump_latched=false jump_reason=NO_BASELINE published_count=0 gated_count=0
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[INFO] [px4_odometry_bridge_external_node-3]: sending signal 'SIGINT' to process[px4_odometry_bridge_external_node-3]
+[INFO] [fast_lio_node-2]: sending signal 'SIGINT' to process[fast_lio_node-2]
+[INFO] [robot_state_publisher-1]: sending signal 'SIGINT' to process[robot_state_publisher-1]
+[px4_odometry_bridge_external_node-3] [INFO] [1788526853.300300399] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[fast_lio_node-2] [INFO] [1788526853.300300402] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[robot_state_publisher-1] [INFO] [1788526853.300314530] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[px4_odometry_bridge_external_node-3] [INFO] [1788526853.304284663] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[fast_lio_node-2] [INFO] [1788526853.304790036] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[robot_state_publisher-1] [INFO] [1788526853.305207924] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[INFO] [robot_state_publisher-1]: process has finished cleanly [pid 39711]
+[INFO] [px4_odometry_bridge_external_node-3]: process has finished cleanly [pid 39713]
+[INFO] [fast_lio_node-2]: process has finished cleanly [pid 39712]

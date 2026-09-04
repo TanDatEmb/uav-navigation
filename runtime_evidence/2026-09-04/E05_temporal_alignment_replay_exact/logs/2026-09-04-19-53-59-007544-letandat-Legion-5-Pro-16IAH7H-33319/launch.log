@@ -1,0 +1,6 @@
+1788526439.0086124 [INFO] [launch]: All log files can be found below /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T125352-32904/logs/2026-09-04-19-53-59-007544-letandat-Legion-5-Pro-16IAH7H-33319
+1788526439.0087965 [INFO] [launch]: Default logging verbosity is set to INFO
+1788526439.0681698 [INFO] [navigation_runtime_node-1]: process started with pid [33554]
+1788526489.1748240 [WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+1788526489.1758225 [INFO] [navigation_runtime_node-1]: sending signal 'SIGINT' to process[navigation_runtime_node-1]
+1788526489.3023095 [INFO] [navigation_runtime_node-1]: process has finished cleanly [pid 33554]

@@ -1,0 +1,45 @@
+mission:
+  version: 1
+  id: external_mode_open_route
+  frame: lio_odom
+  waypoints:
+  - id: open_start
+    position:
+    - 0.0
+    - 0.0
+    - 3.0
+    acceptance_radius_m: 0.7
+    behavior: pass_through
+  - id: open_east
+    position:
+    - 3.0
+    - 0.0
+    - 3.0
+    acceptance_radius_m: 0.7
+    behavior: pass_through
+  - id: open_north
+    position:
+    - 6.0
+    - 0.0
+    - 3.0
+    acceptance_radius_m: 0.7
+    behavior: pass_through
+  - id: open_west
+    position:
+    - 7.0
+    - 0.0
+    - 3.0
+    acceptance_radius_m: 0.7
+    behavior: pass_through
+  - id: open_finish
+    position:
+    - 7.0
+    - 0.0
+    - 3.0
+    acceptance_radius_m: 0.7
+    behavior: stop
+    hold_s: 0.5
+  planning:
+    requested_cruise_speed_mps: 3.0
+    unknown_policy: allow_unknown
+  control: null

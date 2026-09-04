@@ -1,0 +1,15 @@
+1788525938.0103426 [INFO] [launch]: All log files can be found below /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T124531-24234/logs/2026-09-04-19-45-38-009469-letandat-Legion-5-Pro-16IAH7H-24625
+1788525938.0104887 [INFO] [launch]: Default logging verbosity is set to INFO
+1788525938.1884089 [INFO] [robot_state_publisher-1]: process started with pid [24872]
+1788525938.1885650 [INFO] [fast_lio_node-2]: process started with pid [24873]
+1788525938.1886523 [INFO] [px4_odometry_bridge_external_node-3]: process started with pid [24874]
+1788525938.2257557 [robot_state_publisher-1] [INFO] [1788525938.225482628] [robot_state_publisher]: Robot initialized
+1788525984.8278399 [WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+1788525984.8315911 [INFO] [px4_odometry_bridge_external_node-3]: sending signal 'SIGINT' to process[px4_odometry_bridge_external_node-3]
+1788525984.8320162 [INFO] [fast_lio_node-2]: sending signal 'SIGINT' to process[fast_lio_node-2]
+1788525984.8324504 [INFO] [robot_state_publisher-1]: sending signal 'SIGINT' to process[robot_state_publisher-1]
+1788525984.8326533 [robot_state_publisher-1] [INFO] [1788525984.827706128] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+1788525984.8331635 [robot_state_publisher-1] [INFO] [1788525984.832542500] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+1788525984.9397597 [INFO] [px4_odometry_bridge_external_node-3]: process has finished cleanly [pid 24874]
+1788525984.9473886 [INFO] [robot_state_publisher-1]: process has finished cleanly [pid 24872]
+1788525984.9478395 [INFO] [fast_lio_node-2]: process has finished cleanly [pid 24873]

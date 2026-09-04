@@ -1,0 +1,24 @@
+[INFO] [launch]: All log files can be found below /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T124531-24234/logs/2026-09-04-19-45-38-009469-letandat-Legion-5-Pro-16IAH7H-24625
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [robot_state_publisher-1]: process started with pid [24872]
+[INFO] [fast_lio_node-2]: process started with pid [24873]
+[INFO] [px4_odometry_bridge_external_node-3]: process started with pid [24874]
+[robot_state_publisher-1] [INFO] [1788525938.225482628] [robot_state_publisher]: Robot initialized
+[fast_lio_node-2] [WARN] [1788525938.269496988] []: Invalid frame ID "base_link" passed to canTransform argument target_frame - frame does not exist
+[fast_lio_node-2] [INFO] [1788525938.422780725] [fast_lio]: Publishing corrected and propagated odometry in lio_odom -> base_link; dynamic TF owner=propagated; static geometry resolved from base_link -> livox_imu_frame; runtime diagnostics are available on /lio/diagnostics
+[px4_odometry_bridge_external_node-3] [WARN] [1788525940.480141185] [px4_external_odometry_bridge]: external odometry gate transitioned closed: previous_gate_reason=GATE_CLOSED current_gate_reason=GEOMETRIC_CONTINUITY_UNTRUSTED publication_active=false lio_valid=false lio_status_fresh=true odometry_sample_age_ms=0 transport_ready=true timestamp_ready=true covariance_ready=false frame_valid=true public_generation=1595428232041 generation_valid=true geometric_jump_latched=false jump_reason=SOURCE_INVALID published_count=0 gated_count=0
+[px4_odometry_bridge_external_node-3] [INFO] [1788525940.930056673] [px4_external_odometry_bridge]: external odometry gate transitioned to READY: previous_gate_reason=GEOMETRIC_CONTINUITY_UNTRUSTED current_gate_reason=READY publication_active=true lio_valid=true lio_status_fresh=true odometry_sample_age_ms=0 transport_ready=true timestamp_ready=true covariance_ready=true frame_valid=true public_generation=1595428232041 generation_valid=true geometric_jump_latched=false jump_reason=NO_BASELINE published_count=0 gated_count=18
+[px4_odometry_bridge_external_node-3] [INFO] [1788525940.930114589] [px4_external_odometry_bridge]: external odometry publication resumed: previous_gate_reason=GEOMETRIC_CONTINUITY_UNTRUSTED current_gate_reason=READY publication_active=true lio_valid=true lio_status_fresh=true odometry_sample_age_ms=0 transport_ready=true timestamp_ready=true covariance_ready=true frame_valid=true public_generation=1595428232041 generation_valid=true geometric_jump_latched=false jump_reason=NO_BASELINE published_count=0 gated_count=18
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[INFO] [px4_odometry_bridge_external_node-3]: sending signal 'SIGINT' to process[px4_odometry_bridge_external_node-3]
+[INFO] [fast_lio_node-2]: sending signal 'SIGINT' to process[fast_lio_node-2]
+[INFO] [robot_state_publisher-1]: sending signal 'SIGINT' to process[robot_state_publisher-1]
+[robot_state_publisher-1] [INFO] [1788525984.827706128] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[fast_lio_node-2] [INFO] [1788525984.827729835] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[px4_odometry_bridge_external_node-3] [INFO] [1788525984.827723830] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[px4_odometry_bridge_external_node-3] [INFO] [1788525984.831905163] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[fast_lio_node-2] [INFO] [1788525984.832135504] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[robot_state_publisher-1] [INFO] [1788525984.832542500] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[INFO] [px4_odometry_bridge_external_node-3]: process has finished cleanly [pid 24874]
+[INFO] [robot_state_publisher-1]: process has finished cleanly [pid 24872]
+[INFO] [fast_lio_node-2]: process has finished cleanly [pid 24873]

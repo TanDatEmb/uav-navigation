@@ -1,0 +1,375 @@
+[INFO] [launch]: All log files can be found below /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T124531-24234/logs/2026-09-04-19-45-38-149719-letandat-Legion-5-Pro-16IAH7H-24617
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [navigation_runtime_node-1]: process started with pid [24896]
+[navigation_runtime_node-1] [INFO] [1788525938.295181427] [navigation_runtime_node]: Applying mission dynamics to planner backend before optimizer construction: velocity=3.000 acceleration=12.000 jerk=30.000
+[navigation_runtime_node-1] Load config file: /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T124531-24234/planner.yaml
+[navigation_runtime_node-1] [0;33m Load param rog_map/esdf/resolution failed, use default value: [0;0m0.2
+[navigation_runtime_node-1] [0;33m Load param rog_map/esdf/enable failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/esdf/local_update_box failed, use default value: [0;0m[]
+[navigation_runtime_node-1] [0;33m Load param rog_map/load_pcd_en failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param rog_map/map_sliding/enable success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/map_sliding/threshold success: [0;0m1.5
+[navigation_runtime_node-1] [0;32m Load param rog_map/fix_map_origin success: [0;0m[0 0 1.5 ]
+[navigation_runtime_node-1] [0;33m Load param rog_map/frontier_extraction_en failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/ros_callback/enable failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/ros_callback/cloud_topic failed, use default value: [0;0m/cloud_registered
+[navigation_runtime_node-1] [0;33m Load param rog_map/ros_callback/odom_topic failed, use default value: [0;0m/lidar_slam/odom
+[navigation_runtime_node-1] [0;33m Load param rog_map/ros_callback/odom_timeout failed, use default value: [0;0m0.05
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/enable failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/use_dynamic_reconfigure failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/pub_unknown_map_en failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/frame_id failed, use default value: [0;0mworld
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/time_rate failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/frame_rate failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/range failed, use default value: [0;0m[0 0 0 ]
+[navigation_runtime_node-1] [33m -- [ROG] Visualization range is not set, visualization is disabled[0m
+[navigation_runtime_node-1] [0;32m Load param rog_map/resolution success: [0;0m0.2
+[navigation_runtime_node-1] [0;32m Load param rog_map/inflation_resolution success: [0;0m0.2
+[navigation_runtime_node-1] [0;33m Load param rog_map/unk_inflation_en failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/unk_inflation_step failed, use default value: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/inflation_step success: [0;0m4
+[navigation_runtime_node-1] [0;32m Load param rog_map/intensity_thresh success: [0;0m-10
+[navigation_runtime_node-1] [0;32m Load param rog_map/map_size success: [0;0m[50 50 8 ]
+[navigation_runtime_node-1] [0;32m Load param rog_map/point_filt_num success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/enable success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/batch_update_size success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/unk_thresh success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_hit success: [0;0m0.9
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_miss success: [0;0m0.49
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_min success: [0;0m0.12
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_max success: [0;0m0.98
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_occ success: [0;0m0.85
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_free success: [0;0m0.499
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/ray_range success: [0;0m[0.8 100 ]
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/local_update_box success: [0;0m[50 50 8 ]
+[navigation_runtime_node-1] [0;32m Load param rog_map/virtual_ground_ceiling_en success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param rog_map/virtual_ground_height success: [0;0m-1.1
+[navigation_runtime_node-1] [0;32m Load param rog_map/virtual_ceil_height success: [0;0m5.8
+[navigation_runtime_node-1] [32m -- [RM-Config] inflation_resolution: 0.2[0m
+[navigation_runtime_node-1]  -- [ROG-Map] Init, resetMapSize: ORIGIN_AT_CORNER.
+[navigation_runtime_node-1]  -- [ROG-Map] Init, resetMapSize: virtual_ceil_height: 4.7, virtual_ground_height: -0.30000000000000004.
+[navigation_runtime_node-1] [34m	[ROG] n_free: 1[0m
+[navigation_runtime_node-1] [34m	[ROG] n_occ: 1[0m
+[navigation_runtime_node-1] [34m	[ROG] l_hit: 2.19722[0m
+[navigation_runtime_node-1] [34m	[ROG] l_miss: -0.0400053[0m
+[navigation_runtime_node-1] [34m	[ROG] l_min: -1.99243[0m
+[navigation_runtime_node-1] [34m	[ROG] l_max: 3.89182[0m
+[navigation_runtime_node-1] [34m	[ROG] l_occ: 1.7346[0m
+[navigation_runtime_node-1] [34m	[ROG] l_free: -0.00399995[0m
+[navigation_runtime_node-1] [33m -- [Inf-Map] Clear all local map.[0m
+[navigation_runtime_node-1] [32m -- [CounterMap] Init successfully -- .[0m
+[navigation_runtime_node-1] [32m	resolution: 0.2[0m
+[navigation_runtime_node-1] [32m	map_sliding_en: 1[0m
+[navigation_runtime_node-1] [32m	local_map_size_i: 261 261  51[0m
+[navigation_runtime_node-1] [32m	local_map_size_d: 52.2 52.2 10.2[0m
+[navigation_runtime_node-1] [33m -- [Inf-Map] Clear all local map.[0m
+[navigation_runtime_node-1] [32m -- [InfMap] Init successfully -- .[0m
+[navigation_runtime_node-1] [32m	resolution: 0.2[0m
+[navigation_runtime_node-1] [32m	map_sliding_en: 1[0m
+[navigation_runtime_node-1] [32m	local_map_size_i: 261 261  51[0m
+[navigation_runtime_node-1] [32m	local_map_size_d: 52.2 52.2 10.2[0m
+[navigation_runtime_node-1] [ProbMap] virtual_ceil_height: 4.6
+[navigation_runtime_node-1] [ProbMap] virtual_ground_height: -0.4
+[navigation_runtime_node-1] [33m -- [Prob-Map] Clear all local map.[0m
+[navigation_runtime_node-1] [32m -- [ProbMap] Init successfully -- .[0m
+[navigation_runtime_node-1] [32m	resolution: 0.2[0m
+[navigation_runtime_node-1] [32m	map_sliding_en: 1[0m
+[navigation_runtime_node-1] [32m	local_map_size_i: 251 251  41[0m
+[navigation_runtime_node-1] [32m	local_map_size_d: 50.2 50.2  8.2[0m
+[navigation_runtime_node-1] Load config file: /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T124531-24234/planner.yaml
+[navigation_runtime_node-1] [0;32m Load param traj_opt/switch/print_optimizer_log success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/mass success: [0;0m1.64
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/dh success: [0;0m0.35
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/dv success: [0;0m0.35
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/grav success: [0;0m9.81
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/cp success: [0;0m0.001
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/v_eps success: [0;0m0.0001
+[navigation_runtime_node-1] [0;32m Load param traj_opt/switch/save_log_en success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/pos_constraint_type success: [0;0m2
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/block_energy_cost success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/opt_accuracy success: [0;0m5e-06
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/integral_reso success: [0;0m15
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/lbfgs_memory_size success: [0;0m32
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/smooth_eps success: [0;0m0.01
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/corridor_plane_tolerance_m success: [0;0m0.01
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/feasibility_retry_max_iterations success: [0;0m64
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/route_reference/lateral_weight success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/route_reference/vertical_weight success: [0;0m10
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/route_reference/lateral_deadband_m success: [0;0m0.05
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/route_reference/vertical_deadband_m success: [0;0m0.05
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/optimization_dynamic_reserve_ratio success: [0;0m0.98
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_vel success: [0;0m3
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_acc success: [0;0m12
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_jerk success: [0;0m30
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_omg success: [0;0m5
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_acc_thr success: [0;0m25
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/min_acc_thr success: [0;0m6
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/objective/time_weight success: [0;0m12000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/objective/position_penalty_weight success: [0;0m5e+08
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/objective/velocity_penalty_weight success: [0;0m500000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/objective/acceleration_penalty_weight success: [0;0m500000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/objective/jerk_penalty_weight success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/objective/waypoint_attraction_weight success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/objective/angular_rate_penalty_weight success: [0;0m100000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/exp_traj/objective/thrust_penalty_weight success: [0;0m100000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/switch/print_optimizer_log success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/mass success: [0;0m1.64
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/dh success: [0;0m0.35
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/dv success: [0;0m0.35
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/grav success: [0;0m9.81
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/cp success: [0;0m0.001
+[navigation_runtime_node-1] [0;32m Load param traj_opt/flatness/v_eps success: [0;0m0.0001
+[navigation_runtime_node-1] [0;32m Load param traj_opt/switch/save_log_en success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/pos_constraint_type success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/piece_num success: [0;0m2
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/uniform_time_en success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/block_energy_cost success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/opt_accuracy success: [0;0m1e-06
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/integral_reso success: [0;0m12
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/lbfgs_memory_size success: [0;0m32
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/smooth_eps success: [0;0m0.01
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/corridor_plane_tolerance_m success: [0;0m0.01
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_vel success: [0;0m3
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_acc success: [0;0m12
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_jerk success: [0;0m30
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_omg success: [0;0m5
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/max_acc_thr success: [0;0m25
+[navigation_runtime_node-1] [0;32m Load param traj_opt/boundary/min_acc_thr success: [0;0m6
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/objective/time_weight success: [0;0m1200
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/objective/terminal_time_weight success: [0;0m100000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/objective/position_penalty_weight success: [0;0m1e+10
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/objective/velocity_penalty_weight success: [0;0m100000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/objective/acceleration_penalty_weight success: [0;0m100000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/objective/jerk_penalty_weight success: [0;0m100000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/objective/angular_rate_penalty_weight success: [0;0m100000
+[navigation_runtime_node-1] [0;32m Load param traj_opt/backup_traj/objective/thrust_penalty_weight success: [0;0m100000
+[navigation_runtime_node-1] [0;32m Load param astar/allow_diag success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param astar/debug_visualization_en success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param astar/heu_type success: [0;0m2
+[navigation_runtime_node-1] [0;32m Load param astar/heuristic_weight success: [0;0m1.5
+[navigation_runtime_node-1] [0;32m Load param astar/visual_process success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param planner/print_log success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param planner/visualization_en success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param planner/preserve_backup_altitude success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param planner/backup_refinement_enabled success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param planner/use_fov_cut success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param planner/visibility_horizon_cap_m success: [0;0m23
+[navigation_runtime_node-1] [0;32m Load param planner/visibility_horizon_floor_m success: [0;0m14
+[navigation_runtime_node-1] [0;32m Load param planner/sensing_horizon_m success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param planner/replan_forward_dt_s success: [0;0m0.4
+[navigation_runtime_node-1] [0;32m Load param astar/search_time_limit_s success: [0;0m0.06
+[navigation_runtime_node-1] [0;32m Load param astar/total_time_limit_s success: [0;0m0.12
+[navigation_runtime_node-1] [0;32m Load param planner/solve_deadline_s success: [0;0m0.18
+[navigation_runtime_node-1] [0;32m Load param planner/finalization_reserve_s success: [0;0m0.04
+[navigation_runtime_node-1] [0;32m Load param planner/corridor_bound_distance_m success: [0;0m1.5
+[navigation_runtime_node-1] [0;32m Load param planner/corridor_segment_max_length_m success: [0;0m3
+[navigation_runtime_node-1] [0;32m Load param planner/local_window_m success: [0;0m20
+[navigation_runtime_node-1] [0;33m Load param planner/planning_horizon_m failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param planner/receding_distance_m success: [0;0m3
+[navigation_runtime_node-1] [0;32m Load param planner/vehicle_radius_m success: [0;0m0.35
+[navigation_runtime_node-1] [0;32m Load param planner/tracking_error_budget_m success: [0;0m0.25
+[navigation_runtime_node-1] [0;32m Load param planner/localization_error_budget_m success: [0;0m0.05
+[navigation_runtime_node-1] [0;32m Load param planner/mapping_error_budget_m success: [0;0m0.1
+[navigation_runtime_node-1] [0;32m Load param planner/planning_margin_m success: [0;0m0.05
+[navigation_runtime_node-1] [0;32m Load param planner/iris_iter_num success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param planner/yaw_rate_max_rad_s success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param planner/yaw_acceleration_max_rad_s2 success: [0;0m0.3
+[navigation_runtime_node-1] [0;32m Load param planner/route_yaw/minimum_lookahead_m success: [0;0m2
+[navigation_runtime_node-1] [0;32m Load param planner/route_yaw/maximum_lookahead_m success: [0;0m12
+[navigation_runtime_node-1] [0;32m Load param planner/route_yaw/lookahead_time_s success: [0;0m1.5
+[navigation_runtime_node-1] [0;32m Load param planner/route_yaw/minimum_horizontal_speed_mps success: [0;0m0.3
+[navigation_runtime_node-1] [0;32m Load param planner/route_yaw/minimum_horizontal_support_m success: [0;0m0.5
+[navigation_runtime_node-1] [0;32m Load param planner/route_yaw/reversal_threshold_rad success: [0;0m2.61799
+[navigation_runtime_node-1] [0;32m Load param planner/yaw_tracking_error_budget_rad success: [0;0m0.35
+[navigation_runtime_node-1] [32m -- [A*] Initialize sparse search workspace.[0m
+[navigation_runtime_node-1] [INFO] [1788525938.348087941] [navigation_runtime_node]: planner backend runtime ready: registered_scan=/lio/mapping_observation propagated_odom=/lio/odometry_propagated goal=/navigation/goal output=/navigation/navigation_command planner=5.0Hz command=50.0Hz snapshot=0.10s planning_input_source_receive=0.50s command_stream=0.10s stopped_recovery=5.0s
+[navigation_runtime_node-1] [WARN] [1788525938.970889718] [navigation_runtime_node]: Localization epoch changed to 1595428232041; old mapping and command state invalidated
+[navigation_runtime_node-1] Load config file: /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T124531-24234/planner.yaml
+[navigation_runtime_node-1] [0;33m Load param rog_map/esdf/resolution failed, use default value: [0;0m0.2
+[navigation_runtime_node-1] [0;33m Load param rog_map/esdf/enable failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/esdf/local_update_box failed, use default value: [0;0m[]
+[navigation_runtime_node-1] [0;33m Load param rog_map/load_pcd_en failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param rog_map/map_sliding/enable success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/map_sliding/threshold success: [0;0m1.5
+[navigation_runtime_node-1] [0;32m Load param rog_map/fix_map_origin success: [0;0m[0 0 1.5 ]
+[navigation_runtime_node-1] [0;33m Load param rog_map/frontier_extraction_en failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/ros_callback/enable failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/ros_callback/cloud_topic failed, use default value: [0;0m/cloud_registered
+[navigation_runtime_node-1] [0;33m Load param rog_map/ros_callback/odom_topic failed, use default value: [0;0m/lidar_slam/odom
+[navigation_runtime_node-1] [0;33m Load param rog_map/ros_callback/odom_timeout failed, use default value: [0;0m0.05
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/enable failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/use_dynamic_reconfigure failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/pub_unknown_map_en failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/frame_id failed, use default value: [0;0mworld
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/time_rate failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/frame_rate failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/visualization/range failed, use default value: [0;0m[0 0 0 ]
+[navigation_runtime_node-1] [33m -- [ROG] Visualization range is not set, visualization is disabled[0m
+[navigation_runtime_node-1] [0;32m Load param rog_map/resolution success: [0;0m0.2
+[navigation_runtime_node-1] [0;32m Load param rog_map/inflation_resolution success: [0;0m0.2
+[navigation_runtime_node-1] [0;33m Load param rog_map/unk_inflation_en failed, use default value: [0;0m0
+[navigation_runtime_node-1] [0;33m Load param rog_map/unk_inflation_step failed, use default value: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/inflation_step success: [0;0m4
+[navigation_runtime_node-1] [0;32m Load param rog_map/intensity_thresh success: [0;0m-10
+[navigation_runtime_node-1] [0;32m Load param rog_map/map_size success: [0;0m[50 50 8 ]
+[navigation_runtime_node-1] [0;32m Load param rog_map/point_filt_num success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/enable success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/batch_update_size success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/unk_thresh success: [0;0m1
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_hit success: [0;0m0.9
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_miss success: [0;0m0.49
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_min success: [0;0m0.12
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_max success: [0;0m0.98
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_occ success: [0;0m0.85
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/p_free success: [0;0m0.499
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/ray_range success: [0;0m[0.8 100 ]
+[navigation_runtime_node-1] [0;32m Load param rog_map/raycasting/local_update_box success: [0;0m[50 50 8 ]
+[navigation_runtime_node-1] [0;32m Load param rog_map/virtual_ground_ceiling_en success: [0;0m0
+[navigation_runtime_node-1] [0;32m Load param rog_map/virtual_ground_height success: [0;0m-1.1
+[navigation_runtime_node-1] [0;32m Load param rog_map/virtual_ceil_height success: [0;0m5.8
+[navigation_runtime_node-1] [32m -- [RM-Config] inflation_resolution: 0.2[0m
+[navigation_runtime_node-1]  -- [ROG-Map] Init, resetMapSize: ORIGIN_AT_CORNER.
+[navigation_runtime_node-1]  -- [ROG-Map] Init, resetMapSize: virtual_ceil_height: 4.7, virtual_ground_height: -0.30000000000000004.
+[navigation_runtime_node-1] [34m	[ROG] n_free: 1[0m
+[navigation_runtime_node-1] [34m	[ROG] n_occ: 1[0m
+[navigation_runtime_node-1] [34m	[ROG] l_hit: 2.19722[0m
+[navigation_runtime_node-1] [34m	[ROG] l_miss: -0.0400053[0m
+[navigation_runtime_node-1] [34m	[ROG] l_min: -1.99243[0m
+[navigation_runtime_node-1] [34m	[ROG] l_max: 3.89182[0m
+[navigation_runtime_node-1] [34m	[ROG] l_occ: 1.7346[0m
+[navigation_runtime_node-1] [34m	[ROG] l_free: -0.00399995[0m
+[navigation_runtime_node-1] [33m -- [Inf-Map] Clear all local map.[0m
+[navigation_runtime_node-1] [32m -- [CounterMap] Init successfully -- .[0m
+[navigation_runtime_node-1] [32m	resolution: 0.2[0m
+[navigation_runtime_node-1] [32m	map_sliding_en: 1[0m
+[navigation_runtime_node-1] [32m	local_map_size_i: 261 261  51[0m
+[navigation_runtime_node-1] [32m	local_map_size_d: 52.2 52.2 10.2[0m
+[navigation_runtime_node-1] [33m -- [Inf-Map] Clear all local map.[0m
+[navigation_runtime_node-1] [32m -- [InfMap] Init successfully -- .[0m
+[navigation_runtime_node-1] [32m	resolution: 0.2[0m
+[navigation_runtime_node-1] [32m	map_sliding_en: 1[0m
+[navigation_runtime_node-1] [32m	local_map_size_i: 261 261  51[0m
+[navigation_runtime_node-1] [32m	local_map_size_d: 52.2 52.2 10.2[0m
+[navigation_runtime_node-1] [ProbMap] virtual_ceil_height: 4.6
+[navigation_runtime_node-1] [ProbMap] virtual_ground_height: -0.4
+[navigation_runtime_node-1] [33m -- [Prob-Map] Clear all local map.[0m
+[navigation_runtime_node-1] [32m -- [ProbMap] Init successfully -- .[0m
+[navigation_runtime_node-1] [32m	resolution: 0.2[0m
+[navigation_runtime_node-1] [32m	map_sliding_en: 1[0m
+[navigation_runtime_node-1] [32m	local_map_size_i: 251 251  41[0m
+[navigation_runtime_node-1] [32m	local_map_size_d: 50.2 50.2  8.2[0m
+[navigation_runtime_node-1] [INFO] [1788525967.166243902] [navigation_runtime_node]: planner backend decision_trace cycle=1 solve_generation=1 committed_generation=0 pinned_world_generation=2 pinned_world_revision=201 pinned_world_stamp_ns=23200000000 certificate_world_generation=0 certificate_world_revision=0 certificate_world_stamp_ns=0 cloud_stamp_ns=23200000000 corrected_stamp_ns=23200000000 propagated_stamp_ns=23268000000 state_age_ms=28.000 mode=PlanFromRest result=0 replan_code=3 commit_decision=1 solve_stage=5 solve_stage_name=backup solve_elapsed_ms=17.894 solve_deadline_exceeded=0 target=(3.00,0.00,3.00) planning_target=(6.00,0.00,3.00) goal_radius=0.700 goal_adjusted=1 target_grid=4 target_inf_grid=4 planning_target_grid=4 planning_target_inf_grid=4 committed_end=(0.00,0.00,0.00) endpoint_error=inf command=1 failure=0 exp_frontend_ms=4.267 exp_opt_ms=6.923 backup_frontend_ms=2.371 backup_opt_ms=0.000 robot_grid=4 robot_inf_grid=4 nearest_free_m=nan nearest_occ_m=nan nearest_occ=(nan,nan,nan)
+[navigation_runtime_node-1] [INFO] [1788525967.166461436] [navigation_runtime_node]: planner_cycle_metrics cycles=1 commands=0 dropped_cloud=0 planner_cycle_ms=18.223 p50_ms=18.223 p95_ms=18.223 p99_ms=18.223 map_us=35433 planner_us=17894 publish_us=0 store_publish_us=0 transition_lock_us=0 input_lock_us=0 target=(3.00,0.00,3.00) robot=(-0.17,-0.30,2.90) committed_start=(0.00,0.00,0.00) committed_q1=(0.00,0.00,0.00) committed_mid=(0.00,0.00,0.00) committed_q3=(0.00,0.00,0.00) committed_end=(0.00,0.00,0.00) main_end=(0.00,0.00,0.00) backup_start=0.000 guide_end=(6.00,0.00,3.00) guide_bounds=[(-0.17,-0.30,2.90),(6.00,0.00,3.00)] committed_duration=0.000
+[navigation_runtime_node-1] [WARN] [1788525967.960133076] [navigation_runtime_node]: diagnostic injection converted planning cycle=5 to a failed planning result
+[navigation_runtime_node-1] [WARN] [1788525967.961870559] [navigation_runtime_node]: one-shot emergency altitude anchor measured=2.974 command=2.938 terminal=2.938 limit=0.250
+[navigation_runtime_node-1] [WARN] [1788525967.962660735] [navigation_runtime_node]: planner backend replaced the exceeded-anchor command with one measured-state emergency brake
+[navigation_runtime_node-1] [WARN] [1788525967.962670103] [navigation_runtime_node]: planner backend hot replan failed (4); retaining visible committed trajectory backup=1 elapsed=0.652 backup_start=2.516 end=3.357 anchor_error=0.307 projected_anchor_error=0.491 relative_anchor_speed=0.918 tracking_limit=0.250
+[navigation_runtime_node-1] [INFO] [1788525967.962682825] [navigation_runtime_node]: planner backend decision_trace cycle=5 solve_generation=2 committed_generation=2 pinned_world_generation=2 pinned_world_revision=207 pinned_world_stamp_ns=23800000000 certificate_world_generation=2 certificate_world_revision=207 certificate_world_stamp_ns=23800000000 cloud_stamp_ns=23800000000 corrected_stamp_ns=23800000000 propagated_stamp_ns=23908000000 state_age_ms=24.000 mode=ReplanOnce result=4 replan_code=3 commit_decision=1 solve_stage=5 solve_stage_name=backup solve_elapsed_ms=11.893 solve_deadline_exceeded=0 target=(3.00,0.00,3.00) planning_target=(6.00,0.00,3.00) goal_radius=0.700 goal_adjusted=1 target_grid=4 target_inf_grid=4 planning_target_grid=4 planning_target_inf_grid=4 committed_end=(0.06,-0.27,2.94) endpoint_error=2.951 command=1 failure=0 exp_frontend_ms=1.830 exp_opt_ms=5.547 backup_frontend_ms=2.048 backup_opt_ms=0.001 robot_grid=4 robot_inf_grid=4 nearest_free_m=nan nearest_occ_m=nan nearest_occ=(nan,nan,nan)
+[navigation_runtime_node-1] [INFO] [1788525967.962708209] [navigation_runtime_node]: planner backend commit_trace generation=2 previous_generation=1 start_wall_time=23.932000000 execution_stamp_ns=23908000000 execution_age_at_solve_ms=12.000 execution_age_at_trace_ms=24.000 execution_p=[-0.168266,-0.309553,2.968957] execution_v=[0.522214,0.096339,0.356679] candidate_start_p=[-0.155613,-0.309860,2.973643] candidate_start_v=[0.613809,0.106904,0.359936] previous_valid=1 candidate_start_a=[0.000000,0.000000,0.000000] candidate_start_j=[0.000000,0.000000,0.000000] previous_sample_tt=0.652000 splice_p=0.306920 splice_v=0.918186 splice_a=4.003732 splice_j=1.343937 splice_yaw=-0.011810 splice_yaw_rate=0.000000
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=2.900675937262984 points=18
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through lookahead input active goal=(3, 0, 3) next=(6, 0, 3) guide_end=(3, 0, 3) guide_error=0
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3 points=16
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through route lookahead distance=3.000 required=3.000 complete=true terminal_speed_cap=2.940 remaining_horizon=16.812 corner=false
+[navigation_runtime_node-1] [planner INFO]  -- [planner] inserted route-boundary junction index=2 radius=0.7 overlap_depth=0.4041451884327381
+[navigation_runtime_node-1] [planner INFO]  -- [ExpOpt] route-boundary seed cell=2 point=(3, 0, 3) junction=(3, 0, 3) distance=0
+[navigation_runtime_node-1] [planner WARN]  -- [ExpOpt] complete baseline has no certified deterministic seed; falling back to bounded certified optimizer seed_stage=5
+[navigation_runtime_node-1] [planner INFO]  -- [planner] in [PlanFromRest] GenerateExpTrajectory SUCCESS.
+[navigation_runtime_node-1] [planner INFO]  -- [planner] visible MAIN requires certified backup suffix instead of main-only command terminal_stop=0 terminal_rest=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] selected braking-hull-aligned backup SFC switch_t=2.51576084480965 duration=0.8408702239500018 endpoint=(6.516494847557576, 0.002738795230518584, 3)
+[navigation_runtime_node-1] [planner WARN]  -- [planner] backup refinement failed; using certified minimum-snap seed backup_refinement_success=0 backup_refinement_fallback=1
+[navigation_runtime_node-1] [planner WARN]  -- [planner] bounded propagated derivative estimates: acceleration=2.3900001327980007/12 jerk=33.30729028949384/30; raw estimates remain in runtime diagnostics
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3.000122108418086 points=6
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3 points=14
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through route lookahead distance=2.475 required=3.000 complete=false terminal_speed_cap=2.210 remaining_horizon=16.204 corner=true
+[navigation_runtime_node-1] [planner INFO]  -- [planner] inserted route-boundary junction index=17 radius=0.7 overlap_depth=0.4041451884327381
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through corner terminal speed cap=2.898 preferred=2.898
+[navigation_runtime_node-1] [planner INFO]  -- [ExpOpt] route-boundary seed cell=1 point=(3, 0, 3) junction=(3, 0, 3) distance=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] visible MAIN requires certified backup suffix instead of main-only command terminal_stop=0 terminal_rest=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] selected braking-hull-aligned backup SFC switch_t=1.6605299599217094 duration=0.6540000396000117 endpoint=(6.3131760852106735, 0.00031913505036638675, 3)
+[navigation_runtime_node-1] [planner WARN]  -- [planner] backup refinement failed; using certified minimum-snap seed backup_refinement_success=0 backup_refinement_fallback=2
+[navigation_runtime_node-1] [planner WARN]  -- [planner] committed command-continuous emergency brake: initial_speed=0.7195448642931418 speed_limit=3 initial_overspeed=false duration=0.7093386347916663 distance=0.2237540519043345 peak_vel=0.7195448642931418 peak_acc=3.28827111117824 peak_jerk=24.15819964798225
+[navigation_runtime_node-1] [INFO] [1788525968.854523521] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525968.986344134] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525969.110159376] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525969.226343700] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525969.354314632] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525969.474562665] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525969.598278985] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525969.850381722] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525969.980808449] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [INFO] [1788525970.096295237] [navigation_runtime_node]: retaining expired recovery endpoint generation=2 as bounded STOPPED_HOLD endpoint=(0.062,-0.272,2.938)
+[navigation_runtime_node-1] [WARN] [1788525970.148308506] [navigation_runtime_node]: emergency brake reached a certified stop; replanning the active waypoint from measured state instead of treating the safety endpoint as terminal
+[navigation_runtime_node-1] [INFO] [1788525970.148340012] [navigation_runtime_node]: planner backend trajectory completion observed reaches_goal=0 endpoint_error=2.951 measured_goal_error=2.804 goal=(3.00,0.00,3.00)
+[navigation_runtime_node-1] [INFO] [1788525970.148346136] [navigation_runtime_node]: planner backend finite trajectory requires continuation; restarting PlanFromRest pass_through=1 goal=(3.00,0.00,3.00) vehicle=(0.21,-0.28,2.92)
+[navigation_runtime_node-1] [INFO] [1788525970.153825201] [navigation_runtime_node]: planner backend decision_trace cycle=16 solve_generation=3 committed_generation=2 pinned_world_generation=2 pinned_world_revision=224 pinned_world_stamp_ns=25600000000 certificate_world_generation=2 certificate_world_revision=207 certificate_world_stamp_ns=23800000000 cloud_stamp_ns=25600000000 corrected_stamp_ns=25600000000 propagated_stamp_ns=25668000000 state_age_ms=16.000 mode=PlanFromRest result=0 replan_code=3 commit_decision=1 solve_stage=5 solve_stage_name=backup solve_elapsed_ms=5.456 solve_deadline_exceeded=0 target=(3.00,0.00,3.00) planning_target=(6.00,0.00,3.00) goal_radius=0.700 goal_adjusted=1 target_grid=4 target_inf_grid=4 planning_target_grid=4 planning_target_inf_grid=4 committed_end=(0.06,-0.27,2.94) endpoint_error=2.951 command=1 failure=0 exp_frontend_ms=0.523 exp_opt_ms=0.444 backup_frontend_ms=0.989 backup_opt_ms=0.000 robot_grid=4 robot_inf_grid=4 nearest_free_m=nan nearest_occ_m=nan nearest_occ=(nan,nan,nan)
+[navigation_runtime_node-1] [INFO] [1788525970.153990589] [navigation_runtime_node]: planner_cycle_metrics cycles=16 commands=150 dropped_cloud=0 planner_cycle_ms=5.753 p50_ms=14.702 p95_ms=18.223 p99_ms=18.223 map_us=18486 planner_us=5456 publish_us=65 store_publish_us=67 transition_lock_us=0 input_lock_us=0 target=(3.00,0.00,3.00) robot=(0.21,-0.28,2.92) committed_start=(-0.16,-0.31,2.97) committed_q1=(-0.05,-0.29,3.02) committed_mid=(0.03,-0.28,3.00) committed_q3=(0.06,-0.27,2.95) committed_end=(0.06,-0.27,2.94) main_end=(-0.16,-0.31,2.97) backup_start=0.000 guide_end=(6.00,0.00,3.00) guide_bounds=[(0.21,-0.28,2.92),(6.00,0.00,3.00)] committed_duration=0.709
+[navigation_runtime_node-1] [INFO] [1788525971.153933093] [navigation_runtime_node]: planner backend decision_trace cycle=21 solve_generation=4 committed_generation=3 pinned_world_generation=2 pinned_world_revision=232 pinned_world_stamp_ns=26400000000 certificate_world_generation=2 certificate_world_revision=224 certificate_world_stamp_ns=25600000000 cloud_stamp_ns=26400000000 corrected_stamp_ns=26400000000 propagated_stamp_ns=26468000000 state_age_ms=16.000 mode=ReplanOnce result=0 replan_code=3 commit_decision=1 solve_stage=5 solve_stage_name=backup solve_elapsed_ms=5.557 solve_deadline_exceeded=0 target=(3.00,0.00,3.00) planning_target=(6.00,0.00,3.00) goal_radius=0.700 goal_adjusted=1 target_grid=4 target_inf_grid=4 planning_target_grid=4 planning_target_inf_grid=4 committed_end=(6.61,0.01,3.00) endpoint_error=3.609 command=1 failure=0 exp_frontend_ms=1.957 exp_opt_ms=1.724 backup_frontend_ms=0.579 backup_opt_ms=0.000 robot_grid=4 robot_inf_grid=4 nearest_free_m=nan nearest_occ_m=nan nearest_occ=(nan,nan,nan)
+[navigation_runtime_node-1] [INFO] [1788525971.154226649] [navigation_runtime_node]: planner_cycle_metrics cycles=21 commands=200 dropped_cloud=0 planner_cycle_ms=5.959 p50_ms=14.702 p95_ms=18.223 p99_ms=18.223 map_us=29787 planner_us=5557 publish_us=45 store_publish_us=47 transition_lock_us=0 input_lock_us=0 target=(3.00,0.00,3.00) robot=(0.67,-0.23,2.99) committed_start=(0.21,-0.28,2.92) committed_q1=(2.22,-0.10,2.98) committed_mid=(3.00,0.16,3.00) committed_q3=(4.43,0.06,3.00) committed_end=(6.61,0.01,3.00) main_end=(5.29,0.00,3.00) backup_start=4.093 guide_end=(6.00,0.00,3.00) guide_bounds=[(2.11,-0.11,2.98),(6.00,0.20,3.00)] committed_duration=4.985
+[navigation_runtime_node-1] [INFO] [1788525971.648175039] [navigation_runtime_node]: execution timeline activated successor generation=4 at ns=26880000000
+[navigation_runtime_node-1] [INFO] [1788525971.961333214] [navigation_runtime_node]: planner backend decision_trace cycle=23 solve_generation=5 committed_generation=4 pinned_world_generation=2 pinned_world_revision=237 pinned_world_stamp_ns=27000000000 certificate_world_generation=2 certificate_world_revision=232 certificate_world_stamp_ns=26400000000 cloud_stamp_ns=27000000000 corrected_stamp_ns=27000000000 propagated_stamp_ns=27108000000 state_age_ms=24.000 mode=ReplanOnce result=0 replan_code=3 commit_decision=1 solve_stage=5 solve_stage_name=backup solve_elapsed_ms=12.930 solve_deadline_exceeded=0 target=(6.00,0.00,3.00) planning_target=(7.00,0.00,3.00) goal_radius=0.700 goal_adjusted=1 target_grid=4 target_inf_grid=4 planning_target_grid=4 planning_target_inf_grid=4 committed_end=(6.31,0.00,3.00) endpoint_error=0.314 command=1 failure=0 exp_frontend_ms=2.248 exp_opt_ms=7.230 backup_frontend_ms=1.112 backup_opt_ms=0.001 robot_grid=4 robot_inf_grid=4 nearest_free_m=nan nearest_occ_m=nan nearest_occ=(nan,nan,nan)
+[navigation_runtime_node-1] [INFO] [1788525972.448175567] [navigation_runtime_node]: execution timeline activated successor generation=5 at ns=27520000000
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=2.9153464398509947 points=17
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through lookahead input active goal=(3, 0, 3) next=(6, 0, 3) guide_end=(3, 0, 3) guide_error=0
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3 points=16
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through route lookahead distance=3.000 required=3.000 complete=true terminal_speed_cap=2.940 remaining_horizon=17.196 corner=false
+[navigation_runtime_node-1] [planner INFO]  -- [planner] inserted route-boundary junction index=1 radius=0.7 overlap_depth=0.4041451884327381
+[navigation_runtime_node-1] [planner INFO]  -- [ExpOpt] route-boundary seed cell=1 point=(3, 0, 3) junction=(3, 0, 3) distance=0
+[navigation_runtime_node-1] [planner INFO]  -- [ExpOpt] complete baseline requested; returning certified nominal seed before optional refinement duration=4.337577073787466
+[navigation_runtime_node-1] [planner INFO]  -- [planner] in [PlanFromRest] GenerateExpTrajectory SUCCESS.
+[navigation_runtime_node-1] [planner INFO]  -- [planner] visible MAIN requires certified backup suffix instead of main-only command terminal_stop=0 terminal_rest=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] selected braking-hull-aligned backup SFC switch_t=4.092577073787466 duration=0.8921950112807048 endpoint=(6.609013707577459, 0.007050822747309969, 3)
+[navigation_runtime_node-1] [planner WARN]  -- [planner] backup refinement failed; using certified minimum-snap seed backup_refinement_success=0 backup_refinement_fallback=3
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3.000009885133055 points=12
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3 points=14
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through route lookahead distance=2.475 required=3.000 complete=false terminal_speed_cap=2.210 remaining_horizon=14.652 corner=true
+[navigation_runtime_node-1] [planner INFO]  -- [planner] inserted route-boundary junction index=18 radius=0.7 overlap_depth=0.4041451884327381
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through corner terminal speed cap=2.898 preferred=2.898
+[navigation_runtime_node-1] [planner INFO]  -- [ExpOpt] route-boundary seed cell=1 point=(3, 0, 3) junction=(3, 0, 3) distance=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] visible MAIN requires certified backup suffix instead of main-only command terminal_stop=0 terminal_rest=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] selected braking-hull-aligned backup SFC switch_t=1.5989105577298721 duration=0.6551432166673982 endpoint=(6.313786136866389, 0.00011006784954256844, 3)
+[navigation_runtime_node-1] [planner WARN]  -- [planner] backup refinement failed; using certified minimum-snap seed backup_refinement_success=0 backup_refinement_fallback=4
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3.000008285551798 points=3
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3 points=4
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through route lookahead distance=0.475 required=1.000 complete=false terminal_speed_cap=2.136 remaining_horizon=16.804 corner=true
+[navigation_runtime_node-1] [planner INFO]  -- [planner] inserted route-boundary junction index=16 radius=0.7 overlap_depth=0.4041451884327379
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through corner terminal speed cap=2.898 preferred=3.376
+[navigation_runtime_node-1] [planner INFO]  -- [ExpOpt] route-boundary seed cell=2 point=(6, 0, 3) junction=(6, 0, 3) distance=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] visible MAIN requires certified backup suffix instead of main-only command terminal_stop=0 terminal_rest=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] selected braking-hull-aligned backup SFC switch_t=1.2926521864089933 duration=0.6495911708011737 endpoint=(7.310693030598455, -2.4334013827891294e-06, 3)
+[navigation_runtime_node-1] [planner WARN]  -- [planner] backup refinement failed; using certified minimum-snap seed backup_refinement_success=0 backup_refinement_fallback=5
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=2.9999984251074823 points=7
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3 points=4
+[navigation_runtime_node-1] [INFO] [1788525972.554283873] [navigation_runtime_node]: planner backend decision_trace cycle=24 solve_generation=6 committed_generation=5 pinned_world_generation=2 pinned_world_revision=242 pinned_world_stamp_ns=27500000000 certificate_world_generation=2 certificate_world_revision=237 certificate_world_stamp_ns=27000000000 cloud_stamp_ns=27500000000 corrected_stamp_ns=27500000000 propagated_stamp_ns=27588000000 state_age_ms=16.000 mode=ReplanOnce result=0 replan_code=3 commit_decision=1 solve_stage=5 solve_stage_name=backup solve_elapsed_ms=5.816 solve_deadline_exceeded=0 target=(6.00,0.00,3.00) planning_target=(7.00,0.00,3.00) goal_radius=0.700 goal_adjusted=1 target_grid=4 target_inf_grid=4 planning_target_grid=4 planning_target_inf_grid=4 committed_end=(7.31,-0.00,3.00) endpoint_error=1.311 command=1 failure=0 exp_frontend_ms=1.380 exp_opt_ms=2.131 backup_frontend_ms=0.917 backup_opt_ms=0.001 robot_grid=4 robot_inf_grid=4 nearest_free_m=nan nearest_occ_m=nan nearest_occ=(nan,nan,nan)
+[navigation_runtime_node-1] [INFO] [1788525972.554663732] [navigation_runtime_node]: planner_cycle_metrics cycles=24 commands=270 dropped_cloud=0 planner_cycle_ms=6.307 p50_ms=13.388 p95_ms=18.223 p99_ms=18.223 map_us=36342 planner_us=5816 publish_us=52 store_publish_us=53 transition_lock_us=0 input_lock_us=0 target=(6.00,0.00,3.00) robot=(3.93,-0.01,2.93) committed_start=(3.30,-0.01,3.00) committed_q1=(4.47,0.00,3.00) committed_mid=(5.86,0.00,3.00) committed_q3=(6.96,0.00,3.00) committed_end=(7.31,-0.00,3.00) main_end=(6.62,0.00,3.00) backup_start=1.293 guide_end=(7.00,0.00,3.00) guide_bounds=[(4.46,0.00,3.00),(7.20,0.00,3.00)] committed_duration=1.942
+[navigation_runtime_node-1] [INFO] [1788525973.048185752] [navigation_runtime_node]: execution timeline activated successor generation=6 at ns=28000000000
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through route lookahead distance=0.475 required=1.000 complete=false terminal_speed_cap=0.351 remaining_horizon=16.061 corner=true
+[navigation_runtime_node-1] [planner INFO]  -- [planner] inserted route-boundary junction index=15 radius=0.7 overlap_depth=0.4041451884327379
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through corner terminal speed cap=2.898 preferred=2.898
+[navigation_runtime_node-1] [planner INFO]  -- [ExpOpt] route-boundary seed cell=1 point=(6, 0, 3) junction=(6, 0, 3) distance=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] visible MAIN requires certified backup suffix instead of main-only command terminal_stop=0 terminal_rest=0
+[navigation_runtime_node-1] [planner INFO]  -- [planner] selected braking-hull-aligned backup SFC switch_t=0.8587116348470896 duration=0.44802156372089225 endpoint=(6.859733680046957, -2.441271163391859e-05, 3)
+[navigation_runtime_node-1] [planner WARN]  -- [planner] backup refinement failed; using certified minimum-snap seed backup_refinement_success=0 backup_refinement_fallback=6
+[navigation_runtime_node-1] [WARN] [1788525973.351291339] [navigation_runtime_node]: one-shot emergency altitude anchor measured=2.993 command=3.001 terminal=3.001 limit=0.250
+[navigation_runtime_node-1] [WARN] [1788525973.351780958] [navigation_runtime_node]: planner backend replaced the exceeded-anchor command with one measured-state emergency brake
+[navigation_runtime_node-1] [WARN] [1788525973.351785844] [navigation_runtime_node]: planner backend hot replan failed (4); retaining visible committed trajectory backup=1 elapsed=0.244 backup_start=0.859 end=1.307 anchor_error=0.313 projected_anchor_error=0.378 relative_anchor_speed=0.322 tracking_limit=0.250
+[navigation_runtime_node-1] [INFO] [1788525973.351797354] [navigation_runtime_node]: planner backend decision_trace cycle=26 solve_generation=7 committed_generation=7 pinned_world_generation=2 pinned_world_revision=248 pinned_world_stamp_ns=28100000000 certificate_world_generation=2 certificate_world_revision=249 certificate_world_stamp_ns=28200000000 cloud_stamp_ns=28100000000 corrected_stamp_ns=28100000000 propagated_stamp_ns=28228000000 state_age_ms=16.000 mode=ReplanOnce result=4 replan_code=-3 commit_decision=0 solve_stage=5 solve_stage_name=backup solve_elapsed_ms=2.696 solve_deadline_exceeded=0 target=(6.00,0.00,3.00) planning_target=(7.00,0.00,3.00) goal_radius=0.700 goal_adjusted=1 target_grid=4 target_inf_grid=4 planning_target_grid=4 planning_target_inf_grid=4 committed_end=(5.89,-0.12,3.00) endpoint_error=0.158 command=1 failure=0 exp_frontend_ms=0.913 exp_opt_ms=1.082 backup_frontend_ms=0.917 backup_opt_ms=0.001 robot_grid=4 robot_inf_grid=4 nearest_free_m=nan nearest_occ_m=nan nearest_occ=(nan,nan,nan)
+[navigation_runtime_node-1] [INFO] [1788525973.351818689] [navigation_runtime_node]: planner backend commit_trace generation=7 previous_generation=6 start_wall_time=28.244000000 execution_stamp_ns=28228000000 execution_age_at_solve_ms=12.000 execution_age_at_trace_ms=16.000 execution_p=[4.864491,-0.064863,2.992773] execution_v=[2.618699,-0.133994,-0.004403] candidate_start_p=[4.864491,-0.064863,2.992773] candidate_start_v=[2.618699,-0.133994,-0.004403] previous_valid=1 candidate_start_a=[0.000000,0.000000,0.000000] candidate_start_j=[0.000000,0.000000,0.000000] previous_sample_tt=0.244000 splice_p=0.313489 splice_v=0.321640 splice_a=0.608743 splice_j=6.684148 splice_yaw=-0.002079 splice_yaw_rate=-0.000000
+[navigation_runtime_node-1] [ERROR] [1788525974.348177447] [navigation_runtime_node]: execution boundary rejected planned STOPPED_HOLD endpoint known_free=1 near_execution=0
+[navigation_runtime_node-1] [ERROR] [1788525974.348235098] [navigation_runtime_node]: publishing rejected command planner_failed=1 planner_available=1 sampled_valid=0 sampled_bundle=1 generation=7 role=0 safety_suffix=0 execution_freshness=1
+[navigation_runtime_node-1] [WARN] [1788525974.349541886] [navigation_runtime_node]: active generation=7 failed full immutable candidate revalidation failure=1 blocked_role=0 samples=0
+[navigation_runtime_node-1] [ERROR] [1788525975.608171778] [navigation_runtime_node]: publishing rejected command planner_failed=1 planner_available=0 sampled_valid=0 sampled_bundle=0 generation=0 role=0 safety_suffix=0 execution_freshness=1
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3.00003704826518 points=6
+[navigation_runtime_node-1] [planner INFO]  -- [Astar] selected certified constant mission-altitude route altitude=3 start_altitude=3 points=4
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through route lookahead distance=0.475 required=1.000 complete=false terminal_speed_cap=0.671 remaining_horizon=18.534 corner=true
+[navigation_runtime_node-1] [planner INFO]  -- [planner] inserted route-boundary junction index=5 radius=0.7 overlap_depth=0.4041451884327379
+[navigation_runtime_node-1] [planner INFO]  -- [planner] pass-through corner terminal speed cap=2.898 preferred=2.663
+[navigation_runtime_node-1] [planner INFO]  -- [ExpOpt] route-boundary seed cell=1 point=(6, 0, 3) junction=(6, 0, 3) distance=0
+[navigation_runtime_node-1] [planner WARN]  -- [ExpOpt] refinement cancelled after certified seed; returning immutable seed duration=4.764308071308696
+[navigation_runtime_node-1] [planner INFO]  -- [planner] visible MAIN requires certified backup suffix instead of main-only command terminal_stop=0 terminal_rest=0
+[navigation_runtime_node-1] [planner WARN]  -- [planner] backup visibility seed is too short after KNOWN_FREE visibility selection length=0.027303033649728168
+[navigation_runtime_node-1] [planner WARN]  -- [planner] in [ReplanOnce]: backup result is not executable; leaving CmdTraj unchanged
+[navigation_runtime_node-1] [planner WARN]  -- [planner] committed command-continuous emergency brake: initial_speed=2.622128461553518 speed_limit=3 initial_overspeed=false duration=0.7864140018812151 distance=1.0310682043457309 peak_vel=2.622128461553518 peak_acc=6.251784506752979 peak_jerk=24.48400388712349
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[INFO] [navigation_runtime_node-1]: sending signal 'SIGINT' to process[navigation_runtime_node-1]
+[navigation_runtime_node-1] [INFO] [1788525985.061986303] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[ERROR] [navigation_runtime_node-1]: process has died [pid 24896, exit code -2, cmd '/home/letandat/Dev/uav-navigation/install/navigation_runtime/lib/navigation_runtime/navigation_runtime_node --ros-args -r __node:=navigation_runtime_node --params-file /home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T124531-24234/navigation_runtime_params.yaml --params-file /tmp/launch_params_5glw7d1p'].

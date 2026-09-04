@@ -20,6 +20,7 @@ HYPOTHESES = (
     ("H4c_backup_ownership_begins_at_declared_switch", "H4c — BACKUP ownership begins at declared switch"),
     ("H5_corner_overconstraint", "H5 — Route/corner overconstraint"),
     ("H6_px4_controller_mismatch", "H6 — Planner vs PX4 controller mismatch"),
+    ("H7_temporal_anchor_alignment", "H7 — Temporal anchor alignment"),
 )
 
 
@@ -127,6 +128,21 @@ def markdown(runs: list[dict[str, Any]], report: dict[str, Any]) -> str:
             lines.append("Route boundary evidence is reported as `NO_ROUTE_BOUNDARY_EVENT` when no producer-declared event was captured.")
         elif key == "H6_px4_controller_mismatch":
             lines.append("PX4 correction and frame-residual statistics are available under each run's `metrics.px4` object.")
+        elif key == "H7_temporal_anchor_alignment":
+            lines.append("Exact immutable-polynomial temporal decomposition is stored in each run's `e5_temporal_alignment.csv` and `metrics.temporal_alignment`.")
+            for run in runs:
+                temporal = run.get('metrics', {}).get('temporal_alignment', {})
+                if temporal.get('usable_sample_count', 0):
+                    lines.append(f"- {run.get('run')}: usable={temporal.get('usable_sample_count')}; raw={temporal.get('raw_error', {}).get('p95')}; aligned={temporal.get('time_aligned_error', {}).get('p95')}; motion={temporal.get('command_motion_over_state_age', {}).get('p95')}.")
+            lines += [
+                "",
+                "### H7 explicit answers",
+                "",
+                "- The legacy E5 value `0.482191 m` cannot be decomposed from its retained artifact because exact immutable samples at both timestamps were not recorded.",
+                "- In the exact temporal replay, the vehicle was still more than `0.25 m` from the committed trajectory at the synchronized state-source timestamp (`0.442874 m` aligned versus `0.25 m` limit).",
+                "- The measured command-motion contribution over state age was `0.010839 m` in that boundary sample; timestamp alignment therefore did not explain the certificate violation or prevent emergency authorization.",
+                "- Further PX4/LIO tracking investigation remains required; H7 does not account for the observed synchronized residual.",
+            ]
         else:
             lines.append("Per-run measured metrics are available under the corresponding `metrics` object in `report_run.json`.")
         lines.append("Evidence: " + ("; ".join(report["hypotheses"][key].get("evidence", [])) or "none") + ".")

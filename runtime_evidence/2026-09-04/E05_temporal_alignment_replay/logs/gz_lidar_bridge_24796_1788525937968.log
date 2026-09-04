@@ -1,0 +1,6 @@
+[INFO] [1788525937.985937065] [px4_mid360_lidar_bridge]: bridging Gazebo PointCloudPacked /sim/mid360/scan/points -> ROS PointCloud2 /lidar/points with latest-only inbox depth=1 and SensorDataQoS depth=1
+[INFO] [1788525947.986011731] [px4_mid360_lidar_bridge]: gz_lidar_bridge_metrics phase=periodic ingress=79 published=79 dropped=0 copy_failures=0 convert_failures=0 publish_failures=0
+[INFO] [1788525957.986011968] [px4_mid360_lidar_bridge]: gz_lidar_bridge_metrics phase=periodic ingress=159 published=159 dropped=0 copy_failures=0 convert_failures=0 publish_failures=0
+[INFO] [1788525967.986013042] [px4_mid360_lidar_bridge]: gz_lidar_bridge_metrics phase=periodic ingress=239 published=239 dropped=0 copy_failures=0 convert_failures=0 publish_failures=0
+[INFO] [1788525977.986010435] [px4_mid360_lidar_bridge]: gz_lidar_bridge_metrics phase=periodic ingress=319 published=319 dropped=0 copy_failures=0 convert_failures=0 publish_failures=0
+[INFO] [1788525985.742030618] [rclcpp]: signal_handler(SIGINT/SIGTERM)

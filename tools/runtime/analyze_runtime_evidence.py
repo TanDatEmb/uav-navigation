@@ -172,6 +172,47 @@ def bool_value(value: Any) -> bool | None:
         return None
 
 
+def temporal_alignment_metrics(rows: list[dict[str, Any]]) -> tuple[str, list[str], dict[str, Any]]:
+    """Classify H7 only from direct exact-timestamp telemetry."""
+    usable = []
+    for row in rows:
+        raw = finite(row.get("raw_anchor_error_m"))
+        aligned = finite(row.get("time_aligned_anchor_error_m"))
+        limit = finite(row.get("retained_tracking_limit_m"))
+        motion = finite(row.get("command_motion_during_state_age_m"))
+        age = finite(row.get("source_age_ms"))
+        if raw is None or aligned is None or limit is None:
+            continue
+        usable.append({"raw": raw, "aligned": aligned, "limit": limit,
+                       "motion": motion, "age": age,
+                       "difference": raw - aligned,
+                       "timestamp_ns": row.get("timestamp_ns")})
+    metrics = {
+        "sample_count": len(rows),
+        "usable_sample_count": len(usable),
+        "samples": usable,
+        "raw_error": summary([x["raw"] for x in usable]),
+        "time_aligned_error": summary([x["aligned"] for x in usable]),
+        "command_motion_over_state_age": summary([x["motion"] for x in usable if x["motion"] is not None]),
+        "source_age_ms": summary([x["age"] for x in usable if x["age"] is not None]),
+        "raw_minus_aligned": summary([x["difference"] for x in usable]),
+    }
+    if not usable:
+        return "NOT_TESTED", ["No exact immutable-polynomial temporal-alignment samples were recorded."], metrics
+    rejected = [x for x in usable if x["raw"] > x["limit"] and x["aligned"] > x["limit"]]
+    confirmed = [x for x in usable if x["raw"] > x["limit"] and x["aligned"] <= x["limit"] and
+                 x["motion"] is not None and x["difference"] > 0.0]
+    if rejected:
+        return "REJECTED", [
+            f"{len(rejected)} retained-validation sample(s) exceeded {rejected[0]['limit']} m after exact state-source time alignment.",
+        ], metrics
+    if confirmed:
+        return "CONFIRMED", [
+            f"{len(confirmed)} sample(s) crossed the raw limit but remained within it after exact time alignment; command motion over state age explains a positive residual difference.",
+        ], metrics
+    return "INCONCLUSIVE", ["Direct temporal samples exist, but they do not satisfy either H7 confirmation or rejection criteria."], metrics
+
+
 def causal_transition_plot(out: Path, cmds: list[dict[str, Any]],
                            traces: list[dict[str, Any]]) -> str | None:
     try:
@@ -414,15 +455,24 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
     route_events = [item for item in traces if int(trace_value(item, "route_boundary_event_present", 0) or 0) == 1]
     px4 = planner_px4_metrics(cmds, samples)
     figures = make_plots(input_dir / "figures", cmds, traces, scenario, samples)
+    for temporal_figure in ("plot_E5_temporal_alignment.png",
+                            "plot_E5_temporal_alignment_scatter.png"):
+        temporal_path = input_dir / "figures" / temporal_figure
+        if temporal_path.is_file() and str(temporal_path) not in figures:
+            figures.append(str(temporal_path))
+    temporal_rows = read_csv(input_dir / "e5_temporal_alignment.csv")
+    h7_status, h7_evidence, h7_metrics = temporal_alignment_metrics(temporal_rows)
     bag_files = list((input_dir / "rosbag").glob("*.db3")) if (input_dir / "rosbag").is_dir() else []
     quality = {"scenario_records": len(scenario), "monitor_samples": len(samples), "planner_traces": len(traces),
                "commands": len(cmds), "rosbag_present": bool(bag_files),
                "missing": [name for name, count in (("scenario.jsonl", len(scenario)), ("samples.jsonl", len(samples))) if count == 0]}
-    hypothesis_keys = ("H1_splice_continuity", "H2_replanning_timing", "H3_pass_through_continuation", "H4_failed_replan_safety_takeover", "H4a_planning_failure_alone_changes_ownership", "H4b_tracking_certificate_exhaustion_authorizes_emergency", "H4c_backup_ownership_begins_at_declared_switch", "H5_corner_overconstraint", "H6_px4_controller_mismatch")
+    hypothesis_keys = ("H1_splice_continuity", "H2_replanning_timing", "H3_pass_through_continuation", "H4_failed_replan_safety_takeover", "H4a_planning_failure_alone_changes_ownership", "H4b_tracking_certificate_exhaustion_authorizes_emergency", "H4c_backup_ownership_begins_at_declared_switch", "H5_corner_overconstraint", "H6_px4_controller_mismatch", "H7_temporal_anchor_alignment")
     hypothesis_status = {key: "INCONCLUSIVE" for key in hypothesis_keys}
+    hypothesis_status["H7_temporal_anchor_alignment"] = h7_status
     if any(item["premature_safety_takeover_before_backup"] for item in failure_timelines):
         hypothesis_status["H4_failed_replan_safety_takeover"] = "CONFIRMED"
     hypothesis_evidence = {key: [] for key in hypothesis_status}
+    hypothesis_evidence["H7_temporal_anchor_alignment"] = h7_evidence
     if hypothesis_status["H4_failed_replan_safety_takeover"] == "CONFIRMED":
         hypothesis_evidence["H4_failed_replan_safety_takeover"].append(
             "Injected failure was followed by a safety-suffix command while the prior command still had positive time_to_backup_start_s."
@@ -472,7 +522,8 @@ def analyze(input_dir: Path, output: Path) -> dict[str, Any]:
                      "safe_margin_injected_failure_count": len(safe_injected),
                      "backup_ownership_transitions": backup_transitions,
                      "route_boundary_event_count": len(route_events), "route_boundary_status": "PRESENT" if route_events else "NO_ROUTE_BOUNDARY_EVENT",
-                     "px4": px4, "command_roles": {role: sum(role_name(x.get("analytic_sample_role")) == role for x in cmds) for role in ("MAIN", "BACKUP", "EMERGENCY", "UNKNOWN")},
+                     "px4": px4, "temporal_alignment": h7_metrics,
+                     "command_roles": {role: sum(role_name(x.get("analytic_sample_role")) == role for x in cmds) for role in ("MAIN", "BACKUP", "EMERGENCY", "UNKNOWN")},
                      "recovery_states": {state_name(x.get("execution_recovery_state")): sum(state_name(y.get("execution_recovery_state")) == state_name(x.get("execution_recovery_state")) for y in cmds) for x in cmds}},
         "hypotheses": {key: {"status": hypothesis_status[key], "evidence": hypothesis_evidence[key]} for key in hypothesis_status},
         "critical_events": [{"time_s": item.get("time_s"), "type": "planner_failure", "injected": int(trace_value(item, "injected_replan_failure", 0) or 0), "candidate_result": trace_value(item, "candidate_result")} for item in failures],
