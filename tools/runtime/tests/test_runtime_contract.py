@@ -27,6 +27,7 @@ import gazebo_native_observer
 import report
 import runner
 import process_group
+import closed_loop_characterization
 
 
 def _valid_captured_provenance() -> dict[str, object]:
@@ -67,6 +68,26 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_closed_loop_lateral_arc_endpoint_matches_following_hold(self) -> None:
+        harness = object.__new__(closed_loop_characterization.Characterization)
+        harness.profile = "lateral"
+        harness.initial_px4 = [0.0, 0.0, -2.0]
+        segments = harness._build_segments()
+        arcs = [segment for segment in segments if segment["kind"] == "arc"]
+        self.assertTrue(arcs)
+        for arc in arcs:
+            arc_end, _, _, _, _ = harness._reference(
+                float(arc["start_s"]) + float(arc["duration_s"]),
+                arc, float(arc["duration_s"]))
+            hold = next(
+                segment for segment in segments
+                if segment["id"] == f'{arc["id"]}_HOLD'
+            )
+            self.assertAlmostEqual(arc_end[0], hold["offset_x"], places=10)
+            self.assertAlmostEqual(arc_end[1], hold["offset_y"], places=10)
+            self.assertAlmostEqual(
+                arc_end[2], harness.initial_px4[2] + hold["offset_z"], places=10)
+
     def test_px4_controller_observability_decoders_preserve_setpoints_and_saturation(self) -> None:
         local_setpoint = monitor._px4_local_position_setpoint_payload(SimpleNamespace(
             timestamp=123,
@@ -608,7 +629,7 @@ class RuntimeContractTest(unittest.TestCase):
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(parameters["planner_rate_hz"], 5.0)
             self.assertEqual(parameters["mission_file"], str(mission.resolve()))
-            self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 1.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 12.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 12.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 30.0)
             self.assertEqual(
@@ -644,7 +665,7 @@ class RuntimeContractTest(unittest.TestCase):
             )
             speed_parameters = yaml.safe_load(speed_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             speed_planner = yaml.safe_load(Path(speed_parameters["config_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(speed_planner["traj_opt"]["boundary"]["max_vel"], 5.0)
+            self.assertEqual(speed_planner["traj_opt"]["boundary"]["max_vel"], 12.0)
             self.assertEqual(speed_planner["traj_opt"]["exp_traj"]["pos_constraint_type"], 2)
 
             capped_target = runner._mapping_params(
@@ -655,7 +676,7 @@ class RuntimeContractTest(unittest.TestCase):
             )
             capped_parameters = yaml.safe_load(capped_target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             capped_planner = yaml.safe_load(Path(capped_parameters["config_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(capped_planner["traj_opt"]["boundary"]["max_vel"], 2.0)
+            self.assertEqual(capped_planner["traj_opt"]["boundary"]["max_vel"], 12.0)
 
             external = runner._external_mode_params(
                 session, ROOT / "config/runtime/external_mode.yaml"
@@ -725,7 +746,7 @@ class RuntimeContractTest(unittest.TestCase):
             planner = yaml.safe_load(
                 Path(parameters["config_path"]).read_text(encoding="utf-8")
             )
-            self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 10.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 12.0)
             self.assertEqual(parameters["mission_file"], str(resolved.resolve()))
             launch_command = runner._navigation_runtime_launch_command(mapping, resolved)
             self.assertIn(f"mission_file:={resolved.resolve()}", launch_command)

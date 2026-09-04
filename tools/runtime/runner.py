@@ -1111,10 +1111,11 @@ def _mapping_params(
     )
     if not isinstance(planner, dict):
         raise ValueError("planner backend planner config must be a mapping")
-    # PVA is the direct control contract, so mission limits must constrain the
-    # planner backend optimizer itself.  Applying them here avoids reintroducing an
-    # external velocity/acceleration limiter that would distort the planned
-    # trajectory after optimization.
+    # PVA is the direct control contract. Mission files provide requested
+    # intent only; the planner YAML owns the physical boundary and the
+    # product-owned control envelope. Applying mission values to the physical
+    # boundary here would create a second authority and would also alter
+    # BACKUP/EMERGENCY feasibility.
     planning = _mission_planning(mission_file) if mission_file is not None else {}
     if mission_file is not None:
         # NavigationRuntimeNode independently loads mission dynamics before
@@ -1152,7 +1153,6 @@ def _mapping_params(
             raise ValueError(
                 f"planner backend target speed exceeds X500 limit {product_max_velocity:g} m/s"
             )
-        boundary["max_vel"] = target_speed
     # Acceleration and jerk are owned by the immutable vehicle model. Mission
     # files contain intent only and cannot create per-mission dynamics.
     traj_opt = planner.setdefault("traj_opt", {})

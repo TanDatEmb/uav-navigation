@@ -228,6 +228,21 @@ struct PlannerDiagnostics {
   int replan_return_code{0};
   int commit_decision{0};
   double solve_deadline_s{0.0};
+  double requested_cruise_speed_mps{std::numeric_limits<double>::quiet_NaN()};
+  double effective_cruise_speed_mps{std::numeric_limits<double>::quiet_NaN()};
+  double control_max_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
+  double control_max_acceleration_mps2{std::numeric_limits<double>::quiet_NaN()};
+  double control_max_jerk_mps3{std::numeric_limits<double>::quiet_NaN()};
+  double physical_max_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
+  double physical_max_acceleration_mps2{std::numeric_limits<double>::quiet_NaN()};
+  double physical_max_jerk_mps3{std::numeric_limits<double>::quiet_NaN()};
+  // These are the extrema of the latest independently evaluated MAIN
+  // candidate. They are diagnostic evidence; candidate admission remains
+  // governed by the existing hard certificates.
+  double candidate_maximum_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
+  double candidate_maximum_acceleration_mps2{
+      std::numeric_limits<double>::quiet_NaN()};
+  double candidate_maximum_jerk_mps3{std::numeric_limits<double>::quiet_NaN()};
   std::array<double, 4> module_time_us{};
   Eigen::Vector3d latest_guide_start{Eigen::Vector3d::Constant(
       std::numeric_limits<double>::quiet_NaN())};

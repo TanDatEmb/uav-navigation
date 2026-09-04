@@ -2943,7 +2943,7 @@ double knownFreeGuideSupport(
         viability_dynamics.vehicle.maximum_jerk_mps3 =
             cfg_.exp_traj_cfg.max_jerk;
         viability_dynamics.intent.requested_cruise_speed_mps =
-            cfg_.requested_cruise_speed_mps;
+            cfg_.effective_cruise_speed_mps;
         viability_dynamics.unknown_space_policy = cfg_.unknown_space_policy;
         const auto governed_speed = evidenceAwareSpeedLimit(
             viability_state, viability_dynamics,

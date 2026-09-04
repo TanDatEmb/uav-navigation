@@ -90,6 +90,36 @@ TEST(PieceCertificate, IgnoresRoundoffOnlyLeadingPolynomialTerms) {
   EXPECT_FALSE(piece.checkMaxAccRate(0.3));
 }
 
+TEST(DeterministicNominalSeed, RejectsMainCandidateAboveControlEnvelope) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.max_vel = 0.5624988750005627;
+  config.max_acc = 0.2165062314375;
+  config.max_jerk = 0.2804066718750005;
+  const auto initial = makePositionState(0.0);
+  const auto terminal = makePositionState(1.0);
+  const auto piece = navigation_planning_backend::minimumSnapStateTransitionPiece(
+      initial, terminal, 0.2);
+  ASSERT_TRUE(piece.has_value());
+  geometry_utils::Trajectory seed;
+  seed.emplace_back(*piece);
+
+  navigation_math::PolyhedraH corridors{makeConvexBox().GetPlanes()};
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+  const std::vector<unsigned char> gates(1, 0U);
+  const std::vector<navigation_math::Vec3f> points(
+      1, navigation_math::Vec3f::Zero());
+  const std::vector<double> radii(
+      1, std::numeric_limits<double>::quiet_NaN());
+
+  const auto rejected = navigation_planning_backend::certifyDeterministicNominalSeed(
+      seed, corridors, mapping, gates, points, radii, initial, terminal, config);
+  EXPECT_FALSE(rejected.valid);
+  EXPECT_EQ(rejected.failure_stage,
+            navigation_planning_backend::DeterministicNominalSeedFailureStage::kDynamics);
+  EXPECT_GT(rejected.maximum_acceleration_mps2, config.max_acc);
+}
+
 TEST(ExpOptimizer, HighSpeedCorridorSolveKeepsContinuousCertificate) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   // This fixture intentionally starts at the exact physical velocity cap;

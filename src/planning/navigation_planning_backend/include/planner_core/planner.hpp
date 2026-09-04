@@ -333,6 +333,18 @@ namespace navigation_planning_backend {
         double solveDeadlineSeconds() const noexcept {
             return cfg_.solve_deadline_s;
         }
+        double requestedCruiseSpeedMetersPerSecond() const noexcept {
+            return cfg_.requested_cruise_speed_mps;
+        }
+        double effectiveCruiseSpeedMetersPerSecond() const noexcept {
+            return cfg_.effective_cruise_speed_mps;
+        }
+        navigation_planning::VehicleControlEnvelope controlEnvelope() const noexcept {
+            return cfg_.control_envelope;
+        }
+        navigation_planning::VehicleDynamicModel physicalModel() const noexcept {
+            return cfg_.physical_model();
+        }
         double replanForwardSeconds() const noexcept {
             return cfg_.replan_forward_dt_s;
         }

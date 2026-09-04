@@ -463,6 +463,18 @@ navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
   output.replan_return_code = impl_->planner->latestReplanReturnCode();
   output.commit_decision = impl_->planner->latestCommitDecision();
   output.solve_deadline_s = impl_->planner->solveDeadlineSeconds();
+  output.requested_cruise_speed_mps =
+      impl_->planner->requestedCruiseSpeedMetersPerSecond();
+  output.effective_cruise_speed_mps =
+      impl_->planner->effectiveCruiseSpeedMetersPerSecond();
+  const auto control = impl_->planner->controlEnvelope();
+  const auto physical = impl_->planner->physicalModel();
+  output.control_max_velocity_mps = control.maximum_velocity_mps;
+  output.control_max_acceleration_mps2 = control.maximum_acceleration_mps2;
+  output.control_max_jerk_mps3 = control.maximum_jerk_mps3;
+  output.physical_max_velocity_mps = physical.maximum_velocity_mps;
+  output.physical_max_acceleration_mps2 = physical.maximum_acceleration_mps2;
+  output.physical_max_jerk_mps3 = physical.maximum_jerk_mps3;
   std::vector<double> module_times;
   module_times = impl_->planner->moduleTimeConsumingSnapshot();
   const auto read_time = [&module_times](const std::size_t index) {
@@ -501,6 +513,12 @@ navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
       impl_->planner->latestCandidateMaximumYawAccelerationRadS2();
   output.backup_certificate = impl_->planner->backupCertificateDiagnostics();
   output.optimization = toProductDiagnostics(impl_->planner->latestExpOptimizationDiagnostics());
+  output.candidate_maximum_velocity_mps =
+      output.optimization.last_candidate_maximum_velocity_mps;
+  output.candidate_maximum_acceleration_mps2 =
+      output.optimization.last_candidate_maximum_acceleration_mps2;
+  output.candidate_maximum_jerk_mps3 =
+      output.optimization.last_candidate_maximum_jerk_mps3;
   return output;
 }
 

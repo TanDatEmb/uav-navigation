@@ -3484,14 +3484,21 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     }
     return euclidean_distance;
   }();
+  const double effective_cruise_speed_mps =
+      planner_->diagnostics().effective_cruise_speed_mps;
+  if (!std::isfinite(effective_cruise_speed_mps) ||
+      effective_cruise_speed_mps <= 0.0) {
+    throw std::logic_error(
+        "planner control envelope did not provide a finite effective cruise speed");
+  }
   const bool terminal_stop_approach_due = plannerTerminalStopApproachDue(
       stop_waypoint, remaining_route_m,
-      mission_dynamic_limits_.intent.requested_cruise_speed_mps,
+      effective_cruise_speed_mps,
       mission_dynamic_limits_.vehicle.maximum_acceleration_mps2,
       mission_dynamic_limits_.vehicle.maximum_jerk_mps3);
   if (plan_from_rest_with_transition && stop_waypoint) {
     const double stop_distance = plannerTerminalStopBrakingDistanceM(
-        mission_dynamic_limits_.intent.requested_cruise_speed_mps,
+        effective_cruise_speed_mps,
         mission_dynamic_limits_.vehicle.maximum_acceleration_mps2,
         mission_dynamic_limits_.vehicle.maximum_jerk_mps3);
     RCLCPP_INFO(
@@ -4990,6 +4997,28 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     add_trace_vector("backup_last_seed_endpoint",
                      backup_diagnostics.last_seed_endpoint);
     add_trace_value("exp_diagnostics_valid", exp_diagnostics.valid ? 1 : 0);
+    add_trace_value("requested_cruise_speed_mps",
+                    planner_diagnostics.requested_cruise_speed_mps);
+    add_trace_value("effective_cruise_speed_mps",
+                    planner_diagnostics.effective_cruise_speed_mps);
+    add_trace_value("control_max_velocity_mps",
+                    planner_diagnostics.control_max_velocity_mps);
+    add_trace_value("control_max_acceleration_mps2",
+                    planner_diagnostics.control_max_acceleration_mps2);
+    add_trace_value("control_max_jerk_mps3",
+                    planner_diagnostics.control_max_jerk_mps3);
+    add_trace_value("physical_max_velocity_mps",
+                    planner_diagnostics.physical_max_velocity_mps);
+    add_trace_value("physical_max_acceleration_mps2",
+                    planner_diagnostics.physical_max_acceleration_mps2);
+    add_trace_value("physical_max_jerk_mps3",
+                    planner_diagnostics.physical_max_jerk_mps3);
+    add_trace_value("candidate_max_velocity_mps",
+                    planner_diagnostics.candidate_maximum_velocity_mps);
+    add_trace_value("candidate_max_acceleration_mps2",
+                    planner_diagnostics.candidate_maximum_acceleration_mps2);
+    add_trace_value("candidate_max_jerk_mps3",
+                    planner_diagnostics.candidate_maximum_jerk_mps3);
     add_trace_value("exp_used_certified_seed",
                     exp_diagnostics.used_certified_seed ? 1 : 0);
     add_trace_value("exp_certified_seed_failure_stage",

@@ -58,6 +58,11 @@ namespace navigation_planning_backend {
         // Mission intent is a requested cruise speed, not a physical model
         // limit. The immutable vehicle model remains in `DynamicLimits`.
         double requested_cruise_speed_mps{0.0};
+        // Product-owned nominal closed-loop capability. This is applied only
+        // to the MAIN optimizer; BACKUP/EMERGENCY retain the hard physical
+        // limits loaded from traj_opt/boundary.
+        navigation_planning::VehicleControlEnvelope control_envelope{};
+        double effective_cruise_speed_mps{0.0};
         // Zero disables the optional FOV cut; the unit is explicit.
         double sensing_horizon_m{0.0};
 
@@ -97,32 +102,30 @@ namespace navigation_planning_backend {
             exp_traj_cfg = traj_opt::Config(loader, "exp_traj");
             back_traj_cfg = traj_opt::Config(loader, "backup_traj");
             astar_cfg = path_search::PathSearchConfig(loader);
+            loader.LoadParam("planner/control_envelope/maximum_velocity_mps",
+                             control_envelope.maximum_velocity_mps, 0.0);
+            loader.LoadParam("planner/control_envelope/maximum_acceleration_mps2",
+                             control_envelope.maximum_acceleration_mps2, 0.0);
+            loader.LoadParam("planner/control_envelope/maximum_jerk_mps3",
+                             control_envelope.maximum_jerk_mps3, 0.0);
             if (mission_limits.has_value()) {
                 const auto &limits = *mission_limits;
                 if (!limits.valid()) {
                     throw std::invalid_argument(
                         "mission dynamic limits or unknown-space policy are invalid");
                 }
-                // The YAML velocity is an operational cruise cap and may be
-                // lower than the immutable physical model. A mission request
-                // must fit that cap; A/J remain physical-model checks.
+                // The mission owns intent only. Its requested speed may be
+                // above the nominal closed-loop envelope, but must still fit
+                // the hard physical model loaded from the planner config.
                 if (limits.intent.requested_cruise_speed_mps >
                         exp_traj_cfg.max_vel + 1.0e-9 ||
                     limits.vehicle.maximum_acceleration_mps2 > exp_traj_cfg.max_acc + 1.0e-9 ||
                     limits.vehicle.maximum_jerk_mps3 > exp_traj_cfg.max_jerk + 1.0e-9 ||
-                    limits.intent.requested_cruise_speed_mps >
-                        back_traj_cfg.max_vel + 1.0e-9 ||
                     limits.vehicle.maximum_acceleration_mps2 > back_traj_cfg.max_acc + 1.0e-9 ||
                     limits.vehicle.maximum_jerk_mps3 > back_traj_cfg.max_jerk + 1.0e-9) {
                     throw std::invalid_argument(
-                        "mission dynamic limits exceed the product envelope");
+                        "mission requested speed or vehicle model exceeds the physical envelope");
                 }
-                exp_traj_cfg.max_vel = limits.intent.requested_cruise_speed_mps;
-                exp_traj_cfg.max_acc = limits.vehicle.maximum_acceleration_mps2;
-                exp_traj_cfg.max_jerk = limits.vehicle.maximum_jerk_mps3;
-                back_traj_cfg.max_vel = limits.intent.requested_cruise_speed_mps;
-                back_traj_cfg.max_acc = limits.vehicle.maximum_acceleration_mps2;
-                back_traj_cfg.max_jerk = limits.vehicle.maximum_jerk_mps3;
                 requested_cruise_speed_mps = limits.intent.requested_cruise_speed_mps;
             }
             loader.LoadParam("planner/print_log", print_log, false);
@@ -151,10 +154,6 @@ namespace navigation_planning_backend {
                              visibility_horizon_floor_m,
                              visibility_horizon_cap_m);
             loader.LoadParam("planner/sensing_horizon_m", sensing_horizon_m, 0.0);
-            if (!std::isfinite(requested_cruise_speed_mps) ||
-                requested_cruise_speed_mps <= 0.0) {
-                requested_cruise_speed_mps = exp_traj_cfg.max_vel;
-            }
             loader.LoadParam("planner/replan_forward_dt_s", replan_forward_dt_s, 0.4);
             loader.LoadParam("astar/search_time_limit_s", astar_search_time_limit_s, 0.1);
             loader.LoadParam("astar/total_time_limit_s", astar_total_time_limit_s,
@@ -197,6 +196,39 @@ namespace navigation_planning_backend {
             loader.LoadParam("planner/yaw_rate_max_rad_s", yaw_rate_max_rad_s, 3.14);
             loader.LoadParam("planner/yaw_acceleration_max_rad_s2",
                              yaw_acceleration_max_rad_s2, 0.3);
+            const navigation_planning::VehicleDynamicModel exp_physical_model{
+                exp_traj_cfg.max_vel, exp_traj_cfg.max_acc, exp_traj_cfg.max_jerk,
+                exp_traj_cfg.max_omg, exp_traj_cfg.max_omg,
+                yaw_acceleration_max_rad_s2, exp_traj_cfg.min_acc_thr * exp_traj_cfg.mass,
+                exp_traj_cfg.max_acc_thr * exp_traj_cfg.mass, exp_traj_cfg.mass};
+            const navigation_planning::VehicleDynamicModel backup_physical_model{
+                back_traj_cfg.max_vel, back_traj_cfg.max_acc, back_traj_cfg.max_jerk,
+                back_traj_cfg.max_omg, back_traj_cfg.max_omg,
+                yaw_acceleration_max_rad_s2, back_traj_cfg.min_acc_thr * back_traj_cfg.mass,
+                back_traj_cfg.max_acc_thr * back_traj_cfg.mass, back_traj_cfg.mass};
+            if (!control_envelope.valid(exp_physical_model) ||
+                !control_envelope.valid(backup_physical_model)) {
+                throw std::invalid_argument(
+                    "planner control envelope must be finite, positive, and no greater than "
+                    "the physical traj_opt boundary");
+            }
+            if (!std::isfinite(requested_cruise_speed_mps) ||
+                requested_cruise_speed_mps <= 0.0) {
+                requested_cruise_speed_mps = exp_physical_model.maximum_velocity_mps;
+            }
+            effective_cruise_speed_mps = std::min(
+                requested_cruise_speed_mps,
+                control_envelope.maximum_velocity_mps);
+            if (!std::isfinite(effective_cruise_speed_mps) ||
+                effective_cruise_speed_mps <= 0.0) {
+                throw std::invalid_argument(
+                    "planner effective cruise speed must be finite and positive");
+            }
+            // MAIN owns the nominal closed-loop envelope. The separately
+            // loaded BACKUP limits are intentionally not overwritten here.
+            exp_traj_cfg.max_vel = effective_cruise_speed_mps;
+            exp_traj_cfg.max_acc = control_envelope.maximum_acceleration_mps2;
+            exp_traj_cfg.max_jerk = control_envelope.maximum_jerk_mps3;
             loader.LoadParam("planner/route_yaw/minimum_lookahead_m",
                              route_yaw_config.minimum_lookahead_m, 2.0);
             loader.LoadParam("planner/route_yaw/maximum_lookahead_m",
@@ -220,10 +252,10 @@ namespace navigation_planning_backend {
                       planning_margin_m;
 
             const double required_safety_horizon =
-                jerkLimitedStopDistance(requested_cruise_speed_mps,
-                                        exp_traj_cfg.max_acc,
-                                        exp_traj_cfg.max_jerk) +
-                2.0 * requested_cruise_speed_mps * replan_forward_dt_s + robot_r;
+                jerkLimitedStopDistance(effective_cruise_speed_mps,
+                        exp_traj_cfg.max_acc,
+                        exp_traj_cfg.max_jerk) +
+                2.0 * effective_cruise_speed_mps * replan_forward_dt_s + robot_r;
             visibility_horizon_m =
                 std::max(visibility_horizon_floor_m, required_safety_horizon);
             const bool sensing_horizon_enabled = sensing_horizon_m > 0.0;
@@ -313,6 +345,14 @@ namespace navigation_planning_backend {
                     "safety margin");
             }
 
+        }
+
+        [[nodiscard]] navigation_planning::VehicleDynamicModel physical_model() const {
+            return navigation_planning::VehicleDynamicModel{
+                back_traj_cfg.max_vel, back_traj_cfg.max_acc, back_traj_cfg.max_jerk,
+                back_traj_cfg.max_omg, back_traj_cfg.max_omg,
+                yaw_acceleration_max_rad_s2, back_traj_cfg.min_acc_thr * back_traj_cfg.mass,
+                back_traj_cfg.max_acc_thr * back_traj_cfg.mass, back_traj_cfg.mass};
         }
 
         void bindWorldGeometry(

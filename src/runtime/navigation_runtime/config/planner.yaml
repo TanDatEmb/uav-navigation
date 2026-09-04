@@ -84,6 +84,14 @@ planner:
   # yaw anchor. This is a continuity recovery envelope, not a safety/waypoint
   # acceptance threshold; calibrate it from repeated tracking distributions.
   yaw_tracking_error_budget_rad: 0.35
+  # P0_PROVISIONAL_CLOSED_LOOP_PROFILE: one deliberately conservative GOOD
+  # operating point measured by the isolated MODE_PX4_LOCAL characterization
+  # harness. This is nominal MAIN authority only, not a physical or actuator
+  # limit. Keep the hard physical boundary below unchanged for BACKUP/EMERGENCY.
+  control_envelope:
+    maximum_velocity_mps: 0.5624988750005627
+    maximum_acceleration_mps2: 0.2165062314375
+    maximum_jerk_mps3: 0.2804066718750005
 
 traj_opt:
   switch:
