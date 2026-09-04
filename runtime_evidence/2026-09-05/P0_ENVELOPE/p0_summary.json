@@ -1,0 +1,356 @@
+{
+  "production_behavior_baseline": "37e8dc7f9967990ef4c1401475e0d15abef14360",
+  "implementation_commit_at_capture": "cf92e583d31470c2a1afdd5176ac64012e0d5ae2",
+  "provisional_profile": {
+    "maximum_velocity_mps": 0.5624988750005627,
+    "maximum_acceleration_mps2": 0.2165062314375,
+    "maximum_jerk_mps3": 0.2804066718750005
+  },
+  "certificate_m": 0.25,
+  "raw_evidence": {
+    "stage_a": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T172247-200103",
+    "matched_open_control": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T172420-201626",
+    "baseline_e5": "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5"
+  },
+  "stage_a": {
+    "label": "P0_STAGE_A_EXACT_E5",
+    "run_id": "external-mode-check-20260904T172247-200103",
+    "experiment_id": "P0_E5_STAGE_A_ACCEPTANCE",
+    "raw_run": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T172247-200103",
+    "repo_commit": "cf92e583d31470c2a1afdd5176ac64012e0d5ae2",
+    "map_profile": "open",
+    "mission_file": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T172247-200103/resolved_mission.yaml",
+    "requested_cruise_speed_mps": 3.0,
+    "planner_rate_hz": 5.0,
+    "command_rate_hz": 50.0,
+    "pva_sample_count": 1381,
+    "main_sample_count": 966,
+    "command_lio_tracking": {
+      "count": 1224,
+      "rms": 0.21787159017965158,
+      "p50": 0.14551821228326067,
+      "p95": 0.5535366935557332,
+      "p99": 0.7528325181453567,
+      "max": 0.8050714575536007
+    },
+    "command_px4_tracking": {
+      "count": 1224,
+      "rms": 0.20780540019952687,
+      "p50": 0.205985209211247,
+      "p95": 0.23200625298873367,
+      "p99": 0.3643229367513911,
+      "max": 0.4111938875212241
+    },
+    "lio_gt_position": {
+      "count": 1381,
+      "rms": 0.17339902503573726,
+      "p50": 0.1795591836511817,
+      "p95": 0.19975278810526167,
+      "p99": 0.2069844597291783,
+      "max": 0.21164750856565365
+    },
+    "px4_gt_position": {
+      "count": 1381,
+      "rms": 0.20717166662566103,
+      "p50": 0.23243377422197425,
+      "p95": 0.2538146822824466,
+      "p99": 0.26259137542295385,
+      "max": 0.26550815525706045
+    },
+    "planner_speed": {
+      "count": 966,
+      "rms": 0.47408511057004876,
+      "p50": 0.5157559704689579,
+      "p95": 0.5529896325259651,
+      "p99": 0.5535733448516824,
+      "max": 0.5536193584595367
+    },
+    "planner_acceleration": {
+      "count": 966,
+      "rms": 0.0867378879525726,
+      "p50": 0.04436021770793843,
+      "p95": 0.1874415821893211,
+      "p99": 0.19590056572529324,
+      "max": 0.19633043153734744
+    },
+    "planner_jerk": {
+      "count": 966,
+      "rms": 0.07394818328424364,
+      "p50": 0.05704232478678064,
+      "p95": 0.13351692493449813,
+      "p99": 0.14889103988735133,
+      "max": 0.14989167669413417
+    },
+    "px4_delta_v": {
+      "count": 1224,
+      "rms": 0.6029235579428595,
+      "p50": 0.6067103025896518,
+      "p95": 0.8548154191624454,
+      "p99": 0.861368282727993,
+      "max": 0.8644049651296202
+    },
+    "px4_delta_a": {
+      "count": 1224,
+      "rms": 0.21290447206307814,
+      "p50": 0.13335290390097757,
+      "p95": 0.3976525541594299,
+      "p99": 0.6374555577222278,
+      "max": 0.6578905752571885
+    },
+    "main_compliance": {
+      "main_sample_count": 966,
+      "observed_main_maxima": {
+        "maximum_velocity_mps": 0.5536193584595367,
+        "maximum_acceleration_mps2": 0.19633043153734744,
+        "maximum_jerk_mps3": 0.14989167669413417
+      },
+      "limits": {
+        "maximum_velocity_mps": 0.5624988750005627,
+        "maximum_acceleration_mps2": 0.2165062314375,
+        "maximum_jerk_mps3": 0.2804066718750005
+      },
+      "exceeds_limit": {
+        "maximum_velocity_mps": false,
+        "maximum_acceleration_mps2": false,
+        "maximum_jerk_mps3": false
+      },
+      "compliant": true
+    },
+    "first_certificate_crossing_ns": 40304000000,
+    "external_mode_states": [
+      "RECOVERY_HOLD",
+      "TRACK_TRAJECTORY",
+      "WAIT_AIRBORNE",
+      "WAIT_FIRST_COMMAND"
+    ],
+    "recovery_states": [
+      "INITIAL_HOLD",
+      "STOPPED_RECOVERY",
+      "TRACK_BACKUP",
+      "TRACK_MAIN"
+    ],
+    "scenario_failures": [
+      "External Mode exited before mission completion",
+      "mission completion event was not observed",
+      "waypoint acceptance coverage incomplete: expected [0, 1, 2, 3, 4], got [0, 1, 2, 3]"
+    ],
+    "mission_complete_observed": false,
+    "decision_trace": {
+      "decision_trace_count": 4,
+      "requested_cruise_speed_mps": 3.0,
+      "effective_cruise_speed_mps": 0.562499,
+      "control_max_velocity_mps": 0.562499,
+      "control_max_acceleration_mps2": 0.216506,
+      "control_max_jerk_mps3": 0.280407,
+      "physical_max_velocity_mps": 12.0,
+      "physical_max_acceleration_mps2": 12.0,
+      "physical_max_jerk_mps3": 30.0,
+      "candidate_max_velocity_mps_max": 0.553619,
+      "candidate_max_acceleration_mps2_max": 0.214155,
+      "candidate_max_jerk_mps3_max": 0.159954,
+      "emergency_authorization_reason_values": [
+        "0"
+      ],
+      "injected_replan_failure_values": [
+        "0"
+      ]
+    }
+  },
+  "matched_open_control": {
+    "label": "P0_MATCHED_OPEN_CONTROL",
+    "run_id": "external-mode-check-20260904T172420-201626",
+    "experiment_id": "P0_MATCHED_OPEN_CONTROL_FINAL",
+    "raw_run": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T172420-201626",
+    "repo_commit": "cf92e583d31470c2a1afdd5176ac64012e0d5ae2",
+    "map_profile": "open",
+    "mission_file": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260904T172420-201626/resolved_mission.yaml",
+    "requested_cruise_speed_mps": 3.0,
+    "planner_rate_hz": 5.0,
+    "command_rate_hz": 50.0,
+    "pva_sample_count": 2704,
+    "main_sample_count": 2278,
+    "command_lio_tracking": {
+      "count": 2483,
+      "rms": 0.19196773274405537,
+      "p50": 0.15104844245454113,
+      "p95": 0.24947779145507962,
+      "p99": 0.6724588302348317,
+      "max": 0.8169587897852675
+    },
+    "command_px4_tracking": {
+      "count": 2483,
+      "rms": 0.22060481612089128,
+      "p50": 0.22227222233830243,
+      "p95": 0.23092557943056885,
+      "p99": 0.2407640842083236,
+      "max": 0.3603366722387988
+    },
+    "lio_gt_position": {
+      "count": 2704,
+      "rms": 0.17294677959670923,
+      "p50": 0.17290306549680576,
+      "p95": 0.21735241075342196,
+      "p99": 0.2296625989345583,
+      "max": 0.23097800107852015
+    },
+    "px4_gt_position": {
+      "count": 2704,
+      "rms": 0.2564128224747784,
+      "p50": 0.2620785093598839,
+      "p95": 0.33965118121896654,
+      "p99": 0.3454793297162187,
+      "max": 0.3477291697314468
+    },
+    "planner_speed": {
+      "count": 2278,
+      "rms": 0.2551554251851568,
+      "p50": 0.1292599557288774,
+      "p95": 0.5477910262941685,
+      "p99": 0.5547651032280977,
+      "max": 0.5556045986900935
+    },
+    "planner_acceleration": {
+      "count": 2278,
+      "rms": 0.0525975932948327,
+      "p50": 0.008459271861202128,
+      "p95": 0.15812387629502653,
+      "p99": 0.20417601757526888,
+      "max": 0.20790714591440618
+    },
+    "planner_jerk": {
+      "count": 2278,
+      "rms": 0.04673613862964528,
+      "p50": 0.0026635923090032308,
+      "p95": 0.12515250523860535,
+      "p99": 0.166549731663046,
+      "max": 0.1757070640580922
+    },
+    "px4_delta_v": {
+      "count": 2483,
+      "rms": 0.3538053414756871,
+      "p50": 0.17093207588907644,
+      "p95": 0.7735277952922572,
+      "p99": 0.7901144978260288,
+      "max": 0.796951608213204
+    },
+    "px4_delta_a": {
+      "count": 2483,
+      "rms": 0.15635363178674166,
+      "p50": 0.0589061828516647,
+      "p95": 0.33377010853314165,
+      "p99": 0.6009745614110752,
+      "max": 1.0010487984748249
+    },
+    "main_compliance": {
+      "main_sample_count": 2278,
+      "observed_main_maxima": {
+        "maximum_velocity_mps": 0.5556045986900935,
+        "maximum_acceleration_mps2": 0.20790714591440618,
+        "maximum_jerk_mps3": 0.1757070640580922
+      },
+      "limits": {
+        "maximum_velocity_mps": 0.5624988750005627,
+        "maximum_acceleration_mps2": 0.2165062314375,
+        "maximum_jerk_mps3": 0.2804066718750005
+      },
+      "exceeds_limit": {
+        "maximum_velocity_mps": false,
+        "maximum_acceleration_mps2": false,
+        "maximum_jerk_mps3": false
+      },
+      "compliant": true
+    },
+    "first_certificate_crossing_ns": 61120000000,
+    "external_mode_states": [
+      "RECOVERY_HOLD",
+      "TRACK_TRAJECTORY",
+      "WAIT_AIRBORNE",
+      "WAIT_FIRST_COMMAND"
+    ],
+    "recovery_states": [
+      "INITIAL_HOLD",
+      "STOPPED_RECOVERY",
+      "TRACK_BACKUP",
+      "TRACK_MAIN"
+    ],
+    "scenario_failures": [
+      "External Mode exited before mission completion",
+      "mission completion event was not observed",
+      "waypoint acceptance coverage incomplete: expected [0, 1, 2, 3, 4], got [0, 1, 2, 3]"
+    ],
+    "mission_complete_observed": false,
+    "decision_trace": {
+      "decision_trace_count": 4,
+      "requested_cruise_speed_mps": 3.0,
+      "effective_cruise_speed_mps": 0.562499,
+      "control_max_velocity_mps": 0.562499,
+      "control_max_acceleration_mps2": 0.216506,
+      "control_max_jerk_mps3": 0.280407,
+      "physical_max_velocity_mps": 12.0,
+      "physical_max_acceleration_mps2": 12.0,
+      "physical_max_jerk_mps3": 30.0,
+      "candidate_max_velocity_mps_max": 0.555605,
+      "candidate_max_acceleration_mps2_max": 0.207911,
+      "candidate_max_jerk_mps3_max": 0.242226,
+      "emergency_authorization_reason_values": [
+        "0"
+      ],
+      "injected_replan_failure_values": [
+        "0"
+      ]
+    }
+  },
+  "production_baseline": {
+    "label": "PRODUCTION_BASELINE_E5",
+    "run_id": "external-mode-check-20260904T092142-49584",
+    "raw_run": "/home/letandat/Dev/uav-navigation/runtime_evidence/2026-09-04/E05_single_hot_replan_failure_cycle5",
+    "repo_commit": "37e8dc7f9967990ef4c1401475e0d15abef14360",
+    "requested_cruise_speed_mps": 3.0,
+    "physical_command_maxima": {
+      "maximum_velocity_mps": 2.877382,
+      "maximum_acceleration_mps2": 1.366991,
+      "maximum_jerk_mps3": 25.396569
+    },
+    "lio_gt_position_p95_m": 0.16969738989515115,
+    "acceptance": {
+      "cross_track_error_p95_m": 0.19405617963538507,
+      "cross_track_sample_count": 1630,
+      "enabled": true,
+      "expected_outcome": "complete",
+      "goal_indices": [
+        0,
+        1
+      ],
+      "max_cross_track_p95_m": 0.5,
+      "mission_complete_observed": false,
+      "mission_waypoint_count": 5,
+      "reasons": [
+        "mission completion event was not observed",
+        "waypoint acceptance coverage incomplete: expected [0, 1, 2, 3, 4], got [0]",
+        "mission did not reach COMPLETE outcome: PAUSED_SAFETY_STOP"
+      ],
+      "waypoint_acceptance_complete": false,
+      "waypoint_acceptance_indices": [
+        0
+      ]
+    },
+    "note": "Legacy E5 retained no P0 control-envelope fields; command-LIO/PX4 layer metrics are NOT_RECORDED here."
+  },
+  "stage_a_acceptance": {
+    "pass": false,
+    "reason": "Stage A has no clean acceptance: retained run reports missing waypoint completion and RECOVERY_HOLD/certificate or tracking gates fail."
+  },
+  "stage_b": {
+    "status": "NOT_RUN",
+    "reason": "Stage B is conditional on a fully passing Stage A; no failure injection was run."
+  },
+  "figures": [
+    "p0_e5_tracking_error.png",
+    "p0_e5_velocity_layers.png",
+    "p0_e5_acceleration_layers.png",
+    "p0_e5_estimator_gt.png",
+    "p0_demand_vs_tracking.png",
+    "p0_stage_a_vs_open_control.png"
+  ],
+  "conclusion": "P0 ENVELOPE FIX NOT SUFFICIENT"
+}
