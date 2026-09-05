@@ -8,15 +8,34 @@
 namespace navigation_runtime {
 
 enum class ExecutionEpisodePhase : std::uint8_t {
-  // These values are serialized in runtime telemetry.  Keep the historical
-  // ordinals while planning-worker activity remains orthogonal to the
-  // physical execution episode.
+  // Internal physical execution lifecycle. Planning-worker activity remains
+  // orthogonal to this episode.
   kInitialHold = 0,
-  kTrackingMain = 2,
-  kTrackingBackup = 3,
-  kStoppedHold = 4,
-  kPx4Hold = 5,
+  kTrackingMain = 1,
+  kTrackingBackup = 2,
+  kStoppedHold = 3,
+  kPx4Hold = 4,
 };
+
+// The diagnostic key execution_episode_phase is a v1 telemetry field. Keep
+// its historical wire codes at this publication boundary while the internal
+// lifecycle enum remains contiguous and free to evolve independently.
+constexpr std::uint8_t executionEpisodePhaseTelemetryCodeV1(
+    ExecutionEpisodePhase phase) noexcept {
+  switch (phase) {
+    case ExecutionEpisodePhase::kInitialHold:
+      return 0U;
+    case ExecutionEpisodePhase::kTrackingMain:
+      return 2U;
+    case ExecutionEpisodePhase::kTrackingBackup:
+      return 3U;
+    case ExecutionEpisodePhase::kStoppedHold:
+      return 4U;
+    case ExecutionEpisodePhase::kPx4Hold:
+      return 5U;
+  }
+  return 0xFFU;
+}
 
 struct ExecutionEpisodeSnapshot final {
   std::uint64_t localization_epoch{0U};
@@ -30,8 +49,8 @@ struct ExecutionEpisodeSnapshot final {
   bool restart_from_rest{false};
 };
 
-// One serialized lifecycle record for an execution episode. Policy code reads
-// this snapshot instead of reconstructing physical state from worker flags.
+// One lifecycle record for an execution episode. Policy code reads this
+// snapshot instead of reconstructing physical state from worker flags.
 class ExecutionEpisode final {
  public:
   [[nodiscard]] ExecutionEpisodeSnapshot snapshot() const noexcept {

@@ -1,5 +1,30 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-05 - Decouple internal execution phase ordinals from v1 telemetry
+
+- **Owner/status:** navigation runtime execution episode; `IMPLEMENTED`, focused
+  runtime build and phase conversion tests required.
+- **Scope:** `ExecutionEpisodePhase` is an internal contiguous lifecycle enum.
+  The existing `execution_episode_phase` diagnostic key keeps its historical
+  v1 wire codes through the explicit
+  `executionEpisodePhaseTelemetryCodeV1()` publication conversion. No planner
+  worker state is encoded as a physical episode phase.
+- **Safety impact:** lifecycle policy still consumes the typed internal phase
+  snapshot, while diagnostics retain compatibility at the boundary. No
+  command admission, recovery, freshness, tracking, PX4, or timing gate is
+  changed.
+- **Evidence:** the production conversion is exercised for every phase and
+  the runtime diagnostic publisher calls it instead of serializing the enum
+  underlying value. The old ordinal-locking test was removed; no SITL or flight
+  acceptance claim is made.
+- **Removal/review condition:** remove the v1 conversion only after all
+  retained telemetry consumers migrate to an explicitly versioned replacement
+  field and artifact compatibility is demonstrated.
+- **Verification:** `cmake --build build/navigation_runtime --target
+  navigation_runtime_node test_execution_episode -j2`, run
+  `build/navigation_runtime/test_execution_episode`, and run focused runtime
+  CTest with the ROS/Jazzy overlay sourced.
+
 ### 2026-09-05 - Bound completed terminal STOP to a measured desired-goal handover
 
 - **Owner/status:** navigation runtime execution handover; `IMPLEMENTED` in
