@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
+#include <limits>
 
 #include <nav_msgs/msg/odometry.hpp>
 #include <navigation_mapping/mapping_diagnostics.hpp>
@@ -28,7 +28,8 @@ struct MappingObservation {
   // Registered endpoints are expressed in the outer frame.  Keep the base
   // pose and the actual sensor ray origin separate so a non-zero lever arm
   // cannot silently become a map-ray origin.
-  std::optional<navigation_world_model::Point3> sensor_origin_world;
+  navigation_world_model::Point3 sensor_origin_world{
+      navigation_world_model::Point3::Constant(std::numeric_limits<double>::quiet_NaN())};
   // These identity fields are part of the same accepted scan contract; a
   // producer must not attach an origin from another epoch or timestamp.
   std::uint64_t sensor_origin_localization_epoch{0};

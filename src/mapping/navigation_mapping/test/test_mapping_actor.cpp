@@ -86,20 +86,21 @@ TEST(MappingActorContract, RejectsNonFinitePoseBeforeBackendMutation) {
   EXPECT_THROW(actor.process(observation), std::invalid_argument);
 }
 
-TEST(MappingActorContract, RejectsRaycastObservationWithoutSensorOrigin) {
+TEST(MappingActorContract, RejectsNonFiniteRequiredSensorOrigin) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   auto observation = observationAt(1'000'000'000LL, 1'000'000'000LL);
-  observation.sensor_origin_world.reset();
+  observation.sensor_origin_world =
+      navigation_world_model::Point3::Constant(NAN);
   observation.sensor_origin_localization_epoch = 0U;
   observation.sensor_origin_stamp_ns = 0;
   try {
     (void)actor.process(std::move(observation));
-    FAIL() << "missing sensor origin was accepted";
+    FAIL() << "non-finite required sensor origin was accepted";
   } catch (const navigation_mapping::MappingObservationRejected& error) {
     EXPECT_EQ(error.reason(),
-              navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin);
+              navigation_mapping::MappingObservationRejectionReason::kSensorOriginContractMismatch);
   } catch (...) {
-    FAIL() << "missing sensor origin was not reported with its typed reason";
+    FAIL() << "invalid required sensor origin was not reported with its typed reason";
   }
 }
 

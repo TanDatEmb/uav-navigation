@@ -246,7 +246,7 @@ class MappingActor::Impl final {
   [[nodiscard]] MappingConfiguration configuration() const noexcept {
     const auto& config = map_->getMapConfig();
     return {config.ros_callback_en, config.batch_update_size,
-            config.raycasting_en, true, config.virtual_ground_ceiling_en,
+            config.raycasting_en, config.virtual_ground_ceiling_en,
             config.traversed_free_max_age_s,
             config.traversed_free_support_radius_m};
   }
@@ -333,7 +333,7 @@ class MappingActor::Impl final {
         fillBackendCloud(*observation.free_space_endpoints,
                          backend_free_space_cloud_);
       }
-      const auto sensor_origin = *observation.sensor_origin_world;
+      const auto& sensor_origin = observation.sensor_origin_world;
       const auto backend_outcome = map_->updateMap(
           backend_cloud_, backend_free_space_cloud_, map_pose,
           sensor_origin);
@@ -606,21 +606,15 @@ class MappingActor::Impl final {
         }
       }
     }
-    if (observation.sensor_origin_world &&
-        !observation.sensor_origin_world->allFinite()) {
-      throw std::invalid_argument("mapping sensor origin is invalid");
-    }
-    // Even endpoint-only mode uses the origin for the configured sensor-range
-    // contract. There is no safe implicit base-link substitute in either
-    // mode; a non-raycasting deployment must provide the same explicit
-    // sensor-origin field.
-    if (!observation.sensor_origin_world.has_value()) {
+    // The internal observation type carries an origin value unconditionally;
+    // a non-finite value is the only malformed representation after transport
+    // admission has handled the distinct missing-origin case.
+    if (!observation.sensor_origin_world.allFinite()) {
       throw MappingObservationRejected(
-          MappingObservationRejectionReason::kMissingSensorOrigin);
+          MappingObservationRejectionReason::kSensorOriginContractMismatch);
     }
-    if (observation.sensor_origin_world.has_value() &&
-        (observation.sensor_origin_localization_epoch != observation.localization_epoch ||
-         observation.sensor_origin_stamp_ns != observation.stamp_ns)) {
+    if (observation.sensor_origin_localization_epoch != observation.localization_epoch ||
+        observation.sensor_origin_stamp_ns != observation.stamp_ns) {
       throw MappingObservationRejected(
           MappingObservationRejectionReason::kSensorOriginContractMismatch);
     }

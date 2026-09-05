@@ -19,6 +19,7 @@
 
 #include "navigation_runtime/navigation_runtime_node.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
+#include "navigation_runtime/mapping_observation_contract.hpp"
 
 namespace navigation_runtime {
 namespace {
@@ -124,6 +125,26 @@ TEST(NavigationRuntimeCadence, RejectsPlannerPeriodShorterThanSolveBudget) {
   // exception unwinding (verified by ASan), obscuring the product predicate.
   EXPECT_FALSE(plannerPeriodCoversSolveBudget(10.0, 0.18));
   EXPECT_TRUE(plannerPeriodCoversSolveBudget(5.0, 0.18));
+}
+
+TEST(NavigationRuntimeBoundaries, ClassifiesSensorOriginContract) {
+  geometry_msgs::msg::Pose origin;
+  origin.orientation.w = 1.0;
+  EXPECT_EQ(
+      classifySensorOriginContract(true, origin),
+      navigation_mapping::MappingObservationRejectionReason::kNone);
+  EXPECT_EQ(
+      classifySensorOriginContract(false, origin),
+      navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin);
+  origin.position.x = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_EQ(
+      classifySensorOriginContract(true, origin),
+      navigation_mapping::MappingObservationRejectionReason::kSensorOriginContractMismatch);
+  origin.position.x = 0.0;
+  origin.orientation.w = 0.0;
+  EXPECT_EQ(
+      classifySensorOriginContract(true, origin),
+      navigation_mapping::MappingObservationRejectionReason::kSensorOriginContractMismatch);
 }
 
 class ExecutorStopGuard {

@@ -10,6 +10,7 @@
 #include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/certified_continuation.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
+#include "navigation_runtime/mapping_observation_contract.hpp"
 #include <navigation_execution/timestamp_freshness.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
 #include <navigation_contracts/execution_state_freshness.hpp>
@@ -726,6 +727,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       if (!pending.message) {
         throw std::invalid_argument("mapping worker received a null RegisteredScan");
       }
+      if (!pending.message->sensor_origin_valid) {
+        throw navigation_mapping::MappingObservationRejected(
+            navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin);
+      }
       const auto decode_started = std::chrono::steady_clock::now();
       auto decoded = std::make_unique<navigation_mapping::PointCloud>();
       if (!decodeCloud(pending.message->points, *decoded)) {
@@ -744,20 +749,19 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       corrected.header = pending.message->header;
       corrected.child_frame_id = pending.message->body_frame_id;
       corrected.pose = pending.message->corrected_pose;
+      // MappingWorker calls this callback only after validate_mapping has
+      // admitted the finite, fresh, frame/epoch/time/origin contract.
       navigation_mapping::MappingObservation observation{
           std::move(decoded), std::move(corrected), pending.localization_epoch,
           pending.scan_sequence, pending.stamp_ns,
           std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::steady_clock::now() - decode_started).count(),
-          nullptr, std::nullopt, 0U, 0};
-      if (pending.message->sensor_origin_valid) {
-        const auto& origin = pending.message->sensor_origin_pose.position;
-        observation.sensor_origin_world =
-            navigation_world_model::Point3{origin.x, origin.y, origin.z};
-        observation.sensor_origin_localization_epoch =
-            pending.localization_epoch;
-        observation.sensor_origin_stamp_ns = pending.stamp_ns;
-      }
+          nullptr,
+          navigation_world_model::Point3{
+              pending.message->sensor_origin_pose.position.x,
+              pending.message->sensor_origin_pose.position.y,
+              pending.message->sensor_origin_pose.position.z},
+          pending.localization_epoch, pending.stamp_ns};
       if (decoded_free_space) {
         observation.free_space_endpoints = std::move(decoded_free_space);
       }
@@ -1223,11 +1227,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       throw;
     }
   };
-  const bool mapping_requires_sensor_origin = mapping_configuration.sensor_origin_required;
   auto validate_mapping = [ros_clock, telemetry = mapping_telemetry_,
                            active_epoch = &active_localization_epoch_,
-                           maximum_age_ns = data_freshness_window_ns_,
-                           mapping_requires_sensor_origin](
+                           maximum_age_ns = data_freshness_window_ns_](
       const PendingRegisteredScan& pending) {
     if (!pending.message) {
       telemetry->recordDiscard(false, false, true);
@@ -1236,21 +1238,16 @@ NavigationRuntimeNode::NavigationRuntimeNode(
     const auto& pose = pending.message->corrected_pose.pose;
     const Eigen::Quaterniond q{
         pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
-    const auto& sensor_origin = pending.message->sensor_origin_pose;
-    const double sensor_orientation_norm = std::sqrt(
-        sensor_origin.orientation.w * sensor_origin.orientation.w +
-        sensor_origin.orientation.x * sensor_origin.orientation.x +
-        sensor_origin.orientation.y * sensor_origin.orientation.y +
-        sensor_origin.orientation.z * sensor_origin.orientation.z);
-    const bool missing_sensor_origin = mapping_requires_sensor_origin &&
-        !pending.message->sensor_origin_valid;
-    const bool invalid_sensor_origin = pending.message->sensor_origin_valid &&
-        (!std::isfinite(sensor_origin.position.x) ||
-         !std::isfinite(sensor_origin.position.y) ||
-         !std::isfinite(sensor_origin.position.z) ||
-         !std::isfinite(sensor_orientation_norm) || sensor_orientation_norm <= 1.0e-9);
     const auto freshness = navigation_execution::classifyTimestampFreshness(
         ros_clock->now().nanoseconds(), pending.stamp_ns, maximum_age_ns);
+    const auto sensor_origin_reason = classifySensorOriginContract(
+        pending.message->sensor_origin_valid, pending.message->sensor_origin_pose);
+    const bool missing_sensor_origin =
+        sensor_origin_reason ==
+        navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin;
+    const bool invalid_sensor_origin =
+        sensor_origin_reason ==
+        navigation_mapping::MappingObservationRejectionReason::kSensorOriginContractMismatch;
     const bool invalid = pending.message->points.width == 0U ||
                          pending.localization_epoch !=
                              active_epoch->load(std::memory_order_acquire) ||
@@ -1709,6 +1706,14 @@ void NavigationRuntimeNode::onRegisteredScan(
     const navigation_contracts::msg::RegisteredScan::ConstSharedPtr& message) {
   if (!message) {
     observation_accounting_.recordRejectedBeforeInbox();
+    return;
+  }
+  const auto sensor_origin_reason = classifySensorOriginContract(
+      message->sensor_origin_valid, message->sensor_origin_pose);
+  if (sensor_origin_reason !=
+      navigation_mapping::MappingObservationRejectionReason::kNone) {
+    observation_accounting_.recordRejectedBeforeInbox();
+    mapping_telemetry_->recordDiscard(false, false, true, sensor_origin_reason);
     return;
   }
   const auto observation_stamp_ns = navigation_common::rosTimeToNanoseconds(

@@ -18848,6 +18848,50 @@ release profiles must not use the former allowance.
   ./build/navigation_runtime/test_certified_continuation --gtest_color=no`;
   `git diff --check`.
 
+### 2026-09-05 - Make internal mapping sensor origin canonical
+
+- **Owner/status:** Navigation mapping/runtime; CODE implemented, focused mapping
+  and runtime regressions passed. No SITL or flight-acceptance claim.
+- **Scope:** Keep `RegisteredScan.sensor_origin_valid` as the malformed
+  transport/admission boundary, but make internal `MappingObservation` carry a
+  required finite sensor-origin value. Remove the always-true
+  `MappingConfiguration.sensor_origin_required` compatibility switch and its
+  conditional runtime branch. Missing transport origin still reports
+  `kMissingSensorOrigin`; invalid internal origin remains
+  `kSensorOriginContractMismatch`.
+- **Safety impact:** Removes the internal absent-origin state and the
+  dereference of an optional value before map update. Origin epoch/stamp
+  matching and occupied/free-space precedence are unchanged; no thresholds or
+  map geometry behavior changed.
+- **Evidence:** `navigation_mapping`, `test_mapping_actor`,
+  `test_mapping_worker`, `navigation_runtime_core`,
+  `navigation_runtime_node`, and `test_navigation_runtime_shutdown` built.
+  The mapping actor passed 18/18, mapping worker 17/17, and runtime tests
+  passed 7/7, including four pure boundary tests for valid, missing, non-finite,
+  and zero-quaternion origins; `test_planner_fsm` passed 56/56 after the
+  classifier was isolated from its lightweight header. Source review confirms
+  the classifier runs in
+  `onRegisteredScan()` before localization reset or inbox acceptance; no
+  deterministic node-level missing-origin reproduction is claimed. Runtime
+  test execution explicitly prefixed the build mapping and contracts libraries
+  in `LD_LIBRARY_PATH` so stale install artifacts could not mask the source
+  change. No SITL or flight-acceptance evidence is claimed.
+- **Removal condition:** Revisit only if a future transport contract provides a
+  typed validated observation carrying equivalent origin identity and finite
+  value guarantees.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_mapping --target navigation_mapping
+  test_mapping_actor test_mapping_worker -j2 && cmake --build
+  build/navigation_runtime --target navigation_runtime_core
+  navigation_runtime_node test_navigation_runtime_shutdown test_planner_fsm -j2`; then run
+  `ctest --test-dir build/navigation_mapping -R
+  'test_mapping_actor|test_mapping_worker' --output-on-failure` and
+  `ctest --test-dir build/navigation_runtime -R
+  '^test_navigation_runtime_shutdown$' --output-on-failure` and
+  `./build/navigation_runtime/test_planner_fsm --gtest_color=no` with
+  `LD_LIBRARY_PATH` prefixed by `build/navigation_mapping` and
+  `build/navigation_contracts`; `git diff --check`.
+
 ### 2026-09-05 - Serialize foreign-mission worker cancellation after stop
 
 - **Owner/status:** Navigation runtime; CODE implemented and focused build/
