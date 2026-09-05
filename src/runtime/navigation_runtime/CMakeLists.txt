@@ -135,7 +135,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_navigation_runtime_shutdown
     test/test_navigation_runtime_shutdown.cpp)
   target_compile_definitions(test_navigation_runtime_shutdown PRIVATE
-    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml")
+    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml"
+    NAVIGATION_HANDOVER_MISSION_FILE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/missions/open.yaml")
   target_link_libraries(test_navigation_runtime_shutdown navigation_runtime_core)
   ament_add_gtest(test_mapping_fail_stop test/test_mapping_fail_stop.cpp)
   target_link_libraries(test_mapping_fail_stop navigation_runtime_core)
