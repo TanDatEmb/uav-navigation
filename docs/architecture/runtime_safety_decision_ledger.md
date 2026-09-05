@@ -18805,3 +18805,45 @@ release profiles must not use the former allowance.
   `cmake --build build/navigation_execution --target test_committed_bundle_store`;
   run the
   five direct binaries named above; `git diff --check`.
+
+### 2026-09-05 - Bind trajectory completion to immutable execution identity
+
+- **Owner/status:** Navigation runtime; CODE implemented and focused unit
+  contract passed. No component reproduction, SITL, or flight-acceptance claim.
+- **Scope:** Replaced the overloaded atomic `trajectory_finished_` flag with
+  one optional completion witness containing bundle generation, execution
+  timeline version, localization/goal epoch,
+  mission/request/waypoint identity, and completion identity. Publishers
+  record it only after canonical localization -> input -> execution-transition
+  locking and exact current bundle/executing identity checks. Planner
+  RestartFromRest does not fabricate completion when no active generation
+  exists; when a generation exists, the restart result must still match the
+  scheduled committed generation. Immediate commit, pending activation,
+  invalidation, localization/goal reset, and terminal cleanup clear the
+  witness; runCycle consumes it once only when the same execution identity and
+  bundle pointer are still current. Existing
+  `trajectory_reaches_goal_` and `terminal_bundle_generation_` remain the
+  separate terminal STOP ownership.
+- **Safety impact:** Removes cross-generation and cross-mission completion
+  authority through identity-bound validation. Runtime concurrency interleavings
+  remain unverified by this focused unit evidence.
+  Desired hot-retarget may differ from the executing identity: old physical
+  completion can request a new goal restart, but cannot mark that new goal
+  terminal. BACKUP measured-stop restart, PASS frontier continuation, pending
+  handoff, STOP and coincident terminal semantics otherwise remain unchanged.
+  No gate, timing, dynamics, FSM, or PX4 threshold changed.
+- **Evidence:** The focused `test_certified_continuation` unit contract covers
+  immutable identity matching, stale identity rejection, no-generation
+  invalidity, successor identity separation, and physical hot-retarget
+  identity as pure predicates. It does not reproduce runtime recovery,
+  publisher, or concurrency paths. No component, SITL, or flight-acceptance
+  evidence is claimed.
+- **Removal condition:** Replace only with an equivalent immutable completion
+  certificate preserving bundle and goal/localization identity, one-shot
+  consumption, hot-retarget terminal separation, and separate terminal STOP
+  ownership.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_runtime --target navigation_runtime_core
+  navigation_runtime_node test_certified_continuation -j2 &&
+  ./build/navigation_runtime/test_certified_continuation --gtest_color=no`;
+  `git diff --check`.

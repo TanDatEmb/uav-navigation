@@ -31,6 +31,7 @@
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
 #include "navigation_runtime/execution_episode.hpp"
+#include "navigation_runtime/trajectory_completion.hpp"
 #include "navigation_runtime/planning_worker.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
@@ -450,10 +451,12 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       static_cast<int>(navigation_planning::PlanningFailureStage::kInput)};
   std::atomic_int last_planning_failure_reason_{
       static_cast<int>(navigation_planning::PlanningFailureReason::kInvalidInput)};
-  // A local planner backend trajectory can end at a known-free frontier before the
-  // mission goal. The FSM must call the stopped-state planner again after that trajectory
-  // finishes instead of holding the completed old trajectory forever.
-  std::atomic_bool trajectory_finished_{false};
+  // A local planner backend trajectory can end at a known-free frontier before
+  // the mission goal. The optional witness is serialized by the execution
+  // transition mutex. Goal/timeline matching and lifecycle mutation use the
+  // canonical localization -> input -> execution-transition lock order; it is
+  // consumed only when its immutable bundle identity is still current.
+  std::optional<TrajectoryCompletionWitness> trajectory_completion_witness_;
   std::atomic_bool trajectory_reaches_goal_{false};
   // Non-zero only after the command publisher has observed the terminal sample
   // of a bundle whose endpoint reaches the active mission goal. This is a

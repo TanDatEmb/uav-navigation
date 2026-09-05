@@ -1,4 +1,5 @@
 #include "navigation_runtime/certified_continuation.hpp"
+#include "navigation_runtime/trajectory_completion.hpp"
 
 #include <gtest/gtest.h>
 
@@ -76,6 +77,58 @@ TEST(CertifiedContinuation, RejectsAnyStaleIdentityOrJunction) {
   facts = validFacts();
   facts.constraint_junction_index = 1U;
   EXPECT_FALSE(certifiedMainContinuationBoundaryEligible(facts));
+}
+
+TEST(TrajectoryCompletion, MatchesOnlyTheSameImmutableIdentity) {
+  const TrajectoryCompletionWitness witness{
+      11U, 22U, 3U, 5U, 7U, "mission", 2U};
+  EXPECT_TRUE(completionWitnessMatches(
+      witness, 11U, 22U, 3U, 5U, 7U, "mission", 2U));
+  EXPECT_FALSE(completionWitnessMatches(
+      witness, 12U, 22U, 3U, 5U, 7U, "mission", 2U));
+  EXPECT_FALSE(completionWitnessMatches(
+      witness, 11U, 23U, 3U, 5U, 7U, "mission", 2U));
+  EXPECT_FALSE(completionWitnessMatches(
+      witness, 11U, 22U, 4U, 5U, 7U, "mission", 2U));
+  EXPECT_FALSE(completionWitnessMatches(
+      witness, 11U, 22U, 3U, 6U, 7U, "mission", 2U));
+  EXPECT_FALSE(completionWitnessMatches(
+      witness, 11U, 22U, 3U, 5U, 8U, "mission", 2U));
+  EXPECT_FALSE(completionWitnessMatches(
+      witness, 11U, 22U, 3U, 5U, 7U, "other-mission", 2U));
+  EXPECT_FALSE(completionWitnessMatches(
+      witness, 11U, 22U, 3U, 5U, 7U, "mission", 3U));
+}
+
+TEST(TrajectoryCompletion, RetargetKeepsPhysicalIdentityUntilSuccessorCommits) {
+  const TrajectoryCompletionWitness physical_a{
+      11U, 22U, 3U, 5U, 7U, "mission", 2U};
+  // Desired request 8 may be hot-retargeted while command A is still the
+  // executing bundle; the witness remains tied to A's physical identity.
+  EXPECT_TRUE(completionWitnessMatches(
+      physical_a, 11U, 22U, 3U, 5U, 7U, "mission", 2U));
+  EXPECT_NE(physical_a.request_id, 8U);
+  // Once successor B owns execution, A's completion cannot enter recovery.
+  EXPECT_FALSE(completionWitnessMatches(
+      physical_a, 12U, 22U, 3U, 6U, 8U, "mission", 2U));
+}
+
+TEST(TrajectoryCompletion, StaleWitnessIsRejectedBeforeRecoveryDecision) {
+  const TrajectoryCompletionWitness stale{
+      11U, 22U, 3U, 5U, 7U, "mission", 2U};
+  // Recovery must validate the witness against the active bundle before using
+  // it to choose BACKUP restart or frontier continuation.
+  EXPECT_FALSE(completionWitnessMatches(
+      stale, 12U, 22U, 3U, 5U, 7U, "mission", 2U));
+  EXPECT_FALSE(completionWitnessMatches(
+      stale, 11U, 22U, 3U, 6U, 7U, "mission", 2U));
+}
+
+TEST(TrajectoryCompletion, InvalidWithoutAnActiveBundleIdentity) {
+  const TrajectoryCompletionWitness empty{};
+  EXPECT_FALSE(empty.valid());
+  EXPECT_FALSE(completionWitnessMatches(
+      empty, 0U, 0U, 3U, 5U, 7U, "mission", 2U));
 }
 
 }  // namespace

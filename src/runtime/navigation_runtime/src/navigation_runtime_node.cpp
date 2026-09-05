@@ -294,6 +294,33 @@ std::optional<std::uint64_t> certifiedMainContinuationBoundary(
   return static_cast<std::uint64_t>(boundary.boundary_stamp_ns);
 }
 
+bool completionWitnessMatchesCurrentExecution(
+    const TrajectoryCompletionWitness& witness,
+    const navigation_execution::ExecutionTimelineSnapshot& timeline,
+    const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_bundle,
+    const std::optional<navigation_contracts::msg::NavigationGoal>& executing_goal,
+    const std::uint64_t command_goal_epoch,
+    const std::uint64_t localization_epoch,
+    const bool episode_failure_latched,
+    const bool command_exposure_allowed) noexcept {
+  if (episode_failure_latched || !command_exposure_allowed || !expected_bundle ||
+      !timeline.active ||
+      timeline.active.get() != expected_bundle.get() || !executing_goal ||
+      executing_goal->mission_id != witness.mission_id ||
+      executing_goal->waypoint_index != witness.waypoint_index ||
+      executing_goal->request_id != witness.request_id ||
+      command_goal_epoch != witness.goal_epoch ||
+      localization_epoch != witness.localization_epoch) {
+    return false;
+  }
+  return completionWitnessMatches(
+      witness, timeline.active->bundle_generation,
+      timeline.version,
+      timeline.active->localization_epoch, timeline.active->goal_epoch,
+      timeline.active->request_id, executing_goal->mission_id,
+      executing_goal->waypoint_index);
+}
+
 bool routeSnapshotMatchesGoalMirrors(
     const navigation_mission::ImmutableRouteSnapshot& route,
     const navigation_contracts::msg::NavigationGoal& goal) noexcept {
@@ -1154,9 +1181,6 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               (void)command_store->invalidateIfCurrent(execution_timeline);
               failClosedLocked();
               command_goal_epoch_.store(0U);
-              trajectory_finished_.store(false);
-              trajectory_reaches_goal_.store(false);
-              terminal_bundle_generation_.store(0U);
               invalidated_current = true;
             }
           }
@@ -1557,6 +1581,9 @@ void NavigationRuntimeNode::applyExecutionRecoveryEventLocked(
 }
 
 void NavigationRuntimeNode::failClosedLocked() noexcept {
+  trajectory_completion_witness_.reset();
+  trajectory_reaches_goal_.store(false, std::memory_order_release);
+  terminal_bundle_generation_.store(0U, std::memory_order_release);
   execution_episode_.failClosed();
   execution_recovery_state_.store(
       ExecutionRecoveryState::kPx4Hold, std::memory_order_release);
@@ -1657,7 +1684,7 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
     hot_goal_transition_ = false;
     execution_episode_.clearRestartFromRest();
     skip_replan_once_.store(false, std::memory_order_release);
-    trajectory_finished_.store(false);
+    trajectory_completion_witness_.reset();
     trajectory_reaches_goal_.store(false);
     terminal_bundle_generation_.store(0U);
     // Keep the command path fail-closed until the new epoch publishes its
@@ -1896,7 +1923,6 @@ void NavigationRuntimeNode::transitionForeignMissionLocked(
   failClosedLocked();
   plan_from_rest_first_failure_steady_ns_ = 0;
   skip_replan_once_.store(false, std::memory_order_release);
-  trajectory_finished_.store(false, std::memory_order_release);
   trajectory_reaches_goal_.store(false, std::memory_order_release);
   terminal_bundle_generation_.store(0U, std::memory_order_release);
   command_goal_epoch_.store(0U, std::memory_order_release);
@@ -2035,7 +2061,7 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
     new_goal_ = !effective_hot_retarget;
     execution_episode_.clearRestartFromRest();
     skip_replan_once_.store(false, std::memory_order_release);
-    trajectory_finished_.store(false);
+    trajectory_completion_witness_.reset();
     trajectory_reaches_goal_.store(false);
     terminal_bundle_generation_.store(0U);
     execution_recovery_state_.store(
@@ -2121,7 +2147,7 @@ void NavigationRuntimeNode::onModeStatus(
   skip_replan_once_.store(false, std::memory_order_release);
   command_goal_epoch_.store(0U);
   plan_from_rest_first_failure_steady_ns_ = 0;
-  trajectory_finished_.store(false);
+  trajectory_completion_witness_.reset();
   trajectory_reaches_goal_.store(false);
   terminal_bundle_generation_.store(0U);
   execution_recovery_state_.store(
@@ -2495,7 +2521,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
     std::lock_guard<std::mutex> input_lock(input_mutex_);
     std::lock_guard<std::mutex> command_lock(
-        command_execution_lease_failure_latch_.transitionMutex());
+    command_execution_lease_failure_latch_.transitionMutex());
     command_bundle_store_.invalidate();
     failClosedLocked();
     RCLCPP_ERROR(get_logger(), "execution transaction id exhausted");
@@ -2835,6 +2861,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   std::uint64_t goal_epoch = 0;
   std::uint64_t goal_epoch_at_cycle = 0U;
   std::uint64_t localization_epoch_at_cycle = 0U;
+  std::optional<TrajectoryCompletionWitness> completion_witness_at_cycle;
+  std::shared_ptr<const navigation_planning::CandidateBundle>
+      completed_bundle_at_cycle;
+  bool completed_trajectory = false;
   navigation_execution::ExecutionTimelineSnapshot expected_timeline_at_cycle;
   const auto input_lock_started = std::chrono::steady_clock::now();
   {
@@ -2858,6 +2888,22 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     localization_epoch_at_cycle = active_localization_epoch_.load(
         std::memory_order_acquire);
     expected_timeline_at_cycle = command_bundle_store_.snapshot();
+    if (trajectory_completion_witness_) {
+      const auto& witness = *trajectory_completion_witness_;
+      if (completionWitnessMatchesCurrentExecution(
+              witness, expected_timeline_at_cycle,
+              expected_timeline_at_cycle.active, executing_goal_,
+              command_goal_epoch_.load(std::memory_order_acquire),
+              localization_epoch_at_cycle,
+              execution_episode_.snapshot().failure_latched,
+              command_execution_lease_failure_latch_.allowsCommandExposure())) {
+        completion_witness_at_cycle = witness;
+        completed_bundle_at_cycle = expected_timeline_at_cycle.active;
+        completed_trajectory = true;
+      } else {
+        trajectory_completion_witness_.reset();
+      }
+    }
   }
   // Do not acquire the state-store mutex while holding input_mutex_: the
   // odometry callback publishes to the store before taking input_mutex_.
@@ -3084,10 +3130,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   //
   // This is deliberately a peek. A finished BACKUP endpoint can be sampled before
   // the measured vehicle velocity has settled below the certified-stop threshold;
-  // consuming the flag in that interval loses the only event that can advance a
-  // pending handoff. The flag is cleared below only after the recovery gate has
+  // consuming the witness in that interval loses the only event that can advance
+  // a pending handoff. The witness is cleared only after the recovery gate has
   // accepted this cycle for processing.
-  const bool completed_trajectory = trajectory_finished_.load(std::memory_order_acquire);
   bool completed_trajectory_for_planning = completed_trajectory;
   std::shared_ptr<const navigation_contracts::msg::NavigationGoal>
       pending_handoff_goal;
@@ -3112,6 +3157,35 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         goal->behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP;
     effective_terminal_stop = stop_goal || coincident_pass_through_stop;
   };
+  if (completed_trajectory && completion_witness_at_cycle &&
+      completed_bundle_at_cycle) {
+    bool completion_identity_current = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto current_timeline = command_bundle_store_.snapshot();
+      const auto witness = completion_witness_at_cycle.value_or(
+          TrajectoryCompletionWitness{});
+      completion_identity_current = completionWitnessMatchesCurrentExecution(
+          witness, current_timeline, completed_bundle_at_cycle, executing_goal_,
+          command_goal_epoch_.load(std::memory_order_acquire),
+          localization_epoch_at_cycle,
+          execution_episode_.snapshot().failure_latched,
+          command_execution_lease_failure_latch_.allowsCommandExposure());
+      if (!completion_identity_current && trajectory_completion_witness_ &&
+          *trajectory_completion_witness_ == witness) {
+        trajectory_completion_witness_.reset();
+      }
+    }
+    if (!completion_identity_current) {
+      completed_trajectory = false;
+      completed_trajectory_for_planning = false;
+      completion_witness_at_cycle.reset();
+      completed_bundle_at_cycle.reset();
+    }
+  }
   auto recovery_state = execution_recovery_state_.load(std::memory_order_acquire);
   if (recovery_state == ExecutionRecoveryState::kTrackBackup ||
       recovery_state == ExecutionRecoveryState::kEmergencyBrake) {
@@ -3219,9 +3293,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         command_bundle_store_.invalidate();
         command_goal_epoch_.store(0U, std::memory_order_release);
         failClosedLocked();
-        trajectory_finished_.store(false, std::memory_order_release);
-        trajectory_reaches_goal_.store(false, std::memory_order_release);
-        terminal_bundle_generation_.store(0U, std::memory_order_release);
         return;
       }
       // A terminal status may have cleared the old active identity while this
@@ -3412,11 +3483,37 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     }
     effective_scheduled_key = *refreshed_key;
   }
-  if (completed_trajectory) {
-    bool expected_completion = true;
-    (void)trajectory_finished_.compare_exchange_strong(
-        expected_completion, false, std::memory_order_acq_rel,
-        std::memory_order_acquire);
+  if (completed_trajectory && completion_witness_at_cycle &&
+      completed_bundle_at_cycle) {
+    bool completion_identity_current = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto witness = completion_witness_at_cycle.value_or(
+          TrajectoryCompletionWitness{});
+      const auto current_timeline = command_bundle_store_.snapshot();
+      completion_identity_current = completionWitnessMatchesCurrentExecution(
+          witness, current_timeline, completed_bundle_at_cycle, executing_goal_,
+          command_goal_epoch_.load(std::memory_order_acquire),
+          localization_epoch_at_cycle,
+          execution_episode_.snapshot().failure_latched,
+          command_execution_lease_failure_latch_.allowsCommandExposure());
+      if (completion_identity_current && trajectory_completion_witness_ &&
+          *trajectory_completion_witness_ == witness) {
+        trajectory_completion_witness_.reset();
+      }
+    }
+    if (!completion_identity_current) {
+      // A newer goal, execution epoch, or bundle owns the command now. The
+      // stale completion is deliberately a no-op and cannot trigger a solve
+      // against the replacement identity.
+      completed_trajectory = false;
+      completed_trajectory_for_planning = false;
+      completion_witness_at_cycle.reset();
+      completed_bundle_at_cycle.reset();
+    }
   }
   bool completed_trajectory_reaches_goal = trajectory_reaches_goal_.load();
   const bool has_outgoing_route = goal && !coincident_pass_through_stop &&
@@ -3424,49 +3521,78 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       goal->route.waypoint_positions.size();
   bool completed_endpoint_valid = false;
   if (completed_trajectory_for_planning && goal) {
-    // The completion flag can be cleared by a concurrent replan before this
+    // The completion witness can be replaced by a concurrent replan before this
     // callback observes the publisher's terminal sample. Recompute it from
     // the immutable committed candidate so a terminal command is not
     // mistaken for a frontier trajectory and restarted indefinitely.
-    const auto committed_bundle = command_bundle_store_.load();
-    const auto& target_message = plannerTarget(*goal);
-    const Eigen::Vector3d target_position{
-      pointFromMessage(target_message, 0),
-      pointFromMessage(target_message, 1),
-      pointFromMessage(target_message, 2)};
+    const auto committed_bundle = completed_bundle_at_cycle;
+    const auto completion_witness = completion_witness_at_cycle.value_or(
+        TrajectoryCompletionWitness{});
     const auto endpoint = committed_bundle &&
         committed_bundle->hasDeclaredEndpointMetadata()
         ? committed_bundle->sampleAtDeclaredEnd()
         : std::nullopt;
     completed_endpoint_valid = endpoint.has_value();
-    const double completion_tolerance = goalCompletionTolerance(*goal);
-    const double measured_goal_error = execution_state.finite()
-        ? (execution_state.position_world - target_position).norm()
-        : std::numeric_limits<double>::infinity();
-    // PASS_THROUGH endpoint completion is a route-boundary continuation event;
-    // only STOP owns a terminal waypoint comparison here. Comparing an
-    // outgoing continuation endpoint with the requested checkpoint creates a
-    // false terminal failure and can restart the wrong state machine branch.
-    const double endpoint_error = endpoint.has_value()
-        ? (endpoint->position_world - target_position).norm()
-        : std::numeric_limits<double>::infinity();
-      const bool terminal_endpoint_contract = committed_bundle && endpoint &&
-        terminalStopEndpointContractValid(
-            effective_terminal_stop, committed_bundle->kind,
-            committed_bundle->role, endpoint->role);
-    completed_trajectory_reaches_goal = terminalStopCompletionObserved(
-        effective_terminal_stop, terminal_endpoint_contract, completed_endpoint_valid,
-        endpoint_error, measured_goal_error, completion_tolerance);
+    bool desired_identity_current = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      desired_identity_current = goal && desiredGoalIdentityMatchesLocked(
+          *goal, goal_epoch, localization_epoch_at_cycle);
+    }
+    const bool completion_goal_matches = desired_identity_current && goal &&
+        goal->request_id == completion_witness.request_id &&
+        goal_epoch == completion_witness.goal_epoch &&
+        localization_epoch_at_cycle == completion_witness.localization_epoch;
+    double endpoint_error = std::numeric_limits<double>::infinity();
+    double measured_goal_error = std::numeric_limits<double>::infinity();
+    double completion_tolerance = std::numeric_limits<double>::quiet_NaN();
+    bool terminal_endpoint_contract = false;
+    if (completion_goal_matches) {
+      const auto& target_message = plannerTarget(*goal);
+      const Eigen::Vector3d target_position{
+        pointFromMessage(target_message, 0),
+        pointFromMessage(target_message, 1),
+        pointFromMessage(target_message, 2)};
+      completion_tolerance = goalCompletionTolerance(*goal);
+      measured_goal_error = execution_state.finite()
+          ? (execution_state.position_world - target_position).norm()
+          : std::numeric_limits<double>::infinity();
+      // PASS_THROUGH endpoint completion is a route-boundary continuation event;
+      // only STOP owns a terminal waypoint comparison here.
+      endpoint_error = endpoint.has_value()
+          ? (endpoint->position_world - target_position).norm()
+          : std::numeric_limits<double>::infinity();
+      terminal_endpoint_contract = committed_bundle && endpoint &&
+          terminalStopEndpointContractValid(
+              effective_terminal_stop, committed_bundle->kind,
+              committed_bundle->role, endpoint->role);
+    }
+    completed_trajectory_reaches_goal = completion_goal_matches &&
+        terminalStopCompletionObserved(
+          effective_terminal_stop, terminal_endpoint_contract, completed_endpoint_valid,
+          endpoint_error, measured_goal_error, completion_tolerance);
     bool completion_identity_current = false;
-    RCLCPP_INFO(get_logger(),
-                "planner backend trajectory completion observed reaches_goal=%d endpoint_error=%.3f "
-                "measured_goal_error=%.3f goal=(%.2f,%.2f,%.2f)",
-                completed_trajectory_reaches_goal ? 1 : 0,
-                endpoint_error, measured_goal_error,
-                pointFromMessage(plannerTarget(*goal), 0),
-                pointFromMessage(plannerTarget(*goal), 1),
-                pointFromMessage(plannerTarget(*goal), 2));
-    if (completed_trajectory_reaches_goal) {
+    if (completion_goal_matches) {
+      RCLCPP_INFO(get_logger(),
+                  "planner backend trajectory completion observed reaches_goal=%d endpoint_error=%.3f "
+                  "measured_goal_error=%.3f goal=(%.2f,%.2f,%.2f)",
+                  completed_trajectory_reaches_goal ? 1 : 0,
+                  endpoint_error, measured_goal_error,
+                  pointFromMessage(plannerTarget(*goal), 0),
+                  pointFromMessage(plannerTarget(*goal), 1),
+                  pointFromMessage(plannerTarget(*goal), 2));
+    } else {
+      RCLCPP_INFO(
+          get_logger(),
+          "planner completion witness belongs to executing request=%lu; desired request=%lu "
+          "changed, so terminal comparison is suppressed",
+          static_cast<unsigned long>(completion_witness.request_id),
+          static_cast<unsigned long>(goal->request_id));
+    }
+    if (completed_trajectory_reaches_goal && completion_goal_matches) {
       std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
       std::lock_guard<std::mutex> input_lock(input_mutex_);
       std::lock_guard<std::mutex> command_lock(
@@ -3510,22 +3636,30 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     if (continue_completed_pass_through ||
         std::sqrt(dx * dx + dy * dy + dz * dz) >
             goalCompletionTolerance(*goal)) {
-      std::lock_guard<std::mutex> lock(input_mutex_);
-      if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
-          active_goal_->waypoint_index == goal->waypoint_index &&
-          active_goal_->request_id == goal->request_id) {
-        execution_episode_.requestRestartFromRest();
-        hot_goal_transition_ = false;
-        restart_from_rest = true;
-        skip_replan_once_.store(false, std::memory_order_release);
+      bool restart_requested = false;
+      {
+        std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+        std::lock_guard<std::mutex> input_lock(input_mutex_);
+        std::lock_guard<std::mutex> command_lock(
+            command_execution_lease_failure_latch_.transitionMutex());
+        if (desiredGoalIdentityMatchesLocked(
+                *goal, goal_epoch, localization_epoch_at_cycle)) {
+          execution_episode_.requestRestartFromRest();
+          hot_goal_transition_ = false;
+          restart_from_rest = true;
+          skip_replan_once_.store(false, std::memory_order_release);
+          restart_requested = true;
+        }
       }
-      RCLCPP_INFO(get_logger(),
-                  "planner backend finite trajectory requires continuation; restarting PlanFromRest "
-                  "pass_through=%d goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
-                  continue_completed_pass_through ? 1 : 0,
-                  pointFromMessage(target_message, 0), pointFromMessage(target_message, 1),
-                  pointFromMessage(target_message, 2), execution_state.position_world.x(),
-                  execution_state.position_world.y(), execution_state.position_world.z());
+      if (restart_requested) {
+        RCLCPP_INFO(get_logger(),
+                    "planner backend finite trajectory requires continuation; restarting PlanFromRest "
+                    "pass_through=%d goal=(%.2f,%.2f,%.2f) vehicle=(%.2f,%.2f,%.2f)",
+                    continue_completed_pass_through ? 1 : 0,
+                    pointFromMessage(target_message, 0), pointFromMessage(target_message, 1),
+                    pointFromMessage(target_message, 2), execution_state.position_world.x(),
+                    execution_state.position_world.y(), execution_state.position_world.z());
+      }
     }
   }
 
@@ -4113,8 +4247,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     if (goal && desiredGoalIdentityMatchesLocked(
             *goal, goal_epoch, localization_epoch_at_solve)) {
       failClosedLocked();
-      trajectory_reaches_goal_.store(false);
-      terminal_bundle_generation_.store(0U);
     }
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
                          "planner backend planning failed (%d)", static_cast<int>(result));
@@ -4131,7 +4263,37 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       if (restart_identity_current) {
         trajectory_reaches_goal_.store(false);
         terminal_bundle_generation_.store(0U);
-        trajectory_finished_.store(true);
+        const auto committed_timeline = command_bundle_store_.snapshot();
+        const auto committed_bundle = committed_timeline.active;
+        const auto committed_goal_epoch = command_goal_epoch_.load(
+            std::memory_order_acquire);
+        const auto execution_episode = execution_episode_.snapshot();
+        const bool command_exposure_allowed =
+            command_execution_lease_failure_latch_.allowsCommandExposure();
+        const bool scheduled_bundle_current = committed_bundle &&
+            effective_scheduled_key.committed_bundle_generation != 0U &&
+            committed_bundle->bundle_generation ==
+                effective_scheduled_key.committed_bundle_generation;
+        const bool completion_identity_current = !execution_episode.failure_latched &&
+            command_exposure_allowed && scheduled_bundle_current &&
+            executing_goal_ &&
+            executingCommandIdentityMatchesLocked(
+                *executing_goal_, committed_goal_epoch, localization_epoch_at_solve,
+                committed_bundle->bundle_generation);
+        if (completion_identity_current) {
+          trajectory_completion_witness_ = TrajectoryCompletionWitness{
+              committed_bundle->bundle_generation,
+              committed_timeline.version,
+              committed_bundle->localization_epoch,
+              committed_bundle->goal_epoch,
+              committed_bundle->request_id,
+              executing_goal_->mission_id,
+              executing_goal_->waypoint_index};
+        } else {
+          // A restart result without a current committed generation is only
+          // restart intent; it is not evidence that a trajectory completed.
+          trajectory_completion_witness_.reset();
+        }
         execution_episode_.requestRestartFromRest();
         hot_goal_transition_ = false;
       }
@@ -4643,7 +4805,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
               retained_execution_bundle->bundle_generation);
           execution_episode_.setSafetySuffix(use_safety_suffix);
         }
-        trajectory_finished_.store(false);
+        trajectory_completion_witness_.reset();
       } else if (use_safety_suffix && validate_without_new_commit) {
         const auto retained_execution_goal = executing_goal_;
         const auto retained_command_epoch =
@@ -4787,7 +4949,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         // An immediate commit is the ownership boundary: a prior BACKUP
         // suffix and its completion markers must not contaminate the new
         // MAIN command sampled by the publisher.
-        trajectory_finished_.store(false, std::memory_order_release);
+        trajectory_completion_witness_.reset();
         trajectory_reaches_goal_.store(false, std::memory_order_release);
         terminal_bundle_generation_.store(0U, std::memory_order_release);
         applyExecutionRecoveryEventLocked(
@@ -5674,6 +5836,9 @@ void NavigationRuntimeNode::publishCommand() {
         executing_goal_ = *active_goal_;
         hot_goal_transition_ = false;
         new_goal_ = false;
+        // Activation is an ownership boundary: a completion witness from the
+        // predecessor cannot be consumed as evidence for the successor.
+        trajectory_completion_witness_.reset();
       }
     }
     if (activated) {
@@ -6103,7 +6268,40 @@ void NavigationRuntimeNode::publishCommand() {
         sampled_role == navigation_planning::CandidateRole::kMain) {
       on_backup_traj = true;
     }
-    if (traj_finish) trajectory_finished_.store(true);
+    if (traj_finish && sampled_command_valid && sampled_bundle) {
+      // Completion is recorded only after the sampled immutable bundle is
+      // still the active command for the current executing identity.
+      // A stale endpoint must not trigger PlanFromRest for a replacement goal.
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      const auto current_timeline = command_bundle_store_.snapshot();
+      const auto current_bundle = current_timeline.active;
+      const auto execution_episode = execution_episode_.snapshot();
+      const bool command_exposure_allowed =
+          command_execution_lease_failure_latch_.allowsCommandExposure();
+      const bool exact_current_bundle = current_bundle &&
+          current_bundle.get() == sampled_bundle.get() &&
+          current_bundle->bundle_generation == sampled_bundle->bundle_generation &&
+          current_bundle->localization_epoch ==
+              active_localization_epoch_.load(std::memory_order_acquire);
+      const bool exact_execution_identity = executing_goal_ &&
+          executingCommandIdentityMatchesLocked(
+              *executing_goal_, command_goal_epoch_at_command,
+              localization_epoch_at_command, sampled_bundle->bundle_generation);
+      if (!execution_episode.failure_latched && command_exposure_allowed &&
+          exact_current_bundle && exact_execution_identity) {
+        trajectory_completion_witness_ = TrajectoryCompletionWitness{
+            sampled_bundle->bundle_generation,
+            current_timeline.version,
+            sampled_bundle->localization_epoch,
+            sampled_bundle->goal_epoch,
+            sampled_bundle->request_id,
+            executing_goal_->mission_id,
+            executing_goal_->waypoint_index};
+      }
+    }
   } else {
     // A rest-to-rest solve can fail before a command has ever been committed. Emit an
     // explicit terminal status so External Mode enters its PX4 Hold path;
