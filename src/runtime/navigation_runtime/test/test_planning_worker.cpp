@@ -148,6 +148,42 @@ TEST(PlanningWorker, DropsExactDuplicateWithoutCancellingActiveSolve) {
   EXPECT_EQ(worker.snapshot().exact_duplicates, 1U);
 }
 
+TEST(PlanningWorker, AllowsSameLogicalKeyRetryAfterPriorJobCompletes) {
+  auto planner = std::make_unique<FakePlanner>();
+  PlanningWorker<FakePlanner> worker(std::move(planner));
+  worker.start();
+  std::atomic_int running{0};
+  std::atomic_int maximum_running{0};
+  std::atomic_int completed_jobs{0};
+  const auto key = makeKey();
+  const auto job = [&](FakePlanner&, std::stop_token) {
+    const int current = ++running;
+    maximum_running.store(std::max(maximum_running.load(), current));
+    ++completed_jobs;
+    --running;
+  };
+
+  ASSERT_EQ(worker.submit(key, PlanningPriority::kNormalRenewal, job),
+            PlanningSubmitDisposition::kAccepted);
+  for (int attempt = 0; attempt < 200 && worker.snapshot().completed < 1U; ++attempt) {
+    std::this_thread::sleep_for(5ms);
+  }
+  ASSERT_EQ(worker.snapshot().completed, 1U);
+
+  // A retry after the prior job has left active_ must be accepted even though
+  // it carries the same logical PlanningKey. While active, the same key is
+  // still rejected as an exact duplicate by the production worker contract.
+  EXPECT_EQ(worker.submit(key, PlanningPriority::kNormalRenewal, job),
+            PlanningSubmitDisposition::kAccepted);
+  for (int attempt = 0; attempt < 200 && worker.snapshot().completed < 2U; ++attempt) {
+    std::this_thread::sleep_for(5ms);
+  }
+  worker.shutdown();
+  EXPECT_EQ(completed_jobs.load(), 2);
+  EXPECT_EQ(maximum_running.load(), 1);
+  EXPECT_EQ(worker.snapshot().completed, 2U);
+}
+
 TEST(PlanningWorker, MapRevisionQueuesWithoutCancellingActiveSolve) {
   auto planner = std::make_unique<FakePlanner>();
   auto* planner_view = planner.get();

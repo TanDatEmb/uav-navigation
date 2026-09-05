@@ -40,7 +40,6 @@ struct PlanningKey {
   PlanningStartMode start_mode{PlanningStartMode::kStoppedMeasuredState};
   std::int64_t anchor_stamp_ns{0};
   std::uint64_t dynamics_hash{0};
-  std::uint32_t recovery_level{0};
 
   [[nodiscard]] bool valid() const noexcept {
     return localization_epoch != 0 && goal_epoch != 0 && request_id != 0 &&

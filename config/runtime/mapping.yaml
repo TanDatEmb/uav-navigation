@@ -24,4 +24,3 @@ navigation_runtime_node:
       command_stream_timeout_s: 0.10
       planner_watchdog_timeout_s: 1.0
       stopped_recovery_timeout_s: 5.0
-      max_plan_from_rest_failures: 3

@@ -260,7 +260,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   double planner_watchdog_timeout_s_{1.0};
   std::int64_t planner_watchdog_timeout_ns_{1'000'000'000};
   double stopped_recovery_timeout_s_{5.0};
-  std::uint32_t max_plan_from_rest_failures_{3U};
   // Diagnostic-only deterministic failure injection. Zero disables it; when
   // matched, exactly one solve is converted to a failed result after the
   // backend returns, leaving the prior committed bundle untouched.
@@ -332,7 +331,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // the first hot replan is not run against a trajectory that has just been
   // committed.
   std::atomic_bool skip_replan_once_{false};
-  ConsecutiveFailureBudget plan_from_rest_failure_budget_{3U};
   std::int64_t plan_from_rest_first_failure_steady_ns_{0};
   std::atomic_uint64_t stale_input_count_{0};
   std::atomic_uint64_t stale_mapping_input_count_{0};

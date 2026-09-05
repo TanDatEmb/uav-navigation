@@ -18596,3 +18596,34 @@ release profiles must not use the former allowance.
   && colcon build --packages-select navigation_planning_backend
   --symlink-install --cmake-args -DBUILD_TESTING=ON`; then
   `ctest --test-dir build/navigation_planning_backend --output-on-failure`.
+
+### 2026-09-05 - Make stopped recovery deadline the sole retry terminal authority
+
+- **Owner/status:** NavigationRuntimeNode planning-recovery owner; implemented
+  in the current worktree and pending central review; no SITL or flight-acceptance
+  claim.
+- **Scope:** Remove the capped `ConsecutiveFailureBudget`, its
+  `max_plan_from_rest_failures` parameter/configuration, and `recovery_level`
+  from `PlanningKey` and cancellation identity. PlanFromRest retries remain
+  bound to the existing logical goal/localization/bundle/world checks; the
+  first-failure steady timestamp and existing `stopped_recovery_timeout_s`
+  provide the single terminal deadline. Logs report elapsed recovery time and
+  configured timeout instead of a misleading capped retry count.
+- **Safety impact:** Removing the diagnostic retry counter does not permit
+  unbounded execution: stationary InitialHold/StoppedRecovery still fails
+  closed at the unchanged five-second deadline, while moving or non-recovery
+  states do not satisfy that timeout helper. No identity, freshness, dynamics,
+  clearance, PX4 or mission gate changes are intended.
+- **False-accept/false-reject consequences:** More retries can be attempted
+  before the same deadline, increasing planner CPU use; a genuine no-path
+  episode still reaches PX4 Hold at the existing deadline. A same-key retry is
+  accepted only after the previous worker job completes; concurrent duplicate
+  jobs remain rejected by the worker's active/pending key check.
+- **Removal condition:** Revisit only if measured recovery latency/CPU or
+  repeated representative evidence shows the fixed deadline is insufficient;
+  do not restore a second retry authority without an explicit safety contract.
+- **Verification:** With `/opt/ros/jazzy/setup.bash` and `install/setup.bash`
+  sourced in the same shell, `cmake --build build/navigation_runtime -j2`
+  passed; runtime CTest passed 8/8; `cmake --build build/navigation_planning
+  -j2` and `./build/navigation_planning/test_planning_contracts
+  --gtest_color=no` passed 20/20. No SITL evidence is claimed.

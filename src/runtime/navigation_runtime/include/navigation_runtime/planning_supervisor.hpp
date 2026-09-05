@@ -39,8 +39,7 @@ enum class PlanningPriority : std::uint8_t {
          lhs.committed_bundle_generation == rhs.committed_bundle_generation &&
          lhs.pinned_world_generation == rhs.pinned_world_generation &&
          lhs.start_mode == rhs.start_mode &&
-         lhs.dynamics_hash == rhs.dynamics_hash &&
-         lhs.recovery_level == rhs.recovery_level;
+         lhs.dynamics_hash == rhs.dynamics_hash;
 }
 
 class PlanningSupervisor {

@@ -476,8 +476,6 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.planner_watchdog_timeout_s", 1.0);
   stopped_recovery_timeout_s_ = declare_parameter(
       "navigation_runtime.stopped_recovery_timeout_s", 5.0);
-  const auto max_plan_from_rest_failures = declare_parameter(
-      "navigation_runtime.max_plan_from_rest_failures", std::int64_t{3});
   const auto inject_failed_replan_cycle_id = declare_parameter(
       "navigation_runtime.inject_failed_replan_cycle_id", std::int64_t{0});
   inject_failed_replan_cycle_id_ = inject_failed_replan_cycle_id > 0
@@ -564,17 +562,6 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   if (body_frame_id_.empty()) {
     throw std::invalid_argument("navigation_runtime.body_frame_id must not be empty");
   }
-  if (max_plan_from_rest_failures <= 0 ||
-      max_plan_from_rest_failures >
-          static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max())) {
-    throw std::invalid_argument(
-        "navigation_runtime.max_plan_from_rest_failures must fit uint32 and be positive");
-  }
-  max_plan_from_rest_failures_ =
-      static_cast<std::uint32_t>(max_plan_from_rest_failures);
-  plan_from_rest_failure_budget_ =
-      ConsecutiveFailureBudget(max_plan_from_rest_failures_);
-
   diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/navigation/diagnostics", rclcpp::QoS(rclcpp::KeepLast(5)).reliable());
   std::optional<navigation_planning::DynamicLimits> mission_limits;
@@ -1767,7 +1754,6 @@ void NavigationRuntimeNode::transitionForeignMissionLocked(
   hot_goal_transition_ = false;
   execution_episode_.clearRestartFromRest();
   execution_episode_.failClosed();
-  plan_from_rest_failure_budget_.reset();
   plan_from_rest_first_failure_steady_ns_ = 0;
   skip_replan_once_.store(false, std::memory_order_release);
   trajectory_finished_.store(false, std::memory_order_release);
@@ -1906,7 +1892,6 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
       executing_goal_ = *message;
       command_goal_epoch_.store(0U);
     }
-    plan_from_rest_failure_budget_.reset();
     plan_from_rest_first_failure_steady_ns_ = 0;
     hot_goal_transition_ = effective_hot_retarget;
     new_goal_ = !effective_hot_retarget;
@@ -1997,7 +1982,6 @@ void NavigationRuntimeNode::onModeStatus(
   execution_episode_.clearRestartFromRest();
   skip_replan_once_.store(false, std::memory_order_release);
   command_goal_epoch_.store(0U);
-  plan_from_rest_failure_budget_.reset();
   plan_from_rest_first_failure_steady_ns_ = 0;
   trajectory_finished_.store(false);
   trajectory_reaches_goal_.store(false);
@@ -2467,14 +2451,12 @@ void NavigationRuntimeNode::suspendCommandForWorldFreshness() {
 std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
   std::optional<navigation_contracts::msg::NavigationGoal> goal;
   bool safety_renewal = false;
-  std::uint32_t recovery_level = 0U;
   std::uint64_t goal_epoch = 0U;
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     goal = active_goal_;
     const auto episode = execution_episode_.snapshot();
     safety_renewal = episode.restart_from_rest || episode.safety_suffix_active;
-    recovery_level = plan_from_rest_failure_budget_.failureCount();
     goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
   }
   const auto execution = execution_state_store_.load();
@@ -2533,7 +2515,6 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
       : PlanningStartMode::kStoppedMeasuredState;
   key.anchor_stamp_ns = execution->state.source_stamp_ns;
   key.dynamics_hash = dynamics_hash_;
-  key.recovery_level = recovery_level;
   if (!key.valid() || execution->state.localization_epoch != key.localization_epoch ||
       world.identity.localization_epoch != key.localization_epoch) {
     return std::nullopt;
@@ -3102,7 +3083,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     }
     {
       std::lock_guard<std::mutex> lock(input_mutex_);
-      plan_from_rest_failure_budget_.reset();
       plan_from_rest_first_failure_steady_ns_ = 0;
     }
     // Motion observed after a certified stop is not an authorization to enter
@@ -3788,8 +3768,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   if (timed_out) {
     // The immutable STOPPED_HOLD remains exposed while the measured-state
     // solve is retried. Treat the canceled solve as a bounded PlanFromRest
-    // failure so the existing stopped-recovery failure budget can decide
-    // whether to continue or fail closed.
+    // failure so the stopped-recovery deadline can decide whether to continue
+    // or fail closed.
     result = navigation_planning::PlannerStatus::kFailed;
     planning_outcome.outcome =
         navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
@@ -3800,7 +3780,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     RCLCPP_WARN(
         get_logger(),
         "planner backend stopped-recovery solve generation=%lu exceeded watchdog; "
-        "retaining bounded hold and charging retry budget",
+        "retaining bounded hold within the stopped-recovery deadline",
         static_cast<unsigned long>(solve_generation));
   }
   if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
@@ -3885,43 +3865,49 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       trajectory_reaches_goal_.store(false);
       terminal_bundle_generation_.store(0U);
     }
-    bool failure_budget_exhausted = false;
-    std::uint32_t failure_count = 0U;
+    bool stopped_recovery_timeout = false;
+    bool failure_identity_current = false;
+    double failure_window_s = std::numeric_limits<double>::quiet_NaN();
     {
       std::lock_guard<std::mutex> lock(input_mutex_);
       if (active_goal_ && active_goal_->mission_id == goal->mission_id &&
           active_goal_->waypoint_index == goal->waypoint_index &&
           active_goal_->request_id == goal->request_id) {
+        failure_identity_current = true;
         const auto failure_now_ns = navigation_common::steadyClockNowNanoseconds();
         if (plan_from_rest_first_failure_steady_ns_ == 0) {
           plan_from_rest_first_failure_steady_ns_ = failure_now_ns;
         }
-        plan_from_rest_failure_budget_.recordFailure();
-        const double failure_window_s = static_cast<double>(
+        failure_window_s = static_cast<double>(
             static_cast<long double>(failure_now_ns) -
             static_cast<long double>(plan_from_rest_first_failure_steady_ns_)) * 1.0e-9;
         const auto timeout_state = execution_recovery_state_.load(
             std::memory_order_acquire);
-        failure_budget_exhausted = stoppedPlanningTimeoutMayFailClosed(
+        stopped_recovery_timeout = stoppedPlanningTimeoutMayFailClosed(
             timeout_state,
             std::isfinite(measured_speed_mps) && measured_speed_mps <=
                 navigation_planning::PlanningTimingContract::kStationarySpeedMps,
             failure_window_s, stopped_recovery_timeout_s_);
-        failure_count = plan_from_rest_failure_budget_.failureCount();
       }
     }
-    if (failure_budget_exhausted) {
+    if (!failure_identity_current) {
+      RCLCPP_DEBUG(get_logger(),
+                   "discarding stale PlanFromRest failure for mission=%s waypoint=%u request=%lu",
+                   goal->mission_id.c_str(), goal->waypoint_index,
+                   static_cast<unsigned long>(goal->request_id));
+    } else if (stopped_recovery_timeout) {
       execution_episode_.failClosed();
       RCLCPP_ERROR(get_logger(),
-                   "planner backend PlanFromRest failed %u consecutive times; fail-closed for "
-                   "mission=%s waypoint=%u",
-                   failure_count, goal->mission_id.c_str(), goal->waypoint_index);
+                   "planner backend PlanFromRest recovery timeout elapsed=%.3f timeout=%.3f s; "
+                   "fail-closed for mission=%s waypoint=%u",
+                   failure_window_s, stopped_recovery_timeout_s_,
+                   goal->mission_id.c_str(), goal->waypoint_index);
     } else {
       RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 2000,
-          "planner backend PlanFromRest transient failure (%d); retry %u/%u",
-          static_cast<int>(result),
-          failure_count, max_plan_from_rest_failures_);
+          "planner backend PlanFromRest transient failure (%d); retrying within stopped "
+          "recovery deadline elapsed=%.3f timeout=%.3f s",
+          static_cast<int>(result), failure_window_s, stopped_recovery_timeout_s_);
     }
   }
   if (disposition == PlannerResultDisposition::RetainCommittedCommand ||
@@ -4522,7 +4508,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // anchor recovery remain higher priority at the next tick.
     skip_replan_once_.store(true, std::memory_order_release);
     std::lock_guard<std::mutex> lock(input_mutex_);
-    plan_from_rest_failure_budget_.reset();
     plan_from_rest_first_failure_steady_ns_ = 0;
     // Do not fall back to hot replan after a failed new-goal attempt.  That
     // would keep publishing the previous waypoint while the mission has
@@ -5358,7 +5343,7 @@ void NavigationRuntimeNode::publishCommand() {
           if (retain_safety_suffix || retain_stopped_recovery_hold) {
             // The timed-out replacement is not allowed to revoke the already
             // certified suffix or bounded stopped-recovery hold. Keep its
-            // ownership and let the normal recovery budget decide the next
+            // ownership and let the stopped-recovery deadline govern the next
             // transition.
             if (retain_safety_suffix) {
               execution_episode_.setSafetySuffix(true);
