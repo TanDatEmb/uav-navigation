@@ -11,6 +11,10 @@ uint64 world_revision
 builtin_interfaces/Time world_observation_stamp
 
 uint64 bundle_generation
+# Optional producer-certified MAIN continuation for the current pass-through
+# waypoint. Existing mission/request/goal/bundle fields bind this witness.
+bool certified_main_continuation
+uint64 continuation_boundary_stamp_ns
 uint64 sample_id
 builtin_interfaces/Time state_source_stamp
 builtin_interfaces/Time valid_until

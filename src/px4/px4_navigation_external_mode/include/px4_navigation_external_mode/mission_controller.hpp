@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <string>
 
 #include <Eigen/Core>
 
@@ -34,6 +35,19 @@ struct MissionControllerEvent {
   double acceptance_speed_mps{0.0};
 };
 
+// Immutable per-update handoff witness derived from the currently accepted
+// NavigationCommand. It carries no lifecycle or readiness state.
+struct CertifiedContinuation {
+  std::string mission_id;
+  std::uint32_t waypoint_index{0U};
+  std::uint64_t request_id{0U};
+  std::uint64_t boundary_stamp_ns{0U};
+
+  [[nodiscard]] bool valid() const noexcept {
+    return !mission_id.empty() && request_id > 0U && boundary_stamp_ns > 0U;
+  }
+};
+
 class MissionController final {
  public:
   explicit MissionController(Mission mission);
@@ -45,10 +59,9 @@ class MissionController final {
   void onTrajectory(bool success, std::uint8_t trajectory_role,
                     std::uint8_t safety_plan_kind, double now_s,
                     double duration_s = 0.0);
-  // Native planner backend trajectories do not use the legacy PlannedTrajectory
-  // lifecycle. Latch readiness independently of the airborne transition so a
-  // callback that races activate()/update() cannot strand the mission on the
-  // first waypoint.
+  // Native planner backend trajectories still acknowledge STOP/hold handling.
+  // PASS_THROUGH progression uses the per-update CertifiedContinuation witness
+  // instead of this generic readiness bit.
   void onNativeTrajectoryReady();
   // A safety-owned BACKUP/EMERGENCY sample is not a readiness certificate for
   // the active waypoint. Clear the nominal readiness latch so a pass-through
@@ -61,16 +74,14 @@ class MissionController final {
   // normal acceptance gate; do not re-publish the same goal and restart the
   // planner in the meantime.
   void onNativeTerminalHoldObserved();
-  // A completed certified BACKUP may leave the vehicle stopped inside the
-  // active PASS_THROUGH checkpoint. This authorizes only measured checkpoint
-  // progression; it does not relabel or retain an adjacent old command for a
-  // new waypoint identity.
-  void onCertifiedPassThroughSuffixStop();
   [[nodiscard]] MissionControllerEvent update(double now_s,
                                                const std::optional<Eigen::Vector3d>& position,
                                                bool airborne = true,
                                                const std::optional<Eigen::Vector3d>& velocity =
-                                                   std::nullopt);
+                                                   std::nullopt,
+                                               const std::optional<CertifiedContinuation>&
+                                                   continuation = std::nullopt,
+                                               bool certified_suffix_stop = false);
   [[nodiscard]] MissionControllerState state() const;
   [[nodiscard]] bool holding() const;
   [[nodiscard]] bool waitingForAirborne() const;

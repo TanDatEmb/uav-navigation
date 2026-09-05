@@ -7,6 +7,7 @@
 #include <builtin_interfaces/msg/time.hpp>
 #include <navigation_common/time.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
+#include <navigation_contracts/execution_state_freshness.hpp>
 
 namespace navigation_contracts {
 
@@ -26,11 +27,38 @@ inline bool commandValidAt(
          now_ns <= valid_until_ns;
 }
 
+// Pure lease predicate shared by the PX4 update path and its focused tests.
+// All inputs are sampled by the caller; this function owns no freshness or
+// lifecycle state and fails closed on any missing lease component.
+inline bool continuationWitnessLeaseValid(
+    const bool command_valid_at, const std::int64_t now_ns,
+    const std::int64_t last_receive_ns, const std::int64_t stale_after_ns,
+    const ExecutionStateFreshness& odometry_freshness,
+    const ExecutionStateFreshness& health_freshness, const bool health_matches,
+    const bool failure_reported,
+    const bool mission_terminal, const bool handover_requested) noexcept {
+  return command_valid_at && now_ns > 0 && last_receive_ns > 0 &&
+         stale_after_ns >= 0 && now_ns >= last_receive_ns &&
+         now_ns - last_receive_ns <= stale_after_ns &&
+         odometry_freshness.valid() && health_freshness.valid() && health_matches &&
+         !failure_reported &&
+         !mission_terminal && !handover_requested;
+}
+
 inline bool commandMissionIdentityMatches(
     const NavigationCommand& command, std::string_view mission_id,
     std::uint32_t waypoint_index, std::uint64_t request_id) noexcept {
   return !mission_id.empty() && command.mission_id == mission_id &&
          command.waypoint_index == waypoint_index && command.request_id == request_id;
+}
+
+inline bool certifiedMainContinuationFieldsValid(
+    const NavigationCommand& command) noexcept {
+  const auto boundary_ns = command.continuation_boundary_stamp_ns;
+  if (!command.certified_main_continuation) return boundary_ns == 0U;
+  return command.role == NavigationCommand::ROLE_MAIN &&
+         command.status == NavigationCommand::STATUS_READY &&
+         boundary_ns > 0U;
 }
 
 inline bool commandWorldIdentityNonRegressing(
@@ -94,6 +122,7 @@ inline bool commandContractValid(
          command.world_generation != 0U && command.world_revision != 0U &&
          command.sample_id != 0U && command.status != NavigationCommand::STATUS_EMPTY &&
          (normal || braking || rejected) && role_valid && pvaj_finite &&
+         certifiedMainContinuationFieldsValid(command) &&
          command.trajectory_time_s >= 0.0;
 }
 

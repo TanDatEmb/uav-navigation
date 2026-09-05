@@ -8,6 +8,7 @@
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/planning_supervisor.hpp"
 #include "navigation_runtime/planning_worker.hpp"
+#include "navigation_runtime/certified_continuation.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include <navigation_execution/timestamp_freshness.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
@@ -216,6 +217,81 @@ std::optional<navigation_mission::ImmutableRouteSnapshot> decodeRouteSnapshot(
   } catch (...) {
     return std::nullopt;
   }
+}
+
+std::optional<std::uint64_t> certifiedMainContinuationBoundary(
+    const navigation_planning::CandidateBundle& candidate,
+    const navigation_contracts::msg::NavigationGoal& goal,
+    const std::uint64_t localization_epoch,
+    const std::uint64_t goal_epoch,
+    const bool trajectory_finished) noexcept {
+  if (goal.behavior != navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH ||
+      !candidate.route_boundary_event.has_value() ||
+      !candidate.route_boundary_constraint.has_value()) {
+    return std::nullopt;
+  }
+  const auto route = decodeRouteSnapshot(goal);
+  const auto& boundary = *candidate.route_boundary_event;
+  if (!route) {
+    return std::nullopt;
+  }
+  const auto boundary_sample = candidate.sampleAtDeclaredStamp(boundary.boundary_stamp_ns);
+  if (!boundary_sample) {
+    return std::nullopt;
+  }
+
+  const auto boundary_offset_ns = boundary.boundary_stamp_ns - candidate.declared_start_ns;
+  const auto canonical_offset_ns = [](const double seconds)
+      -> std::optional<std::int64_t> {
+    if (!std::isfinite(seconds) || seconds < 0.0) return std::nullopt;
+    const long double nanos = static_cast<long double>(seconds) * 1.0e9L;
+    if (!std::isfinite(nanos) || nanos < 0.0L ||
+        nanos > static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+      return std::nullopt;
+    }
+    return static_cast<std::int64_t>(std::llround(nanos));
+  };
+  // Use the producer's canonical role interval rather than a duration magic
+  // number: the boundary must have a strictly positive MAIN remainder before
+  // the role interval ends (backup switch or declared endpoint).
+  std::int64_t main_interval_begin_ns = -1;
+  std::int64_t main_interval_end_ns = -1;
+  for (const auto& interval : candidate.role_schedule) {
+    const auto begin_ns = canonical_offset_ns(interval.begin_time_s);
+    const auto end_ns = canonical_offset_ns(interval.end_time_s);
+    if (begin_ns && end_ns && interval.role == navigation_planning::CandidateRole::kMain &&
+        boundary_offset_ns >= *begin_ns && boundary_offset_ns < *end_ns) {
+      main_interval_begin_ns = *begin_ns;
+      main_interval_end_ns = *end_ns;
+      break;
+    }
+  }
+  const CertifiedMainContinuationBoundaryFacts facts{
+      true,
+      navigation_mission::passThroughNextWaypointIsCoincidentStop(*route),
+      trajectory_finished,
+      true,
+      true,
+      candidate.localization_epoch,
+      localization_epoch,
+      candidate.goal_epoch,
+      goal_epoch,
+      candidate.request_id,
+      goal.request_id,
+      boundary.kind,
+      boundary_sample->role,
+      boundary.junction_index,
+      candidate.route_boundary_constraint->junction_index,
+      goal.waypoint_index,
+      boundary.boundary_stamp_ns,
+      candidate.declared_start_ns,
+      candidate.declared_end_ns,
+      main_interval_begin_ns,
+      main_interval_end_ns};
+  if (!certifiedMainContinuationBoundaryEligible(facts)) {
+    return std::nullopt;
+  }
+  return static_cast<std::uint64_t>(boundary.boundary_stamp_ns);
 }
 
 bool routeSnapshotMatchesGoalMirrors(
@@ -2222,6 +2298,10 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
         : navigation_planning::RouteBoundaryEventKind::kPassThrough;
     const bool boundary_kind_valid =
         boundary.kind == expected_boundary_kind;
+    const bool boundary_junction_valid = route_snapshot.has_value() &&
+        boundary.junction_index == route_snapshot->active_waypoint_index &&
+        constraint_valid &&
+        constraint->junction_index == route_snapshot->active_waypoint_index;
     const bool boundary_stamp_valid =
         boundary.boundary_stamp_ns >= candidate_ptr->declared_start_ns &&
         boundary.boundary_stamp_ns <= candidate_ptr->declared_end_ns;
@@ -2237,6 +2317,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     const bool boundary_role_valid = boundary_sample_valid &&
         boundary_sample->role == navigation_planning::CandidateRole::kMain;
     if (!constraint_valid || !boundary_valid || !boundary_kind_valid ||
+        !boundary_junction_valid ||
         !boundary_stamp_valid || !endpoint_valid || !boundary_crossing_contained ||
         !boundary_position_matches || !boundary_role_valid) {
       planner_->discardCommandCandidate();
@@ -5727,6 +5808,15 @@ void NavigationRuntimeNode::publishCommand() {
   command.world_observation_stamp = navigation_common::nanosecondsToRosTime(
       command_world_identity.observation_stamp_ns).value_or(builtin_interfaces::msg::Time{});
   command.bundle_generation = trajectory_generation;
+  const auto continuation_boundary = sampled_command_valid && sampled_bundle && executing_goal &&
+      sampled_role == navigation_planning::CandidateRole::kMain &&
+      !sampled_planned_stop_hold && !safety_suffix_active && !traj_finish
+      ? certifiedMainContinuationBoundary(
+            *sampled_bundle, *executing_goal, localization_epoch_at_command,
+            command_goal_epoch_at_command, traj_finish)
+      : std::nullopt;
+  command.certified_main_continuation = continuation_boundary.has_value();
+  command.continuation_boundary_stamp_ns = continuation_boundary.value_or(0U);
   const auto command_id = advanceMonotonicId(command_id_);
   if (!command_id) {
     command_bundle_store_.invalidate();

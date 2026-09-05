@@ -337,33 +337,11 @@ void MissionController::onNativeTerminalHoldObserved() {
   }
 }
 
-void MissionController::onCertifiedPassThroughSuffixStop() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (state_ == MissionControllerState::Idle ||
-      state_ == MissionControllerState::Complete ||
-      state_ == MissionControllerState::Failed ||
-      active_waypoint_index_ >= mission_.waypoints.size()) {
-    return;
-  }
-  // This is a measured route-progress witness, not a command handoff. Keep
-  // it limited to a non-terminal pass-through checkpoint; STOP and coincident
-  // STOP boundaries must continue through their own terminal-hold contract.
-  if (mission_.waypoints[active_waypoint_index_].behavior !=
-          MissionWaypoint::Behavior::PassThrough ||
-      navigation_mission::passThroughNextWaypointIsCoincidentStop(
-          route_progress_.snapshot(
-              mission_.id, mission_.frame, 1U, request_id_,
-              active_waypoint_index_))) {
-    return;
-  }
-  checkpoint_valid_ = true;
-  trajectory_ready_ = true;
-  terminal_hold_pending_ = false;
-}
-
 MissionControllerEvent MissionController::update(
     double now_s, const std::optional<Eigen::Vector3d>& position, bool airborne,
-    const std::optional<Eigen::Vector3d>& velocity) {
+    const std::optional<Eigen::Vector3d>& velocity,
+    const std::optional<CertifiedContinuation>& continuation,
+    const bool certified_suffix_stop) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (!std::isfinite(now_s) || state_ == MissionControllerState::Idle ||
       state_ == MissionControllerState::Complete || state_ == MissionControllerState::Failed) {
@@ -536,6 +514,11 @@ MissionControllerEvent MissionController::update(
         pass_through && active_waypoint_index_ == 0U && request_id_ == 1U && inside &&
         slowEnough();
     const bool acceptance_ready = pass_through ? passThroughCornerReady() : slowEnough();
+    // Capture this before the coincident PASS/STOP hold block clears its
+    // pending marker at a measured stop. The captured readiness is the
+    // terminal MAIN witness for the same update that accepts PASS.
+    const bool coincident_terminal_hold_ready = pass_through &&
+        coincident_terminal_stop && terminal_hold_pending_ && trajectory_ready_;
     if (terminal_hold_pending_ && !pass_through) {
       // A terminal STOP requires a continuous measured confirmation window,
       // not a single low-speed sample. Keep the certified endpoint hold while
@@ -579,7 +562,17 @@ MissionControllerEvent MissionController::update(
         return {};
       }
     }
-    if ((trajectory_ready_ || immediate_pass_through) && inside && acceptance_ready) {
+    const bool certified_main_continuation = pass_through && continuation.has_value() &&
+        continuation->valid() && continuation->mission_id == mission_.id &&
+        continuation->waypoint_index == active_waypoint_index_ &&
+        continuation->request_id == request_id_;
+    // PASS_THROUGH requires measured crossing plus the current accepted MAIN
+    // command witness. Generic readiness remains for STOP/legacy hold paths.
+    const bool progression_ready = pass_through
+        ? (certified_main_continuation || certified_suffix_stop ||
+           coincident_terminal_hold_ready || immediate_pass_through)
+        : trajectory_ready_;
+    if (progression_ready && inside && acceptance_ready) {
       if (pass_through) {
         const auto acceptance_error = passThroughAcceptanceError();
         if (!acceptance_error.has_value() || !position.has_value() ||

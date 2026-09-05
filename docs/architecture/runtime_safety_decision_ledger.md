@@ -18719,3 +18719,52 @@ release profiles must not use the former allowance.
   test_trajectory -j2`; `./build/navigation_planning_backend/test_trajectory
   --gtest_filter='PlannerTrajectory.SolveFailureCodesRemainDistinct:PlannerTrajectory.MainKnownFreeFailureUsesTypedNominalSeedReason'
   --gtest_color=no`; `python3 -m unittest tools.runtime.tests.test_planner_trace`.
+
+### 2026-09-05 - Require a current certified MAIN continuation for PASS progress
+
+- **Owner/status:** PX4 NavigationMode, MissionController and navigation runtime;
+  CODE and COMPONENT_REPRO implemented and verified, no SITL or
+  flight-acceptance claim.
+- **Scope:** PASS_THROUGH advancement now receives an optional per-update
+  witness from the currently accepted, admitted MAIN `STATUS_READY` command. The command is
+  bound to existing mission, waypoint, request, goal, localization and bundle
+  identity fields; NavigationMode projects only mission/waypoint/request plus
+  the boundary sample timestamp into the local witness. Runtime derives it only
+  from an activated immutable candidate whose canonical MAIN interval continues
+  strictly beyond the measured boundary. NavigationMode snapshots odometry,
+  command and witness together, checks command/receive/odometry/health
+  freshness separately from candidate boundary timing (no comparison with the
+  short command lease), then serializes MissionController::update under the trajectory
+  ownership mutex. No new FSM, readiness latch or route revision was added.
+- **Safety impact:** This tightens PASS readiness and fails closed for missing,
+  stale, expired, wrong-identity, BACKUP, terminal-STOP and coincident
+  PASS+STOP continuation certificates. The producer-side certificate claim is
+  limited to the active sampled bundle; pending-candidate behavior is not
+  claimed by this entry. Existing initial already
+  inside exception, measured RouteProgress ordering, suffix-stop and STOP hold
+  semantics remain explicit. Gate thresholds, dynamics and PX4 mode behavior
+  are unchanged.
+- **Evidence:** `test_typed_interfaces` passed 10/10, including independent
+  command/health/odometry lease freshness cases; direct producer-predicate
+  `test_certified_continuation` passed 5/5; `test_navigation_command` passed
+  27/27 and full `test_mission` passed 43/43. The affected runtime and PX4
+  node targets built in the sourced ROS Jazzy environment. The lock audit
+  found no MissionController
+  path that acquires `trajectory_mutex_`; the update path takes
+  `trajectory_mutex_` before `MissionController::mutex_` at
+  `navigation_mode_node.cpp:1032-1058`, with event handling after release.
+  No SITL evidence is claimed.
+- **Removal condition:** Replace only with an equivalent typed certificate
+  preserving current-command identity, MAIN continuation interval, freshness,
+  and ordered measured crossing guarantees.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake -S src/runtime/navigation_runtime -B build/navigation_runtime
+  && cmake --build build/navigation_runtime --target
+  test_certified_continuation navigation_runtime_node -j2
+  && cmake --build build/navigation_contracts --target test_typed_interfaces -j2
+  && cmake --build build/px4_navigation_external_mode --target
+  px4_navigation_external_mode_node test_navigation_command test_mission -j2
+  && ./build/navigation_runtime/test_certified_continuation
+  && ./build/navigation_contracts/test_typed_interfaces
+  && ./build/px4_navigation_external_mode/test_navigation_command
+  && ./build/px4_navigation_external_mode/test_mission`; `git diff --check`.

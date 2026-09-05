@@ -573,7 +573,6 @@ void NavigationMode::onNavigationCommand(
   bool terminal_stop_settle_required = false;
   bool prior_safety_suffix_command = false;
   bool prior_pass_through_main_command = false;
-  bool certified_suffix_pass_through_stop = false;
   bool recovery_deadline_invalid = false;
   std::optional<nav_msgs::msg::Odometry> completed_command_odometry;
   navigation_contracts::ExecutionStateFreshness odometry_freshness;
@@ -653,31 +652,6 @@ void NavigationMode::onNavigationCommand(
     } else if (acceptance_gate == CommandAcceptanceGate::kNonIncreasingMessageId) {
       ++trajectory_rejected_count_;
       return;
-    }
-    if (!odometry_stale &&
-        message->status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
-        message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
-        mission_controller_ && odometry_.has_value() &&
-        !mission_controller_->activePassThroughHasCoincidentStop()) {
-      const auto waypoint = mission_controller_->activeWaypoint();
-      if (waypoint.has_value() &&
-          waypoint->behavior == MissionWaypoint::Behavior::PassThrough) {
-        const auto& point = odometry_->pose.pose.position;
-        const Eigen::Vector3d measured{point.x, point.y, point.z};
-        const Eigen::Vector3d command_position{message->position.x, message->position.y,
-                                               message->position.z};
-        const auto& velocity = odometry_->twist.twist.linear;
-        const Eigen::Vector3d measured_velocity{velocity.x, velocity.y, velocity.z};
-        const bool measured_inside = measured.allFinite() &&
-            (measured - waypoint->position_enu).norm() <= waypoint->acceptance_radius_m;
-        const bool command_inside = command_position.allFinite() &&
-            (command_position - waypoint->position_enu).norm() <= waypoint->acceptance_radius_m;
-        certified_suffix_pass_through_stop =
-            measured_inside && command_inside && measured_velocity.allFinite() &&
-            measured_velocity.norm() <= mission_controller_->acceptanceSpeedMps() &&
-            (measured - command_position).norm() <=
-                navigation_contracts::kCommandAnchorErrorLimitM;
-      }
     }
       const bool terminal_failure =
         message->status ==
@@ -917,17 +891,6 @@ void NavigationMode::onNavigationCommand(
       mission_controller_->onNativeTerminalHoldObserved();
     }
   }
-  if (accepted && completed_command && certified_suffix_pass_through_stop &&
-      mission_controller_) {
-    // For an adjacent old suffix, the old BACKUP remains stored under its old
-    // identity. For a current-identity BACKUP, the same witness certifies the
-    // active checkpoint without changing command ownership. In both cases
-    // MissionController applies only its normal measured PASS_THROUGH gate.
-    mission_controller_->onCertifiedPassThroughSuffixStop();
-    RCLCPP_INFO(node().get_logger(),
-                "Certified BACKUP stop is inside next PASS_THROUGH checkpoint; "
-                "allowing measured route progression under a fresh command identity");
-  }
   if (recovery_deadline_invalid) {
     safetyStopNavigation("planner recovery deadline is not representable");
     return;
@@ -985,51 +948,122 @@ void NavigationMode::updateMission() {
     safetyStopNavigation("planner backend backup trajectory completed before bounded planner recovery");
     return;
   }
+  const auto now = node().get_clock()->now();
+  const auto now_ns = now.nanoseconds();
+  const double now_s = now.seconds();
   std::optional<Eigen::Vector3d> position;
+  std::optional<Eigen::Vector3d> velocity;
+  std::optional<CertifiedContinuation> continuation;
+  bool certified_suffix_stop = false;
+  MissionControllerEvent event{};
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    // Recheck lifecycle ownership after the recovery-window probe. A failure
+    // callback may have taken the mutex in that interval; in that case the
+    // timer must not run even the STOP/initial exception path on old data.
+    if (failure_reported_ || mission_terminal_ || handover_requested_) return;
     if (odometry_.has_value()) {
       const auto& point = odometry_->pose.pose.position;
       position = Eigen::Vector3d{point.x, point.y, point.z};
-    }
-  }
-  const double now_s = node().get_clock()->now().seconds();
-  std::optional<Eigen::Vector3d> velocity;
-  {
-    std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    if (odometry_.has_value()) {
       const auto& twist = odometry_->twist.twist.linear;
       velocity = Eigen::Vector3d{twist.x, twist.y, twist.z};
     }
-  }
-  const bool airborne = isArmed() && position.has_value() && position->z() > 0.5;
-  const auto active_waypoint = mission_controller_->activeWaypoint();
-  const auto state = mission_controller_->state();
-  const auto native_ready = mission_controller_->nativeTrajectoryReady();
-  const auto terminal_hold_pending = mission_controller_->terminalHoldPending();
-  const double position_error = position.has_value() && active_waypoint.has_value()
-                                    ? (*position - active_waypoint->position_enu).norm()
-                                    : -1.0;
-  const double speed = velocity.has_value() ? velocity->norm() : -1.0;
-  RCLCPP_INFO_THROTTLE(
-      node().get_logger(), *node().get_clock(), 1000,
-      "Mission gate: wp=%zu request=%lu state=%u position_error_m=%.3f radius_m=%.3f "
-      "speed_mps=%.3f acceptance_speed_mps=%.3f airborne=%s trajectory_ready=%s "
-      "terminal_hold_pending=%s",
-      mission_controller_->activeWaypointIndex(),
-      static_cast<unsigned long>(mission_controller_->activeRequestId()),
-      static_cast<unsigned>(state), position_error,
-      active_waypoint.has_value() ? active_waypoint->acceptance_radius_m : -1.0, speed,
-      mission_controller_->acceptanceSpeedMps(), airborne ? "true" : "false",
-      native_ready ? "true" : "false", terminal_hold_pending ? "true" : "false");
-  const auto event = mission_controller_->update(now_s, position, airborne, velocity);
-  if (event.waypoint_accepted) {
-    RCLCPP_INFO(node().get_logger(),
-                "Mission waypoint accepted: wp=%zu position_error_m=%.3f speed_mps=%.3f "
-                "next_wp=%zu next_request=%lu",
-                event.accepted_waypoint_index, event.acceptance_position_error_m,
-                event.acceptance_speed_mps, event.waypoint_index,
-                static_cast<unsigned long>(event.request_id));
+    const auto odometry_source_ns = odometry_
+        ? navigation_common::rosTimeToNanoseconds(odometry_->header.stamp).value_or(0) : 0;
+    const auto odometry_freshness = navigation_contracts::evaluateExecutionStateFreshness(
+        now_ns, odometry_source_ns, navigation_common::steadyClockNowNanoseconds(),
+        last_odometry_receive_steady_ns_, state_stale_after_s_);
+    const auto health_freshness = navigation_contracts::evaluateExecutionStateFreshness(
+        now_ns, last_health_source_stamp_ns_, navigation_common::steadyClockNowNanoseconds(),
+        last_health_receive_steady_ns_, state_stale_after_s_);
+    const bool health_matches = navigation_contracts::estimatorHealthAllowsCommand(
+        typed_health_seen_, lio_health_valid_,
+        navigation_command_ ? navigation_command_->localization_epoch : 0U,
+        lio_localization_epoch_);
+    const bool command_fresh = navigation_command_ &&
+        navigation_contracts::continuationWitnessLeaseValid(
+            navigation_contracts::commandValidAt(*navigation_command_, now_ns), now_ns,
+            last_command_receive_ns_, stale_after_ns_, odometry_freshness, health_freshness,
+            health_matches, failure_reported_, mission_terminal_, handover_requested_);
+    // Snapshot the witness with the same accepted command that supplies the
+    // measured update. A retained adjacent suffix or a stale generation is
+    // therefore unable to authorize the new waypoint.
+    if (command_fresh && mission_ && mission_controller_ &&
+        navigation_contracts::certifiedMainContinuationFieldsValid(
+            *navigation_command_) &&
+        navigation_command_->mission_id == mission_->id &&
+        navigation_command_->waypoint_index ==
+            mission_controller_->activeWaypointIndex() &&
+        navigation_command_->request_id == mission_controller_->activeRequestId()) {
+      continuation = CertifiedContinuation{
+          navigation_command_->mission_id,
+          navigation_command_->waypoint_index,
+          navigation_command_->request_id,
+          navigation_command_->continuation_boundary_stamp_ns};
+    }
+    if (command_fresh && mission_ && mission_controller_ && odometry_ &&
+        navigation_command_->status ==
+            navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
+        navigation_command_->role ==
+            navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+        navigation_command_->mission_id == mission_->id &&
+        navigation_command_->waypoint_index ==
+            mission_controller_->activeWaypointIndex() &&
+        navigation_command_->request_id == mission_controller_->activeRequestId() &&
+        !mission_controller_->activePassThroughHasCoincidentStop()) {
+      const auto waypoint = mission_controller_->activeWaypoint();
+      const auto& measured_point = odometry_->pose.pose.position;
+      const Eigen::Vector3d measured{measured_point.x, measured_point.y, measured_point.z};
+      const Eigen::Vector3d command_position{
+          navigation_command_->position.x, navigation_command_->position.y,
+          navigation_command_->position.z};
+      const auto& measured_velocity = odometry_->twist.twist.linear;
+      const Eigen::Vector3d velocity_vector{
+          measured_velocity.x, measured_velocity.y, measured_velocity.z};
+      certified_suffix_stop = waypoint.has_value() &&
+          waypoint->behavior == MissionWaypoint::Behavior::PassThrough &&
+          measured.allFinite() && command_position.allFinite() && velocity_vector.allFinite() &&
+          (measured - waypoint->position_enu).norm() <= waypoint->acceptance_radius_m &&
+          (command_position - waypoint->position_enu).norm() <= waypoint->acceptance_radius_m &&
+          velocity_vector.norm() <= mission_controller_->acceptanceSpeedMps() &&
+          (measured - command_position).norm() <=
+              navigation_contracts::kCommandAnchorErrorLimitM;
+    }
+    // Linearize the measured crossing and its command witness against command
+    // admission/failure callbacks. Lock order is
+    // trajectory_mutex_ -> MissionController::mutex_; no callback takes the
+    // inverse order. Releasing this lock before update() would permit a
+    // failure or replacement command between the snapshot and transition.
+    const bool airborne = isArmed() && position.has_value() && position->z() > 0.5;
+    const auto active_waypoint = mission_controller_->activeWaypoint();
+    const auto state = mission_controller_->state();
+    const auto native_ready = mission_controller_->nativeTrajectoryReady();
+    const auto terminal_hold_pending = mission_controller_->terminalHoldPending();
+    const double position_error = position.has_value() && active_waypoint.has_value()
+                                      ? (*position - active_waypoint->position_enu).norm()
+                                      : -1.0;
+    const double speed = velocity.has_value() ? velocity->norm() : -1.0;
+    RCLCPP_INFO_THROTTLE(
+        node().get_logger(), *node().get_clock(), 1000,
+        "Mission gate: wp=%zu request=%lu state=%u position_error_m=%.3f radius_m=%.3f "
+        "speed_mps=%.3f acceptance_speed_mps=%.3f airborne=%s trajectory_ready=%s "
+        "terminal_hold_pending=%s",
+        mission_controller_->activeWaypointIndex(),
+        static_cast<unsigned long>(mission_controller_->activeRequestId()),
+        static_cast<unsigned>(state), position_error,
+        active_waypoint.has_value() ? active_waypoint->acceptance_radius_m : -1.0, speed,
+        mission_controller_->acceptanceSpeedMps(), airborne ? "true" : "false",
+        native_ready ? "true" : "false", terminal_hold_pending ? "true" : "false");
+    event = mission_controller_->update(
+        now_s, position, airborne, velocity, continuation, certified_suffix_stop);
+    if (event.waypoint_accepted) {
+      RCLCPP_INFO(node().get_logger(),
+                  "Mission waypoint accepted: wp=%zu position_error_m=%.3f speed_mps=%.3f "
+                  "next_wp=%zu next_request=%lu",
+                  event.accepted_waypoint_index, event.acceptance_position_error_m,
+                  event.acceptance_speed_mps, event.waypoint_index,
+                  static_cast<unsigned long>(event.request_id));
+    }
   }
   handleMissionEvent(event, now_s);
 }

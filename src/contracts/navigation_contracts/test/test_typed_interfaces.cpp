@@ -136,6 +136,85 @@ TEST(NavigationContracts, CommandsRequireHealthyTypedEpochHandshake) {
   EXPECT_TRUE(navigation_contracts::estimatorHealthAllowsCommand(true, true, 3U, 3U));
 }
 
+TEST(NavigationContracts, ContinuationWitnessLeaseFailsClosedPerFreshnessInput) {
+  navigation_contracts::ExecutionStateFreshness fresh;
+  fresh.reason = navigation_contracts::ExecutionStateFreshnessReason::kValid;
+  const auto valid = [&]() {
+    return navigation_contracts::continuationWitnessLeaseValid(
+        true, 2'000'000'000LL, 1'500'000'000LL, 1'000'000'000LL,
+        fresh, fresh, true, false, false, false);
+  };
+  EXPECT_TRUE(valid());
+
+  auto source_stale = fresh;
+  source_stale.reason = navigation_contracts::ExecutionStateFreshnessReason::kSourceStale;
+  EXPECT_FALSE(navigation_contracts::continuationWitnessLeaseValid(
+      true, 2'000'000'000LL, 1'500'000'000LL, 1'000'000'000LL,
+      source_stale, fresh, true, false, false, false));
+  auto receive_stale = fresh;
+  receive_stale.reason = navigation_contracts::ExecutionStateFreshnessReason::kReceiveStale;
+  EXPECT_FALSE(navigation_contracts::continuationWitnessLeaseValid(
+      true, 2'000'000'000LL, 1'500'000'000LL, 1'000'000'000LL,
+      receive_stale, fresh, true, false, false, false));
+  EXPECT_FALSE(navigation_contracts::continuationWitnessLeaseValid(
+      true, 2'000'000'000LL, 500'000'000LL, 1'000'000'000LL,
+      fresh, fresh, true, false, false, false));
+  EXPECT_FALSE(navigation_contracts::continuationWitnessLeaseValid(
+      true, 2'000'000'000LL, 1'500'000'000LL, 1'000'000'000LL,
+      fresh, fresh, false, false, false, false));
+  EXPECT_FALSE(navigation_contracts::continuationWitnessLeaseValid(
+      false, 2'000'000'000LL, 1'500'000'000LL, 1'000'000'000LL,
+      fresh, fresh, true, false, false, false));
+  auto health_stale = fresh;
+  health_stale.reason = navigation_contracts::ExecutionStateFreshnessReason::kSourceStale;
+  EXPECT_FALSE(navigation_contracts::continuationWitnessLeaseValid(
+      true, 2'000'000'000LL, 1'500'000'000LL, 1'000'000'000LL,
+      fresh, health_stale, true, false, false, false));
+}
+
+TEST(NavigationContracts, CertifiedContinuationIsExplicitAndMainBound) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.header.frame_id = "lio_odom";
+  command.header.stamp.sec = 10;
+  command.valid_until.sec = 11;
+  command.world_observation_stamp.sec = 9;
+  command.state_source_stamp.sec = 9;
+  command.mission_id = "mission-a";
+  command.localization_epoch = 3U;
+  command.goal_epoch = 5U;
+  command.world_generation = 13U;
+  command.world_revision = 21U;
+  command.bundle_generation = 34U;
+  command.sample_id = 55U;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  EXPECT_TRUE(navigation_contracts::commandContractValid(command, "lio_odom"));
+
+  command.certified_main_continuation = true;
+  command.continuation_boundary_stamp_ns = 10'500'000'000ULL;
+  EXPECT_TRUE(navigation_contracts::certifiedMainContinuationFieldsValid(command));
+  EXPECT_TRUE(navigation_contracts::commandContractValid(command, "lio_odom"));
+  // The boundary is on the candidate timeline and may be beyond this
+  // individual command's short lease. Freshness is checked separately by
+  // commandValidAt()/continuationWitnessLeaseValid().
+  command.continuation_boundary_stamp_ns = 12'000'000'000ULL;
+  EXPECT_TRUE(navigation_contracts::certifiedMainContinuationFieldsValid(command));
+  EXPECT_TRUE(navigation_contracts::commandContractValid(command, "lio_odom"));
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
+  EXPECT_FALSE(navigation_contracts::certifiedMainContinuationFieldsValid(command));
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
+  EXPECT_FALSE(navigation_contracts::certifiedMainContinuationFieldsValid(command));
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  command.continuation_boundary_stamp_ns = 0U;
+  EXPECT_FALSE(navigation_contracts::certifiedMainContinuationFieldsValid(command));
+  command.certified_main_continuation = false;
+  EXPECT_TRUE(navigation_contracts::certifiedMainContinuationFieldsValid(command));
+  command.continuation_boundary_stamp_ns = 10'500'000'000ULL;
+  EXPECT_FALSE(navigation_contracts::certifiedMainContinuationFieldsValid(command));
+}
+
 TEST(NavigationContracts, NavigationCommandContractRejectsMalformedOrRegressedIdentity) {
   navigation_contracts::msg::NavigationCommand previous;
   previous.header.frame_id = "lio_odom";

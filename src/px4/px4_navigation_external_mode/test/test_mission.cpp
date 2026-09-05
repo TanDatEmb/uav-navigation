@@ -1,5 +1,6 @@
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -56,6 +57,12 @@ void expectNoWaypointAccepted(
   EXPECT_FALSE(event.waypoint_accepted);
   EXPECT_TRUE(std::isfinite(event.acceptance_position_error_m));
   EXPECT_TRUE(std::isfinite(event.acceptance_speed_mps));
+}
+
+px4_navigation_external_mode::CertifiedContinuation testMainContinuation(
+    std::string mission_id, std::uint32_t waypoint_index, std::uint64_t request_id) {
+  return px4_navigation_external_mode::CertifiedContinuation{
+      mission_id, waypoint_index, request_id, 2'000'000'000ULL};
 }
 
 }  // namespace
@@ -298,7 +305,8 @@ mission:
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   controller.onTrajectory(true, 0.0);
   const auto event = controller.update(0.1, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
-                                       Eigen::Vector3d{1.0, 0.0, 0.0});
+                                       Eigen::Vector3d{1.0, 0.0, 0.0},
+                                       testMainContinuation("pass_through_route", 0U, 1U));
   EXPECT_EQ(event.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   expectWaypointAccepted(event, 0U);
@@ -331,7 +339,8 @@ mission:
   controller.onTrajectory(true, 0.0);
 
   const auto first = controller.update(0.1, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
-                                       Eigen::Vector3d{1.0, 0.0, 0.0});
+                                       Eigen::Vector3d{1.0, 0.0, 0.0},
+                                       testMainContinuation("pass_through_handoff_contract", 0U, 1U));
   ASSERT_EQ(first.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   expectWaypointAccepted(first, 0U);
@@ -349,11 +358,59 @@ mission:
 
   controller.onTrajectory(true, 0.2);
   const auto second = controller.update(0.3, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
-                                        Eigen::Vector3d::Zero());
+                                        Eigen::Vector3d::Zero(),
+                                        testMainContinuation("pass_through_handoff_contract", 1U, 2U));
   EXPECT_EQ(second.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   expectWaypointAccepted(second, 1U);
   EXPECT_EQ(second.waypoint_index, 2U);
+}
+
+TEST(MissionController, PassThroughRequiresPerUpdateMainContinuationWitness) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: certified_continuation_contract
+  frame: lio_odom
+  waypoints:
+    - {id: origin, position: [1.0, 0.0, 3.0], behavior: pass_through, acceptance_radius_m: 0.4}
+    - {id: active, position: [2.0, 0.0, 3.0], behavior: pass_through, acceptance_radius_m: 0.4}
+    - {id: finish, position: [3.0, 0.0, 3.0], behavior: stop, acceptance_radius_m: 0.4}
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onNativeTrajectoryReady();
+  ASSERT_TRUE(controller.update(0.1, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+                                Eigen::Vector3d::Zero()).waypoint_accepted);
+  controller.onNativeTrajectoryReady();
+
+  const auto without_witness = controller.update(
+      0.2, Eigen::Vector3d{2.0, 0.0, 3.0}, true, Eigen::Vector3d::Zero());
+  EXPECT_EQ(without_witness.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  const auto wrong_identity = controller.update(
+      0.25, Eigen::Vector3d{2.0, 0.0, 3.0}, true, Eigen::Vector3d::Zero(),
+      testMainContinuation("certified_continuation_contract", 0U, 99U));
+  EXPECT_EQ(wrong_identity.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  const auto with_witness = controller.update(
+      0.3, Eigen::Vector3d{2.0, 0.0, 3.0}, true, Eigen::Vector3d::Zero(),
+      testMainContinuation("certified_continuation_contract", 1U, 2U));
+  EXPECT_EQ(with_witness.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  expectWaypointAccepted(with_witness, 1U);
+  EXPECT_EQ(controller.activeWaypointIndex(), 2U);
 }
 
 TEST(MissionController, PassThroughAcceptanceDoesNotBypassAcceptanceRadius) {
@@ -387,7 +444,8 @@ mission:
   EXPECT_EQ(controller.activeWaypointIndex(), 1U);
 
   event = controller.update(0.3, Eigen::Vector3d{0.7, 0.0, 3.0}, true,
-                             Eigen::Vector3d{1.0, 0.0, 0.0});
+                             Eigen::Vector3d{1.0, 0.0, 0.0},
+                             testMainContinuation("lookahead_route", 1U, 2U));
   EXPECT_EQ(event.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   expectWaypointAccepted(event, 1U);
@@ -430,7 +488,8 @@ mission:
             px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
 
   const auto accepted = controller.update(0.2, Eigen::Vector3d{1.2, 0.0, 3.0}, true,
-                                          Eigen::Vector3d::Zero());
+                                          Eigen::Vector3d::Zero(),
+                                          testMainContinuation("lookahead_route", 1U, 2U));
   EXPECT_EQ(accepted.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   expectWaypointAccepted(accepted, 0U);
@@ -479,7 +538,8 @@ mission:
   // checkpoint solely because the timer did not sample the ball's interior.
   const auto crossing = controller.update(
       0.10, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
-      Eigen::Vector3d{5.0, 0.0, 0.0});
+      Eigen::Vector3d{5.0, 0.0, 0.0},
+      testMainContinuation("pass_through_segment_crossing", 1U, 2U));
   EXPECT_EQ(crossing.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   expectWaypointAccepted(crossing, 1U);
@@ -629,7 +689,9 @@ mission:
   controller.onTrajectory(true, 0.3);
 
   const auto incoming_velocity = controller.update(
-      0.4, Eigen::Vector3d{1.0, 0.0, 3.0}, true, Eigen::Vector3d{1.0, 0.0, 0.0});
+      0.4, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
+      Eigen::Vector3d{1.0, 0.0, 0.0},
+      testMainContinuation("pass_through_corner_gate", 1U, 2U));
   EXPECT_EQ(incoming_velocity.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   EXPECT_TRUE(incoming_velocity.waypoint_accepted);
@@ -673,7 +735,8 @@ mission:
   controller.onNativeTerminalHoldObserved();
 
   const auto moving = controller.update(0.2, Eigen::Vector3d{1.0, 0.0, 3.0}, true,
-                                        Eigen::Vector3d{1.0, 0.0, 0.0});
+                                        Eigen::Vector3d{1.0, 0.0, 0.0},
+                                        testMainContinuation("native_terminal_corner_hold", 1U, 2U));
   EXPECT_EQ(moving.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
   expectWaypointAccepted(moving, 1U);
@@ -1151,9 +1214,8 @@ mission:
 
   // No trajectory callback for the new waypoint is available yet. The
   // certified suffix witness enables only the normal measured acceptance gate.
-  controller.onCertifiedPassThroughSuffixStop();
   const auto second = controller.update(0.2, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
-                                        Eigen::Vector3d::Zero());
+                                        Eigen::Vector3d::Zero(), std::nullopt, true);
   EXPECT_EQ(second.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
   expectWaypointAccepted(second, 1U);
@@ -1199,9 +1261,8 @@ mission:
   EXPECT_EQ(blocked.type, px4_navigation_external_mode::MissionControllerEvent::Type::None);
   EXPECT_EQ(controller.activeWaypointIndex(), 1U);
 
-  controller.onCertifiedPassThroughSuffixStop();
   const auto progressed = controller.update(0.3, Eigen::Vector3d{2.0, 0.0, 3.0}, true,
-                                            Eigen::Vector3d::Zero());
+                                            Eigen::Vector3d::Zero(), std::nullopt, true);
   EXPECT_EQ(progressed.type,
             px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
   expectWaypointAccepted(progressed, 1U);
