@@ -1,14 +1,18 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
 #include <future>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -273,7 +277,7 @@ navigation_contracts::msg::NavigationGoal makeHandoverGoal(
   goal.waypoint_index = waypoint_index;
   goal.request_id = request_id;
   goal.target.x = behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
-      ? 3.3 : 3.0;
+      ? (request_id == 11U ? 6.0 : 3.5) : 3.0;
   goal.target.z = 0.3;
   goal.acceptance_radius_m = behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
       ? 0.5 : 0.2;
@@ -289,15 +293,23 @@ navigation_contracts::msg::NavigationGoal makeHandoverGoal(
   route.active_waypoint_index = waypoint_index;
   geometry_msgs::msg::Point origin;
   origin.z = 0.3;
-  route.waypoint_positions = {origin, goal.target, goal.target};
-  route.waypoint_ids = {"origin", "completed", "stop"};
-  route.waypoint_acceptance_radii_m = {0.2, goal.acceptance_radius_m, goal.acceptance_radius_m};
-  route.waypoint_behaviors = {
-      navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH,
-      behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
-          ? navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP
-          : navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH,
-      navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP};
+  if (behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP) {
+    route.waypoint_positions = {origin, goal.target};
+    route.waypoint_ids = {"origin", "stop"};
+    route.waypoint_acceptance_radii_m = {0.2, goal.acceptance_radius_m};
+    route.waypoint_behaviors = {
+        navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH,
+        navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP};
+  } else {
+    route.waypoint_positions = {origin, goal.target, goal.target};
+    route.waypoint_ids = {"origin", "completed", "stop"};
+    route.waypoint_acceptance_radii_m = {
+        0.2, goal.acceptance_radius_m, goal.acceptance_radius_m};
+    route.waypoint_behaviors = {
+        navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH,
+        navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH,
+        navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP};
+  }
   route.measured_progress_valid = true;
   route.measured_segment_index = 0U;
   route.measured_progress_arc_m = 0.0;
@@ -406,7 +418,7 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
   // The Context destructor owns the single shutdown after node/worker teardown.
 }
 
-TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThrough) {
+TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) {
   const auto process_suffix = std::to_string(static_cast<long long>(::getpid()));
   auto context = std::make_shared<rclcpp::Context>();
   context->init(0, nullptr);
@@ -444,8 +456,14 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
   std::atomic<double> measured_x{0.0};
   std::atomic<double> measured_velocity{0.0};
   std::atomic_bool terminal_adjacent{false};
+  std::atomic_bool completed_witness{false};
   std::atomic_bool successor_published{false};
-  std::atomic_bool terminal_debug_printed{false};
+  std::atomic<double> completed_position_x{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic_bool successor_odom_recorded{false};
+  std::atomic<double> first_successor_odom_x{std::numeric_limits<double>::quiet_NaN()};
+  std::atomic_bool successor_command_recorded{false};
+  std::mutex successor_command_mutex;
+  std::optional<navigation_contracts::msg::NavigationCommand> first_successor_command;
   auto command_subscription = driver->create_subscription<
       navigation_contracts::msg::NavigationCommand>(
       prefix + "/command", goal_qos,
@@ -454,34 +472,25 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
         if (message->request_id == 10U) {
           const double speed = std::hypot(
               message->velocity.x, std::hypot(message->velocity.y, message->velocity.z));
-          measured_x.store(message->position.x, std::memory_order_release);
-          measured_velocity.store(message->velocity.x, std::memory_order_release);
-          const bool terminal_boundary = message->retained_terminal_stop &&
-              std::isfinite(message->committed_bundle_duration_s) &&
-              message->trajectory_time_s + 0.2 >= message->committed_bundle_duration_s &&
+          const bool completed_terminal =
+              message->status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
               message->position.x > 2.5 && speed <= 0.15;
-          if (message->position.x > 2.5 && speed <= 0.15 &&
-              !terminal_debug_printed.exchange(true)) {
-            std::cerr << "terminal sample status=" << static_cast<int>(message->status)
-                      << " role=" << static_cast<int>(message->role)
-                      << " retained=" << message->retained_terminal_stop
-                      << " tt=" << message->trajectory_time_s
-                      << " duration=" << message->committed_bundle_duration_s << '\n';
+          if (!completed_witness.load(std::memory_order_acquire)) {
+            measured_x.store(message->position.x, std::memory_order_release);
+            measured_velocity.store(message->velocity.x, std::memory_order_release);
           }
           if (message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
-              terminal_boundary) {
+              completed_terminal) {
             terminal_adjacent.store(true, std::memory_order_release);
-            bool expected = false;
-            if (successor_published.compare_exchange_strong(
-                    expected, true, std::memory_order_acq_rel)) {
-              // Publish the successor from the public terminal-boundary sample
-              // callback so the desired identity races the next planner cycle
-              // at the old completed endpoint, rather than after a poll delay.
-              goal_publisher->publish(makeHandoverGoal(
-                  driver->now(), 11U, 2U, 2U,
-                  navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP));
-            }
+            completed_position_x.store(message->position.x, std::memory_order_release);
+            completed_witness.store(true, std::memory_order_release);
           }
+        } else if (message->request_id == 11U &&
+                   message->status == navigation_contracts::msg::NavigationCommand::STATUS_READY &&
+                   message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+                   !successor_command_recorded.exchange(true, std::memory_order_acq_rel)) {
+          std::lock_guard lock(successor_command_mutex);
+          first_successor_command = *message;
         }
         std::lock_guard lock(samples_mutex);
         commands.push_back(*message);
@@ -512,14 +521,19 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
   const auto initial_stamp = driver->now();
   goal_publisher->publish(makeHandoverGoal(
       initial_stamp, 10U, 1U, 1U,
-      navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH));
+      navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP));
   std::atomic_bool stop_publishing{false};
   std::thread sensor_thread([&] {
     std::uint64_t sequence = 1U;
     while (!stop_publishing.load(std::memory_order_acquire)) {
       const auto stamp = driver->now();
+      const auto x = measured_x.load(std::memory_order_acquire);
+      if (successor_published.load(std::memory_order_acquire) &&
+          !successor_odom_recorded.exchange(true, std::memory_order_acq_rel)) {
+        first_successor_odom_x.store(x, std::memory_order_release);
+      }
       odometry_publisher->publish(makeHandoverOdometry(
-          stamp, sequence, measured_x.load(std::memory_order_acquire),
+          stamp, sequence, x,
           measured_velocity.load(std::memory_order_acquire)));
       observation_publisher->publish(makeHandoverScan(stamp, sequence));
       ++sequence;
@@ -549,7 +563,7 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
   }
   if (!old_command_seen) {
     cleanup();
-    FAIL() << "real NavigationRuntimeNode did not dispatch the old PASS_THROUGH command";
+    FAIL() << "real NavigationRuntimeNode did not dispatch the old STOP command";
   }
   // The command is now executing. Move the public measured state to the
   // declared terminal point with a small residual speed before publishing the
@@ -565,10 +579,8 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
         std::lock_guard lock(samples_mutex);
         old_terminal_seen = std::any_of(commands.begin(), commands.end(), [&](const auto& command) {
         return command.request_id == 10U && terminal_adjacent.load(std::memory_order_acquire) &&
+               command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
                command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
-               command.retained_terminal_stop &&
-               std::isfinite(command.committed_bundle_duration_s) &&
-               command.trajectory_time_s + 0.2 >= command.committed_bundle_duration_s &&
                command.position.x > 2.5 &&
                std::hypot(command.velocity.x, std::hypot(command.velocity.y, command.velocity.z)) <=
                    0.15;
@@ -581,6 +593,13 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
     cleanup();
     FAIL() << "real NavigationRuntimeNode did not publish the old terminal command";
   }
+  // Let the runtime consume the completed predecessor witness before changing
+  // desired identity. The successor still starts from the same measured state.
+  std::this_thread::sleep_for(500ms);
+  ASSERT_FALSE(successor_published.exchange(true, std::memory_order_acq_rel));
+  goal_publisher->publish(makeHandoverGoal(
+      driver->now(), 11U, 1U, 2U,
+      navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP));
   bool successor_command_seen = false;
   const auto successor_deadline = std::chrono::steady_clock::now() + 12s;
   while (std::chrono::steady_clock::now() < successor_deadline) {
@@ -598,6 +617,29 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
   cleanup();
   EXPECT_TRUE(successor_command_seen)
       << "new same-mission STOP was not dispatched after the completed coincident boundary";
+  EXPECT_TRUE(successor_published.load(std::memory_order_acquire));
+  EXPECT_TRUE(successor_odom_recorded.load(std::memory_order_acquire));
+  const double old_terminal_x = completed_position_x.load(std::memory_order_acquire);
+  const double first_odom_x = first_successor_odom_x.load(std::memory_order_acquire);
+  ASSERT_TRUE(std::isfinite(old_terminal_x));
+  ASSERT_TRUE(std::isfinite(first_odom_x));
+  EXPECT_NEAR(first_odom_x, old_terminal_x, 1.0e-6)
+      << "successor odometry did not continue from the measured completed endpoint";
+  std::optional<navigation_contracts::msg::NavigationCommand> successor_command;
+  {
+    std::lock_guard lock(successor_command_mutex);
+    successor_command = first_successor_command;
+  }
+  ASSERT_TRUE(successor_command.has_value());
+  // A fresh stopped-state solve exposes a new bundle from the measured state;
+  // the short fresh-bundle time and endpoint continuity catch a test-side pose
+  // teleport between the completed command and solve.
+  EXPECT_LT(successor_command->trajectory_time_s, 0.5);
+  EXPECT_NEAR(successor_command->position.x, old_terminal_x, 0.1)
+      << "successor command was not anchored to the measured state";
+  EXPECT_LE(std::hypot(successor_command->velocity.x,
+                       std::hypot(successor_command->velocity.y,
+                                  successor_command->velocity.z)), 0.15);
   (void)context->shutdown("completed handover test cleanup");
 }
 
