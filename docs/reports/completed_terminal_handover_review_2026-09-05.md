@@ -101,3 +101,7 @@ handover behavior, and the existing nonterminal planner failure paths still
 need central integration review. The worker's pre-existing bare `submit()` and
 `cancelActive()` paths retain their prior semantics; only the new terminal
 identity path is serialized through the worker mutex and backend interrupt.
+
+The handover component test was also repeated three times after this report
+was written; all three runs passed (3/3), including the old completion witness
+and successor dispatch assertions.

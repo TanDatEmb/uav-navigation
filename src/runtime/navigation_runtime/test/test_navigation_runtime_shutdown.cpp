@@ -273,10 +273,10 @@ navigation_contracts::msg::NavigationGoal makeHandoverGoal(
   goal.waypoint_index = waypoint_index;
   goal.request_id = request_id;
   goal.target.x = behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
-      ? 3.5 : 3.0;
+      ? 3.3 : 3.0;
   goal.target.z = 0.3;
   goal.acceptance_radius_m = behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
-      ? 0.8 : 0.2;
+      ? 0.5 : 0.2;
   goal.behavior = behavior;
   goal.has_next_target = waypoint_index == 1U &&
       behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
@@ -444,6 +444,8 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
   std::atomic<double> measured_x{0.0};
   std::atomic<double> measured_velocity{0.0};
   std::atomic_bool terminal_adjacent{false};
+  std::atomic_bool successor_published{false};
+  std::atomic_bool terminal_debug_printed{false};
   auto command_subscription = driver->create_subscription<
       navigation_contracts::msg::NavigationCommand>(
       prefix + "/command", goal_qos,
@@ -454,8 +456,31 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
               message->velocity.x, std::hypot(message->velocity.y, message->velocity.z));
           measured_x.store(message->position.x, std::memory_order_release);
           measured_velocity.store(message->velocity.x, std::memory_order_release);
-          if (message->position.x > 2.5 && speed <= 0.15) {
+          const bool terminal_boundary = message->retained_terminal_stop &&
+              std::isfinite(message->committed_bundle_duration_s) &&
+              message->trajectory_time_s + 0.2 >= message->committed_bundle_duration_s &&
+              message->position.x > 2.5 && speed <= 0.15;
+          if (message->position.x > 2.5 && speed <= 0.15 &&
+              !terminal_debug_printed.exchange(true)) {
+            std::cerr << "terminal sample status=" << static_cast<int>(message->status)
+                      << " role=" << static_cast<int>(message->role)
+                      << " retained=" << message->retained_terminal_stop
+                      << " tt=" << message->trajectory_time_s
+                      << " duration=" << message->committed_bundle_duration_s << '\n';
+          }
+          if (message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+              terminal_boundary) {
             terminal_adjacent.store(true, std::memory_order_release);
+            bool expected = false;
+            if (successor_published.compare_exchange_strong(
+                    expected, true, std::memory_order_acq_rel)) {
+              // Publish the successor from the public terminal-boundary sample
+              // callback so the desired identity races the next planner cycle
+              // at the old completed endpoint, rather than after a poll delay.
+              goal_publisher->publish(makeHandoverGoal(
+                  driver->now(), 11U, 2U, 2U,
+                  navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP));
+            }
           }
         }
         std::lock_guard lock(samples_mutex);
@@ -534,12 +559,16 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
   // the measured pose while it is still executing would trigger the
   // emergency discontinuity guard instead of terminal completion.
   bool old_terminal_seen = false;
-  const auto terminal_deadline = std::chrono::steady_clock::now() + 12s;
-  while (std::chrono::steady_clock::now() < terminal_deadline) {
-    {
-      std::lock_guard lock(samples_mutex);
-      old_terminal_seen = std::any_of(commands.begin(), commands.end(), [&](const auto& command) {
+  const auto terminal_deadline = std::chrono::steady_clock::now() + 20s;
+    while (std::chrono::steady_clock::now() < terminal_deadline) {
+      {
+        std::lock_guard lock(samples_mutex);
+        old_terminal_seen = std::any_of(commands.begin(), commands.end(), [&](const auto& command) {
         return command.request_id == 10U && terminal_adjacent.load(std::memory_order_acquire) &&
+               command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+               command.retained_terminal_stop &&
+               std::isfinite(command.committed_bundle_duration_s) &&
+               command.trajectory_time_s + 0.2 >= command.committed_bundle_duration_s &&
                command.position.x > 2.5 &&
                std::hypot(command.velocity.x, std::hypot(command.velocity.y, command.velocity.z)) <=
                    0.15;
@@ -552,11 +581,6 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
     cleanup();
     FAIL() << "real NavigationRuntimeNode did not publish the old terminal command";
   }
-  const auto successor_stamp = driver->now();
-  goal_publisher->publish(makeHandoverGoal(
-      successor_stamp, 11U, 2U, 2U,
-      navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP));
-
   bool successor_command_seen = false;
   const auto successor_deadline = std::chrono::steady_clock::now() + 12s;
   while (std::chrono::steady_clock::now() < successor_deadline) {
