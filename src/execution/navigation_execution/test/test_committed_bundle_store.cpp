@@ -207,7 +207,9 @@ TEST(CommittedBundleStore, RetainedCommandStaysOldUntilSuccessorActivation) {
   EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 7)));
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 8)));
 
-  ASSERT_TRUE(store.activatePendingIfDue(50));
+  const auto activation = store.snapshot();
+  ASSERT_TRUE(store.activatePendingIfDueAndFinalize(
+      50, activation, [](std::uint64_t) { return true; }));
   EXPECT_EQ(store.load(), successor_ptr);
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 7)));
   EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 8)));
@@ -293,9 +295,11 @@ TEST(ExecutionTimelineStore, FailedPendingFinalizationRestoresPriorPending) {
                 {world, 7, 3}, *replacement_anchor, replacement_pending,
                 [] { return false; }),
             navigation_execution::StageDecision::kFinalizationFailed);
-  EXPECT_EQ(store.loadPending(), first_pending);
-  EXPECT_EQ(store.pendingActivationNs(), 50);
-  EXPECT_TRUE(store.activatePendingIfDue(50));
+  const auto failed_snapshot = store.snapshot();
+  EXPECT_EQ(failed_snapshot.pending, first_pending);
+  EXPECT_EQ(failed_snapshot.pending_activation_ns, 50);
+  EXPECT_TRUE(store.activatePendingIfDueAndFinalize(
+      50, failed_snapshot, [](std::uint64_t) { return true; }));
   EXPECT_EQ(store.load(), first_pending);
 }
 
@@ -353,7 +357,9 @@ TEST(ExecutionTimelineStore, RecertifiedPredecessorKeepsSuccessorActivationValid
             navigation_world_model::WorldCommitDecision::kCommitted);
   EXPECT_NE(store.load(), active);
   EXPECT_TRUE(store.hasPending());
-  EXPECT_TRUE(store.activatePendingIfDue(50));
+  const auto activation = store.snapshot();
+  EXPECT_TRUE(store.activatePendingIfDueAndFinalize(
+      50, activation, [](std::uint64_t) { return true; }));
   EXPECT_EQ(store.load()->bundle_generation, successor->bundle_generation);
 }
 
@@ -380,7 +386,9 @@ TEST(ExecutionTimelineStore, RejectsActivationWhenActiveWasInvalidatedButPending
             navigation_world_model::WorldCommitDecision::kCommitted);
   EXPECT_FALSE(store.load());
   EXPECT_TRUE(store.hasPending());
-  EXPECT_FALSE(store.activatePendingIfDue(50));
+  const auto activation = store.snapshot();
+  EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
+      50, activation, [](std::uint64_t) { return true; }));
   EXPECT_FALSE(store.hasPending());
 }
 
@@ -501,11 +509,13 @@ TEST(ExecutionTimelineStore, StagesSuccessorUntilFutureAnchorActivation) {
   ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successor_ptr),
             navigation_execution::StageDecision::kStaged);
   EXPECT_EQ(store.load(), active);
-  EXPECT_EQ(store.loadPending(), successor_ptr);
+  EXPECT_EQ(store.snapshot().pending, successor_ptr);
 
   navigation_execution::CommandSampler sampler(store);
   EXPECT_EQ(sampler.sample(49, 7).bundle, active);
-  ASSERT_TRUE(store.activatePendingIfDue(50));
+  const auto activation = store.snapshot();
+  ASSERT_TRUE(store.activatePendingIfDueAndFinalize(
+      50, activation, [](std::uint64_t) { return true; }));
   const auto activated = sampler.sample(50, 7);
   ASSERT_TRUE(activated);
   EXPECT_EQ(activated.bundle, successor_ptr);
@@ -536,7 +546,9 @@ TEST(ExecutionTimelineStore, RenewsSuccessorsWithoutAnExecutionPointerGap) {
   ASSERT_EQ(store.stagePending({world, 7, 2}, *first_anchor, first_successor_ptr),
             navigation_execution::StageDecision::kStaged);
   ASSERT_EQ(store.load(), initial);
-  ASSERT_TRUE(store.activatePendingIfDue(50));
+  const auto activation = store.snapshot();
+  ASSERT_TRUE(store.activatePendingIfDueAndFinalize(
+      50, activation, [](std::uint64_t) { return true; }));
   ASSERT_EQ(store.load(), first_successor_ptr);
 
   const auto second_anchor = store.reserveAnchor(60, 70);
@@ -552,7 +564,9 @@ TEST(ExecutionTimelineStore, RenewsSuccessorsWithoutAnExecutionPointerGap) {
             navigation_execution::StageDecision::kStaged);
   EXPECT_EQ(store.load(), first_successor_ptr);
   EXPECT_TRUE(store.hasPending());
-  ASSERT_TRUE(store.activatePendingIfDue(70));
+  const auto second_activation = store.snapshot();
+  ASSERT_TRUE(store.activatePendingIfDueAndFinalize(
+      70, second_activation, [](std::uint64_t) { return true; }));
   EXPECT_EQ(store.load(), second_successor_ptr);
   EXPECT_FALSE(store.hasPending());
 
@@ -615,9 +629,9 @@ TEST(ExecutionTimelineStore, KeepsPendingSuccessorOnlyAfterExplicitWorldRecertif
   ASSERT_TRUE(recertified_pending);
   ASSERT_TRUE(store.publishWorldIdentity(
       next_world, {}, false, 0, *recertified_pending, true));
-  const auto recertified = store.loadPending();
-  ASSERT_TRUE(recertified);
-  EXPECT_EQ(recertified->world_identity.revision, next_world.revision);
+  const auto recertified_snapshot = store.snapshot();
+  ASSERT_TRUE(recertified_snapshot.pending);
+  EXPECT_EQ(recertified_snapshot.pending->world_identity.revision, next_world.revision);
 }
 
 TEST(ExecutionTimelineStore, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
@@ -641,7 +655,9 @@ TEST(ExecutionTimelineStore, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
             navigation_execution::StageDecision::kStaged);
 
   std::uint64_t finalized_generation = 0;
-  EXPECT_TRUE(store.activatePendingIfDueAndFinalize(50, [&](const std::uint64_t generation) {
+  const auto activation = store.snapshot();
+  EXPECT_TRUE(store.activatePendingIfDueAndFinalize(
+      50, activation, [&](const std::uint64_t generation) {
     finalized_generation = generation;
     return true;
   }));
@@ -690,7 +706,7 @@ TEST(ExecutionTimelineStore,
       }));
   EXPECT_FALSE(finalized);
   EXPECT_EQ(store.load(), active);
-  EXPECT_EQ(store.loadPending(), newer_ptr);
+  EXPECT_EQ(store.snapshot().pending, newer_ptr);
 
   auto activation_mismatch = store.snapshot();
   ++activation_mismatch.pending_activation_ns;
@@ -700,7 +716,7 @@ TEST(ExecutionTimelineStore,
         return true;
       }));
   EXPECT_FALSE(finalized);
-  EXPECT_EQ(store.loadPending(), newer_ptr);
+  EXPECT_EQ(store.snapshot().pending, newer_ptr);
 }
 
 TEST(ExecutionTimelineStore, ActivationFinalizerFailureKeepsOldAndDropsPending) {
@@ -723,9 +739,9 @@ TEST(ExecutionTimelineStore, ActivationFinalizerFailureKeepsOldAndDropsPending) 
   ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successor_ptr),
             navigation_execution::StageDecision::kStaged);
 
-  EXPECT_FALSE(store.activatePendingIfDueAndFinalize(50, [](std::uint64_t) {
-    return false;
-  }));
+  const auto activation = store.snapshot();
+  EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
+      50, activation, [](std::uint64_t) { return false; }));
   EXPECT_EQ(store.load(), active);
   EXPECT_FALSE(store.hasPending());
 }
@@ -752,7 +768,9 @@ TEST(ExecutionTimelineStore, MissedActivationKeepsActiveCommandAndDropsSuccessor
 
   // Pending activation is an execution-store transition owned by the command
   // publisher; CommandSampler must remain read-only.
-  EXPECT_FALSE(store.activatePendingIfDue(61));
+  const auto activation = store.snapshot();
+  EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
+      61, activation, [](std::uint64_t) { return true; }));
   navigation_execution::CommandSampler sampler(store);
   const auto missed = sampler.sample(61, 7);
   ASSERT_TRUE(missed);
@@ -940,7 +958,7 @@ TEST(ExecutionTimelineStore, RefreshKeepsActiveWhenPendingIsInvalid) {
   ASSERT_TRUE(store.load());
   EXPECT_NE(store.load(), active);
   EXPECT_EQ(store.load()->valid_from_ns, active->valid_from_ns);
-  EXPECT_FALSE(store.loadPending());
+  EXPECT_FALSE(store.snapshot().pending);
   EXPECT_EQ(store.snapshot().world_identity->revision, next_world.revision);
 }
 
@@ -983,7 +1001,7 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesNewPendingSuccessor) {
 
   EXPECT_FALSE(store.invalidateIfCurrent(observed));
   EXPECT_EQ(store.load(), active);
-  EXPECT_EQ(store.loadPending(), pending);
+  EXPECT_EQ(store.snapshot().pending, pending);
 }
 
 TEST(ExecutionTimelineStore, ActivationWinsBeforeRevokeAndKeepsSuccessor) {
@@ -1002,7 +1020,9 @@ TEST(ExecutionTimelineStore, ActivationWinsBeforeRevokeAndKeepsSuccessor) {
             navigation_execution::StageDecision::kStaged);
   const auto observed = store.snapshot();
 
-  ASSERT_TRUE(store.activatePendingIfDue(50));
+  const auto activation = store.snapshot();
+  ASSERT_TRUE(store.activatePendingIfDueAndFinalize(
+      50, activation, [](std::uint64_t) { return true; }));
   EXPECT_FALSE(store.invalidateIfCurrent(observed));
   EXPECT_EQ(store.load(), pending);
 }
@@ -1025,8 +1045,9 @@ TEST(ExecutionTimelineStore, RevokeWinsAndBlocksPendingReexposure) {
 
   EXPECT_TRUE(store.invalidateIfCurrent(observed));
   EXPECT_FALSE(store.load());
-  EXPECT_FALSE(store.loadPending());
-  EXPECT_FALSE(store.activatePendingIfDue(50));
+  EXPECT_FALSE(store.snapshot().pending);
+  EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
+      50, store.snapshot(), [](std::uint64_t) { return true; }));
 }
 
 TEST(ExecutionTimelineStore, StaleRevokePreservesRecertifiedPendingSuccessor) {
@@ -1053,8 +1074,9 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesRecertifiedPendingSuccessor) {
 
   EXPECT_FALSE(store.invalidateIfCurrent(observed));
   EXPECT_NE(store.load(), active);
-  EXPECT_TRUE(store.loadPending());
-  EXPECT_EQ(store.loadPending()->world_identity.revision, next_world.revision);
+  const auto pending_snapshot = store.snapshot();
+  ASSERT_TRUE(pending_snapshot.pending);
+  EXPECT_EQ(pending_snapshot.pending->world_identity.revision, next_world.revision);
 }
 
 TEST(ExecutionTimelineStore, StaleRevokePreservesActiveAfterExpiredPendingIsDropped) {
@@ -1075,10 +1097,12 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesActiveAfterExpiredPendingIsDrop
             navigation_execution::StageDecision::kStaged);
   const auto observed = store.snapshot();
 
-  EXPECT_FALSE(store.activatePendingIfDue(101));
+  const auto activation = store.snapshot();
+  EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
+      101, activation, [](std::uint64_t) { return true; }));
   EXPECT_FALSE(store.invalidateIfCurrent(observed));
   EXPECT_EQ(store.load(), active);
-  EXPECT_FALSE(store.loadPending());
+  EXPECT_FALSE(store.snapshot().pending);
 }
 
 TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {

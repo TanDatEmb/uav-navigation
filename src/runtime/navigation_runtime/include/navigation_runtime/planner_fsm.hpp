@@ -17,9 +17,9 @@
 namespace navigation_runtime {
 
 // Small sole-owner model for the runtime's single pending request. It makes
-// callback/promotion interleavings explicit: enqueue and promote are each
-// linearizable operations under the caller's input/transition critical
-// section, and promotion consumes the newest request exactly once.
+// callback/handoff interleavings explicit: enqueue, snapshot and consume are
+// each linearizable operations under the caller's input/transition critical
+// section, and consumption removes the exact request exactly once.
 class PendingGoalHandoffOwner {
  public:
   using GoalConstPtr = navigation_contracts::msg::NavigationGoal::ConstSharedPtr;
@@ -39,15 +39,6 @@ class PendingGoalHandoffOwner {
     }
     pending_goal_ = candidate;
     return true;
-  }
-
-  [[nodiscard]] GoalConstPtr promoteGoal(bool certified_stop_observed) {
-    if (!certified_stop_observed) return {};
-    std::lock_guard<std::mutex> lock(goal_mutex_);
-    if (!pending_goal_) return {};
-    auto result = pending_goal_;
-    pending_goal_.reset();
-    return result;
   }
 
   [[nodiscard]] GoalConstPtr goalSnapshot() const {

@@ -280,20 +280,9 @@ class ExecutionTimelineStore final {
             pending_activation_ns_};
   }
 
-  [[nodiscard]] std::shared_ptr<const navigation_planning::CandidateBundle>
-  loadPending() const noexcept {
-    std::lock_guard lock(mutex_);
-    return pending_;
-  }
-
   [[nodiscard]] bool hasPending() const noexcept {
     std::lock_guard lock(mutex_);
     return static_cast<bool>(pending_);
-  }
-
-  [[nodiscard]] std::int64_t pendingActivationNs() const noexcept {
-    std::lock_guard lock(mutex_);
-    return pending_activation_ns_;
   }
 
   // Sample the execution-owned active command at a future splice point. The
@@ -436,20 +425,6 @@ class ExecutionTimelineStore final {
     return activatePendingIfDueAndFinalizeLocked(
         now_ns, expected.pending, expected.version, expected.pending_activation_ns,
         true, std::forward<FinalizeFn>(finalize));
-  }
-
-  template <typename FinalizeFn>
-  bool activatePendingIfDueAndFinalize(
-      std::int64_t now_ns, FinalizeFn&& finalize) const noexcept {
-    std::lock_guard lock(mutex_);
-    return activatePendingIfDueAndFinalizeLocked(
-        now_ns, {}, 0U, 0, false, std::forward<FinalizeFn>(finalize));
-  }
-
-  bool activatePendingIfDue(std::int64_t now_ns) const noexcept {
-    return activatePendingIfDueAndFinalize(now_ns, [](std::uint64_t) {
-      return true;
-    });
   }
 
   // Execute the exposure callback while the same transaction lock protects

@@ -446,7 +446,7 @@ TEST(PlannerFsm, RetainsPendingStatusWhileSafetySuffixDrains) {
   EXPECT_FALSE(pendingGoalTerminalStatusMayClear(false, false));
 }
 
-TEST(PlannerFsm, PendingGoalOwnerLinearizesSupersedeAndCertifiedPromotion) {
+TEST(PlannerFsm, PendingGoalOwnerLinearizesSupersedeAndExactConsumption) {
   PendingGoalHandoffOwner owner;
   navigation_contracts::msg::NavigationGoal active;
   active.mission_id = "mission";
@@ -466,11 +466,11 @@ TEST(PlannerFsm, PendingGoalOwnerLinearizesSupersedeAndCertifiedPromotion) {
   EXPECT_FALSE(owner.enqueueGoal(make_goal(14U, 6U, 8U), active, false));
   EXPECT_FALSE(owner.enqueueGoal(make_goal(10U, 3U, 5U), active, true));
   EXPECT_TRUE(owner.enqueueGoal(make_goal(12U, 4U, 6U), active, true));
-  EXPECT_FALSE(owner.promoteGoal(false));
-  const auto promoted = owner.promoteGoal(true);
+  const auto promoted = owner.goalSnapshot();
   ASSERT_TRUE(promoted);
   EXPECT_EQ(promoted->request_id, 12U);
-  EXPECT_FALSE(owner.promoteGoal(true));
+  EXPECT_TRUE(owner.consumeGoal(promoted));
+  EXPECT_FALSE(owner.goalSnapshot());
   EXPECT_TRUE(owner.enqueueGoal(make_goal(13U, 5U, 7U), active, true));
   EXPECT_TRUE(owner.goalMatchesStatus("mission", 5U, 13U));
   EXPECT_FALSE(owner.goalMatchesStatus("mission", 5U, 12U));
