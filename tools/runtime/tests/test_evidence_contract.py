@@ -66,7 +66,7 @@ class EvidenceContractTest(unittest.TestCase):
         self.assertAlmostEqual(normalized["velocity_ned"][1], 0.0, places=8)
 
     def test_e5_stream_normalization_uses_header_convention_and_rejects_bad_quaternion(self):
-        records = [{"stream": "propagated_odometry", "payload": {"stamp_ns": 1_000_000_000, "frame_id": "world", "child_frame_id": "base_link", "position": [0, 0, 0], "linear_velocity": [1, 0, 0], "q_xyzw": [0, 0, 0.7071067812, 0.7071067812], "localization_epoch": 1}}]
+        records = [{"stream": "propagated_odometry", "payload": {"stamp_ns": 1_000_000_000, "frame_id": "world", "child_frame_id": "base_link", "frame_convention": "ENU", "child_frame_convention": "BODY_FLU", "source_clock": "ros_sim_ns", "position": [0, 0, 0], "linear_velocity": [1, 0, 0], "q_xyzw": [0, 0, 0.7071067812, 0.7071067812], "localization_epoch": 1}}]
         series = e5.stream_series(records, "propagated_odometry")
         self.assertAlmostEqual(series["velocity"][0][1][0], 1.0, places=8)
         self.assertAlmostEqual(series["velocity"][0][1][1], 0.0, places=8)
