@@ -8,12 +8,14 @@
 namespace navigation_runtime {
 
 enum class ExecutionEpisodePhase : std::uint8_t {
-  kInitialHold,
-  kPlanning,
-  kTrackingMain,
-  kTrackingBackup,
-  kStoppedHold,
-  kPx4Hold,
+  // These values are serialized in runtime telemetry.  Keep the historical
+  // ordinals while planning-worker activity remains orthogonal to the
+  // physical execution episode.
+  kInitialHold = 0,
+  kTrackingMain = 2,
+  kTrackingBackup = 3,
+  kStoppedHold = 4,
+  kPx4Hold = 5,
 };
 
 struct ExecutionEpisodeSnapshot final {
@@ -28,10 +30,8 @@ struct ExecutionEpisodeSnapshot final {
   bool restart_from_rest{false};
 };
 
-// One serialized lifecycle record for an execution episode. The legacy atomics
-// remain diagnostic compatibility mirrors during migration; policy code can
-// progressively consume this snapshot without reconstructing state from
-// unrelated flags.
+// One serialized lifecycle record for an execution episode. Policy code reads
+// this snapshot instead of reconstructing physical state from worker flags.
 class ExecutionEpisode final {
  public:
   [[nodiscard]] ExecutionEpisodeSnapshot snapshot() const noexcept {
@@ -59,13 +59,6 @@ class ExecutionEpisode final {
     state_.safety_suffix_active = false;
     state_.restart_from_rest = false;
     if (!retain_command) state_.active_generation = 0U;
-  }
-
-  void planningStarted() noexcept {
-    std::lock_guard lock(mutex_);
-    if (state_.phase != ExecutionEpisodePhase::kPx4Hold) {
-      state_.phase = ExecutionEpisodePhase::kPlanning;
-    }
   }
 
   void commandCommitted(

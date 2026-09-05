@@ -1030,13 +1030,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                     recertified_bundle->valid(),
                     execution_episode_.snapshot().failure_latched,
                     command_execution_lease_failure_latch_.allowsCommandExposure())) {
-              planner_command_available_.store(true, std::memory_order_release);
               command_goal_epoch_.store(
                   recertified_bundle->goal_epoch, std::memory_order_release);
-              safety_suffix_active_.store(
-                  world_freshness_suspended_safety_suffix_active_.load(
-                      std::memory_order_acquire),
-                  std::memory_order_release);
               execution_episode_.roleObserved(
                   recertified_bundle->role, recertified_bundle->bundle_generation);
               execution_episode_.setSafetySuffix(
@@ -1084,9 +1079,6 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               execution_episode_.clearRestartFromRest();
               hot_goal_transition_ = false;
               skip_replan_once_.store(false, std::memory_order_release);
-              planner_command_available_.store(false);
-              planner_failure_latched_.store(true);
-              safety_suffix_active_.store(false);
               pending_goal_owner_.clearGoal();
               execution_recovery_state_.store(
                   ExecutionRecoveryState::kPx4Hold, std::memory_order_release);
@@ -1347,8 +1339,6 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       PlanningWorker<navigation_planning_backend::PlannerFacade>>(
       std::move(planner), [this](std::exception_ptr failure) {
         execution_episode_.failClosed();
-        planner_failure_latched_.store(true, std::memory_order_release);
-        planner_command_available_.store(false, std::memory_order_release);
         try {
           if (failure) std::rethrow_exception(failure);
         } catch (const std::exception& error) {
@@ -1543,19 +1533,15 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
     trajectory_finished_.store(false);
     trajectory_reaches_goal_.store(false);
     terminal_bundle_generation_.store(0U);
-    planner_command_available_.store(false);
     // Keep the command path fail-closed until the new epoch publishes its
     // first valid world snapshot. This evidence barrier is recoverable: the
     // active goal may be planned again after that snapshot arrives.
-    planner_failure_latched_.store(false);
     command_execution_lease_failure_latch_.resetForNewGoalWithinTransition();
-    safety_suffix_active_.store(false);
     execution_recovery_state_.store(
         foreign_hold ? ExecutionRecoveryState::kPx4Hold
                      : ExecutionRecoveryState::kInitialHold,
         std::memory_order_release);
     if (foreign_hold) {
-      planner_failure_latched_.store(true);
       execution_episode_.failClosed();
     }
     command_goal_epoch_.store(0U);
@@ -1787,9 +1773,6 @@ void NavigationRuntimeNode::transitionForeignMissionLocked(
   trajectory_finished_.store(false, std::memory_order_release);
   trajectory_reaches_goal_.store(false, std::memory_order_release);
   terminal_bundle_generation_.store(0U, std::memory_order_release);
-  planner_command_available_.store(false, std::memory_order_release);
-  planner_failure_latched_.store(true, std::memory_order_release);
-  safety_suffix_active_.store(false, std::memory_order_release);
   command_goal_epoch_.store(0U, std::memory_order_release);
   execution_recovery_state_.store(
       ExecutionRecoveryState::kPx4Hold, std::memory_order_release);
@@ -1901,10 +1884,7 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
       deferred_terminal_status_.reset();
       active_goal_.reset();
       executing_goal_.reset();
-      planner_command_available_.store(false);
-      planner_failure_latched_.store(true);
       execution_episode_.failClosed();
-      safety_suffix_active_.store(false);
       RCLCPP_ERROR(get_logger(), "rejected navigation goal: active goal epoch exhausted");
       return;
     }
@@ -1918,16 +1898,12 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
     // Global order is input_mutex_ -> execution transition. Command sampling
     // snapshots input and releases it before taking the transition lock.
     command_execution_lease_failure_latch_.resetForNewGoalWithinTransition();
-    planner_failure_latched_.store(false);
-    safety_suffix_active_.store(
-        effective_hot_retarget && previous_safety_suffix_active);
     if (effective_hot_retarget) {
       // The retained command still belongs to the previous execution
       // identity.  The successor owns the new identity only after timeline
       // activation; do not relabel the old bundle here.
     } else {
       executing_goal_ = *message;
-      planner_command_available_.store(false);
       command_goal_epoch_.store(0U);
     }
     plan_from_rest_failure_budget_.reset();
@@ -2020,9 +1996,6 @@ void NavigationRuntimeNode::onModeStatus(
   hot_goal_transition_ = false;
   execution_episode_.clearRestartFromRest();
   skip_replan_once_.store(false, std::memory_order_release);
-  planner_command_available_.store(false);
-  planner_failure_latched_.store(false);
-  safety_suffix_active_.store(false);
   command_goal_epoch_.store(0U);
   plan_from_rest_failure_budget_.reset();
   plan_from_rest_first_failure_steady_ns_ = 0;
@@ -2393,8 +2366,6 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   if (!transaction_id) {
     planner_->discardCommandCandidate();
     command_bundle_store_.invalidate();
-    planner_command_available_.store(false);
-    planner_failure_latched_.store(true);
     execution_episode_.failClosed();
     RCLCPP_ERROR(get_logger(), "execution transaction id exhausted");
     return reject(kTransactionIdExhausted);
@@ -2437,8 +2408,6 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
       (void)clearCommandForCurrentIdentity(
           goal, goal_epoch, localization_epoch, candidate_ptr);
       planner_->discardCommandCandidate();
-      planner_command_available_.store(false, std::memory_order_release);
-      planner_failure_latched_.store(true, std::memory_order_release);
       execution_episode_.failClosed();
       return false;
     }
@@ -2469,9 +2438,6 @@ bool NavigationRuntimeNode::clearCommandForCurrentIdentity(
          current_bundle->bundle_generation == expected->bundle_generation)
       : !current_bundle;
   if (!goal_current || !bundle_current) return false;
-  planner_command_available_.store(false, std::memory_order_release);
-  planner_failure_latched_.store(true, std::memory_order_release);
-  safety_suffix_active_.store(false, std::memory_order_release);
   pending_goal_owner_.clearGoal();
   command_goal_epoch_.store(0U, std::memory_order_release);
   execution_episode_.failClosed();
@@ -2495,9 +2461,6 @@ void NavigationRuntimeNode::suspendCommandForWorldFreshness() {
       ++world_freshness_command_suspend_count_;
     }
   }
-  planner_command_available_.store(false, std::memory_order_release);
-  planner_failure_latched_.store(false, std::memory_order_release);
-  safety_suffix_active_.store(false, std::memory_order_release);
   // Keep the execution identity while publication is suspended.  A fresh
   // world may recertify and resume this exact bundle, including across a
   // desired pass-through transition whose successor is still pending.
@@ -2512,8 +2475,8 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     goal = active_goal_;
-    safety_renewal = execution_episode_.snapshot().restart_from_rest ||
-        execution_episode_.snapshot().safety_suffix_active;
+    const auto episode = execution_episode_.snapshot();
+    safety_renewal = episode.restart_from_rest || episode.safety_suffix_active;
     recovery_level = plan_from_rest_failure_budget_.failureCount();
     goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
   }
@@ -2590,8 +2553,8 @@ void NavigationRuntimeNode::schedulePlanningCycle() {
   {
     std::lock_guard<std::mutex> lock(input_mutex_);
     goal_transition = new_goal_ || hot_goal_transition_;
-    safety_renewal = execution_episode_.snapshot().restart_from_rest ||
-        execution_episode_.snapshot().safety_suffix_active;
+    const auto episode = execution_episode_.snapshot();
+    safety_renewal = episode.restart_from_rest || episode.safety_suffix_active;
   }
   const auto priority = PlanningSupervisor::classifyPriority(
       false, false, goal_transition, safety_renewal);
@@ -2999,9 +2962,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         return;
       }
       if (auto pending = pending_goal_owner_.goalSnapshot(); pending) {
-        planner_command_available_.store(false, std::memory_order_release);
-        planner_failure_latched_.store(false, std::memory_order_release);
-        safety_suffix_active_.store(false, std::memory_order_release);
         command_goal_epoch_.store(0U, std::memory_order_release);
         // Keep ownership of the pending request until the replacement
         // candidate commits. Solving in this same cycle avoids the old
@@ -3027,9 +2987,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             active_localization_epoch_.load(std::memory_order_acquire));
         deferred_terminal_status_.reset();
         command_bundle_store_.invalidate();
-        planner_command_available_.store(false, std::memory_order_release);
-        planner_failure_latched_.store(true, std::memory_order_release);
-        safety_suffix_active_.store(false, std::memory_order_release);
         command_goal_epoch_.store(0U, std::memory_order_release);
         execution_recovery_state_.store(
             ExecutionRecoveryState::kPx4Hold, std::memory_order_release);
@@ -3140,9 +3097,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // transaction in this branch, so fail closed to PX4 Hold; a future
     // emergency request must create, certify and commit its command before the
     // state can become kEmergencyBrake.
-    planner_command_available_.store(false, std::memory_order_release);
-    planner_failure_latched_.store(true, std::memory_order_release);
-    safety_suffix_active_.store(false, std::memory_order_release);
     command_goal_epoch_.store(0U, std::memory_order_release);
     execution_recovery_state_.store(
         ExecutionRecoveryState::kPx4Hold, std::memory_order_release);
@@ -3168,9 +3122,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       return;
     }
     if (auto pending = pending_goal_owner_.goalSnapshot(); pending) {
-      planner_command_available_.store(false, std::memory_order_release);
-      planner_failure_latched_.store(false, std::memory_order_release);
-      safety_suffix_active_.store(false, std::memory_order_release);
       command_goal_epoch_.store(0U, std::memory_order_release);
       // Keep the pending request until the replacement candidate commits in
       // this cycle; a failed solve can then retry the same active identity.
@@ -3196,9 +3147,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       active_goal_.reset();
       deferred_terminal_status_.reset();
       command_bundle_store_.invalidate();
-      planner_command_available_.store(false, std::memory_order_release);
-      planner_failure_latched_.store(false, std::memory_order_release);
-      safety_suffix_active_.store(false, std::memory_order_release);
       command_goal_epoch_.store(0U, std::memory_order_release);
       execution_recovery_state_.store(
           ExecutionRecoveryState::kInitialHold, std::memory_order_release);
@@ -3328,10 +3276,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       !routeSnapshotMatchesGoalMirrors(*route_snapshot, *goal)) {
     if (planning_worker_) planning_worker_->cancelActive();
     command_bundle_store_.invalidate();
-    planner_command_available_.store(false);
-    planner_failure_latched_.store(true);
     execution_episode_.failClosed();
-    safety_suffix_active_.store(false);
     RCLCPP_ERROR_THROTTLE(
         get_logger(), *get_clock(), 1000,
         "planner cycle rejected an invalid immutable route snapshot");
@@ -3487,8 +3432,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             trajectory_reaches_goal_.load(std::memory_order_acquire),
             effective_terminal_stop, terminal_generation);
     if (!terminal_hold_belongs_to_current_goal) {
-      planner_command_available_.store(false);
-      planner_failure_latched_.store(false);
       execution_episode_.suspendCommand();
       trajectory_reaches_goal_.store(false);
       terminal_bundle_generation_.store(0U);
@@ -3501,10 +3444,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
   const bool forced_transition = plan_from_rest_with_transition ||
       replan_for_new_goal || anchor_renewal_replan;
+  const auto renewal_episode = execution_episode_.snapshot();
   const auto renewal_decision = classifyPlannerRenewal(
       forced_transition,
-      execution_episode_.snapshot().command_available,
-      execution_episode_.snapshot().safety_suffix_active,
+      renewal_episode.command_available,
+      renewal_episode.safety_suffix_active,
       transition_sample ? transition_sample->role
                         : transition_bundle ? transition_bundle->role
                                             : navigation_planning::CandidateRole::kEmergency,
@@ -3594,8 +3538,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   const auto solve_generation_value = advanceMonotonicId(planner_solve_generation_);
   if (!solve_generation_value) {
     command_bundle_store_.invalidate();
-    planner_command_available_.store(false);
-    planner_failure_latched_.store(true);
     RCLCPP_ERROR(get_logger(), "planner solve generation exhausted");
     return;
   }
@@ -3614,8 +3556,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   if (!planner_->setRouteSnapshot(*route_snapshot)) {
     planner_->cancelActiveSolve();
     command_bundle_store_.invalidate();
-    planner_command_available_.store(false);
-    planner_failure_latched_.store(true);
     RCLCPP_ERROR(get_logger(), "planner rejected the immutable route snapshot");
     return;
   }
@@ -3627,7 +3567,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planner_solve_started_steady_ns_.store(navigation_common::steadyClockNowNanoseconds());
   active_planner_solve_generation_.store(solve_generation);
   planner_->resetSolveCancellation();
-  execution_episode_.planningStarted();
   const auto solve_started_ros_ns = now().nanoseconds();
   const double execution_age_at_solve_ms =
       executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
@@ -3893,7 +3832,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     planner_->discardCommandCandidate();
   }
   if (disposition == PlannerResultDisposition::FailClosed) {
-    planner_failure_latched_.store(true);
     execution_episode_.failClosed();
     trajectory_reaches_goal_.store(false);
     terminal_bundle_generation_.store(0U);
@@ -3901,7 +3839,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                          "planner backend planning failed (%d)", static_cast<int>(result));
   }
   if (disposition == PlannerResultDisposition::RestartFromRest) {
-    planner_failure_latched_.store(false);
     trajectory_reaches_goal_.store(false);
     terminal_bundle_generation_.store(0U);
     trajectory_finished_.store(true);
@@ -3950,7 +3887,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         failure_count = plan_from_rest_failure_budget_.failureCount();
       }
     }
-    planner_failure_latched_.store(failure_budget_exhausted);
     if (failure_budget_exhausted) {
       execution_episode_.failClosed();
       RCLCPP_ERROR(get_logger(),
@@ -4366,12 +4302,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         // A newer goal owns command state now. This old solve is discard-only:
         // never invalidate a deliberately transferred hot-retarget command.
       } else if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
-        planner_command_available_.store(false);
-        planner_failure_latched_.store(true);
-        safety_suffix_active_.store(false);
         execution_episode_.failClosed();
       } else if (recovery_bridge_usable) {
-        planner_command_available_.store(true);
         // A hot-retarget recovery bridge may still be the previous physical
         // bundle.  Its execution epoch is immutable until the staged
         // successor activation boundary; never relabel it with the desired
@@ -4381,13 +4313,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             retained_execution_bundle->goal_epoch == goal_epoch) {
           command_goal_epoch_.store(goal_epoch);
         }
-        planner_failure_latched_.store(false);
-        safety_suffix_active_.store(false);
         trajectory_finished_.store(false);
       } else if (!validate_without_new_commit ||
                  retained_transition == RetainedValidationTransition::FailClosed) {
-        safety_suffix_active_.store(
-            use_safety_suffix && (backup_available || emergency_brake_committed));
         if (use_safety_suffix && backup_available && !emergency_brake_committed) {
           execution_recovery_state_.store(
               transitionExecutionRecovery(
@@ -4395,13 +4323,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                   ExecutionRecoveryEvent::kBackupActivated),
               std::memory_order_release);
         }
-        planner_failure_latched_.store(!use_safety_suffix);
         if (!use_safety_suffix) {
-          planner_command_available_.store(false);
           command_goal_epoch_.store(0U);
           execution_episode_.failClosed();
         } else if (emergency_brake_committed) {
-          planner_command_available_.store(true);
           const auto emergency_bundle = command_bundle_store_.load();
           if (emergency_bundle) {
             command_goal_epoch_.store(emergency_bundle->goal_epoch);
@@ -4481,16 +4406,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         return;
       }
       if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
-        planner_command_available_.store(false);
-        planner_failure_latched_.store(true);
-        safety_suffix_active_.store(false);
         planner_->discardCommandCandidate();
         return;
       }
       if (timed_out_planner_solve_generation_.load() == solve_generation) {
-        planner_command_available_.store(false);
-        planner_failure_latched_.store(true);
-        safety_suffix_active_.store(false);
         planner_->discardCommandCandidate();
         return;
       }
@@ -4498,9 +4417,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       // is exported, revalidated and committed.  Clearing availability here
       // creates an observable replacement window in which the sampler can see
       // no command even though the old immutable bundle is still executable.
-      // A successful commit below swaps the store pointer first and only then
-      // updates the lifecycle flags. A rejected candidate leaves all previous
-      // command state untouched.
+      // A successful commit below swaps the store pointer first. A rejected
+      // candidate leaves all previous command state untouched.
     }
     if (!commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
                                 now().nanoseconds(), effective_scheduled_key,
@@ -4519,21 +4437,16 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
               localization_epoch_at_solve ||
           active_goal_epoch_.load() != goal_epoch ||
           !command_execution_lease_failure_latch_.allowsCommandExposure()) {
-        planner_command_available_.store(false);
         command_goal_epoch_.store(0U);
-        safety_suffix_active_.store(false);
         return;
       }
-      planner_command_available_.store(true);
       if (!successor_staged) {
         command_goal_epoch_.store(goal_epoch);
       }
-      planner_failure_latched_.store(false, std::memory_order_release);
       if (!successor_staged) {
         // An immediate commit is the ownership boundary: a prior BACKUP
         // suffix and its completion markers must not contaminate the new
         // MAIN command sampled by the publisher.
-        safety_suffix_active_.store(false, std::memory_order_release);
         trajectory_finished_.store(false, std::memory_order_release);
         trajectory_reaches_goal_.store(false, std::memory_order_release);
         terminal_bundle_generation_.store(0U, std::memory_order_release);
@@ -5424,18 +5337,13 @@ void NavigationRuntimeNode::publishCommand() {
             // certified suffix or bounded stopped-recovery hold. Keep its
             // ownership and let the normal recovery budget decide the next
             // transition.
-            planner_failure_latched_.store(false, std::memory_order_release);
             if (retain_safety_suffix) {
-              safety_suffix_active_.store(true, std::memory_order_release);
               execution_episode_.setSafetySuffix(true);
             }
           } else {
             // No certified suffix is available for this solve. A watchdog
             // timeout is therefore a terminal handover, never a stale-command
             // continuation or an ambiguous safety state.
-            planner_command_available_.store(false, std::memory_order_release);
-            planner_failure_latched_.store(true, std::memory_order_release);
-            safety_suffix_active_.store(false, std::memory_order_release);
             pending_goal_owner_.clearGoal();
             command_goal_epoch_.store(0U, std::memory_order_release);
             execution_recovery_state_.store(
@@ -5531,9 +5439,6 @@ void NavigationRuntimeNode::publishCommand() {
     if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
         active_localization_epoch_.load(std::memory_order_acquire) !=
             localization_epoch_at_command) {
-      planner_command_available_.store(false);
-      planner_failure_latched_.store(true);
-      safety_suffix_active_.store(false);
       execution_episode_.failClosed();
       pending_goal_owner_.clearGoal();
       command_goal_epoch_.store(0U);
@@ -5551,9 +5456,6 @@ void NavigationRuntimeNode::publishCommand() {
       // Clearing executable command state is unconditional. The latch owns
       // one-time cancellation/logging only; a solve that races past cancellation
       // must never resurrect a nominal command for this failed goal.
-      planner_command_available_.store(false);
-      planner_failure_latched_.store(true);
-      safety_suffix_active_.store(false);
       execution_episode_.failClosed();
       planner_failed = true;
       safety_suffix_active = false;
@@ -5581,9 +5483,6 @@ void NavigationRuntimeNode::publishCommand() {
             active_localization_epoch_.load(std::memory_order_acquire) ==
                 localization_epoch_at_command;
         if (!still_current) return;
-        planner_command_available_.store(false);
-        planner_failure_latched_.store(true);
-        safety_suffix_active_.store(false);
         execution_episode_.failClosed();
         pending_goal_owner_.clearGoal();
       }
@@ -5698,8 +5597,6 @@ void NavigationRuntimeNode::publishCommand() {
         if (!queueExecutionTimelineActivation(sample.bundle->bundle_generation)) {
           planner_failed = true;
           sampled_command_valid = false;
-          planner_command_available_.store(false, std::memory_order_release);
-          planner_failure_latched_.store(true, std::memory_order_release);
           execution_episode_.failClosed();
           if (planning_worker_) planning_worker_->cancelActive();
           RCLCPP_ERROR_THROTTLE(
@@ -5736,7 +5633,6 @@ void NavigationRuntimeNode::publishCommand() {
       if (!sample.planned_stop_hold &&
           (point.role == navigation_planning::CandidateRole::kBackup ||
            safety_suffix_active)) {
-        safety_suffix_active_.store(true, std::memory_order_release);
         execution_episode_.setSafetySuffix(true);
         execution_recovery_state_.store(
             transitionExecutionRecovery(
@@ -5822,9 +5718,7 @@ void NavigationRuntimeNode::publishCommand() {
   const auto command_id = advanceMonotonicId(command_id_);
   if (!command_id) {
     command_bundle_store_.invalidate();
-      planner_command_available_.store(false);
-      planner_failure_latched_.store(true);
-      execution_episode_.failClosed();
+    execution_episode_.failClosed();
     RCLCPP_ERROR(get_logger(), "command sample id exhausted");
     return;
   }
@@ -6067,9 +5961,7 @@ void NavigationRuntimeNode::publishCommand() {
               execution_episode_.snapshot().failure_latched,
               command_execution_lease_failure_latch_.allowsCommandExposure());
       if (!superseded_by_valid_bundle) {
-        planner_command_available_.store(false);
         command_goal_epoch_.store(0U);
-        safety_suffix_active_.store(false);
         execution_episode_.failClosed();
       }
       return;

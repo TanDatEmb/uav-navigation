@@ -361,9 +361,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t execution_transaction_id_{0};
   std::atomic_uint64_t command_goal_epoch_{0};
   std::atomic_bool accepting_observations_{true};
-  std::atomic_bool planner_command_available_{false};
-  std::atomic_bool planner_failure_latched_{false};
-  std::atomic_bool safety_suffix_active_{false};
   // Diagnostic-only retained-command causal evidence. These values are
   // written by the planner decision boundary and copied into the command
   // stream; they are never consumed by admission or recovery predicates.

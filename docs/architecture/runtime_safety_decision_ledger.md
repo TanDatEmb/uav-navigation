@@ -18445,3 +18445,47 @@ release profiles must not use the former allowance.
   --packages-select navigation_execution --symlink-install
   --cmake-args -DBUILD_TESTING=ON`; `ctest --test-dir
   build/navigation_execution --output-on-failure`.
+
+### 2026-09-05 - Remove write-only planner lifecycle mirrors
+
+- **Owner/status:** NavigationRuntimeNode and ExecutionEpisode owners;
+  `IMPLEMENTED` in the current worktree, focused verification recorded below;
+  no SITL or flight-acceptance claim.
+- **Scope:** Remove the write-only compatibility atomics
+  `planner_command_available_`, `planner_failure_latched_` and
+  `safety_suffix_active_`, after a repository-wide source/test audit found no
+  readers. Remove the worker-to-physical `kPlanning` phase transition and
+  retain explicit historical ordinals for all remaining physical episode
+  phases. Keep planner worker progress in
+  `active_planner_solve_generation_`; use one `ExecutionEpisode` snapshot for
+  paired restart/safety-suffix decisions. No gate, threshold, dynamics,
+  timing, PX4 or mission behavior is changed.
+- **Safety impact:** The serialized `ExecutionEpisode` snapshot is the sole
+  physical lifecycle authority; deleting stores cannot alter policy because
+  the removed fields had no loads. Solve-generation-exhaustion and immutable
+  route-rejection branches remain explicitly separate owner-audit work; this
+  change does not add a latch or call `failClosed()` for a potentially stale
+  planner callback.
+- **Evidence:** Repository-wide `rg` found only stores/declarations for the
+  three removed names, with the similarly named
+  `world_freshness_suspended_safety_suffix_active_` retained as a distinct
+  suspension diagnostic. The phase ordinal regression covers 0, 2, 3, 4 and 5.
+  The integrated build passed for `navigation_execution` and
+  `navigation_runtime`. Direct affected binaries passed:
+  `build/navigation_runtime/test_execution_episode` (5/5),
+  `build/navigation_execution/test_committed_bundle_store` (32/32) and
+  `build/navigation_execution/test_execution_state` (10/10). With both
+  `/opt/ros/jazzy/setup.bash` and `install/setup.bash` sourced in the same
+  shell, CTest passed for `navigation_runtime` (8/8) and
+  `navigation_execution` (2/2); the earlier unsourced invocation failed before
+  test entry because `ament_cmake_test` was absent from Python's path. No SITL
+  evidence is claimed.
+- **Removal condition:** None for the dead fields. Revisit the two owner-audit
+  branches only with a separately reviewed execution-owner contract that
+  proves callback identity before any lifecycle mutation.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select navigation_execution navigation_runtime
+  --symlink-install --cmake-args -DBUILD_TESTING=ON`; then CTest with the same
+  sourced environment: `ctest --test-dir build/navigation_runtime
+  --output-on-failure` (8/8) and `ctest --test-dir build/navigation_execution
+  --output-on-failure` (2/2).

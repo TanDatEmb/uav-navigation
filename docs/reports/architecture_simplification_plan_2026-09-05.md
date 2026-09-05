@@ -2,8 +2,9 @@
 
 ## Baseline
 
-- HEAD: `14c3f78b` on `codex/runtime-evidence-for-analysis`; worktree was
-  clean at audit start. `1642823e` is an ancestor and is present in history.
+- Baseline audit HEAD was `14c3f78b` on `codex/runtime-evidence-for-analysis`;
+  R15 is now checkpointed as `05ac49c8`. `1642823e` is an ancestor and is
+  present in history. The worktree contains unrelated runtime-evidence WIP.
 - This document is a staged engineering plan. It makes no SITL or flight
   acceptance claim.
 
@@ -55,10 +56,24 @@ must be re-analyzed before controller/estimator conclusions.
 ## COMPONENT — execution and retry ownership
 
 `ExecutionEpisode` is the intended lifecycle policy source, while planning
-worker phase is orthogonal to physical execution. Complete migration of
-legacy atomics is a later step. Keep the store/timeline transaction boundary.
-Unify retry/deadline reporting only after distinguishing optimizer feasibility
-retries from runtime PlanFromRest retries and the single terminal deadline.
+worker activity is orthogonal to physical execution. R15 is complete. The
+bounded runtime cleanup removes three write-only compatibility atomics and
+the physical `kPlanning` episode phase while preserving the historical numeric
+ordinals of all remaining telemetry phases; worker progress remains identified
+by `active_planner_solve_generation_`. Paired safety-suffix/restart decisions
+use one episode snapshot. The solve-generation-exhausted and rejected-route
+branches remain separately audited owner work; this cleanup does not add a
+new latch or fail-close a possibly stale solve callback. Keep the
+store/timeline transaction boundary. Unify retry/deadline reporting only after
+distinguishing optimizer feasibility retries from runtime PlanFromRest retries
+and the single terminal deadline.
+
+The preflight artifact `.artifacts/runtime/external-mode-check-20260905T012101-305346`
+is legacy occlusion evidence (`REPORT` blocked, no successful planner PVA), not
+clutter evidence. `C0` is only a case label here; the separate C0 clutter
+scenario is `MAP_SCENE=clutter MAP_SEED=11 TEST_CASE=positive`. `O0-moving`
+is not automated by the current harness. Do not combine the 1.402 m occlusion
+clearance with clutter results.
 
 ## RUNTIME — PX4 and evidence
 
@@ -67,10 +82,18 @@ handover remain required. A continuous velocity profile can replace discrete
 approach speed profiles, but cannot replace stale/foreign command rejection,
 measured stop/acceptance, asynchronous handoff, or PX4 recovery gating.
 
-Validation order after R15 is complete: focused execution CTest/build; then
+Validation order after R15 and runtime cleanup: focused execution/runtime
+CTest/build; then
 R13/R14 evidence re-analysis; then exact repeated O0-HANDOVER,
 C0-NEAR-OBSTACLE and RESET scenarios after a clean provenance-matching build;
 finally repeated open/pass-through/obstacle External Mode runs with generation
 activation, PVA continuity, clearance, PX4 state/health, waypoint completion
 and fail-closed negative-path evidence. No gate is to be relaxed from a single
 run, and no scenario is accepted from focused tests alone.
+
+The R15/runtime cleanup integrated build passed for `navigation_execution` and
+`navigation_runtime`; direct affected binaries passed execution-episode 5/5,
+committed-bundle-store 32/32 and execution-state 10/10. With both ROS Jazzy
+and the workspace overlay sourced in the same shell, CTest passed runtime 8/8
+and execution 2/2. The earlier unsourced wrapper failure was an environment
+path issue, not a test assertion. No SITL was run.
