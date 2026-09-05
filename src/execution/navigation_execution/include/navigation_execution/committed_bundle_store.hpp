@@ -264,6 +264,7 @@ class ExecutionTimelineStore final {
     recertified->world_identity = identity;
     if (!recertified->valid()) return std::nullopt;
     pending_ = std::move(recertified);
+    ++timeline_version_;
     return pending_;
   }
 
@@ -441,6 +442,7 @@ class ExecutionTimelineStore final {
             *world_identity_, committed_->world_identity)) {
       pending_.reset();
       pending_activation_ns_ = 0;
+      ++timeline_version_;
       return false;
     }
     const auto previous = committed_;
@@ -499,6 +501,22 @@ class ExecutionTimelineStore final {
     } catch (...) {
       return false;
     }
+    return true;
+  }
+
+  // Revoke the exact timeline observed by an execution owner. A changed
+  // version means a commit, activation, recertification or pending mutation
+  // won the race; preserve that newer timeline rather than clearing it.
+  bool invalidateIfCurrent(const ExecutionTimelineSnapshot& expected) const noexcept {
+    std::lock_guard lock(mutex_);
+    if (timeline_version_ != expected.version ||
+        committed_.get() != expected.active.get()) {
+      return false;
+    }
+    committed_.reset();
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    ++timeline_version_;
     return true;
   }
 

@@ -2389,6 +2389,7 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   world_freshness_suspended_bundle_generation_.store(0U, std::memory_order_release);
   world_freshness_suspended_safety_suffix_active_.store(
       false, std::memory_order_release);
+  const auto committed_timeline = command_bundle_store_.snapshot();
   if (!anchor) {
     // The execution store is the sole command-authority cutover. Emergency
     // replacement is already committed synchronously at this worker-owned
@@ -2405,10 +2406,11 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
           candidate_ptr->bundle_generation);
     }
     if (!planner_activation_queued) {
-      (void)clearCommandForCurrentIdentity(
-          goal, goal_epoch, localization_epoch, candidate_ptr);
+      if (committed_timeline.active.get() == candidate_ptr.get()) {
+        (void)clearCommandForCurrentIdentity(
+            goal, goal_epoch, localization_epoch, committed_timeline);
+      }
       planner_->discardCommandCandidate();
-      execution_episode_.failClosed();
       return false;
     }
     execution_episode_.commandCommitted(*candidate_ptr);
@@ -2420,7 +2422,7 @@ bool NavigationRuntimeNode::clearCommandForCurrentIdentity(
     const navigation_contracts::msg::NavigationGoal& command_goal,
     const std::uint64_t goal_epoch_at_command,
     const std::uint64_t localization_epoch_at_command,
-    const std::shared_ptr<const navigation_planning::CandidateBundle>& expected) {
+    const navigation_execution::ExecutionTimelineSnapshot& expected) {
   std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
   std::lock_guard<std::mutex> input_lock(input_mutex_);
   std::lock_guard<std::mutex> command_lock(
@@ -2432,12 +2434,7 @@ bool NavigationRuntimeNode::clearCommandForCurrentIdentity(
       active_goal_epoch_.load(std::memory_order_acquire) == goal_epoch_at_command &&
       active_localization_epoch_.load(std::memory_order_acquire) ==
           localization_epoch_at_command;
-  const auto current_bundle = command_bundle_store_.load();
-  const bool bundle_current = expected
-      ? (current_bundle && current_bundle.get() == expected.get() &&
-         current_bundle->bundle_generation == expected->bundle_generation)
-      : !current_bundle;
-  if (!goal_current || !bundle_current) return false;
+  if (!goal_current || !command_bundle_store_.invalidateIfCurrent(expected)) return false;
   pending_goal_owner_.clearGoal();
   command_goal_epoch_.store(0U, std::memory_order_release);
   execution_episode_.failClosed();
@@ -2636,20 +2633,36 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   ++cycle_count_;
   std::shared_ptr<const navigation_execution::ExecutionStateLease> propagated_state;
   std::optional<navigation_contracts::msg::NavigationGoal> goal;
+  std::optional<navigation_contracts::msg::NavigationGoal> cycle_goal;
   bool new_goal = false;
   bool hot_goal_transition = false;
   bool restart_from_rest = false;
   std::uint64_t goal_epoch = 0;
+  std::uint64_t goal_epoch_at_cycle = 0U;
+  std::uint64_t localization_epoch_at_cycle = 0U;
+  navigation_execution::ExecutionTimelineSnapshot expected_timeline_at_cycle;
   const auto input_lock_started = std::chrono::steady_clock::now();
   {
+    // Capture the planner callback's ownership identity once.  The helper used
+    // by early failure paths rechecks this identity under the same lock order;
+    // it must never load a newer bundle at the failure site and clear it as if
+    // it belonged to this callback.
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
     std::lock_guard<std::mutex> lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
     last_input_lock_wait_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - input_lock_started).count();
     goal = active_goal_;
+    cycle_goal = goal;
     new_goal = new_goal_;
     hot_goal_transition = hot_goal_transition_;
     restart_from_rest = execution_episode_.snapshot().restart_from_rest;
     goal_epoch = active_goal_epoch_.load();
+    goal_epoch_at_cycle = goal_epoch;
+    localization_epoch_at_cycle = active_localization_epoch_.load(
+        std::memory_order_acquire);
+    expected_timeline_at_cycle = command_bundle_store_.snapshot();
   }
   // Do not acquire the state-store mutex while holding input_mutex_: the
   // odometry callback publishes to the store before taking input_mutex_.
@@ -3274,9 +3287,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   if (!goal) return;
   if (!route_snapshot.has_value() ||
       !routeSnapshotMatchesGoalMirrors(*route_snapshot, *goal)) {
-    if (planning_worker_) planning_worker_->cancelActive();
-    command_bundle_store_.invalidate();
-    execution_episode_.failClosed();
+    if (cycle_goal) {
+      (void)clearCommandForCurrentIdentity(
+          *cycle_goal, goal_epoch_at_cycle, localization_epoch_at_cycle,
+          expected_timeline_at_cycle);
+    }
     RCLCPP_ERROR_THROTTLE(
         get_logger(), *get_clock(), 1000,
         "planner cycle rejected an invalid immutable route snapshot");
@@ -3537,7 +3552,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   navigation_planning::PlannerStatus result = navigation_planning::PlannerStatus::kFailed;
   const auto solve_generation_value = advanceMonotonicId(planner_solve_generation_);
   if (!solve_generation_value) {
-    command_bundle_store_.invalidate();
+    if (cycle_goal) {
+      (void)clearCommandForCurrentIdentity(
+          *cycle_goal, goal_epoch_at_cycle, localization_epoch_at_cycle,
+          expected_timeline_at_cycle);
+    }
     RCLCPP_ERROR(get_logger(), "planner solve generation exhausted");
     return;
   }
@@ -3555,7 +3574,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planner_->setGoalAcceptanceRadius(active_route_waypoint.acceptance_radius_m);
   if (!planner_->setRouteSnapshot(*route_snapshot)) {
     planner_->cancelActiveSolve();
-    command_bundle_store_.invalidate();
+    if (cycle_goal) {
+      (void)clearCommandForCurrentIdentity(
+          *cycle_goal, goal_epoch_at_cycle, localization_epoch_at_cycle,
+          expected_timeline_at_cycle);
+    }
     RCLCPP_ERROR(get_logger(), "planner rejected the immutable route snapshot");
     return;
   }
@@ -5531,9 +5554,11 @@ void NavigationRuntimeNode::publishCommand() {
         // recertification. This is a normal pending state, not a planner
         // failure and must not latch a terminal emergency decision.
         if (command_goal) {
+          const navigation_execution::ExecutionTimelineSnapshot expected_timeline{
+              sample.timeline_version, {}, command_bundle_at_sample, {}, 0};
           (void)clearCommandForCurrentIdentity(
               *command_goal, goal_epoch_at_command,
-              localization_epoch_at_command, command_bundle_at_sample);
+              localization_epoch_at_command, expected_timeline);
         }
         return;
       }
@@ -5556,9 +5581,11 @@ void NavigationRuntimeNode::publishCommand() {
         if (!endpoint_known_free || !endpoint_near_execution_state) {
           planned_hold_valid = false;
           if (command_goal) {
+            const navigation_execution::ExecutionTimelineSnapshot expected_timeline{
+                sample.timeline_version, {}, sample.bundle, {}, 0};
             (void)clearCommandForCurrentIdentity(
                 *command_goal, goal_epoch_at_command,
-                localization_epoch_at_command, sample.bundle);
+                localization_epoch_at_command, expected_timeline);
           }
           planner_failed = true;
           safety_suffix_active = false;

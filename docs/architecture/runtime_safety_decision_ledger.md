@@ -18529,3 +18529,39 @@ release profiles must not use the former allowance.
   --gtest_filter='RogMapVendorSmoke.*:RogMapPlanningGridExport.*'` and
   `python3 tools/runtime/tests/test_runtime_contract.py -q
   RuntimeContractTest.test_mission_planning_policy_is_applied_to_runtime_parameters`.
+
+### 2026-09-05 - Bound early planner failure cleanup to the current timeline
+
+- **Owner/status:** `NavigationRuntimeNode` and `ExecutionTimelineStore`;
+  implemented in the current worktree and pending central review; no SITL or
+  flight-acceptance claim.
+- **Scope:** Early route-snapshot, solve-generation-exhaustion and planner
+  route-rejection paths capture the callback's goal/localization identity and
+  execution timeline once. `invalidateIfCurrent()` compares the existing
+  timeline version and active pointer under the store mutex before clearing
+  active and pending commands; only a matching current identity then clears
+  command exposure and fails the episode closed. Immediate-commit activation
+  queue failure applies the same exact-pointer condition only to its revoke
+  path, while recertified candidates still complete planner-history
+  synchronization. No retry policy, threshold, dynamics, timing, PX4 or
+  mission gate changes are included.
+- **Safety impact:** A stale planner callback cannot clear a newer active or
+  pending bundle, and a revoked pending bundle cannot be re-exposed by the
+  command timer. A goal promotion changes the active goal epoch and clears
+  pending; the old cycle's identity check therefore no-ops, and the next
+  planning cycle uses the refreshed key rather than combining the old bundle
+  with the promoted goal.
+- **Evidence:** Store regressions cover stale active replacement, stale pending
+  successor, activation-first, revoke-first, pending world recertification,
+  and expired-pending removal. `navigation_execution` build and CTest passed
+  2/2; `navigation_runtime` build and CTest passed 8/8 with both ROS Jazzy and
+  workspace overlays sourced in the same shell. No SITL evidence is claimed.
+- **Removal condition:** Remove the version/pointer revalidation only when an
+  equivalent execution-owned atomic revoke transaction protects active,
+  pending, activation and world-recertification interleavings. Do not replace
+  it with a helper-only episode latch or global invalidation.
+- **Verification:** `cmake --build build/navigation_execution -j2 && cmake
+  --build build/navigation_runtime -j2`; then
+  `source /opt/ros/jazzy/setup.bash && source install/setup.bash && ctest
+  --test-dir build/navigation_execution --output-on-failure && ctest
+  --test-dir build/navigation_runtime --output-on-failure`.

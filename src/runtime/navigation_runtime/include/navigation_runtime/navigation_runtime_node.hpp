@@ -226,7 +226,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const navigation_contracts::msg::NavigationGoal& command_goal,
       std::uint64_t goal_epoch_at_command,
       std::uint64_t localization_epoch_at_command,
-      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected);
+      const navigation_execution::ExecutionTimelineSnapshot& expected);
   bool commitPlannerCandidate(const navigation_contracts::msg::NavigationGoal& goal,
                              std::uint64_t goal_epoch,
                              std::uint64_t localization_epoch,

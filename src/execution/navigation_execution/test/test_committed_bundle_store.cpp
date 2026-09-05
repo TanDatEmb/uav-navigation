@@ -891,6 +891,143 @@ TEST(ExecutionTimelineStore, RefreshKeepsActiveWhenPendingIsInvalid) {
   EXPECT_EQ(store.snapshot().world_identity->revision, next_world.revision);
 }
 
+TEST(ExecutionTimelineStore, StaleRevokePreservesReplacementActiveBundle) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto observed = store.snapshot();
+  auto replacement_data = candidateFor(7, 1);
+  replacement_data.bundle_generation = active->bundle_generation + 1U;
+  auto replacement = std::make_shared<const navigation_planning::CandidateBundle>(
+      replacement_data);
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, replacement),
+            navigation_execution::CommitDecision::kCommitted);
+
+  EXPECT_FALSE(store.invalidateIfCurrent(observed));
+  EXPECT_EQ(store.load(), replacement);
+}
+
+TEST(ExecutionTimelineStore, StaleRevokePreservesNewPendingSuccessor) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto observed = store.snapshot();
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto pending = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, pending),
+            navigation_execution::StageDecision::kStaged);
+
+  EXPECT_FALSE(store.invalidateIfCurrent(observed));
+  EXPECT_EQ(store.load(), active);
+  EXPECT_EQ(store.loadPending(), pending);
+}
+
+TEST(ExecutionTimelineStore, ActivationWinsBeforeRevokeAndKeepsSuccessor) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto pending = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, pending),
+            navigation_execution::StageDecision::kStaged);
+  const auto observed = store.snapshot();
+
+  ASSERT_TRUE(store.activatePendingIfDue(50));
+  EXPECT_FALSE(store.invalidateIfCurrent(observed));
+  EXPECT_EQ(store.load(), pending);
+}
+
+TEST(ExecutionTimelineStore, RevokeWinsAndBlocksPendingReexposure) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto pending = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, pending),
+            navigation_execution::StageDecision::kStaged);
+  const auto observed = store.snapshot();
+
+  EXPECT_TRUE(store.invalidateIfCurrent(observed));
+  EXPECT_FALSE(store.load());
+  EXPECT_FALSE(store.loadPending());
+  EXPECT_FALSE(store.activatePendingIfDue(50));
+}
+
+TEST(ExecutionTimelineStore, StaleRevokePreservesRecertifiedPendingSuccessor) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto pending = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, pending),
+            navigation_execution::StageDecision::kStaged);
+  const auto observed = store.snapshot();
+  const auto next_world = navigation_world_model::WorldSnapshotIdentity{3, 4, 2, 2};
+  const auto recertified = store.recertifyPendingWorldIdentity(next_world, pending);
+  ASSERT_TRUE(recertified);
+  EXPECT_NE(recertified->get(), pending.get());
+  ASSERT_TRUE(store.publishWorldIdentity(
+      next_world, active, true, 0, *recertified, true));
+
+  EXPECT_FALSE(store.invalidateIfCurrent(observed));
+  EXPECT_NE(store.load(), active);
+  EXPECT_TRUE(store.loadPending());
+  EXPECT_EQ(store.loadPending()->world_identity.revision, next_world.revision);
+}
+
+TEST(ExecutionTimelineStore, StaleRevokePreservesActiveAfterExpiredPendingIsDropped) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto pending_data = *successorFor(*anchor, 7);
+  pending_data.valid_until_ns = 100;
+  auto pending = std::make_shared<const navigation_planning::CandidateBundle>(pending_data);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, pending),
+            navigation_execution::StageDecision::kStaged);
+  const auto observed = store.snapshot();
+
+  EXPECT_FALSE(store.activatePendingIfDue(101));
+  EXPECT_FALSE(store.invalidateIfCurrent(observed));
+  EXPECT_EQ(store.load(), active);
+  EXPECT_FALSE(store.loadPending());
+}
+
 TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {
   navigation_execution::ExecutionStateStore store;
   navigation_planning::KinematicState state;

@@ -62,11 +62,24 @@ the physical `kPlanning` episode phase while preserving the historical numeric
 ordinals of all remaining telemetry phases; worker progress remains identified
 by `active_planner_solve_generation_`. Paired safety-suffix/restart decisions
 use one episode snapshot. The solve-generation-exhausted and rejected-route
-branches remain separately audited owner work; this cleanup does not add a
-new latch or fail-close a possibly stale solve callback. Keep the
-store/timeline transaction boundary. Unify retry/deadline reporting only after
+branches remain separately audited owner work; their bounded identity-guarded
+cleanup keeps the store/timeline transaction boundary and does not add a new
+latch or fail-close a possibly stale solve callback. Unify retry/deadline reporting only after
 distinguishing optimizer feasibility retries from runtime PlanFromRest retries
 and the single terminal deadline.
+
+The bounded early-failure owner fix now uses the same execution timeline
+watermark: route-snapshot rejection, solve-generation exhaustion, route-setter
+rejection and immediate-commit activation-queue failure may revoke only the
+goal/localization identity and `{timeline_version, active pointer}` captured by
+that callback. Store recertification or activation wins the race and preserves
+the newer command; recertified immediate commits still run planner-history
+synchronization before any queue-failure revoke decision. During a valid
+pending-goal promotion, the old callback's identity check deliberately
+no-ops: the goal-epoch transition clears pending, and the next planner cycle
+consumes a refreshed key, so no old bundle is combined with the promoted goal.
+This remains a bounded transaction, with no retry threshold, FSM, latch or
+global invalidation added.
 
 The preflight artifact `.artifacts/runtime/external-mode-check-20260905T012101-305346`
 is legacy occlusion evidence (`REPORT` blocked, no successful planner PVA), not
