@@ -11,7 +11,8 @@ It currently composes the pinned mapping and planning backends directly:
 ```text
 LiDAR + IMU
   -> FAST-LIO
-  -> /lio/registered_points + /lio/odometry_propagated
+  -> /lio/mapping_observation (RegisteredScan) + /lio/odometry_propagated
+     + /lio/health
   -> navigation_runtime_node (mapping + planning backends)
   -> /navigation/navigation_command
   -> px4_navigation_external_mode

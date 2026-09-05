@@ -5,9 +5,9 @@ The current product path is a small number of explicit runtime boundaries:
 ```text
 LiDAR + IMU
   -> FAST-LIO
-     -> /lio/odometry_corrected
+     -> /lio/mapping_observation (RegisteredScan)
      -> /lio/odometry_propagated
-     -> /lio/registered_points
+     -> /lio/health
   -> navigation_mission + navigation_runtime_node
      -> mapping and planning backends
      -> /navigation/navigation_command
@@ -20,14 +20,17 @@ LiDAR + IMU
 FAST-LIO validates message layout, timing, frames, initialization, deskew,
 correction, and registration. Corrected odometry is emitted only after a
 successful LiDAR correction in `Tracking`. Propagated odometry is the
-high-rate state used by the planner and PX4 bridge. The registered cloud is
-the current point-cloud boundary consumed by the planner backend; it remains distinct from
+high-rate state used by the planner and PX4 bridge. The atomic
+`/lio/mapping_observation` (`RegisteredScan`) carries the registered cloud and
+corrected pose into the mapping runtime. `/lio/registered_points` and
+`/lio/odometry_corrected` remain optional estimator/RViz outputs, distinct from
 FAST-LIO's internal nearest-neighbour registration structure.
 
-All three LIO outputs use `lio_odom -> base_link`. The cloud consumed by the planner backend
-must carry `lio_odom` and finite XYZ fields. Typed `/lio/health` is the
-estimator control-plane health surface; `/lio/diagnostics` is observability
-only.
+The two odometry messages use `lio_odom -> base_link`. `RegisteredScan` carries
+`header.frame_id=lio_odom`, `body_frame_id=base_link`, and a registered cloud
+whose header uses `lio_odom`; its XYZ fields must be finite. Typed `/lio/health`
+is the estimator control-plane health surface; `/lio/diagnostics` is
+observability only.
 
 ## Navigation runtime
 
@@ -41,8 +44,8 @@ readers remain tooling-only.
 through the transitional backend boundary. `navigation_planning` now defines the
 ROS/vendor-free C++20 request/outcome/candidate and kinematic-state contracts;
 runtime sends the typed propagated state directly to the backend adapter.
-It pairs the newest cloud and propagated odometry, rejects wrong-frame/stale
-inputs, updates the world model, and runs the backend's
+It consumes the atomic registered observation and propagated odometry, rejects
+wrong-frame/stale inputs, updates the world model, and runs the backend's
 `PlanFromRest`/`ReplanOnce` state machine. The configured loop is 5 Hz for
 planning and 50 Hz for command sampling.
 
@@ -55,7 +58,7 @@ bundle provenance. The diagnostic status name is
 dropped observations, planner cycles, published trajectories, stale inputs,
 and processing exceptions.
 
-The product-owned `navigation_execution::CommittedBundleStore` is the sole
+The product-owned `navigation_execution::ExecutionTimelineStore` is the sole
 exposed command candidate store at the runtime/PX4 boundary, and
 `CommandSampler` reads only that immutable store. The planner backend retains
 private trajectory history temporarily for replan continuity; that history is
