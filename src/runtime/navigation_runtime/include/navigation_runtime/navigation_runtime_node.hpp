@@ -33,6 +33,7 @@
 #include "navigation_runtime/execution_episode.hpp"
 #include "navigation_runtime/trajectory_completion.hpp"
 #include "navigation_runtime/planning_worker.hpp"
+#include "navigation_runtime/execution_trace_snapshot.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
 #include <navigation_execution/committed_bundle_store.hpp>
@@ -381,63 +382,10 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t execution_transaction_id_{0};
   std::atomic_uint64_t command_goal_epoch_{0};
   std::atomic_bool accepting_observations_{true};
-  // Diagnostic-only retained-command causal evidence. These values are
-  // written by the planner decision boundary and copied into the command
-  // stream; they are never consumed by admission or recovery predicates.
-  std::atomic<double> causal_anchor_error_m_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_projected_anchor_error_m_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_retained_tracking_limit_m_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_relative_anchor_speed_mps_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic_bool causal_backup_available_{false};
-  std::atomic<double> causal_time_to_backup_start_s_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic_bool causal_committed_suffix_usable_{false};
-  std::atomic_bool causal_sampled_path_clear_{false};
-  std::atomic_bool causal_tracking_certificate_exceeded_{false};
-  std::atomic_bool causal_projected_tracking_certificate_exceeded_{false};
-  std::atomic_uint8_t causal_emergency_authorization_reason_{0U};
-  std::atomic_uint64_t causal_planning_cycle_id_{0U};
-  std::atomic_int64_t causal_timestamp_ns_{0};
-  std::atomic_int causal_emergency_candidate_commit_result_{0};
-  std::atomic_int64_t causal_evaluation_now_ns_{0};
-  std::atomic_int64_t causal_execution_state_source_stamp_ns_{0};
-  std::atomic_int64_t causal_execution_state_receive_stamp_ns_{0};
-  std::atomic<double> causal_execution_state_source_age_ms_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_execution_state_receive_age_ms_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic_int64_t causal_committed_bundle_start_stamp_ns_{0};
-  std::atomic<double> causal_measured_position_x_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_measured_position_y_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_measured_position_z_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_measured_velocity_x_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_measured_velocity_y_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_measured_velocity_z_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_now_position_x_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_now_position_y_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_now_position_z_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_now_velocity_x_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_now_velocity_y_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_now_velocity_z_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_source_position_x_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_source_position_y_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_source_position_z_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_source_velocity_x_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_source_velocity_y_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_source_velocity_z_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_anchor_error_raw_m_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_anchor_error_time_aligned_m_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_command_motion_over_state_age_m_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_velocity_residual_time_aligned_mps_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_retained_elapsed_s_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_committed_bundle_duration_s_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic<double> causal_committed_safety_transition_time_s_{std::numeric_limits<double>::quiet_NaN()};
-  std::atomic_bool causal_validate_without_new_commit_{false};
-  std::atomic_bool causal_retained_fresh_vehicle_state_{false};
-  std::atomic_bool causal_retained_committed_command_available_{false};
-  std::atomic_bool causal_retained_command_anchor_valid_{false};
-  std::atomic_bool causal_current_vehicle_state_known_free_{false};
-  std::atomic_bool causal_retained_safety_trajectory_available_{false};
-  std::atomic_bool causal_retained_terminal_stop_{false};
-  std::atomic_int causal_retained_committed_role_{-1};
-  std::atomic_uint8_t causal_retained_recovery_state_before_{0U};
+  // Diagnostic-only retained-command causal evidence is published as one
+  // immutable record. It is copied into the command stream and never
+  // consumed by admission or recovery predicates.
+  ExecutionTraceStore execution_trace_store_;
   std::atomic<ExecutionRecoveryState> execution_recovery_state_{
       ExecutionRecoveryState::kInitialHold};
   std::atomic_uint64_t planner_solve_generation_{0U};

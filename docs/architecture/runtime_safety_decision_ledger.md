@@ -1,5 +1,45 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-05 - Publish one immutable execution decision trace
+
+- **Owner/status:** navigation runtime decision trace; `IMPLEMENTED`, repeated
+  representative runtime-artifact verification remains open.
+- **Scope:** Replace the independently published retained-command causal
+  atomics with one mutex-protected immutable `ExecutionTraceSnapshot`. The
+  snapshot carries the complete evaluated execution identity and clock/sample
+  fields. Localization reset advances the store's minimum epoch; publication
+  is linearized by that store and rejects stale epochs or older solve
+  generations. Command attachment requires the full localization, goal,
+  request, and bundle identity, while `DECISION_TRACE` retains the identity
+  evaluated by a failed decision even if activation changes before publication.
+- **Safety impact:** observability and synchronization ownership only. No
+  planner result, candidate certificate, freshness, tracking, recovery, PX4,
+  or command field semantics change. A rejected trace publication suppresses
+  diagnostic attachment and cannot expose a command. The trace publication
+  path no longer takes the localization, input, or command-transition locks;
+  the store's epoch invariant remains the fail-closed invalidation boundary.
+- **Evidence:** immutable-store identity/epoch/concurrency tests cover
+  monotonic solve publication, stale localization rejection, full command
+  identity matching, and paired concurrent publication/load operations. The
+  branch-local Release runtime core, node, and 10/10 runtime CTest tests pass
+  with the isolated dependency install and ROS Jazzy loader paths; the full
+  runtime Python suite passes 247/247. The first plain CTest invocation lacked
+  the isolated ROS library path and failed to load a generated contracts
+  library; rerunning with the explicit isolated-plus-Jazzy `LD_LIBRARY_PATH`
+  passed. No shared main-workspace install was used.
+- **Removal/review condition:** retain until the runtime artifact records the
+  complete trace through repeated representative failure and transition runs;
+  remove only if an equivalent immutable record preserves the same causal
+  identity and clock/sample provenance without reintroducing independently
+  published fields.
+- **Verification:** branch-local dependency build/install; configure and build
+  `navigation_runtime` with `/usr/bin/python3` and `-DBUILD_TESTING=ON`; run
+  `ctest --test-dir /tmp/uav-navigation-immutable-runtime-build
+  --output-on-failure` with the isolated dependency and `/opt/ros/jazzy`
+  library paths; run `/usr/bin/python3 -m unittest discover -s
+  tools/runtime/tests -p 'test_*.py'`. Runtime-artifact replay and repeated
+  representative SITL remain pending.
+
 ### 2026-09-05 - Bound nominal MAIN planning by a provisional closed-loop envelope
 
 - **Owner/status:** navigation planning maintainers; `IMPLEMENTED`, exact E5
