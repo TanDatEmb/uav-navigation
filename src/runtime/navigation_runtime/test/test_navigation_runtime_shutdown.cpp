@@ -248,7 +248,7 @@ navigation_contracts::msg::RegisteredScan makeHandoverScan(
 
 navigation_contracts::msg::PropagatedOdometry makeHandoverOdometry(
     const builtin_interfaces::msg::Time& stamp, const std::uint64_t sequence,
-    const double measured_x) {
+    const double measured_x, const double measured_velocity) {
   navigation_contracts::msg::PropagatedOdometry message;
   message.odometry.header.stamp = stamp;
   message.odometry.header.frame_id = "lio_odom";
@@ -256,7 +256,7 @@ navigation_contracts::msg::PropagatedOdometry makeHandoverOdometry(
   message.odometry.pose.pose.orientation.w = 1.0;
   message.odometry.pose.pose.position.x = measured_x;
   message.odometry.pose.pose.position.z = 0.3;
-  message.odometry.twist.twist.linear.x = measured_x < 2.9 ? 0.3 : 0.03;
+  message.odometry.twist.twist.linear.x = measured_velocity;
   message.localization_epoch = 1U;
   message.sequence = sequence;
   return message;
@@ -328,6 +328,7 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
       rclcpp::Parameter("navigation_runtime.command_topic", prefix + "/command"),
       rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
       rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
+      rclcpp::Parameter("navigation_runtime.planner_rate_hz", 5.0),
       rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
   });
 
@@ -441,8 +442,8 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
   std::condition_variable samples_condition;
   std::vector<navigation_contracts::msg::NavigationCommand> commands;
   std::atomic<double> measured_x{0.0};
+  std::atomic<double> measured_velocity{0.0};
   std::atomic_bool terminal_adjacent{false};
-  std::atomic<std::int64_t> target_motion_start_ns{0};
   auto command_subscription = driver->create_subscription<
       navigation_contracts::msg::NavigationCommand>(
       prefix + "/command", goal_qos,
@@ -451,6 +452,8 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
         if (message->request_id == 10U) {
           const double speed = std::hypot(
               message->velocity.x, std::hypot(message->velocity.y, message->velocity.z));
+          measured_x.store(message->position.x, std::memory_order_release);
+          measured_velocity.store(message->velocity.x, std::memory_order_release);
           if (message->position.x > 2.5 && speed <= 0.15) {
             terminal_adjacent.store(true, std::memory_order_release);
           }
@@ -490,16 +493,9 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
     std::uint64_t sequence = 1U;
     while (!stop_publishing.load(std::memory_order_acquire)) {
       const auto stamp = driver->now();
-      const auto motion_start = target_motion_start_ns.load(std::memory_order_acquire);
-      const double motion_elapsed_s = motion_start > 0
-          ? std::chrono::duration<double>(
-              std::chrono::steady_clock::now() -
-              std::chrono::steady_clock::time_point(std::chrono::nanoseconds(motion_start))).count()
-          : 0.0;
-      measured_x.store(std::clamp(motion_elapsed_s * 0.5, 0.0, 3.0),
-                       std::memory_order_release);
       odometry_publisher->publish(makeHandoverOdometry(
-          stamp, sequence, measured_x.load(std::memory_order_acquire)));
+          stamp, sequence, measured_x.load(std::memory_order_acquire),
+          measured_velocity.load(std::memory_order_acquire)));
       observation_publisher->publish(makeHandoverScan(stamp, sequence));
       ++sequence;
       std::this_thread::sleep_for(20ms);
@@ -530,10 +526,6 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
     cleanup();
     FAIL() << "real NavigationRuntimeNode did not dispatch the old PASS_THROUGH command";
   }
-  target_motion_start_ns.store(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(
-          std::chrono::steady_clock::now().time_since_epoch()).count(),
-      std::memory_order_release);
   // The command is now executing. Move the public measured state to the
   // declared terminal point with a small residual speed before publishing the
   // newer coincident STOP request. This exercises the runtime's existing
@@ -541,7 +533,6 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThr
   // Let the committed trajectory reach its declared endpoint first; changing
   // the measured pose while it is still executing would trigger the
   // emergency discontinuity guard instead of terminal completion.
-  std::this_thread::sleep_for(7s);
   bool old_terminal_seen = false;
   const auto terminal_deadline = std::chrono::steady_clock::now() + 12s;
   while (std::chrono::steady_clock::now() < terminal_deadline) {

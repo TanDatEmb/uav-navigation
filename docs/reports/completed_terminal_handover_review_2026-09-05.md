@@ -55,3 +55,49 @@ The regression must exercise the real runtime/worker dispatch boundary for:
 Boolean-only policy tests do not establish this dispatch contract. No SITL
 acceptance is claimed here; integration and repeated representative evidence
 remain owned by the central integration review.
+
+## Before/after validation evidence
+
+The clean runtime build used the read-only underlay
+`/tmp/uav-navigation-reviewed-integration-install` and produced into
+`/tmp/uav-navigation-completed-handover-clean-install2`; the source checkout
+was this branch, with no main checkout or map pooling involved. The component
+fixture publishes a dense 231-endpoint PointCloud2 volume through the public
+`RegisteredScan` contract, and feeds propagated odometry from the public
+command trajectory with the same measured velocity. It observes a real
+`NavigationRuntimeNode` command stream.
+
+The green run of
+`NavigationRuntimeHandover.DispatchesNewStopAfterCoincidentCompletedPassThrough`
+observed the old request 10 MAIN/BACKUP command, then the terminal completion
+witness, followed by the log `desired request=11 changed`. The node logged
+`restarting PlanFromRest` for request 11 and dispatched the successor MAIN
+command. The successor target was 0.5 m beyond the measured stop position
+with a 0.8 m acceptance radius, so it was in the desired goal ball while
+retaining a finite route segment. The measured terminal velocity was 0.03
+m/s; no pose teleport or gate relaxation was used.
+
+Focused command:
+
+```
+source /opt/ros/jazzy/setup.bash
+source /tmp/uav-navigation-reviewed-integration-install/setup.bash
+source /tmp/uav-navigation-completed-handover-clean-install2/setup.bash
+ctest --test-dir /tmp/uav-navigation-completed-handover-clean-build2/navigation_runtime \
+  --output-on-failure -R 'test_planning_worker|test_navigation_runtime_shutdown'
+```
+
+Result: 2/2 tests passed, including the bounded worker turnover cancellation
+interleaving and the real public-contract handover fixture. The raw watchdog
+baseline remained the documented pre-fix evidence: artifact
+`/tmp/uav-navigation-reviewed-integration/.artifacts/runtime/external-mode-check-20260905T111200-690529`
+reported the same-request req4-to-5 failure, while the older runtime artifact
+above records the coincident req5 arrival and subsequent drift. These are
+diagnostic runtime artifacts; no SITL qualification claim follows from them.
+
+The broader mission/execution debt remains outside this bounded change:
+repeated representative flight evidence, PX4 transport freshness, moving
+handover behavior, and the existing nonterminal planner failure paths still
+need central integration review. The worker's pre-existing bare `submit()` and
+`cancelActive()` paths retain their prior semantics; only the new terminal
+identity path is serialized through the worker mutex and backend interrupt.
