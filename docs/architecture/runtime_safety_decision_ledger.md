@@ -19038,3 +19038,25 @@ release profiles must not use the former allowance.
 - **Verification:** Build/run `test_planner_fsm` and build
   `navigation_runtime_core` in the isolated dependency-aware worktree;
   `git diff --check`.
+
+### 2026-09-05 - Propagate builtin_interfaces through navigation_common
+
+- **Owner/status:** Navigation runtime build contract; `IMPLEMENTED`, clean
+  prefix rebuild and focused CTest verification passed.
+- **Scope:** The `navigation_common` interface target links the
+  `builtin_interfaces::builtin_interfaces__rosidl_generator_cpp` target so
+  consumers of its public `time.hpp` header receive the generated C++ include
+  and runtime dependencies transitively.
+- **Safety impact:** Build/test wiring only. No runtime planner, watchdog,
+  timing, recovery, command-admission, or safety gate behavior changes.
+- **Evidence:** The clean-prefix runtime build failed because the
+  `test_certified_continuation` compile flags omitted the `builtin_interfaces`
+  include directory even though package metadata exported it. The omission
+  originated at the `navigation_common` interface target; other runtime tests
+  and the direct watchdog suite remained runnable.
+- **Removal condition:** Remove only if `navigation_common/time.hpp` no longer
+  exposes builtin interfaces or an equivalent exported interface target carries
+  the complete generated C++ dependency.
+- **Verification:** Clean-prefix Release build; runtime 9/9, planning 1/1,
+  execution 2/2, and PX4 4/4 CTest; Python runtime contracts 247/247; and
+  `git diff --check`.

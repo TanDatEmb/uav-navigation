@@ -15,6 +15,8 @@ target_include_directories(${PROJECT_NAME} INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(${PROJECT_NAME} INTERFACE Eigen3::Eigen)
+target_link_libraries(${PROJECT_NAME} INTERFACE
+  builtin_interfaces::builtin_interfaces__rosidl_generator_cpp)
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS ${PROJECT_NAME}
