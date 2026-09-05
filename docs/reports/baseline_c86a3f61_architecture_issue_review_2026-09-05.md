@@ -1,9 +1,9 @@
 # Baseline architecture and issue review — `c86a3f61`
 
-Date: 2026-09-05  
-Branch: `codex/runtime-evidence-for-analysis`  
-HEAD: `c86a3f61df7bc7124b180f5aa31b311ee38d8c08`  
-Comparison base: `14c3f78b`  
+Date: 2026-09-05
+Branch: `codex/runtime-evidence-for-analysis`
+HEAD: `c86a3f61df7bc7124b180f5aa31b311ee38d8c08`
+Comparison base: `14c3f78b`
 
 ## 1. Review rules and verdict
 
@@ -84,7 +84,7 @@ An earlier partial rebuild produced a shutdown-test crash after only `navigation
 
 ### B01 — backend test dependency graph is broken
 
-**Severity:** P0 integration blocker.  
+**Severity:** P0 integration blocker.
 **Status:** OPEN.
 
 The clean canonical build stops before planner-backend and runtime tests. The immediate source mismatch is:
@@ -97,7 +97,7 @@ Architectural decision is required. Adding a test dependency is the smallest bui
 
 ### B02 — unconditional debug I/O is committed in the collision oracle
 
-**Severity:** P1 real-time/performance blocker.  
+**Severity:** P1 real-time/performance blocker.
 **Status:** OPEN, source-confirmed.
 
 [`mapping_world_snapshot.hpp`](../../src/mapping/navigation_mapping/include/navigation_mapping/mapping_world_snapshot.hpp#L258) contains unconditional `std::fprintf(stderr, ...)` calls at the segment entry, guard, every visited cell and every body-support interval. Two calls are inside voxel traversal. This makes planning/safety-query latency depend on stderr buffering and the consuming terminal/log pipe, outside the planner deadline model.
@@ -106,7 +106,7 @@ These statements are development instrumentation and must be removed before any 
 
 ### B03 — current-body behavior does not implement the current requirement
 
-**Severity:** P1 behavior/architecture blocker.  
+**Severity:** P1 behavior/architecture blocker.
 **Status:** replacement WIP failed architecture review.
 
 The old `TraversedFreeSpace` production history has been removed, which is correct. The replacement at HEAD is not complete:
@@ -138,7 +138,7 @@ This rule prevents the system from rejecting the space the UAV currently occupie
 
 ### B04 — current-body query policies disagree
 
-**Severity:** P2 liveness/maintainability blocker for the body cutover.  
+**Severity:** P2 liveness/maintainability blocker for the body cutover.
 **Status:** OPEN.
 
 The mapping oracle at [`mapping_world_snapshot.hpp:315`](../../src/mapping/navigation_mapping/include/navigation_mapping/mapping_world_snapshot.hpp#L315) explicitly permits `UNKNOWN -> KNOWN_FREE -> UNKNOWN` while each UNKNOWN interval stays inside the OBB. A direct mapping test at [`test_mapping_world_model.cpp:274`](../../src/mapping/navigation_mapping/test/test_mapping_world_model.cpp#L274) codifies that behavior. The final trajectory certificate separately rejects re-entry by interval ordering at [`trajectory_world_validator.hpp:360`](../../src/planning/navigation_planning_backend/include/planner_core/trajectory_world_validator.hpp#L360).
@@ -203,7 +203,7 @@ A short positional stop may end before yaw rate reaches zero, after which HOLD c
 
 ### R16 — general PlanningWorker cancellation turnover race
 
-**Severity:** P1/P2 liveness risk.  
+**Severity:** P1/P2 liveness risk.
 **Status:** OPEN, source-confirmed interleaving.
 
 [`PlanningWorker::submit()`](../../src/runtime/navigation_runtime/include/navigation_runtime/planning_worker.hpp#L114) and bare [`cancelActive()`](../../src/runtime/navigation_runtime/include/navigation_runtime/planning_worker.hpp#L130) release the worker mutex before `planner_->cancelActiveSolve()`. The old job can finish, the worker can start the new pending job, and the old caller can then interrupt the new solve. The terminal identity-specific API correctly holds the mutex through the interrupt; the general paths do not.
