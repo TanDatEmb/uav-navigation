@@ -1,5 +1,30 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-05 - Decouple internal execution phase ordinals from v1 telemetry
+
+- **Owner/status:** navigation runtime execution episode; `IMPLEMENTED`, focused
+  runtime build and phase conversion tests required.
+- **Scope:** `ExecutionEpisodePhase` is an internal contiguous lifecycle enum.
+  The existing `execution_episode_phase` diagnostic key keeps its historical
+  v1 wire codes through the explicit
+  `executionEpisodePhaseTelemetryCodeV1()` publication conversion. No planner
+  worker state is encoded as a physical episode phase.
+- **Safety impact:** lifecycle policy still consumes the typed internal phase
+  snapshot, while diagnostics retain compatibility at the boundary. No
+  command admission, recovery, freshness, tracking, PX4, or timing gate is
+  changed.
+- **Evidence:** the production conversion is exercised for every phase and
+  the runtime diagnostic publisher calls it instead of serializing the enum
+  underlying value. The old ordinal-locking test was removed; no SITL or flight
+  acceptance claim is made.
+- **Removal/review condition:** remove the v1 conversion only after all
+  retained telemetry consumers migrate to an explicitly versioned replacement
+  field and artifact compatibility is demonstrated.
+- **Verification:** `cmake --build build/navigation_runtime --target
+  navigation_runtime_node test_execution_episode -j2`, run
+  `build/navigation_runtime/test_execution_episode`, and run focused runtime
+  CTest with the ROS/Jazzy overlay sourced.
+
 ### 2026-09-05 - Keep runtime timer ownership in one product timing contract
 
 - **Owner/status:** navigation runtime and planning maintainers; `IMPLEMENTED`,
@@ -18522,8 +18547,9 @@ release profiles must not use the former allowance.
   `planner_command_available_`, `planner_failure_latched_` and
   `safety_suffix_active_`, after a repository-wide source/test audit found no
   readers. Remove the worker-to-physical `kPlanning` phase transition and
-  retain explicit historical ordinals for all remaining physical episode
-  phases. Keep planner worker progress in
+  keep the physical episode lifecycle separate from planner worker progress.
+  Preserve legacy diagnostic codes only through the explicit v1 conversion at
+  the publication boundary. Keep planner worker progress in
   `active_planner_solve_generation_`; use one `ExecutionEpisode` snapshot for
   paired restart/safety-suffix decisions. No gate, threshold, dynamics,
   timing, PX4 or mission behavior is changed.
@@ -18536,7 +18562,8 @@ release profiles must not use the former allowance.
 - **Evidence:** Repository-wide `rg` found only stores/declarations for the
   three removed names, with the similarly named
   `world_freshness_suspended_safety_suffix_active_` retained as a distinct
-  suspension diagnostic. The phase ordinal regression covers 0, 2, 3, 4 and 5.
+  suspension diagnostic. The v1 telemetry conversion covers historical wire
+  codes 0, 2, 3, 4 and 5 while internal phase ordinals remain contiguous.
   The integrated build passed for `navigation_execution` and
   `navigation_runtime`. Direct affected binaries passed:
   `build/navigation_runtime/test_execution_episode` (5/5),

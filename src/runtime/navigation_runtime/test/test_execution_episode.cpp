@@ -39,13 +39,23 @@ TEST(ExecutionEpisode, KeepsOneAuthoritativeLifecycleSnapshot) {
             navigation_runtime::ExecutionEpisodePhase::kStoppedHold);
 }
 
-TEST(ExecutionEpisode, PreservesSerializedPhysicalPhaseOrdinals) {
+TEST(ExecutionEpisode, UsesContiguousInternalPhasesAndVersionedTelemetryConversion) {
   using navigation_runtime::ExecutionEpisodePhase;
   EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kInitialHold), 0U);
-  EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kTrackingMain), 2U);
-  EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kTrackingBackup), 3U);
-  EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kStoppedHold), 4U);
-  EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kPx4Hold), 5U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kTrackingMain), 1U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kTrackingBackup), 2U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kStoppedHold), 3U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ExecutionEpisodePhase::kPx4Hold), 4U);
+  EXPECT_EQ(navigation_runtime::executionEpisodePhaseTelemetryCodeV1(
+                ExecutionEpisodePhase::kInitialHold), 0U);
+  EXPECT_EQ(navigation_runtime::executionEpisodePhaseTelemetryCodeV1(
+                ExecutionEpisodePhase::kTrackingMain), 2U);
+  EXPECT_EQ(navigation_runtime::executionEpisodePhaseTelemetryCodeV1(
+                ExecutionEpisodePhase::kTrackingBackup), 3U);
+  EXPECT_EQ(navigation_runtime::executionEpisodePhaseTelemetryCodeV1(
+                ExecutionEpisodePhase::kStoppedHold), 4U);
+  EXPECT_EQ(navigation_runtime::executionEpisodePhaseTelemetryCodeV1(
+                ExecutionEpisodePhase::kPx4Hold), 5U);
 }
 
 TEST(ExecutionEpisode, FailClosedClearsCommandExposure) {

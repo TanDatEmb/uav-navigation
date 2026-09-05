@@ -2986,7 +2986,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_value("command_execution_lease_reason", command_execution_lease_reason_.load());
   const auto episode = execution_episode_.snapshot();
   add_value("execution_episode_phase",
-            static_cast<std::uint64_t>(episode.phase));
+            executionEpisodePhaseTelemetryCodeV1(episode.phase));
   add_value("execution_episode_generation", episode.active_generation);
   add_value("execution_episode_goal_epoch", episode.goal_epoch);
   add_value("execution_episode_command_available",
