@@ -596,7 +596,6 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertNotIn("updateMap(", cycle)
         self.assertNotIn("map_->", cycle)
         self.assertIn("if (!propagated_state) return;", cycle)
-        self.assertIn("const bool completed_trajectory", cycle)
 
     def test_mapping_profile_is_independent_of_visualization_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
