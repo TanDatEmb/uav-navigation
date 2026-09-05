@@ -75,7 +75,6 @@ namespace {
   result.map_slide_voxel_shift_y = source.map_slide_voxel_shift_y;
   result.map_slide_voxel_shift_z = source.map_slide_voxel_shift_z;
   result.map_slide_cells_cleared = source.map_slide_cells_cleared;
-  result.body_neighborhood_cells_cleared = source.body_neighborhood_cells_cleared;
   result.inflation_update_count = source.inflation_update_count;
   result.map_update_us = source.rog_total_update_us;
   result.raycast_us = source.rog_raycast_us;
@@ -174,53 +173,6 @@ constexpr std::size_t kWorldChangeHistoryRetention = 256U;
 constexpr std::size_t kMaximumSnapshotPatchDepth = 8U;
 constexpr double kMaximumPatchToFullOwnedByteRatio = 0.40;
 
-[[nodiscard]] bool includeTraversedSegmentRegion(
-    navigation_world_model::AxisAlignedBox& region,
-    const TraversedFreeSegment& segment,
-    const double query_tolerance_m) noexcept {
-  if (!segment.start.allFinite() || !segment.end.allFinite() ||
-      !std::isfinite(segment.support_radius_m) || segment.support_radius_m < 0.0 ||
-      !std::isfinite(query_tolerance_m) || query_tolerance_m < 0.0) {
-    return false;
-  }
-  const double expansion = segment.support_radius_m + query_tolerance_m;
-  const auto minimum = segment.start.cwiseMin(segment.end).array() - expansion;
-  const auto maximum = segment.start.cwiseMax(segment.end).array() + expansion;
-  if (!minimum.allFinite() || !maximum.allFinite()) return false;
-  if (!region.valid()) {
-    region.minimum = minimum.matrix();
-    region.maximum = maximum.matrix();
-  } else {
-    region.minimum = region.minimum.cwiseMin(minimum.matrix());
-    region.maximum = region.maximum.cwiseMax(maximum.matrix());
-  }
-  return region.valid();
-}
-
-[[nodiscard]] std::optional<navigation_world_model::AxisAlignedBox>
-traversedAffectedRegion(const TraversedFreeSpacePtr& previous,
-                        const TraversedFreeSpacePtr& next,
-                        const double inflated_resolution_m) noexcept {
-  if (!std::isfinite(inflated_resolution_m) || inflated_resolution_m <= 0.0) {
-    return std::nullopt;
-  }
-  navigation_world_model::AxisAlignedBox region;
-  const double query_tolerance_m = 0.5 * inflated_resolution_m;
-  const auto include = [&](const TraversedFreeSpacePtr& overlay) {
-    if (!overlay) return true;
-    for (const auto& segment : overlay->segments()) {
-      if (!includeTraversedSegmentRegion(region, segment, query_tolerance_m)) {
-        return false;
-      }
-    }
-    return true;
-  };
-  if (!include(previous) || !include(next)) return std::nullopt;
-  return region.valid()
-      ? std::optional<navigation_world_model::AxisAlignedBox>{region}
-      : std::nullopt;
-}
-
 }  // namespace
 
 class MappingActor::Impl final {
@@ -246,9 +198,7 @@ class MappingActor::Impl final {
   [[nodiscard]] MappingConfiguration configuration() const noexcept {
     const auto& config = map_->getMapConfig();
     return {config.ros_callback_en, config.batch_update_size,
-            config.raycasting_en, config.virtual_ground_ceiling_en,
-            config.traversed_free_max_age_s,
-            config.traversed_free_support_radius_m};
+            config.raycasting_en, config.virtual_ground_ceiling_en};
   }
 
   [[nodiscard]] MappingSnapshotPublication initialSnapshot() {
@@ -290,8 +240,6 @@ class MappingActor::Impl final {
         Eigen::Quaterniond{normalized_q.w(), normalized_q.x(), normalized_q.y(),
                            normalized_q.z()}};
 
-    const auto previous_traversed_free_space = traversed_free_space_;
-    const auto previous_localization_epoch = localization_epoch_;
     try {
       MappingUpdateResult result;
       if (observation.localization_epoch > localization_epoch_) {
@@ -316,9 +264,6 @@ class MappingActor::Impl final {
         current_snapshot_.reset();
         pending_changed_region_ = {};
         pending_change_covers_world_ = false;
-        traversed_free_space_.reset();
-        last_traversed_pose_.reset();
-        last_traversed_stamp_ns_ = 0;
       }
 
       if (world_revision_ == std::numeric_limits<std::uint64_t>::max()) {
@@ -347,42 +292,9 @@ class MappingActor::Impl final {
             std::string(worldUpdateOutcomeName(result.outcome)));
       }
 
-      const auto next_traversed = updateTraversedFreeSpace(
-          observation, navigation_world_model::Point3{pose.position.x, pose.position.y,
-                                                       pose.position.z});
-      traversed_free_space_ = next_traversed;
-      const auto& map_config = map_->getMapConfig();
-      const bool epoch_reset = observation.localization_epoch !=
-          previous_localization_epoch;
-      const auto traversed_region = traversedAffectedRegion(
-          previous_traversed_free_space, next_traversed,
-          map_config.inflation_resolution);
-      if (epoch_reset ||
-          ((previous_traversed_free_space || next_traversed) &&
-           !traversed_region.has_value())) {
-        result.diagnostics.changed_region_covers_world = true;
-      } else if (traversed_region.has_value()) {
-        if (!result.diagnostics.changed_region_min.allFinite() ||
-            !result.diagnostics.changed_region_max.allFinite()) {
-          result.diagnostics.changed_region_covers_world = true;
-        } else {
-          result.diagnostics.changed_region_min =
-              result.diagnostics.changed_region_min.cwiseMin(
-                  traversed_region->minimum);
-          result.diagnostics.changed_region_max =
-              result.diagnostics.changed_region_max.cwiseMax(
-                  traversed_region->maximum);
-        }
-      }
       result.diagnostics.base_pose_world =
           navigation_world_model::Point3{pose.position.x, pose.position.y, pose.position.z};
       result.diagnostics.sensor_origin_world = sensor_origin;
-      result.diagnostics.traversed_segment_count = next_traversed
-          ? next_traversed->segments().size() : 0U;
-      result.diagnostics.traversed_latest_stamp_ns = observation.stamp_ns;
-      result.diagnostics.traversed_latest_age_s = 0.0;
-      result.diagnostics.traversed_chain_reset_reason =
-          static_cast<std::uint8_t>(traversed_reset_reason_);
 
       const auto export_started = std::chrono::steady_clock::now();
       ++world_revision_;
@@ -392,6 +304,7 @@ class MappingActor::Impl final {
       change.identity = identity;
       change.affects_whole_world = result.diagnostics.changed_region_covers_world;
       if (!change.affects_whole_world) {
+        const auto& map_config = map_->getMapConfig();
         const double inflation_radius = map_config.inflation_resolution * static_cast<double>(
             std::max(map_config.inflation_step, map_config.unk_inflation_step));
         // The backend reports metric endpoints, while map updates are made at
@@ -504,8 +417,7 @@ class MappingActor::Impl final {
         result.snapshot_export_inflated_cells = patch_export.inflated.occupied.size();
         if (!patch_export.base_state.empty() && !patch_export.inflated.occupied.empty()) {
           snapshot = std::make_shared<MappingWorldSnapshot>(
-              current_snapshot_, toProductPatch(patch_export), identity, change_history_,
-              traversed_free_space_);
+              current_snapshot_, toProductPatch(patch_export), identity, change_history_);
           result.snapshot_export_mode = SnapshotExportMode::kPatch;
         } else {
           result.snapshot_full_export_reason = SnapshotFullExportReason::kEmptyPatch;
@@ -529,8 +441,7 @@ class MappingActor::Impl final {
           nearest_offsets_ = toProductNearestOffsets(exported.nearest_offsets);
         }
         snapshot = std::make_shared<MappingWorldSnapshot>(
-            toProductGrid(std::move(exported), nearest_offsets_), identity, change_history_,
-            traversed_free_space_);
+            toProductGrid(std::move(exported), nearest_offsets_), identity, change_history_);
         result.snapshot_export_mode = SnapshotExportMode::kFull;
       }
       result.snapshot = snapshot;
@@ -629,64 +540,6 @@ class MappingActor::Impl final {
     }
   }
 
-  [[nodiscard]] TraversedFreeSpacePtr updateTraversedFreeSpace(
-      const MappingObservation& observation,
-      const navigation_world_model::Point3& base_pose) {
-    const auto& config = map_->getMapConfig();
-    std::vector<TraversedFreeSegment> segments = traversed_free_space_
-        ? traversed_free_space_->segments() : std::vector<TraversedFreeSegment>{};
-    // Keep bounded stale segment metadata for typed handover diagnostics.  It
-    // is never returned as traversed-free evidence: TraversedFreeSpace::contains
-    // applies max_age_s at query time.  The bounded ring below prevents this
-    // diagnostic history from becoming an unbounded map or free-space source.
-    traversed_reset_reason_ = TraversedChainResetReason::kNone;
-    bool append_sweep = false;
-    if (!last_traversed_pose_) {
-      traversed_reset_reason_ = TraversedChainResetReason::kFirstPose;
-    } else if (observation.localization_epoch != last_traversed_epoch_) {
-      segments.clear();
-      traversed_reset_reason_ = TraversedChainResetReason::kEpochChanged;
-    } else {
-      const auto delta_ns = observation.stamp_ns - last_traversed_stamp_ns_;
-      const double dt_s = static_cast<double>(delta_ns) * 1.0e-9;
-      const double distance_m = (base_pose - *last_traversed_pose_).norm();
-      const bool monotonic = delta_ns > 0;
-      const bool gap_valid = std::isfinite(dt_s) && dt_s <= config.traversed_free_max_pose_gap_s;
-      const bool plausible = std::isfinite(distance_m) &&
-          distance_m <= config.traversed_free_max_speed_mps * std::max(0.0, dt_s) +
-              1.0e-6;
-      if (monotonic && gap_valid && plausible) {
-        append_sweep = true;
-      } else if (!monotonic) {
-        traversed_reset_reason_ = TraversedChainResetReason::kTimestampRegression;
-      } else if (!gap_valid) {
-        traversed_reset_reason_ = TraversedChainResetReason::kSourceGap;
-      } else {
-        traversed_reset_reason_ = TraversedChainResetReason::kImplausibleMotion;
-      }
-    }
-    if (append_sweep) {
-      segments.push_back(TraversedFreeSegment{
-          *last_traversed_pose_, base_pose, observation.localization_epoch,
-          last_traversed_stamp_ns_, observation.stamp_ns,
-          config.traversed_free_support_radius_m});
-    }
-    segments.push_back(TraversedFreeSegment{
-        base_pose, base_pose, observation.localization_epoch,
-        observation.stamp_ns, observation.stamp_ns,
-        config.traversed_free_support_radius_m});
-    constexpr std::size_t kMaximumSegments = 512U;
-    if (segments.size() > kMaximumSegments) {
-      segments.erase(segments.begin(), segments.begin() +
-          static_cast<std::ptrdiff_t>(segments.size() - kMaximumSegments));
-    }
-    last_traversed_pose_ = base_pose;
-    last_traversed_epoch_ = observation.localization_epoch;
-    last_traversed_stamp_ns_ = observation.stamp_ns;
-    return std::make_shared<const TraversedFreeSpace>(
-        std::move(segments), config.traversed_free_max_age_s);
-  }
-
   std::string config_path_;
   std::function<double()> wall_clock_seconds_;
   std::unique_ptr<internal::RuntimeMappingMap> map_;
@@ -703,11 +556,6 @@ class MappingActor::Impl final {
   std::int64_t last_observation_stamp_ns_{0};
   std::uint64_t last_scan_sequence_{0};
   bool poisoned_{false};
-  TraversedFreeSpacePtr traversed_free_space_;
-  std::optional<navigation_world_model::Point3> last_traversed_pose_;
-  std::uint64_t last_traversed_epoch_{0};
-  std::int64_t last_traversed_stamp_ns_{0};
-  TraversedChainResetReason traversed_reset_reason_{TraversedChainResetReason::kNone};
   navigation_world_model::WorldChangeHistoryPtr change_history_;
   navigation_world_model::AxisAlignedBox pending_changed_region_{};
   bool pending_change_covers_world_{false};

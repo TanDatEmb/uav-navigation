@@ -96,6 +96,7 @@ ament_export_dependencies(Eigen3 fmt navigation_mission navigation_planning navi
 ament_export_include_directories(include)
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(navigation_mapping REQUIRED)
 
   function(configure_backend_test target)
     target_link_libraries(${target}
@@ -129,6 +130,7 @@ if(BUILD_TESTING)
     ORIGIN_AT_CORNER
     PLANNER_FACADE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
   target_link_libraries(test_planner_facade ${PROJECT_NAME})
+  target_link_libraries(test_planner_facade navigation_mapping::navigation_mapping)
   configure_backend_test(test_planner_facade)
 
   ament_add_gtest(test_planner_runtime_context

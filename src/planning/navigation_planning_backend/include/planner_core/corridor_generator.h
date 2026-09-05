@@ -47,6 +47,7 @@ namespace navigation_planning_backend {
         double virtual_ground_height_ = 0.0;
         double virtual_ceiling_height_ = 0.0;
         navigation_world_model::WorldModelViewPtr map_ptr_;
+        navigation_world_model::CurrentBodySupportPtr current_body_support_;
         navigation_world_model::UnknownPolicy unknown_policy_{
             navigation_world_model::UnknownPolicy::kAllowUnknown};
         vec_E<Vec3i> line_seed_neighbor_list;
@@ -109,11 +110,16 @@ namespace navigation_planning_backend {
             refreshVerticalBounds();
         }
 
+        void setCurrentBodySupport(
+            navigation_world_model::CurrentBodySupportPtr support) {
+            current_body_support_ = std::move(support);
+        }
+
         bool SearchPolytopeOnPath(const vec_Vec3f &path, PolytopeVec &sfcs,
                                   Vec3f & shifted_start_pt,
                                   bool cut_first_poly = false,
                                   const AbsoluteDeadline* deadline = nullptr,
-                                  const std::optional<RouteBoundaryGate>&
+                                      const std::optional<RouteBoundaryGate>&
                                       route_boundary_gate = std::nullopt);
 
         void getSeedBBox(const Vec3f &p1, const Vec3f &p2,

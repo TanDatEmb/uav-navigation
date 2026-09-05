@@ -1,5 +1,6 @@
 #include "mapping_world_model_adapter.hpp"
 #include <navigation_mapping/mapping_world_snapshot.hpp>
+#include <navigation_mapping/current_body_support.hpp>
 #include <navigation_math/type_utils.hpp>
 
 #include <array>
@@ -231,6 +232,74 @@ TEST_F(MappingWorldModelTest, ClassificationAndIndexConversionMatchBackend) {
   EXPECT_EQ(view->classify(nan_point, navigation_world_model::GridLayer::kEvidence),
             navigation_world_model::CellState::kOutOfMap);
   EXPECT_FALSE(view->contains(nan_point));
+}
+
+TEST_F(MappingWorldModelTest, CurrentBodySupportTraversesExactFacesInBothDirections) {
+  const auto support_value = navigation_mapping::makeX500Mid360CurrentBodySupport(
+      Eigen::Vector3d{0.0, 0.0, 1.5}, Eigen::Quaterniond::Identity(),
+      snapshot->identity(), "lio_odom", "base_link", 1U,
+      snapshot->identity().observation_stamp_ns);
+  ASSERT_TRUE(support_value.valid);
+  const auto support = std::make_shared<const navigation_world_model::CurrentBodySupport>(
+      support_value);
+  constexpr auto layer = navigation_world_model::GridLayer::kEvidence;
+  constexpr auto policy = navigation_world_model::UnknownPolicy::kRequireKnownFree;
+
+  // The export is initially UNKNOWN, so only the measured OBB may discharge
+  // this short prefix.  The two calls start on the same x=0 voxel face and
+  // travel in opposite directions.
+  EXPECT_TRUE(snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{0.0, 0.0, 1.5}, Eigen::Vector3d{0.1, 0.0, 1.5},
+      layer, policy, support));
+  EXPECT_TRUE(snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{0.0, 0.0, 1.5}, Eigen::Vector3d{-0.1, 0.0, 1.5},
+      layer, policy, support));
+
+  // A sub-meter chord remains inside the connected main OBB, while a
+  // multivoxel chord leaves it and must fail closed.
+  EXPECT_TRUE(snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{-0.15, 0.0, 1.5}, Eigen::Vector3d{0.15, 0.0, 1.5},
+      layer, policy, support));
+  EXPECT_FALSE(snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{-0.15, 0.0, 1.5}, Eigen::Vector3d{0.45, 0.0, 1.5},
+      layer, policy, support));
+  EXPECT_TRUE(snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{0.0, 0.0, 1.5}, Eigen::Vector3d{-0.1, -0.1, 1.5},
+      layer, policy, support));
+  EXPECT_TRUE(snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{0.0, 0.0, 1.5}, Eigen::Vector3d{0.1, 0.1, 1.5},
+      layer, policy, support));
+}
+
+TEST_F(MappingWorldModelTest, SensorFreeCellInsideBodyDoesNotConsumeWitness) {
+  auto grid = productGrid(map->exportPlanningGrid());
+  const auto offset = [&grid](const navigation_world_model::GridIndex3& index) {
+    const auto local = index - grid.base_layout.global_min_index;
+    const auto y = static_cast<std::size_t>(local.y());
+    const auto z = static_cast<std::size_t>(local.z());
+    return (static_cast<std::size_t>(local.x()) *
+            static_cast<std::size_t>(grid.base_layout.dimensions.y()) + y) *
+            static_cast<std::size_t>(grid.base_layout.dimensions.z()) + z;
+  };
+  // The voxel sequence along this chord is KNOWN_FREE -> UNKNOWN -> UNKNOWN.
+  // Enlarge only this local witness to keep all three centers inside the
+  // test OBB; the production factory remains the measured X500 box.
+  grid.base_state[offset(navigation_world_model::GridIndex3{-1, 0, 7})] =
+      static_cast<std::uint8_t>(navigation_world_model::CellState::kKnownFree);
+  const auto identity = snapshot->identity();
+  auto mixed_snapshot = std::make_shared<navigation_mapping::MappingWorldSnapshot>(
+      std::move(grid), identity);
+  auto support_value = navigation_mapping::makeX500Mid360CurrentBodySupport(
+      Eigen::Vector3d{0.0, 0.0, 1.5}, Eigen::Quaterniond::Identity(),
+      identity, "lio_odom", "base_link", 1U, identity.observation_stamp_ns);
+  support_value.body_box.half_extent.x() = 0.45;
+  ASSERT_TRUE(support_value.valid);
+  const auto support = std::make_shared<const navigation_world_model::CurrentBodySupport>(
+      support_value);
+  EXPECT_TRUE(mixed_snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{-0.15, 0.0, 1.5}, Eigen::Vector3d{0.35, 0.0, 1.5},
+      navigation_world_model::GridLayer::kEvidence,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, support));
 }
 
 TEST(MappingWorldSnapshot, IndexConversionRejectsNonRepresentableProduct) {
@@ -470,9 +539,9 @@ TEST_F(MappingWorldModelTest, InflatedSegmentRejectsObservedTubeBelowRobotRadius
 
   navigation_mapping::MappingWorldSnapshot obstacle_snapshot(
       std::move(grid), navigation_world_model::WorldSnapshotIdentity{1, 1, 2, 123});
-  // Keep the point strictly inside the 0.8 m robot-radius tube.  The former
-  // four-cell offset landed exactly on the radius and contradicted the shared
-  // 1 cm continuous-clearance tolerance used by the live planner contract.
+  // Keep the line strictly inside the configured continuous inflated tube.
+  // The former four-cell offset landed exactly on its boundary and
+  // contradicted the shared 1 cm continuous-clearance tolerance.
   const navigation_world_model::GridIndex3 start_index =
       (obstacle_index + navigation_world_model::GridIndex3{-4, -3, 0}).eval();
   const navigation_world_model::GridIndex3 end_index =

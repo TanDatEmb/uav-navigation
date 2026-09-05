@@ -160,18 +160,26 @@ geometry_utils::Polytope acceptanceBallInnerCell(
             solve_stage_.store(0);
             return false;
         }
-        const auto first_evidence = map_ptr_->classifyFreeSpace(
+        const auto first_state = map_ptr_->classify(
             corridor_path[first_id], navigation_world_model::GridLayer::kInflated);
-        if (!navigation_world_model::isCellTraversable(
-                map_ptr_->classify(corridor_path[first_id],
-                                   navigation_world_model::GridLayer::kInflated),
-                unknown_policy_) &&
-            first_evidence != navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
+        const bool first_point_body_supported =
+            first_id == 0U && first_state == navigation_world_model::CellState::kUnknown &&
+            current_body_support_ &&
+            current_body_support_->contains(
+                corridor_path[first_id].cast<double>(), map_ptr_->identity(),
+                current_body_support_->source_stamp_ns);
+        if (!navigation_world_model::isCellTraversable(first_state, unknown_policy_) &&
+            !first_point_body_supported) {
             planner_context_->warn(
                 " -- [planner] Corridor path starts in a non-traversable cell");
             solve_stage_.store(0);
             return false;
         }
+
+        // A measured body witness is an ordered prefix contract. Keep it
+        // active only while the path remains in an UNKNOWN body cell; once a
+        // known-free cell is reached, every later edge is sensor-only.
+        bool body_prefix_active = first_point_body_supported;
 
         if(first_id!=0){
             shifted_start_pt = corridor_path[first_id];
@@ -216,10 +224,16 @@ geometry_utils::Polytope acceptanceBallInnerCell(
                 // over the base-grid spherical neighbour list is redundant
                 // and can stall for seconds around an obstacle boundary.
                 const bool line_free = seed_length <= seed_line_max_length_ &&
-                    map_ptr_->isSegmentTraversableWithTraversedFree(
-                        corridor_path[first_id], corridor_path[j],
-                        navigation_world_model::GridLayer::kInflated,
-                        unknown_policy_);
+                    (body_prefix_active && current_body_support_
+                         ? map_ptr_->isSegmentTraversableWithCurrentBodySupport(
+                             corridor_path[first_id].cast<double>(),
+                             corridor_path[j].cast<double>(),
+                             navigation_world_model::GridLayer::kInflated,
+                             unknown_policy_, current_body_support_)
+                         : map_ptr_->isSegmentTraversable(
+                             corridor_path[first_id], corridor_path[j],
+                             navigation_world_model::GridLayer::kInflated,
+                             unknown_policy_));
                 if (!line_free) {
                     reach_segment = true;
                 }
@@ -317,6 +331,17 @@ geometry_utils::Polytope acceptanceBallInnerCell(
             }
 
             sfcs.push_back(temp_poly);
+            if (body_prefix_active && current_body_support_ &&
+                second_id < corridor_path.size()) {
+                const auto endpoint = corridor_path[second_id].cast<double>();
+                body_prefix_active =
+                    map_ptr_->classify(
+                        endpoint, navigation_world_model::GridLayer::kInflated) ==
+                        navigation_world_model::CellState::kUnknown &&
+                    current_body_support_->contains(
+                        endpoint, map_ptr_->identity(),
+                        current_body_support_->source_stamp_ns);
+            }
             if (reached_route_boundary) {
                 Polytope boundary_poly;
                 if (!GeneratePolytopeFromPoint(

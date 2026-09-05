@@ -4,6 +4,7 @@
 #include "navigation_runtime/commit_trace.hpp"
 
 #include <navigation_mapping/mapping_actor.hpp>
+#include <navigation_mapping/current_body_support.hpp>
 
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/planning_supervisor.hpp"
@@ -1338,21 +1339,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("mapping_free_space_skipped_count",
                   map.free_space_skipped_count);
         add_value("mapping_allocated_voxel_count", map.allocated_voxel_count);
-        add_value("mapping_body_neighborhood_cells_cleared",
-                  map.body_neighborhood_cells_cleared);
-        add_value("mapping_traversed_segment_count", map.traversed_segment_count);
         add_value("mapping_discarded_missing_sensor_origin",
                   mapping.discarded_missing_sensor_origin);
         add_value("mapping_discarded_sensor_origin_contract",
                   mapping.discarded_sensor_origin_contract);
-        add_signed_value("mapping_traversed_latest_stamp_ns",
-                         map.traversed_latest_stamp_ns);
-        add_value("mapping_traversed_chain_reset_reason",
-                  map.traversed_chain_reset_reason);
-        add_value("mapping_traversed_latest_age_ms",
-                  std::isfinite(map.traversed_latest_age_s)
-                      ? static_cast<std::uint64_t>(std::max(0.0,
-                          map.traversed_latest_age_s) * 1000.0) : 0U);
         add_signed_value("mapping_sensor_origin_x_mm",
                          std::isfinite(map.sensor_origin_world.x())
                              ? static_cast<std::int64_t>(std::llround(
@@ -3012,14 +3002,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_value("mapping_free_space_skipped_count",
             map_diagnostics.free_space_skipped_count);
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
-  add_value("mapping_body_neighborhood_cells_cleared",
-            map_diagnostics.body_neighborhood_cells_cleared);
-  add_value("mapping_traversed_segment_count",
-            map_diagnostics.traversed_segment_count);
-  add_signed_value("mapping_traversed_latest_stamp_ns",
-                   map_diagnostics.traversed_latest_stamp_ns);
-  add_value("mapping_traversed_chain_reset_reason",
-            map_diagnostics.traversed_chain_reset_reason);
   add_value("localization_epoch",
             active_localization_epoch_.load(std::memory_order_acquire));
   add_value("localization_epoch_ready",
@@ -3996,6 +3978,21 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planning_request.goal.waypoint_index = goal->waypoint_index;
   planning_request.goal.request_id = goal->request_id;
   planning_request.start_state = execution_state;
+  if (planning_request.key.start_mode ==
+      navigation_planning::PlanningStartMode::kStoppedMeasuredState) {
+    const auto support = navigation_mapping::makeX500Mid360CurrentBodySupport(
+        execution_state.position_world, execution_state.orientation_world_body,
+        pinned_world.identity, execution_state.world_frame_id.c_str(),
+        execution_state.body_frame_id.c_str(), execution_state.localization_epoch,
+        execution_state.source_stamp_ns);
+    if (support.valid && support.matchesMeasuredState(
+            execution_state.position_world, execution_state.orientation_world_body,
+            execution_state.localization_epoch, execution_state.source_stamp_ns,
+            execution_state.world_frame_id, execution_state.body_frame_id)) {
+      planning_request.current_body_support =
+          std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
+    }
+  }
   planning_request.history.previous_bundle_generation =
       transition_bundle ? transition_bundle->bundle_generation : 0U;
   // PlanningHistory describes a prior executable bundle, not the measured

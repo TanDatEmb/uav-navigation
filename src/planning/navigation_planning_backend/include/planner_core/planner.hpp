@@ -62,6 +62,13 @@ namespace navigation_planning_backend {
         LogOneReplan latest_replan;
         navigation_planning_backend::Config cfg_;
         navigation_world_model::WorldModelViewPtr map_ptr_;
+        navigation_world_model::CurrentBodySupportPtr current_body_support_;
+        bool current_body_support_matches_start_{false};
+        // Set for the first candidate admission of a stopped measured
+        // request and consumed after a command is committed. Later
+        // recertification is sensor-only, even if the witness is retained for
+        // diagnostics.
+        bool current_body_support_admission_pending_{false};
         navigation_world_model::WorldCommitAuthorizer* commit_authorizer_{nullptr};
         CorridorGenerator::Ptr cg_ptr_;
         path_search::Astar::Ptr astar_ptr_;
@@ -558,6 +565,12 @@ namespace navigation_planning_backend {
                    const bool &new_goal);
 
     private:
+        // Internal request admission only. Current-body geometry is never a
+        // public mutable planner setting.
+        void setCurrentBodySupport(
+            navigation_world_model::CurrentBodySupportPtr support,
+            const Eigen::Quaterniond& measured_orientation =
+                Eigen::Quaterniond::Identity());
         RET_CODE generateExpTraj(ExpTraj &last_exp_traj_info,
                                  ExpTraj &out_exp_traj_info,
                                  const AbsoluteDeadline &solve_deadline,

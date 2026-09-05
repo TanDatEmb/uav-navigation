@@ -34,13 +34,18 @@ previous staged successor and its activation boundary.
 
 ## COMPONENT — mapping and route contracts
 
-The current mapping implementation keeps bounded `TraversedFreeSpace`, explicit
-sensor origin and OCCUPIED/inflated precedence. `CurrentBodySupport` is absent
-at this HEAD. The historical simplification proposal may replace history only
-after a typed current-body contract proves: current-body UNKNOWN handling,
-outside-body UNKNOWN rejection, OCCUPIED contradiction, no ROG mutation,
-normal BACKUP evidence, arbitrary moving entry, and complete MAIN+BACKUP
-admission. Until then, mapping history remains the current authority.
+The current mapping implementation is sensor-only: it keeps explicit sensor
+origin and OCCUPIED/inflated precedence, while immutable snapshots contain no
+`TraversedFreeSpace` history or configuration. A stopped measured planning
+request may carry one request-local `CurrentBodySupport` witness built from the
+selected full pose quaternion, source timestamp/epoch/frames, and the pinned
+X500/MID360 collision primitives. The witness can discharge UNKNOWN only in a
+continuous prefix inside that measured rigid-body union; it cannot discharge
+OCCUPIED, OUT_OF_MAP, UNDEFINED or Frontier, cannot re-enter after sensor-free
+space, and is never used for successor or BACKUP validation. Complete
+MAIN+BACKUP admission remains subject to the existing candidate and swept
+certificates. No SITL or flight acceptance claim follows from this component
+cutover.
 
 PASS progress must remain measured and route ordered. Planner corner handling
 already computes a speed cap from acceptance radius and acceleration, preserves
