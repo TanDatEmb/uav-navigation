@@ -18977,3 +18977,34 @@ release profiles must not use the former allowance.
 - **Residual:** The generic `cancelActive()` operation is not yet bound to an
   execution identity. Existing stale-result guards preserve fail-closed
   behavior; identity-binding is a separate follow-up review.
+
+### 2026-09-05 - Use one execution timeline snapshot for pending checks
+
+- **Owner/status:** Navigation execution/runtime; CODE implemented and focused
+  tests/build passed. No
+  gate, dynamics, behavior, component, SITL, or flight-acceptance claim.
+- **Scope:** Replace the two runtime `hasPending()` plus active-bundle read
+  pairs with one `ExecutionTimelineStore::snapshot()` result, and migrate the
+  focused store assertions to the same snapshot API. Remove the redundant
+  pending-only accessor after confirming there are no remaining callers.
+- **Safety impact:** The pending decision and active pointer used by each
+  caller now come from one store-mutex-consistent timeline observation. This
+  removes an inconsistent-read window without changing thresholds, ownership,
+  activation rules, or branch policy.
+- **Evidence:** Source review found exactly two production callers (runtime
+  planning-key capture and post-commit activation decision) plus the focused
+  store tests. The source/test search has no remaining `hasPending()` call.
+  `test_committed_bundle_store` passed 39/39; `test_planner_fsm` passed 56/56;
+  `navigation_runtime_core` and `navigation_runtime_node` built successfully.
+  No component, SITL, or flight-acceptance evidence is claimed.
+- **Removal condition:** Revisit only if a future API needs an atomic timeline
+  observation with additional fields; do not restore an independent pending
+  accessor for paired state decisions.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_execution --target
+  test_committed_bundle_store -j2 &&
+  cmake --build build/navigation_runtime --target navigation_runtime_core
+  navigation_runtime_node test_planner_fsm -j2`; then run
+  `./build/navigation_execution/test_committed_bundle_store --gtest_color=no`
+  and `./build/navigation_runtime/test_planner_fsm --gtest_color=no` with the
+  same setup; `git diff --check`.

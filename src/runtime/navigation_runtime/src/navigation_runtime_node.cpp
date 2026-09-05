@@ -2685,8 +2685,9 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
     goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
     localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
     command_goal_epoch = command_goal_epoch_.load(std::memory_order_acquire);
-    bundle = command_bundle_store_.load();
-    pending_bundle = command_bundle_store_.hasPending();
+    const auto timeline = command_bundle_store_.snapshot();
+    bundle = timeline.active;
+    pending_bundle = static_cast<bool>(timeline.pending);
   }
   const auto execution = execution_state_store_.load();
   const auto world = world_snapshot_store_.load();
@@ -4953,9 +4954,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
         return;
       }
-      successor_staged = command_bundle_store_.hasPending();
+      const auto timeline = command_bundle_store_.snapshot();
+      successor_staged = static_cast<bool>(timeline.pending);
       if (!successor_staged) {
-        const auto committed_bundle = command_bundle_store_.load();
+        const auto committed_bundle = timeline.active;
         if (!committed_bundle || !desiredGoalIdentityMatchesLocked(
                 *goal, goal_epoch, localization_epoch_at_solve,
                 committed_bundle->bundle_generation)) {

@@ -255,7 +255,7 @@ TEST(ExecutionTimelineStore, RejectsSuccessorWhenPredecessorAdvanced) {
   EXPECT_EQ(store.stagePending({world, 7, 3}, *anchor, successorFor(*anchor, 7)),
             navigation_execution::StageDecision::kPredecessorAdvanced);
   EXPECT_EQ(store.load(), replacement);
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
 TEST(ExecutionTimelineStore, RejectsFinalizedSuccessorWhenPredecessorAdvanced) {
@@ -287,7 +287,7 @@ TEST(ExecutionTimelineStore, RejectsFinalizedSuccessorWhenPredecessorAdvanced) {
             navigation_execution::StageDecision::kPredecessorAdvanced);
   EXPECT_FALSE(finalized);
   EXPECT_EQ(store.load(), replacement);
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
 TEST(ExecutionTimelineStore, FailedPendingFinalizationRestoresPriorPending) {
@@ -374,7 +374,7 @@ TEST(ExecutionTimelineStore, RecertifiedPredecessorKeepsSuccessorActivationValid
                 old_timeline.pending, true),
             navigation_world_model::WorldCommitDecision::kCommitted);
   EXPECT_NE(store.load(), active);
-  EXPECT_TRUE(store.hasPending());
+  EXPECT_TRUE(static_cast<bool>(store.snapshot().pending));
   const auto activation = store.snapshot();
   EXPECT_TRUE(store.activatePendingIfDueAndFinalize(
       50, activation, [](std::uint64_t) { return true; }));
@@ -403,11 +403,11 @@ TEST(ExecutionTimelineStore, RejectsActivationWhenActiveWasInvalidatedButPending
                 old_timeline.pending, true),
             navigation_world_model::WorldCommitDecision::kCommitted);
   EXPECT_FALSE(store.load());
-  EXPECT_TRUE(store.hasPending());
+  EXPECT_TRUE(static_cast<bool>(store.snapshot().pending));
   const auto activation = store.snapshot();
   EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
       50, activation, [](std::uint64_t) { return true; }));
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
 TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
@@ -537,7 +537,7 @@ TEST(ExecutionTimelineStore, StagesSuccessorUntilFutureAnchorActivation) {
   const auto activated = sampler.sample(50, 7);
   ASSERT_TRUE(activated);
   EXPECT_EQ(activated.bundle, successor_ptr);
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
 TEST(ExecutionTimelineStore, RenewsSuccessorsWithoutAnExecutionPointerGap) {
@@ -581,12 +581,12 @@ TEST(ExecutionTimelineStore, RenewsSuccessorsWithoutAnExecutionPointerGap) {
   ASSERT_EQ(store.stagePending({world, 7, 3}, *second_anchor, second_successor_ptr),
             navigation_execution::StageDecision::kStaged);
   EXPECT_EQ(store.load(), first_successor_ptr);
-  EXPECT_TRUE(store.hasPending());
+  EXPECT_TRUE(static_cast<bool>(store.snapshot().pending));
   const auto second_activation = store.snapshot();
   ASSERT_TRUE(store.activatePendingIfDueAndFinalize(
       70, second_activation, [](std::uint64_t) { return true; }));
   EXPECT_EQ(store.load(), second_successor_ptr);
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 
   const auto sampled = sampler.sample(70, 7);
   ASSERT_TRUE(sampled);
@@ -616,7 +616,7 @@ TEST(ExecutionTimelineStore, WorldAdvanceInvalidatesPendingSuccessor) {
 
   const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
   ASSERT_TRUE(publishWorldIdentityForTest(store, next_world));
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
   EXPECT_FALSE(store.load());
 }
 
@@ -680,7 +680,7 @@ TEST(ExecutionTimelineStore, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
   }));
   EXPECT_EQ(finalized_generation, successor_ptr->bundle_generation);
   EXPECT_EQ(store.load(), successor_ptr);
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
 TEST(ExecutionTimelineStore,
@@ -760,7 +760,7 @@ TEST(ExecutionTimelineStore, ActivationFinalizerFailureKeepsOldAndDropsPending) 
   EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
       50, activation, [](std::uint64_t) { return false; }));
   EXPECT_EQ(store.load(), active);
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
 TEST(ExecutionTimelineStore, MissedActivationKeepsActiveCommandAndDropsSuccessor) {
@@ -793,7 +793,7 @@ TEST(ExecutionTimelineStore, MissedActivationKeepsActiveCommandAndDropsSuccessor
   ASSERT_TRUE(missed);
   EXPECT_EQ(missed.bundle, active);
   EXPECT_EQ(store.load(), active);
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
 TEST(ExecutionTimelineStore, FinalizerFailureRestoresPendingTransactionWatermark) {
@@ -816,7 +816,7 @@ TEST(ExecutionTimelineStore, FinalizerFailureRestoresPendingTransactionWatermark
   EXPECT_EQ(store.stagePendingAndFinalize(
                 {world, 7, 2}, *anchor, successor_ptr, [] { return false; }),
             navigation_execution::StageDecision::kFinalizationFailed);
-  EXPECT_FALSE(store.hasPending());
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 
   auto retry = std::make_shared<const navigation_planning::CandidateBundle>(successor);
   EXPECT_EQ(store.stagePending({world, 7, 2}, *anchor, retry),

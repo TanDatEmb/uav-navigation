@@ -173,11 +173,6 @@ class ExecutionTimelineStore final {
             pending_activation_ns_};
   }
 
-  [[nodiscard]] bool hasPending() const noexcept {
-    std::lock_guard lock(mutex_);
-    return static_cast<bool>(pending_);
-  }
-
   // Sample the execution-owned active command at a future splice point. The
   // old command must remain valid through the point; otherwise the planner
   // receives no anchor and the runtime fails closed.
