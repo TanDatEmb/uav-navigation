@@ -1373,20 +1373,19 @@ double knownFreeGuideSupport(
         }
 
         // A map revision can make a previously exploratory trajectory unsafe
-        // immediately after this solve. If backup visibility says the new EXP
-        // is entirely known-free, blindly committing it as a main-only bundle
-        // would erase the older bundle's braking suffix at exactly the
-        // boundary where it is needed. Retain that suffix until the runtime
-        // validates the old bundle and/or a later solve produces another
-        // atomic backup bundle. A new goal is excluded because the old suffix
-        // belongs to a different command boundary; an active backup is kept
-        // until its finite stop endpoint.
+        // immediately after this solve. A NO_NEED result carries the
+        // historical EXP snapshot rather than a new executable command, so
+        // retain the older braking suffix at exactly the boundary where it is
+        // needed. FINISH is different: generateBackupTrajectory has already
+        // proved the new EXP is a terminal-rest command, and its EXP-only
+        // candidate must pass the same authorization gates before replacing
+        // the old bundle.
         const double command_time_now = planner_context_->getSimTime() -
                 planner_warm_start_.getStartWallTime();
         const bool retain_backup_capable_command =
                 shouldRetainBackupCapableCommand(
                     new_goal, planner_warm_start_.backupTrajectoryAvailable());
-        if ((back_ret_code == NO_NEED || back_ret_code == FINISH) &&
+        if (back_ret_code == NO_NEED &&
             retain_backup_capable_command) {
             latest_replan.setRetCode(PlannerResultCode::PLANNER_SUCCESS);
             planner_context_->info(

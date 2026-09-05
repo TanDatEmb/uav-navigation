@@ -21,10 +21,9 @@ inline bool backupResultMayBuildCommandCandidate(navigation_math::RET_CODE resul
          result == navigation_math::FINISH;
 }
 
-// A visible main-only replacement must not erase a still-future certified
-// safety suffix.  The existing bundle remains subject to the runtime's latest
-// world recertification; this predicate only decides whether the backend may
-// replace that bundle at all.
+// NO_NEED carries historical planner metadata rather than a new executable
+// trajectory. Keep a still-future certified suffix for the same goal; FINISH
+// is handled by constructing and authorizing its complete main-only candidate.
 inline bool shouldRetainBackupCapableCommand(
     bool new_goal, bool backup_available) noexcept {
   return !new_goal && backup_available;

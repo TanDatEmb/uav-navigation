@@ -18565,3 +18565,34 @@ release profiles must not use the former allowance.
   `source /opt/ros/jazzy/setup.bash && source install/setup.bash && ctest
   --test-dir build/navigation_execution --output-on-failure && ctest
   --test-dir build/navigation_runtime --output-on-failure`.
+
+### 2026-09-05 - Preserve NO_NEED backup retention while authorizing FINISH replacement
+
+- **Owner/status:** Navigation planning backend owner; implemented and verified
+  by the focused backend build and CTest (8/8); no SITL or flight acceptance
+  claim.
+- **Scope:** In successor replanning, retain the existing command only when
+  `generateBackupTrajectory()` returns `NO_NEED` for the same goal and a
+  certified BACKUP suffix exists. A `FINISH` result now proceeds through the
+  existing EXP-only candidate construction, world/identity/route/dynamic
+  authorization and staged history path. The active-BACKUP command-end guard,
+  failure retention, timing budget and all existing caps remain unchanged.
+- **Safety impact:** `NO_NEED` remains historical planner metadata and cannot
+  erase a still-future braking suffix. `FINISH` may replace that suffix only if
+  its complete main-only candidate passes the existing finite/rest and
+  authorization certificates; malformed or rejected candidates leave the
+  committed command unchanged. No body-clear, unknown-space, dynamics or
+  execution gate is relaxed.
+- **Evidence:** Source comparison against SUPER pin
+  `2ad3419c127a617c6d7df6925e81a14175a9c096` distinguishes upstream
+  `NO_NEED` retention from `FINISH` EXP replacement. Existing candidate-builder
+  and terminal-rest/authorization tests cover the underlying candidate
+  contract. A direct `planSuccessorFromExecutionAnchor()` FINISH witness with
+  an old BACKUP command remains pending; no qualification claim is made.
+- **Removal condition:** Revisit only if a typed successor-command contract
+  replaces the existing `NO_NEED`/`FINISH` result ownership while preserving
+  active-BACKUP fail-closed behavior and complete candidate authorization.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select navigation_planning_backend
+  --symlink-install --cmake-args -DBUILD_TESTING=ON`; then
+  `ctest --test-dir build/navigation_planning_backend --output-on-failure`.
