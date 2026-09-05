@@ -625,12 +625,6 @@ inline SweptValidationResult validateExecutableCandidate(
         double segment_dt = next_t - t;
         double curve_deviation_bound =
             acceleration_bound * segment_dt * segment_dt / 8.0;
-        // A repeated trajectory sample is a zero-length geometric segment.
-        // Validate its exact point, without manufacturing a finite-radius
-        // tube that can exceed the physical body OBB before motion begins.
-        if ((next - previous).norm() <= 1.0e-6) {
-            curve_deviation_bound = 0.0;
-        }
         while (std::isfinite(curve_deviation_bound) &&
                curve_deviation_bound > curve_deviation_tolerance &&
                dt > 0.002 + 1.0e-12) {

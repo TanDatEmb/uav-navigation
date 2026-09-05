@@ -171,6 +171,19 @@ class CurvedCellWorld final : public SweepWorld {
   }
 };
 
+class LoopingCellWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    // The polynomial below leaves and returns to the same endpoint while
+    // passing through this occupied voxel between samples.
+    return point.x() > 0.9 && point.x() < 1.1
+        ? navigation_world_model::CellState::kOccupied
+        : navigation_world_model::CellState::kUnknown;
+  }
+};
+
 class DiagonalNeighborWorld final : public SweepWorld {
  public:
   explicit DiagonalNeighborWorld(
@@ -1853,6 +1866,28 @@ TEST(PlannerTrajectory, ContinuousTubeRejectsCurvePassingThroughOccupiedCell) {
   // The curve crosses the occupied voxel around t=0.5102 while its sampled
   // points remain 0.1 m below the voxel center. The tube certificate must
   // inspect the cell covered by the bounded curve deviation.
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, ContinuousTubeRejectsNonconstantCurveWithEqualEndpoints) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 4.0;
+  coefficients(0, 5) = -4.0;
+  coefficients(2, 7) = 0.007;
+
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  LoopingCellWorld world;
+  // Both endpoints are x=0, but x(t)=4t-4t^2 reaches x=1 at t=0.5.
+  // Endpoint equality must never suppress the polynomial swept certificate.
   EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
       world, candidate, 10.0,
       navigation_world_model::UnknownPolicy::kAllowUnknown).valid);

@@ -271,7 +271,7 @@ TEST_F(MappingWorldModelTest, CurrentBodySupportTraversesExactFacesInBothDirecti
       layer, policy, support));
 }
 
-TEST_F(MappingWorldModelTest, SensorFreeCellInsideBodyDoesNotConsumeWitness) {
+TEST_F(MappingWorldModelTest, SensorFreeCellInsideBodyConsumesWitnessMonotonically) {
   auto grid = productGrid(map->exportPlanningGrid());
   const auto offset = [&grid](const navigation_world_model::GridIndex3& index) {
     const auto local = index - grid.base_layout.global_min_index;
@@ -281,7 +281,7 @@ TEST_F(MappingWorldModelTest, SensorFreeCellInsideBodyDoesNotConsumeWitness) {
             static_cast<std::size_t>(grid.base_layout.dimensions.y()) + y) *
             static_cast<std::size_t>(grid.base_layout.dimensions.z()) + z;
   };
-  // The voxel sequence along this chord is KNOWN_FREE -> UNKNOWN -> UNKNOWN.
+  // The voxel sequence along this chord is UNKNOWN -> KNOWN_FREE -> UNKNOWN.
   // Enlarge only this local witness to keep all three centers inside the
   // test OBB; the production factory remains the measured X500 box.
   grid.base_state[offset(navigation_world_model::GridIndex3{-1, 0, 7})] =
@@ -296,7 +296,7 @@ TEST_F(MappingWorldModelTest, SensorFreeCellInsideBodyDoesNotConsumeWitness) {
   ASSERT_TRUE(support_value.valid);
   const auto support = std::make_shared<const navigation_world_model::CurrentBodySupport>(
       support_value);
-  EXPECT_TRUE(mixed_snapshot->isSegmentTraversableWithCurrentBodySupport(
+  EXPECT_FALSE(mixed_snapshot->isSegmentTraversableWithCurrentBodySupport(
       Eigen::Vector3d{-0.15, 0.0, 1.5}, Eigen::Vector3d{0.35, 0.0, 1.5},
       navigation_world_model::GridLayer::kEvidence,
       navigation_world_model::UnknownPolicy::kRequireKnownFree, support));

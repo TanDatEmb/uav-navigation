@@ -264,6 +264,28 @@ class MappingWorldSnapshot final
     if (!std::isfinite(length) || !std::isfinite(resolution) || resolution <= 0.0 ||
         !navigation_world_model::sameWorldSnapshotIdentity(
             support->snapshot_identity, identity_)) return false;
+
+    // The body witness is an ordered bootstrap prefix. Once a segment has
+    // entered sensor-known-free space, a later UNKNOWN sample cannot reclaim
+    // the witness, even when the whole chord remains inside the OBB. This
+    // check is deliberately independent of voxel traversal tie ordering.
+    if (length > 0.0) {
+      const auto sample_count = std::min<std::int64_t>(
+          4096, std::max<std::int64_t>(2,
+              static_cast<std::int64_t>(std::ceil(length / (0.25 * resolution)))));
+      bool sensor_free_seen = false;
+      for (std::int64_t sample = 0; sample <= sample_count; ++sample) {
+        const auto point = start +
+            (static_cast<double>(sample) / static_cast<double>(sample_count)) * delta;
+        const auto state = classify(point, layer);
+        if (state == navigation_world_model::CellState::kKnownFree) {
+          sensor_free_seen = true;
+        } else if (sensor_free_seen &&
+                   state == navigation_world_model::CellState::kUnknown) {
+          return false;
+        }
+      }
+    }
     const auto original_start_index = positionToIndex(start, layer);
     auto start_index = original_start_index;
     const auto end_index = positionToIndex(end, layer);

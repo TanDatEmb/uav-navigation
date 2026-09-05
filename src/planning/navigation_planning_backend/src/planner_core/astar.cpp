@@ -19,23 +19,6 @@ using namespace navigation_math;
 
 namespace path_search {
 
-bool Astar::startPrefixTraversable(
-        const Vec3f& start, const Vec3f& end,
-        const navigation_world_model::GridLayer layer,
-        const navigation_world_model::UnknownPolicy policy) const noexcept {
-    if (!map_ptr_ || !start.allFinite() || !end.allFinite()) return false;
-    if (!current_body_support_ ||
-        !current_body_support_->matchesMeasuredState(
-            start.template cast<double>(),
-            current_body_orientation_,
-            current_body_support_->localization_epoch,
-            current_body_support_->source_stamp_ns)) {
-        return map_ptr_->isSegmentTraversable(start, end, layer, policy);
-    }
-    return map_ptr_->isSegmentTraversableWithCurrentBodySupport(
-        start.template cast<double>(), end.template cast<double>(), layer, policy,
-        current_body_support_);
-}
     using namespace rog_map;
     using navigation_world_model::CellState;
     using navigation_world_model::GridLayer;
@@ -515,25 +498,16 @@ bool Astar::startPrefixTraversable(
         const auto configured_search_policy = md_.unknown_as_occ
                 ? UnknownPolicy::kRequireKnownFree
                 : UnknownPolicy::kAllowUnknown;
-        const bool measured_body_admission = current_body_support_ &&
-            current_body_support_->matchesMeasuredState(
-                local_start_pt.template cast<double>(), current_body_orientation_,
-                current_body_support_->localization_epoch,
-                current_body_support_->source_stamp_ns) &&
-            navigation_world_model::sameWorldSnapshotIdentity(
-                current_body_support_->snapshot_identity, map_ptr_->identity());
-        // Body UNKNOWN is an admission prefix only. Force the virtual graph
-        // seed itself to sensor-known-free so all subsequent graph edges are
-        // sensor-only and cannot dead-end on a body-only node.
-        const auto search_policy = measured_body_admission
-            ? UnknownPolicy::kRequireKnownFree : configured_search_policy;
+        const auto search_policy = configured_search_policy;
         rog_map::Vec3f graph_start_pt;
         globalIndexToPos(start_idx, graph_start_pt);
         const auto graph_start_state = map_ptr_->classify(
             graph_start_pt.template cast<double>(), search_layer);
         if (!(isCellTraversable(graph_start_state, search_policy) &&
-              startPrefixTraversable(
-                  local_start_pt, graph_start_pt, search_layer, search_policy))) {
+              map_ptr_->isSegmentTraversable(
+                  local_start_pt.template cast<double>(),
+                  graph_start_pt.template cast<double>(), search_layer,
+                  search_policy))) {
             struct StartCandidate {
                 rog_map::Vec3i index;
                 rog_map::Vec3f position;
@@ -568,8 +542,9 @@ bool Astar::startPrefixTraversable(
                             if (!isCellTraversable(candidate_type, search_policy)) {
                                 continue;
                             }
-                            if (!startPrefixTraversable(
-                                        local_start_pt, candidate_pos,
+                            if (!map_ptr_->isSegmentTraversable(
+                                        local_start_pt.template cast<double>(),
+                                        candidate_pos.template cast<double>(),
                                         search_layer, search_policy)) {
                                 continue;
                             }

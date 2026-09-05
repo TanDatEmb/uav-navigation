@@ -567,10 +567,6 @@ namespace navigation_planning_backend {
     private:
         // Internal request admission only. Current-body geometry is never a
         // public mutable planner setting.
-        void setCurrentBodySupport(
-            navigation_world_model::CurrentBodySupportPtr support,
-            const Eigen::Quaterniond& measured_orientation =
-                Eigen::Quaterniond::Identity());
         RET_CODE generateExpTraj(ExpTraj &last_exp_traj_info,
                                  ExpTraj &out_exp_traj_info,
                                  const AbsoluteDeadline &solve_deadline,

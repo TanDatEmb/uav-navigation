@@ -461,14 +461,6 @@ double knownFreeGuideSupport(
         astar_ptr_->setFineInfNeighbors(neighbor_step);
     }
 
-    void Planner::setCurrentBodySupport(
-        navigation_world_model::CurrentBodySupportPtr support,
-        const Eigen::Quaterniond& measured_orientation) {
-        current_body_support_ = std::move(support);
-        astar_ptr_->setCurrentBodySupport(current_body_support_, measured_orientation);
-        cg_ptr_->setCurrentBodySupport(current_body_support_);
-    }
-
     bool Planner::authorizeAndStage(CandidateCommandBundle&& candidate) {
         if (commit_authorizer_ == nullptr || !map_ptr_) {
             latest_commit_decision_.store(static_cast<int>(
@@ -1571,7 +1563,7 @@ double knownFreeGuideSupport(
             // request cannot inherit physical support from an old pose.
             current_body_support_admission_pending_ = false;
             current_body_support_matches_start_ = false;
-            setCurrentBodySupport({});
+            current_body_support_.reset();
             outcome.trace.elapsed_steady_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now() - started).count();
@@ -1584,7 +1576,7 @@ double knownFreeGuideSupport(
         const auto cleanup = [&]() {
             current_body_support_admission_pending_ = false;
             current_body_support_matches_start_ = false;
-            setCurrentBodySupport({});
+            current_body_support_.reset();
         };
         const ScopeExit cleanup_guard(cleanup);
         if (!request.valid()) return finish();
@@ -1603,11 +1595,10 @@ double knownFreeGuideSupport(
             request.route_snapshot.waypoints[request.route_snapshot.active_waypoint_index]
                 .position_enu;
         setWorldModelView(request.world);
-        setCurrentBodySupport(
+        current_body_support_ =
             request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState
                 ? request.current_body_support
-                : navigation_world_model::CurrentBodySupportPtr{},
-            request.start_state.orientation_world_body);
+                : navigation_world_model::CurrentBodySupportPtr{};
         current_body_support_matches_start_ =
             request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState &&
             current_body_support_ &&
@@ -2984,6 +2975,41 @@ double knownFreeGuideSupport(
         latest_guide_duration_s_ = guide_stamp.empty()
                 ? std::numeric_limits<double>::quiet_NaN()
                 : guide_stamp.back() - guide_stamp.front();
+
+        // A* and corridor generation start at the first sensor-known-free
+        // point. The immutable request-local body prefix is consumed only by
+        // final candidate validation, so neither stage retains a body
+        // support pointer or can re-enter UNKNOWN space.
+        if (current_body_support_admission_pending_ && current_body_support_ &&
+            !guide_path.empty()) {
+            std::size_t known_free_start = 0U;
+            while (known_free_start < guide_path.size() &&
+                   map_ptr_->classify(
+                       guide_path[known_free_start].cast<double>(),
+                       navigation_world_model::GridLayer::kInflated) !=
+                       navigation_world_model::CellState::kKnownFree) {
+                ++known_free_start;
+            }
+            if (known_free_start >= guide_path.size()) {
+                planner_context_->warn(
+                    " -- [planner] body bootstrap has no sensor-known-free cutoff");
+                return FAILED;
+            }
+            guide_path.erase(guide_path.begin(),
+                             guide_path.begin() +
+                                 static_cast<std::ptrdiff_t>(known_free_start));
+            if (guide_stamp.size() >= known_free_start) {
+                guide_stamp.erase(guide_stamp.begin(),
+                                  guide_stamp.begin() +
+                                      static_cast<std::ptrdiff_t>(known_free_start));
+            }
+            if (guide_path.size() < 2U) {
+                planner_context_->warn(
+                    " -- [planner] body bootstrap cutoff leaves no planning segment");
+                return FAILED;
+            }
+            guide_stamp.front() = 0.0;
+        }
 
         sfc.clear();
         {
