@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <atomic>
 #include <condition_variable>
 #include <cstring>
 #include <cstdlib>
@@ -10,9 +11,13 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <unistd.h>
 
+#include <navigation_contracts/msg/navigation_command.hpp>
+#include <navigation_contracts/msg/navigation_goal.hpp>
+#include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/registered_scan.hpp>
 #include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <sensor_msgs/msg/point_field.hpp>
@@ -200,6 +205,107 @@ navigation_contracts::msg::RegisteredScan makeRegisteredScan(
   return observation;
 }
 
+sensor_msgs::msg::PointCloud2 makeHandoverCloud(
+    const builtin_interfaces::msg::Time& stamp) {
+  sensor_msgs::msg::PointCloud2 cloud;
+  cloud.header.stamp = stamp;
+  cloud.header.frame_id = "lio_odom";
+  cloud.height = 1;
+  cloud.width = 0;
+  cloud.is_bigendian = false;
+  cloud.is_dense = true;
+  cloud.point_step = 3U * sizeof(float);
+  cloud.fields.resize(3);
+  for (std::size_t axis = 0; axis < cloud.fields.size(); ++axis) {
+    cloud.fields[axis].name = std::string(1, "xyz"[axis]);
+    cloud.fields[axis].offset = static_cast<std::uint32_t>(axis * sizeof(float));
+    cloud.fields[axis].datatype = sensor_msgs::msg::PointField::FLOAT32;
+    cloud.fields[axis].count = 1;
+  }
+  for (int y_index = -10; y_index <= 10; ++y_index) {
+    for (int z_index = -4; z_index <= 6; ++z_index) {
+      const float point[3]{8.0F, static_cast<float>(y_index) * 0.4F,
+                           0.3F + static_cast<float>(z_index) * 0.4F};
+      const auto offset = cloud.data.size();
+      cloud.data.resize(offset + sizeof(point));
+      std::memcpy(cloud.data.data() + offset, point, sizeof(point));
+      ++cloud.width;
+    }
+  }
+  cloud.row_step = cloud.width * cloud.point_step;
+  return cloud;
+}
+
+navigation_contracts::msg::RegisteredScan makeHandoverScan(
+    const builtin_interfaces::msg::Time& stamp, const std::uint64_t sequence) {
+  auto observation = makeRegisteredScan(stamp);
+  observation.scan_sequence = sequence;
+  observation.points = makeHandoverCloud(stamp);
+  observation.corrected_pose.pose.position.z = 0.3;
+  observation.sensor_origin_pose.position.z = 0.3;
+  return observation;
+}
+
+navigation_contracts::msg::PropagatedOdometry makeHandoverOdometry(
+    const builtin_interfaces::msg::Time& stamp, const std::uint64_t sequence,
+    const double measured_x) {
+  navigation_contracts::msg::PropagatedOdometry message;
+  message.odometry.header.stamp = stamp;
+  message.odometry.header.frame_id = "lio_odom";
+  message.odometry.child_frame_id = "base_link";
+  message.odometry.pose.pose.orientation.w = 1.0;
+  message.odometry.pose.pose.position.x = measured_x;
+  message.odometry.pose.pose.position.z = 0.3;
+  message.odometry.twist.twist.linear.x = measured_x < 2.9 ? 0.3 : 0.03;
+  message.localization_epoch = 1U;
+  message.sequence = sequence;
+  return message;
+}
+
+navigation_contracts::msg::NavigationGoal makeHandoverGoal(
+    const builtin_interfaces::msg::Time& stamp, const std::uint64_t request_id,
+    const std::uint32_t waypoint_index, const std::uint64_t route_revision,
+    const std::uint8_t behavior) {
+  navigation_contracts::msg::NavigationGoal goal;
+  goal.header.stamp = stamp;
+  goal.header.frame_id = "lio_odom";
+  goal.mission_id = "completed_handover";
+  goal.waypoint_index = waypoint_index;
+  goal.request_id = request_id;
+  goal.target.x = behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
+      ? 3.5 : 3.0;
+  goal.target.z = 0.3;
+  goal.acceptance_radius_m = behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
+      ? 0.8 : 0.2;
+  goal.behavior = behavior;
+  goal.has_next_target = waypoint_index == 1U &&
+      behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH;
+  if (goal.has_next_target) goal.next_target = goal.target;
+  auto& route = goal.route;
+  route.mission_id = goal.mission_id;
+  route.frame_id = goal.header.frame_id;
+  route.route_revision = route_revision;
+  route.request_id = request_id;
+  route.active_waypoint_index = waypoint_index;
+  geometry_msgs::msg::Point origin;
+  origin.z = 0.3;
+  route.waypoint_positions = {origin, goal.target, goal.target};
+  route.waypoint_ids = {"origin", "completed", "stop"};
+  route.waypoint_acceptance_radii_m = {0.2, goal.acceptance_radius_m, goal.acceptance_radius_m};
+  route.waypoint_behaviors = {
+      navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH,
+      behavior == navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP
+          ? navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP
+          : navigation_contracts::msg::RouteSnapshot::BEHAVIOR_PASS_THROUGH,
+      navigation_contracts::msg::RouteSnapshot::BEHAVIOR_STOP};
+  route.measured_progress_valid = true;
+  route.measured_segment_index = 0U;
+  route.measured_progress_arc_m = 0.0;
+  route.measured_projection_arc_m = 0.0;
+  route.measured_lateral_error_m = 0.0;
+  return goal;
+}
+
 TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
   const auto process_suffix = std::to_string(static_cast<long long>(::getpid()));
   const std::filesystem::path ros_log_directory =
@@ -297,6 +403,187 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
 
   driver.reset();
   // The Context destructor owns the single shutdown after node/worker teardown.
+}
+
+TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCoincidentCompletedPassThrough) {
+  const auto process_suffix = std::to_string(static_cast<long long>(::getpid()));
+  auto context = std::make_shared<rclcpp::Context>();
+  context->init(0, nullptr);
+  const std::string prefix = "/completed_handover_" + process_suffix;
+  rclcpp::NodeOptions options;
+  options.context(context);
+  options.parameter_overrides({
+      rclcpp::Parameter("navigation_runtime.registered_scan_topic", prefix + "/observation"),
+      rclcpp::Parameter("navigation_runtime.propagated_odometry_topic", prefix + "/propagated"),
+      rclcpp::Parameter("navigation_runtime.goal_topic", prefix + "/goal"),
+      rclcpp::Parameter("navigation_runtime.status_topic", prefix + "/status"),
+      rclcpp::Parameter("navigation_runtime.command_topic", prefix + "/command"),
+      rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
+      rclcpp::Parameter("navigation_runtime.body_frame_id", "base_link"),
+      rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
+      rclcpp::Parameter("navigation_runtime.planner_rate_hz", 5.0),
+      rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
+      rclcpp::Parameter("navigation_runtime.mission_file",
+                        NAVIGATION_HANDOVER_MISSION_FILE_PATH),
+  });
+  auto navigation = std::make_shared<NavigationRuntimeNode>(options);
+  auto driver = std::make_shared<rclcpp::Node>(
+      "completed_handover_driver_" + process_suffix, options);
+  const auto sensor_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
+  const auto goal_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable();
+  auto observation_publisher = driver->create_publisher<
+      navigation_contracts::msg::RegisteredScan>(prefix + "/observation", sensor_qos);
+  auto odometry_publisher = driver->create_publisher<
+      navigation_contracts::msg::PropagatedOdometry>(prefix + "/propagated", sensor_qos);
+  auto goal_publisher = driver->create_publisher<navigation_contracts::msg::NavigationGoal>(
+      prefix + "/goal", goal_qos);
+  std::mutex samples_mutex;
+  std::condition_variable samples_condition;
+  std::vector<navigation_contracts::msg::NavigationCommand> commands;
+  std::atomic<double> measured_x{0.0};
+  std::atomic_bool terminal_adjacent{false};
+  std::atomic<std::int64_t> target_motion_start_ns{0};
+  auto command_subscription = driver->create_subscription<
+      navigation_contracts::msg::NavigationCommand>(
+      prefix + "/command", goal_qos,
+      [&](navigation_contracts::msg::NavigationCommand::ConstSharedPtr message) {
+        if (!message) return;
+        if (message->request_id == 10U) {
+          const double speed = std::hypot(
+              message->velocity.x, std::hypot(message->velocity.y, message->velocity.z));
+          if (message->position.x > 2.5 && speed <= 0.15) {
+            terminal_adjacent.store(true, std::memory_order_release);
+          }
+        }
+        std::lock_guard lock(samples_mutex);
+        commands.push_back(*message);
+        samples_condition.notify_all();
+      });
+  (void)command_subscription;
+  rclcpp::ExecutorOptions executor_options;
+  executor_options.context = context;
+  rclcpp::executors::MultiThreadedExecutor executor(executor_options, 4);
+  executor.add_node(navigation);
+  executor.add_node(driver);
+  std::thread spin_thread([&executor] { executor.spin(); });
+  ExecutorStopGuard executor_guard(executor, spin_thread);
+
+  const auto subscriptions_deadline = std::chrono::steady_clock::now() + 5s;
+  while ((observation_publisher->get_subscription_count() == 0U ||
+          odometry_publisher->get_subscription_count() == 0U ||
+          goal_publisher->get_subscription_count() == 0U ||
+          driver->count_publishers(prefix + "/command") == 0U) &&
+         std::chrono::steady_clock::now() < subscriptions_deadline) {
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_GT(observation_publisher->get_subscription_count(), 0U);
+  ASSERT_GT(odometry_publisher->get_subscription_count(), 0U);
+  ASSERT_GT(goal_publisher->get_subscription_count(), 0U);
+  ASSERT_GT(driver->count_publishers(prefix + "/command"), 0U);
+
+  const auto initial_stamp = driver->now();
+  goal_publisher->publish(makeHandoverGoal(
+      initial_stamp, 10U, 1U, 1U,
+      navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH));
+  std::atomic_bool stop_publishing{false};
+  std::thread sensor_thread([&] {
+    std::uint64_t sequence = 1U;
+    while (!stop_publishing.load(std::memory_order_acquire)) {
+      const auto stamp = driver->now();
+      const auto motion_start = target_motion_start_ns.load(std::memory_order_acquire);
+      const double motion_elapsed_s = motion_start > 0
+          ? std::chrono::duration<double>(
+              std::chrono::steady_clock::now() -
+              std::chrono::steady_clock::time_point(std::chrono::nanoseconds(motion_start))).count()
+          : 0.0;
+      measured_x.store(std::clamp(motion_elapsed_s * 0.5, 0.0, 3.0),
+                       std::memory_order_release);
+      odometry_publisher->publish(makeHandoverOdometry(
+          stamp, sequence, measured_x.load(std::memory_order_acquire)));
+      observation_publisher->publish(makeHandoverScan(stamp, sequence));
+      ++sequence;
+      std::this_thread::sleep_for(20ms);
+    }
+  });
+  auto cleanup = [&] {
+    stop_publishing.store(true, std::memory_order_release);
+    if (sensor_thread.joinable()) sensor_thread.join();
+    executor_guard.stop();
+    executor.remove_node(navigation);
+    executor.remove_node(driver);
+  };
+
+  bool old_command_seen = false;
+  const auto old_deadline = std::chrono::steady_clock::now() + 12s;
+  while (std::chrono::steady_clock::now() < old_deadline) {
+    {
+      std::lock_guard lock(samples_mutex);
+      old_command_seen = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+        return command.request_id == 10U &&
+               command.status == navigation_contracts::msg::NavigationCommand::STATUS_READY;
+      });
+    }
+    if (old_command_seen) break;
+    std::this_thread::sleep_for(20ms);
+  }
+  if (!old_command_seen) {
+    cleanup();
+    FAIL() << "real NavigationRuntimeNode did not dispatch the old PASS_THROUGH command";
+  }
+  target_motion_start_ns.store(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count(),
+      std::memory_order_release);
+  // The command is now executing. Move the public measured state to the
+  // declared terminal point with a small residual speed before publishing the
+  // newer coincident STOP request. This exercises the runtime's existing
+  // freshness/stationary evidence rather than a private state injection.
+  // Let the committed trajectory reach its declared endpoint first; changing
+  // the measured pose while it is still executing would trigger the
+  // emergency discontinuity guard instead of terminal completion.
+  std::this_thread::sleep_for(7s);
+  bool old_terminal_seen = false;
+  const auto terminal_deadline = std::chrono::steady_clock::now() + 12s;
+  while (std::chrono::steady_clock::now() < terminal_deadline) {
+    {
+      std::lock_guard lock(samples_mutex);
+      old_terminal_seen = std::any_of(commands.begin(), commands.end(), [&](const auto& command) {
+        return command.request_id == 10U && terminal_adjacent.load(std::memory_order_acquire) &&
+               command.position.x > 2.5 &&
+               std::hypot(command.velocity.x, std::hypot(command.velocity.y, command.velocity.z)) <=
+                   0.15;
+      });
+    }
+    if (old_terminal_seen) break;
+    std::this_thread::sleep_for(20ms);
+  }
+  if (!old_terminal_seen) {
+    cleanup();
+    FAIL() << "real NavigationRuntimeNode did not publish the old terminal command";
+  }
+  const auto successor_stamp = driver->now();
+  goal_publisher->publish(makeHandoverGoal(
+      successor_stamp, 11U, 2U, 2U,
+      navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP));
+
+  bool successor_command_seen = false;
+  const auto successor_deadline = std::chrono::steady_clock::now() + 12s;
+  while (std::chrono::steady_clock::now() < successor_deadline) {
+    {
+      std::lock_guard lock(samples_mutex);
+      successor_command_seen = std::any_of(commands.begin(), commands.end(), [](const auto& command) {
+        return command.request_id == 11U &&
+               command.status == navigation_contracts::msg::NavigationCommand::STATUS_READY &&
+               command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+      });
+    }
+    if (successor_command_seen) break;
+    std::this_thread::sleep_for(20ms);
+  }
+  cleanup();
+  EXPECT_TRUE(successor_command_seen)
+      << "new same-mission STOP was not dispatched after the completed coincident boundary";
+  (void)context->shutdown("completed handover test cleanup");
 }
 
 }  // namespace

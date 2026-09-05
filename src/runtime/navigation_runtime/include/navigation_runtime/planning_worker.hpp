@@ -130,6 +130,39 @@ class PlanningWorker {
     if (cancel_backend) planner_->cancelActiveSolve();
   }
 
+  // A command-sampler callback may observe the terminal sample of an older
+  // execution bundle while a newer desired goal is already being solved.  A
+  // bare cancelActive() would then interrupt that newer solve.  Match the
+  // execution ownership tuple while the caller holds its lifecycle
+  // transaction; only the worker item carrying the completed command's
+  // identity may be interrupted.
+  bool cancelActiveIfExecutionIdentity(
+      const std::uint64_t localization_epoch,
+      const std::uint64_t goal_epoch,
+      const std::uint64_t request_id,
+      const std::uint64_t committed_bundle_generation) noexcept {
+    if (localization_epoch == 0U || goal_epoch == 0U || request_id == 0U ||
+        committed_bundle_generation == 0U) {
+      return false;
+    }
+    // Keep the worker mutex held through the backend interrupt.  The worker
+    // clears active_ only after its backend call returns, and submit() also
+    // needs this mutex before it can install a replacement.  Releasing it
+    // before cancelActiveSolve() would let the old job finish and a new job
+    // become active while this callback still held permission to cancel.
+    std::lock_guard lock(mutex_);
+    if (!active_ || active_->key.localization_epoch != localization_epoch ||
+        active_->key.goal_epoch != goal_epoch ||
+        active_->key.request_id != request_id ||
+        active_->key.committed_bundle_generation !=
+            committed_bundle_generation) {
+      return false;
+    }
+    if (active_->stop_source.request_stop()) ++snapshot_.cancelled;
+    planner_->cancelActiveSolve();
+    return true;
+  }
+
   void shutdown() noexcept {
     bool cancel_backend = false;
     {

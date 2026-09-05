@@ -4,6 +4,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -18,8 +19,12 @@ namespace {
 using namespace std::chrono_literals;
 
 struct FakePlanner {
-  void cancelActiveSolve() noexcept { ++cancel_calls; }
+  void cancelActiveSolve() noexcept {
+    ++cancel_calls;
+    if (cancel_hook) cancel_hook();
+  }
   std::atomic_uint64_t cancel_calls{0};
+  std::function<void()> cancel_hook;
 };
 
 PlanningKey makeKey(std::uint64_t request_id = 1U) {
@@ -232,6 +237,87 @@ TEST(PlanningWorker, GoalIdentityChangeCancelsInflightAndKeepsReplacement) {
   EXPECT_TRUE(replacement_ran.load());
   EXPECT_GE(planner_view->cancel_calls.load(), 1U);
   EXPECT_GE(worker.snapshot().cancelled, 1U);
+}
+
+TEST(PlanningWorker, TerminalCancelKeepsWorkerIdentityThroughBackendInterrupt) {
+  auto planner = std::make_unique<FakePlanner>();
+  auto* planner_view = planner.get();
+  PlanningWorker<FakePlanner> worker(std::move(planner));
+  worker.start();
+  JobGate gate;
+  std::atomic_bool old_finished{false};
+  std::atomic_bool cancel_entered{false};
+  std::atomic_bool release_cancel{false};
+  std::atomic_bool replacement_started{false};
+  std::atomic_bool cancel_result{false};
+  planner_view->cancel_hook = [&] {
+    cancel_entered.store(true, std::memory_order_release);
+    while (!old_finished.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    while (!release_cancel.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  };
+  const auto old_key = makeKey(1U);
+  ASSERT_EQ(worker.submit(old_key, PlanningPriority::kNormalRenewal,
+                          [&](FakePlanner&, std::stop_token stop) {
+                            gate.started();
+                            gate.waitUntilReleased(stop);
+                            old_finished.store(true, std::memory_order_release);
+                          }),
+            PlanningSubmitDisposition::kAccepted);
+  ASSERT_TRUE(gate.waitUntilStarted());
+
+  std::thread terminal_cancel([&] {
+    cancel_result.store(worker.cancelActiveIfExecutionIdentity(
+        old_key.localization_epoch, old_key.goal_epoch, old_key.request_id,
+        old_key.committed_bundle_generation), std::memory_order_release);
+  });
+  for (int attempt = 0; attempt < 200 &&
+       !cancel_entered.load(std::memory_order_acquire); ++attempt) {
+    std::this_thread::sleep_for(1ms);
+  }
+  if (!cancel_entered.load(std::memory_order_acquire)) {
+    release_cancel.store(true, std::memory_order_release);
+    gate.release();
+    terminal_cancel.join();
+    worker.shutdown();
+    ADD_FAILURE() << "identity-scoped terminal cancellation did not enter backend";
+    return;
+  }
+  for (int attempt = 0; attempt < 200 &&
+       !old_finished.load(std::memory_order_acquire); ++attempt) {
+    std::this_thread::sleep_for(1ms);
+  }
+  if (!old_finished.load(std::memory_order_acquire)) {
+    release_cancel.store(true, std::memory_order_release);
+    gate.release();
+    terminal_cancel.join();
+    worker.shutdown();
+    ADD_FAILURE() << "old worker job did not finish after stop request";
+    return;
+  }
+
+  std::thread replacement_submit([&] {
+    (void)worker.submit(makeKey(2U), PlanningPriority::kGoalTransition,
+                        [&](FakePlanner&, std::stop_token) {
+                          replacement_started.store(true, std::memory_order_release);
+                        });
+  });
+  std::this_thread::sleep_for(10ms);
+  EXPECT_FALSE(replacement_started.load(std::memory_order_acquire));
+  release_cancel.store(true, std::memory_order_release);
+  terminal_cancel.join();
+  replacement_submit.join();
+  for (int attempt = 0; attempt < 200 &&
+       !replacement_started.load(std::memory_order_acquire); ++attempt) {
+    std::this_thread::sleep_for(1ms);
+  }
+  worker.shutdown();
+  EXPECT_TRUE(cancel_result.load(std::memory_order_acquire));
+  EXPECT_TRUE(replacement_started.load(std::memory_order_acquire));
+  EXPECT_GE(planner_view->cancel_calls.load(), 1U);
 }
 
 TEST(PlanningWorker, RejectsLowerPriorityWhileHigherPriorityIsInflight) {

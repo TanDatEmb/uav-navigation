@@ -1,5 +1,38 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-05 - Bound completed terminal STOP to a measured desired-goal handover
+
+- **Owner/status:** navigation runtime execution handover; `IMPLEMENTED` in
+  the isolated `codex/completed-handover` review branch, focused dispatch and
+  Release build verification required before integration.
+- **Scope:** when an exact immutable completed `kTerminalStop` MAIN bundle is
+  still the executing command and a newer same-mission desired goal is valid,
+  the runtime preserves the old endpoint/completion witness and requests the
+  existing measured-state `PlanFromRest` path even when the desired goal is
+  already inside its acceptance ball. The desired goal is never marked
+  complete by the predecessor witness. Terminal-sample solve cancellation is
+  scoped to the matching old execution tuple under the lifecycle transaction.
+- **Safety impact:** closes a bounded admission hole that could leave a
+  coincident successor without a nominal solve after a completed STOP. Fresh
+  propagated state, stationary speed, endpoint finite/known-free,
+  localization/goal identity, timeline pointer/version, and all existing
+  candidate, world, tracking, dynamic, freshness, and PX4 gates remain
+  authoritative. No tolerance, timer, latch, or fallback gate is relaxed.
+- **Evidence:** baseline artifact
+  `external-mode-check-20260905T082033-554608` showed generation 4 ending at
+  41.518254 s, request 5 arriving at 41.516 s, measured speed below 0.04 m/s,
+  and no new admission while the desired state was coincident; after 3 s of
+  drift, the restart was blocked. The isolated branch adds identity-bound
+  runtime/worker dispatch regressions and records build/test results in
+  `docs/reports/completed_terminal_handover_review_2026-09-05.md`.
+- **Removal/review condition:** remove only when an equivalent serialized
+  execution timeline contract proves every completed-to-successor handover
+  has an explicit measured-state admission boundary; do not replace this
+  identity proof with a desired-goal boolean or distance-only exception.
+- **Verification:** affected runtime component/node dispatch regression,
+  PlanningWorker cancellation interleaving regression, focused runtime CTest,
+  and isolated Release build. No SITL claim is made by this entry.
+
 ### 2026-09-05 - Replace traversed history with request-local measured body support
 
 - **Owner/status:** MappingActor, world-model and planning certificate owners;
