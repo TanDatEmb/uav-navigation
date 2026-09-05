@@ -86,81 +86,6 @@ class ExecutionTimelineStore final {
     return true;
   }
 
-  bool publishWorldIdentity(
-      const navigation_world_model::WorldSnapshotIdentity& identity) noexcept {
-    return publishWorldIdentity(identity, {}, false);
-  }
-
-  // Replace the world certificate for the currently exposed bundle only after
-  // an external validator has checked that bundle against the new immutable
-  // snapshot.  Pointer identity is part of the precondition: if a newer
-  // bundle was committed while validation was running, the new world must not
-  // inherit a certificate that was never checked against it.
-  bool publishWorldIdentity(
-      const navigation_world_model::WorldSnapshotIdentity& identity,
-      const std::shared_ptr<const navigation_planning::CandidateBundle>&
-          expected_bundle,
-      bool retain_validated_bundle,
-      std::int64_t refreshed_valid_until_ns = 0,
-      const std::shared_ptr<const navigation_planning::CandidateBundle>&
-          expected_pending = {},
-      bool retain_validated_pending = false) noexcept {
-    if (identity.localization_epoch == 0 || identity.generation == 0 ||
-        identity.revision == 0 || identity.observation_stamp_ns <= 0) {
-      return false;
-    }
-    std::lock_guard lock(mutex_);
-    if (world_identity_ && !advances(*world_identity_, identity)) return false;
-    if (retain_validated_bundle && expected_bundle && committed_ &&
-        committed_.get() == expected_bundle.get() && world_identity_ &&
-        navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, expected_bundle->world_identity)) {
-      auto recertified = std::make_shared<navigation_planning::CandidateBundle>(
-          *committed_);
-      recertified->world_identity = identity;
-      if (refreshed_valid_until_ns > recertified->valid_until_ns) {
-        // A revalidated bundle may continue to be sampled only for the new
-        // fresh-world window. Never extend it beyond the declared trajectory
-        // endpoint, and never widen the interval without a successful full
-        // candidate validation in the caller.
-        auto renewed_until_ns = refreshed_valid_until_ns;
-        if (recertified->hasDeclaredEndpointMetadata()) {
-          const auto endpoint_ns = navigation_common::secondsSumToNanoseconds(
-              recertified->start_wall_time_s, recertified->duration_s);
-          if (!endpoint_ns || *endpoint_ns <= 0) {
-            return false;
-          }
-          renewed_until_ns = std::min(renewed_until_ns, *endpoint_ns);
-        }
-        recertified->valid_until_ns = renewed_until_ns;
-      }
-      committed_ = recertified->valid()
-          ? std::shared_ptr<const navigation_planning::CandidateBundle>(
-                std::move(recertified))
-          : nullptr;
-    } else {
-      // A candidate is certified against one immutable snapshot.  If no
-      // matching validation certificate was supplied for the newer snapshot,
-      // clear it rather than retaining an uncertified command.
-      committed_.reset();
-    }
-    const bool pending_recertified = retain_validated_pending && expected_pending &&
-        pending_ && pending_.get() == expected_pending.get() &&
-        navigation_world_model::sameWorldSnapshotIdentity(
-            pending_->world_identity, identity) && pending_->valid();
-    // A pending successor was certified against the previous immutable
-    // snapshot. It may survive only when the caller has proven that all
-    // changes in the new immutable snapshot are disjoint from its protected
-    // execution region and has already replaced its world identity.
-    if (!pending_recertified) {
-      pending_.reset();
-      pending_activation_ns_ = 0;
-    }
-    world_identity_ = identity;
-    ++timeline_version_;
-    return true;
-  }
-
   // Apply a world refresh only if the exact execution timeline observed before
   // validation is still current.  The active and pending pointers are
   // checked independently: an invalid pending successor must not discard a
@@ -234,38 +159,6 @@ class ExecutionTimelineStore final {
     world_identity_ = identity;
     ++timeline_version_;
     return navigation_world_model::WorldCommitDecision::kCommitted;
-  }
-
-  // Replace a pending successor's world identity after an external immutable
-  // snapshot has proved its protected region unchanged. The proof belongs to
-  // the world-view owner; this method only linearizes the exact pointer and
-  // identity transition so an older pending candidate cannot be relabelled.
-  std::optional<std::shared_ptr<const navigation_planning::CandidateBundle>>
-  recertifyPendingWorldIdentity(
-      const navigation_world_model::WorldSnapshotIdentity& identity,
-      const std::shared_ptr<const navigation_planning::CandidateBundle>&
-          expected_pending) noexcept {
-    if (identity.localization_epoch == 0U || identity.generation == 0U ||
-        identity.revision == 0U || identity.observation_stamp_ns <= 0 ||
-        !expected_pending) {
-      return std::nullopt;
-    }
-    std::lock_guard lock(mutex_);
-    if (!world_identity_ || !pending_ || pending_.get() != expected_pending.get() ||
-        !pending_->valid() ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            pending_->world_identity, *world_identity_) ||
-        identity.localization_epoch != world_identity_->localization_epoch ||
-        identity.generation != world_identity_->generation ||
-        !advances(*world_identity_, identity)) {
-      return std::nullopt;
-    }
-    auto recertified = std::make_shared<navigation_planning::CandidateBundle>(*pending_);
-    recertified->world_identity = identity;
-    if (!recertified->valid()) return std::nullopt;
-    pending_ = std::move(recertified);
-    ++timeline_version_;
-    return pending_;
   }
 
   [[nodiscard]] std::shared_ptr<const navigation_planning::CandidateBundle> load()
