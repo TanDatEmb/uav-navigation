@@ -568,18 +568,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   body_frame_id_ = declare_parameter("navigation_runtime.body_frame_id", std::string("base_link"));
   deployment_profile_ = declare_parameter(
       "navigation_runtime.deployment_profile", std::string("sitl"));
-  planner_rate_hz_ = declare_parameter("navigation_runtime.planner_rate_hz", 5.0);
-  command_rate_hz_ = declare_parameter("navigation_runtime.command_rate_hz", 50.0);
-  mapping_snapshot_publication_period_s_ = declare_parameter(
-      "navigation_runtime.mapping_snapshot_publication_period_s", 0.10);
   data_freshness_window_s_ = declare_parameter(
       "navigation_runtime.data_freshness_window_s", 0.5);
-  command_stream_timeout_s_ = declare_parameter(
-      "navigation_runtime.command_stream_timeout_s", 0.10);
   planner_watchdog_timeout_s_ = declare_parameter(
       "navigation_runtime.planner_watchdog_timeout_s", 1.0);
-  stopped_recovery_timeout_s_ = declare_parameter(
-      "navigation_runtime.stopped_recovery_timeout_s", 5.0);
   const auto inject_failed_replan_cycle_id = declare_parameter(
       "navigation_runtime.inject_failed_replan_cycle_id", std::int64_t{0});
   inject_failed_replan_cycle_id_ = inject_failed_replan_cycle_id > 0
@@ -614,38 +606,26 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         "hardware planner backend runtime is blocked until an immutable sensor-visibility "
         "certificate and its runtime verifier are implemented");
   }
-  if (!std::isfinite(planner_rate_hz_) ||
-      std::abs(planner_rate_hz_ - 5.0) > 1.0e-9) {
-    throw std::invalid_argument("navigation_runtime.planner_rate_hz must equal 5 Hz");
-  }
-  const auto planning_period = ratePeriodNanoseconds(planner_rate_hz_);
-  const auto command_period = ratePeriodNanoseconds(command_rate_hz_);
+  const auto planning_period = ratePeriodNanoseconds(
+      navigation_planning::PlanningTimingContract::kPlannerRateHz);
+  const auto command_period = ratePeriodNanoseconds(
+      navigation_planning::PlanningTimingContract::kCommandRateHz);
   if (!planning_period || !command_period ||
       std::chrono::duration_cast<std::chrono::microseconds>(*planning_period).count() <= 0) {
     throw std::invalid_argument(
         "navigation_runtime planner/command rates must produce positive representable periods");
   }
-  if (!std::isfinite(command_rate_hz_) || command_rate_hz_ <= 0.0 ||
-      !std::isfinite(mapping_snapshot_publication_period_s_) ||
-      mapping_snapshot_publication_period_s_ <= 0.0 ||
-      !std::isfinite(data_freshness_window_s_) || data_freshness_window_s_ <= 0.0 ||
-      !std::isfinite(command_stream_timeout_s_) ||
-      std::abs(command_stream_timeout_s_ -
-               navigation_planning::PlanningTimingContract::kCommandStreamTimeoutS) > 1.0e-9 ||
-      !std::isfinite(planner_watchdog_timeout_s_) || planner_watchdog_timeout_s_ <= 0.0 ||
-      !std::isfinite(stopped_recovery_timeout_s_) ||
-      std::abs(stopped_recovery_timeout_s_ -
-               navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS) > 1.0e-9 ||
-      std::abs(command_rate_hz_ - 50.0) > 1.0e-9 ||
-      std::abs(mapping_snapshot_publication_period_s_ -
-               navigation_planning::PlanningTimingContract::kSnapshotPeriodS) > 1.0e-9) {
+  if (!std::isfinite(data_freshness_window_s_) || data_freshness_window_s_ <= 0.0 ||
+      !std::isfinite(planner_watchdog_timeout_s_) || planner_watchdog_timeout_s_ <= 0.0) {
     throw std::invalid_argument(
         "planner backend timing and safety parameters must be positive");
   }
-  if (mapping_snapshot_publication_period_s_ > data_freshness_window_s_ ||
-      mapping_snapshot_publication_period_s_ > 1.0 / planner_rate_hz_) {
+  if (navigation_planning::PlanningTimingContract::kSnapshotPeriodS >
+          data_freshness_window_s_ ||
+      navigation_planning::PlanningTimingContract::kSnapshotPeriodS >
+          navigation_planning::PlanningTimingContract::kPlannerPeriodS) {
     throw std::invalid_argument(
-        "navigation_runtime.mapping_snapshot_publication_period_s must not exceed "
+        "the product mapping snapshot period must not exceed "
         "the world freshness window or planner period");
   }
   const auto data_freshness_window_ns =
@@ -653,7 +633,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   const auto planner_watchdog_timeout_ns =
       navigation_common::secondsToNanoseconds(planner_watchdog_timeout_s_);
   const auto command_stream_timeout_ns =
-      navigation_common::secondsToNanoseconds(command_stream_timeout_s_);
+      navigation_common::secondsToNanoseconds(
+          navigation_planning::PlanningTimingContract::kCommandStreamTimeoutS);
   if (!data_freshness_window_ns || *data_freshness_window_ns <= 0 ||
       !planner_watchdog_timeout_ns || *planner_watchdog_timeout_ns <= 0 ||
       !command_stream_timeout_ns || *command_stream_timeout_ns <= 0) {
@@ -689,7 +670,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   auto mapping_actor = std::make_shared<navigation_mapping::MappingActor>(
       planner_config_path_, [ros_clock] { return ros_clock->now().seconds(); },
       navigation_mapping::MappingFrameContract{planning_frame_, body_frame_id_},
-      mapping_snapshot_publication_period_s_);
+      navigation_planning::PlanningTimingContract::kSnapshotPeriodS);
   const auto mapping_configuration = mapping_actor->configuration();
   if (mapping_configuration.callbacks_enabled ||
       mapping_configuration.raycasting_batch_update_size != 1) {
@@ -1422,9 +1403,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       world_snapshot_store_, [this]() { return now().seconds(); });
   planner_ = planner.get();
   const double solve_deadline_s = planner_->solveDeadlineSeconds();
-  if (!plannerPeriodCoversSolveBudget(planner_rate_hz_, solve_deadline_s)) {
+  if (!plannerPeriodCoversSolveBudget(
+          navigation_planning::PlanningTimingContract::kPlannerRateHz, solve_deadline_s)) {
     throw std::invalid_argument(
-        "navigation_runtime.planner_rate_hz must leave a complete timer period "
+        "the product planner rate must leave a complete timer period "
         "for planner.solve_deadline_s");
   }
   planning_worker_ = std::make_unique<
@@ -1497,9 +1479,13 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               "stopped_recovery=%.1fs",
               registered_scan_topic_.c_str(),
               propagated_odometry_topic_.c_str(), goal_topic_.c_str(),
-              command_topic_.c_str(), planner_rate_hz_, command_rate_hz_,
-              mapping_snapshot_publication_period_s_, data_freshness_window_s_,
-              command_stream_timeout_s_, stopped_recovery_timeout_s_);
+              command_topic_.c_str(),
+              navigation_planning::PlanningTimingContract::kPlannerRateHz,
+              navigation_planning::PlanningTimingContract::kCommandRateHz,
+              navigation_planning::PlanningTimingContract::kSnapshotPeriodS,
+              data_freshness_window_s_,
+              navigation_planning::PlanningTimingContract::kCommandStreamTimeoutS,
+              navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS);
 }
 
 NavigationRuntimeNode::~NavigationRuntimeNode() {
@@ -4367,7 +4353,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             timeout_state,
             std::isfinite(measured_speed_mps) && measured_speed_mps <=
                 navigation_planning::PlanningTimingContract::kStationarySpeedMps,
-            failure_window_s, stopped_recovery_timeout_s_);
+            failure_window_s,
+            navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS);
         if (stopped_recovery_timeout) failClosedLocked();
       }
     }
@@ -4380,14 +4367,16 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       RCLCPP_ERROR(get_logger(),
                    "planner backend PlanFromRest recovery timeout elapsed=%.3f timeout=%.3f s; "
                    "fail-closed for mission=%s waypoint=%u",
-                   failure_window_s, stopped_recovery_timeout_s_,
+                   failure_window_s,
+                   navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS,
                    goal->mission_id.c_str(), goal->waypoint_index);
     } else {
       RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 2000,
           "planner backend PlanFromRest transient failure (%d); retrying within stopped "
           "recovery deadline elapsed=%.3f timeout=%.3f s",
-          static_cast<int>(result), failure_window_s, stopped_recovery_timeout_s_);
+          static_cast<int>(result), failure_window_s,
+          navigation_planning::PlanningTimingContract::kStoppedRecoveryTimeoutS);
     }
   }
   if (disposition == PlannerResultDisposition::RetainCommittedCommand ||

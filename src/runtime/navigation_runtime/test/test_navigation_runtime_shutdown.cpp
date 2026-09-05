@@ -222,7 +222,6 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
       rclcpp::Parameter("navigation_runtime.command_topic", prefix + "/command"),
       rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
       rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
-      rclcpp::Parameter("navigation_runtime.planner_rate_hz", 5.0),
       rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
   });
 
