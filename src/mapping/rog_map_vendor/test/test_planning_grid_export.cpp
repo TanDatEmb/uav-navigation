@@ -414,12 +414,19 @@ TEST(RogMapPlanningGridExport, RaycastUsesSensorOriginNotBaseOrigin) {
   const Eigen::Vector3d base{0.0, 0.0, 0.0};
   const rog_map::Vec3f sensor_origin{0.5F, 0.0F, 0.0F};
   const Eigen::Vector3d obstacle{3.0, 0.0, 0.0};
-  ASSERT_EQ(map.updateMap(singlePointCloud(obstacle),
-                          rog_map::Pose{base, Eigen::Quaterniond::Identity()},
-                          sensor_origin),
-            rog_map::MapUpdateOutcome::UPDATED);
+  // One miss update remains UNKNOWN by design; repeat the same valid sensor
+  // ray until the sensor evidence itself crosses the map's known-free
+  // probability threshold.  No body/neighborhood clear is involved.
+  for (int update = 0; update < 25; ++update) {
+    ASSERT_EQ(map.updateMap(singlePointCloud(obstacle),
+                            rog_map::Pose{base, Eigen::Quaterniond::Identity()},
+                            sensor_origin),
+              rog_map::MapUpdateOutcome::UPDATED);
+  }
   EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.4, 0.0, 0.0}),
             rog_map::GridType::UNKNOWN);
-  EXPECT_EQ(map.getGridType(Eigen::Vector3d{1.5, 0.0, 0.0}),
+  // The first voxel fully traversed after the explicit 0.7 m minimum-range
+  // shell is the stable witness for this low-level ray-origin regression.
+  EXPECT_EQ(map.getGridType(Eigen::Vector3d{2.0, 0.0, 0.0}),
             rog_map::GridType::KNOWN_FREE);
 }

@@ -29,6 +29,7 @@ struct SweptValidationResult {
     kRoleBoundaryMissing,
     kPieceLookupFailed,
     kCertificateTubeBlocked,
+    kMainTraversedPrefixViolation,
     kEndpointBlocked,
     kSegmentBlocked,
   } failure{Failure::kNone};
@@ -60,6 +61,8 @@ inline const char* sweptValidationFailureName(
         return "piece_lookup_failed";
       case SweptValidationResult::Failure::kCertificateTubeBlocked:
         return "certificate_tube_blocked";
+      case SweptValidationResult::Failure::kMainTraversedPrefixViolation:
+        return "main_traversed_prefix_violation";
       case SweptValidationResult::Failure::kEndpointBlocked:
         return "endpoint_blocked";
       case SweptValidationResult::Failure::kSegmentBlocked:
@@ -185,13 +188,18 @@ inline bool certificateTubeIsSafe(
         const navigation_world_model::UnknownPolicy unknown_policy,
         const double resolution_m,
         navigation_world_model::CellState* blocked_cell_state = nullptr,
-        navigation_world_model::Point3* blocked_position = nullptr) noexcept {
+        navigation_world_model::Point3* blocked_position = nullptr,
+        const bool reject_traversed_after_sensor = false,
+        bool* traversed_prefix_violation = nullptr) noexcept {
     if (blocked_cell_state != nullptr) {
         *blocked_cell_state = navigation_world_model::CellState::kUndefined;
     }
     if (blocked_position != nullptr) {
         *blocked_position = navigation_world_model::Point3::Constant(
             std::numeric_limits<double>::quiet_NaN());
+    }
+    if (traversed_prefix_violation != nullptr) {
+        *traversed_prefix_violation = false;
     }
     if (!start.allFinite() || !end.allFinite() ||
         !std::isfinite(curve_deviation_m) || curve_deviation_m < 0.0 ||
@@ -258,8 +266,15 @@ inline bool certificateTubeIsSafe(
                     cell_center, navigation_world_model::GridLayer::kInflated);
                 const auto evidence = world.classifyFreeSpace(
                     cell_center, navigation_world_model::GridLayer::kInflated);
-                if (!navigation_world_model::isCellTraversable(state, unknown_policy) &&
-                    evidence != navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
+                if ((!navigation_world_model::isCellTraversable(state, unknown_policy) &&
+                     evidence != navigation_world_model::FreeSpaceEvidence::kTraversedFree) ||
+                    (reject_traversed_after_sensor &&
+                     evidence == navigation_world_model::FreeSpaceEvidence::kTraversedFree)) {
+                    if (traversed_prefix_violation != nullptr &&
+                        reject_traversed_after_sensor &&
+                        evidence == navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
+                        *traversed_prefix_violation = true;
+                    }
                     if (blocked_cell_state != nullptr) *blocked_cell_state = state;
                     if (blocked_position != nullptr) *blocked_position = cell_center;
                     return false;
@@ -269,6 +284,42 @@ inline bool certificateTubeIsSafe(
             if (y == upper[1]) break;
         }
         if (x == upper[0]) break;
+    }
+    return true;
+}
+
+// MAIN may bootstrap through fresh traversed support only before it has
+// entered ordinary sensor-supported space.  Keep this state outside the
+// per-piece/per-segment helpers: resetting it at a polynomial boundary would
+// allow a later traversed-only segment to re-enter the candidate silently.
+inline bool advanceMainTraversedPrefix(
+        const navigation_world_model::WorldModelView& world,
+        const navigation_world_model::Point3& start,
+        const navigation_world_model::Point3& end,
+        const double resolution_m,
+        bool& main_has_entered_sensor_free) noexcept {
+    if (!start.allFinite() || !end.allFinite() ||
+        !std::isfinite(resolution_m) || resolution_m <= 0.0) return false;
+    const double length = (end - start).norm();
+    if (!std::isfinite(length)) return false;
+    const double step_count = std::ceil(length / resolution_m);
+    if (!std::isfinite(step_count) || step_count < 0.0 || step_count > 1.0e6) {
+        return false;
+    }
+    const std::size_t steps = std::max<std::size_t>(
+        1U, static_cast<std::size_t>(step_count));
+    for (std::size_t index = 0U; index <= steps; ++index) {
+        const double alpha = static_cast<double>(index) /
+            static_cast<double>(steps);
+        const auto evidence = world.classifyFreeSpace(
+            start + alpha * (end - start),
+            navigation_world_model::GridLayer::kInflated);
+        if (evidence == navigation_world_model::FreeSpaceEvidence::kSensorFree) {
+            main_has_entered_sensor_free = true;
+        } else if (main_has_entered_sensor_free &&
+                   evidence == navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
+            return false;
+        }
     }
     return true;
 }
@@ -465,6 +516,7 @@ inline SweptValidationResult validateExecutableCandidate(
                 point, navigation_world_model::GridLayer::kInflated) ==
                 navigation_world_model::FreeSpaceEvidence::kTraversedFree;
     };
+    bool main_has_entered_sensor_free = false;
     const auto initial_role = role_at(t);
     if (!initial_role) {
         result.failure = SweptValidationResult::Failure::kRoleBoundaryMissing;
@@ -478,6 +530,12 @@ inline SweptValidationResult validateExecutableCandidate(
             previous, navigation_world_model::GridLayer::kInflated);
         return result;
     }
+    if (*initial_role == CandidateTrajectoryRole::MAIN &&
+        world.classifyFreeSpace(
+            previous, navigation_world_model::GridLayer::kInflated) ==
+            navigation_world_model::FreeSpaceEvidence::kSensorFree) {
+        main_has_entered_sensor_free = true;
+    }
     ++result.sample_count;
 
     while (t < duration) {
@@ -488,6 +546,17 @@ inline SweptValidationResult validateExecutableCandidate(
         }
         result.blocked_role = *role;
         const auto segment_policy = policy_for_role(*role);
+        const bool main_segment = *role == CandidateTrajectoryRole::MAIN;
+        if (main_segment && main_has_entered_sensor_free &&
+            world.classifyFreeSpace(
+                previous, navigation_world_model::GridLayer::kInflated) ==
+                navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
+            result.failure = SweptValidationResult::Failure::kMainTraversedPrefixViolation;
+            result.blocked_position = previous;
+            result.blocked_cell_state = world.classify(
+                previous, navigation_world_model::GridLayer::kInflated);
+            return result;
+        }
         const auto piece_location = locatePieceForSweep(candidate.position, t);
         if (!piece_location) {
             result.failure = SweptValidationResult::Failure::kPieceLookupFailed;
@@ -552,13 +621,18 @@ inline SweptValidationResult validateExecutableCandidate(
         navigation_world_model::Point3 tube_blocked_position =
             navigation_world_model::Point3::Constant(
                 std::numeric_limits<double>::quiet_NaN());
+        bool traversed_prefix_violation = false;
         const bool tube_safe = certificateTubeIsSafe(
             world, previous, next, curve_deviation_bound, segment_policy,
             geometry.inflated_resolution_m, &tube_blocked_cell_state,
-            &tube_blocked_position);
+            &tube_blocked_position,
+            main_segment && main_has_entered_sensor_free,
+            &traversed_prefix_violation);
         if (!std::isfinite(curve_deviation_bound) ||
-            curve_deviation_bound > curve_deviation_tolerance || !tube_safe) {
-            result.failure = SweptValidationResult::Failure::kCertificateTubeBlocked;
+               curve_deviation_bound > curve_deviation_tolerance || !tube_safe) {
+            result.failure = traversed_prefix_violation
+                ? SweptValidationResult::Failure::kMainTraversedPrefixViolation
+                : SweptValidationResult::Failure::kCertificateTubeBlocked;
             if (tube_blocked_position.allFinite()) {
                 result.blocked_position = tube_blocked_position;
                 result.blocked_cell_state = tube_blocked_cell_state;
@@ -592,6 +666,15 @@ inline SweptValidationResult validateExecutableCandidate(
                 result.blocked_cell_state = world.classify(
                     next, navigation_world_model::GridLayer::kInflated);
             }
+            return result;
+        }
+        if (main_segment && !advanceMainTraversedPrefix(
+                world, previous, next, geometry.inflated_resolution_m,
+                main_has_entered_sensor_free)) {
+            result.failure = SweptValidationResult::Failure::kMainTraversedPrefixViolation;
+            result.blocked_position = next;
+            result.blocked_cell_state = world.classify(
+                next, navigation_world_model::GridLayer::kInflated);
             return result;
         }
         ++result.sample_count;

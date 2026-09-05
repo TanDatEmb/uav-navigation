@@ -18377,3 +18377,34 @@ release profiles must not use the former allowance.
   navigation_contracts fast_lio_ros navigation_runtime
   --symlink-install --cmake-args -DBUILD_TESTING=ON`; targeted mapping/ROG
   CTest; O0-HANDOVER, C0-NEAR-OBSTACLE and RESET scenario-separated runs.
+
+### 2026-09-05 - Harden traversed-prefix, sensor-origin and world-change contracts
+
+- **Owner/status:** MappingActor and candidate swept-validation owners,
+  `IMPLEMENTED`; runtime O0/C0/RESET qualification remains scenario-gated.
+- **Scope:** Carry MAIN traversed-prefix ownership across all polynomial and
+  certificate segments; keep BACKUP allowed to use fresh traversed support
+  without the MAIN prefix monotonicity rule; reject missing or mismatched
+  explicit sensor origins; include added/expired/evicted traversed support in
+  immutable world-change regions, using whole-world invalidation for epoch or
+  non-representable resets.
+- **Safety impact:** A MAIN candidate cannot re-enter traversed-only support
+  after sensor-free admission. Mapping never falls back to base pose for a
+  ray origin. Loss of traversed evidence forces recertification, while
+  OCCUPIED/inflated precedence and UNKNOWN fail-closed behavior remain intact.
+  No planner dynamics, recovery, threshold, timing, PX4 or mission policy was
+  changed.
+- **Evidence:** ROS Jazzy `ament_package` is available at
+  `/opt/ros/jazzy/lib/python3.12/site-packages/ament_package`. Selected-package
+  build passed. CTest passed for `navigation_mapping` (3/3),
+  `navigation_planning_backend` (8/8), `navigation_runtime` (8/8),
+  `rog_map_vendor` (1/1 aggregate test), and `navigation_contracts` (1/1);
+  `navigation_world_model` has no registered tests. The first C0 attempt was
+  rejected before startup because the workspace was dirty and build
+  provenance did not match; it is not runtime evidence.
+- **Removal condition:** Remove only after a stronger typed mapping contract
+  or independently verified operational clearance source replaces these
+  fail-closed semantics without restoring probability-map body clearing.
+- **Verification:** `source /opt/ros/jazzy/setup.bash`; selected-package
+  `colcon build`; per-package `ctest --output-on-failure`; O0-HANDOVER,
+  C0-NEAR-OBSTACLE and RESET runs after a clean committed rebuild.

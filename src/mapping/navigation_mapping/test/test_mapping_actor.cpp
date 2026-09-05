@@ -42,7 +42,12 @@ navigation_mapping::MappingObservation observationAt(
   auto cloud = std::make_unique<navigation_mapping::PointCloud>();
   cloud->push_back(navigation_mapping::PointXYZI{1.0F, 0.0F, 0.0F, 0.0F});
   auto odometry = odometryAtStamp(odometry_stamp_ns);
-  return {std::move(cloud), std::move(odometry), 1U, 1U, stamp_ns, 0};
+  navigation_mapping::MappingObservation observation{
+      std::move(cloud), std::move(odometry), 1U, 1U, stamp_ns, 0};
+  observation.sensor_origin_world = navigation_world_model::Point3::Zero();
+  observation.sensor_origin_localization_epoch = 1U;
+  observation.sensor_origin_stamp_ns = stamp_ns;
+  return observation;
 }
 
 navigation_mapping::MappingObservation observationAtPose(
@@ -56,8 +61,12 @@ navigation_mapping::MappingObservation observationAtPose(
   odometry.pose.pose.position.x = position.x();
   odometry.pose.pose.position.y = position.y();
   odometry.pose.pose.position.z = position.z();
-  return {std::move(cloud), std::move(odometry), 1U, scan_sequence,
-          stamp_ns, 0};
+  navigation_mapping::MappingObservation observation{
+      std::move(cloud), std::move(odometry), 1U, scan_sequence, stamp_ns, 0};
+  observation.sensor_origin_world = position;
+  observation.sensor_origin_localization_epoch = 1U;
+  observation.sensor_origin_stamp_ns = stamp_ns;
+  return observation;
 }
 
 TEST(MappingActorContract, RejectsMismatchedObservationAndOdometryTime) {
@@ -75,6 +84,23 @@ TEST(MappingActorContract, RejectsNonFinitePoseBeforeBackendMutation) {
   auto observation = observationAt(1'000'000'000LL, 1'000'000'000LL);
   observation.corrected_odometry.pose.pose.position.x = NAN;
   EXPECT_THROW(actor.process(observation), std::invalid_argument);
+}
+
+TEST(MappingActorContract, RejectsRaycastObservationWithoutSensorOrigin) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  auto observation = observationAt(1'000'000'000LL, 1'000'000'000LL);
+  observation.sensor_origin_world.reset();
+  observation.sensor_origin_localization_epoch = 0U;
+  observation.sensor_origin_stamp_ns = 0;
+  try {
+    (void)actor.process(std::move(observation));
+    FAIL() << "missing sensor origin was accepted";
+  } catch (const navigation_mapping::MappingObservationRejected& error) {
+    EXPECT_EQ(error.reason(),
+              navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin);
+  } catch (...) {
+    FAIL() << "missing sensor origin was not reported with its typed reason";
+  }
 }
 
 TEST(MappingActorContract, RejectsNonMonotonicObservationTimestamp) {
@@ -139,6 +165,7 @@ TEST(MappingActorContract, ReconstructsBackendForNewLocalizationEpoch) {
   auto next_epoch = observationAt(2'000'000'000LL, 2'000'000'000LL);
   next_epoch.localization_epoch = 2U;
   next_epoch.scan_sequence = 1U;
+  next_epoch.sensor_origin_localization_epoch = 2U;
   const auto result = actor.process(next_epoch);
 
   ASSERT_TRUE(result.snapshot);
@@ -157,6 +184,9 @@ TEST(MappingActorContract, TraversedEvidenceSupportsCurrentPoseNearFiniteMapCeil
   odometry.pose.pose.position.z = 2.9;
   navigation_mapping::MappingObservation observation{
       std::move(cloud), std::move(odometry), 1U, 1U, 1'000'000'000LL, 0};
+  observation.sensor_origin_world = navigation_world_model::Point3{0.0, 0.0, 2.9};
+  observation.sensor_origin_localization_epoch = 1U;
+  observation.sensor_origin_stamp_ns = 1'000'000'000LL;
 
   const auto result = actor.process(observation);
   ASSERT_TRUE(result.snapshot);
@@ -242,13 +272,21 @@ TEST(MappingActorContract, OccupiedSensorEvidenceOverridesTraversedEvidence) {
   EXPECT_EQ(result.snapshot->classifyFreeSpace(
                 Eigen::Vector3d::Zero(), navigation_world_model::GridLayer::kEvidence),
             navigation_world_model::FreeSpaceEvidence::kOccupied);
+  EXPECT_EQ(result.snapshot->classifyFreeSpace(
+                Eigen::Vector3d::Zero(), navigation_world_model::GridLayer::kInflated),
+            navigation_world_model::FreeSpaceEvidence::kOccupied);
+  EXPECT_FALSE(result.snapshot->isSegmentTraversableWithTraversedFree(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{0.2, 0.0, 0.0},
+      navigation_world_model::GridLayer::kInflated,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree));
 }
 
 TEST(MappingActorContract, TraversedEvidenceExpiresWithoutOccupancyMutation) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
-  ASSERT_TRUE(actor.process(observationAtPose(
-      1'000'000'000LL, 1'000'000'000LL, Eigen::Vector3d::Zero(), 1U)).snapshot);
+  const auto first = actor.process(observationAtPose(
+      1'000'000'000LL, 1'000'000'000LL, Eigen::Vector3d::Zero(), 1U));
+  ASSERT_TRUE(first.snapshot);
   const auto result = actor.process(observationAtPose(
       2'100'000'000LL, 2'100'000'000LL, Eigen::Vector3d{1.0, 0.0, 0.0}, 2U));
   ASSERT_TRUE(result.snapshot);
@@ -258,6 +296,11 @@ TEST(MappingActorContract, TraversedEvidenceExpiresWithoutOccupancyMutation) {
   EXPECT_EQ(result.snapshot->handoverClearanceReason(
                 Eigen::Vector3d::Zero(), navigation_world_model::GridLayer::kEvidence),
             navigation_world_model::HandoverClearanceReason::kExpiredTraversedEvidence);
+  ASSERT_TRUE(result.snapshot->changedRegionIntersectsSince(
+      first.snapshot->identity(),
+      navigation_world_model::AxisAlignedBox{
+          Eigen::Vector3d{-0.05, -0.05, -0.05},
+          Eigen::Vector3d{0.05, 0.05, 0.05}}));
 }
 
 TEST(MappingActorContract, BlindShellReportsDisconnectedHandoverClearance) {

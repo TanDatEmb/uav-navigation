@@ -151,6 +151,59 @@ class DiagonalNeighborWorld final : public SweepWorld {
   navigation_world_model::Point3 unknown_center_;
 };
 
+class TraversedPrefixWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return point.x() >= 0.35 && point.x() < 0.70
+        ? navigation_world_model::CellState::kKnownFree
+        : navigation_world_model::CellState::kUnknown;
+  }
+
+  navigation_world_model::FreeSpaceEvidence classifyFreeSpace(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer,
+      std::int64_t) const noexcept override {
+    if (point.x() >= 0.35 && point.x() < 0.70) {
+      return navigation_world_model::FreeSpaceEvidence::kSensorFree;
+    }
+    return navigation_world_model::FreeSpaceEvidence::kTraversedFree;
+  }
+
+  bool isSegmentTraversableWithTraversedFree(
+      const navigation_world_model::Point3&,
+      const navigation_world_model::Point3&,
+      navigation_world_model::GridLayer,
+      navigation_world_model::UnknownPolicy) const noexcept override {
+    return true;
+  }
+};
+
+class TraversedOnlyWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3&,
+      navigation_world_model::GridLayer) const noexcept override {
+    return navigation_world_model::CellState::kUnknown;
+  }
+
+  navigation_world_model::FreeSpaceEvidence classifyFreeSpace(
+      const navigation_world_model::Point3&,
+      navigation_world_model::GridLayer,
+      std::int64_t) const noexcept override {
+    return navigation_world_model::FreeSpaceEvidence::kTraversedFree;
+  }
+
+  bool isSegmentTraversableWithTraversedFree(
+      const navigation_world_model::Point3&,
+      const navigation_world_model::Point3&,
+      navigation_world_model::GridLayer,
+      navigation_world_model::UnknownPolicy) const noexcept override {
+    return true;
+  }
+};
+
 class CountingAstarWorld final : public SweepWorld {
  public:
   navigation_world_model::WorldGeometry geometry() const noexcept override {
@@ -1867,6 +1920,38 @@ TEST(PlannerTrajectory, BackupRoleRequiresKnownFreeEvidence) {
 
   candidate.roles.pop_back();
   EXPECT_FALSE(navigation_planning_backend::candidateHasBackupSuffix(candidate));
+}
+
+TEST(PlannerTrajectory, MainTraversedPrefixStateSpansPieceValidationSegments) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  const auto result = navigation_planning_backend::validateExecutableCandidate(
+      TraversedPrefixWorld{}, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.failure,
+            navigation_planning_backend::SweptValidationResult::Failure::
+                kMainTraversedPrefixViolation);
+}
+
+TEST(PlannerTrajectory, BackupMayRemainEntirelyInsideFreshTraversedSupport) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
+  };
+
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      TraversedOnlyWorld{}, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree).valid);
 }
 
 TEST(PlannerTrajectory, MainOnlyAllowUnknownRequiresKnownFreeCertificate) {

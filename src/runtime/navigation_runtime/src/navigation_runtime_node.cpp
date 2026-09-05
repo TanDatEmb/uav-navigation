@@ -659,11 +659,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           pending.scan_sequence, pending.stamp_ns,
           std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::steady_clock::now() - decode_started).count(),
-          nullptr};
+          nullptr, std::nullopt, 0U, 0};
       if (pending.message->sensor_origin_valid) {
         const auto& origin = pending.message->sensor_origin_pose.position;
         observation.sensor_origin_world =
             navigation_world_model::Point3{origin.x, origin.y, origin.z};
+        observation.sensor_origin_localization_epoch =
+            pending.localization_epoch;
+        observation.sensor_origin_stamp_ns = pending.stamp_ns;
       }
       if (decoded_free_space) {
         observation.free_space_endpoints = std::move(decoded_free_space);
@@ -1133,9 +1136,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       throw;
     }
   };
+  const bool mapping_requires_sensor_origin = mapping_configuration.sensor_origin_required;
   auto validate_mapping = [ros_clock, telemetry = mapping_telemetry_,
                            active_epoch = &active_localization_epoch_,
-                           maximum_age_ns = data_freshness_window_ns_](
+                           maximum_age_ns = data_freshness_window_ns_,
+                           mapping_requires_sensor_origin](
       const PendingRegisteredScan& pending) {
     if (!pending.message) {
       telemetry->recordDiscard(false, false, true);
@@ -1144,6 +1149,19 @@ NavigationRuntimeNode::NavigationRuntimeNode(
     const auto& pose = pending.message->corrected_pose.pose;
     const Eigen::Quaterniond q{
         pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z};
+    const auto& sensor_origin = pending.message->sensor_origin_pose;
+    const double sensor_orientation_norm = std::sqrt(
+        sensor_origin.orientation.w * sensor_origin.orientation.w +
+        sensor_origin.orientation.x * sensor_origin.orientation.x +
+        sensor_origin.orientation.y * sensor_origin.orientation.y +
+        sensor_origin.orientation.z * sensor_origin.orientation.z);
+    const bool missing_sensor_origin = mapping_requires_sensor_origin &&
+        !pending.message->sensor_origin_valid;
+    const bool invalid_sensor_origin = pending.message->sensor_origin_valid &&
+        (!std::isfinite(sensor_origin.position.x) ||
+         !std::isfinite(sensor_origin.position.y) ||
+         !std::isfinite(sensor_origin.position.z) ||
+         !std::isfinite(sensor_orientation_norm) || sensor_orientation_norm <= 1.0e-9);
     const auto freshness = navigation_execution::classifyTimestampFreshness(
         ros_clock->now().nanoseconds(), pending.stamp_ns, maximum_age_ns);
     const bool invalid = pending.message->points.width == 0U ||
@@ -1158,10 +1176,20 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                          !std::isfinite(pose.position.y) ||
                          !std::isfinite(pose.position.z) || !q.coeffs().allFinite() ||
                          !finiteNonzeroQuaternion(q) ||
+                         missing_sensor_origin || invalid_sensor_origin ||
                          freshness == navigation_execution::TimestampFreshness::INVALID;
     const bool stale = freshness == navigation_execution::TimestampFreshness::STALE;
     const bool future = freshness == navigation_execution::TimestampFreshness::FUTURE;
-    if (invalid || stale || future) telemetry->recordDiscard(stale, future, invalid);
+    const auto rejection_reason = missing_sensor_origin
+        ? navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin
+        : invalid_sensor_origin
+            ? navigation_mapping::MappingObservationRejectionReason::kSensorOriginContractMismatch
+            : invalid
+                ? navigation_mapping::MappingObservationRejectionReason::kMalformedObservation
+                : navigation_mapping::MappingObservationRejectionReason::kNone;
+    if (invalid || stale || future) {
+      telemetry->recordDiscard(stale, future, invalid, rejection_reason);
+    }
     return !invalid && !stale && !future;
   };
   mapping_worker_ = std::make_unique<navigation_mapping::MappingWorker<PendingRegisteredScan>>(
@@ -1248,6 +1276,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("mapping_body_neighborhood_cells_cleared",
                   map.body_neighborhood_cells_cleared);
         add_value("mapping_traversed_segment_count", map.traversed_segment_count);
+        add_value("mapping_discarded_missing_sensor_origin",
+                  mapping.discarded_missing_sensor_origin);
+        add_value("mapping_discarded_sensor_origin_contract",
+                  mapping.discarded_sensor_origin_contract);
         add_signed_value("mapping_traversed_latest_stamp_ns",
                          map.traversed_latest_stamp_ns);
         add_value("mapping_traversed_chain_reset_reason",

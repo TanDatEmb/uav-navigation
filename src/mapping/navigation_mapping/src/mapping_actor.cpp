@@ -174,6 +174,53 @@ constexpr std::size_t kWorldChangeHistoryRetention = 256U;
 constexpr std::size_t kMaximumSnapshotPatchDepth = 8U;
 constexpr double kMaximumPatchToFullOwnedByteRatio = 0.40;
 
+[[nodiscard]] bool includeTraversedSegmentRegion(
+    navigation_world_model::AxisAlignedBox& region,
+    const TraversedFreeSegment& segment,
+    const double query_tolerance_m) noexcept {
+  if (!segment.start.allFinite() || !segment.end.allFinite() ||
+      !std::isfinite(segment.support_radius_m) || segment.support_radius_m < 0.0 ||
+      !std::isfinite(query_tolerance_m) || query_tolerance_m < 0.0) {
+    return false;
+  }
+  const double expansion = segment.support_radius_m + query_tolerance_m;
+  const auto minimum = segment.start.cwiseMin(segment.end).array() - expansion;
+  const auto maximum = segment.start.cwiseMax(segment.end).array() + expansion;
+  if (!minimum.allFinite() || !maximum.allFinite()) return false;
+  if (!region.valid()) {
+    region.minimum = minimum.matrix();
+    region.maximum = maximum.matrix();
+  } else {
+    region.minimum = region.minimum.cwiseMin(minimum.matrix());
+    region.maximum = region.maximum.cwiseMax(maximum.matrix());
+  }
+  return region.valid();
+}
+
+[[nodiscard]] std::optional<navigation_world_model::AxisAlignedBox>
+traversedAffectedRegion(const TraversedFreeSpacePtr& previous,
+                        const TraversedFreeSpacePtr& next,
+                        const double inflated_resolution_m) noexcept {
+  if (!std::isfinite(inflated_resolution_m) || inflated_resolution_m <= 0.0) {
+    return std::nullopt;
+  }
+  navigation_world_model::AxisAlignedBox region;
+  const double query_tolerance_m = 0.5 * inflated_resolution_m;
+  const auto include = [&](const TraversedFreeSpacePtr& overlay) {
+    if (!overlay) return true;
+    for (const auto& segment : overlay->segments()) {
+      if (!includeTraversedSegmentRegion(region, segment, query_tolerance_m)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!include(previous) || !include(next)) return std::nullopt;
+  return region.valid()
+      ? std::optional<navigation_world_model::AxisAlignedBox>{region}
+      : std::nullopt;
+}
+
 }  // namespace
 
 class MappingActor::Impl final {
@@ -199,7 +246,8 @@ class MappingActor::Impl final {
   [[nodiscard]] MappingConfiguration configuration() const noexcept {
     const auto& config = map_->getMapConfig();
     return {config.ros_callback_en, config.batch_update_size,
-            config.virtual_ground_ceiling_en, config.traversed_free_max_age_s,
+            config.raycasting_en, true, config.virtual_ground_ceiling_en,
+            config.traversed_free_max_age_s,
             config.traversed_free_support_radius_m};
   }
 
@@ -242,6 +290,8 @@ class MappingActor::Impl final {
         Eigen::Quaterniond{normalized_q.w(), normalized_q.x(), normalized_q.y(),
                            normalized_q.z()}};
 
+    const auto previous_traversed_free_space = traversed_free_space_;
+    const auto previous_localization_epoch = localization_epoch_;
     try {
       MappingUpdateResult result;
       if (observation.localization_epoch > localization_epoch_) {
@@ -283,8 +333,7 @@ class MappingActor::Impl final {
         fillBackendCloud(*observation.free_space_endpoints,
                          backend_free_space_cloud_);
       }
-      const auto sensor_origin = observation.sensor_origin_world.value_or(
-          navigation_world_model::Point3{pose.position.x, pose.position.y, pose.position.z});
+      const auto sensor_origin = *observation.sensor_origin_world;
       const auto backend_outcome = map_->updateMap(
           backend_cloud_, backend_free_space_cloud_, map_pose,
           sensor_origin);
@@ -302,6 +351,29 @@ class MappingActor::Impl final {
           observation, navigation_world_model::Point3{pose.position.x, pose.position.y,
                                                        pose.position.z});
       traversed_free_space_ = next_traversed;
+      const auto& map_config = map_->getMapConfig();
+      const bool epoch_reset = observation.localization_epoch !=
+          previous_localization_epoch;
+      const auto traversed_region = traversedAffectedRegion(
+          previous_traversed_free_space, next_traversed,
+          map_config.inflation_resolution);
+      if (epoch_reset ||
+          ((previous_traversed_free_space || next_traversed) &&
+           !traversed_region.has_value())) {
+        result.diagnostics.changed_region_covers_world = true;
+      } else if (traversed_region.has_value()) {
+        if (!result.diagnostics.changed_region_min.allFinite() ||
+            !result.diagnostics.changed_region_max.allFinite()) {
+          result.diagnostics.changed_region_covers_world = true;
+        } else {
+          result.diagnostics.changed_region_min =
+              result.diagnostics.changed_region_min.cwiseMin(
+                  traversed_region->minimum);
+          result.diagnostics.changed_region_max =
+              result.diagnostics.changed_region_max.cwiseMax(
+                  traversed_region->maximum);
+        }
+      }
       result.diagnostics.base_pose_world =
           navigation_world_model::Point3{pose.position.x, pose.position.y, pose.position.z};
       result.diagnostics.sensor_origin_world = sensor_origin;
@@ -320,7 +392,6 @@ class MappingActor::Impl final {
       change.identity = identity;
       change.affects_whole_world = result.diagnostics.changed_region_covers_world;
       if (!change.affects_whole_world) {
-        const auto& map_config = map_->getMapConfig();
         const double inflation_radius = map_config.inflation_resolution * static_cast<double>(
             std::max(map_config.inflation_step, map_config.unk_inflation_step));
         // The backend reports metric endpoints, while map updates are made at
@@ -538,6 +609,20 @@ class MappingActor::Impl final {
     if (observation.sensor_origin_world &&
         !observation.sensor_origin_world->allFinite()) {
       throw std::invalid_argument("mapping sensor origin is invalid");
+    }
+    // Even endpoint-only mode uses the origin for the configured sensor-range
+    // contract. There is no safe implicit base-link substitute in either
+    // mode; a non-raycasting deployment must provide the same explicit
+    // sensor-origin field.
+    if (!observation.sensor_origin_world.has_value()) {
+      throw MappingObservationRejected(
+          MappingObservationRejectionReason::kMissingSensorOrigin);
+    }
+    if (observation.sensor_origin_world.has_value() &&
+        (observation.sensor_origin_localization_epoch != observation.localization_epoch ||
+         observation.sensor_origin_stamp_ns != observation.stamp_ns)) {
+      throw MappingObservationRejected(
+          MappingObservationRejectionReason::kSensorOriginContractMismatch);
     }
     if (observation.localization_epoch == localization_epoch_) {
       if (observation.stamp_ns <= last_observation_stamp_ns_) {

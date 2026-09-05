@@ -72,6 +72,8 @@ struct MappingTelemetrySnapshot {
   std::uint64_t discarded_stale{0};
   std::uint64_t discarded_future{0};
   std::uint64_t discarded_invalid{0};
+  std::uint64_t discarded_missing_sensor_origin{0};
+  std::uint64_t discarded_sensor_origin_contract{0};
   std::uint64_t outcome_updated{0};
   std::uint64_t outcome_accumulated{0};
   std::uint64_t outcome_slide_only{0};
@@ -98,6 +100,8 @@ class MappingTelemetry {
     next.discarded_stale = state_.discarded_stale;
     next.discarded_future = state_.discarded_future;
     next.discarded_invalid = state_.discarded_invalid;
+    next.discarded_missing_sensor_origin = state_.discarded_missing_sensor_origin;
+    next.discarded_sensor_origin_contract = state_.discarded_sensor_origin_contract;
     next.outcome_updated = state_.outcome_updated;
     next.outcome_accumulated = state_.outcome_accumulated;
     next.outcome_slide_only = state_.outcome_slide_only;
@@ -139,11 +143,20 @@ class MappingTelemetry {
     std::lock_guard lock(mutex_);
     return state_;
   }
-  void recordDiscard(bool stale, bool future, bool invalid) {
+  void recordDiscard(
+      bool stale, bool future, bool invalid,
+      const navigation_mapping::MappingObservationRejectionReason reason =
+          navigation_mapping::MappingObservationRejectionReason::kNone) {
     std::lock_guard lock(mutex_);
     state_.discarded_stale += stale ? 1U : 0U;
     state_.discarded_future += future ? 1U : 0U;
     state_.discarded_invalid += invalid ? 1U : 0U;
+    state_.discarded_missing_sensor_origin +=
+        reason == navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin
+            ? 1U : 0U;
+    state_.discarded_sensor_origin_contract +=
+        reason == navigation_mapping::MappingObservationRejectionReason::kSensorOriginContractMismatch
+            ? 1U : 0U;
   }
   void recordCallbackFailure(std::int64_t callback_total_us) {
     std::lock_guard lock(mutex_);

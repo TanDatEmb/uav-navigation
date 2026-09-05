@@ -172,6 +172,8 @@ navigation_contracts::msg::RegisteredScan makeRegisteredScan(
   observation.scan_sequence = 1U;
   observation.body_frame_id = "base_link";
   observation.corrected_pose.pose.orientation.w = 1.0;
+  observation.sensor_origin_pose.orientation.w = 1.0;
+  observation.sensor_origin_valid = true;
   observation.points = makeCloud(stamp);
   return observation;
 }

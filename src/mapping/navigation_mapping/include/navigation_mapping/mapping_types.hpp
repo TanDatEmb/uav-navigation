@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <memory>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -34,6 +36,43 @@ enum class MapUpdateOutcome : std::uint8_t {
   kCallbackOwned,
   kBelowGround,
   kAboveCeiling,
+};
+
+enum class MappingObservationRejectionReason : std::uint8_t {
+  kNone = 0,
+  kMalformedObservation,
+  kMissingSensorOrigin,
+  kSensorOriginContractMismatch,
+};
+
+[[nodiscard]] constexpr std::string_view mappingObservationRejectionReasonName(
+    const MappingObservationRejectionReason reason) noexcept {
+  switch (reason) {
+    case MappingObservationRejectionReason::kNone: return "NONE";
+    case MappingObservationRejectionReason::kMalformedObservation:
+      return "MALFORMED_OBSERVATION";
+    case MappingObservationRejectionReason::kMissingSensorOrigin:
+      return "MISSING_SENSOR_ORIGIN";
+    case MappingObservationRejectionReason::kSensorOriginContractMismatch:
+      return "SENSOR_ORIGIN_CONTRACT_MISMATCH";
+  }
+  return "UNKNOWN";
+}
+
+class MappingObservationRejected final : public std::invalid_argument {
+ public:
+  explicit MappingObservationRejected(
+      const MappingObservationRejectionReason reason)
+      : std::invalid_argument(
+            std::string(mappingObservationRejectionReasonName(reason))),
+        reason_(reason) {}
+
+  [[nodiscard]] MappingObservationRejectionReason reason() const noexcept {
+    return reason_;
+  }
+
+ private:
+  MappingObservationRejectionReason reason_;
 };
 
 [[nodiscard]] constexpr bool worldUpdateAdvanced(MapUpdateOutcome outcome) noexcept {
