@@ -19016,16 +19016,19 @@ release profiles must not use the former allowance.
 - **Scope:** The watchdog solve generation and steady start timestamp are now
   owned by a scope-bound marker created only after the complete
   `PlanningRequest`, activation timing, and reserved execution anchor are
-  valid, immediately before `Planner::plan()`. Its destructor clears only its
-  own generation with an ownership-safe CAS.
+  valid, immediately before `Planner::plan()`. The generation and timestamp
+  are one mutex-protected observation, and the watchdog holds that same short
+  activity lock through its timeout cancellation and execution transition, so
+  a completed scope cannot be mistaken for a newer solve.
 - **Safety impact:** Early request/timing/anchor failures no longer appear as
   active optimizer work to the watchdog and cannot trigger cancellation for a
   solve that never started. No numerical threshold, planner gate, recovery
   policy, or command admission rule changed. Transition timing/latency effects
   have not been confirmed by runtime traces or SITL.
 - **Evidence:** The isolated `test_planner_fsm` build and direct run passed
-  57/57, including normal disarm and stale-scope preservation of a newer
-  generation. `navigation_runtime_core` built after rebuilding the clean
+  58/58, including normal disarm, stale-scope preservation of a newer
+  generation, and deterministic serialization of watchdog observation with
+  scope exit. `navigation_runtime_core` built after rebuilding the clean
   world-model, ROG-Map, mapping, planning, and backend dependency chain into
   a temporary prefix. No component-level reserve-anchor failure harness is
   claimed.

@@ -4071,6 +4071,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // anchor have all been accepted.  The scope ends as soon as the backend
     // returns, so post-solve admission work is not reported as an active solve.
     const PlannerSolveActivityScope solve_activity(
+        planner_solve_activity_mutex_,
         planner_solve_started_steady_ns_, active_planner_solve_generation_,
         solve_generation, navigation_common::steadyClockNowNanoseconds());
     try {
@@ -5872,11 +5873,14 @@ void NavigationRuntimeNode::publishCommand() {
     }
   }
 
-  const std::uint64_t active_solve = active_planner_solve_generation_.load();
-  if (active_solve != 0U) {
+  std::unique_lock<std::mutex> solve_activity_lock(planner_solve_activity_mutex_,
+                                                   std::defer_lock);
+  solve_activity_lock.lock();
+  const std::uint64_t active_solve = active_planner_solve_generation_;
+  const std::int64_t solve_started_ns = planner_solve_started_steady_ns_;
+  if (active_solve != 0U && solve_started_ns > 0) {
     const std::int64_t solve_age_ns =
-        navigation_common::steadyClockNowNanoseconds() -
-        planner_solve_started_steady_ns_.load();
+        navigation_common::steadyClockNowNanoseconds() - solve_started_ns;
     if (solve_age_ns > planner_watchdog_timeout_ns_) {
       const std::uint64_t previous_timeout =
           timed_out_planner_solve_generation_.exchange(active_solve);
@@ -5922,6 +5926,7 @@ void NavigationRuntimeNode::publishCommand() {
             failClosedLocked();
           }
         }
+        solve_activity_lock.unlock();
         RCLCPP_ERROR(get_logger(),
                      "planner backend planner watchdog timed out generation=%lu age=%.3f s stage=%d points=%zu; "
                      "preserving certified safety suffix=%d",
@@ -5940,6 +5945,7 @@ void NavigationRuntimeNode::publishCommand() {
       }
     }
   }
+  if (solve_activity_lock.owns_lock()) solve_activity_lock.unlock();
 
   Eigen::Matrix<double, 3, 4> pvaj = Eigen::Matrix<double, 3, 4>::Zero();
   double yaw = 0.0;

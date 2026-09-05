@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <string_view>
 
@@ -81,32 +82,35 @@ inline std::optional<std::uint64_t> advanceMonotonicId(
 class PlannerSolveActivityScope final {
  public:
   PlannerSolveActivityScope(
-      std::atomic_int64_t& started_steady_ns,
-      std::atomic_uint64_t& active_generation,
+      std::mutex& activity_mutex,
+      std::int64_t& started_steady_ns,
+      std::uint64_t& active_generation,
       const std::uint64_t generation,
       const std::int64_t started_ns) noexcept
-      : started_steady_ns_(started_steady_ns),
+      : activity_mutex_(activity_mutex),
+        started_steady_ns_(started_steady_ns),
         active_generation_(active_generation),
         generation_(generation) {
-    started_steady_ns_.store(started_ns, std::memory_order_release);
-    active_generation_.store(generation_, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(activity_mutex_);
+    started_steady_ns_ = started_ns;
+    active_generation_ = generation_;
   }
 
   PlannerSolveActivityScope(const PlannerSolveActivityScope&) = delete;
   PlannerSolveActivityScope& operator=(const PlannerSolveActivityScope&) = delete;
 
-  ~PlannerSolveActivityScope() {
-    std::uint64_t expected = generation_;
-    if (active_generation_.compare_exchange_strong(
-            expected, 0U, std::memory_order_acq_rel,
-            std::memory_order_acquire)) {
-      started_steady_ns_.store(0, std::memory_order_release);
+  ~PlannerSolveActivityScope() noexcept {
+    std::lock_guard<std::mutex> lock(activity_mutex_);
+    if (active_generation_ == generation_) {
+      active_generation_ = 0U;
+      started_steady_ns_ = 0;
     }
   }
 
  private:
-  std::atomic_int64_t& started_steady_ns_;
-  std::atomic_uint64_t& active_generation_;
+  std::mutex& activity_mutex_;
+  std::int64_t& started_steady_ns_;
+  std::uint64_t& active_generation_;
   std::uint64_t generation_;
 };
 
