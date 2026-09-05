@@ -236,6 +236,25 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                                  planned_candidate = std::nullopt);
   void suspendCommandForWorldFreshness();
   void resetForLocalizationEpochLocked(std::uint64_t localization_epoch);
+  // Caller holds command_execution_lease_failure_latch_.transitionMutex().
+  void applyExecutionRecoveryEventLocked(ExecutionRecoveryEvent event) noexcept;
+  // Caller holds command_execution_lease_failure_latch_.transitionMutex().
+  // Command-store invalidation remains explicit at call sites because ordinary
+  // planner failures must retain a still-certified active command.
+  void failClosedLocked() noexcept;
+  // Caller holds localization_transition_mutex_, input_mutex_, and the
+  // execution transition mutex. A nonzero generation requires the active
+  // immutable bundle to match the event producer's identity.
+  [[nodiscard]] bool desiredGoalIdentityMatchesLocked(
+      const navigation_contracts::msg::NavigationGoal& goal,
+      std::uint64_t goal_epoch, std::uint64_t localization_epoch,
+      std::uint64_t bundle_generation = 0U) const noexcept;
+  // The execution identity is the immutable command owner. It may differ from
+  // active_goal_ during a hot retarget until the pending successor activates.
+  [[nodiscard]] bool executingCommandIdentityMatchesLocked(
+      const navigation_contracts::msg::NavigationGoal& goal,
+      std::uint64_t goal_epoch, std::uint64_t localization_epoch,
+      std::uint64_t bundle_generation = 0U) const noexcept;
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
                           navigation_mapping::PointCloud& output,
                           bool require_nonempty = true);

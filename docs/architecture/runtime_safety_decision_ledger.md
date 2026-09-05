@@ -18768,3 +18768,40 @@ release profiles must not use the former allowance.
   && ./build/navigation_contracts/test_typed_interfaces
   && ./build/px4_navigation_external_mode/test_navigation_command
   && ./build/px4_navigation_external_mode/test_mission`; `git diff --check`.
+
+### 2026-09-05 - Serialize execution recovery ownership transitions
+
+- **Owner/status:** Navigation runtime; CODE and COMPONENT_REPRO implemented and
+  focused direct verification passed. No SITL or flight-acceptance claim.
+- **Scope:** Recovery events now use the existing transition mutex's
+  load/transition/store helper. Fail-closed call sites pair the execution
+  episode with sticky `kPx4Hold`; ordinary planner failures retain a still
+  certified command. Desired-goal and executing-command identities are checked
+  separately, and planning-key policy uses one coherent locked snapshot without
+  consulting the telemetry-only episode phase. Sampler recovery role events use
+  the sampled bundle role, not a stale suffix mirror. Non-commit episode
+  observations cannot resurrect a fail-closed episode. Pending activation now
+  requires an exact execution-timeline token plus current nominal recovery,
+  lease, episode and goal/localization identity; final command publication
+  rechecks current execution-state source/receive freshness.
+- **Safety impact:** Preserves one-way BACKUP/EMERGENCY and PX4 Hold dominance;
+  stale workers, goals, bundles and hot-retarget desired identities cannot
+  relabel the executing command. Numerical thresholds, budgets, planner gates
+  and planner geometry are unchanged; transition ordering and lock ownership
+  changed deliberately. Their latency and runtime-continuity effects have not
+  been confirmed by SITL or runtime traces.
+- **Evidence:** `navigation_runtime_node` and `test_planner_fsm` built. Direct
+  `test_planner_fsm` passed 56/56, `test_execution_episode` 6/6,
+  `test_planning_worker` 9/9, and `test_certified_continuation` 5/5. CTest
+  wrapper execution was unavailable because the environment lacks the
+  `ament_cmake_test` Python module; this is an infrastructure result, not a
+  test assertion result. `test_committed_bundle_store` passed 39/39,
+  including stale pending activation token interleaving preservation.
+- **Removal condition:** Revisit only when a single immutable execution
+  authority can replace the serialized recovery and identity checks while
+  preserving sticky Hold, certified suffix ownership, and telemetry ordinals.
+- **Verification:** `cmake --build build/navigation_runtime --target
+  navigation_runtime_node test_planner_fsm test_execution_episode -j2`; build
+  `cmake --build build/navigation_execution --target test_committed_bundle_store`;
+  run the
+  five direct binaries named above; `git diff --check`.

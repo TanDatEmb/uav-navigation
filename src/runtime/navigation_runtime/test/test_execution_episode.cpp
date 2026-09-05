@@ -58,6 +58,25 @@ TEST(ExecutionEpisode, FailClosedClearsCommandExposure) {
   EXPECT_TRUE(state.failure_latched);
 }
 
+TEST(ExecutionEpisode, ObservationsCannotResurrectFailClosedEpisode) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, true);
+  episode.failClosed();
+
+  episode.roleObserved(navigation_planning::CandidateRole::kBackup, 7U);
+  episode.setSafetySuffix(true);
+  episode.requestRestartFromRest();
+  episode.stoppedHold(7U);
+
+  const auto state = episode.snapshot();
+  EXPECT_EQ(state.phase, navigation_runtime::ExecutionEpisodePhase::kPx4Hold);
+  EXPECT_FALSE(state.command_available);
+  EXPECT_TRUE(state.failure_latched);
+  EXPECT_FALSE(state.safety_suffix_active);
+  EXPECT_FALSE(state.restart_from_rest);
+  EXPECT_EQ(state.active_generation, 0U);
+}
+
 TEST(ExecutionEpisode, StoppedHoldPreservesMeasuredRestartRequest) {
   navigation_runtime::ExecutionEpisode episode;
   episode.beginGoal(1U, 2U, 3U, true);

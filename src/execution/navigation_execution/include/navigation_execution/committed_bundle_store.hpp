@@ -425,50 +425,25 @@ class ExecutionTimelineStore final {
 
   // The command timer calls this operation before sampling. No callback or
   // planner code can replace active outside this single atomic boundary.
+  // The exact timeline snapshot is a transaction token. Its version,
+  // pending pointer/generation and activation instant must still match under
+  // the store mutex before any activation or rollback is attempted.
+  template <typename FinalizeFn>
+  bool activatePendingIfDueAndFinalize(
+      std::int64_t now_ns, const ExecutionTimelineSnapshot& expected,
+      FinalizeFn&& finalize) const noexcept {
+    std::lock_guard lock(mutex_);
+    return activatePendingIfDueAndFinalizeLocked(
+        now_ns, expected.pending, expected.version, expected.pending_activation_ns,
+        true, std::forward<FinalizeFn>(finalize));
+  }
+
   template <typename FinalizeFn>
   bool activatePendingIfDueAndFinalize(
       std::int64_t now_ns, FinalizeFn&& finalize) const noexcept {
     std::lock_guard lock(mutex_);
-    if (!pending_ || pending_activation_ns_ <= 0 || now_ns < pending_activation_ns_) {
-      return false;
-    }
-    if (!world_identity_ ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, pending_->world_identity) ||
-        active_goal_epoch_ != pending_->goal_epoch ||
-        now_ns > pending_->valid_until_ns || !pending_->valid() || !committed_ ||
-        !committed_->valid() ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, committed_->world_identity)) {
-      pending_.reset();
-      pending_activation_ns_ = 0;
-      ++timeline_version_;
-      return false;
-    }
-    const auto previous = committed_;
-    const auto successor = pending_;
-    committed_ = successor;
-    pending_.reset();
-    pending_activation_ns_ = 0;
-    ++timeline_version_;
-    bool finalized = false;
-    try {
-      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)(
-          successor->bundle_generation));
-    } catch (...) {
-      finalized = false;
-    }
-    if (!finalized) {
-      committed_ = previous;
-      // The finalize callback owns an external transaction (planner history,
-      // for example). Once it rejects, retaining the pending pointer would
-      // leave an unfinalizable candidate parked ahead of future solves.
-      pending_.reset();
-      pending_activation_ns_ = 0;
-      ++timeline_version_;
-      return false;
-    }
-    return true;
+    return activatePendingIfDueAndFinalizeLocked(
+        now_ns, {}, 0U, 0, false, std::forward<FinalizeFn>(finalize));
   }
 
   bool activatePendingIfDue(std::int64_t now_ns) const noexcept {
@@ -617,6 +592,64 @@ class ExecutionTimelineStore final {
   }
 
  private:
+  template <typename FinalizeFn>
+  bool activatePendingIfDueAndFinalizeLocked(
+      std::int64_t now_ns,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending,
+      std::uint64_t expected_version, std::int64_t expected_activation_ns,
+      bool require_exact_token, FinalizeFn&& finalize) const noexcept {
+    if (!pending_ || pending_activation_ns_ <= 0 || now_ns < pending_activation_ns_) {
+      return false;
+    }
+    if (require_exact_token &&
+        (timeline_version_ != expected_version ||
+         pending_activation_ns_ != expected_activation_ns)) {
+      return false;
+    }
+    if (expected_pending &&
+        (pending_.get() != expected_pending.get() ||
+         pending_->bundle_generation != expected_pending->bundle_generation)) {
+      return false;
+    }
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, pending_->world_identity) ||
+        active_goal_epoch_ != pending_->goal_epoch ||
+        now_ns > pending_->valid_until_ns || !pending_->valid() || !committed_ ||
+        !committed_->valid() ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, committed_->world_identity)) {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      ++timeline_version_;
+      return false;
+    }
+    const auto previous = committed_;
+    const auto successor = pending_;
+    committed_ = successor;
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    ++timeline_version_;
+    bool finalized = false;
+    try {
+      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)(
+          successor->bundle_generation));
+    } catch (...) {
+      finalized = false;
+    }
+    if (!finalized) {
+      committed_ = previous;
+      // The finalize callback owns an external transaction (planner history,
+      // for example). Once it rejects, retaining the pending pointer would
+      // leave an unfinalizable candidate parked ahead of future solves.
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      ++timeline_version_;
+      return false;
+    }
+    return true;
+  }
+
   // Validate the immutable predecessor anchor without invoking its evaluator
   // while holding the store mutex. All operations which replace or invalidate
   // semantic replacements of committed_ clear pending_; a world-only

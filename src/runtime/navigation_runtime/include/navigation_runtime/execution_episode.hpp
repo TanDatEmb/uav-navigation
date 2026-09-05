@@ -78,6 +78,7 @@ class ExecutionEpisode final {
   void roleObserved(navigation_planning::CandidateRole role,
                     std::uint64_t generation) noexcept {
     std::lock_guard lock(mutex_);
+    if (state_.failure_latched) return;
     state_.active_generation = generation;
     state_.command_available = true;
     if (role == navigation_planning::CandidateRole::kEmergency ||
@@ -91,11 +92,13 @@ class ExecutionEpisode final {
 
   void setSafetySuffix(bool active) noexcept {
     std::lock_guard lock(mutex_);
+    if (state_.failure_latched) return;
     state_.safety_suffix_active = active;
   }
 
   void requestRestartFromRest() noexcept {
     std::lock_guard lock(mutex_);
+    if (state_.failure_latched) return;
     state_.restart_from_rest = true;
   }
 
@@ -106,6 +109,7 @@ class ExecutionEpisode final {
 
   void stoppedHold(std::uint64_t generation) noexcept {
     std::lock_guard lock(mutex_);
+    if (state_.failure_latched) return;
     // A stopped hold is also the command publisher's representation while a
     // measured-state PlanFromRest retry is in flight.  Do not erase that
     // lifecycle request from the 50 Hz hold samples; otherwise the next

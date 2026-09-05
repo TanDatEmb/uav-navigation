@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 
 namespace navigation_runtime {
 
@@ -95,6 +96,18 @@ enum class ExecutionRecoveryEvent : std::uint8_t {
       return state;
   }
   return ExecutionRecoveryState::kPx4Hold;
+}
+
+// The caller must hold the execution transition mutex.  Keeping the
+// load/transition/store sequence here prevents event writers from silently
+// bypassing the one-way recovery semantics while avoiding a second lock or a
+// CAS loop inside the already-serialized transition boundary.
+inline void applyExecutionRecoveryEventLocked(
+    std::atomic<ExecutionRecoveryState>& state,
+    ExecutionRecoveryEvent event) noexcept {
+  state.store(
+      transitionExecutionRecovery(state.load(std::memory_order_acquire), event),
+      std::memory_order_release);
 }
 
 }  // namespace navigation_runtime

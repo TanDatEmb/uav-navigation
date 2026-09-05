@@ -650,6 +650,59 @@ TEST(ExecutionTimelineStore, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
   EXPECT_FALSE(store.hasPending());
 }
 
+TEST(ExecutionTimelineStore,
+     ActivationRejectsStaleExpectedPendingWithoutDroppingNewerCandidate) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor.has_value());
+
+  auto first = candidateFor(7, 1);
+  first.bundle_generation = 28;
+  first.valid_from_ns = 50;
+  first.valid_until_ns = 90;
+  first.activation_stamp_ns = 50;
+  const auto first_ptr = std::make_shared<const navigation_planning::CandidateBundle>(first);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, first_ptr),
+            navigation_execution::StageDecision::kStaged);
+  const auto first_timeline = store.snapshot();
+
+  auto newer = first;
+  newer.bundle_generation = 29;
+  const auto newer_ptr = std::make_shared<const navigation_planning::CandidateBundle>(newer);
+  ASSERT_EQ(store.stagePending({world, 7, 3}, *anchor, newer_ptr),
+            navigation_execution::StageDecision::kStaged);
+
+  // Model a publisher that captured first_ptr before a newer pending candidate
+  // won the store mutex. The stale activation must be a no-op, including its
+  // finalizer, and must preserve the newer pending pointer.
+  bool finalized = false;
+  EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
+      50, first_timeline, [&](const std::uint64_t) {
+        finalized = true;
+        return true;
+      }));
+  EXPECT_FALSE(finalized);
+  EXPECT_EQ(store.load(), active);
+  EXPECT_EQ(store.loadPending(), newer_ptr);
+
+  auto activation_mismatch = store.snapshot();
+  ++activation_mismatch.pending_activation_ns;
+  EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
+      50, activation_mismatch, [&](const std::uint64_t) {
+        finalized = true;
+        return true;
+      }));
+  EXPECT_FALSE(finalized);
+  EXPECT_EQ(store.loadPending(), newer_ptr);
+}
+
 TEST(ExecutionTimelineStore, ActivationFinalizerFailureKeepsOldAndDropsPending) {
   navigation_execution::ExecutionTimelineStore store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};

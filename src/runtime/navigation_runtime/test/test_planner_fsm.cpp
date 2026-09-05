@@ -362,6 +362,55 @@ TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
             ExecutionRecoveryState::kPx4Hold);
 }
 
+TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
+  std::atomic<ExecutionRecoveryState> state{ExecutionRecoveryState::kTrackMain};
+  std::mutex transition_mutex;
+  std::barrier rendezvous(3);
+  std::thread backup([&] {
+    rendezvous.arrive_and_wait();
+    std::lock_guard<std::mutex> lock(transition_mutex);
+    applyExecutionRecoveryEventLocked(
+        state, ExecutionRecoveryEvent::kBackupActivated);
+  });
+  std::thread emergency([&] {
+    rendezvous.arrive_and_wait();
+    std::lock_guard<std::mutex> lock(transition_mutex);
+    applyExecutionRecoveryEventLocked(
+        state, ExecutionRecoveryEvent::kEmergencyCommitted);
+  });
+  rendezvous.arrive_and_wait();
+  backup.join();
+  emergency.join();
+
+  const auto result = state.load(std::memory_order_acquire);
+  EXPECT_TRUE(result == ExecutionRecoveryState::kTrackBackup ||
+              result == ExecutionRecoveryState::kEmergencyBrake);
+}
+
+TEST(PlannerFsm, SerializedFailClosedCannotBeResurrectedByNominalEvent) {
+  std::atomic<ExecutionRecoveryState> state{ExecutionRecoveryState::kTrackMain};
+  std::mutex transition_mutex;
+  std::barrier rendezvous(3);
+  std::thread nominal([&] {
+    rendezvous.arrive_and_wait();
+    std::lock_guard<std::mutex> lock(transition_mutex);
+    applyExecutionRecoveryEventLocked(
+        state, ExecutionRecoveryEvent::kBackupActivated);
+  });
+  std::thread fail_closed([&] {
+    rendezvous.arrive_and_wait();
+    std::lock_guard<std::mutex> lock(transition_mutex);
+    state.store(ExecutionRecoveryState::kPx4Hold,
+                std::memory_order_release);
+  });
+  rendezvous.arrive_and_wait();
+  nominal.join();
+  fail_closed.join();
+
+  EXPECT_EQ(state.load(std::memory_order_acquire),
+            ExecutionRecoveryState::kPx4Hold);
+}
+
 TEST(PlannerFsm, PreservesObservedTerminalHoldAcrossRestRetry) {
   EXPECT_TRUE(terminalHoldIsPending(true, true, true, 17U));
   EXPECT_FALSE(terminalHoldIsPending(false, true, true, 17U));
