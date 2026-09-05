@@ -1,4 +1,4 @@
-# Regression fixture for first-frame body-clear at the upper sliding-map edge.
+# Regression fixture for sensor-origin ray evidence at the upper sliding-map edge.
 rog_map:
   resolution: 0.2
   inflation_resolution: 0.2
@@ -44,5 +44,6 @@ rog_map:
     p_max: 0.98
     p_occ: 0.85
     p_free: 0.499
-    ray_range: [0.7, 100.0]
+    # Sensor first-return/no-return minimum; never a vehicle-clearance radius.
+    ray_range: [0.1, 100.0]
     local_update_box: [10.0, 10.0, 5.0]

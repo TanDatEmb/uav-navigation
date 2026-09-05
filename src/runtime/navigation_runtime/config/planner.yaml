@@ -263,12 +263,12 @@ rog_map:
     # Keep the raycasting update box synchronized with the complete evidence
     # window; startup/product tests compare all three discretized axes.
     local_update_box: [50, 50, 8]
-    # Reject returns from the airframe before occupancy insertion. This only
-    # affects the planning map; the estimator keeps its own registered cloud.
-    # The minimum ray range is also the body-clear radius. It must cover the
-    # complete planner safety envelope so a strict BACKUP swept tube cannot
-    # enter an artificial UNKNOWN ring around the execution anchor.
-    ray_range: [0.8, 100]
+    # The estimator's upstream self-return/range filter remains separate from
+    # this planning-map evidence gate; this only affects map insertion.
+    # The minimum is the sensor first-return/no-return ray contract, not a
+    # vehicle-clearance or planner-safety radius. The bundled MID-360 SDF
+    # accepts returns from 0.1 m; keep the existing upper horizon unchanged.
+    ray_range: [0.1, 100]
     p_min: 0.12
     p_miss: 0.49
     p_free: 0.499

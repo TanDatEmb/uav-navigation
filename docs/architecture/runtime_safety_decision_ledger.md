@@ -18489,3 +18489,43 @@ release profiles must not use the former allowance.
   sourced environment: `ctest --test-dir build/navigation_runtime
   --output-on-failure` (8/8) and `ctest --test-dir build/navigation_execution
   --output-on-failure` (2/2).
+
+### 2026-09-05 - Separate MID-360 sensor ray minimum from planner clearance
+
+- **Owner/status:** Navigation mapping and runtime configuration owners;
+  `IMPLEMENTED` in the current worktree; focused mapping/runtime verification
+  recorded below; no SITL or hardware qualification claim.
+- **Scope:** Keep the existing `rog_map.raycasting.ray_range` key. Set the
+  canonical bundled MID-360 profile minimum from the local Gazebo SDF's
+  `0.1 m` first-return range while retaining the existing upper value `100 m`.
+  This minimum governs accepted return/no-return endpoints and the starting
+  point of sensor-origin miss rays. Upstream estimator preprocessing keeps its
+  independent `minimum_range_m: 0.5`; vehicle clearance, planner inflation and
+  planned CurrentBodySupport remain separate authorities. The shared planner source is
+  copied for runtime and dataset replay, but the bundled SDF is not evidence of
+  dataset or hardware calibration.
+- **Safety impact:** Removes the legacy `0.8 m` artificial UNKNOWN shell and
+  restores valid near-range beam evidence. Only voxels traversed by accepted
+  measured beams receive miss updates; no body neighborhood is synthesized or
+  cleared. Explicit no-return endpoints remain miss-only and OCCUPIED
+  precedence remains intact. The unchanged upper `100 m` value does not expand
+  bundled sensor coverage because its SDF producer stops at `40 m`.
+- **Evidence:** `prob_map.cpp` applies the minimum to hit/no-return endpoint
+  validation and miss-ray start (`:901-904`, `:953-958`, `:1019-1035`). The SDF
+  range is `0.1..40.0 m` (`lidar_mid360/model.sdf:54`). ROG-Map regressions
+  cover `0.6 m` hit, direct component-level `0.4 m` no-return, on-beam FREE
+  versus off-beam UNKNOWN, sensor-origin lever arm, occupied precedence, and
+  rejection below `0.1 m`; selected tests passed `18/18`. The focused runtime
+  contract test parses the SDF minimum and passed `1/1`. No SITL evidence is
+  claimed.
+- **Removal condition:** Remove or revise only when an explicit source-profile
+  sensor-range contract replaces this shared profile and preserves independent
+  estimator self-return filtering, miss-only no-return semantics, and occupied
+  precedence. Do not restore planner-radius coupling.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && colcon build --packages-select rog_map_vendor
+  --cmake-args -DBUILD_TESTING=ON`; then
+  `./build/rog_map_vendor/test_rog_map_vendor --gtest_color=no
+  --gtest_filter='RogMapVendorSmoke.*:RogMapPlanningGridExport.*'` and
+  `python3 tools/runtime/tests/test_runtime_contract.py -q
+  RuntimeContractTest.test_mission_planning_policy_is_applied_to_runtime_parameters`.

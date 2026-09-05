@@ -120,3 +120,64 @@ TEST(RogMapVendorSmoke, ExplicitNoReturnEndpointAddsMissOnlyEvidence) {
   EXPECT_TRUE(map.isLineKnownFree(rog_map::Vec3f(1.0, 0.0, 0.0),
                                   rog_map::Vec3f(1.0, 0.0, 0.0)));
 }
+
+TEST(RogMapVendorSmoke, SensorMinimumAdmitsSubMeterHitAndComponentNoReturnOnBeamOnly) {
+  const std::string config = std::string(ROG_MAP_VENDOR_TEST_FIXTURE_DIR) +
+      "/rog_map_raycasting_boundary.yaml";
+  const rog_map::Vec3f sensor_origin(0.0, 0.0, 0.0);
+  const rog_map::Pose pose(sensor_origin, Eigen::Quaterniond::Identity());
+
+  TestRogMap hit_map;
+  hit_map.loadConfigAndInit(config);
+  // 0.6 m is beyond the simulator's separate 0.5 m estimator preprocessing
+  // minimum, while remaining below the legacy 0.8 m map-ray minimum.
+  const rog_map::Vec3f hit(0.6, 0.0, 0.0);
+  for (int i = 0; i < 30; ++i) {
+    ASSERT_EQ(hit_map.updateMap(singlePointCloud(hit), pose),
+              rog_map::MapUpdateOutcome::UPDATED);
+  }
+  // This witness proves acceptance by the endpoint filter; occupancy is
+  // exercised separately by the occupied-precedence regression.
+  EXPECT_EQ(hit_map.lastDiagnostics().processed_count, 1U);
+  EXPECT_EQ(hit_map.lastDiagnostics().skip_below_raycast_min_range, 0U);
+
+  TestRogMap no_return_map;
+  no_return_map.loadConfigAndInit(config);
+  // This direct ROG-Map endpoint test intentionally exercises the component
+  // contract below the estimator preprocessing boundary.
+  const rog_map::Vec3f no_return_endpoint(0.4, 0.0, 0.0);
+  const auto endpoint = noReturnEndpoints(no_return_endpoint);
+  rog_map::PointCloud hits;
+  for (int i = 0; i < 30; ++i) {
+    ASSERT_EQ(no_return_map.updateMap(hits, endpoint, pose),
+              rog_map::MapUpdateOutcome::UPDATED);
+  }
+  EXPECT_EQ(no_return_map.lastDiagnostics().free_space_processed_count, 1U);
+  EXPECT_FALSE(no_return_map.isOccupied(no_return_endpoint));
+  EXPECT_TRUE(no_return_map.isKnownFree(rog_map::Vec3f(0.2, 0.0, 0.0)));
+  EXPECT_EQ(no_return_map.getGridType(rog_map::Vec3f(0.2, 0.5, 0.0)),
+            rog_map::GridType::UNKNOWN);
+}
+
+TEST(RogMapVendorSmoke, SensorMinimumRejectsHitAndNoReturnBelowProfileMinimum) {
+  const std::string config = std::string(ROG_MAP_VENDOR_TEST_FIXTURE_DIR) +
+      "/rog_map_raycasting_boundary.yaml";
+  const rog_map::Vec3f sensor_origin(0.0, 0.0, 0.0);
+  const rog_map::Pose pose(sensor_origin, Eigen::Quaterniond::Identity());
+  const rog_map::Vec3f below_minimum(0.09, 0.0, 0.0);
+
+  TestRogMap hit_map;
+  hit_map.loadConfigAndInit(config);
+  ASSERT_EQ(hit_map.updateMap(singlePointCloud(below_minimum), pose),
+            rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(hit_map.lastDiagnostics().skip_below_raycast_min_range, 1U);
+  EXPECT_FALSE(hit_map.isOccupied(below_minimum));
+
+  TestRogMap no_return_map;
+  no_return_map.loadConfigAndInit(config);
+  rog_map::PointCloud hits;
+  ASSERT_EQ(no_return_map.updateMap(hits, noReturnEndpoints(below_minimum), pose),
+            rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(no_return_map.lastDiagnostics().free_space_skipped_count, 1U);
+  EXPECT_EQ(no_return_map.lastDiagnostics().free_space_processed_count, 0U);
+}

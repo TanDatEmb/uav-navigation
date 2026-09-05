@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 from contextlib import redirect_stderr
+import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -644,18 +645,15 @@ class RuntimeContractTest(unittest.TestCase):
 
             self.assertFalse(planner["rog_map"]["virtual_ground_ceiling_en"])
             ray_range_min = planner["rog_map"]["raycasting"]["ray_range"][0]
-            self.assertEqual(ray_range_min, 0.8)
-            planner_safety_radius = sum(
-                planner["planner"][name]
-                for name in (
-                    "vehicle_radius_m",
-                    "tracking_error_budget_m",
-                    "localization_error_budget_m",
-                    "mapping_error_budget_m",
-                    "planning_margin_m",
-                )
-            )
-            self.assertGreaterEqual(ray_range_min, planner_safety_radius)
+            # ray_range is sensor first-return/no-return evidence.  Vehicle
+            # clearance is owned independently by the planner vehicle contract.
+            sdf_root = ET.parse(
+                ROOT / "src/uav_simulation/models/lidar_mid360/model.sdf"
+            ).getroot()
+            sensor_min = sdf_root.find(".//sensor[@name='lidar']/lidar/range/min")
+            self.assertIsNotNone(sensor_min)
+            self.assertIsNotNone(sensor_min.text)
+            self.assertAlmostEqual(ray_range_min, float(sensor_min.text))
 
             speed_mission = ROOT / "config/runtime/missions/long_three_pillars_speed.yaml"
             speed_target = runner._mapping_params(

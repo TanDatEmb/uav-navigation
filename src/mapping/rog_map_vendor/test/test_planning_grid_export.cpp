@@ -423,10 +423,12 @@ TEST(RogMapPlanningGridExport, RaycastUsesSensorOriginNotBaseOrigin) {
                             sensor_origin),
               rog_map::MapUpdateOutcome::UPDATED);
   }
-  EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.4, 0.0, 0.0}),
+  // The cell behind the explicit sensor origin must not be cleared by a
+  // forward ray, even though the base pose is at the world origin.
+  EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.0, 0.0, 0.0}),
             rog_map::GridType::UNKNOWN);
-  // The first voxel fully traversed after the explicit 0.7 m minimum-range
-  // shell is the stable witness for this low-level ray-origin regression.
+  // The first voxel fully traversed after the explicit 0.1 m sensor minimum
+  // is the stable witness for this low-level ray-origin regression.
   EXPECT_EQ(map.getGridType(Eigen::Vector3d{2.0, 0.0, 0.0}),
             rog_map::GridType::KNOWN_FREE);
 }
