@@ -199,6 +199,19 @@ namespace rog_map {
             }
             local_update_box_d = Vec3f(update_box[0], update_box[1], update_box[2]);
 
+            // Traversed-free provenance is owned by navigation_mapping, but
+            // its bounded policy is loaded beside the map configuration so
+            // there is one runtime authority.  It is never written into the
+            // probability map.
+            loader.LoadParam(name_space + "/traversed_free/max_age_s",
+                             traversed_free_max_age_s, 1.0);
+            loader.LoadParam(name_space + "/traversed_free/max_pose_gap_s",
+                             traversed_free_max_pose_gap_s, 0.5);
+            loader.LoadParam(name_space + "/traversed_free/max_speed_mps",
+                             traversed_free_max_speed_mps, 20.0);
+            loader.LoadParam(name_space + "/traversed_free/support_radius_m",
+                             traversed_free_support_radius_m, 0.0);
+
 
             loader.LoadParam(name_space + "/virtual_ground_ceiling_en",
                              virtual_ground_ceiling_en, true);
@@ -330,6 +343,10 @@ namespace rog_map {
         /* probability update */
         double raycast_range_min{}, raycast_range_max{};
         double sqr_raycast_range_min{}, sqr_raycast_range_max{};
+        double traversed_free_max_age_s{1.0};
+        double traversed_free_max_pose_gap_s{0.5};
+        double traversed_free_max_speed_mps{20.0};
+        double traversed_free_support_radius_m{0.0};
         int point_filt_num{}, batch_update_size{};
         float p_hit{}, p_miss{}, p_min{}, p_max{}, p_occ{}, p_free{};
         float l_hit{}, l_miss{}, l_min{}, l_max{}, l_occ{}, l_free{};
@@ -462,6 +479,14 @@ namespace rog_map {
                 !std::isfinite(raycast_range_max) || raycast_range_max <= raycast_range_min) {
                 throw std::invalid_argument(
                     "rog_map raycasting ray_range must satisfy 0 <= min < max");
+            }
+            if (!positiveFinite(traversed_free_max_age_s) ||
+                !positiveFinite(traversed_free_max_pose_gap_s) ||
+                !positiveFinite(traversed_free_max_speed_mps) ||
+                !nonNegativeFinite(traversed_free_support_radius_m)) {
+                throw std::invalid_argument(
+                    "rog_map traversed_free policy must be finite with positive age/gap/speed "
+                    "and non-negative support radius");
             }
             const auto probability = [](const float value) {
                 return std::isfinite(value) && value > 0.0F && value < 1.0F;

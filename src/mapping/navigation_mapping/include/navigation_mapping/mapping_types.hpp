@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <limits>
 #include <string_view>
 #include <vector>
 
 #include <navigation_world_model/world_model_view.hpp>
+#include <navigation_mapping/traversed_free_space.hpp>
 
 namespace navigation_mapping {
 
@@ -92,6 +94,14 @@ struct RaycastDiagnostics {
   std::int64_t map_slide_voxel_shift_z{0};
   std::uint64_t map_slide_cells_cleared{0};
   std::uint64_t body_neighborhood_cells_cleared{0};
+  std::uint64_t traversed_segment_count{0};
+  std::int64_t traversed_latest_stamp_ns{0};
+  double traversed_latest_age_s{std::numeric_limits<double>::quiet_NaN()};
+  std::uint8_t traversed_chain_reset_reason{0};
+  navigation_world_model::Point3 base_pose_world{
+      navigation_world_model::Point3::Constant(std::numeric_limits<double>::quiet_NaN())};
+  navigation_world_model::Point3 sensor_origin_world{
+      navigation_world_model::Point3::Constant(std::numeric_limits<double>::quiet_NaN())};
   std::uint64_t inflation_update_count{0};
   std::int64_t map_update_us{0};
   std::int64_t raycast_us{0};
@@ -117,6 +127,7 @@ struct MappingSnapshotMetrics {
   std::uint64_t peak_live_count{0};
   std::uint64_t live_owned_bytes{0};
   std::uint64_t peak_live_owned_bytes{0};
+  std::uint64_t traversed_free_bytes{0};
 };
 
 struct MappingSnapshotPublication {

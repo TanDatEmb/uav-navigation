@@ -256,7 +256,10 @@ inline bool certificateTubeIsSafe(
                 }
                 const auto state = world.classify(
                     cell_center, navigation_world_model::GridLayer::kInflated);
-                if (!navigation_world_model::isCellTraversable(state, unknown_policy)) {
+                const auto evidence = world.classifyFreeSpace(
+                    cell_center, navigation_world_model::GridLayer::kInflated);
+                if (!navigation_world_model::isCellTraversable(state, unknown_policy) &&
+                    evidence != navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
                     if (blocked_cell_state != nullptr) *blocked_cell_state = state;
                     if (blocked_position != nullptr) *blocked_position = cell_center;
                     return false;
@@ -457,7 +460,10 @@ inline SweptValidationResult validateExecutableCandidate(
                                      const navigation_world_model::UnknownPolicy policy) {
         const auto state = world.classify(
             point, navigation_world_model::GridLayer::kInflated);
-        return navigation_world_model::isCellTraversable(state, policy);
+        return navigation_world_model::isCellTraversable(state, policy) ||
+            world.classifyFreeSpace(
+                point, navigation_world_model::GridLayer::kInflated) ==
+                navigation_world_model::FreeSpaceEvidence::kTraversedFree;
     };
     const auto initial_role = role_at(t);
     if (!initial_role) {
@@ -572,7 +578,7 @@ inline SweptValidationResult validateExecutableCandidate(
         }
         result.first_blocked_tt = next_t;
         const bool endpoint_safe = next.allFinite() && point_safe(next, segment_policy);
-        const bool segment_safe = endpoint_safe && world.isSegmentTraversable(
+        const bool segment_safe = endpoint_safe && world.isSegmentTraversableWithTraversedFree(
             previous, next, navigation_world_model::GridLayer::kInflated,
             segment_policy);
         if (!endpoint_safe || !segment_safe) {

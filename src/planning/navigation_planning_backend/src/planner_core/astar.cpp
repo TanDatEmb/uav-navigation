@@ -22,6 +22,7 @@ namespace path_search {
     using navigation_world_model::CellState;
     using navigation_world_model::GridLayer;
     using navigation_world_model::UnknownPolicy;
+    using navigation_world_model::FreeSpaceEvidence;
     using navigation_world_model::isCellTraversable;
     constexpr CellState OCCUPIED_CELL = CellState::kOccupied;
     constexpr CellState KNOWN_FREE_CELL = CellState::kKnownFree;
@@ -499,7 +500,7 @@ namespace path_search {
                 : UnknownPolicy::kAllowUnknown;
         rog_map::Vec3f graph_start_pt;
         globalIndexToPos(start_idx, graph_start_pt);
-        if (!map_ptr_->isSegmentTraversable(
+        if (!map_ptr_->isSegmentTraversableWithTraversedFree(
                     local_start_pt, graph_start_pt, search_layer, search_policy)) {
             struct StartCandidate {
                 rog_map::Vec3i index;
@@ -527,14 +528,18 @@ namespace path_search {
                             }
                             const CellState candidate_type = map_ptr_->classify(
                                     candidate_pos, search_layer);
-                            if (!isCellTraversable(candidate_type,
-                                                   UnknownPolicy::kAllowUnknown) ||
+                            const auto candidate_evidence = map_ptr_->classifyFreeSpace(
+                                    candidate_pos, search_layer);
+                            if ((!isCellTraversable(candidate_type,
+                                                   UnknownPolicy::kAllowUnknown) &&
+                                 candidate_evidence != FreeSpaceEvidence::kTraversedFree) ||
                                 (md_.unknown_as_occ &&
                                  (candidate_type == CellState::kUnknown ||
-                                  candidate_type == CellState::kFrontier))) {
+                                  candidate_type == CellState::kFrontier) &&
+                                 candidate_evidence != FreeSpaceEvidence::kTraversedFree)) {
                                 continue;
                             }
-                            if (!map_ptr_->isSegmentTraversable(
+                            if (!map_ptr_->isSegmentTraversableWithTraversedFree(
                                         local_start_pt, candidate_pos,
                                         search_layer, search_policy)) {
                                 continue;
@@ -803,9 +808,13 @@ namespace path_search {
                                     ? KNOWN_FREE_CELL : UNKNOWN_CELL;
                             }
                         }
+                        const auto neighbor_evidence = map_ptr_->classifyFreeSpace(
+                            neighborPos, md_.use_inf_map ? GridLayer::kInflated
+                                                         : GridLayer::kEvidence);
                         if (!isCellTraversable(
                                     neighbor_type,
-                                    UnknownPolicy::kAllowUnknown)) {
+                                    UnknownPolicy::kAllowUnknown) &&
+                            neighbor_evidence != FreeSpaceEvidence::kTraversedFree) {
                             continue;
                         }
 
@@ -826,7 +835,7 @@ namespace path_search {
                         const auto search_policy = md_.unknown_as_occ
                                 ? UnknownPolicy::kRequireKnownFree
                                 : UnknownPolicy::kAllowUnknown;
-                        if (!map_ptr_->isSegmentTraversable(
+                        if (!map_ptr_->isSegmentTraversableWithTraversedFree(
                                     current_pos, neighborPos,
                                     search_layer, search_policy)) {
                             continue;
@@ -838,7 +847,7 @@ namespace path_search {
                         // work without adding evidence. Probability-map search
                         // still receives the separate inflated-layer check.
                         if (search_layer != GridLayer::kInflated &&
-                            !map_ptr_->isSegmentTraversable(
+                            !map_ptr_->isSegmentTraversableWithTraversedFree(
                                     current_pos, neighborPos,
                                     GridLayer::kInflated, search_policy)) {
                             continue;

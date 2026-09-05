@@ -353,6 +353,12 @@ MapUpdateOutcome ProbMap::updateProbMap(const PointCloud& cloud, const Pose& pos
 MapUpdateOutcome ProbMap::updateProbMap(
     const PointCloud& cloud, const PointCloud& free_space_endpoints,
     const Pose& pose) {
+    return updateProbMap(cloud, free_space_endpoints, pose, pose.first);
+}
+
+MapUpdateOutcome ProbMap::updateProbMap(
+    const PointCloud& cloud, const PointCloud& free_space_endpoints,
+    const Pose& pose, const Vec3f& ray_origin) {
     last_diagnostics_ = RaycastDiagnostics{};
     last_diagnostics_.endpoint_count = cloud.size();
     last_diagnostics_.free_space_endpoint_count = free_space_endpoints.size();
@@ -397,7 +403,10 @@ MapUpdateOutcome ProbMap::updateProbMap(
 
     updateLocalBox(pos);
     TimeConsuming t_raycast("raycast", false);
-    raycastProcess(cloud, free_space_endpoints, pos);
+    if (!ray_origin.allFinite()) {
+        throw std::invalid_argument("ROG ray origin is not finite");
+    }
+    raycastProcess(cloud, free_space_endpoints, ray_origin);
     time_consuming_[1] = t_raycast.stop();
     last_diagnostics_.rog_raycast_us = static_cast<std::int64_t>(time_consuming_[1] * 1e6);
     raycast_data_.batch_update_counter++;
@@ -425,51 +434,17 @@ MapUpdateOutcome ProbMap::updateProbMap(
         esdf_map_->updateESDF3D(pos);
     }
 
-    /* Refresh the sensor-minimum body neighborhood on every observation.
-       The execution anchor can move between map slides, and strict backup
-       certification must see the same local evidence as the live map. */
-    first_frame_clear_pending_ = false;
-    last_diagnostics_.body_neighborhood_cells_cleared =
-        clearRobotNeighborhood(pos);
-
     if (!last_diagnostics_.changed_region_covers_world) {
         last_diagnostics_.changed_region_min = raycast_data_.cache_box_min;
         last_diagnostics_.changed_region_max = raycast_data_.cache_box_max;
-        const auto body_extent = Vec3f::Constant(
-            static_cast<float>(cfg_.raycast_range_min));
-        last_diagnostics_.changed_region_min =
-            last_diagnostics_.changed_region_min.cwiseMin(pos - body_extent);
-        last_diagnostics_.changed_region_max =
-            last_diagnostics_.changed_region_max.cwiseMax(pos + body_extent);
+        // The changed region is sensor/raycast evidence only.  In particular,
+        // raycast_range_min is not a vehicle-clearance radius.
     }
     last_diagnostics_.update_outcome = applies_probability_update
         ? MapUpdateOutcome::UPDATED
         : (slid_before_update ? MapUpdateOutcome::SLIDE_ONLY
                               : MapUpdateOutcome::ACCUMULATED);
     return last_diagnostics_.update_outcome;
-}
-
-std::uint64_t ProbMap::clearRobotNeighborhood(const Vec3f& pos) {
-    std::uint64_t cleared_cells = 0U;
-    for (double dx = -cfg_.raycast_range_min; dx <= cfg_.raycast_range_min;
-         dx += cfg_.resolution) {
-        for (double dy = -cfg_.raycast_range_min; dy <= cfg_.raycast_range_min;
-             dy += cfg_.resolution) {
-            for (double dz = -cfg_.raycast_range_min; dz <= cfg_.raycast_range_min;
-                 dz += cfg_.resolution) {
-                const Vec3f offset(dx, dy, dz);
-                if (offset.norm() > cfg_.raycast_range_min) continue;
-                const Vec3f point = pos + offset;
-                // The body-clear sphere may straddle a finite sliding-map
-                // boundary.  Do not derive a hash for an out-of-window point;
-                // only the in-window, sensor-minimum neighborhood is cleared.
-                if (!insideLocalMap(point)) continue;
-                missPointUpdate(point, getHashIndexFromPos(point), 999);
-                ++cleared_cells;
-            }
-        }
-    }
-    return cleared_cells;
 }
 
 GridType ProbMap::getGridType(Vec3i& id_g) const {
@@ -825,10 +800,10 @@ void ProbMap::missPointUpdate(const Vec3f& pos, const int& hash_id, const int& h
 
 void ProbMap::raycastProcess(const PointCloud& input_cloud,
                              const PointCloud& free_space_endpoints,
-                             const Vec3f& cur_odom) {
+                             const Vec3f& ray_origin) {
     // bounding box of updated region
-    raycast_data_.cache_box_min = cur_odom;
-    raycast_data_.cache_box_max = cur_odom;
+    raycast_data_.cache_box_min = ray_origin;
+    raycast_data_.cache_box_max = ray_origin;
     Vec3f raycast_box_min, raycast_box_max;
 
     {
@@ -873,7 +848,7 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud,
         // no raycasting, purely add occ pints
         if (!cfg_.raycasting_en) {
             if (insideLocalMap(p)) {
-                double sqrdis = (p - cur_odom).squaredNorm();
+                double sqrdis = (p - ray_origin).squaredNorm();
                 if(sqrdis<cfg_.sqr_raycast_range_min){
                     last_diagnostics_.skip_below_raycast_min_range++;
                     continue;
@@ -898,26 +873,26 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud,
             clipped = true;
             last_diagnostics_.clipped_virtual_ground_or_ceiling++;
             // find the intersect point with the ceil
-            const double dz = p.z() - cur_odom.z();
-            const double pc = cfg_.virtual_ceil_height - cur_odom.z();
-            p = cur_odom + (p - cur_odom).normalized() * pc / dz;
+            const double dz = p.z() - ray_origin.z();
+            const double pc = cfg_.virtual_ceil_height - ray_origin.z();
+            p = ray_origin + (p - ray_origin).normalized() * pc / dz;
         }
         else if (cfg_.virtual_ground_ceiling_en && p.z() < cfg_.virtual_ground_height) {
             update_hit = false;
             clipped = true;
             last_diagnostics_.clipped_virtual_ground_or_ceiling++;
             // find the intersect point with the ground
-            const double dz = p.z() - cur_odom.z();
-            const double pc = cfg_.virtual_ground_height - cur_odom.z();
-            p = cur_odom + (p - cur_odom).normalized() * pc / dz;
+            const double dz = p.z() - ray_origin.z();
+            const double pc = cfg_.virtual_ground_height - ray_origin.z();
+            p = ray_origin + (p - ray_origin).normalized() * pc / dz;
         }
 
         // 1.4) bounding box filter
         // raycasting max
-        const double sqr_dis = (p - cur_odom).squaredNorm();
+        const double sqr_dis = (p - ray_origin).squaredNorm();
         if (sqr_dis > cfg_.sqr_raycast_range_max) {
             double k = cfg_.raycast_range_max / sqrt(sqr_dis);
-            p = k * (p - cur_odom) + cur_odom;
+            p = k * (p - ray_origin) + ray_origin;
             update_hit = false;
             clipped = true;
             last_diagnostics_.clipped_raycast_max_range++;
@@ -932,7 +907,7 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud,
         if (((p - raycast_box_min).minCoeff() < 0) ||
             ((p - raycast_box_max).maxCoeff() > 0)) {
             p = lineBoxIntersectPoint(p,
-                                      cur_odom,
+                                      ray_origin,
                                       raycast_box_min,
                                       raycast_box_max);
             update_hit = false;
@@ -975,7 +950,7 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud,
             }
 
             Vec3f p(free_endpoint.x, free_endpoint.y, free_endpoint.z);
-            const double sqr_dis = (p - cur_odom).squaredNorm();
+            const double sqr_dis = (p - ray_origin).squaredNorm();
             if (!std::isfinite(sqr_dis) ||
                 sqr_dis < cfg_.sqr_raycast_range_min) {
                 ++last_diagnostics_.free_space_skipped_count;
@@ -985,23 +960,23 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud,
             bool clipped = false;
             if (cfg_.virtual_ground_ceiling_en &&
                 p.z() > cfg_.virtual_ceil_height) {
-                const double dz = p.z() - cur_odom.z();
+                const double dz = p.z() - ray_origin.z();
                 if (std::abs(dz) <= std::numeric_limits<double>::epsilon()) {
                     ++last_diagnostics_.free_space_skipped_count;
                     continue;
                 }
-                const double pc = cfg_.virtual_ceil_height - cur_odom.z();
-                p = cur_odom + (p - cur_odom).normalized() * pc / dz;
+                const double pc = cfg_.virtual_ceil_height - ray_origin.z();
+                p = ray_origin + (p - ray_origin).normalized() * pc / dz;
                 clipped = true;
             } else if (cfg_.virtual_ground_ceiling_en &&
                        p.z() < cfg_.virtual_ground_height) {
-                const double dz = p.z() - cur_odom.z();
+                const double dz = p.z() - ray_origin.z();
                 if (std::abs(dz) <= std::numeric_limits<double>::epsilon()) {
                     ++last_diagnostics_.free_space_skipped_count;
                     continue;
                 }
-                const double pc = cfg_.virtual_ground_height - cur_odom.z();
-                p = cur_odom + (p - cur_odom).normalized() * pc / dz;
+                const double pc = cfg_.virtual_ground_height - ray_origin.z();
+                p = ray_origin + (p - ray_origin).normalized() * pc / dz;
                 clipped = true;
             }
 
@@ -1011,13 +986,13 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud,
                     ++last_diagnostics_.free_space_skipped_count;
                     continue;
                 }
-                p = cfg_.raycast_range_max / distance * (p - cur_odom) + cur_odom;
+                p = cfg_.raycast_range_max / distance * (p - ray_origin) + ray_origin;
                 clipped = true;
             }
 
             if (((p - raycast_box_min).minCoeff() < 0) ||
                 ((p - raycast_box_max).maxCoeff() > 0)) {
-                p = lineBoxIntersectPoint(p, cur_odom, raycast_box_min,
+                p = lineBoxIntersectPoint(p, ray_origin, raycast_box_min,
                                           raycast_box_max);
                 clipped = true;
             }
@@ -1034,15 +1009,15 @@ void ProbMap::raycastProcess(const PointCloud& input_cloud,
         }
 
         // 4) process all inf points, updae free probability
-        const auto add_miss_ray = [this, &cur_odom](const Vec3f& p) {
-            const Vec3f delta = p - cur_odom;
+        const auto add_miss_ray = [this, &ray_origin](const Vec3f& p) {
+            const Vec3f delta = p - ray_origin;
             const float delta_norm = delta.norm();
             if (!delta.allFinite() || !std::isfinite(delta_norm) || delta_norm <= 0.0F) {
                 ++last_diagnostics_.free_space_skipped_count;
                 return;
             }
             const Vec3f raycast_start =
-                delta.normalized() * cfg_.raycast_range_min + cur_odom;
+                delta.normalized() * cfg_.raycast_range_min + ray_origin;
             if (!raycast_start.allFinite() ||
                 !raycast_data_.raycaster.setInput(raycast_start, p)) {
                 ++last_diagnostics_.free_space_skipped_count;
@@ -1137,5 +1112,4 @@ void ProbMap::resetLocalMap() {
     raycast_data_.batch_update_counter = 0;
     std::fill(raycast_data_.operation_cnt.begin(), raycast_data_.operation_cnt.end(), 0);
     std::fill(raycast_data_.hit_cnt.begin(), raycast_data_.hit_cnt.end(), 0);
-    first_frame_clear_pending_ = true;
 }

@@ -26,6 +26,26 @@ enum class CellState : std::uint8_t {
   kFrontier,
 };
 
+// Free-space provenance is deliberately separate from the legacy CellState
+// domain.  SENSOR_FREE is backed by the probabilistic/raycast map; traversed
+// free space is a short-lived geometric overlay and is never written into
+// that map.  OCCUPIED has precedence over both free-space sources.
+enum class FreeSpaceEvidence : std::uint8_t {
+  kUnknown,
+  kSensorFree,
+  kTraversedFree,
+  kOccupied,
+  kOutOfMap,
+};
+
+enum class HandoverClearanceReason : std::uint8_t {
+  kNone = 0,
+  kNoSensorEvidence,
+  kExpiredTraversedEvidence,
+  kDisconnectedTraversedClearance,
+  kOccupiedContradiction,
+};
+
 enum class GridLayer : std::uint8_t { kEvidence, kInflated };
 enum class UnknownPolicy : std::uint8_t { kAllowUnknown, kRequireKnownFree };
 
@@ -231,6 +251,46 @@ class WorldModelView {
   }
   [[nodiscard]] virtual CellState classify(const Point3& point,
                                            GridLayer layer) const noexcept = 0;
+  [[nodiscard]] virtual FreeSpaceEvidence classifyFreeSpace(
+      const Point3& point, GridLayer layer,
+      std::int64_t now_stamp_ns = 0) const noexcept {
+    const auto state = classify(point, layer);
+    switch (state) {
+      case CellState::kKnownFree: return FreeSpaceEvidence::kSensorFree;
+      case CellState::kOccupied: return FreeSpaceEvidence::kOccupied;
+      case CellState::kOutOfMap: return FreeSpaceEvidence::kOutOfMap;
+      case CellState::kUnknown:
+      case CellState::kFrontier:
+      case CellState::kUndefined:
+        return FreeSpaceEvidence::kUnknown;
+    }
+    return FreeSpaceEvidence::kUnknown;
+  }
+  [[nodiscard]] virtual HandoverClearanceReason handoverClearanceReason(
+      const Point3& point, GridLayer layer,
+      std::int64_t now_stamp_ns = 0) const noexcept {
+    const auto state = classify(point, layer);
+    if (state == CellState::kOccupied) {
+      return HandoverClearanceReason::kOccupiedContradiction;
+    }
+    return state == CellState::kKnownFree
+               ? HandoverClearanceReason::kNone
+               : HandoverClearanceReason::kNoSensorEvidence;
+  }
+  [[nodiscard]] bool isSensorKnownFree(
+      const Point3& point, GridLayer layer) const noexcept {
+    return classifyFreeSpace(point, layer) == FreeSpaceEvidence::kSensorFree;
+  }
+  [[nodiscard]] bool isTraversedFree(
+      const Point3& point, GridLayer layer,
+      std::int64_t now_stamp_ns = 0) const noexcept {
+    return classifyFreeSpace(point, layer, now_stamp_ns) ==
+           FreeSpaceEvidence::kTraversedFree;
+  }
+  [[nodiscard]] bool isOccupiedOrInflated(
+      const Point3& point, GridLayer layer) const noexcept {
+    return classifyFreeSpace(point, layer) == FreeSpaceEvidence::kOccupied;
+  }
   [[nodiscard]] virtual bool contains(const Point3& point) const noexcept = 0;
   [[nodiscard]] virtual GridIndex3 positionToIndex(const Point3& point,
                                                    GridLayer layer) const noexcept = 0;
@@ -241,6 +301,13 @@ class WorldModelView {
   [[nodiscard]] virtual bool isSegmentTraversable(
       const Point3& start, const Point3& end, GridLayer layer,
       UnknownPolicy unknown_policy) const noexcept = 0;
+  // Explicit handover/backup oracle.  The default preserves the old strict
+  // sensor-only contract for every non-mapping implementation.
+  [[nodiscard]] virtual bool isSegmentTraversableWithTraversedFree(
+      const Point3& start, const Point3& end, GridLayer layer,
+      UnknownPolicy unknown_policy) const noexcept {
+    return isSegmentTraversable(start, end, layer, unknown_policy);
+  }
   [[nodiscard]] virtual AxisAlignedBox clampToLocalBounds(
       const AxisAlignedBox& requested) const noexcept = 0;
   [[nodiscard]] virtual PointVector observedOccupiedPoints(

@@ -660,6 +660,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::steady_clock::now() - decode_started).count(),
           nullptr};
+      if (pending.message->sensor_origin_valid) {
+        const auto& origin = pending.message->sensor_origin_pose.position;
+        observation.sensor_origin_world =
+            navigation_world_model::Point3{origin.x, origin.y, origin.z};
+      }
       if (decoded_free_space) {
         observation.free_space_endpoints = std::move(decoded_free_space);
       }
@@ -1186,6 +1191,13 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           item.value = std::to_string(std::max<std::int64_t>(0, value));
           status.values.push_back(std::move(item));
         };
+        const auto add_signed_value = [&status](const std::string& key,
+                                                std::int64_t value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = std::to_string(value);
+          status.values.push_back(std::move(item));
+        };
         const auto add_text = [&status](const std::string& key, const std::string& value) {
           diagnostic_msgs::msg::KeyValue item;
           item.key = key;
@@ -1235,6 +1247,39 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("mapping_allocated_voxel_count", map.allocated_voxel_count);
         add_value("mapping_body_neighborhood_cells_cleared",
                   map.body_neighborhood_cells_cleared);
+        add_value("mapping_traversed_segment_count", map.traversed_segment_count);
+        add_signed_value("mapping_traversed_latest_stamp_ns",
+                         map.traversed_latest_stamp_ns);
+        add_value("mapping_traversed_chain_reset_reason",
+                  map.traversed_chain_reset_reason);
+        add_value("mapping_traversed_latest_age_ms",
+                  std::isfinite(map.traversed_latest_age_s)
+                      ? static_cast<std::uint64_t>(std::max(0.0,
+                          map.traversed_latest_age_s) * 1000.0) : 0U);
+        add_signed_value("mapping_sensor_origin_x_mm",
+                         std::isfinite(map.sensor_origin_world.x())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.sensor_origin_world.x() * 1000.0)) : 0);
+        add_signed_value("mapping_sensor_origin_y_mm",
+                         std::isfinite(map.sensor_origin_world.y())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.sensor_origin_world.y() * 1000.0)) : 0);
+        add_signed_value("mapping_sensor_origin_z_mm",
+                         std::isfinite(map.sensor_origin_world.z())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.sensor_origin_world.z() * 1000.0)) : 0);
+        add_signed_value("mapping_base_pose_x_mm",
+                         std::isfinite(map.base_pose_world.x())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.base_pose_world.x() * 1000.0)) : 0);
+        add_signed_value("mapping_base_pose_y_mm",
+                         std::isfinite(map.base_pose_world.y())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.base_pose_world.y() * 1000.0)) : 0);
+        add_signed_value("mapping_base_pose_z_mm",
+                         std::isfinite(map.base_pose_world.z())
+                             ? static_cast<std::int64_t>(std::llround(
+                                 map.base_pose_world.z() * 1000.0)) : 0);
         add_value("world_snapshot_freshness_rejection_count",
                   freshness_rejection_count->load());
         add_value("world_snapshot_bytes", mapping.snapshot_bytes);
@@ -2723,6 +2768,12 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
   add_value("mapping_body_neighborhood_cells_cleared",
             map_diagnostics.body_neighborhood_cells_cleared);
+  add_value("mapping_traversed_segment_count",
+            map_diagnostics.traversed_segment_count);
+  add_signed_value("mapping_traversed_latest_stamp_ns",
+                   map_diagnostics.traversed_latest_stamp_ns);
+  add_value("mapping_traversed_chain_reset_reason",
+            map_diagnostics.traversed_chain_reset_reason);
   add_value("localization_epoch",
             active_localization_epoch_.load(std::memory_order_acquire));
   add_value("localization_epoch_ready",

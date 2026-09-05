@@ -7,8 +7,10 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include <Eigen/Geometry>
 #include <navigation_common/time.hpp>
@@ -197,7 +199,8 @@ class MappingActor::Impl final {
   [[nodiscard]] MappingConfiguration configuration() const noexcept {
     const auto& config = map_->getMapConfig();
     return {config.ros_callback_en, config.batch_update_size,
-            config.virtual_ground_ceiling_en};
+            config.virtual_ground_ceiling_en, config.traversed_free_max_age_s,
+            config.traversed_free_support_radius_m};
   }
 
   [[nodiscard]] MappingSnapshotPublication initialSnapshot() {
@@ -263,6 +266,9 @@ class MappingActor::Impl final {
         current_snapshot_.reset();
         pending_changed_region_ = {};
         pending_change_covers_world_ = false;
+        traversed_free_space_.reset();
+        last_traversed_pose_.reset();
+        last_traversed_stamp_ns_ = 0;
       }
 
       if (world_revision_ == std::numeric_limits<std::uint64_t>::max()) {
@@ -277,8 +283,11 @@ class MappingActor::Impl final {
         fillBackendCloud(*observation.free_space_endpoints,
                          backend_free_space_cloud_);
       }
+      const auto sensor_origin = observation.sensor_origin_world.value_or(
+          navigation_world_model::Point3{pose.position.x, pose.position.y, pose.position.z});
       const auto backend_outcome = map_->updateMap(
-          backend_cloud_, backend_free_space_cloud_, map_pose);
+          backend_cloud_, backend_free_space_cloud_, map_pose,
+          sensor_origin);
       result.outcome = toProductOutcome(backend_outcome);
       result.diagnostics = toProductDiagnostics(map_->lastDiagnostics());
       if (!worldUpdateAdvanced(result.outcome)) {
@@ -288,6 +297,20 @@ class MappingActor::Impl final {
             std::string("mapping observation did not advance the immutable world: ") +
             std::string(worldUpdateOutcomeName(result.outcome)));
       }
+
+      const auto next_traversed = updateTraversedFreeSpace(
+          observation, navigation_world_model::Point3{pose.position.x, pose.position.y,
+                                                       pose.position.z});
+      traversed_free_space_ = next_traversed;
+      result.diagnostics.base_pose_world =
+          navigation_world_model::Point3{pose.position.x, pose.position.y, pose.position.z};
+      result.diagnostics.sensor_origin_world = sensor_origin;
+      result.diagnostics.traversed_segment_count = next_traversed
+          ? next_traversed->segments().size() : 0U;
+      result.diagnostics.traversed_latest_stamp_ns = observation.stamp_ns;
+      result.diagnostics.traversed_latest_age_s = 0.0;
+      result.diagnostics.traversed_chain_reset_reason =
+          static_cast<std::uint8_t>(traversed_reset_reason_);
 
       const auto export_started = std::chrono::steady_clock::now();
       ++world_revision_;
@@ -410,7 +433,8 @@ class MappingActor::Impl final {
         result.snapshot_export_inflated_cells = patch_export.inflated.occupied.size();
         if (!patch_export.base_state.empty() && !patch_export.inflated.occupied.empty()) {
           snapshot = std::make_shared<MappingWorldSnapshot>(
-              current_snapshot_, toProductPatch(patch_export), identity, change_history_);
+              current_snapshot_, toProductPatch(patch_export), identity, change_history_,
+              traversed_free_space_);
           result.snapshot_export_mode = SnapshotExportMode::kPatch;
         } else {
           result.snapshot_full_export_reason = SnapshotFullExportReason::kEmptyPatch;
@@ -434,7 +458,8 @@ class MappingActor::Impl final {
           nearest_offsets_ = toProductNearestOffsets(exported.nearest_offsets);
         }
         snapshot = std::make_shared<MappingWorldSnapshot>(
-            toProductGrid(std::move(exported), nearest_offsets_), identity, change_history_);
+            toProductGrid(std::move(exported), nearest_offsets_), identity, change_history_,
+            traversed_free_space_);
         result.snapshot_export_mode = SnapshotExportMode::kFull;
       }
       result.snapshot = snapshot;
@@ -510,6 +535,10 @@ class MappingActor::Impl final {
         }
       }
     }
+    if (observation.sensor_origin_world &&
+        !observation.sensor_origin_world->allFinite()) {
+      throw std::invalid_argument("mapping sensor origin is invalid");
+    }
     if (observation.localization_epoch == localization_epoch_) {
       if (observation.stamp_ns <= last_observation_stamp_ns_) {
         throw std::runtime_error("mapping observation timestamp is not increasing");
@@ -519,6 +548,64 @@ class MappingActor::Impl final {
         throw std::runtime_error("mapping observation sequence is not increasing");
       }
     }
+  }
+
+  [[nodiscard]] TraversedFreeSpacePtr updateTraversedFreeSpace(
+      const MappingObservation& observation,
+      const navigation_world_model::Point3& base_pose) {
+    const auto& config = map_->getMapConfig();
+    std::vector<TraversedFreeSegment> segments = traversed_free_space_
+        ? traversed_free_space_->segments() : std::vector<TraversedFreeSegment>{};
+    // Keep bounded stale segment metadata for typed handover diagnostics.  It
+    // is never returned as traversed-free evidence: TraversedFreeSpace::contains
+    // applies max_age_s at query time.  The bounded ring below prevents this
+    // diagnostic history from becoming an unbounded map or free-space source.
+    traversed_reset_reason_ = TraversedChainResetReason::kNone;
+    bool append_sweep = false;
+    if (!last_traversed_pose_) {
+      traversed_reset_reason_ = TraversedChainResetReason::kFirstPose;
+    } else if (observation.localization_epoch != last_traversed_epoch_) {
+      segments.clear();
+      traversed_reset_reason_ = TraversedChainResetReason::kEpochChanged;
+    } else {
+      const auto delta_ns = observation.stamp_ns - last_traversed_stamp_ns_;
+      const double dt_s = static_cast<double>(delta_ns) * 1.0e-9;
+      const double distance_m = (base_pose - *last_traversed_pose_).norm();
+      const bool monotonic = delta_ns > 0;
+      const bool gap_valid = std::isfinite(dt_s) && dt_s <= config.traversed_free_max_pose_gap_s;
+      const bool plausible = std::isfinite(distance_m) &&
+          distance_m <= config.traversed_free_max_speed_mps * std::max(0.0, dt_s) +
+              1.0e-6;
+      if (monotonic && gap_valid && plausible) {
+        append_sweep = true;
+      } else if (!monotonic) {
+        traversed_reset_reason_ = TraversedChainResetReason::kTimestampRegression;
+      } else if (!gap_valid) {
+        traversed_reset_reason_ = TraversedChainResetReason::kSourceGap;
+      } else {
+        traversed_reset_reason_ = TraversedChainResetReason::kImplausibleMotion;
+      }
+    }
+    if (append_sweep) {
+      segments.push_back(TraversedFreeSegment{
+          *last_traversed_pose_, base_pose, observation.localization_epoch,
+          last_traversed_stamp_ns_, observation.stamp_ns,
+          config.traversed_free_support_radius_m});
+    }
+    segments.push_back(TraversedFreeSegment{
+        base_pose, base_pose, observation.localization_epoch,
+        observation.stamp_ns, observation.stamp_ns,
+        config.traversed_free_support_radius_m});
+    constexpr std::size_t kMaximumSegments = 512U;
+    if (segments.size() > kMaximumSegments) {
+      segments.erase(segments.begin(), segments.begin() +
+          static_cast<std::ptrdiff_t>(segments.size() - kMaximumSegments));
+    }
+    last_traversed_pose_ = base_pose;
+    last_traversed_epoch_ = observation.localization_epoch;
+    last_traversed_stamp_ns_ = observation.stamp_ns;
+    return std::make_shared<const TraversedFreeSpace>(
+        std::move(segments), config.traversed_free_max_age_s);
   }
 
   std::string config_path_;
@@ -537,6 +624,11 @@ class MappingActor::Impl final {
   std::int64_t last_observation_stamp_ns_{0};
   std::uint64_t last_scan_sequence_{0};
   bool poisoned_{false};
+  TraversedFreeSpacePtr traversed_free_space_;
+  std::optional<navigation_world_model::Point3> last_traversed_pose_;
+  std::uint64_t last_traversed_epoch_{0};
+  std::int64_t last_traversed_stamp_ns_{0};
+  TraversedChainResetReason traversed_reset_reason_{TraversedChainResetReason::kNone};
   navigation_world_model::WorldChangeHistoryPtr change_history_;
   navigation_world_model::AxisAlignedBox pending_changed_region_{};
   bool pending_change_covers_world_{false};

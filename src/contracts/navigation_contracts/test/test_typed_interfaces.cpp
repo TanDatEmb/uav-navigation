@@ -14,6 +14,8 @@ TEST(NavigationContracts, RegisteredScanCarriesAtomicIdentityAndPayload) {
   message.scan_sequence = 11U;
   message.header.frame_id = "lio_odom";
   message.body_frame_id = "base_link";
+  message.sensor_origin_valid = true;
+  message.sensor_origin_pose.position.x = 0.25;
   message.points.header.frame_id = message.header.frame_id;
   message.points.header.stamp = message.header.stamp;
   message.free_space_endpoints.header.frame_id = message.header.frame_id;
@@ -24,6 +26,8 @@ TEST(NavigationContracts, RegisteredScanCarriesAtomicIdentityAndPayload) {
   EXPECT_EQ(message.points.header.frame_id, "lio_odom");
   EXPECT_EQ(message.free_space_endpoints.header.frame_id, "lio_odom");
   EXPECT_EQ(message.body_frame_id, "base_link");
+  EXPECT_TRUE(message.sensor_origin_valid);
+  EXPECT_DOUBLE_EQ(message.sensor_origin_pose.position.x, 0.25);
 }
 
 TEST(NavigationContracts, PropagatedOdometryCarriesEpochSequenceAndSourceState) {

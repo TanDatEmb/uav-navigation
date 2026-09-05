@@ -197,6 +197,9 @@ namespace rog_map {
         [[nodiscard]] MapUpdateOutcome updateProbMap(
             const PointCloud &cloud, const PointCloud &free_space_endpoints,
             const Pose &pose);
+        [[nodiscard]] MapUpdateOutcome updateProbMap(
+            const PointCloud &cloud, const PointCloud &free_space_endpoints,
+            const Pose &pose, const Vec3f &ray_origin);
 
         [[nodiscard]] const RaycastDiagnostics& lastDiagnostics() const noexcept {
             return last_diagnostics_;
@@ -226,8 +229,6 @@ namespace rog_map {
         // incompatible with the public-frame-generation reset contract, which
         // requires destroying and reconstructing the map in the same process.
         bool initialized_once_{false};
-        bool first_frame_clear_pending_{true};
-
         bool map_empty_{true};
         struct RaycastData {
             raycaster::RayCaster raycaster;
@@ -277,15 +278,9 @@ namespace rog_map {
 
         void missPointUpdate(const Vec3f &pos, const int &hash_id, const int &hit_num);
 
-        // The finite sliding window and estimator/command handoff can expose
-        // fresh unknown cells around the vehicle between map slides. Refresh
-        // only the sensor-minimum body neighborhood; this is conservative
-        // local evidence and never authorizes unknown future space.
-        [[nodiscard]] std::uint64_t clearRobotNeighborhood(const Vec3f &pos);
-
         void raycastProcess(const PointCloud &input_cloud,
                             const PointCloud &free_space_endpoints,
-                            const Vec3f &cur_odom);
+                            const Vec3f &ray_origin);
 
         void insertUpdateCandidate(const Vec3i &id_g, bool is_hit);
 

@@ -211,6 +211,14 @@ astar:
   debug_visualization_en: false
 
 rog_map:
+  traversed_free:
+    # Geometric vehicle-center provenance only.  This is not a sensor minimum
+    # range and is not a safety/inflation radius.  Zero is the conservative
+    # point-support default until an independently verified hull is supplied.
+    max_age_s: 1.0
+    max_pose_gap_s: 0.5
+    max_speed_mps: 20.0
+    support_radius_m: 0.0
   # The registered cloud is voxelized at 0.20 m. Keep measured occupancy at
   # that evidence resolution; a denser grid creates thousands of duplicate
   # surface constraints and gives CIRI quadratic work without adding geometry.

@@ -317,6 +317,63 @@ sensor_msgs::msg::PointCloud2 RosOutputPublisher::makeFreeSpaceCloud(
   return makeCloud(endpoints, stamp);
 }
 
+geometry_msgs::msg::Pose RosOutputPublisher::sensorOriginPose(
+    const nav_msgs::msg::Odometry& corrected_odometry) const {
+  geometry_msgs::msg::Pose result;
+  std::shared_ptr<const BaseLinkStateConverter> base_link_converter;
+  {
+    std::lock_guard lock(converter_mutex_);
+    base_link_converter = base_link_converter_;
+  }
+  if (!base_link_converter) return result;
+  const Eigen::Quaterniond q_base(
+      corrected_odometry.pose.pose.orientation.w,
+      corrected_odometry.pose.pose.orientation.x,
+      corrected_odometry.pose.pose.orientation.y,
+      corrected_odometry.pose.pose.orientation.z);
+  const Eigen::Quaterniond q_imu_lidar(
+      parameters_.rotation_imu_lidar_xyzw[3],
+      parameters_.rotation_imu_lidar_xyzw[0],
+      parameters_.rotation_imu_lidar_xyzw[1],
+      parameters_.rotation_imu_lidar_xyzw[2]);
+  const double base_scale = q_base.coeffs().cwiseAbs().maxCoeff();
+  const double lidar_scale = q_imu_lidar.coeffs().cwiseAbs().maxCoeff();
+  if (!q_base.coeffs().allFinite() || !q_imu_lidar.coeffs().allFinite() ||
+      !std::isfinite(base_scale) || base_scale <= 1.0e-9 ||
+      !std::isfinite(lidar_scale) || lidar_scale <= 1.0e-9) return result;
+  const auto normalized_base = Eigen::Quaterniond(
+      q_base.w() / base_scale, q_base.x() / base_scale,
+      q_base.y() / base_scale, q_base.z() / base_scale).normalized();
+  const auto normalized_lidar = Eigen::Quaterniond(
+      q_imu_lidar.w() / lidar_scale, q_imu_lidar.x() / lidar_scale,
+      q_imu_lidar.y() / lidar_scale, q_imu_lidar.z() / lidar_scale).normalized();
+  const Eigen::Matrix3d R_world_base = normalized_base.toRotationMatrix();
+  const Eigen::Matrix3d R_base_imu = base_link_converter->baseToImu()
+      .rotation().toRotationMatrix();
+  const Eigen::Matrix3d R_world_lidar = R_world_base * R_base_imu *
+      normalized_lidar.toRotationMatrix();
+  const Eigen::Vector3d t_base_lidar = R_base_imu * Eigen::Vector3d(
+      parameters_.translation_imu_lidar_m[0],
+      parameters_.translation_imu_lidar_m[1],
+      parameters_.translation_imu_lidar_m[2]) +
+      base_link_converter->baseToImu().translation();
+  const Eigen::Vector3d p_world_base(
+      corrected_odometry.pose.pose.position.x,
+      corrected_odometry.pose.pose.position.y,
+      corrected_odometry.pose.pose.position.z);
+  const Eigen::Vector3d p_world_lidar = p_world_base + R_world_base * t_base_lidar;
+  if (!p_world_lidar.allFinite() || !R_world_lidar.allFinite()) return result;
+  const Eigen::Quaterniond q_world_lidar(R_world_lidar);
+  result.position.x = p_world_lidar.x();
+  result.position.y = p_world_lidar.y();
+  result.position.z = p_world_lidar.z();
+  result.orientation.w = q_world_lidar.w();
+  result.orientation.x = q_world_lidar.x();
+  result.orientation.y = q_world_lidar.y();
+  result.orientation.z = q_world_lidar.z();
+  return result;
+}
+
 void RosOutputPublisher::publish(const ProcessResult& result,
                                  const std::uint64_t scan_sequence) {
   EstimatorHealthSnapshot health;
@@ -469,6 +526,18 @@ void RosOutputPublisher::publish(const ProcessResult& result,
     observation.scan_sequence = scan_sequence;
     observation.body_frame_id = corrected_odometry->child_frame_id;
     observation.corrected_pose = corrected_odometry->pose;
+    observation.sensor_origin_pose = sensorOriginPose(*corrected_odometry);
+    const auto& sensor_orientation = observation.sensor_origin_pose.orientation;
+    const double sensor_orientation_norm = std::sqrt(
+        sensor_orientation.w * sensor_orientation.w +
+        sensor_orientation.x * sensor_orientation.x +
+        sensor_orientation.y * sensor_orientation.y +
+        sensor_orientation.z * sensor_orientation.z);
+    observation.sensor_origin_valid =
+        std::isfinite(observation.sensor_origin_pose.position.x) &&
+        std::isfinite(observation.sensor_origin_pose.position.y) &&
+        std::isfinite(observation.sensor_origin_pose.position.z) &&
+        std::isfinite(sensor_orientation_norm) && sensor_orientation_norm > 1.0e-9;
     observation.points = std::move(registered_cloud);
     sensor_msgs::msg::PointCloud2::ConstSharedPtr matching_visibility_cloud;
     {

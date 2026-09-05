@@ -11,6 +11,7 @@
 
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <geometry_msgs/msg/pose.hpp>
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/registered_scan.hpp>
 #include <rclcpp/node.hpp>
@@ -106,6 +107,8 @@ class RosOutputPublisher {
       const sensor_msgs::msg::PointCloud2& cloud,
       const nav_msgs::msg::Odometry& corrected_odometry,
       const builtin_interfaces::msg::Time& stamp) const;
+  [[nodiscard]] geometry_msgs::msg::Pose sensorOriginPose(
+      const nav_msgs::msg::Odometry& corrected_odometry) const;
   void publishTypedHealth(const EstimatorHealthSnapshot& health,
                           bool correction_fresh,
                           const builtin_interfaces::msg::Time& stamp);

@@ -12,6 +12,7 @@
 #include <utility>
 
 #include <navigation_mapping/mapping_types.hpp>
+#include <navigation_mapping/traversed_free_space.hpp>
 #include <navigation_mapping/visibility_control.hpp>
 #include <navigation_world_model/continuous_clearance.hpp>
 
@@ -84,11 +85,14 @@ class MappingWorldSnapshot final
  public:
   MappingWorldSnapshot(PlanningGrid grid,
                        navigation_world_model::WorldSnapshotIdentity identity,
-                       navigation_world_model::WorldChangeHistoryPtr change_history = {})
+                       navigation_world_model::WorldChangeHistoryPtr change_history = {},
+                       TraversedFreeSpacePtr traversed_free_space = {})
       : grid_(validated(std::move(grid), identity)),
         identity_(identity),
         change_history_(std::move(change_history)),
-        owned_bytes_(grid_->ownedByteSize()) {
+        traversed_free_space_(std::move(traversed_free_space)),
+        owned_bytes_(grid_->ownedByteSize() +
+                     (traversed_free_space_ ? traversed_free_space_->byteSize() : 0U)) {
     const auto live = live_count_.fetch_add(1U, std::memory_order_relaxed) + 1U;
     const auto bytes = live_owned_bytes_.fetch_add(owned_bytes_, std::memory_order_relaxed) +
                        owned_bytes_;
@@ -99,12 +103,15 @@ class MappingWorldSnapshot final
   MappingWorldSnapshot(std::shared_ptr<const MappingWorldSnapshot> parent,
                        PlanningGridPatch patch,
                        navigation_world_model::WorldSnapshotIdentity identity,
-                       navigation_world_model::WorldChangeHistoryPtr change_history = {})
+                       navigation_world_model::WorldChangeHistoryPtr change_history = {},
+                       TraversedFreeSpacePtr traversed_free_space = {})
       : parent_(std::move(parent)),
         patch_(validatedPatch(std::move(patch), parent_, identity)),
         identity_(identity),
         change_history_(std::move(change_history)),
-        owned_bytes_(patch_->ownedByteSize()) {
+        traversed_free_space_(std::move(traversed_free_space)),
+        owned_bytes_(patch_->ownedByteSize() +
+                     (traversed_free_space_ ? traversed_free_space_->byteSize() : 0U)) {
     if (!parent_) throw std::invalid_argument("patch snapshot parent is missing");
     const auto live = live_count_.fetch_add(1U, std::memory_order_relaxed) + 1U;
     const auto bytes = live_owned_bytes_.fetch_add(owned_bytes_, std::memory_order_relaxed) +
@@ -217,6 +224,102 @@ class MappingWorldSnapshot final
                  : CellState::kKnownFree;
     }
     return baseState(positionToIndex(point, GridLayer::kEvidence));
+  }
+
+  [[nodiscard]] navigation_world_model::FreeSpaceEvidence classifyFreeSpace(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer layer,
+      const std::int64_t now_stamp_ns = 0) const noexcept override {
+    const auto state = classify(point, layer);
+    using navigation_world_model::CellState;
+    using navigation_world_model::FreeSpaceEvidence;
+    if (state == CellState::kOccupied) return FreeSpaceEvidence::kOccupied;
+    if (state == CellState::kOutOfMap) return FreeSpaceEvidence::kOutOfMap;
+    if (state == CellState::kKnownFree) return FreeSpaceEvidence::kSensorFree;
+    const auto traversed = traversedFreeSpace();
+    const auto stamp = now_stamp_ns > 0 ? now_stamp_ns : identity_.observation_stamp_ns;
+    const double resolution = layer == navigation_world_model::GridLayer::kInflated
+                                  ? rootGrid().inflated.layout.resolution_m
+                                  : rootGrid().base_layout.resolution_m;
+    if (traversed && traversed->contains(
+            point, identity_.localization_epoch, stamp, 0.5 * resolution)) {
+      return FreeSpaceEvidence::kTraversedFree;
+    }
+    return FreeSpaceEvidence::kUnknown;
+  }
+
+  [[nodiscard]] navigation_world_model::HandoverClearanceReason handoverClearanceReason(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer layer,
+      const std::int64_t now_stamp_ns = 0) const noexcept override {
+    const auto state = classify(point, layer);
+    using navigation_world_model::CellState;
+    using navigation_world_model::HandoverClearanceReason;
+    if (state == CellState::kOccupied) {
+      return HandoverClearanceReason::kOccupiedContradiction;
+    }
+    if (state == CellState::kKnownFree) return HandoverClearanceReason::kNone;
+    const auto traversed = traversedFreeSpace();
+    if (!traversed || traversed->segments().empty()) {
+      return HandoverClearanceReason::kNoSensorEvidence;
+    }
+    const auto stamp = now_stamp_ns > 0 ? now_stamp_ns : identity_.observation_stamp_ns;
+    if (classifyFreeSpace(point, layer, stamp) ==
+        navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
+      return HandoverClearanceReason::kNone;
+    }
+    bool same_epoch = false;
+    bool has_expired_epoch_support = false;
+    for (const auto& segment : traversed->segments()) {
+      if (segment.localization_epoch != identity_.localization_epoch) continue;
+      same_epoch = true;
+      const bool fresh = segment.last_traversed_stamp_ns > 0 &&
+          stamp >= segment.last_traversed_stamp_ns &&
+          static_cast<long double>(stamp - segment.last_traversed_stamp_ns) <=
+              static_cast<long double>(traversed->maxAgeSeconds()) * 1.0e9L;
+      has_expired_epoch_support |= !fresh;
+    }
+    if (same_epoch && has_expired_epoch_support) {
+      return HandoverClearanceReason::kExpiredTraversedEvidence;
+    }
+    return HandoverClearanceReason::kDisconnectedTraversedClearance;
+  }
+
+  [[nodiscard]] bool isSegmentTraversableWithTraversedFree(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy unknown_policy) const noexcept override {
+    if (!start.allFinite() || !end.allFinite() || !containsLayer(start, layer) ||
+        !containsLayer(end, layer)) return false;
+    if (unknown_policy == navigation_world_model::UnknownPolicy::kAllowUnknown) {
+      return isSegmentTraversable(start, end, layer, unknown_policy);
+    }
+    const auto delta = end - start;
+    const double length = delta.norm();
+    const double resolution = layer == navigation_world_model::GridLayer::kInflated
+                                  ? rootGrid().inflated.layout.resolution_m
+                                  : rootGrid().base_layout.resolution_m;
+    if (!std::isfinite(length) || !std::isfinite(resolution) || resolution <= 0.0) {
+      return false;
+    }
+    const int steps = std::max(1, static_cast<int>(std::ceil(length / resolution)));
+    bool sensor_prefix_complete = false;
+    for (int index = 0; index <= steps; ++index) {
+      const double alpha = static_cast<double>(index) / static_cast<double>(steps);
+      const auto evidence = classifyFreeSpace(start + alpha * delta, layer);
+      using navigation_world_model::FreeSpaceEvidence;
+      if (evidence == FreeSpaceEvidence::kOccupied ||
+          evidence == FreeSpaceEvidence::kOutOfMap ||
+          evidence == FreeSpaceEvidence::kUnknown) return false;
+      if (evidence == FreeSpaceEvidence::kSensorFree) {
+        sensor_prefix_complete = true;
+      } else if (sensor_prefix_complete) {
+        // Never re-enter traversed-only support after normal sensor support.
+        return false;
+      }
+    }
+    return true;
   }
 
   [[nodiscard]] bool contains(
@@ -511,6 +614,8 @@ class MappingWorldSnapshot final
         static_cast<std::uint64_t>(peakLiveCount()),
         static_cast<std::uint64_t>(liveOwnedBytes()),
         static_cast<std::uint64_t>(peakLiveOwnedBytes()),
+        static_cast<std::uint64_t>(traversedFreeSpace()
+                                       ? traversedFreeSpace()->byteSize() : 0U),
     };
   }
   [[nodiscard]] static std::size_t liveCount() noexcept {
@@ -529,6 +634,12 @@ class MappingWorldSnapshot final
  private:
   [[nodiscard]] const PlanningGrid& rootGrid() const noexcept {
     return grid_ ? *grid_ : parent_->rootGrid();
+  }
+
+  [[nodiscard]] TraversedFreeSpacePtr traversedFreeSpace() const noexcept {
+    return traversed_free_space_ ? traversed_free_space_
+                                  : (parent_ ? parent_->traversedFreeSpace()
+                                             : TraversedFreeSpacePtr{});
   }
 
   [[nodiscard]] std::uint8_t inflatedOccupied(
@@ -809,6 +920,7 @@ class MappingWorldSnapshot final
   const std::optional<PlanningGridPatch> patch_;
   const navigation_world_model::WorldSnapshotIdentity identity_;
   const navigation_world_model::WorldChangeHistoryPtr change_history_;
+  const TraversedFreeSpacePtr traversed_free_space_;
   const std::size_t owned_bytes_;
   inline static std::atomic_size_t live_count_{0U};
   inline static std::atomic_size_t peak_live_count_{0U};

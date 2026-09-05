@@ -51,6 +51,8 @@ struct MappingConfiguration {
   bool callbacks_enabled{false};
   int raycasting_batch_update_size{1};
   bool virtual_ground_ceiling_enabled{true};
+  double traversed_free_max_age_s{0.0};
+  double traversed_free_support_radius_m{0.0};
 };
 
 struct MappingFrameContract {

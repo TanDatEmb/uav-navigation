@@ -42,6 +42,7 @@ install(FILES
   include/navigation_mapping/mapping_diagnostics.hpp
   include/navigation_mapping/mapping_observation.hpp
   include/navigation_mapping/mapping_types.hpp
+  include/navigation_mapping/traversed_free_space.hpp
   include/navigation_mapping/mapping_worker.hpp
   include/navigation_mapping/observation_accounting.hpp
   include/navigation_mapping/visibility_control.hpp

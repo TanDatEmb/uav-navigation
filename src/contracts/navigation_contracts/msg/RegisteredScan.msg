@@ -10,6 +10,11 @@ uint64 scan_sequence
 string body_frame_id
 geometry_msgs/PoseWithCovariance corrected_pose
 
+# The registered cloud is in the outer frame, so the mapping ray origin must
+# carry the corrected sensor lever arm separately from base_link.
+geometry_msgs/Pose sensor_origin_pose
+bool sensor_origin_valid
+
 # points.header.stamp and points.header.frame_id must equal header.stamp and
 # header.frame_id respectively.  The cloud is registered in the outer frame.
 sensor_msgs/PointCloud2 points

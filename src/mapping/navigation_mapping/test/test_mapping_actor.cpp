@@ -3,6 +3,7 @@
 #include <navigation_mapping/mapping_world_snapshot.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -146,7 +147,7 @@ TEST(MappingActorContract, ReconstructsBackendForNewLocalizationEpoch) {
   EXPECT_EQ(result.world_revision, 1U);
 }
 
-TEST(MappingActorContract, FirstFrameClearRemainsKnownFreeNearFiniteMapCeiling) {
+TEST(MappingActorContract, TraversedEvidenceSupportsCurrentPoseNearFiniteMapCeiling) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
 
@@ -159,17 +160,17 @@ TEST(MappingActorContract, FirstFrameClearRemainsKnownFreeNearFiniteMapCeiling) 
 
   const auto result = actor.process(observation);
   ASSERT_TRUE(result.snapshot);
-  EXPECT_EQ(result.snapshot->classify(
+  EXPECT_EQ(result.snapshot->classifyFreeSpace(
                 navigation_world_model::Point3{0.0, 0.0, 2.9},
                 navigation_world_model::GridLayer::kEvidence),
-            navigation_world_model::CellState::kKnownFree);
+            navigation_world_model::FreeSpaceEvidence::kTraversedFree);
   EXPECT_EQ(result.snapshot->classify(
                 navigation_world_model::Point3{0.0, 0.0, 1.5},
                 navigation_world_model::GridLayer::kEvidence),
             navigation_world_model::CellState::kUnknown);
 }
 
-TEST(MappingActorContract, FirstFrameClearSurvivesBoundedSnapshotPatches) {
+TEST(MappingActorContract, TraversedEvidenceSurvivesBoundedSnapshotPatches) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
   const Eigen::Vector3d position{-0.3, -0.3, 2.9};
@@ -180,11 +181,99 @@ TEST(MappingActorContract, FirstFrameClearSurvivesBoundedSnapshotPatches) {
         seconds * 1'000'000'000LL, seconds * 1'000'000'000LL, position,
         static_cast<std::uint64_t>(seconds)));
     ASSERT_TRUE(result.snapshot);
-    EXPECT_EQ(result.snapshot->classify(
+    EXPECT_EQ(result.snapshot->classifyFreeSpace(
                   robot_point, navigation_world_model::GridLayer::kEvidence),
-              navigation_world_model::CellState::kKnownFree)
+              navigation_world_model::FreeSpaceEvidence::kTraversedFree)
         << "revision=" << result.world_revision;
   }
+}
+
+TEST(MappingActorContract, LocalizationJumpDoesNotCreateTraversedBridge) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  const auto first = actor.process(observationAtPose(
+      1'000'000'000LL, 1'000'000'000LL, Eigen::Vector3d::Zero(), 1U));
+  ASSERT_TRUE(first.snapshot);
+  const auto jumped = actor.process(observationAtPose(
+      1'100'000'000LL, 1'100'000'000LL, Eigen::Vector3d{3.0, 0.0, 0.0}, 2U));
+  ASSERT_TRUE(jumped.snapshot);
+  EXPECT_EQ(jumped.snapshot->classifyFreeSpace(
+                Eigen::Vector3d{1.5, 0.0, 0.0},
+                navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::FreeSpaceEvidence::kUnknown);
+}
+
+TEST(MappingActorContract, ManualVerticalTakeoffFollowsCurrentPoseWithTraversedEvidence) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  const std::array<double, 4> heights{0.0, 1.0, 2.0, 3.0};
+  for (std::size_t index = 0; index < heights.size(); ++index) {
+    const auto stamp = static_cast<std::int64_t>(index + 1U) * 1'000'000'000LL;
+    const auto result = actor.process(observationAtPose(
+        stamp, stamp, Eigen::Vector3d{0.0, 0.0, heights[index]}, index + 1U));
+    ASSERT_TRUE(result.snapshot);
+  }
+  const auto latest = actor.process(observationAtPose(
+      5'000'000'000LL, 5'000'000'000LL, Eigen::Vector3d{0.0, 0.0, 3.0}, 5U));
+  ASSERT_TRUE(latest.snapshot);
+  EXPECT_EQ(latest.snapshot->classifyFreeSpace(
+                Eigen::Vector3d{0.0, 0.0, 3.0},
+                navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::FreeSpaceEvidence::kTraversedFree);
+  EXPECT_EQ(latest.snapshot->classify(
+                Eigen::Vector3d{0.0, 0.0, 3.0},
+                navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::CellState::kUnknown);
+}
+
+TEST(MappingActorContract, OccupiedSensorEvidenceOverridesTraversedEvidence) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  const auto first = actor.process(observationAtPose(
+      1'000'000'000LL, 1'000'000'000LL, Eigen::Vector3d::Zero(), 1U));
+  ASSERT_TRUE(first.snapshot);
+  auto occupied = observationAtPose(
+      1'100'000'000LL, 1'100'000'000LL, Eigen::Vector3d{1.0, 0.0, 0.0}, 2U);
+  auto occupied_cloud = std::make_unique<navigation_mapping::PointCloud>();
+  occupied_cloud->push_back(navigation_mapping::PointXYZI{0.0F, 0.0F, 0.0F, 0.0F});
+  occupied.cloud = std::move(occupied_cloud);
+  const auto result = actor.process(occupied);
+  ASSERT_TRUE(result.snapshot);
+  EXPECT_EQ(result.snapshot->classifyFreeSpace(
+                Eigen::Vector3d::Zero(), navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::FreeSpaceEvidence::kOccupied);
+}
+
+TEST(MappingActorContract, TraversedEvidenceExpiresWithoutOccupancyMutation) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  ASSERT_TRUE(actor.process(observationAtPose(
+      1'000'000'000LL, 1'000'000'000LL, Eigen::Vector3d::Zero(), 1U)).snapshot);
+  const auto result = actor.process(observationAtPose(
+      2'100'000'000LL, 2'100'000'000LL, Eigen::Vector3d{1.0, 0.0, 0.0}, 2U));
+  ASSERT_TRUE(result.snapshot);
+  EXPECT_EQ(result.snapshot->classifyFreeSpace(
+                Eigen::Vector3d::Zero(), navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::FreeSpaceEvidence::kUnknown);
+  EXPECT_EQ(result.snapshot->handoverClearanceReason(
+                Eigen::Vector3d::Zero(), navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::HandoverClearanceReason::kExpiredTraversedEvidence);
+}
+
+TEST(MappingActorContract, BlindShellReportsDisconnectedHandoverClearance) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  const auto result = actor.process(observationAtPose(
+      1'000'000'000LL, 1'000'000'000LL, Eigen::Vector3d::Zero(), 1U));
+  ASSERT_TRUE(result.snapshot);
+  EXPECT_EQ(result.snapshot->handoverClearanceReason(
+                Eigen::Vector3d{2.0, 0.0, 0.0},
+                navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::HandoverClearanceReason::kDisconnectedTraversedClearance);
+  EXPECT_FALSE(result.snapshot->isSegmentTraversableWithTraversedFree(
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{2.0, 0.0, 0.0},
+      navigation_world_model::GridLayer::kEvidence,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree));
 }
 
 TEST(MappingActorContract, UsesBoundedPatchForSteadyStateMapUpdate) {

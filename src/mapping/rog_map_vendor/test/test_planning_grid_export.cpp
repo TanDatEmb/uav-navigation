@@ -323,7 +323,7 @@ TEST(RogMapPlanningGridExport, DisabledVirtualPlanesAllowNegativeZAndMoveLocalWi
   EXPECT_EQ(before.base_layout.local_center_m, Eigen::Vector3d::Zero());
 }
 
-TEST(RogMapPlanningGridExport, FirstFrameClearClipsToFiniteMapWindow) {
+TEST(RogMapPlanningGridExport, SensorRaycastDoesNotFabricateBodyFreeSpace) {
   TestRogMap map;
   map.loadConfigAndInit(raycastingBoundaryConfigPath());
 
@@ -333,19 +333,18 @@ TEST(RogMapPlanningGridExport, FirstFrameClearClipsToFiniteMapWindow) {
       rog_map::Pose{pose_position, Eigen::Quaterniond::Identity()});
 
   ASSERT_EQ(outcome, rog_map::MapUpdateOutcome::UPDATED);
-  // The body-clear sphere reaches above the finite local map.  Every point
-  // retained inside the map must be known free, while an interior point that
-  // was not cleared remains unknown.  Most importantly, the boundary
-  // clipping must not corrupt the occupancy buffer.
+  // A sensor minimum range is not vehicle-presence evidence.  The endpoint
+  // ray still contributes its own sensor free cells, but the base pose cell
+  // is not cleared by a synthetic sphere.
   EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.0, 0.0, 2.9}),
-            rog_map::GridType::KNOWN_FREE);
+            rog_map::GridType::UNKNOWN);
   EXPECT_EQ(map.getInfGridType(Eigen::Vector3d{0.0, 0.0, 2.9}),
-            rog_map::GridType::KNOWN_FREE);
+            rog_map::GridType::UNKNOWN);
   EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.0, 0.0, 1.5}),
             rog_map::GridType::UNKNOWN);
 }
 
-TEST(RogMapPlanningGridExport, MapSlideClearsFreshBodyNeighborhood) {
+TEST(RogMapPlanningGridExport, MapSlideDoesNotClearFreshBodyNeighborhood) {
   TestRogMap map;
   map.loadConfigAndInit(raycastingBoundaryConfigPath());
 
@@ -354,18 +353,17 @@ TEST(RogMapPlanningGridExport, MapSlideClearsFreshBodyNeighborhood) {
                 singlePointCloud(initial_pose + Eigen::Vector3d{2.0, 0.0, 0.0}),
                 rog_map::Pose{initial_pose, Eigen::Quaterniond::Identity()}),
             rog_map::MapUpdateOutcome::UPDATED);
-  EXPECT_EQ(map.getGridType(initial_pose), rog_map::GridType::KNOWN_FREE);
+  EXPECT_EQ(map.getGridType(initial_pose), rog_map::GridType::UNKNOWN);
 
-  // This exceeds the 1.5 m slide threshold and exposes a new local window
-  // around a takeoff-adjacent pose.  The newly exposed robot cell must be
-  // known free, while a point outside the body-clear sphere remains unknown.
+  // This exceeds the 1.5 m slide threshold and exposes a new local window.
+  // Sliding must not turn the new base pose into probabilistic free evidence.
   const Eigen::Vector3d slid_pose{0.0, 0.0, 2.9};
   ASSERT_EQ(map.updateMap(
                 singlePointCloud(slid_pose + Eigen::Vector3d{2.0, 0.0, 0.0}),
                 rog_map::Pose{slid_pose, Eigen::Quaterniond::Identity()}),
             rog_map::MapUpdateOutcome::UPDATED);
-  EXPECT_EQ(map.getGridType(slid_pose), rog_map::GridType::KNOWN_FREE);
-  EXPECT_EQ(map.getInfGridType(slid_pose), rog_map::GridType::KNOWN_FREE);
+  EXPECT_EQ(map.getGridType(slid_pose), rog_map::GridType::UNKNOWN);
+  EXPECT_EQ(map.getInfGridType(slid_pose), rog_map::GridType::UNKNOWN);
   EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.0, 0.0, 1.5}),
             rog_map::GridType::UNKNOWN);
 }
@@ -390,9 +388,38 @@ TEST(RogMapPlanningGridExport, RefreshesBodyNeighborhoodAsPoseMovesWithinWindow)
                 singlePointCloud(Eigen::Vector3d{1.0, 2.0, 0.0}),
                 rog_map::Pose{moved_pose, Eigen::Quaterniond::Identity()}),
             rog_map::MapUpdateOutcome::UPDATED);
-  EXPECT_EQ(map.getGridType(moved_pose), rog_map::GridType::KNOWN_FREE);
-  EXPECT_EQ(map.getInfGridType(moved_pose), rog_map::GridType::KNOWN_FREE);
-  EXPECT_GT(map.lastDiagnostics().body_neighborhood_cells_cleared, 0U);
-  EXPECT_LE(map.lastDiagnostics().changed_region_min.x(), moved_pose.x() - 0.7 + 1.0e-5);
-  EXPECT_GE(map.lastDiagnostics().changed_region_max.x(), moved_pose.x() + 0.7 - 1.0e-5);
+  EXPECT_EQ(map.getGridType(moved_pose), rog_map::GridType::UNKNOWN);
+  EXPECT_EQ(map.getInfGridType(moved_pose), rog_map::GridType::UNKNOWN);
+  EXPECT_EQ(map.lastDiagnostics().body_neighborhood_cells_cleared, 0U);
+  EXPECT_LE(map.lastDiagnostics().changed_region_min.x(), moved_pose.x() + 1.0e-5);
+  EXPECT_GE(map.lastDiagnostics().changed_region_max.x(), moved_pose.x() - 1.0e-5);
+}
+
+TEST(RogMapPlanningGridExport, OccupiedEvidenceIsNotErasedByVehiclePresence) {
+  TestRogMap map;
+  map.loadConfigAndInit(raycastingBoundaryConfigPath());
+  const Eigen::Vector3d base{0.0, 0.0, 0.0};
+  const Eigen::Vector3d obstacle{0.8, 0.0, 0.0};
+  ASSERT_EQ(map.updateMap(singlePointCloud(obstacle),
+                          rog_map::Pose{base, Eigen::Quaterniond::Identity()}),
+            rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(map.getGridType(obstacle), rog_map::GridType::OCCUPIED);
+  EXPECT_EQ(map.getInfGridType(obstacle), rog_map::GridType::OCCUPIED);
+  EXPECT_EQ(map.lastDiagnostics().body_neighborhood_cells_cleared, 0U);
+}
+
+TEST(RogMapPlanningGridExport, RaycastUsesSensorOriginNotBaseOrigin) {
+  TestRogMap map;
+  map.loadConfigAndInit(raycastingBoundaryConfigPath());
+  const Eigen::Vector3d base{0.0, 0.0, 0.0};
+  const rog_map::Vec3f sensor_origin{0.5F, 0.0F, 0.0F};
+  const Eigen::Vector3d obstacle{3.0, 0.0, 0.0};
+  ASSERT_EQ(map.updateMap(singlePointCloud(obstacle),
+                          rog_map::Pose{base, Eigen::Quaterniond::Identity()},
+                          sensor_origin),
+            rog_map::MapUpdateOutcome::UPDATED);
+  EXPECT_EQ(map.getGridType(Eigen::Vector3d{0.4, 0.0, 0.0}),
+            rog_map::GridType::UNKNOWN);
+  EXPECT_EQ(map.getGridType(Eigen::Vector3d{1.5, 0.0, 0.0}),
+            rog_map::GridType::KNOWN_FREE);
 }

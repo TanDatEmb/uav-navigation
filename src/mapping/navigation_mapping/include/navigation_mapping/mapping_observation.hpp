@@ -2,9 +2,11 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include <nav_msgs/msg/odometry.hpp>
 #include <navigation_mapping/mapping_diagnostics.hpp>
+#include <navigation_world_model/world_model_view.hpp>
 
 namespace navigation_mapping {
 
@@ -23,6 +25,10 @@ struct MappingObservation {
   // the outer/world frame and share stamp_ns with cloud.  Empty/absent means
   // no visibility evidence, never blanket free space.
   std::unique_ptr<const PointCloud> free_space_endpoints;
+  // Registered endpoints are expressed in the outer frame.  Keep the base
+  // pose and the actual sensor ray origin separate so a non-zero lever arm
+  // cannot silently become a map-ray origin.
+  std::optional<navigation_world_model::Point3> sensor_origin_world;
 };
 
 }  // namespace navigation_mapping

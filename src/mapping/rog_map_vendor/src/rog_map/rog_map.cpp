@@ -675,9 +675,21 @@ MapUpdateOutcome ROGMap::updateMap(const PointCloud& cloud, const Pose& pose) {
   return updateMap(cloud, no_return_endpoints, pose);
 }
 
+MapUpdateOutcome ROGMap::updateMap(const PointCloud& cloud, const Pose& pose,
+                                   const Vec3f& sensor_origin) {
+  static const PointCloud no_return_endpoints;
+  return updateMap(cloud, no_return_endpoints, pose, sensor_origin);
+}
+
 MapUpdateOutcome ROGMap::updateMap(
     const PointCloud& cloud, const PointCloud& free_space_endpoints,
     const Pose& pose) {
+  return updateMap(cloud, free_space_endpoints, pose, pose.first);
+}
+
+MapUpdateOutcome ROGMap::updateMap(
+    const PointCloud& cloud, const PointCloud& free_space_endpoints,
+    const Pose& pose, const Vec3f& sensor_origin) {
   // Product runtime keeps timing in MappingDiagnostics; upstream's
   // per-update console timer is research instrumentation.
   TimeConsuming ssss("updateMap", false);
@@ -703,7 +715,7 @@ MapUpdateOutcome ROGMap::updateMap(
   }
 
   updateRobotState(pose);
-  return updateProbMap(cloud, free_space_endpoints, pose);
+  return updateProbMap(cloud, free_space_endpoints, pose, sensor_origin);
 }
 
 RobotState ROGMap::getRobotState() const { return robot_state_; }

@@ -104,13 +104,18 @@ class ROGMap : public ProbMap {
     inf_map_->infMapGlobalIndexToPos(id_g, pos);
   }
 
-  [[nodiscard]] MapUpdateOutcome updateMap(const PointCloud& cloud, const Pose& pose);
+        [[nodiscard]] MapUpdateOutcome updateMap(const PointCloud& cloud, const Pose& pose);
+        [[nodiscard]] MapUpdateOutcome updateMap(
+            const PointCloud& cloud, const Pose& pose, const Vec3f& sensor_origin);
 
   // Optional explicit no-return endpoints are consumed as miss-only rays.
   // They never turn their endpoint into an occupied voxel.
-  [[nodiscard]] MapUpdateOutcome updateMap(
-      const PointCloud& cloud, const PointCloud& free_space_endpoints,
-      const Pose& pose);
+        [[nodiscard]] MapUpdateOutcome updateMap(
+            const PointCloud& cloud, const PointCloud& free_space_endpoints,
+            const Pose& pose);
+        [[nodiscard]] MapUpdateOutcome updateMap(
+            const PointCloud& cloud, const PointCloud& free_space_endpoints,
+            const Pose& pose, const Vec3f& sensor_origin);
 
   RobotState getRobotState() const;
 

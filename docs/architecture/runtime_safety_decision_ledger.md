@@ -18343,3 +18343,37 @@ release profiles must not use the former allowance.
   tools.runtime.tests.test_runtime_contract`; per-run
   `tools/runtime/analyze_runtime_evidence.py`; aggregate
   `tools/runtime/build_runtime_report.py`.
+
+### 2026-09-05 - Separate traversed free-space provenance from ROG occupancy
+
+- **Owner/status:** MappingActor / ROG mapping-boundary owner,
+  `IMPLEMENTED`; O0/C0/RESET integration evidence remains required.
+- **Scope:** Remove per-observation probability-map body-neighborhood miss
+  clearing. Add a bounded immutable `TraversedFreeSpace` overlay updated from
+  valid corrected base poses, with epoch, timestamp, source-gap and physically
+  plausible-motion checks. Preserve sensor free, traversed free, unknown and
+  occupied as distinct query provenance. Carry the registered LiDAR sensor
+  origin separately from the base pose for ROG rays.
+- **Safety impact:** `raycast_range_min` is no longer a vehicle-free radius;
+  occupied/inflated evidence has precedence; UNKNOWN is not globally changed
+  to FREE; epoch jumps and invalid source gaps do not create swept bridges;
+  fresh traversed evidence is admitted only through explicit start-prefix and
+  backup query paths. Physical vehicle support defaults to a zero-radius center
+  support until independently verified geometry is supplied. No tracking,
+  recovery, timing, PX4 or mission gate was changed.
+- **Evidence:** Component regressions cover occupied preservation, no
+  synthetic body clearing, epoch-jump non-bridging, occupied precedence,
+  freshness expiry, and separate sensor-origin ray behavior. ROS build/test
+  verification is currently blocked by the environment missing Python module
+  `ament_package`; direct C++ syntax checks for mapping/ROG/planner sources
+  pass with the repository include graph.
+- **Removal condition:** Revisit only after representative C0 near-obstacle,
+  O0 manual/takeoff handover, and RESET evidence show that the explicit
+  traversed overlay is either insufficient or can be replaced by a stronger
+  typed operational prior/additional sensing. Do not restore probability-map
+  body clearing.
+- **Verification:** `colcon build --packages-select
+  navigation_world_model rog_map_vendor navigation_mapping
+  navigation_contracts fast_lio_ros navigation_runtime
+  --symlink-install --cmake-args -DBUILD_TESTING=ON`; targeted mapping/ROG
+  CTest; O0-HANDOVER, C0-NEAR-OBSTACLE and RESET scenario-separated runs.
