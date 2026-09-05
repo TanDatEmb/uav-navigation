@@ -18847,3 +18847,38 @@ release profiles must not use the former allowance.
   navigation_runtime_node test_certified_continuation -j2 &&
   ./build/navigation_runtime/test_certified_continuation --gtest_color=no`;
   `git diff --check`.
+
+### 2026-09-05 - Serialize foreign-mission worker cancellation after stop
+
+- **Owner/status:** Navigation runtime; CODE implemented and focused build/
+  regression suite passed. Component reproduction remains pending. No SITL or
+  flight-acceptance claim.
+- **Scope:** Foreign-mission cancellation consumption now has a lock-held
+  helper and an outer wrapper. Certified-stop and StoppedRecovery transitions
+  consume the cancellation token while holding the existing lifecycle locks,
+  then release all locks before calling `PlanningWorker::cancelActive()`.
+  Recovery policy, cancellation-token identity checks, thresholds, and command
+  gates are unchanged.
+- **Safety impact:** Removes a self-deadlock at the certified-stop foreign
+  mission boundary and prevents the deferred StoppedRecovery path from
+  returning with an unconsumed worker-cancellation token. No safety authority
+  is broadened; fail-closed Hold remains the transition result.
+- **Evidence:** Source review identified the recursive localization mutex lock
+  in the certified-stop callsite. `cmake --build build/navigation_runtime
+  --target navigation_runtime_node test_navigation_runtime_shutdown
+  test_planner_fsm -j2` passed; `./build/navigation_runtime/test_planner_fsm
+  --gtest_color=no` passed 56/56; and `source /opt/ros/jazzy/setup.bash &&
+  source install/setup.bash && ./build/navigation_runtime/
+  test_navigation_runtime_shutdown --gtest_color=no` passed 6/6. These tests
+  do not reproduce the foreign-mission stop path; no qualification claim is
+  made.
+- **Removal condition:** Revisit only if foreign-mission cancellation is
+  replaced by an equivalent serialized lifecycle transaction that preserves
+  post-action worker interruption and token identity checks.
+- **Verification:** `git diff --check`; the focused build and two direct test
+  commands listed above. A bounded foreign-mission stop component test remains
+  the follow-up verification when the existing harness can exercise it without
+  a test-only product seam.
+- **Residual:** The generic `cancelActive()` operation is not yet bound to an
+  execution identity. Existing stale-result guards preserve fail-closed
+  behavior; identity-binding is a separate follow-up review.

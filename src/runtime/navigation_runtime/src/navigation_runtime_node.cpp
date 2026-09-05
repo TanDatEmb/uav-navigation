@@ -1928,9 +1928,7 @@ void NavigationRuntimeNode::transitionForeignMissionLocked(
   command_goal_epoch_.store(0U, std::memory_order_release);
 }
 
-bool NavigationRuntimeNode::consumeForeignMissionCancelIfCurrent() {
-  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
-  std::lock_guard<std::mutex> input_lock(input_mutex_);
+bool NavigationRuntimeNode::consumeForeignMissionCancelIfCurrentLocked() {
   if (!foreign_mission_cancel_pending_.load(std::memory_order_acquire)) return false;
   const bool unchanged = !active_goal_.has_value() &&
       active_goal_epoch_.load(std::memory_order_acquire) ==
@@ -1939,6 +1937,12 @@ bool NavigationRuntimeNode::consumeForeignMissionCancelIfCurrent() {
           foreign_cancel_localization_epoch_;
   foreign_mission_cancel_pending_.store(false, std::memory_order_release);
   return unchanged;
+}
+
+bool NavigationRuntimeNode::consumeForeignMissionCancelIfCurrent() {
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> input_lock(input_mutex_);
+  return consumeForeignMissionCancelIfCurrentLocked();
 }
 
 void NavigationRuntimeNode::applyValidatedGoalLocked(
@@ -3256,11 +3260,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         // certified suffix has now stopped, so perform one complete transition
         // to PX4 Hold and revoke every goal owner atomically.
         transitionForeignMissionLocked(false);
+        const bool cancel_foreign_worker = consumeForeignMissionCancelIfCurrentLocked();
         command_lock.unlock();
         input_lock.unlock();
-  if (consumeForeignMissionCancelIfCurrent() && planning_worker_) {
-    planning_worker_->cancelActive();
-  }
+        localization_lock.unlock();
+        if (cancel_foreign_worker && planning_worker_) {
+          planning_worker_->cancelActive();
+        }
         return;
       }
       if (auto pending = pending_goal_owner_.goalSnapshot(); pending) {
@@ -3430,6 +3436,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         command_execution_lease_failure_latch_.transitionMutex());
     if (foreign_mission_hold_after_stop_) {
       transitionForeignMissionLocked(false);
+      const bool cancel_foreign_worker = consumeForeignMissionCancelIfCurrentLocked();
+      command_lock.unlock();
+      input_lock.unlock();
+      localization_lock.unlock();
+      if (cancel_foreign_worker && planning_worker_) {
+        planning_worker_->cancelActive();
+      }
       return;
     }
     if (auto pending = pending_goal_owner_.goalSnapshot(); pending) {

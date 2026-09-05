@@ -211,6 +211,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       bool execution_transition_held = false);
   // Caller holds input_mutex_ and transitionMutex() in that order.
   void transitionForeignMissionLocked(bool defer_until_certified_stop);
+  // Caller holds localization_transition_mutex_ and input_mutex_.
+  bool consumeForeignMissionCancelIfCurrentLocked();
   bool consumeForeignMissionCancelIfCurrent();
   void onModeStatus(
       const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message);
