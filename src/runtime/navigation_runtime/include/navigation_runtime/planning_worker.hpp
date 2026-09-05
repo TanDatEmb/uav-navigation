@@ -167,20 +167,6 @@ class PlanningWorker {
     return result;
   }
 
-  // Temporary read/certificate bridge for legacy runtime code. Ownership does
-  // not transfer; planning jobs remain the only path that executes a solve.
-  [[nodiscard]] Planner* plannerHandle() noexcept { return planner_.get(); }
-  [[nodiscard]] const Planner* plannerHandle() const noexcept { return planner_.get(); }
-
-  // Runtime diagnostics and world-recertification callbacks may need a
-  // certificate view while the worker is solving. They must take this same
-  // mutex before using plannerHandle(); the active job holds it for the entire
-  // backend transaction. cancelActiveSolve() intentionally remains an
-  // out-of-band interrupt and is not serialized by this mutex.
-  [[nodiscard]] std::recursive_mutex& backendAccessMutex() noexcept {
-    return backend_access_mutex_;
-  }
-
  private:
   struct WorkItem {
     PlanningKey key;
