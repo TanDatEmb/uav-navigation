@@ -551,7 +551,7 @@ void NavigationMode::onNavigationCommand(
   if (!valid) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     ++trajectory_rejected_count_;
-    // A malformed replacement does not revoke the independently certified
+    // A malformed replacement does not revoke the independently accepted
     // command already being executed. Its own validity/freshness and health
     // leases remain authoritative in updateSetpoint().
     navigation_command_ = transitionCertifiedCommand(
@@ -1079,7 +1079,7 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       // Waypoint acceptance and planner publication run on independent
-      // callbacks. Preserve the exact old certified command under its old
+      // callbacks. Preserve the exact old accepted command under its old
       // identity until a new command is committed atomically. Never relabel it
       // here; normal validity/freshness expiry remains fail-closed.
       if (navigation_command_.has_value() &&
@@ -1096,7 +1096,7 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
         }
       } else {
         // A rejected command is a terminal status for the old waypoint, not a
-        // certified command that may bridge the waypoint handoff.  If it is
+        // accepted command that may bridge the waypoint handoff.  If it is
         // retained here, the mission timer can publish the next goal and the
         // setpoint callback can immediately consume the old rejection before
         // the runtime has processed that goal, causing a false PX4 Hold.
@@ -1775,10 +1775,10 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     return;
   }
 
-  // Native planner backend command path.  The planner FSM already evaluated the
-  // polynomial and selected main versus backup trajectory.  PX4 must receive
-  // that PVA state directly; applying a second velocity controller here would
-  // change planner backend's trajectory and reintroduce the old terminal oscillation.
+  // Planner command path. The upstream planner has already selected the
+  // polynomial and MAIN/BACKUP role. PX4 receives that PVA state directly;
+  // applying a second velocity controller here would change the planner
+  // trajectory and reintroduce the old terminal oscillation.
   if (navigation_command.has_value()) {
     bool terminal_recovery_window_open = false;
     {

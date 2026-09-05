@@ -120,10 +120,9 @@ inline bool watchdogTimeoutMayRetainSafetySuffix(
 }
 
 // A stopped recovery endpoint is a bounded, known-free hold while a measured
-// state PlanFromRest solve is retried. A watchdog timeout must not turn that
-// hold into PX4 Hold immediately: the stopped-recovery timeout and failure
-// budget remain the terminal authority, while the hold prevents drift during
-// the retry.
+// state PlanFromRest solve is retried. This predicate only identifies when the
+// watchdog may retain that hold; the existing stopped-recovery timeout and its
+// failure handling remain the terminal authority.
 inline bool watchdogTimeoutMayRetainStoppedRecoveryHold(
     ExecutionRecoveryState state, bool command_available,
     bool restart_from_rest) noexcept {
@@ -151,11 +150,11 @@ inline bool clearHotGoalTransitionAfterCommit(
   return measured_state_transition_committed || hot_stitch_transition_committed;
 }
 
-// A pass-through goal transition changes the route boundary. Rebase on the
-// newest measured PVA state rather than hot-stitching through the previous
-// endpoint. The remaining-time rule also covers an expired command when the
-// identity is not available; its interval is supplied by the runtime timer
-// rather than introduced as a second safety threshold.
+// A pass-through goal transition may reuse the committed future state only
+// while an available MAIN command has a finite anchor within the supplied
+// existing limit. Missing or invalid identity/anchor evidence makes the
+// runtime use measured-state planning or fail closed; this helper adds no
+// timing threshold and does not cover an expired command.
 inline bool hotRetargetUsesCommittedFutureState(
     bool hot_goal_transition, bool command_available,
     navigation_planning::CandidateRole command_role,
@@ -596,9 +595,9 @@ inline PlannerResultDisposition classifyPlannerResult(
       command_available) {
     return PlannerResultDisposition::RetainCommittedCommand;
   }
-  // planner backend's native FSM retries a failed rest-to-rest solve when no
-  // executable command exists. A single optimizer timeout is not yet an
-  // emergency, but repeated confirmed failures remain fail-closed.
+  // A failed rest-to-rest solve with no executable command is classified for
+  // retry. The runtime's existing stopped-recovery timeout and failure
+  // handling decide when retrying ends and the node fails closed.
   if (result == navigation_planning::PlannerStatus::kFailed && plan_from_rest) {
     return PlannerResultDisposition::RetryFromRest;
   }

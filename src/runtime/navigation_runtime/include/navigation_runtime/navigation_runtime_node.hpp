@@ -348,10 +348,10 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // execution-anchor successor path so the
   // committed polynomial supplies the future PVA initial state.
   bool hot_goal_transition_{false};
-  // planner backend's native FSM skips one replan timer callback immediately after a
-  // successful stopped-state plan. Keep that state at the ROS adapter boundary so
-  // the first hot replan is not run against a trajectory that has just been
-  // committed.
+  // The ROS adapter suppresses one scheduler renewal after a successful
+  // stopped-state plan, allowing the committed trajectory to establish its
+  // continuous command before the next horizon check. This mirror does not own
+  // planner recovery state.
   std::atomic_bool skip_replan_once_{false};
   std::int64_t plan_from_rest_first_failure_steady_ns_{0};
   std::atomic_uint64_t stale_input_count_{0};

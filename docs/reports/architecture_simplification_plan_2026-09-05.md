@@ -2,9 +2,11 @@
 
 ## Baseline
 
-- Baseline audit HEAD was `14c3f78b` on `codex/runtime-evidence-for-analysis`;
-  R15 is now checkpointed as `05ac49c8`. `1642823e` is an ancestor and is
-  present in history. The worktree contains unrelated runtime-evidence WIP.
+- Baseline audit snapshot was `14c3f78b` on
+  `codex/runtime-evidence-for-analysis`; R15 was checkpointed as `05ac49c8`.
+  `1642823e` is an ancestor and is present in history. The original audit also
+  contained unrelated runtime-evidence WIP; this plan does not treat that WIP
+  as acceptance evidence.
 - This document is a staged engineering plan. It makes no SITL or flight
   acceptance claim.
 
@@ -48,10 +50,11 @@ contracts, then derive continuous speed from curvature/corridor/STOP and
 time-parameterize it under existing V/A/J certificates. Do not clamp or smooth
 commands downstream of the optimizer.
 
-R13 and R14 remain evidence blockers: historical characterization had a
-body-frame/ENU-NED velocity basis issue and stale-source handling problem; the
-E5 analyzer also had hard-coded causal scope/verdict. Their historical numbers
-must be re-analyzed before controller/estimator conclusions.
+R13/R14 analysis tooling is now corrected in the bounded characterization and
+root-cause analyzers, but retained artifact qualification remains open. The
+historical characterization and E5 numbers are unqualified until re-analysis
+uses those tools with raw source-time/frame/reset provenance; they must not
+support controller or estimator conclusions before that evidence exists.
 
 ## COMPONENT — execution and retry ownership
 

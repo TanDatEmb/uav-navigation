@@ -1,12 +1,14 @@
 # SUPER architecture comparison (pinned 2026-09-05)
 
-This bounded comparison uses upstream SUPER commit
+This bounded comparison is a historical source snapshot. It uses upstream SUPER commit
 `2ad3419c127a617c6d7df6925e81a14175a9c096`, checked out at
-`/tmp/uav-super-2ad3419c`, and current repository HEAD
-`1835f3570e12985aea500d71be384fb2ba66d4e6` before the FINISH patch. The
+`/tmp/uav-super-2ad3419c`, and repository snapshot
+`1835f3570e12985aea500d71be384fb2ba66d4e6` before the FINISH patch. That
+repository hash is not the current HEAD; the comparison records the behavior
+seen at that earlier snapshot. The
 upstream source is available at
 `https://github.com/hku-mars/SUPER/tree/2ad3419c127a617c6d7df6925e81a14175a9c096`.
-The current backend is under
+The backend snapshot compared there is under
 `src/planning/navigation_planning_backend/`. It is source evidence only; it
 does not claim algorithmic equivalence, performance, or flight qualification.
 
@@ -19,7 +21,7 @@ existing command ([upstream `super_planner.cpp:256-273`](https://github.com/hku-
 `FINISH` is the branch that replaces the command with EXP-only via
 `setTrajectory(exp_traj_info)` ([upstream `:274-290`](https://github.com/hku-mars/SUPER/blob/2ad3419c127a617c6d7df6925e81a14175a9c096/super_planner/src/super_core/super_planner.cpp#L274-L290)).
 
-The current successor path first applies one retention predicate to both
+The successor path in that historical snapshot first applied one retention predicate to both
 `NO_NEED` and `FINISH` when an old backup exists, returning `NO_NEED` without
 staging (`src/planning/navigation_planning_backend/src/planner_core/planner.cpp:1375-1397`).
 Only when retention is false does it build/stage separate `NO_NEED` and
@@ -41,7 +43,7 @@ keeps points with `norm() <= cfg_.raycast_range_min`, and calls
 `missPointUpdate()` at `pos + p` ([upstream `prob_map.cpp:358-374`](https://github.com/hku-mars/SUPER/blob/2ad3419c127a617c6d7df6925e81a14175a9c096/rog_map/src/rog_map/prob_map.cpp#L358-L374)).
 This is a radius-based unknown prior, not a measured rectangular vehicle hull.
 
-Current `ProbMap::updateProbMap()` ends after sensor/raycast diagnostics and
+At that snapshot, `ProbMap::updateProbMap()` ended after sensor/raycast diagnostics and
 does not perform that synthetic body-neighborhood clear
 (`src/mapping/rog_map_vendor/src/rog_map/prob_map.cpp:432-447`). Mapping instead
 publishes bounded traversed support around the measured base-pose chain, with
@@ -50,7 +52,7 @@ epoch, source timestamps, age, and motion plausibility checks
 records removal of probability-map body clearing and OCCUPIED precedence
 (`docs/architecture/runtime_safety_decision_ledger.md:18347-18374`).
 
-The current certificate checks the initial point and then every curved tube
+The certificate in that snapshot checked the initial point and then every curved tube
 against inflated known-free/traversed evidence
 (`src/planning/navigation_planning_backend/include/planner_core/trajectory_world_validator.hpp:510-537`,
 `:619-657`). Therefore a planned thin-body support shape may encounter UNKNOWN
@@ -61,9 +63,10 @@ unrelated UNKNOWN cells or supply an extra safety-inflation margin. Restoring
 the upstream sphere or adding an FSM workaround would change the safety
 assumption and is not justified by this comparison.
 
-## Follow-up working-tree patch
+## Historical follow-up working-tree patch
 
-The bounded backend change now retains the old command only for
+In the historical working tree reviewed by this report, the bounded backend
+change retained the old command only for
 `NO_NEED`; `FINISH` proceeds through the existing EXP-only candidate builder,
 authorization, and history staging at
 `src/planning/navigation_planning_backend/src/planner_core/planner.cpp:1375-1497`.

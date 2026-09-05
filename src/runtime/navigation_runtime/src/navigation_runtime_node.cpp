@@ -3727,12 +3727,12 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       route_snapshot->waypoints[route_snapshot->active_waypoint_index];
   const Eigen::Vector3d target = active_route_waypoint.position_enu;
   const auto planner_started = std::chrono::steady_clock::now();
-  // This is the internal planner backend FSM boundary: each mission waypoint
-  // enters PlanFromRest once. Later timer ticks retain a latest-world-certified
-  // MAIN until its planner-owned backup transition is close enough that one
-  // scheduler period, one complete solve deadline, and the future hot-splice
-  // interval must be reserved. Map recertification and command sampling remain
-  // independent of this expensive optimizer renewal policy.
+  // This is the runtime boundary for a PlanFromRest attempt. Each mission
+  // waypoint enters that measured-state path when required; later timer ticks
+  // retain the latest world-validated MAIN until its backup transition is
+  // close enough to reserve the scheduler period, solve deadline, and future
+  // splice interval. Map recertification and command sampling remain
+  // independent of this optimizer renewal policy.
   const bool plan_from_rest = new_goal || restart_from_rest;
   const auto transition_bundle = command_bundle_store_.load();
   const double transition_elapsed_s = transition_bundle
@@ -4238,9 +4238,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     planner_->discardCommandCandidate();
     return;
   }
-  // The backend stages a certified candidate; the execution store commits it
-  // once below.  Its planning-history generation intentionally changes only
-  // after the execution commit ACK, so it is not evidence of a ready command.
+  // The backend stages a candidate; the execution store commits it only after
+  // the authorization checks below. Its planning-history generation changes
+  // only after the execution commit ACK, so staging is not evidence of a ready
+  // command.
   const bool solve_committed_new_generation = planner_->hasStagedCommandCandidate();
   const auto disposition = classifyPlannerResult(
       result, plan_from_rest_with_transition,
