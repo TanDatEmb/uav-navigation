@@ -148,6 +148,11 @@ if(BUILD_TESTING)
     test/test_execution_episode.cpp)
   target_include_directories(test_execution_episode PRIVATE include)
   ament_target_dependencies(test_execution_episode navigation_planning builtin_interfaces)
+  ament_add_gtest(test_execution_trace_snapshot
+    test/test_execution_trace_snapshot.cpp)
+  target_include_directories(test_execution_trace_snapshot PRIVATE include)
+  ament_target_dependencies(test_execution_trace_snapshot
+    navigation_planning builtin_interfaces)
   ament_add_gtest(test_certified_continuation
     test/test_certified_continuation.cpp)
   target_include_directories(test_certified_continuation PRIVATE include)
