@@ -43,7 +43,8 @@ class BlockingLifecycleObserver final : public MappingLifecycleObserver {
     condition_.notify_all();
   }
 
-  bool waitForMapUpdate(std::chrono::seconds timeout) {
+  template <typename Rep, typename Period>
+  bool waitForMapUpdate(std::chrono::duration<Rep, Period> timeout) {
     std::unique_lock lock(mutex_);
     return condition_.wait_for(lock, timeout, [this] { return map_updated_; });
   }
@@ -200,15 +201,16 @@ navigation_contracts::msg::RegisteredScan makeRegisteredScan(
 }
 
 TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
+  const auto process_suffix = std::to_string(static_cast<long long>(::getpid()));
   const std::filesystem::path ros_log_directory =
-      "/tmp/uav-navigation-test-ros-logs";
+      std::filesystem::path("/tmp") /
+      ("uav-navigation-test-ros-logs_" + process_suffix);
   std::filesystem::create_directories(ros_log_directory);
   ASSERT_EQ(setenv("ROS_LOG_DIR", ros_log_directory.c_str(), 1), 0);
   auto context = std::make_shared<rclcpp::Context>();
   context->init(0, nullptr);
   auto observer = std::make_shared<BlockingLifecycleObserver>();
 
-  const auto process_suffix = std::to_string(static_cast<long long>(::getpid()));
   const std::string prefix = "/shutdown_contract_" + process_suffix;
   rclcpp::NodeOptions options;
   options.context(context);
@@ -242,17 +244,27 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
   std::thread spin_thread([&executor] { executor.spin(); });
   ExecutorStopGuard executor_guard(executor, spin_thread);
 
-  const auto discovery_deadline = std::chrono::steady_clock::now() + 5s;
+  const auto test_deadline = std::chrono::steady_clock::now() + 5s;
   while (observation_publisher->get_subscription_count() == 0U &&
-         std::chrono::steady_clock::now() < discovery_deadline) {
+         std::chrono::steady_clock::now() < test_deadline) {
     std::this_thread::sleep_for(10ms);
   }
   ASSERT_GT(observation_publisher->get_subscription_count(), 0U);
 
-  const builtin_interfaces::msg::Time stamp = driver->now();
-  ASSERT_GT(rclcpp::Time(stamp).nanoseconds(), 0);
-  observation_publisher->publish(makeRegisteredScan(stamp));
-  ASSERT_TRUE(observer->waitForMapUpdate(5s));
+  bool map_updated = false;
+  while (!map_updated && std::chrono::steady_clock::now() < test_deadline) {
+    // The production topic is best-effort and volatile.  Keep sending a
+    // fresh timestamp until the observer sees the one accepted update.  The
+    // fixed sequence makes retries idempotent after the first delivery.
+    const auto stamp = driver->now();
+    ASSERT_GT(rclcpp::Time(stamp).nanoseconds(), 0);
+    observation_publisher->publish(makeRegisteredScan(stamp));
+    const auto remaining = test_deadline - std::chrono::steady_clock::now();
+    map_updated = remaining > 10ms
+        ? observer->waitForMapUpdate(10ms)
+        : observer->waitForMapUpdate(remaining);
+  }
+  ASSERT_TRUE(map_updated);
 
   executor_guard.stop();
   executor.remove_node(navigation);
@@ -271,7 +283,8 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
   const auto lifecycle = observer->shutdownSnapshot();
   ASSERT_TRUE(lifecycle.has_value());
   EXPECT_EQ(observer->shutdownCount(), 1U);
-  EXPECT_EQ(lifecycle->received, 1U);
+  EXPECT_GE(lifecycle->received, 1U);
+  EXPECT_EQ(lifecycle->rejected_before_inbox, lifecycle->received - 1U);
   EXPECT_EQ(lifecycle->accepted_to_inbox, 1U);
   EXPECT_EQ(lifecycle->mapping_started, 1U);
   EXPECT_EQ(lifecycle->mapping_published, 1U);
