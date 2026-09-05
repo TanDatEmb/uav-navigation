@@ -766,6 +766,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         observation.free_space_endpoints = std::move(decoded_free_space);
       }
       const auto result = mapping_actor->process(observation);
+      {
+        std::lock_guard<std::mutex> input_lock(input_mutex_);
+        latest_current_body_support_ = result.current_body_support;
+      }
       if (lifecycle_observer) {
         lifecycle_observer->onMutableMapUpdated(observation.stamp_ns);
       }
@@ -1357,21 +1361,26 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("mapping_free_space_skipped_count",
                   map.free_space_skipped_count);
         add_value("mapping_allocated_voxel_count", map.allocated_voxel_count);
-        add_value("mapping_body_neighborhood_cells_cleared",
-                  map.body_neighborhood_cells_cleared);
-        add_value("mapping_traversed_segment_count", map.traversed_segment_count);
+        add_value("mapping_current_body_support_valid",
+                  map.current_body_support_valid ? 1U : 0U);
+        add_value("mapping_current_body_support_geometry_id",
+                  map.current_body_support_geometry_id);
+        add_value("mapping_current_body_support_epoch",
+                  map.current_body_support_epoch);
+        add_value("mapping_current_body_support_scan_sequence",
+                  map.current_body_support_scan_sequence);
         add_value("mapping_discarded_missing_sensor_origin",
                   mapping.discarded_missing_sensor_origin);
         add_value("mapping_discarded_sensor_origin_contract",
                   mapping.discarded_sensor_origin_contract);
-        add_signed_value("mapping_traversed_latest_stamp_ns",
-                         map.traversed_latest_stamp_ns);
-        add_value("mapping_traversed_chain_reset_reason",
-                  map.traversed_chain_reset_reason);
-        add_value("mapping_traversed_latest_age_ms",
-                  std::isfinite(map.traversed_latest_age_s)
-                      ? static_cast<std::uint64_t>(std::max(0.0,
-                          map.traversed_latest_age_s) * 1000.0) : 0U);
+        add_signed_value("mapping_current_body_support_stamp_ns",
+                         map.current_body_support_stamp_ns);
+        add_value("mapping_current_body_support_occupied_contradictions",
+                  map.current_body_support_occupied_contradictions);
+        add_value("mapping_current_body_support_outside_rejections",
+                  map.current_body_support_outside_rejections);
+        add_value("mapping_current_body_support_map_mutated",
+                  map.current_body_support_map_mutated ? 1U : 0U);
         add_signed_value("mapping_sensor_origin_x_mm",
                          std::isfinite(map.sensor_origin_world.x())
                              ? static_cast<std::int64_t>(std::llround(
@@ -3025,14 +3034,22 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_value("mapping_free_space_skipped_count",
             map_diagnostics.free_space_skipped_count);
   add_value("mapping_allocated_voxel_count", map_diagnostics.allocated_voxel_count);
-  add_value("mapping_body_neighborhood_cells_cleared",
-            map_diagnostics.body_neighborhood_cells_cleared);
-  add_value("mapping_traversed_segment_count",
-            map_diagnostics.traversed_segment_count);
-  add_signed_value("mapping_traversed_latest_stamp_ns",
-                   map_diagnostics.traversed_latest_stamp_ns);
-  add_value("mapping_traversed_chain_reset_reason",
-            map_diagnostics.traversed_chain_reset_reason);
+  add_value("mapping_current_body_support_valid",
+            map_diagnostics.current_body_support_valid ? 1U : 0U);
+  add_value("mapping_current_body_support_geometry_id",
+            map_diagnostics.current_body_support_geometry_id);
+  add_value("mapping_current_body_support_epoch",
+            map_diagnostics.current_body_support_epoch);
+  add_value("mapping_current_body_support_scan_sequence",
+            map_diagnostics.current_body_support_scan_sequence);
+  add_signed_value("mapping_current_body_support_stamp_ns",
+                   map_diagnostics.current_body_support_stamp_ns);
+  add_value("mapping_current_body_support_occupied_contradictions",
+            map_diagnostics.current_body_support_occupied_contradictions);
+  add_value("mapping_current_body_support_outside_rejections",
+            map_diagnostics.current_body_support_outside_rejections);
+  add_value("mapping_current_body_support_map_mutated",
+            map_diagnostics.current_body_support_map_mutated ? 1U : 0U);
   add_value("localization_epoch",
             active_localization_epoch_.load(std::memory_order_acquire));
   add_value("localization_epoch_ready",
@@ -4011,6 +4028,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planning_request.goal.waypoint_index = goal->waypoint_index;
   planning_request.goal.request_id = goal->request_id;
   planning_request.start_state = execution_state;
+  {
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    planning_request.current_body_support = latest_current_body_support_;
+  }
   planning_request.history.previous_bundle_generation =
       transition_bundle ? transition_bundle->bundle_generation : 0U;
   // PlanningHistory describes a prior executable bundle, not the measured

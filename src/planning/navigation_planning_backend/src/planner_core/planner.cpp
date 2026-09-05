@@ -1082,13 +1082,15 @@ double knownFreeGuideSupport(
         // occupied or out-of-map pose is still corrected before planning.
         const auto measured_start_cell = map_ptr_->classify(
                 solve_state_.p.cast<double>(), navigation_world_model::GridLayer::kInflated);
-        const auto measured_start_evidence = map_ptr_->classifyFreeSpace(
-                solve_state_.p.cast<double>(), navigation_world_model::GridLayer::kInflated);
+        const bool current_body_supported = current_body_support_matches_start_ &&
+            current_body_support_ && current_body_support_->contains(
+                solve_state_.p.cast<double>(), map_ptr_->identity(),
+                current_body_support_->source_stamp_ns);
         const auto measured_start_is_traversable =
             map_ptr_->contains(solve_state_.p) &&
                 (navigation_world_model::isCellTraversable(
                      measured_start_cell, unknownPolicy()) ||
-                 measured_start_evidence == navigation_world_model::FreeSpaceEvidence::kTraversedFree);
+                 current_body_supported);
         Vec3f local_star_pt = solve_state_.p;
         if (!measured_start_is_traversable) {
             planner_context_->warn(
@@ -1541,6 +1543,21 @@ double knownFreeGuideSupport(
             request.route_snapshot.waypoints[request.route_snapshot.active_waypoint_index]
                 .position_enu;
         setWorldModelView(request.world);
+        setCurrentBodySupport(
+            request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState
+                ? request.current_body_support
+                : navigation_world_model::CurrentBodySupportPtr{},
+            request.start_state.orientation_world_body);
+        current_body_support_matches_start_ =
+            request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState &&
+            current_body_support_ &&
+            current_body_support_->matchesMeasuredState(
+                request.start_state.position_world,
+                request.start_state.orientation_world_body,
+                request.start_state.localization_epoch,
+                request.start_state.source_stamp_ns) &&
+            navigation_world_model::sameWorldSnapshotIdentity(
+                current_body_support_->snapshot_identity, request.world->identity());
         if (!setState(request.start_state)) return finish();
         requested_activation_stamp_ns_ = 0;
         requested_activation_yaw_rate_rad_s_ = 0.0;
@@ -3377,7 +3394,7 @@ double knownFreeGuideSupport(
         const double visibility_start_t = command_start_t;
         const Vec3f command_start = ref_exp_traj.getPos(command_start_t);
         if (!command_start.allFinite() || !map_ptr_->contains(command_start) ||
-            !map_ptr_->isSegmentTraversableWithTraversedFree(
+            !map_ptr_->isSegmentTraversable(
                 command_start, command_start,
                 navigation_world_model::GridLayer::kInflated,
                 navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
@@ -3479,7 +3496,7 @@ double knownFreeGuideSupport(
             }
             // A backup is the fail-safe suffix. Its visibility certificate must
             // be known-free, independent of the exploratory main policy.
-            return map_ptr_->isSegmentTraversableWithTraversedFree(
+            return map_ptr_->isSegmentTraversable(
                 visibility_origin, endpoint,
                     navigation_world_model::GridLayer::kInflated,
                     navigation_world_model::UnknownPolicy::kRequireKnownFree);

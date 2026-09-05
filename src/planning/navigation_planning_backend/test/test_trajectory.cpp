@@ -168,10 +168,10 @@ class TraversedPrefixWorld final : public SweepWorld {
     if (point.x() >= 0.35 && point.x() < 0.70) {
       return navigation_world_model::FreeSpaceEvidence::kSensorFree;
     }
-    return navigation_world_model::FreeSpaceEvidence::kTraversedFree;
+    return navigation_world_model::FreeSpaceEvidence::kCurrentBodySupport;
   }
 
-  bool isSegmentTraversableWithTraversedFree(
+  bool isSegmentTraversableWithCurrentBodySupport(
       const navigation_world_model::Point3&,
       const navigation_world_model::Point3&,
       navigation_world_model::GridLayer,
@@ -192,10 +192,10 @@ class TraversedOnlyWorld final : public SweepWorld {
       const navigation_world_model::Point3&,
       navigation_world_model::GridLayer,
       std::int64_t) const noexcept override {
-    return navigation_world_model::FreeSpaceEvidence::kTraversedFree;
+    return navigation_world_model::FreeSpaceEvidence::kCurrentBodySupport;
   }
 
-  bool isSegmentTraversableWithTraversedFree(
+  bool isSegmentTraversableWithCurrentBodySupport(
       const navigation_world_model::Point3&,
       const navigation_world_model::Point3&,
       navigation_world_model::GridLayer,
@@ -1922,7 +1922,7 @@ TEST(PlannerTrajectory, BackupRoleRequiresKnownFreeEvidence) {
   EXPECT_FALSE(navigation_planning_backend::candidateHasBackupSuffix(candidate));
 }
 
-TEST(PlannerTrajectory, MainTraversedPrefixStateSpansPieceValidationSegments) {
+TEST(PlannerTrajectory, UnknownBodySupportCannotAuthorizeTrajectoryValidation) {
   navigation_planning_backend::CandidateCommandBundle candidate;
   candidate.position = linearTrajectory(1.0, 10.0);
   candidate.yaw = linearTrajectory(1.0, 10.0);
@@ -1937,10 +1937,10 @@ TEST(PlannerTrajectory, MainTraversedPrefixStateSpansPieceValidationSegments) {
   EXPECT_FALSE(result.valid);
   EXPECT_EQ(result.failure,
             navigation_planning_backend::SweptValidationResult::Failure::
-                kMainTraversedPrefixViolation);
+                kInitialPointBlocked);
 }
 
-TEST(PlannerTrajectory, BackupMayRemainEntirelyInsideFreshTraversedSupport) {
+TEST(PlannerTrajectory, BackupCannotUseBodySupportAsFutureEvidence) {
   navigation_planning_backend::CandidateCommandBundle candidate;
   candidate.position = linearTrajectory(1.0, 10.0);
   candidate.yaw = linearTrajectory(1.0, 10.0);
@@ -1949,7 +1949,7 @@ TEST(PlannerTrajectory, BackupMayRemainEntirelyInsideFreshTraversedSupport) {
       {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
   };
 
-  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
       TraversedOnlyWorld{}, candidate, 10.0,
       navigation_world_model::UnknownPolicy::kRequireKnownFree).valid);
 }

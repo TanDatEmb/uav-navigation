@@ -1,4 +1,5 @@
 #include <navigation_mapping/mapping_actor.hpp>
+#include <navigation_mapping/current_body_support.hpp>
 #include <navigation_mapping/mapping_observation.hpp>
 #include <navigation_mapping/mapping_world_snapshot.hpp>
 
@@ -175,7 +176,7 @@ TEST(MappingActorContract, ReconstructsBackendForNewLocalizationEpoch) {
   EXPECT_EQ(result.world_revision, 1U);
 }
 
-TEST(MappingActorContract, TraversedEvidenceSupportsCurrentPoseNearFiniteMapCeiling) {
+TEST(MappingActorContract, CurrentBodySupportCoversCurrentPoseNearFiniteMapCeiling) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
 
@@ -191,35 +192,81 @@ TEST(MappingActorContract, TraversedEvidenceSupportsCurrentPoseNearFiniteMapCeil
 
   const auto result = actor.process(observation);
   ASSERT_TRUE(result.snapshot);
+  ASSERT_TRUE(result.current_body_support);
+  EXPECT_TRUE(result.current_body_support->contains(
+      navigation_world_model::Point3{0.0, 0.0, 2.9}, result.snapshot->identity(),
+      result.snapshot->identity().observation_stamp_ns));
   EXPECT_EQ(result.snapshot->classifyFreeSpace(
                 navigation_world_model::Point3{0.0, 0.0, 2.9},
                 navigation_world_model::GridLayer::kEvidence),
-            navigation_world_model::FreeSpaceEvidence::kTraversedFree);
+            navigation_world_model::FreeSpaceEvidence::kUnknown);
   EXPECT_EQ(result.snapshot->classify(
                 navigation_world_model::Point3{0.0, 0.0, 1.5},
                 navigation_world_model::GridLayer::kEvidence),
             navigation_world_model::CellState::kUnknown);
 }
 
-TEST(MappingActorContract, TraversedEvidenceSurvivesBoundedSnapshotPatches) {
-  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
-  ASSERT_TRUE(actor.initialSnapshot());
-  const Eigen::Vector3d position{-0.3, -0.3, 2.9};
-  const navigation_world_model::Point3 robot_point = position;
-
-  for (std::int64_t seconds = 1; seconds <= 20; ++seconds) {
-    const auto result = actor.process(observationAtPose(
-        seconds * 1'000'000'000LL, seconds * 1'000'000'000LL, position,
-        static_cast<std::uint64_t>(seconds)));
-    ASSERT_TRUE(result.snapshot);
-    EXPECT_EQ(result.snapshot->classifyFreeSpace(
-                  robot_point, navigation_world_model::GridLayer::kEvidence),
-              navigation_world_model::FreeSpaceEvidence::kTraversedFree)
-        << "revision=" << result.world_revision;
-  }
+TEST(MappingActorContract, CurrentBodySupportUsesRotatedBodyGeometry) {
+  const navigation_world_model::WorldSnapshotIdentity identity{
+      1U, 1U, 1U, 1'000'000'000LL};
+  const auto support = navigation_mapping::makeX500Mid360CurrentBodySupport(
+      navigation_world_model::Point3::Zero(),
+      Eigen::Quaterniond(Eigen::AngleAxisd(
+          1.5707963267948966, Eigen::Vector3d::UnitZ())), identity, 1U);
+  ASSERT_TRUE(support.valid);
+  EXPECT_TRUE(support.contains(
+      navigation_world_model::Point3{0.132, 0.10, -0.2195}, identity,
+      identity.observation_stamp_ns));
+  EXPECT_FALSE(support.contains(
+      navigation_world_model::Point3{0.132, 0.10, -0.2195}, identity,
+      identity.observation_stamp_ns + 1));
+  EXPECT_FALSE(support.contains(
+      navigation_world_model::Point3{0.232, 0.0, -0.2195}, identity,
+      identity.observation_stamp_ns));
+  const navigation_world_model::WorldSnapshotIdentity replacement_identity{
+      2U, 2U, 1U, 2'000'000'000LL};
+  EXPECT_FALSE(support.contains(
+      navigation_world_model::Point3{0.132, 0.10, -0.2195}, replacement_identity,
+      replacement_identity.observation_stamp_ns));
 }
 
-TEST(MappingActorContract, LocalizationJumpDoesNotCreateTraversedBridge) {
+TEST(MappingActorContract, InvalidCurrentBodySupportFailsClosed) {
+  const navigation_world_model::WorldSnapshotIdentity identity{
+      1U, 1U, 1U, 1'000'000'000LL};
+  const auto support = navigation_mapping::makeX500Mid360CurrentBodySupport(
+      navigation_world_model::Point3::Zero(),
+      Eigen::Quaterniond(0.0, 0.0, 0.0, 0.0), identity, 1U);
+  EXPECT_FALSE(support.valid);
+  EXPECT_FALSE(support.contains(
+      navigation_world_model::Point3::Zero(), identity,
+      identity.observation_stamp_ns));
+}
+
+TEST(MappingActorContract, CurrentBodySupportDoesNotRetainHistoryAcrossSnapshots) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+  const Eigen::Vector3d first_position{0.0, 0.0, 2.9};
+  const Eigen::Vector3d second_position{1.0, 0.0, 2.9};
+  const auto first = actor.process(observationAtPose(
+      1'000'000'000LL, 1'000'000'000LL, first_position, 1U));
+  ASSERT_TRUE(first.snapshot);
+  ASSERT_TRUE(first.current_body_support);
+  EXPECT_TRUE(first.current_body_support->contains(
+      first_position, first.snapshot->identity(), first.snapshot->identity().observation_stamp_ns));
+  const auto second = actor.process(observationAtPose(
+      2'000'000'000LL, 2'000'000'000LL, second_position, 2U));
+  ASSERT_TRUE(second.snapshot);
+  ASSERT_TRUE(second.current_body_support);
+  EXPECT_TRUE(second.current_body_support->contains(
+      second_position, second.snapshot->identity(), second.snapshot->identity().observation_stamp_ns));
+  EXPECT_FALSE(second.current_body_support->contains(
+      first_position, second.snapshot->identity(), second.snapshot->identity().observation_stamp_ns));
+  EXPECT_EQ(second.snapshot->classifyFreeSpace(
+                first_position, navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::FreeSpaceEvidence::kUnknown);
+}
+
+TEST(MappingActorContract, LocalizationJumpDoesNotCreateBodySupportBridge) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
   const auto first = actor.process(observationAtPose(
@@ -234,7 +281,7 @@ TEST(MappingActorContract, LocalizationJumpDoesNotCreateTraversedBridge) {
             navigation_world_model::FreeSpaceEvidence::kUnknown);
 }
 
-TEST(MappingActorContract, ManualVerticalTakeoffFollowsCurrentPoseWithTraversedEvidence) {
+TEST(MappingActorContract, ManualVerticalTakeoffSupportsOnlyLatestPose) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
   const std::array<double, 4> heights{0.0, 1.0, 2.0, 3.0};
@@ -247,17 +294,17 @@ TEST(MappingActorContract, ManualVerticalTakeoffFollowsCurrentPoseWithTraversedE
   const auto latest = actor.process(observationAtPose(
       5'000'000'000LL, 5'000'000'000LL, Eigen::Vector3d{0.0, 0.0, 3.0}, 5U));
   ASSERT_TRUE(latest.snapshot);
-  EXPECT_EQ(latest.snapshot->classifyFreeSpace(
-                Eigen::Vector3d{0.0, 0.0, 3.0},
-                navigation_world_model::GridLayer::kEvidence),
-            navigation_world_model::FreeSpaceEvidence::kTraversedFree);
+  ASSERT_TRUE(latest.current_body_support);
+  EXPECT_TRUE(latest.current_body_support->contains(
+      Eigen::Vector3d{0.0, 0.0, 3.0}, latest.snapshot->identity(),
+      latest.snapshot->identity().observation_stamp_ns));
   EXPECT_EQ(latest.snapshot->classify(
                 Eigen::Vector3d{0.0, 0.0, 3.0},
                 navigation_world_model::GridLayer::kEvidence),
             navigation_world_model::CellState::kUnknown);
 }
 
-TEST(MappingActorContract, OccupiedSensorEvidenceOverridesTraversedEvidence) {
+TEST(MappingActorContract, OccupiedSensorEvidenceOverridesCurrentBodySupport) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
   const auto first = actor.process(observationAtPose(
@@ -276,13 +323,13 @@ TEST(MappingActorContract, OccupiedSensorEvidenceOverridesTraversedEvidence) {
   EXPECT_EQ(result.snapshot->classifyFreeSpace(
                 Eigen::Vector3d::Zero(), navigation_world_model::GridLayer::kInflated),
             navigation_world_model::FreeSpaceEvidence::kOccupied);
-  EXPECT_FALSE(result.snapshot->isSegmentTraversableWithTraversedFree(
+  EXPECT_FALSE(result.snapshot->isSegmentTraversableWithCurrentBodySupport(
       Eigen::Vector3d::Zero(), Eigen::Vector3d{0.2, 0.0, 0.0},
       navigation_world_model::GridLayer::kInflated,
       navigation_world_model::UnknownPolicy::kRequireKnownFree));
 }
 
-TEST(MappingActorContract, TraversedEvidenceExpiresWithoutOccupancyMutation) {
+TEST(MappingActorContract, BodySupportIsEphemeralAndDoesNotMutateOccupancy) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
   const auto first = actor.process(observationAtPose(
@@ -296,7 +343,7 @@ TEST(MappingActorContract, TraversedEvidenceExpiresWithoutOccupancyMutation) {
             navigation_world_model::FreeSpaceEvidence::kUnknown);
   EXPECT_EQ(result.snapshot->handoverClearanceReason(
                 Eigen::Vector3d::Zero(), navigation_world_model::GridLayer::kEvidence),
-            navigation_world_model::HandoverClearanceReason::kExpiredTraversedEvidence);
+            navigation_world_model::HandoverClearanceReason::kNoCurrentBodySupport);
   ASSERT_TRUE(result.snapshot->changedRegionIntersectsSince(
       first.snapshot->identity(),
       navigation_world_model::AxisAlignedBox{
@@ -304,7 +351,7 @@ TEST(MappingActorContract, TraversedEvidenceExpiresWithoutOccupancyMutation) {
           Eigen::Vector3d{0.05, 0.05, 0.05}}));
 }
 
-TEST(MappingActorContract, BlindShellReportsDisconnectedHandoverClearance) {
+TEST(MappingActorContract, UnknownOutsideBodySupportReportsHandoverClearance) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());
   const auto result = actor.process(observationAtPose(
@@ -313,8 +360,8 @@ TEST(MappingActorContract, BlindShellReportsDisconnectedHandoverClearance) {
   EXPECT_EQ(result.snapshot->handoverClearanceReason(
                 Eigen::Vector3d{2.0, 0.0, 0.0},
                 navigation_world_model::GridLayer::kEvidence),
-            navigation_world_model::HandoverClearanceReason::kDisconnectedTraversedClearance);
-  EXPECT_FALSE(result.snapshot->isSegmentTraversableWithTraversedFree(
+            navigation_world_model::HandoverClearanceReason::kNoCurrentBodySupport);
+  EXPECT_FALSE(result.snapshot->isSegmentTraversableWithCurrentBodySupport(
       Eigen::Vector3d::Zero(), Eigen::Vector3d{2.0, 0.0, 0.0},
       navigation_world_model::GridLayer::kEvidence,
       navigation_world_model::UnknownPolicy::kRequireKnownFree));

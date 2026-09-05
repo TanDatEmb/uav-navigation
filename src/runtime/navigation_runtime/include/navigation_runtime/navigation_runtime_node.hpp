@@ -483,6 +483,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::vector<double> end_to_end_samples_ms_;
 
   navigation_mapping::WorldSnapshotStore world_snapshot_store_;
+  navigation_world_model::CurrentBodySupportPtr latest_current_body_support_;
   navigation_execution::ExecutionTimelineStore command_bundle_store_;
   navigation_execution::CommandSampler command_sampler_;
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;

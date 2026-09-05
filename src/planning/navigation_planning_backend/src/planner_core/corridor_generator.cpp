@@ -160,13 +160,10 @@ geometry_utils::Polytope acceptanceBallInnerCell(
             solve_stage_.store(0);
             return false;
         }
-        const auto first_evidence = map_ptr_->classifyFreeSpace(
-            corridor_path[first_id], navigation_world_model::GridLayer::kInflated);
         if (!navigation_world_model::isCellTraversable(
                 map_ptr_->classify(corridor_path[first_id],
                                    navigation_world_model::GridLayer::kInflated),
-                unknown_policy_) &&
-            first_evidence != navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
+                unknown_policy_)) {
             planner_context_->warn(
                 " -- [planner] Corridor path starts in a non-traversable cell");
             solve_stage_.store(0);
@@ -216,7 +213,7 @@ geometry_utils::Polytope acceptanceBallInnerCell(
                 // over the base-grid spherical neighbour list is redundant
                 // and can stall for seconds around an obstacle boundary.
                 const bool line_free = seed_length <= seed_line_max_length_ &&
-                    map_ptr_->isSegmentTraversableWithTraversedFree(
+                    map_ptr_->isSegmentTraversable(
                         corridor_path[first_id], corridor_path[j],
                         navigation_world_model::GridLayer::kInflated,
                         unknown_policy_);

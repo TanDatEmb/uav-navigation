@@ -62,6 +62,8 @@ namespace navigation_planning_backend {
         LogOneReplan latest_replan;
         navigation_planning_backend::Config cfg_;
         navigation_world_model::WorldModelViewPtr map_ptr_;
+        navigation_world_model::CurrentBodySupportPtr current_body_support_;
+        bool current_body_support_matches_start_{false};
         navigation_world_model::WorldCommitAuthorizer* commit_authorizer_{nullptr};
         CorridorGenerator::Ptr cg_ptr_;
         path_search::Astar::Ptr astar_ptr_;
@@ -399,6 +401,17 @@ namespace navigation_planning_backend {
             map_ptr_ = std::move(view);
             astar_ptr_->setWorldModelView(map_ptr_);
             cg_ptr_->setWorldModelView(map_ptr_);
+        }
+
+        // Current-body geometry is valid only for the measured start of a
+        // stopped solve. A* consumes it for the first prefix edge; corridor,
+        // MAIN and BACKUP validation remain sensor-only.
+        void setCurrentBodySupport(
+            navigation_world_model::CurrentBodySupportPtr support,
+            const Eigen::Quaterniond& measured_orientation =
+                Eigen::Quaterniond::Identity()) {
+            current_body_support_ = support;
+            astar_ptr_->setCurrentBodySupport(std::move(support), measured_orientation);
         }
 
         // Runtime supplies the mission-owned waypoint acceptance radius before

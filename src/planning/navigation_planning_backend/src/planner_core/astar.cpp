@@ -18,6 +18,59 @@ using namespace color_text;
 using namespace navigation_math;
 
 namespace path_search {
+
+bool Astar::startPrefixTraversable(
+        const Vec3f& start, const Vec3f& end,
+        const navigation_world_model::GridLayer layer,
+        const navigation_world_model::UnknownPolicy policy) const noexcept {
+    if (!map_ptr_ || !start.allFinite() || !end.allFinite()) return false;
+    if (!current_body_support_ ||
+        !current_body_support_->matchesMeasuredState(
+            start.template cast<double>(),
+            current_body_orientation_,
+            current_body_support_->localization_epoch,
+            current_body_support_->source_stamp_ns)) {
+        return map_ptr_->isSegmentTraversable(start, end, layer, policy);
+    }
+    const auto delta = end - start;
+    const double length = delta.norm();
+    const double resolution = layer == navigation_world_model::GridLayer::kInflated
+        ? map_ptr_->geometry().inflated_resolution_m
+        : map_ptr_->geometry().evidence_resolution_m;
+    if (!std::isfinite(length) || !std::isfinite(resolution) || resolution <= 0.0) return false;
+    const int steps = std::max(1, static_cast<int>(std::ceil(length / resolution)));
+    bool support_prefix = true;
+    for (int index = 0; index <= steps; ++index) {
+        const auto point = start + (static_cast<float>(index) / steps) * delta;
+        const auto state = map_ptr_->classify(point, layer);
+        if (state == navigation_world_model::CellState::kOccupied ||
+            state == navigation_world_model::CellState::kOutOfMap ||
+            state == navigation_world_model::CellState::kUndefined) return false;
+        if (state == navigation_world_model::CellState::kKnownFree) {
+            support_prefix = false;
+            continue;
+        }
+        if (state == navigation_world_model::CellState::kUnknown && support_prefix &&
+            current_body_support_->contains(
+                point.template cast<double>(), map_ptr_->identity(),
+                current_body_support_->source_stamp_ns)) {
+            continue;
+        }
+        if (state == navigation_world_model::CellState::kFrontier && support_prefix &&
+            current_body_support_->contains(
+                point.template cast<double>(), map_ptr_->identity(),
+                current_body_support_->source_stamp_ns)) {
+            continue;
+        }
+        // Once the prefix leaves the measured rigid-body volume, later
+        // samples cannot re-enter it as a fabricated bridge. Unknown space
+        // may still be admitted only under the caller's exploratory policy.
+        support_prefix = false;
+        if (policy == navigation_world_model::UnknownPolicy::kAllowUnknown) continue;
+        return false;
+    }
+    return true;
+}
     using namespace rog_map;
     using navigation_world_model::CellState;
     using navigation_world_model::GridLayer;
@@ -500,7 +553,7 @@ namespace path_search {
                 : UnknownPolicy::kAllowUnknown;
         rog_map::Vec3f graph_start_pt;
         globalIndexToPos(start_idx, graph_start_pt);
-        if (!map_ptr_->isSegmentTraversableWithTraversedFree(
+        if (!startPrefixTraversable(
                     local_start_pt, graph_start_pt, search_layer, search_policy)) {
             struct StartCandidate {
                 rog_map::Vec3i index;
@@ -528,18 +581,27 @@ namespace path_search {
                             }
                             const CellState candidate_type = map_ptr_->classify(
                                     candidate_pos, search_layer);
-                            const auto candidate_evidence = map_ptr_->classifyFreeSpace(
-                                    candidate_pos, search_layer);
+                            const auto candidate_evidence =
+                                current_body_support_ && current_body_support_->contains(
+                                    candidate_pos.template cast<double>(), map_ptr_->identity(),
+                                    current_body_support_->source_stamp_ns)
+                                    ? FreeSpaceEvidence::kCurrentBodySupport
+                                    : map_ptr_->classifyFreeSpace(candidate_pos, search_layer);
+                            if (candidate_type == CellState::kOccupied ||
+                                candidate_type == CellState::kOutOfMap ||
+                                candidate_type == CellState::kUndefined) {
+                                continue;
+                            }
                             if ((!isCellTraversable(candidate_type,
                                                    UnknownPolicy::kAllowUnknown) &&
-                                 candidate_evidence != FreeSpaceEvidence::kTraversedFree) ||
+                                 candidate_evidence != FreeSpaceEvidence::kCurrentBodySupport) ||
                                 (md_.unknown_as_occ &&
                                  (candidate_type == CellState::kUnknown ||
                                   candidate_type == CellState::kFrontier) &&
-                                 candidate_evidence != FreeSpaceEvidence::kTraversedFree)) {
+                                 candidate_evidence != FreeSpaceEvidence::kCurrentBodySupport)) {
                                 continue;
                             }
-                            if (!map_ptr_->isSegmentTraversableWithTraversedFree(
+                            if (!startPrefixTraversable(
                                         local_start_pt, candidate_pos,
                                         search_layer, search_policy)) {
                                 continue;
@@ -808,13 +870,9 @@ namespace path_search {
                                     ? KNOWN_FREE_CELL : UNKNOWN_CELL;
                             }
                         }
-                        const auto neighbor_evidence = map_ptr_->classifyFreeSpace(
-                            neighborPos, md_.use_inf_map ? GridLayer::kInflated
-                                                         : GridLayer::kEvidence);
                         if (!isCellTraversable(
                                     neighbor_type,
-                                    UnknownPolicy::kAllowUnknown) &&
-                            neighbor_evidence != FreeSpaceEvidence::kTraversedFree) {
+                                    UnknownPolicy::kAllowUnknown)) {
                             continue;
                         }
 
@@ -835,7 +893,7 @@ namespace path_search {
                         const auto search_policy = md_.unknown_as_occ
                                 ? UnknownPolicy::kRequireKnownFree
                                 : UnknownPolicy::kAllowUnknown;
-                        if (!map_ptr_->isSegmentTraversableWithTraversedFree(
+                        if (!map_ptr_->isSegmentTraversable(
                                     current_pos, neighborPos,
                                     search_layer, search_policy)) {
                             continue;
@@ -847,7 +905,7 @@ namespace path_search {
                         // work without adding evidence. Probability-map search
                         // still receives the separate inflated-layer check.
                         if (search_layer != GridLayer::kInflated &&
-                            !map_ptr_->isSegmentTraversableWithTraversedFree(
+                            !map_ptr_->isSegmentTraversable(
                                     current_pos, neighborPos,
                                     GridLayer::kInflated, search_policy)) {
                             continue;

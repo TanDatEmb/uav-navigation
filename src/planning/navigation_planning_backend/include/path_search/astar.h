@@ -84,6 +84,9 @@ namespace path_search {
     class Astar {
 
         navigation_world_model::WorldModelViewPtr map_ptr_;
+        navigation_world_model::CurrentBodySupportPtr current_body_support_;
+        Eigen::Quaterniond current_body_orientation_{
+            Eigen::Quaterniond::Identity()};
         navigation_planner_context::PlannerRuntimeContext::Ptr planner_context_;
 
         PathSearchConfig cfg_;
@@ -137,6 +140,10 @@ namespace path_search {
 
         bool insideLocalMap(const Vec3i &id_g) const;
 
+        bool startPrefixTraversable(const Vec3f& start, const Vec3f& end,
+                                    navigation_world_model::GridLayer layer,
+                                    navigation_world_model::UnknownPolicy policy) const noexcept;
+
         bool neighborHaveOne(const navigation_world_model::CellState &type, const Vec3i &src_id);
 
         RET_CODE setup(const Vec3f &start_pt, const Vec3f &goal_pt, const int &flag,
@@ -175,6 +182,14 @@ namespace path_search {
 
         void setWorldModelView(navigation_world_model::WorldModelViewPtr view) {
             map_ptr_ = std::move(view);
+        }
+
+        void setCurrentBodySupport(
+            navigation_world_model::CurrentBodySupportPtr support,
+            const Eigen::Quaterniond& measured_orientation =
+                Eigen::Quaterniond::Identity()) {
+            current_body_support_ = std::move(support);
+            current_body_orientation_ = measured_orientation;
         }
 
         RET_CODE pointToPointPathSearch(const Vec3f &start_pt, const Vec3f &end_pt,
