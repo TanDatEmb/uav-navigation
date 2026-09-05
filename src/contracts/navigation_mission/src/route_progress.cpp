@@ -435,8 +435,37 @@ std::optional<double> RouteProgress::measuredWaypointCrossingError(
     return std::nullopt;
   }
   const auto& waypoint = waypoints_[waypoint_index];
+  const auto ordered_projection = [&]() -> std::optional<RouteProjection> {
+    auto projection = project(current_position);
+    if (!projection.valid) return std::nullopt;
+
+    // update() resolves an exact self-overlap using the previous monotonic
+    // arc.  Preserve that branch choice when it is at least as close as the
+    // stateless projection; otherwise this method remains safe for callers
+    // that use it without first updating route progress.
+    const double state_point_distance_m =
+        (state_.projection.point - current_position).norm();
+    if (state_.valid && state_.projection.valid &&
+        std::isfinite(state_point_distance_m) &&
+        state_point_distance_m <= projection.lateral_error_m + 1.0e-6 &&
+        state_.projection.lateral_error_m <= projection.lateral_error_m +
+            1.0e-6) {
+      projection = state_.projection;
+    }
+    if (segments_.empty()) return projection;
+    if (projection.segment_index >= segments_.size()) return std::nullopt;
+    const auto& segment = segments_[projection.segment_index];
+    const double waypoint_arc_m = waypoint_arc_lengths_[waypoint_index];
+    constexpr double kWaypointArcToleranceM = 1.0e-6;
+    if (std::abs(segment.start_arc_m - waypoint_arc_m) > kWaypointArcToleranceM &&
+        std::abs(segment.end_arc_m - waypoint_arc_m) > kWaypointArcToleranceM) {
+      return std::nullopt;
+    }
+    return projection;
+  };
   const double current_error = (current_position - waypoint.position_enu).norm();
   if (std::isfinite(current_error) && current_error <= waypoint.acceptance_radius_m) {
+    if (!ordered_projection().has_value()) return std::nullopt;
     return current_error;
   }
   if (!previous_position.has_value() || !previous_position->allFinite() ||
@@ -456,6 +485,7 @@ std::optional<double> RouteProgress::measuredWaypointCrossingError(
   if (!error.has_value() || *error > waypoint.acceptance_radius_m + 1.0e-6) {
     return std::nullopt;
   }
+  if (!ordered_projection().has_value()) return std::nullopt;
   return error;
 }
 

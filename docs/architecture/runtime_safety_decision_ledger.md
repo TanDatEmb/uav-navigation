@@ -18627,3 +18627,34 @@ release profiles must not use the former allowance.
   passed; runtime CTest passed 8/8; `cmake --build build/navigation_planning
   -j2` and `./build/navigation_planning/test_planning_contracts
   --gtest_color=no` passed 20/20. No SITL evidence is claimed.
+
+### 2026-09-05 - Require ordered route-arc eligibility for measured waypoint crossing
+
+- **Owner/status:** Navigation mission contract and PX4 MissionController;
+  implemented in the current worktree, focused mission tests passed; no SITL or
+  flight-acceptance claim.
+- **Scope:** A measured pass-through waypoint acceptance sample must project to
+  the active waypoint's ordered incoming or outgoing route arc boundary. This
+  supplements the existing measured acceptance sphere and recent-segment,
+  forward-motion checks. Single-waypoint routes and coincident duplicate
+  geometry remain valid; no FSM, speed, confirmation, STOP, BACKUP or EMERGENCY
+  policy changes are included.
+- **Safety impact:** A later branch that passes near an active waypoint cannot
+  advance mission identity solely from spatial proximity. The predicate remains
+  measured-state-only and fails closed when route branch identity is ambiguous.
+- **Evidence:** Before the change, a route with active `(10,0)` radius `1.2 m`
+  accepted a measured transition from later branch `(20,10)` to `(10,1)`, even
+  though the active ordered arc was never reached. The new regressions cover
+  this case in `RouteProgress` and `MissionController`; existing consecutive
+  pass-through crossing, exact reversal, coincident PASS_THROUGH/STOP, stale
+  gap and certified suffix tests remained green (`18/18` mission-contract and
+  `42/42` external-mode mission tests).
+- **Removal condition:** Revisit only if an equivalent route-progress contract
+  carries an explicit measured branch/arc identity and preserves fail-closed
+  behavior for self-crossings; do not remove the ordered eligibility check to
+  restore sphere-only acceptance.
+- **Verification:** `cmake --build build/navigation_mission --target
+  test_mission_contract -j2 && cmake --install build/navigation_mission`; then
+  `cmake --build build/px4_navigation_external_mode --target test_mission
+  --clean-first -j2`; run `./build/navigation_mission/test_mission_contract`
+  and `./build/px4_navigation_external_mode/test_mission`.

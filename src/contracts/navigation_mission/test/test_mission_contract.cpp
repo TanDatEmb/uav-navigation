@@ -253,6 +253,32 @@ TEST(RouteProgress, MonotonicProjectionSelectsReturnBranchAtReversal) {
   EXPECT_FALSE(returning.backtracking_exceeded);
 }
 
+TEST(RouteProgress, RejectsAcceptanceOnLaterNearSelfCrossingBranch) {
+  navigation_mission::Mission mission;
+  mission.id = "near_self_crossing";
+  mission.frame = "lio_odom";
+  mission.waypoints = {
+      {"origin", Eigen::Vector3d{0.0, 0.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"active", Eigen::Vector3d{10.0, 0.0, 3.0}, 1.2, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"branch", Eigen::Vector3d{20.0, 10.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"near_later_branch", Eigen::Vector3d{10.0, 1.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::Stop},
+  };
+  navigation_mission::RouteProgress route(mission);
+
+  // The measured vehicle is on a later branch, whose endpoint is inside the
+  // active waypoint's acceptance ball.  The active checkpoint was never
+  // crossed on its ordered incoming/outgoing arc.
+  ASSERT_TRUE(route.update(Eigen::Vector3d{20.0, 10.0, 3.0}).valid);
+  ASSERT_EQ(route.project(Eigen::Vector3d{10.0, 1.0, 3.0}).segment_index, 2U);
+  EXPECT_FALSE(route.measuredWaypointCrossingError(
+      1U, Eigen::Vector3d{10.0, 1.0, 3.0},
+      Eigen::Vector3d{10.0, 10.0, 3.0}, 0.05, 0.25).has_value());
+}
+
 TEST(RouteProgress, ImmutableSnapshotCarriesMeasuredRouteIdentityAndLookahead) {
   navigation_mission::RouteProgress route(makeRouteMission());
   const auto state = route.update(Eigen::Vector3d{4.0, 0.2, 1.4});

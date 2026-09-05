@@ -488,6 +488,66 @@ mission:
   EXPECT_EQ(crossing.waypoint_index, 2U);
 }
 
+TEST(MissionController, PassThroughDoesNotAcceptLaterNearSelfCrossingBranch) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: pass_through_near_self_crossing
+  frame: lio_odom
+  waypoints:
+    - id: origin
+      position: [0.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: active
+      position: [10.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 1.2
+    - id: branch
+      position: [20.0, 10.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.4
+    - id: later
+      position: [10.0, 1.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.4
+  control:
+    acceptance_speed_mps: 0.15
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  controller.onTrajectory(true, 0.0);
+  const auto origin = controller.update(
+      0.05, Eigen::Vector3d{0.0, 0.0, 3.0}, true, Eigen::Vector3d::Zero());
+  ASSERT_TRUE(origin.waypoint_accepted);
+  EXPECT_EQ(origin.waypoint_index, 1U);
+  controller.onTrajectory(true, 0.05);
+
+  // Move onto a later branch while the active checkpoint remains unaccepted.
+  const auto branch = controller.update(
+      0.10, Eigen::Vector3d{20.0, 10.0, 3.0}, true,
+      Eigen::Vector3d{1.0, 0.0, 0.0});
+  EXPECT_EQ(branch.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(branch);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+
+  // This later-branch point lies inside active's acceptance sphere. Spatial
+  // proximity alone must not advance the ordered mission checkpoint.
+  const auto later = controller.update(
+      0.15, Eigen::Vector3d{10.0, 1.0, 3.0}, true,
+      Eigen::Vector3d{1.0, 0.0, 0.0});
+  EXPECT_EQ(later.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::None);
+  expectNoWaypointAccepted(later);
+  EXPECT_EQ(controller.activeWaypointIndex(), 1U);
+}
+
 TEST(MissionController, PassThroughRejectsCrossingAcrossStaleMeasuredGap) {
   const auto path = writeMission(R"yaml(
 mission:
