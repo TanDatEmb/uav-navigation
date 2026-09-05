@@ -40,25 +40,55 @@ TEST(PlannerFsm, ClassifiesDesiredAndExecutingIdentityTransitions) {
 }
 
 TEST(PlannerFsm, PlannerSolveActivityDisarmsOnlyItsOwnedGeneration) {
-  std::atomic_int64_t started_ns{0};
-  std::atomic_uint64_t active_generation{0};
+  std::int64_t started_ns{0};
+  std::uint64_t active_generation{0};
+  std::mutex activity_mutex;
   {
     const PlannerSolveActivityScope activity(
-        started_ns, active_generation, 7U, 1234);
-    EXPECT_EQ(started_ns.load(), 1234);
-    EXPECT_EQ(active_generation.load(), 7U);
+        activity_mutex, started_ns, active_generation, 7U, 1234);
+    EXPECT_EQ(started_ns, 1234);
+    EXPECT_EQ(active_generation, 7U);
   }
-  EXPECT_EQ(started_ns.load(), 0);
-  EXPECT_EQ(active_generation.load(), 0U);
+  EXPECT_EQ(started_ns, 0);
+  EXPECT_EQ(active_generation, 0U);
 
   {
     const PlannerSolveActivityScope stale_activity(
-        started_ns, active_generation, 8U, 2000);
-    active_generation.store(9U);
-    started_ns.store(3000);
+        activity_mutex, started_ns, active_generation, 8U, 2000);
+    active_generation = 9U;
+    started_ns = 3000;
   }
-  EXPECT_EQ(active_generation.load(), 9U);
-  EXPECT_EQ(started_ns.load(), 3000);
+  EXPECT_EQ(active_generation, 9U);
+  EXPECT_EQ(started_ns, 3000);
+}
+
+TEST(PlannerFsm, PlannerSolveActivityBlocksScopeExitDuringWatchdogDecision) {
+  std::int64_t started_ns{0};
+  std::uint64_t active_generation{0U};
+  std::mutex activity_mutex;
+  auto activity = std::make_unique<PlannerSolveActivityScope>(
+      activity_mutex, started_ns, active_generation, 11U, 1000);
+
+  std::unique_lock<std::mutex> watchdog_lock(activity_mutex);
+  std::atomic_bool destructor_started{false};
+  std::atomic_bool destructor_finished{false};
+  std::thread stale_scope([&] {
+    destructor_started.store(true, std::memory_order_release);
+    activity.reset();
+    destructor_finished.store(true, std::memory_order_release);
+  });
+  while (!destructor_started.load(std::memory_order_acquire)) std::this_thread::yield();
+  std::this_thread::yield();
+  EXPECT_FALSE(destructor_finished.load(std::memory_order_acquire));
+  EXPECT_EQ(active_generation, 11U);
+  EXPECT_EQ(started_ns, 1000);
+
+  // The watchdog may now cancel and apply its generation-bound transition
+  // while the worker scope is still the sole owner of the marker.
+  watchdog_lock.unlock();
+  stale_scope.join();
+  EXPECT_EQ(active_generation, 0U);
+  EXPECT_EQ(started_ns, 0);
 }
 
 TEST(PlannerFsm, AcceptsSuccessfulPlannerResults) {

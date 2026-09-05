@@ -441,12 +441,13 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic<ExecutionRecoveryState> execution_recovery_state_{
       ExecutionRecoveryState::kInitialHold};
   std::atomic_uint64_t planner_solve_generation_{0U};
-  std::atomic_uint64_t active_planner_solve_generation_{0U};
+  std::uint64_t active_planner_solve_generation_{0U};
   std::atomic_uint64_t timed_out_planner_solve_generation_{0U};
   std::atomic_uint64_t planner_timeline_activation_generation_{0U};
   mutable std::mutex planner_timeline_activation_mutex_;
   std::deque<std::uint64_t> queued_planner_timeline_activations_;
-  std::atomic_int64_t planner_solve_started_steady_ns_{0};
+  std::mutex planner_solve_activity_mutex_;
+  std::int64_t planner_solve_started_steady_ns_{0};
   std::atomic_int last_planning_outcome_{
       static_cast<int>(navigation_planning::CompletePlanningOutcome::kInvalidRequest)};
   std::atomic_int last_planning_failure_stage_{
