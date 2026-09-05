@@ -61,8 +61,10 @@
 ### 2026-09-05 - Replace traversed history with request-local measured body support
 
 - **Owner/status:** MappingActor, world-model and planning certificate owners;
-  `WIP` in the isolated current-body cutover; complete request-to-candidate
-  regressions and authoritative Release rebuild remain required.
+  `IMPLEMENTED`; focused and synthetic planner-level regressions are green,
+  while the complete real MappingActor request-to-candidate integration
+  remains separately blocked by an existing production fixture's insufficient
+  KNOWN_FREE evidence.
 - **Scope:** Mapping snapshots and the mutable mapping actor contain sensor
   evidence only. Remove `TraversedFreeSpace` history/configuration and body
   neighborhood clearing. A stopped measured planning request may carry one
@@ -71,25 +73,45 @@
   the connected X500 main collision OBB. Disconnected legs and MID360 housing
   are recorded as excluded geometry with pinned model hashes in
   `current_body_support.hpp`.
-- **Safety impact:** The witness can discharge UNKNOWN only for a continuous
-  prefix that is proven inside the measured physical main OBB. Exact
-  continuous slab checks reject gaps and cannot discharge OCCUPIED,
-  OUT_OF_MAP, UNDEFINED or Frontier. After sensor-known-free space, UNKNOWN
-  support cannot re-enter. Successors, BACKUP, and future committed anchors
-  remain sensor-only; the witness never mutates the map and introduces no
-  safety radius or ray-range inflation.
+- **Safety impact:** The witness can discharge UNKNOWN only for the initial
+  ordered geometric prefix proven inside the measured physical main OBB.
+  KNOWN_FREE cells do not close that prefix; physical exit closes it and no
+  later segment can reopen it. Exact continuous slab checks reject gaps and
+  cannot discharge OCCUPIED, OUT_OF_MAP, UNDEFINED or Frontier. Successors,
+  BACKUP, and future committed anchors remain sensor-only; the witness never
+  mutates the map and introduces no safety radius or ray-range inflation.
 - **Evidence:** Focused regressions cover rotated geometry, source/epoch/frame
-  identity, body-history absence, occupied precedence, and map immutability.
-  The complete thin-body-to-sensor-free request/planner/candidate path must
-  still be exercised after the final Release build; no SITL claim is made here.
+  identity, body-history absence, occupied precedence, map immutability,
+  UNKNOWN-to-KNOWN_FREE-to-UNKNOWN inside B0, UNKNOWN after physical exit,
+  and closed OBB face/edge/corner boundaries. The synthetic
+  `PlannerFacade.CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal`
+  regression exercises the stopped request through A*, corridor generation,
+  candidate admission/final validation, then proves both request isolation and
+  rejection of an UNKNOWN barrier beyond B0. The real production facade test
+  fails at its precondition assertion on both clean base and patched trees with
+  the same `Actual: false / Expected: true` result; this is pre-existing before
+  the planner transaction and its fixture is intentionally unchanged. The
+  current runtime Python suite collects 247 tests and passes 247/247; the two
+  previously reported contract/evidence selections collect and pass 197/197
+  on both trees, while the older 209/209 baseline is not the current
+  collection. No SITL or hardware acceptance claim is made here.
+- **Qualification status:** Mapping package CTest is 3/3. Planning-backend
+  package CTest is 7/8 because `test_planner_facade` retains the pre-existing
+  production-fixture assertion above; its 9 gtests contain 8 passes, including
+  the new cross-layer/request-isolation regression.
 - **Removal/review condition:** Keep until a stronger measured operational
   contract replaces this request-local witness. Revisit only with recorded
   body geometry and representative planner evidence; do not restore traversed
   history or synthetic map clearing as a workaround.
-- **Verification:** Build the authoritative dependency overlay and run the
-  mapping, world-model, planning-contract and planning-backend focused tests;
-  then inspect the exact candidate certificate and negative occupied/gap/
-  successor/BACKUP cases. SITL remains owned by the integration agent.
+- **Verification:** Source `/opt/ros/jazzy` and the workspace overlay; run
+  `cmake --build build/navigation_mapping --target test_mapping_worker
+  test_mapping_actor test_mapping_world_model -j2`,
+  `cmake --build build/navigation_planning_backend --target
+  test_trajectory test_planner_facade -j2`, and the two package-level CTest
+  commands with `LD_LIBRARY_PATH` preferring `build/navigation_mapping`.
+  Re-run the complete candidate certificate after the facade fixture supplies
+  sufficient three-dimensional KNOWN_FREE evidence. SITL remains owned by the
+  integration agent.
 
 ### 2026-09-05 - Keep runtime timer ownership in one product timing contract
 
