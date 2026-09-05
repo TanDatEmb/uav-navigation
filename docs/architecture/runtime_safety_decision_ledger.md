@@ -18692,3 +18692,30 @@ release profiles must not use the former allowance.
   `ctest --test-dir build/navigation_planning_backend
   -R '^test_planner_(facade|config)$' --output-on-failure` (2/2 passed).
   No SITL evidence is claimed.
+
+### 2026-09-05 - Preserve typed main known-free planning failure
+
+- **Owner/status:** Navigation planning backend and runtime decision trace;
+  CODE and COMPONENT_REPRO implemented and focused verification passed. No SITL
+  or flight-acceptance claim.
+- **Scope:** Carry a per-call `PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT` result from
+  the existing strict known-free MAIN evidence gate through both
+  `PlanFromRest` and `ReplanOnce`, then classify it as `kNominalSeed` plus
+  `kMainKnownFreeInsufficient`. Existing gate, candidate admission,
+  `CompletePlanningOutcome`, recovery, cancellation and deadline precedence are
+  unchanged. Structured trace/report parsing preserves explicit typed fields;
+  legacy `solve_stage` is not used to infer them.
+- **Safety impact:** Observability and type classification only; strict
+  known-free rejection remains fail-closed and generic `PLANNER_EXP_FAILED`
+  remains the result for later trajectory-generation failures. No threshold,
+  timing, FSM, oracle, SITL behavior or PX4 gate changed.
+- **Evidence:** Backend `test_trajectory` typed-classification regression
+  passed 2/2 focused cases and Python planner-trace tests passed 7/7,
+  including typed-field preservation. No SITL evidence claimed.
+- **Removal condition:** Keep while typed planning evidence is required; remove
+  only with an equivalent artifact contract that preserves explicit stage and
+  reason fields.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_trajectory -j2`; `./build/navigation_planning_backend/test_trajectory
+  --gtest_filter='PlannerTrajectory.SolveFailureCodesRemainDistinct:PlannerTrajectory.MainKnownFreeFailureUsesTypedNominalSeedReason'
+  --gtest_color=no`; `python3 -m unittest tools.runtime.tests.test_planner_trace`.

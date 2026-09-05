@@ -57,6 +57,9 @@ enum class PlanningFailureReason : std::uint8_t {
   kStaleResult,
   kSuperseded,
   kInvalidInput,
+  // Keep this new telemetry reason at the end: preceding enum ordinals are
+  // serialized in runtime diagnostics and are therefore wire-compatible.
+  kMainKnownFreeInsufficient,
 };
 
 [[nodiscard]] constexpr bool completePlanningSucceeded(

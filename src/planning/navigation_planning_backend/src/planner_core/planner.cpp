@@ -1123,13 +1123,14 @@ double knownFreeGuideSupport(
         planner_previous_exp_.setEmpty();
         local_start_p_ = local_star_pt;
         ExpTraj previous_exp_snapshot = planner_previous_exp_;
+        PlannerResultCode exp_failure = PLANNER_EXP_FAILED;
         RET_CODE exp_ret_code = generateExpTraj(
                 previous_exp_snapshot, exp_traj_info, solve_deadline,
-                true);
+                true, &exp_failure);
         //GenerateRestToRestExpTraj(local_star_pt, exp_traj_info);
         if (exp_ret_code == FAILED) {
             latest_replan.setRetCode(classifySolveFailure(
-                solve_deadline, false, PlannerResultCode::PLANNER_EXP_FAILED));
+                solve_deadline, false, exp_failure));
             planner_context_->warn(" -- [planner] in [PlanFromRest] GenerateExpTrajectory failed with {}.",
                            RET_CODE_STR[exp_ret_code].c_str());
             return FAILED;
@@ -1288,14 +1289,15 @@ double knownFreeGuideSupport(
         ExpTraj exp_traj_info;
         TimeConsuming t_exp("t_exp", false);
         ExpTraj previous_exp_snapshot = planner_previous_exp_;
+        PlannerResultCode exp_failure = PLANNER_EXP_FAILED;
         RET_CODE exp_ret_code = generateExpTraj(
                 previous_exp_snapshot, exp_traj_info, solve_deadline,
-                !baseline_candidate_ready_for_refinement_);
+                !baseline_candidate_ready_for_refinement_, &exp_failure);
         time_consuming_[GENERATE_EXP_TRAJ] = t_exp.stop();
 
         if (exp_ret_code == FAILED) {
             latest_replan.setRetCode(classifySolveFailure(
-                solve_deadline, false, PlannerResultCode::PLANNER_EXP_FAILED));
+                solve_deadline, false, exp_failure));
             planner_context_->warn(" -- [planner] in [ReplanOnce]: GenerateExpTrajectory failed, force return");
             return FAILED;
         } else if (exp_ret_code == NEW_TRAJ) {
@@ -1580,44 +1582,6 @@ double knownFreeGuideSupport(
                 request.goal.target_world, 0.0, false);
         requested_activation_stamp_ns_ = 0;
         requested_activation_yaw_rate_rad_s_ = 0.0;
-        const auto classifyFailure = [&](const int planner_result) {
-            using Stage = navigation_planning::PlanningFailureStage;
-            using Reason = navigation_planning::PlanningFailureReason;
-            switch (planner_result) {
-                case PLANNER_NO_ODOM:
-                    return std::pair{Stage::kInput, Reason::kInvalidInput};
-                case PLANNER_NO_START_POINT:
-                    return std::pair{Stage::kInput, Reason::kAnchorOutOfMap};
-                case PLANNER_INVALID_ROUTE:
-                    return std::pair{Stage::kRouteWindow, Reason::kInvalidInput};
-                case PLANNER_SOLVE_TIMEOUT:
-                    return std::pair{Stage::kDeadline,
-                                     Reason::kNoCompleteBundleAtDeadline};
-                case PLANNER_SOLVE_CANCELLED:
-                    return std::pair{Stage::kDeadline, Reason::kSuperseded};
-                case PLANNER_BACKUP_NO_PATH:
-                    return std::pair{Stage::kBackupSeed,
-                                     Reason::kBackupKnownFreeInsufficient};
-                case PLANNER_BACKUP_INITIALIZATION_FAILED:
-                    return std::pair{Stage::kBackupSeed, Reason::kBackupDynamics};
-                case PLANNER_BACKUP_OPTIMIZATION_FAILED:
-                    return std::pair{Stage::kBackupRefinement, Reason::kBackupDynamics};
-                case PLANNER_BACKUP_FAILED:
-                    return std::pair{Stage::kBackupRefinement, Reason::kBackupDynamics};
-                case PLANNER_CANDIDATE_REJECTED:
-                    return std::pair{Stage::kCommitRecertification,
-                                     Reason::kWorldChanged};
-                case PLANNER_EXP_FAILED:
-                    return std::pair{
-                        last_nominal_solve_status_ ==
-                                traj_opt::NominalSolveStatus::kFailed
-                            ? Stage::kNominalSeed : Stage::kNominalRefinement,
-                        Reason::kNominalDynamics};
-                default:
-                    return std::pair{Stage::kNominalRefinement,
-                                     Reason::kNoCompleteBundleAtDeadline};
-            }
-        };
         if (result == NO_NEED) {
             outcome.outcome = navigation_planning::CompletePlanningOutcome::
                 kRetainedCommittedBundle;
@@ -1626,7 +1590,9 @@ double knownFreeGuideSupport(
             return finish();
         }
         if (result != SUCCESS && result != FINISH) {
-            const auto [failure_stage, failure_reason] = classifyFailure(result);
+            const auto [failure_stage, failure_reason] = classifyPlannerFailure(
+                static_cast<PlannerResultCode>(result),
+                last_nominal_solve_status_ == traj_opt::NominalSolveStatus::kFailed);
             outcome.outcome = navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
             outcome.failure_stage = failure_stage;
             outcome.failure_reason = failure_reason;
@@ -1956,7 +1922,11 @@ double knownFreeGuideSupport(
     RET_CODE Planner::generateExpTraj(
             ExpTraj &last_exp_traj_info, ExpTraj &out_exp_traj_info,
             const AbsoluteDeadline &solve_deadline,
-            const bool baseline_only) {
+            const bool baseline_only,
+            PlannerResultCode* const failure_detail) {
+        if (failure_detail != nullptr) {
+            *failure_detail = PLANNER_EXP_FAILED;
+        }
         /* 1) Log the exp traj frontend time*/
         TimeConsuming t_exp_frontend("t_exp_frontend", false);
 
@@ -2967,6 +2937,9 @@ double knownFreeGuideSupport(
                 "local=20.000 directional={:.3f} route={:.3f} known_free={:.3f}",
                 directional_support.value_or(0.0), route_support_m,
                 known_free_support_m);
+            if (failure_detail != nullptr) {
+                *failure_detail = PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT;
+            }
             return FAILED;
         }
 

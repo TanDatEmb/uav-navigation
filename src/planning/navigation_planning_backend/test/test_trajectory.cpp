@@ -3155,9 +3155,39 @@ TEST(PlannerTrajectory, SolveFailureCodesRemainDistinct) {
             navigation_planning_backend::PLANNER_BACKUP_FAILED);
   EXPECT_NE(navigation_planning_backend::PLANNER_EXP_FAILED,
             navigation_planning_backend::PLANNER_BACKUP_FAILED);
+  EXPECT_NE(navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT,
+            navigation_planning_backend::PLANNER_EXP_FAILED);
+  EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(
+                navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT),
+            "Main trajectory rejected because strict known-free support was insufficient");
   EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(
                 navigation_planning_backend::PLANNER_CANDIDATE_REJECTED),
             "Generated candidate failed construction or world validation");
+}
+
+TEST(PlannerTrajectory, MainKnownFreeFailureUsesTypedNominalSeedReason) {
+  using Reason = navigation_planning::PlanningFailureReason;
+  EXPECT_EQ(static_cast<int>(Reason::kWorldChanged), 11);
+  EXPECT_EQ(static_cast<int>(Reason::kNoCompleteBundleAtDeadline), 12);
+  EXPECT_EQ(static_cast<int>(Reason::kStaleResult), 13);
+  EXPECT_EQ(static_cast<int>(Reason::kSuperseded), 14);
+  EXPECT_EQ(static_cast<int>(Reason::kInvalidInput), 15);
+  EXPECT_EQ(static_cast<int>(Reason::kMainKnownFreeInsufficient), 16);
+
+  const auto [stage, reason] = navigation_planning_backend::classifyPlannerFailure(
+      navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT,
+      false);
+  EXPECT_EQ(stage, navigation_planning::PlanningFailureStage::kNominalSeed);
+  EXPECT_EQ(reason,
+            navigation_planning::PlanningFailureReason::kMainKnownFreeInsufficient);
+
+  const auto [generic_stage, generic_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_EXP_FAILED, false);
+  EXPECT_EQ(generic_stage,
+            navigation_planning::PlanningFailureStage::kNominalRefinement);
+  EXPECT_EQ(generic_reason,
+            navigation_planning::PlanningFailureReason::kNominalDynamics);
 }
 
 TEST(PlannerTrajectory, BackupFailureKeepsActionableCause) {

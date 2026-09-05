@@ -202,6 +202,11 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "splice_previous_sample_tt_s": ("splice_previous_sample_tt_s",),
     "candidate_result": ("candidate_result",),
     "replan_code": ("replan_code",),
+    # These are emitted by the structured planner outcome contract.  Keep
+    # them explicit; legacy solve_stage is not a substitute for either field.
+    "planning_outcome": ("planning_outcome",),
+    "planning_failure_stage": ("planning_failure_stage",),
+    "planning_failure_reason": ("planning_failure_reason",),
     "commit_decision": ("commit_decision",),
     "solve_stage": ("solve_stage",),
     "solve_stage_name": ("solve_stage_name",),
@@ -557,6 +562,9 @@ def normalize_planner_trace_record(
         if values["candidate_result"] is not None else None,
         "replan_code": str(values["replan_code"])
         if values["replan_code"] is not None else None,
+        "planning_outcome": _int(values["planning_outcome"]),
+        "planning_failure_stage": _int(values["planning_failure_stage"]),
+        "planning_failure_reason": _int(values["planning_failure_reason"]),
         "commit_decision": _int(values["commit_decision"]),
         "solve_stage": _int(values["solve_stage"]),
         "solve_stage_name": str(values["solve_stage_name"])

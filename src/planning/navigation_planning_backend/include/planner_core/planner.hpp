@@ -561,7 +561,8 @@ namespace navigation_planning_backend {
         RET_CODE generateExpTraj(ExpTraj &last_exp_traj_info,
                                  ExpTraj &out_exp_traj_info,
                                  const AbsoluteDeadline &solve_deadline,
-                                 bool baseline_only = false);
+                                 bool baseline_only = false,
+                                 PlannerResultCode* failure_detail = nullptr);
 
         /* For Backup traj generation */
         RET_CODE generateBackupTrajectory(ExpTraj &ref_exp_traj,
