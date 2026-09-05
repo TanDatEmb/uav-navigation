@@ -43,14 +43,16 @@ keeps points with `norm() <= cfg_.raycast_range_min`, and calls
 `missPointUpdate()` at `pos + p` ([upstream `prob_map.cpp:358-374`](https://github.com/hku-mars/SUPER/blob/2ad3419c127a617c6d7df6925e81a14175a9c096/rog_map/src/rog_map/prob_map.cpp#L358-L374)).
 This is a radius-based unknown prior, not a measured rectangular vehicle hull.
 
-At that snapshot, `ProbMap::updateProbMap()` ended after sensor/raycast diagnostics and
-does not perform that synthetic body-neighborhood clear
-(`src/mapping/rog_map_vendor/src/rog_map/prob_map.cpp:432-447`). Mapping instead
-publishes bounded traversed support around the measured base-pose chain, with
-epoch, source timestamps, age, and motion plausibility checks
-(`src/mapping/navigation_mapping/src/mapping_actor.cpp:638-694`). The ledger
-records removal of probability-map body clearing and OCCUPIED precedence
-(`docs/architecture/runtime_safety_decision_ledger.md:18347-18374`).
+At that historical snapshot, `ProbMap::updateProbMap()` ended after
+sensor/raycast diagnostics and did not perform that synthetic body-neighborhood
+clear (`src/mapping/rog_map_vendor/src/rog_map/prob_map.cpp:432-447`). The
+current cutover removes the snapshot-level traversed support that was added in
+the historical working tree. Mapping remains sensor-only; a stopped measured
+planning request may carry a request-local rigid-body witness whose UNKNOWN
+support is limited to a continuous prefix inside the current physical union.
+The current authority is the cutover entry in
+`docs/architecture/runtime_safety_decision_ledger.md`; the traversed-support
+paragraphs in this historical comparison describe only the pinned snapshot.
 
 The certificate in that snapshot checked the initial point and then every curved tube
 against inflated known-free/traversed evidence

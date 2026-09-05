@@ -37,6 +37,26 @@ namespace navigation_planning_backend {
 
 namespace {
 
+template <typename Callback>
+class ScopeExit final {
+ public:
+  explicit ScopeExit(Callback callback) : callback_(std::move(callback)) {}
+  ScopeExit(const ScopeExit&) = delete;
+  ScopeExit& operator=(const ScopeExit&) = delete;
+  ~ScopeExit() noexcept {
+    try {
+      callback_();
+    } catch (...) {
+      // Cleanup is best-effort during exception unwinding. The planner's
+      // request-local body witness must never escape into a later request,
+      // while an error from the clear path must not replace the original one.
+    }
+  }
+
+ private:
+  Callback callback_;
+};
+
 std::string trajectoryDurationSummary(const Trajectory& trajectory) {
     std::ostringstream output;
     output << '[';
@@ -50,17 +70,26 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
 
 double knownFreeGuideSupport(
         const navigation_world_model::WorldModelView& world,
-        const vec_Vec3f& guide) {
+        const vec_Vec3f& guide,
+        const navigation_world_model::CurrentBodySupportPtr& body_support = {}) {
     if (guide.size() < 2U) return 0.0;
     double support_m = 0.0;
     for (std::size_t index = 1; index < guide.size(); ++index) {
         const Eigen::Vector3d begin = guide[index - 1U].cast<double>();
         const Eigen::Vector3d end = guide[index].cast<double>();
         const double segment_m = (end - begin).norm();
-        if (!std::isfinite(segment_m) || segment_m <= 1.0e-9 ||
-            !world.isSegmentTraversable(
+        const bool body_prefix_edge = index == 1U && body_support &&
+            body_support->contains(begin, world.identity(), body_support->source_stamp_ns) &&
+            world.classify(begin, navigation_world_model::GridLayer::kInflated) ==
+                navigation_world_model::CellState::kUnknown;
+        const bool segment_free = body_prefix_edge
+            ? world.isSegmentTraversableWithCurrentBodySupport(
                 begin, end, navigation_world_model::GridLayer::kInflated,
-                navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+                navigation_world_model::UnknownPolicy::kRequireKnownFree, body_support)
+            : world.isSegmentTraversable(
+                begin, end, navigation_world_model::GridLayer::kInflated,
+                navigation_world_model::UnknownPolicy::kRequireKnownFree);
+        if (!std::isfinite(segment_m) || segment_m <= 1.0e-9 || !segment_free) {
             break;
         }
         support_m += segment_m;
@@ -432,6 +461,14 @@ double knownFreeGuideSupport(
         astar_ptr_->setFineInfNeighbors(neighbor_step);
     }
 
+    void Planner::setCurrentBodySupport(
+        navigation_world_model::CurrentBodySupportPtr support,
+        const Eigen::Quaterniond& measured_orientation) {
+        current_body_support_ = std::move(support);
+        astar_ptr_->setCurrentBodySupport(current_body_support_, measured_orientation);
+        cg_ptr_->setCurrentBodySupport(current_body_support_);
+    }
+
     bool Planner::authorizeAndStage(CandidateCommandBundle&& candidate) {
         if (commit_authorizer_ == nullptr || !map_ptr_) {
             latest_commit_decision_.store(static_cast<int>(
@@ -617,7 +654,10 @@ double knownFreeGuideSupport(
         // swept region; the authorizer may retain it across unrelated map
         // revisions only when immutable change provenance proves disjointness.
         const auto validation = validateExecutableCandidate(
-            *lease.view, candidate, authorization_wall_time, certificate_policy);
+            *lease.view, candidate, authorization_wall_time, certificate_policy,
+            current_body_support_matches_start_ ? current_body_support_
+                                                : navigation_world_model::CurrentBodySupportPtr{},
+            current_body_support_matches_start_ && current_body_support_admission_pending_);
         if (!validation.valid || !validation.protected_region.valid()) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -654,6 +694,9 @@ double knownFreeGuideSupport(
                            static_cast<int>(decision));
             return false;
         }
+        // The request-local measured body witness is single-use for initial
+        // admission. A later candidate must pass the sensor-only certificate.
+        current_body_support_admission_pending_ = false;
         return true;
     }
 
@@ -1082,13 +1125,16 @@ double knownFreeGuideSupport(
         // occupied or out-of-map pose is still corrected before planning.
         const auto measured_start_cell = map_ptr_->classify(
                 solve_state_.p.cast<double>(), navigation_world_model::GridLayer::kInflated);
-        const auto measured_start_evidence = map_ptr_->classifyFreeSpace(
-                solve_state_.p.cast<double>(), navigation_world_model::GridLayer::kInflated);
+        const bool current_body_supported = current_body_support_matches_start_ &&
+            current_body_support_ && current_body_support_->contains(
+                solve_state_.p.cast<double>(), map_ptr_->identity(),
+                current_body_support_->source_stamp_ns);
         const auto measured_start_is_traversable =
             map_ptr_->contains(solve_state_.p) &&
                 (navigation_world_model::isCellTraversable(
                      measured_start_cell, unknownPolicy()) ||
-                 measured_start_evidence == navigation_world_model::FreeSpaceEvidence::kTraversedFree);
+                 (measured_start_cell == navigation_world_model::CellState::kUnknown &&
+                  current_body_supported));
         Vec3f local_star_pt = solve_state_.p;
         if (!measured_start_is_traversable) {
             planner_context_->warn(
@@ -1517,14 +1563,30 @@ double knownFreeGuideSupport(
             const navigation_planning::PlanningRequest& request) {
         const auto started = std::chrono::steady_clock::now();
         navigation_planning::PlanningOutcome outcome;
-        outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
-        outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
-        const auto finish = [&]() {
+    outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
+    outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
+    const auto finish = [&]() {
+            // The measured body witness is request-local. Clear it on every
+            // return path, including rejected/expired solves, so a later
+            // request cannot inherit physical support from an old pose.
+            current_body_support_admission_pending_ = false;
+            current_body_support_matches_start_ = false;
+            setCurrentBodySupport({});
             outcome.trace.elapsed_steady_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now() - started).count();
             return outcome;
         };
+        // Keep the request-local witness and all planner-side handover state
+        // scoped to this transaction even when a backend stage throws. The
+        // ordinary return helper below remains responsible for recording the
+        // elapsed time; this guard closes the exception path.
+        const auto cleanup = [&]() {
+            current_body_support_admission_pending_ = false;
+            current_body_support_matches_start_ = false;
+            setCurrentBodySupport({});
+        };
+        const ScopeExit cleanup_guard(cleanup);
         if (!request.valid()) return finish();
 
         last_nominal_solve_status_ = traj_opt::NominalSolveStatus::kFailed;
@@ -1541,6 +1603,24 @@ double knownFreeGuideSupport(
             request.route_snapshot.waypoints[request.route_snapshot.active_waypoint_index]
                 .position_enu;
         setWorldModelView(request.world);
+        setCurrentBodySupport(
+            request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState
+                ? request.current_body_support
+                : navigation_world_model::CurrentBodySupportPtr{},
+            request.start_state.orientation_world_body);
+        current_body_support_matches_start_ =
+            request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState &&
+            current_body_support_ &&
+            current_body_support_->matchesMeasuredState(
+                request.start_state.position_world,
+                request.start_state.orientation_world_body,
+                request.start_state.localization_epoch,
+                request.start_state.source_stamp_ns,
+                request.start_state.world_frame_id,
+                request.start_state.body_frame_id) &&
+            navigation_world_model::sameWorldSnapshotIdentity(
+                current_body_support_->snapshot_identity, request.world->identity());
+        current_body_support_admission_pending_ = current_body_support_matches_start_;
         if (!setState(request.start_state)) return finish();
         requested_activation_stamp_ns_ = 0;
         requested_activation_yaw_rate_rad_s_ = 0.0;
@@ -2341,15 +2421,44 @@ double knownFreeGuideSupport(
                         return FAILED;
                     }
                     bool prefix_certified = true;
+                    bool body_prefix_active =
+                        current_body_support_matches_start_ &&
+                        current_body_support_admission_pending_ &&
+                        current_body_support_ &&
+                        current_body_support_->contains(
+                            bounded_path.front().cast<double>(), map_ptr_->identity(),
+                            current_body_support_->source_stamp_ns) &&
+                        map_ptr_->classify(
+                            bounded_path.front().cast<double>(),
+                            navigation_world_model::GridLayer::kInflated) ==
+                            navigation_world_model::CellState::kUnknown;
                     for (std::size_t index = 1U;
                          index < bounded_path.size(); ++index) {
-                        if (!map_ptr_->isSegmentTraversable(
-                                bounded_path[index - 1U].cast<double>(),
-                                bounded_path[index].cast<double>(),
+                        const auto segment_start = bounded_path[index - 1U].cast<double>();
+                        const auto segment_end = bounded_path[index].cast<double>();
+                        const bool segment_free = body_prefix_active &&
+                                current_body_support_
+                            ? map_ptr_->isSegmentTraversableWithCurrentBodySupport(
+                                segment_start, segment_end,
                                 navigation_world_model::GridLayer::kInflated,
-                                unknownPolicy())) {
+                                unknownPolicy(), current_body_support_)
+                            : map_ptr_->isSegmentTraversable(
+                                segment_start, segment_end,
+                                navigation_world_model::GridLayer::kInflated,
+                                unknownPolicy());
+                        if (!segment_free) {
                             prefix_certified = false;
                             break;
+                        }
+                        if (body_prefix_active && current_body_support_) {
+                            body_prefix_active =
+                                map_ptr_->classify(
+                                    segment_end,
+                                    navigation_world_model::GridLayer::kInflated) ==
+                                    navigation_world_model::CellState::kUnknown &&
+                                current_body_support_->contains(
+                                    segment_end, map_ptr_->identity(),
+                                    current_body_support_->source_stamp_ns);
                         }
                     }
                     if (!prefix_certified) {
@@ -2470,7 +2579,9 @@ double knownFreeGuideSupport(
             const double guide_length = geometry_utils::computePathLength(guide_path);
             const double remaining_horizon = cfg_.local_window_m - guide_length;
             const double known_free_to_boundary_m = knownFreeGuideSupport(
-                *map_ptr_, guide_path);
+                *map_ptr_, guide_path,
+                current_body_support_admission_pending_ ? current_body_support_
+                                                         : navigation_world_model::CurrentBodySupportPtr{});
             const bool boundary_known_free =
                 std::isfinite(known_free_to_boundary_m) &&
                 std::isfinite(guide_length) &&
@@ -2912,7 +3023,10 @@ double knownFreeGuideSupport(
                 guide_path.front().cast<double>(), guide_direction,
                 map_ptr_->geometry());
         const double route_support_m = geometry_utils::computePathLength(guide_path);
-        const double known_free_support_m = knownFreeGuideSupport(*map_ptr_, guide_path);
+        const double known_free_support_m = knownFreeGuideSupport(
+            *map_ptr_, guide_path,
+            current_body_support_admission_pending_ ? current_body_support_
+                                                     : navigation_world_model::CurrentBodySupportPtr{});
         navigation_math::StatePVAJ viability_state =
             navigation_math::StatePVAJ::Zero();
         viability_state.col(0) = solve_state_.p;
@@ -3374,13 +3488,29 @@ double knownFreeGuideSupport(
         // first point and can leave no valid switch window. Existing active
         // candidates retain their positive elapsed-time offset.
         const double command_start_t = std::clamp(start_t, 0.0, total_dur);
-        const double visibility_start_t = command_start_t;
+        double visibility_start_t = command_start_t;
         const Vec3f command_start = ref_exp_traj.getPos(command_start_t);
-        if (!command_start.allFinite() || !map_ptr_->contains(command_start) ||
-            !map_ptr_->isSegmentTraversableWithTraversedFree(
+        const auto command_start_double = command_start.cast<double>();
+        const bool body_supported_command = current_body_support_matches_start_ &&
+            current_body_support_admission_pending_ && current_body_support_ &&
+            current_body_support_->contains(
+                command_start_double, map_ptr_->identity(),
+                current_body_support_->source_stamp_ns) &&
+            map_ptr_->classify(
+                command_start_double, navigation_world_model::GridLayer::kInflated) ==
+                navigation_world_model::CellState::kUnknown;
+        const bool command_boundary_free = map_ptr_->isSegmentTraversable(
                 command_start, command_start,
                 navigation_world_model::GridLayer::kInflated,
-                navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+                navigation_world_model::UnknownPolicy::kRequireKnownFree) ||
+            (body_supported_command &&
+             map_ptr_->isSegmentTraversableWithCurrentBodySupport(
+                 command_start_double, command_start_double,
+                 navigation_world_model::GridLayer::kInflated,
+                 navigation_world_model::UnknownPolicy::kRequireKnownFree,
+                 current_body_support_));
+        if (!command_start.allFinite() || !map_ptr_->contains(command_start) ||
+            !command_boundary_free) {
             backup_certificate_diagnostics_.last_reject_stage = static_cast<int>(
                 navigation_planning::BackupCertificateRejectStage::kCommandBoundary);
             planner_context_->warn(
@@ -3389,6 +3519,47 @@ double knownFreeGuideSupport(
                     command_start.x(), command_start.y(), command_start.z(),
                     solve_state_.p.x(), solve_state_.p.y(), solve_state_.p.z());
             return FAILED;
+        }
+        Vec3f visibility_origin = command_start;
+        if (body_supported_command) {
+            bool found_sensor_free_exit = false;
+            constexpr double kExitSearchEpsilonS = 1.0e-6;
+            for (double candidate_t = command_start_t;
+                 candidate_t <= total_dur + kExitSearchEpsilonS;
+                 candidate_t += std::max(cfg_.sample_traj_dt_s, 1.0e-3)) {
+                const double bounded_t = std::min(candidate_t, total_dur);
+                const Vec3f candidate = ref_exp_traj.getPos(bounded_t);
+                if (!candidate.allFinite() ||
+                    current_body_support_->contains(
+                        candidate.cast<double>(), map_ptr_->identity(),
+                        current_body_support_->source_stamp_ns) ||
+                    map_ptr_->classify(
+                        candidate.cast<double>(), navigation_world_model::GridLayer::kInflated) !=
+                        navigation_world_model::CellState::kKnownFree ||
+                    !map_ptr_->isSegmentTraversable(
+                        candidate, candidate,
+                        navigation_world_model::GridLayer::kInflated,
+                        navigation_world_model::UnknownPolicy::kRequireKnownFree) ||
+                    !map_ptr_->isSegmentTraversableWithCurrentBodySupport(
+                        command_start_double, candidate.cast<double>(),
+                        navigation_world_model::GridLayer::kInflated,
+                        navigation_world_model::UnknownPolicy::kRequireKnownFree,
+                        current_body_support_)) {
+                    if (bounded_t >= total_dur) break;
+                    continue;
+                }
+                visibility_origin = candidate;
+                visibility_start_t = bounded_t;
+                found_sensor_free_exit = true;
+                break;
+            }
+            if (!found_sensor_free_exit) {
+                backup_certificate_diagnostics_.last_reject_stage = static_cast<int>(
+                    navigation_planning::BackupCertificateRejectStage::kCommandBoundary);
+                planner_context_->warn(
+                    " -- [planner] no sensor-known-free backup visibility origin after body exit");
+                return FAILED;
+            }
         }
         back_traj_info.setRobotPos(command_start);
         if (cfg_.print_log &&
@@ -3437,7 +3608,7 @@ double knownFreeGuideSupport(
         candidate_ps.emplace_back(total_dur, temp_point);
 
         bool shared_visibility_ray{false};
-        const Vec3f visibility_origin = back_traj_info.getRobotPos();
+        static_cast<void>(back_traj_info.getRobotPos());
         if (!candidate_ps.empty()) {
             const Vec3f farthest_delta = candidate_ps.back().second - visibility_origin;
             const double farthest_distance = farthest_delta.norm();
@@ -3477,12 +3648,13 @@ double knownFreeGuideSupport(
                 (endpoint - visibility_origin).norm() > visibility_limit) {
                 return false;
             }
-            // A backup is the fail-safe suffix. Its visibility certificate must
-            // be known-free, independent of the exploratory main policy.
-            return map_ptr_->isSegmentTraversableWithTraversedFree(
+            // A backup is the fail-safe suffix. Its positive-length visibility
+            // certificate starts after the physical body prefix and is always
+            // sensor-known-free.
+            return map_ptr_->isSegmentTraversable(
                 visibility_origin, endpoint,
-                    navigation_world_model::GridLayer::kInflated,
-                    navigation_world_model::UnknownPolicy::kRequireKnownFree);
+                navigation_world_model::GridLayer::kInflated,
+                navigation_world_model::UnknownPolicy::kRequireKnownFree);
         };
         if (shared_visibility_ray &&
             inflated_line_visible(candidate_ps.back().second)) {
@@ -4370,9 +4542,18 @@ double knownFreeGuideSupport(
         // 		For start point, must be collision free
         const auto start_type = map_ptr_->classify(
                 start_pt, navigation_world_model::GridLayer::kEvidence);
+        const bool body_supported_start = current_body_support_ &&
+            current_body_support_->contains(
+                start_pt.cast<double>(), map_ptr_->identity(),
+                current_body_support_->source_stamp_ns);
 
         /// If the start_pt is obstacle in prob map, just shift it to the nearest free point.
-        if (!navigation_world_model::isCellTraversable(start_type, unknownPolicy())) {
+        // A measured UNKNOWN start may be admitted only by the request-local
+        // physical body witness. The witness never discharges occupied,
+        // out-of-map, or any later search node.
+        if (!navigation_world_model::isCellTraversable(start_type, unknownPolicy()) &&
+            !(start_type == navigation_world_model::CellState::kUnknown &&
+              body_supported_start)) {
             planner_context_->warn(
                     " -- [planner] The start point in obstacle, this should not happen since the start point should be shift before pathsearch.");
             return false;
@@ -4607,6 +4788,21 @@ double knownFreeGuideSupport(
         // tail on long local paths.
         const auto continuous_edge_is_safe = [this](
                 const Vec3f& start, const Vec3f& end) {
+            const auto start_point = start.cast<double>();
+            const bool body_prefix_edge = current_body_support_matches_start_ &&
+                current_body_support_admission_pending_ && current_body_support_ &&
+                current_body_support_->contains(
+                    start_point, map_ptr_->identity(),
+                    current_body_support_->source_stamp_ns) &&
+                map_ptr_->classify(
+                    start_point, navigation_world_model::GridLayer::kInflated) ==
+                    navigation_world_model::CellState::kUnknown;
+            if (body_prefix_edge) {
+                return map_ptr_->isSegmentTraversableWithCurrentBodySupport(
+                    start_point, end.cast<double>(),
+                    navigation_world_model::GridLayer::kInflated,
+                    unknownPolicy(), current_body_support_);
+            }
             return map_ptr_->isSegmentTraversable(
                 start, end, navigation_world_model::GridLayer::kInflated,
                 unknownPolicy());

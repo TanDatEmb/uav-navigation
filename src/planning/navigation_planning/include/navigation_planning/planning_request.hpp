@@ -88,6 +88,7 @@ struct PlanningRequest {
   // not read a separately mutable route member after this request is queued.
   navigation_mission::ImmutableRouteSnapshot route_snapshot;
   navigation_world_model::WorldModelViewPtr world;
+  navigation_world_model::CurrentBodySupportPtr current_body_support;
   DynamicLimits dynamics;
   PlanningBudget budget;
 
@@ -114,6 +115,14 @@ struct PlanningRequest {
         route_snapshot.route_revision == key.route_revision &&
         route_snapshot.request_id == goal.request_id &&
         route_snapshot.active_waypoint_index == goal.waypoint_index;
+    const bool support_contract_valid =
+        (key.start_mode != PlanningStartMode::kStoppedMeasuredState &&
+         !current_body_support) ||
+        (key.start_mode == PlanningStartMode::kStoppedMeasuredState &&
+         (!current_body_support || current_body_support->matchesMeasuredState(
+             start_state.position_world, start_state.orientation_world_body,
+             start_state.localization_epoch, start_state.source_stamp_ns,
+             start_state.world_frame_id, start_state.body_frame_id)));
     return key.valid() && goal.valid() && route_contract_valid &&
            key.localization_epoch == goal.localization_epoch &&
            key.goal_epoch == goal.goal_epoch && key.request_id == goal.request_id &&
@@ -124,7 +133,7 @@ struct PlanningRequest {
            world->identity().generation == key.pinned_world_generation &&
            world->identity().revision == key.pinned_world_revision &&
            world->identity().observation_stamp_ns > 0 &&
-           history.valid() &&
+           history.valid() && support_contract_valid &&
            dynamics.valid() &&
            !budget.exhausted();
   }

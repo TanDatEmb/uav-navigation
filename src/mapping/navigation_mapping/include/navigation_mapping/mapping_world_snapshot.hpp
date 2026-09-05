@@ -12,7 +12,6 @@
 #include <utility>
 
 #include <navigation_mapping/mapping_types.hpp>
-#include <navigation_mapping/traversed_free_space.hpp>
 #include <navigation_mapping/visibility_control.hpp>
 #include <navigation_world_model/continuous_clearance.hpp>
 
@@ -85,14 +84,11 @@ class MappingWorldSnapshot final
  public:
   MappingWorldSnapshot(PlanningGrid grid,
                        navigation_world_model::WorldSnapshotIdentity identity,
-                       navigation_world_model::WorldChangeHistoryPtr change_history = {},
-                       TraversedFreeSpacePtr traversed_free_space = {})
+                       navigation_world_model::WorldChangeHistoryPtr change_history = {})
       : grid_(validated(std::move(grid), identity)),
         identity_(identity),
         change_history_(std::move(change_history)),
-        traversed_free_space_(std::move(traversed_free_space)),
-        owned_bytes_(grid_->ownedByteSize() +
-                     (traversed_free_space_ ? traversed_free_space_->byteSize() : 0U)) {
+        owned_bytes_(grid_->ownedByteSize()) {
     const auto live = live_count_.fetch_add(1U, std::memory_order_relaxed) + 1U;
     const auto bytes = live_owned_bytes_.fetch_add(owned_bytes_, std::memory_order_relaxed) +
                        owned_bytes_;
@@ -103,15 +99,12 @@ class MappingWorldSnapshot final
   MappingWorldSnapshot(std::shared_ptr<const MappingWorldSnapshot> parent,
                        PlanningGridPatch patch,
                        navigation_world_model::WorldSnapshotIdentity identity,
-                       navigation_world_model::WorldChangeHistoryPtr change_history = {},
-                       TraversedFreeSpacePtr traversed_free_space = {})
+                       navigation_world_model::WorldChangeHistoryPtr change_history = {})
       : parent_(std::move(parent)),
         patch_(validatedPatch(std::move(patch), parent_, identity)),
         identity_(identity),
         change_history_(std::move(change_history)),
-        traversed_free_space_(std::move(traversed_free_space)),
-        owned_bytes_(patch_->ownedByteSize() +
-                     (traversed_free_space_ ? traversed_free_space_->byteSize() : 0U)) {
+        owned_bytes_(patch_->ownedByteSize()) {
     if (!parent_) throw std::invalid_argument("patch snapshot parent is missing");
     const auto live = live_count_.fetch_add(1U, std::memory_order_relaxed) + 1U;
     const auto bytes = live_owned_bytes_.fetch_add(owned_bytes_, std::memory_order_relaxed) +
@@ -236,15 +229,7 @@ class MappingWorldSnapshot final
     if (state == CellState::kOccupied) return FreeSpaceEvidence::kOccupied;
     if (state == CellState::kOutOfMap) return FreeSpaceEvidence::kOutOfMap;
     if (state == CellState::kKnownFree) return FreeSpaceEvidence::kSensorFree;
-    const auto traversed = traversedFreeSpace();
-    const auto stamp = now_stamp_ns > 0 ? now_stamp_ns : identity_.observation_stamp_ns;
-    const double resolution = layer == navigation_world_model::GridLayer::kInflated
-                                  ? rootGrid().inflated.layout.resolution_m
-                                  : rootGrid().base_layout.resolution_m;
-    if (traversed && traversed->contains(
-            point, identity_.localization_epoch, stamp, 0.5 * resolution)) {
-      return FreeSpaceEvidence::kTraversedFree;
-    }
+    static_cast<void>(now_stamp_ns);
     return FreeSpaceEvidence::kUnknown;
   }
 
@@ -259,67 +244,162 @@ class MappingWorldSnapshot final
       return HandoverClearanceReason::kOccupiedContradiction;
     }
     if (state == CellState::kKnownFree) return HandoverClearanceReason::kNone;
-    const auto traversed = traversedFreeSpace();
-    if (!traversed || traversed->segments().empty()) {
-      return HandoverClearanceReason::kNoSensorEvidence;
-    }
-    const auto stamp = now_stamp_ns > 0 ? now_stamp_ns : identity_.observation_stamp_ns;
-    if (classifyFreeSpace(point, layer, stamp) ==
-        navigation_world_model::FreeSpaceEvidence::kTraversedFree) {
-      return HandoverClearanceReason::kNone;
-    }
-    bool same_epoch = false;
-    bool has_expired_epoch_support = false;
-    for (const auto& segment : traversed->segments()) {
-      if (segment.localization_epoch != identity_.localization_epoch) continue;
-      same_epoch = true;
-      const bool fresh = segment.last_traversed_stamp_ns > 0 &&
-          stamp >= segment.last_traversed_stamp_ns &&
-          static_cast<long double>(stamp - segment.last_traversed_stamp_ns) <=
-              static_cast<long double>(traversed->maxAgeSeconds()) * 1.0e9L;
-      has_expired_epoch_support |= !fresh;
-    }
-    if (same_epoch && has_expired_epoch_support) {
-      return HandoverClearanceReason::kExpiredTraversedEvidence;
-    }
-    return HandoverClearanceReason::kDisconnectedTraversedClearance;
+    static_cast<void>(now_stamp_ns);
+    return HandoverClearanceReason::kNoSensorEvidence;
   }
 
-  [[nodiscard]] bool isSegmentTraversableWithTraversedFree(
+  [[nodiscard]] bool isSegmentTraversableWithCurrentBodySupport(
       const navigation_world_model::Point3& start,
       const navigation_world_model::Point3& end,
       navigation_world_model::GridLayer layer,
-      navigation_world_model::UnknownPolicy unknown_policy) const noexcept override {
+      navigation_world_model::UnknownPolicy unknown_policy,
+      const navigation_world_model::CurrentBodySupportPtr& support = {}) const noexcept override {
     if (!start.allFinite() || !end.allFinite() || !containsLayer(start, layer) ||
-        !containsLayer(end, layer)) return false;
-    if (unknown_policy == navigation_world_model::UnknownPolicy::kAllowUnknown) {
-      return isSegmentTraversable(start, end, layer, unknown_policy);
-    }
+        !containsLayer(end, layer) || !support || !support->valid) return false;
     const auto delta = end - start;
     const double length = delta.norm();
     const double resolution = layer == navigation_world_model::GridLayer::kInflated
                                   ? rootGrid().inflated.layout.resolution_m
                                   : rootGrid().base_layout.resolution_m;
-    if (!std::isfinite(length) || !std::isfinite(resolution) || resolution <= 0.0) {
-      return false;
-    }
-    const int steps = std::max(1, static_cast<int>(std::ceil(length / resolution)));
-    bool sensor_prefix_complete = false;
-    for (int index = 0; index <= steps; ++index) {
-      const double alpha = static_cast<double>(index) / static_cast<double>(steps);
-      const auto evidence = classifyFreeSpace(start + alpha * delta, layer);
-      using navigation_world_model::FreeSpaceEvidence;
-      if (evidence == FreeSpaceEvidence::kOccupied ||
-          evidence == FreeSpaceEvidence::kOutOfMap ||
-          evidence == FreeSpaceEvidence::kUnknown) return false;
-      if (evidence == FreeSpaceEvidence::kSensorFree) {
-        sensor_prefix_complete = true;
-      } else if (sensor_prefix_complete) {
-        // Never re-enter traversed-only support after normal sensor support.
-        return false;
+    if (!std::isfinite(length) || !std::isfinite(resolution) || resolution <= 0.0 ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            support->snapshot_identity, identity_)) return false;
+    const auto original_start_index = positionToIndex(start, layer);
+    auto start_index = original_start_index;
+    const auto end_index = positionToIndex(end, layer);
+    auto direction = navigation_world_model::GridIndex3{
+        (end_index.x() > start_index.x()) - (end_index.x() < start_index.x()),
+        (end_index.y() > start_index.y()) - (end_index.y() < start_index.y()),
+        (end_index.z() > start_index.z()) - (end_index.z() < start_index.z())};
+    // `positionToIndex` follows the half-open floor convention.  At an exact
+    // voxel face, a ray travelling in the negative direction starts in the
+    // voxel on the lower side of that face.  Without this adjustment the
+    // first boundary distance is zero and the traversal rejects the segment
+    // (or skips the occupied lower-side voxel).
+    int exact_start_face_axes = 0;
+    int traversed_negative_face_axes = 0;
+    for (int axis = 0; axis < 3; ++axis) {
+      const double coordinate = start[axis] / resolution;
+      const double nearest_boundary = std::round(coordinate);
+      const double boundary_tolerance =
+          32.0 * std::numeric_limits<double>::epsilon() *
+          std::max(1.0, std::abs(coordinate));
+      if (std::abs(coordinate - nearest_boundary) <= boundary_tolerance) {
+        exact_start_face_axes |= 1 << axis;
+      }
+      if (direction[axis] >= 0) continue;
+      traversed_negative_face_axes |= 1 << axis;
+      if (std::abs(coordinate - nearest_boundary) <= boundary_tolerance &&
+          start_index[axis] > std::numeric_limits<int>::min()) {
+        --start_index[axis];
       }
     }
-    return true;
+    const auto point_is_allowed = [&](const navigation_world_model::Point3& point,
+                                      const double interval_begin,
+                                      const double interval_end) {
+      const auto state = classify(point, layer);
+      using navigation_world_model::CellState;
+      if (state == CellState::kOccupied || state == CellState::kOutOfMap ||
+          state == CellState::kUndefined) return false;
+      if (state == CellState::kKnownFree) return true;
+      // Only an explicitly UNKNOWN voxel can be discharged by the measured
+      // body witness. Frontier/undefined are separate map states and remain
+      // rejected under the known-free handover policy. Sensor-free cells do
+      // not consume the witness: UNKNOWN -> sensor-free -> UNKNOWN remains
+      // valid while each unknown interval stays inside the physical OBB.
+      if (state != CellState::kUnknown) return false;
+      const auto a = start + interval_begin * delta;
+      const auto b = start + interval_end * delta;
+      const bool contained = support->containsSegment(a, b, identity_, support->source_stamp_ns);
+      return contained;
+    };
+    // A segment beginning exactly on a face/edge/corner touches both sides
+    // of every such face at t=0. Check all adjacent cells before applying
+    // the negative-direction half-open-index adjustment. This keeps an
+    // occupied upper-side cell authoritative and handles edge/corner ties
+    // independent of traversal direction.
+    for (int subset = exact_start_face_axes; subset >= 0;
+         subset = (subset - 1) & exact_start_face_axes) {
+      // A face on the positive travel side is only touched tangentially at
+      // t=0; checking its outside neighbor would reject a valid path that
+      // starts on the map boundary. Negative-side faces are entered and must
+      // participate in the supercover check.
+      if ((subset & ~traversed_negative_face_axes) != 0) {
+        if (subset == 0) break;
+        continue;
+      }
+      auto candidate = original_start_index;
+      if ((subset & 1) != 0) --candidate.x();
+      if ((subset & 2) != 0) --candidate.y();
+      if ((subset & 4) != 0) --candidate.z();
+      if (!point_is_allowed(indexToPosition(candidate, layer), 0.0, 0.0)) {
+        return false;
+      }
+      if (subset == 0) break;
+    }
+    if (start_index == end_index) {
+      if (!point_is_allowed(indexToPosition(start_index, layer), 0.0, 1.0)) return false;
+    } else {
+      direction = navigation_world_model::GridIndex3{
+          (end_index.x() > start_index.x()) - (end_index.x() < start_index.x()),
+          (end_index.y() > start_index.y()) - (end_index.y() < start_index.y()),
+          (end_index.z() > start_index.z()) - (end_index.z() < start_index.z())};
+      const auto absolute_delta = delta.cwiseAbs();
+      const auto step_time = [&](const int axis) {
+        const double component = absolute_delta[axis] / length;
+        return direction[axis] == 0 ? std::numeric_limits<double>::max()
+                                    : resolution / component;
+      };
+      const auto bound_time = [&](const int axis) {
+        const double center = (static_cast<double>(start_index[axis]) + 0.5) * resolution;
+        const double boundary = center + static_cast<double>(direction[axis]) * resolution * 0.5;
+        const double component = absolute_delta[axis] / length;
+        return direction[axis] == 0 ? std::numeric_limits<double>::max()
+                                    : std::abs(boundary - start[axis]) / component;
+      };
+      double next_x = bound_time(0), next_y = bound_time(1), next_z = bound_time(2);
+      const double step_x = step_time(0), step_y = step_time(1), step_z = step_time(2);
+      auto current = start_index;
+      double current_distance = 0.0;
+      const double never = std::numeric_limits<double>::max();
+      while (current != end_index) {
+        if (current.x() == end_index.x()) next_x = never;
+        if (current.y() == end_index.y()) next_y = never;
+        if (current.z() == end_index.z()) next_z = never;
+        const double boundary = std::min({next_x, next_y, next_z});
+        const double distance_tolerance =
+            32.0 * std::numeric_limits<double>::epsilon() *
+            std::max(1.0, std::abs(boundary));
+        if (!std::isfinite(boundary) ||
+            boundary <= current_distance + distance_tolerance) return false;
+        if (!point_is_allowed(indexToPosition(current, layer),
+                              current_distance / length,
+                              std::min(1.0, boundary / length))) return false;
+        const double boundary_t = std::clamp(boundary / length, 0.0, 1.0);
+        const double scale = std::max(1.0, std::abs(boundary));
+        const double tolerance = 32.0 * std::numeric_limits<double>::epsilon() * scale;
+        int tied = 0;
+        if (next_x != never && std::abs(next_x - boundary) <= tolerance) tied |= 1;
+        if (next_y != never && std::abs(next_y - boundary) <= tolerance) tied |= 2;
+        if (next_z != never && std::abs(next_z - boundary) <= tolerance) tied |= 4;
+        for (int subset = tied; subset > 0; subset = (subset - 1) & tied) {
+          auto candidate = current;
+          if ((subset & 1) != 0) candidate.x() += direction.x();
+          if ((subset & 2) != 0) candidate.y() += direction.y();
+          if ((subset & 4) != 0) candidate.z() += direction.z();
+          if (!point_is_allowed(indexToPosition(candidate, layer), boundary_t, boundary_t))
+            return false;
+        }
+        if ((tied & 1) != 0) { current.x() += direction.x(); next_x += step_x; }
+        if ((tied & 2) != 0) { current.y() += direction.y(); next_y += step_y; }
+        if ((tied & 4) != 0) { current.z() += direction.z(); next_z += step_z; }
+        current_distance = boundary;
+      }
+      if (!point_is_allowed(indexToPosition(end_index, layer), current_distance / length, 1.0)) return false;
+    }
+    if (layer != navigation_world_model::GridLayer::kInflated) return true;
+    return navigation_world_model::observedOccupiedTubeIsClear(
+        *this, start, end, rootGrid().occupied_inflation_radius_m);
   }
 
   [[nodiscard]] bool contains(
@@ -606,17 +686,15 @@ class MappingWorldSnapshot final
     return rootGrid().sharedMetadataByteSize();
   }
   [[nodiscard]] MappingSnapshotMetrics metrics() const noexcept {
-    return {
+    MappingSnapshotMetrics result{
         static_cast<std::uint64_t>(byteSize()),
         static_cast<std::uint64_t>(ownedByteSize()),
         static_cast<std::uint64_t>(sharedMetadataByteSize()),
         static_cast<std::uint64_t>(liveCount()),
         static_cast<std::uint64_t>(peakLiveCount()),
         static_cast<std::uint64_t>(liveOwnedBytes()),
-        static_cast<std::uint64_t>(peakLiveOwnedBytes()),
-        static_cast<std::uint64_t>(traversedFreeSpace()
-                                       ? traversedFreeSpace()->byteSize() : 0U),
-    };
+        static_cast<std::uint64_t>(peakLiveOwnedBytes())};
+    return result;
   }
   [[nodiscard]] static std::size_t liveCount() noexcept {
     return live_count_.load(std::memory_order_relaxed);
@@ -634,12 +712,6 @@ class MappingWorldSnapshot final
  private:
   [[nodiscard]] const PlanningGrid& rootGrid() const noexcept {
     return grid_ ? *grid_ : parent_->rootGrid();
-  }
-
-  [[nodiscard]] TraversedFreeSpacePtr traversedFreeSpace() const noexcept {
-    return traversed_free_space_ ? traversed_free_space_
-                                  : (parent_ ? parent_->traversedFreeSpace()
-                                             : TraversedFreeSpacePtr{});
   }
 
   [[nodiscard]] std::uint8_t inflatedOccupied(
@@ -920,7 +992,6 @@ class MappingWorldSnapshot final
   const std::optional<PlanningGridPatch> patch_;
   const navigation_world_model::WorldSnapshotIdentity identity_;
   const navigation_world_model::WorldChangeHistoryPtr change_history_;
-  const TraversedFreeSpacePtr traversed_free_space_;
   const std::size_t owned_bytes_;
   inline static std::atomic_size_t live_count_{0U};
   inline static std::atomic_size_t peak_live_count_{0U};

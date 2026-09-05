@@ -1,5 +1,38 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-05 - Replace traversed history with request-local measured body support
+
+- **Owner/status:** MappingActor, world-model and planning certificate owners;
+  `WIP` in the isolated current-body cutover; complete request-to-candidate
+  regressions and authoritative Release rebuild remain required.
+- **Scope:** Mapping snapshots and the mutable mapping actor contain sensor
+  evidence only. Remove `TraversedFreeSpace` history/configuration and body
+  neighborhood clearing. A stopped measured planning request may carry one
+  ephemeral `CurrentBodySupport` witness with the exact measured position,
+  full quaternion, source stamp/epoch/frame IDs, pinned world identity, and
+  the connected X500 main collision OBB. Disconnected legs and MID360 housing
+  are recorded as excluded geometry with pinned model hashes in
+  `current_body_support.hpp`.
+- **Safety impact:** The witness can discharge UNKNOWN only for a continuous
+  prefix that is proven inside the measured physical main OBB. Exact
+  continuous slab checks reject gaps and cannot discharge OCCUPIED,
+  OUT_OF_MAP, UNDEFINED or Frontier. After sensor-known-free space, UNKNOWN
+  support cannot re-enter. Successors, BACKUP, and future committed anchors
+  remain sensor-only; the witness never mutates the map and introduces no
+  safety radius or ray-range inflation.
+- **Evidence:** Focused regressions cover rotated geometry, source/epoch/frame
+  identity, body-history absence, occupied precedence, and map immutability.
+  The complete thin-body-to-sensor-free request/planner/candidate path must
+  still be exercised after the final Release build; no SITL claim is made here.
+- **Removal/review condition:** Keep until a stronger measured operational
+  contract replaces this request-local witness. Revisit only with recorded
+  body geometry and representative planner evidence; do not restore traversed
+  history or synthetic map clearing as a workaround.
+- **Verification:** Build the authoritative dependency overlay and run the
+  mapping, world-model, planning-contract and planning-backend focused tests;
+  then inspect the exact candidate certificate and negative occupied/gap/
+  successor/BACKUP cases. SITL remains owned by the integration agent.
+
 ### 2026-09-05 - Bound nominal MAIN planning by a provisional closed-loop envelope
 
 - **Owner/status:** navigation planning maintainers; `IMPLEMENTED`, exact E5

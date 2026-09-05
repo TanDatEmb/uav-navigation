@@ -129,6 +129,9 @@ if(BUILD_TESTING)
     ORIGIN_AT_CORNER
     PLANNER_FACADE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
   target_link_libraries(test_planner_facade ${PROJECT_NAME})
+  target_include_directories(test_planner_facade PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../mapping/navigation_mapping/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../mapping/navigation_mapping/src)
   configure_backend_test(test_planner_facade)
 
   ament_add_gtest(test_planner_runtime_context

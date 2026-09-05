@@ -1,10 +1,14 @@
 #include <navigation_planning_backend/planner_facade.hpp>
+#include <navigation_world_model/current_body_support.hpp>
+#include <navigation_mapping/mapping_world_snapshot.hpp>
+#include "mapping_world_model_adapter.hpp"
 #include <planner_core/route_yaw_reference.hpp>
 #include <navigation_world_model/continuous_clearance.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <chrono>
 #include <limits>
 #include <functional>
 #include <memory>
@@ -128,6 +132,139 @@ class TestCommitAuthorizer final : public navigation_world_model::WorldCommitAut
   navigation_world_model::WorldModelViewPtr world_;
 };
 
+struct ActualMappingFixture final {
+  navigation_world_model::WorldModelViewPtr snapshot;
+  navigation_world_model::CurrentBodySupportPtr body_support;
+  navigation_planning::KinematicState start_state;
+  navigation_mission::ImmutableRouteSnapshot route;
+};
+
+navigation_mapping::PlanningGrid productGrid(rog_map::PlanningGridExport source) {
+  const auto layout = [](const rog_map::PlanningGridLayoutExport& input) {
+    return navigation_mapping::PlanningGridLayout{
+        input.resolution_m, input.global_min_index, input.dimensions,
+        input.local_center_m.cast<double>(), input.local_size_m.cast<double>()};
+  };
+  navigation_mapping::PlanningGrid result;
+  result.base_layout = layout(source.base_layout);
+  result.inflated.layout = layout(source.inflated.layout);
+  result.base_state = std::move(source.base_state);
+  result.inflated.occupied = std::move(source.inflated.occupied);
+  result.inflated.unknown = std::move(source.inflated.unknown);
+  if (source.nearest_offsets) {
+    auto offsets = std::make_shared<std::vector<navigation_world_model::GridIndex3>>();
+    offsets->reserve(source.nearest_offsets->size());
+    for (const auto& offset : *source.nearest_offsets) {
+      offsets->emplace_back(offset.x(), offset.y(), offset.z());
+    }
+    result.nearest_offsets = std::move(offsets);
+  }
+  result.unknown_inflation_enabled = source.unknown_inflation_enabled;
+  result.virtual_ground_ceiling_enabled = source.virtual_ground_ceiling_enabled;
+  result.virtual_ground_m = source.virtual_ground_m;
+  result.virtual_ceiling_m = source.virtual_ceiling_m;
+  result.inflated_virtual_ground_m = source.inflated_virtual_ground_m;
+  result.inflated_virtual_ceiling_m = source.inflated_virtual_ceiling_m;
+  result.occupied_inflation_radius_m = source.occupied_inflation_radius_m;
+  return result;
+}
+
+ActualMappingFixture actualMappingWorldSnapshot() {
+  ActualMappingFixture fixture;
+  navigation_mapping::internal::RuntimeMappingMap map([] { return 1.0; });
+  map.loadConfigAndInit(PLANNER_FACADE_CONFIG_PATH);
+
+  constexpr std::int64_t kStampNs = 20'000'000'000LL;
+  // Exercise the production ROG raycast and planning-grid export directly.
+  // The immutable MappingWorldSnapshot below is the same concrete snapshot
+  // type published by MappingActor; no fake world oracle supplies its cells.
+  for (std::int64_t iteration = 1; iteration <= 20; ++iteration) {
+    rog_map::PointCloud cloud;
+    rog_map::PclPoint hit;
+    hit.x = 20.0F; hit.y = 5.0F; hit.z = 1.5F; hit.intensity = 0.0F;
+    cloud.push_back(hit);
+    rog_map::PointCloud free_endpoints;
+    for (const float y : {-0.6F, -0.3F, 0.0F, 0.3F, 0.6F}) {
+      for (const float z : {1.2F, 1.5F, 1.8F}) {
+        rog_map::PclPoint free_endpoint;
+        free_endpoint.x = 24.0F; free_endpoint.y = y;
+        free_endpoint.z = z; free_endpoint.intensity = 0.0F;
+        free_endpoints.push_back(free_endpoint);
+      }
+    }
+    const rog_map::Pose pose{Eigen::Vector3d{0.0, 0.0, 1.5},
+                             Eigen::Quaterniond::Identity()};
+    const rog_map::Vec3f sensor_origin{0.18F, 0.0F, 1.5F};
+    if (map.updateMap(cloud, free_endpoints, pose, sensor_origin) !=
+        rog_map::MapUpdateOutcome::UPDATED) {
+      return fixture;
+    }
+  }
+
+  fixture.snapshot = std::make_shared<navigation_mapping::MappingWorldSnapshot>(
+      productGrid(map.exportPlanningGrid()),
+      navigation_world_model::WorldSnapshotIdentity{1U, 1U, 20U, kStampNs});
+  const auto support = navigation_world_model::makeX500Mid360CurrentBodySupport(
+      Eigen::Vector3d{0.1, 0.1, 1.5}, Eigen::Quaterniond::Identity(),
+      fixture.snapshot->identity(), "lio_odom", "base_link", 1U, kStampNs);
+  if (!support.valid) return fixture;
+  fixture.body_support = std::make_shared<const navigation_world_model::CurrentBodySupport>(
+      support);
+
+  navigation_mission::Mission mission;
+  mission.id = "current-body-production";
+  mission.frame = "lio_odom";
+  mission.planning.requested_cruise_speed_mps = 1.0;
+  mission.waypoints = {
+      navigation_mission::MissionWaypoint{
+          "start", Eigen::Vector3d{0.1, 0.1, 1.5}, 0.2, 0.0,
+          navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      navigation_mission::MissionWaypoint{
+          "goal", Eigen::Vector3d{0.3, 0.0, 1.5}, 0.3, 0.0,
+          navigation_mission::MissionWaypoint::Behavior::Stop},
+  };
+  navigation_mission::RouteProgress progress(mission);
+  if (!progress.update(Eigen::Vector3d{0.1, 0.1, 1.5}).valid) return fixture;
+  fixture.route = progress.snapshot(mission.id, mission.frame, 1U, 17U, 1U);
+
+  fixture.start_state.position_world = Eigen::Vector3d{0.1, 0.1, 1.5};
+  fixture.start_state.orientation_world_body = Eigen::Quaterniond::Identity();
+  fixture.start_state.velocity_world = Eigen::Vector3d{0.5, 0.0, 0.0};
+  fixture.start_state.source_stamp_ns = kStampNs;
+  fixture.start_state.receive_stamp_ns = kStampNs;
+  fixture.start_state.localization_epoch = 1U;
+  fixture.start_state.world_frame_id = "lio_odom";
+  fixture.start_state.body_frame_id = "base_link";
+  return fixture;
+}
+
+navigation_planning::PlanningRequest productionRequest(
+    const ActualMappingFixture& fixture,
+    const bool with_body_support) {
+  navigation_planning::PlanningRequest request;
+  const auto identity = fixture.snapshot->identity();
+  request.key.localization_epoch = 1U;
+  request.key.goal_epoch = 1U;
+  request.key.request_id = 17U;
+  request.key.route_revision = fixture.route.route_revision;
+  request.key.pinned_world_generation = identity.generation;
+  request.key.pinned_world_revision = identity.revision;
+  request.key.start_mode = navigation_planning::PlanningStartMode::kStoppedMeasuredState;
+  request.key.anchor_stamp_ns = fixture.start_state.source_stamp_ns;
+  request.key.dynamics_hash = 1U;
+  request.goal = navigation_planning::GoalIdentity{
+      1U, 1U, fixture.route.mission_id, 1U, 17U};
+  request.start_state = fixture.start_state;
+  request.route_snapshot = fixture.route;
+  request.world = fixture.snapshot;
+  request.current_body_support = with_body_support ? fixture.body_support : nullptr;
+  request.dynamics.intent.requested_cruise_speed_mps = 1.0;
+  request.dynamics.unknown_space_policy = navigation_world_model::UnknownPolicy::kRequireKnownFree;
+  request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+      std::chrono::seconds(10);
+  return request;
+}
+
 struct BoundaryEntrySample final {
   double trajectory_time_s{0.0};
   navigation_planning::CandidateRole role{navigation_planning::CandidateRole::kMain};
@@ -220,6 +357,85 @@ TEST(PlannerFacade, ExposesOnlyProductStateBeforeFirstCommit) {
             static_cast<int>(navigation_planning_backend::RouteYawSource::kInvalidRoute));
   EXPECT_DOUBLE_EQ(diagnostics.yaw_rate_limit_rad_s, 1.0);
   EXPECT_DOUBLE_EQ(diagnostics.yaw_acceleration_limit_rad_s2, 0.3);
+}
+
+TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {
+  auto fixture = actualMappingWorldSnapshot();
+  ASSERT_TRUE(fixture.snapshot);
+  ASSERT_TRUE(fixture.body_support);
+  ASSERT_TRUE(fixture.route.valid());
+  ASSERT_TRUE(fixture.start_state.finite());
+  ASSERT_EQ(fixture.snapshot->classify(
+                fixture.start_state.position_world,
+                navigation_world_model::GridLayer::kInflated),
+            navigation_world_model::CellState::kUnknown);
+  ASSERT_TRUE(fixture.body_support->containsSegment(
+      fixture.start_state.position_world, Eigen::Vector3d{0.19, 0.1, 1.5},
+      fixture.snapshot->identity(), fixture.snapshot->identity().observation_stamp_ns));
+  ASSERT_NEAR(fixture.body_support->contiguousBodyPrefixFraction(
+      fixture.start_state.position_world, Eigen::Vector3d{0.19, 0.1, 1.5}),
+      1.0, 1.0e-12);
+  EXPECT_EQ(fixture.snapshot->classify(
+                Eigen::Vector3d{0.1, 0.1, 1.5},
+                navigation_world_model::GridLayer::kEvidence),
+            navigation_world_model::CellState::kUnknown);
+  ASSERT_TRUE(fixture.snapshot->isSegmentTraversableWithCurrentBodySupport(
+      fixture.start_state.position_world, Eigen::Vector3d{0.3, 0.1, 1.5},
+      navigation_world_model::GridLayer::kInflated,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree,
+      fixture.body_support));
+  ASSERT_TRUE(fixture.snapshot->isSegmentTraversableWithCurrentBodySupport(
+      fixture.start_state.position_world, Eigen::Vector3d{0.19, 0.1, 1.5},
+      navigation_world_model::GridLayer::kEvidence,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree,
+      fixture.body_support));
+  ASSERT_TRUE(fixture.snapshot->isSegmentTraversable(
+      Eigen::Vector3d{0.5, 0.0, 1.5}, Eigen::Vector3d{0.5, 0.0, 1.5},
+      navigation_world_model::GridLayer::kEvidence,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree));
+  EXPECT_EQ(fixture.snapshot->classify(
+                Eigen::Vector3d{0.5, 0.0, 1.5},
+                navigation_world_model::GridLayer::kInflated),
+            navigation_world_model::CellState::kKnownFree);
+  ASSERT_TRUE(fixture.snapshot->isSegmentTraversable(
+      Eigen::Vector3d{0.5, 0.0, 1.5}, Eigen::Vector3d{0.5, 0.0, 1.5},
+      navigation_world_model::GridLayer::kInflated,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree));
+  ASSERT_TRUE(fixture.body_support->containsSegment(
+      fixture.start_state.position_world, Eigen::Vector3d{0.19, 0.1, 1.5},
+      fixture.snapshot->identity(), fixture.snapshot->identity().observation_stamp_ns));
+
+  double ros_time_s = 1.0;
+  TestCommitAuthorizer authorizer(fixture.snapshot);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, fixture.snapshot, std::nullopt,
+      authorizer, [&ros_time_s] { return ros_time_s; });
+  const auto request = productionRequest(fixture, true);
+  ASSERT_TRUE(request.valid());
+
+  // This is the production request transaction: ROG production export ->
+  // A* seed -> corridor -> nominal optimizer -> candidate -> initial
+  // admission. Advance the authorization clock only after the solve so the
+  // candidate is also checked through the normal temporal boundary.
+  const auto outcome = facade.plan(request);
+  ASSERT_TRUE(outcome.valid()) << static_cast<int>(outcome.failure_stage)
+                              << ":" << static_cast<int>(outcome.failure_reason);
+  ASSERT_TRUE(navigation_planning::completePlanningSucceeded(outcome.outcome));
+  ASSERT_TRUE(outcome.candidate.has_value());
+  ros_time_s = 1.01;
+  EXPECT_TRUE(outcome.candidate->valid());
+
+  // The identical production map and route cannot admit the UNKNOWN measured
+  // start without the request-local physical-body witness.
+  TestCommitAuthorizer no_support_authorizer(fixture.snapshot);
+  navigation_planning_backend::PlannerFacade no_support_facade(
+      PLANNER_FACADE_CONFIG_PATH, fixture.snapshot, std::nullopt,
+      no_support_authorizer, [&ros_time_s] { return ros_time_s; });
+  const auto no_support_outcome = no_support_facade.plan(
+      productionRequest(fixture, false));
+  EXPECT_FALSE(no_support_outcome.candidate.has_value());
+  EXPECT_FALSE(navigation_planning::completePlanningSucceeded(
+      no_support_outcome.outcome));
 }
 
 TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {

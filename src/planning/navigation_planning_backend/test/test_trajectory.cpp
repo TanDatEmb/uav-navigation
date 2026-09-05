@@ -121,6 +121,44 @@ class SweepWorld : public navigation_world_model::WorldModelView {
       const navigation_world_model::AxisAlignedBox&) const override { return {}; }
 };
 
+class BodyHandoverWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return point.x() < 0.0
+        ? navigation_world_model::CellState::kUnknown
+        : navigation_world_model::CellState::kKnownFree;
+  }
+
+  bool isSegmentTraversableWithCurrentBodySupport(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy policy,
+      const navigation_world_model::CurrentBodySupportPtr& support) const noexcept override {
+    if (!support || classify(start, layer) != navigation_world_model::CellState::kUnknown ||
+        !support->contains(start, identity(), support->source_stamp_ns)) {
+      return isSegmentTraversable(start, end, layer, policy);
+    }
+    return classify(end, layer) == navigation_world_model::CellState::kKnownFree ||
+        support->containsSegment(start, end, identity(), support->source_stamp_ns);
+  }
+
+  bool isSegmentTraversable(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy policy) const noexcept override {
+    if (policy == navigation_world_model::UnknownPolicy::kRequireKnownFree &&
+        classify(start, layer) == navigation_world_model::CellState::kKnownFree &&
+        classify(end, layer) == navigation_world_model::CellState::kKnownFree) {
+      return true;
+    }
+    return SweepWorld::isSegmentTraversable(start, end, layer, policy);
+  }
+};
+
 class CurvedCellWorld final : public SweepWorld {
  public:
   navigation_world_model::CellState classify(
@@ -149,59 +187,6 @@ class DiagonalNeighborWorld final : public SweepWorld {
 
  private:
   navigation_world_model::Point3 unknown_center_;
-};
-
-class TraversedPrefixWorld final : public SweepWorld {
- public:
-  navigation_world_model::CellState classify(
-      const navigation_world_model::Point3& point,
-      navigation_world_model::GridLayer) const noexcept override {
-    return point.x() >= 0.35 && point.x() < 0.70
-        ? navigation_world_model::CellState::kKnownFree
-        : navigation_world_model::CellState::kUnknown;
-  }
-
-  navigation_world_model::FreeSpaceEvidence classifyFreeSpace(
-      const navigation_world_model::Point3& point,
-      navigation_world_model::GridLayer,
-      std::int64_t) const noexcept override {
-    if (point.x() >= 0.35 && point.x() < 0.70) {
-      return navigation_world_model::FreeSpaceEvidence::kSensorFree;
-    }
-    return navigation_world_model::FreeSpaceEvidence::kTraversedFree;
-  }
-
-  bool isSegmentTraversableWithTraversedFree(
-      const navigation_world_model::Point3&,
-      const navigation_world_model::Point3&,
-      navigation_world_model::GridLayer,
-      navigation_world_model::UnknownPolicy) const noexcept override {
-    return true;
-  }
-};
-
-class TraversedOnlyWorld final : public SweepWorld {
- public:
-  navigation_world_model::CellState classify(
-      const navigation_world_model::Point3&,
-      navigation_world_model::GridLayer) const noexcept override {
-    return navigation_world_model::CellState::kUnknown;
-  }
-
-  navigation_world_model::FreeSpaceEvidence classifyFreeSpace(
-      const navigation_world_model::Point3&,
-      navigation_world_model::GridLayer,
-      std::int64_t) const noexcept override {
-    return navigation_world_model::FreeSpaceEvidence::kTraversedFree;
-  }
-
-  bool isSegmentTraversableWithTraversedFree(
-      const navigation_world_model::Point3&,
-      const navigation_world_model::Point3&,
-      navigation_world_model::GridLayer,
-      navigation_world_model::UnknownPolicy) const noexcept override {
-    return true;
-  }
 };
 
 class CountingAstarWorld final : public SweepWorld {
@@ -1768,6 +1753,65 @@ TEST(PlannerTrajectory, LatestWorldSweepAllowsUnknownAndRejectsFutureObstacle) {
   EXPECT_GT(blocked.first_blocked_tt, 0.0);
 }
 
+TEST(PlannerTrajectory, InitialBodyAdmissionCertifiesFullCandidateBeforeAdvancingClock) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  position_coefficients(0, 6) = 0.2;
+  position_coefficients(0, 7) = -0.1;
+  position_coefficients(2, 7) = 0.007;
+  candidate.position = geometry_utils::Trajectory({1.0}, {position_coefficients});
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {{0.0, 1.0,
+      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  BodyHandoverWorld world;
+  navigation_world_model::CurrentBodySupport support;
+  support.snapshot_identity = world.identity();
+  support.body_position = Eigen::Vector3d{-0.1, 0.0, 0.0};
+  support.body_orientation = Eigen::Quaterniond::Identity();
+  support.localization_epoch = 1U;
+  support.source_stamp_ns = 1;
+  support.world_frame_id = "lio_odom";
+  support.body_frame_id = "base_link";
+  support.geometry_provenance =
+      "repo:test-model@sha256=0123456789abcdef;"
+      "component=base_link_collision_0_main_obb_only";
+  support.body_box = {{0.0, 0.0, 0.007},
+                      {0.17677669529663687, 0.17677669529663687, 0.025},
+                      Eigen::Quaterniond::Identity()};
+  support.valid = true;
+  auto support_ptr =
+      std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
+
+  // Authorization occurs after the command start, but initial admission
+  // certifies the complete polynomial from the measured pose. The UNKNOWN
+  // prefix is inside the body voxel and the remaining path is known-free.
+  const auto initial = validateExecutableCandidate(
+      world, candidate, 10.2,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, support_ptr,
+      true);
+  EXPECT_TRUE(initial.valid);
+  EXPECT_NEAR(initial.begin_tt, 0.2, 1.0e-12);
+
+  // The same advancing-clock recheck has no request-local admission witness.
+  // Its executable start is still UNKNOWN and must fail closed.
+  const auto recertified = validateExecutableCandidate(
+      world, candidate, 10.2,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, support_ptr,
+      false);
+  EXPECT_FALSE(recertified.valid);
+
+  // A one millimetre departure past the OBB is a real physical exit even
+  // when the map still reports UNKNOWN; it cannot reuse the bootstrap witness.
+  EXPECT_TRUE(support.containsSegment(
+      Eigen::Vector3d{-0.1, 0.0, 0.0}, Eigen::Vector3d{-0.2758, 0.0, 0.0},
+      world.identity(), support.source_stamp_ns));
+  EXPECT_FALSE(support.containsSegment(
+      Eigen::Vector3d{-0.1, 0.0, 0.0}, Eigen::Vector3d{-0.2778, 0.0, 0.0},
+      world.identity(), support.source_stamp_ns));
+}
+
 TEST(PlannerTrajectory, ExpiredCandidateCannotBeValidatedAtItsTerminalPoint) {
   navigation_planning_backend::CandidateCommandBundle candidate;
   candidate.position = linearTrajectory(1.0, 10.0);
@@ -1920,38 +1964,6 @@ TEST(PlannerTrajectory, BackupRoleRequiresKnownFreeEvidence) {
 
   candidate.roles.pop_back();
   EXPECT_FALSE(navigation_planning_backend::candidateHasBackupSuffix(candidate));
-}
-
-TEST(PlannerTrajectory, MainTraversedPrefixStateSpansPieceValidationSegments) {
-  navigation_planning_backend::CandidateCommandBundle candidate;
-  candidate.position = linearTrajectory(1.0, 10.0);
-  candidate.yaw = linearTrajectory(1.0, 10.0);
-  candidate.start_wall_time = 10.0;
-  candidate.roles = {
-      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
-  };
-
-  const auto result = navigation_planning_backend::validateExecutableCandidate(
-      TraversedPrefixWorld{}, candidate, 10.0,
-      navigation_world_model::UnknownPolicy::kRequireKnownFree);
-  EXPECT_FALSE(result.valid);
-  EXPECT_EQ(result.failure,
-            navigation_planning_backend::SweptValidationResult::Failure::
-                kMainTraversedPrefixViolation);
-}
-
-TEST(PlannerTrajectory, BackupMayRemainEntirelyInsideFreshTraversedSupport) {
-  navigation_planning_backend::CandidateCommandBundle candidate;
-  candidate.position = linearTrajectory(1.0, 10.0);
-  candidate.yaw = linearTrajectory(1.0, 10.0);
-  candidate.start_wall_time = 10.0;
-  candidate.roles = {
-      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
-  };
-
-  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
-      TraversedOnlyWorld{}, candidate, 10.0,
-      navigation_world_model::UnknownPolicy::kRequireKnownFree).valid);
 }
 
 TEST(PlannerTrajectory, MainOnlyAllowUnknownRequiresKnownFreeCertificate) {
