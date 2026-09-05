@@ -1537,6 +1537,9 @@ double knownFreeGuideSupport(
             !setRouteSnapshot(request.route_snapshot)) {
             return finish();
         }
+        const Eigen::Vector3d& target_world =
+            request.route_snapshot.waypoints[request.route_snapshot.active_waypoint_index]
+                .position_enu;
         setWorldModelView(request.world);
         if (!setState(request.start_state)) return finish();
         requested_activation_stamp_ns_ = 0;
@@ -1564,7 +1567,7 @@ double knownFreeGuideSupport(
         const auto result = request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kStoppedMeasuredState
             ? planInitialFromStoppedState(
-                request.goal.target_world, 0.0, true)
+                target_world, 0.0, true)
             : request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake
             ? ([&]() {
@@ -1579,7 +1582,7 @@ double knownFreeGuideSupport(
                     ? RET_CODE::SUCCESS : RET_CODE::EMER;
               })()
             : planSuccessorFromExecutionAnchor(
-                request.goal.target_world, 0.0, false);
+                target_world, 0.0, false);
         requested_activation_stamp_ns_ = 0;
         requested_activation_yaw_rate_rad_s_ = 0.0;
         if (result == NO_NEED) {

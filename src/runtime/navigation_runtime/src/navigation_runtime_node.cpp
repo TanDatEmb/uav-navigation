@@ -4009,7 +4009,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planning_request.goal.mission_id = goal->mission_id;
   planning_request.goal.waypoint_index = goal->waypoint_index;
   planning_request.goal.request_id = goal->request_id;
-  planning_request.goal.target_world = target;
   planning_request.start_state = execution_state;
   planning_request.history.previous_bundle_generation =
       transition_bundle ? transition_bundle->bundle_generation : 0U;

@@ -57,11 +57,9 @@ struct GoalIdentity {
   std::string mission_id;
   std::uint32_t waypoint_index{0};
   std::uint64_t request_id{0};
-  Eigen::Vector3d target_world{Eigen::Vector3d::Zero()};
 
   [[nodiscard]] bool valid() const noexcept {
-    return localization_epoch != 0 && goal_epoch != 0 && !mission_id.empty() && request_id != 0 &&
-           target_world.allFinite();
+    return localization_epoch != 0 && goal_epoch != 0 && !mission_id.empty() && request_id != 0;
   }
 };
 

@@ -18848,6 +18848,31 @@ release profiles must not use the former allowance.
   ./build/navigation_runtime/test_certified_continuation --gtest_color=no`;
   `git diff --check`.
 
+### 2026-09-05 - Derive planner target from canonical route snapshot
+
+- **Owner/status:** Navigation planning/backend/runtime; CODE implemented,
+  focused build and regression verification passed. This is a public C++
+  source/ABI shape change; no dynamics, gate, or SITL claim.
+- **Scope:** Remove `GoalIdentity.target_world`; after request route validity
+  and identity checks, `Planner::plan()` derives the target from the active
+  waypoint in the required immutable route snapshot. Runtime no longer copies
+  a second target coordinate into the request.
+- **Safety impact:** Eliminates divergent target geometry between goal metadata
+  and the route authority while preserving canonical runtime planning behavior,
+  route identity checks, and all geometry/timing thresholds.
+- **Evidence:** `test_planning_contracts` and `test_planner_facade` passed 1/1
+  each, including default/malformed route rejection and existing planner
+  facade behavior. `navigation_planning_backend`, runtime core, and runtime
+  node builds passed. No component, SITL, or flight-acceptance evidence is
+  claimed.
+- **Removal condition:** Revisit only if a future solve contract introduces a
+  separately certified target authority with an explicit identity binding.
+- **Verification:** Source ROS Jazzy/workspace setup; build
+  `test_planning_contracts`, `navigation_planning_backend`,
+  `test_planner_facade`, `navigation_runtime_core`, and
+  `navigation_runtime_node`; run focused planning/backend tests and
+  `git diff --check`.
+
 ### 2026-09-05 - Make planning route snapshot a canonical value
 
 - **Owner/status:** Navigation planning/backend/runtime; CODE implemented,
