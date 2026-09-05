@@ -1533,8 +1533,8 @@ double knownFreeGuideSupport(
         // The request owns the immutable solve inputs, including route
         // geometry. Bind that value inside the serialized solve boundary so
         // no queued solve can observe a later mutable route update.
-        if (!request.route_snapshot.has_value() ||
-            !setRouteSnapshot(*request.route_snapshot)) {
+        if (!request.route_snapshot.valid() ||
+            !setRouteSnapshot(request.route_snapshot)) {
             return finish();
         }
         setWorldModelView(request.world);

@@ -346,6 +346,20 @@ TEST(PlanningRequest, CommittedFutureStateCannotOmitOrMoveItsAnchor) {
   EXPECT_TRUE(request.startModeContractValid());
 }
 
+TEST(PlanningRequest, RequiresCanonicalRouteValueAndRejectsMalformedSnapshot) {
+  navigation_planning::PlanningRequest request;
+  EXPECT_FALSE(request.route_snapshot.valid());
+  EXPECT_FALSE(request.valid());
+
+  request.route_snapshot.mission_id = "mission";
+  request.route_snapshot.frame = "lio_odom";
+  request.route_snapshot.route_revision = 1U;
+  request.route_snapshot.request_id = 1U;
+  request.route_snapshot.waypoints.emplace_back();
+  EXPECT_FALSE(request.route_snapshot.valid());
+  EXPECT_FALSE(request.valid());
+}
+
 TEST(PlanningBudget, UsesSteadyClockAndCancellation) {
   navigation_planning::PlanningBudget budget;
   budget.deadline = navigation_planning::PlanningBudget::Clock::now() +

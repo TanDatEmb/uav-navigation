@@ -18848,6 +18848,32 @@ release profiles must not use the former allowance.
   ./build/navigation_runtime/test_certified_continuation --gtest_color=no`;
   `git diff --check`.
 
+### 2026-09-05 - Make planning route snapshot a canonical value
+
+- **Owner/status:** Navigation planning/backend/runtime; CODE implemented,
+  focused build and regression verification passed. This is a public C++
+  source/ABI shape change; no behavior, gate, dynamics, or SITL claim.
+- **Scope:** `PlanningRequest.route_snapshot` is now a required
+  `ImmutableRouteSnapshot` value. Request validation and `Planner::plan()` use
+  that value directly; malformed/default route snapshots remain rejected.
+  `GoalIdentity.target_world` and route identity checks are unchanged.
+- **Safety impact:** Removes an absent-route branch from the queued solve input
+  while retaining the existing immutable route validity and identity checks.
+  No route geometry, timing, or admission threshold changes.
+- **Evidence:** `test_planning_contracts` and `test_planner_facade` passed 1/1
+  each, including default/malformed route rejection. The affected planning,
+  backend, and runtime core/node targets built successfully. No component,
+  SITL, or flight-acceptance evidence is claimed.
+- **Removal condition:** Revisit only if a future solve contract intentionally
+  permits route-less requests with an equivalent explicit authority.
+- **Verification:** Source ROS Jazzy/workspace setup; build
+  `test_planning_contracts`, `navigation_planning_backend`,
+  `test_planner_facade`, `navigation_runtime_core`, and
+  `navigation_runtime_node`; run
+  `ctest --test-dir build/navigation_planning -R '^test_planning_contracts$'
+  --output-on-failure` and `ctest --test-dir build/navigation_planning_backend
+  -R '^test_planner_facade$' --output-on-failure`; `git diff --check`.
+
 ### 2026-09-05 - Make internal mapping sensor origin canonical
 
 - **Owner/status:** Navigation mapping/runtime; CODE implemented, focused mapping
