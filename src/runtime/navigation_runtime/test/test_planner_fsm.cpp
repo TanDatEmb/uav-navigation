@@ -39,6 +39,28 @@ TEST(PlannerFsm, ClassifiesDesiredAndExecutingIdentityTransitions) {
                "same_route_waypoint_advance");
 }
 
+TEST(PlannerFsm, PlannerSolveActivityDisarmsOnlyItsOwnedGeneration) {
+  std::atomic_int64_t started_ns{0};
+  std::atomic_uint64_t active_generation{0};
+  {
+    const PlannerSolveActivityScope activity(
+        started_ns, active_generation, 7U, 1234);
+    EXPECT_EQ(started_ns.load(), 1234);
+    EXPECT_EQ(active_generation.load(), 7U);
+  }
+  EXPECT_EQ(started_ns.load(), 0);
+  EXPECT_EQ(active_generation.load(), 0U);
+
+  {
+    const PlannerSolveActivityScope stale_activity(
+        started_ns, active_generation, 8U, 2000);
+    active_generation.store(9U);
+    started_ns.store(3000);
+  }
+  EXPECT_EQ(active_generation.load(), 9U);
+  EXPECT_EQ(started_ns.load(), 3000);
+}
+
 TEST(PlannerFsm, AcceptsSuccessfulPlannerResults) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kSuccess, true, false, true),
             PlannerResultDisposition::CommandReady);
