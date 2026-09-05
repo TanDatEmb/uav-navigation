@@ -862,8 +862,13 @@ double knownFreeGuideSupport(
                 Eigen::Vector3d::Constant(radius);
             const Eigen::Vector3d boundary_max = waypoint.position_enu +
                 Eigen::Vector3d::Constant(radius);
+            const bool active_pass_through_with_outgoing_route =
+                is_pass_through &&
+                route_snapshot_->active_waypoint_index + 1U <
+                    route_snapshot_->waypoints.size();
             const bool boundary_candidate =
-                command.connected_goal || command.terminal_stop;
+                command.connected_goal || command.terminal_stop ||
+                active_pass_through_with_outgoing_route;
             if (boundary_candidate && (is_pass_through || command.terminal_stop)) {
                 // The route event is the first actual trajectory entry into
                 // the acceptance volume.  Do not manufacture it at the

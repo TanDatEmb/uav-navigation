@@ -18658,3 +18658,37 @@ release profiles must not use the former allowance.
   `cmake --build build/px4_navigation_external_mode --target test_mission
   --clean-first -j2`; run `./build/navigation_mission/test_mission_contract`
   and `./build/px4_navigation_external_mode/test_mission`.
+
+### 2026-09-05 - Restore PASS_THROUGH lookahead boundary-event scan eligibility
+
+- **Owner/status:** Navigation planning backend; CODE and COMPONENT_REPRO
+  implemented and verified in the focused planner-facade target; no SITL or
+  flight-acceptance claim.
+- **Scope:** Candidate export now scans route-boundary entry when the immutable
+  active route snapshot is PASS_THROUGH with an outgoing waypoint, even though
+  the outgoing lookahead deliberately marks `connected_goal=false`. Existing
+  trajectory-entry geometry, MAIN/BACKUP ownership, corner speed, route
+  constraint and runtime event validation remain unchanged. No continuation
+  transport, mutable witness or new state was added.
+- **Safety impact:** A lookahead command that genuinely crosses the active
+  PASS_THROUGH acceptance volume can carry the existing certified boundary
+  constraint/event. A non-crossing prefix remains a valid candidate without an
+  invented event. If the first entry is in BACKUP, the candidate remains
+  valid while the PASS_THROUGH event is omitted, preserving suffix ownership.
+- **Evidence:** `test_planner_facade` covers a MAIN lookahead crossing with a
+  valid constraint/event, a non-crossing prefix without an event, and a
+  bounded 5 ms/refined scan of the exported candidate proving the BACKUP-only
+  crossing enters the exact acceptance AABB after `backup_start_tt` with role
+  BACKUP, while exporting neither event nor constraint.
+- **Removal condition:** Revisit only if a typed continuation witness replaces
+  the existing route-boundary event contract while preserving the same
+  immutable-route and MAIN/BACKUP ownership guarantees.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && cmake --build build/navigation_planning_backend --target
+  test_planner_facade -j2`; then
+  `./build/navigation_planning_backend/test_planner_facade
+  --gtest_filter='PlannerFacade.PassThroughLookahead*:PlannerFacade.PassThroughEntryAfterBackupDoesNotAdvertiseBoundaryEvent'
+  --gtest_color=no` (3/3 passed), plus
+  `ctest --test-dir build/navigation_planning_backend
+  -R '^test_planner_(facade|config)$' --output-on-failure` (2/2 passed).
+  No SITL evidence is claimed.
