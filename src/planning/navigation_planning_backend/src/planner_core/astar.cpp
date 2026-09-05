@@ -26,10 +26,11 @@ bool Astar::startPrefixTraversable(
     if (!map_ptr_ || !start.allFinite() || !end.allFinite()) return false;
     if (!current_body_support_ ||
         !current_body_support_->matchesMeasuredState(
-            start.template cast<double>(),
-            current_body_orientation_,
+            start.template cast<double>(), current_body_orientation_,
             current_body_support_->localization_epoch,
-            current_body_support_->source_stamp_ns)) {
+            current_body_support_->source_stamp_ns) ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            current_body_support_->snapshot_identity, map_ptr_->identity())) {
         return map_ptr_->isSegmentTraversable(start, end, layer, policy);
     }
     return map_ptr_->isSegmentTraversableWithCurrentBodySupport(
@@ -620,13 +621,18 @@ bool Astar::startPrefixTraversable(
         // and unknown-space policy used below. Preserve a resolution-dense
         // path so corridor generation still validates and bounds every seed
         // segment instead of receiving one long unchecked edge.
+        const bool direct_segment_safe = measured_body_admission
+            ? startPrefixTraversable(
+                local_start_pt, local_end_pt,
+                md_.use_inf_map ? GridLayer::kInflated : GridLayer::kEvidence,
+                UnknownPolicy::kRequireKnownFree)
+            : map_ptr_->isSegmentTraversable(
+                local_start_pt, local_end_pt,
+                md_.use_inf_map ? GridLayer::kInflated : GridLayer::kEvidence,
+                md_.unknown_as_occ ? UnknownPolicy::kRequireKnownFree
+                                   : UnknownPolicy::kAllowUnknown);
         if (map_ptr_->contains(local_start_pt) &&
-            map_ptr_->contains(local_end_pt) &&
-            map_ptr_->isSegmentTraversable(
-                    local_start_pt, local_end_pt,
-                    md_.use_inf_map ? GridLayer::kInflated : GridLayer::kEvidence,
-                    md_.unknown_as_occ ? UnknownPolicy::kRequireKnownFree
-                                       : UnknownPolicy::kAllowUnknown)) {
+            map_ptr_->contains(local_end_pt) && direct_segment_safe) {
             const Vec3f delta = local_end_pt - local_start_pt;
             const double distance = delta.cast<double>().norm();
             const double sample_ratio = distance / md_.resolution;

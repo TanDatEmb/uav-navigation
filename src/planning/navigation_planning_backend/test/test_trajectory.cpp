@@ -159,6 +159,43 @@ class BodyHandoverWorld final : public SweepWorld {
   }
 };
 
+class BodyPrefixCertificateWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    // The voxel sequence along the test chord is UNKNOWN -> KNOWN_FREE ->
+    // UNKNOWN while it remains inside the measured body, then UNKNOWN again
+    // after a physical exit. This keeps the test independent of map history.
+    if (point.x() < -0.05 ||
+        (point.x() >= 0.15 && point.x() < 0.55) ||
+        point.x() >= 0.75) {
+      return navigation_world_model::CellState::kUnknown;
+    }
+    return navigation_world_model::CellState::kKnownFree;
+  }
+};
+
+navigation_world_model::CurrentBodySupportPtr testBodySupport(
+    const navigation_world_model::Point3& body_position,
+    const navigation_world_model::Point3& half_extent) {
+  navigation_world_model::CurrentBodySupport support;
+  support.snapshot_identity = {1U, 1U, 1U, 1};
+  support.body_position = body_position;
+  support.body_orientation = Eigen::Quaterniond::Identity();
+  support.localization_epoch = 1U;
+  support.source_stamp_ns = 1;
+  support.world_frame_id = "lio_odom";
+  support.body_frame_id = "base_link";
+  support.geometry_provenance =
+      "repo:test-model@sha256=0123456789abcdef;"
+      "component=base_link_collision_0_main_obb_only";
+  support.body_box = {Eigen::Vector3d::Zero(), half_extent,
+                      Eigen::Quaterniond::Identity()};
+  support.valid = true;
+  return std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
+}
+
 class CurvedCellWorld final : public SweepWorld {
  public:
   navigation_world_model::CellState classify(
@@ -1801,6 +1838,36 @@ TEST(PlannerTrajectory, InitialBodyAdmissionCertifiesFullCandidateBeforeAdvancin
       navigation_world_model::UnknownPolicy::kRequireKnownFree, support_ptr,
       false);
   EXPECT_FALSE(recertified.valid);
+}
+
+TEST(PlannerTrajectory, BodyAdmissionSurvivesKnownFreeCellInsideInitialBody) {
+  BodyPrefixCertificateWorld world;
+  const auto support = testBodySupport(
+      navigation_world_model::Point3::Zero(),
+      navigation_world_model::Point3{0.5, 0.4, 0.4});
+  bool body_prefix_remains = false;
+
+  // UNKNOWN -> KNOWN_FREE -> UNKNOWN is still one admissible physical body
+  // prefix. Sensor-free evidence is not a lifecycle transition.
+  EXPECT_TRUE(navigation_planning_backend::certificateTubeIsSafe(
+      world, {-0.3, 0.0, 0.0}, {0.3, 0.0, 0.0}, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2,
+      nullptr, nullptr, support, &body_prefix_remains));
+  EXPECT_TRUE(body_prefix_remains);
+}
+
+TEST(PlannerTrajectory, BodyAdmissionRejectsUnknownAfterPhysicalExit) {
+  BodyPrefixCertificateWorld world;
+  const auto support = testBodySupport(
+      navigation_world_model::Point3::Zero(),
+      navigation_world_model::Point3{0.5, 0.4, 0.4});
+
+  // The same witness cannot be renewed after the chord leaves B0. The final
+  // UNKNOWN cell is deliberately beyond the physical OBB.
+  EXPECT_FALSE(navigation_planning_backend::certificateTubeIsSafe(
+      world, {-0.3, 0.0, 0.0}, {0.9, 0.0, 0.0}, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2,
+      nullptr, nullptr, support));
 }
 
 TEST(PlannerTrajectory, ExpiredCandidateCannotBeValidatedAtItsTerminalPoint) {

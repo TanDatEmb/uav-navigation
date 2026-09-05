@@ -18,7 +18,7 @@
 
 namespace {
 
-class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
+class IdentityOnlyWorld : public navigation_world_model::WorldModelView {
  public:
   navigation_world_model::PointVector occupied_points;
 
@@ -81,6 +81,81 @@ class IdentityOnlyWorld final : public navigation_world_model::WorldModelView {
       }
     }
     return result;
+  }
+};
+
+class PlannerBodySupportWorld final : public IdentityOnlyWorld {
+ public:
+  const navigation_world_model::Point3 measured_start{0.0, 0.0, 2.0};
+  bool unknown_after_body_exit{false};
+
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    if (unknown_after_body_exit && point.x() >= 0.3 && point.x() < 4.5) {
+      return navigation_world_model::CellState::kUnknown;
+    }
+    return (point - measured_start).norm() <= 0.05
+        ? navigation_world_model::CellState::kUnknown
+        : navigation_world_model::CellState::kKnownFree;
+  }
+
+  navigation_world_model::GridIndex3 positionToIndex(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return (point.array() / 0.2).floor().cast<int>();
+  }
+
+  navigation_world_model::Point3 indexToPosition(
+      const navigation_world_model::GridIndex3& index,
+      navigation_world_model::GridLayer) const noexcept override {
+    return (index.cast<double>().array() + 0.5).matrix() * 0.2;
+  }
+
+  bool isSegmentTraversable(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy policy) const noexcept override {
+    if (policy == navigation_world_model::UnknownPolicy::kAllowUnknown) {
+      return true;
+    }
+    for (int sample = 0; sample <= 64; ++sample) {
+      const double fraction = static_cast<double>(sample) / 64.0;
+      if (classify(start + fraction * (end - start), layer) !=
+          navigation_world_model::CellState::kKnownFree) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool isSegmentTraversableWithCurrentBodySupport(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy policy,
+      const navigation_world_model::CurrentBodySupportPtr& support) const noexcept override {
+    if (policy == navigation_world_model::UnknownPolicy::kAllowUnknown ||
+        !support || classify(start, layer) != navigation_world_model::CellState::kUnknown ||
+        !support->matchesWorldSnapshot(identity(), support->source_stamp_ns) ||
+        !support->contains(start, identity(), support->source_stamp_ns)) {
+      return isSegmentTraversable(start, end, layer, policy);
+    }
+    const double prefix = support->contiguousBodyPrefixFraction(start, end);
+    if (!std::isfinite(prefix) || prefix <= 0.0) return false;
+    for (int sample = 0; sample <= 64; ++sample) {
+      const double fraction = static_cast<double>(sample) / 64.0;
+      const auto state = classify(start + fraction * (end - start), layer);
+      if (state == navigation_world_model::CellState::kOccupied ||
+          state == navigation_world_model::CellState::kOutOfMap ||
+          state == navigation_world_model::CellState::kUndefined ||
+          (state == navigation_world_model::CellState::kUnknown &&
+           fraction > prefix + 1.0e-9)) {
+        return false;
+      }
+    }
+    return true;
   }
 };
 
@@ -234,6 +309,84 @@ navigation_planning::PlanningRequest productionRequest(
   request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
       std::chrono::seconds(10);
   return request;
+}
+
+navigation_planning::PlanningRequest plannerBodySupportRequest(
+    const navigation_world_model::WorldModelViewPtr& world,
+    const navigation_world_model::CurrentBodySupportPtr& body_support) {
+  constexpr std::int64_t kStampNs = 100;
+  constexpr std::uint64_t kRequestId = 31U;
+  const Eigen::Vector3d start{0.0, 0.0, 2.0};
+  const Eigen::Vector3d goal{5.0, 0.0, 2.0};
+
+  navigation_mission::Mission mission;
+  mission.id = "current-body-planner-level";
+  mission.frame = "lio_odom";
+  mission.planning.requested_cruise_speed_mps = 1.0;
+  mission.waypoints = {
+      navigation_mission::MissionWaypoint{
+          "start", start, 0.2, 0.0,
+          navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      navigation_mission::MissionWaypoint{
+          "goal", goal, 0.3, 0.0,
+          navigation_mission::MissionWaypoint::Behavior::Stop}};
+  navigation_mission::RouteProgress progress(mission);
+  EXPECT_TRUE(progress.update(start).valid);
+  const auto route = progress.snapshot(
+      mission.id, mission.frame, 1U, kRequestId, 1U);
+
+  navigation_planning::KinematicState state;
+  state.position_world = start;
+  state.orientation_world_body = Eigen::Quaterniond::Identity();
+  state.source_stamp_ns = kStampNs;
+  state.receive_stamp_ns = kStampNs;
+  state.localization_epoch = 1U;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+
+  navigation_planning::PlanningRequest request;
+  const auto identity = world->identity();
+  request.key.localization_epoch = 1U;
+  request.key.goal_epoch = 1U;
+  request.key.request_id = kRequestId;
+  request.key.route_revision = route.route_revision;
+  request.key.pinned_world_generation = identity.generation;
+  request.key.pinned_world_revision = identity.revision;
+  request.key.start_mode = navigation_planning::PlanningStartMode::kStoppedMeasuredState;
+  request.key.anchor_stamp_ns = kStampNs;
+  request.key.dynamics_hash = 1U;
+  request.goal = navigation_planning::GoalIdentity{
+      1U, 1U, mission.id, 1U, kRequestId};
+  request.start_state = state;
+  request.route_snapshot = route;
+  request.world = world;
+  request.current_body_support = body_support;
+  request.dynamics.intent.requested_cruise_speed_mps = 1.0;
+  request.dynamics.unknown_space_policy =
+      navigation_world_model::UnknownPolicy::kRequireKnownFree;
+  request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+      std::chrono::seconds(10);
+  return request;
+}
+
+navigation_world_model::CurrentBodySupportPtr plannerBodySupport(
+    const navigation_world_model::WorldSnapshotIdentity& identity) {
+  navigation_world_model::CurrentBodySupport support;
+  support.snapshot_identity = identity;
+  support.body_position = Eigen::Vector3d{0.0, 0.0, 2.0};
+  support.body_orientation = Eigen::Quaterniond::Identity();
+  support.localization_epoch = 1U;
+  support.source_stamp_ns = 100;
+  support.world_frame_id = "lio_odom";
+  support.body_frame_id = "base_link";
+  support.geometry_provenance =
+      "repo:test-model@sha256=0123456789abcdef;"
+      "component=base_link_collision_0_main_obb_only";
+  support.body_box = {
+      Eigen::Vector3d::Zero(), Eigen::Vector3d{0.3, 0.3, 0.3},
+      Eigen::Quaterniond::Identity()};
+  support.valid = true;
+  return std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
 }
 
 struct BoundaryEntrySample final {
@@ -407,6 +560,61 @@ TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {
   EXPECT_FALSE(no_support_outcome.candidate.has_value());
   EXPECT_FALSE(navigation_planning::completePlanningSucceeded(
       no_support_outcome.outcome));
+}
+
+TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
+  auto world = std::make_shared<PlannerBodySupportWorld>();
+  const auto support = plannerBodySupport(world->identity());
+  ASSERT_TRUE(support);
+  ASSERT_TRUE(support->matchesMeasuredState(
+      world->measured_start, Eigen::Quaterniond::Identity(), 1U, 100,
+      "lio_odom", "base_link"));
+
+  TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      [&ros_time_s] { return ros_time_s; });
+
+  // The synthetic world has UNKNOWN only at the measured pose and KNOWN_FREE
+  // immediately beyond it. The production request must therefore exercise
+  // A*'s measured-start admission, corridor generation, nominal trajectory
+  // construction, and final executable-candidate validation in one solve.
+  auto request = plannerBodySupportRequest(world, support);
+  ASSERT_TRUE(request.valid());
+  const auto with_support = facade.plan(request);
+  ASSERT_TRUE(with_support.valid())
+      << static_cast<int>(with_support.failure_stage) << ":"
+      << static_cast<int>(with_support.failure_reason);
+  ASSERT_TRUE(with_support.candidate.has_value());
+  EXPECT_TRUE(navigation_planning::completePlanningSucceeded(
+      with_support.outcome));
+  EXPECT_TRUE(with_support.candidate->valid());
+
+  // The same facade receives a second stopped-state request after the first
+  // transaction. Removing the witness must make the UNKNOWN measured start
+  // fail closed; a stale mutable member must not authorize request B.
+  request.current_body_support.reset();
+  const auto without_support = facade.plan(request);
+  EXPECT_FALSE(without_support.candidate.has_value());
+  EXPECT_FALSE(navigation_planning::completePlanningSucceeded(
+      without_support.outcome));
+
+  // A second full planner transaction has UNKNOWN spanning the route after
+  // the physical body OBB. A* may use the measured prefix but cannot cross
+  // this sensor-unknown barrier, so the planner must reject the route rather
+  // than renew the witness beyond B0.
+  auto blocked_world = std::make_shared<PlannerBodySupportWorld>();
+  blocked_world->unknown_after_body_exit = true;
+  const auto blocked_support = plannerBodySupport(blocked_world->identity());
+  TestCommitAuthorizer blocked_authorizer(blocked_world);
+  navigation_planning_backend::PlannerFacade blocked_facade(
+      PLANNER_FACADE_CONFIG_PATH, blocked_world, std::nullopt,
+      blocked_authorizer, [] { return 10.0; });
+  const auto blocked = blocked_facade.plan(
+      plannerBodySupportRequest(blocked_world, blocked_support));
+  EXPECT_FALSE(blocked.candidate.has_value());
+  EXPECT_FALSE(navigation_planning::completePlanningSucceeded(blocked.outcome));
 }
 
 TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {

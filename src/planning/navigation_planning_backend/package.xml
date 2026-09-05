@@ -10,6 +10,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>navigation_mapping</test_depend>
   <depend>eigen</depend>
   <depend>fmt</depend>
   <depend>navigation_world_model</depend>

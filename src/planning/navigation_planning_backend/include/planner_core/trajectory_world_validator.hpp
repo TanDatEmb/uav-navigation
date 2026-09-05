@@ -276,18 +276,14 @@ inline bool certificateTubeIsSafe(
         cell_count *= span;
     }
 
-    bool tube_stays_in_body = body_support != nullptr;
-    if (body_support && !body_support->matchesWorldSnapshot(
-            world.identity(), body_support->source_stamp_ns)) {
-        return false;
-    }
+    const bool body_prefix_open = body_support &&
+        body_support->matchesWorldSnapshot(world.identity(), body_support->source_stamp_ns) &&
+        body_support->contains(start, world.identity(), body_support->source_stamp_ns);
+    if (body_support && !body_prefix_open) return false;
     const double body_prefix_fraction = body_support
         ? body_support->contiguousBodyPrefixFraction(
             start, end, curve_deviation_m) : 0.0;
     if (body_support && !std::isfinite(body_prefix_fraction)) return false;
-    bool saw_sensor_free = false;
-    double earliest_sensor_free_start = std::numeric_limits<double>::infinity();
-    double latest_unknown_start = -std::numeric_limits<double>::infinity();
     for (std::int64_t x = lower[0]; x <= upper[0]; ++x) {
         for (std::int64_t y = lower[1]; y <= upper[1]; ++y) {
             for (std::int64_t z = lower[2]; z <= upper[2]; ++z) {
@@ -311,15 +307,6 @@ inline bool certificateTubeIsSafe(
                 }
                 const auto state = world.classify(
                     cell_center, navigation_world_model::GridLayer::kInflated);
-                if (state == navigation_world_model::CellState::kKnownFree) {
-                    const auto interval = segmentAabbInterval(
-                        start, end, cell_minimum, cell_maximum, curve_deviation_m);
-                    if (interval && interval->second > interval->first + 1.0e-12) {
-                        saw_sensor_free = true;
-                        earliest_sensor_free_start = std::min(
-                            earliest_sensor_free_start, interval->first);
-                    }
-                }
                 bool body_supported = false;
                 if (state == navigation_world_model::CellState::kUnknown && body_support) {
                     const auto interval = segmentAabbInterval(
@@ -331,17 +318,12 @@ inline bool certificateTubeIsSafe(
                         continue;
                     }
                     if (interval && interval->second > interval->first + 1.0e-12) {
-                        latest_unknown_start = std::max(
-                            latest_unknown_start, interval->first);
                         // The clipped UNKNOWN interval must end before the
                         // first exit from the eroded measured body. This is
                         // the ordered-prefix proof; a later re-entry cannot
                         // reuse the request-local witness.
-                        body_supported = interval->second <=
-                            body_prefix_fraction + 1.0e-9;
-                    }
-                    if (interval && !body_supported) {
-                        tube_stays_in_body = false;
+                        body_supported = body_prefix_open &&
+                            interval->second <= body_prefix_fraction + 1.0e-9;
                     }
                 }
                 const bool unknown_outside_body =
@@ -359,15 +341,8 @@ inline bool certificateTubeIsSafe(
         }
         if (x == upper[0]) break;
     }
-    if (latest_unknown_start > earliest_sensor_free_start + 1.0e-9) {
-        if (blocked_cell_state != nullptr) {
-            *blocked_cell_state = navigation_world_model::CellState::kUnknown;
-        }
-        return false;
-    }
     if (body_prefix_remains != nullptr) {
-        *body_prefix_remains = tube_stays_in_body && !saw_sensor_free &&
-            body_support && body_prefix_fraction >= 1.0 - 1.0e-9;
+        *body_prefix_remains = body_prefix_open && body_prefix_fraction >= 1.0 - 1.0e-9;
     }
     return true;
 }

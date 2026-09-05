@@ -271,6 +271,45 @@ TEST_F(MappingWorldModelTest, CurrentBodySupportTraversesExactFacesInBothDirecti
       layer, policy, support));
 }
 
+TEST_F(MappingWorldModelTest, CurrentBodySupportUsesClosedOBBBoundary) {
+  const auto support_value = navigation_mapping::makeX500Mid360CurrentBodySupport(
+      Eigen::Vector3d{0.0, 0.0, 1.5}, Eigen::Quaterniond::Identity(),
+      snapshot->identity(), "lio_odom", "base_link", 1U,
+      snapshot->identity().observation_stamp_ns);
+  ASSERT_TRUE(support_value.valid);
+  const auto support = std::make_shared<const navigation_world_model::CurrentBodySupport>(
+      support_value);
+  const auto identity = snapshot->identity();
+  const Eigen::Vector3d center = support_value.body_position +
+      support_value.body_orientation * support_value.body_box.center;
+  const auto toWorld = [&](const Eigen::Vector3d& local) -> Eigen::Vector3d {
+    return (center + support_value.body_orientation *
+        support_value.body_box.orientation * local).eval();
+  };
+  const auto face = toWorld(Eigen::Vector3d{
+      support_value.body_box.half_extent.x(), 0.0, 0.0});
+  const auto edge = toWorld(Eigen::Vector3d{
+      support_value.body_box.half_extent.x(),
+      support_value.body_box.half_extent.y(), 0.0});
+  const auto corner = toWorld(support_value.body_box.half_extent);
+  const auto just_outside_face = toWorld(Eigen::Vector3d{
+      support_value.body_box.half_extent.x() + 1.0e-9, 0.0, 0.0});
+
+  ASSERT_TRUE(support->finiteGeometry());
+  EXPECT_EQ(support->snapshot_identity.observation_stamp_ns,
+            identity.observation_stamp_ns);
+
+  EXPECT_TRUE(support->contains(face, identity, identity.observation_stamp_ns));
+  EXPECT_TRUE(support->contains(edge, identity, identity.observation_stamp_ns));
+  EXPECT_TRUE(support->contains(corner, identity, identity.observation_stamp_ns));
+  EXPECT_FALSE(support->contains(
+      just_outside_face, identity, identity.observation_stamp_ns));
+  EXPECT_TRUE(support->containsSegment(
+      center, face, identity, identity.observation_stamp_ns));
+  EXPECT_FALSE(support->containsSegment(
+      center, just_outside_face, identity, identity.observation_stamp_ns));
+}
+
 TEST_F(MappingWorldModelTest, SensorFreeCellInsideBodyDoesNotConsumeWitness) {
   auto grid = productGrid(map->exportPlanningGrid());
   const auto offset = [&grid](const navigation_world_model::GridIndex3& index) {
@@ -300,6 +339,44 @@ TEST_F(MappingWorldModelTest, SensorFreeCellInsideBodyDoesNotConsumeWitness) {
       Eigen::Vector3d{-0.15, 0.0, 1.5}, Eigen::Vector3d{0.35, 0.0, 1.5},
       navigation_world_model::GridLayer::kEvidence,
       navigation_world_model::UnknownPolicy::kRequireKnownFree, support));
+}
+
+TEST_F(MappingWorldModelTest, CurrentBodySupportCannotReenterAfterPhysicalExit) {
+  auto grid = productGrid(map->exportPlanningGrid());
+  const auto offset = [&grid](const navigation_world_model::GridIndex3& index) {
+    const auto local = index - grid.base_layout.global_min_index;
+    const auto y = static_cast<std::size_t>(local.y());
+    const auto z = static_cast<std::size_t>(local.z());
+    return (static_cast<std::size_t>(local.x()) *
+            static_cast<std::size_t>(grid.base_layout.dimensions.y()) + y) *
+           static_cast<std::size_t>(grid.base_layout.dimensions.z()) + z;
+  };
+  const auto identity = snapshot->identity();
+  // The first segment crosses UNKNOWN inside B0 and then sensor-known-free
+  // space outside B0. The next segment starts after the physical exit and
+  // must not re-open the witness for UNKNOWN space.
+  grid.base_state[offset(navigation_world_model::GridIndex3{1, 0, 7})] =
+      static_cast<std::uint8_t>(navigation_world_model::CellState::kKnownFree);
+  auto mixed_snapshot = std::make_shared<navigation_mapping::MappingWorldSnapshot>(
+      std::move(grid), identity);
+  const auto support_value = navigation_mapping::makeX500Mid360CurrentBodySupport(
+      Eigen::Vector3d{0.1, 0.0, 1.5}, Eigen::Quaterniond::Identity(),
+      identity, "lio_odom", "base_link", 1U, identity.observation_stamp_ns);
+  ASSERT_TRUE(support_value.valid);
+  const auto support = std::make_shared<const navigation_world_model::CurrentBodySupport>(
+      support_value);
+  constexpr auto layer = navigation_world_model::GridLayer::kEvidence;
+  constexpr auto policy = navigation_world_model::UnknownPolicy::kRequireKnownFree;
+
+  EXPECT_TRUE(mixed_snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{0.0, 0.0, 1.5}, Eigen::Vector3d{0.2, 0.0, 1.5},
+      layer, policy, support));
+  EXPECT_TRUE(mixed_snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{0.2, 0.0, 1.5}, Eigen::Vector3d{0.39, 0.0, 1.5},
+      layer, policy, support));
+  EXPECT_FALSE(mixed_snapshot->isSegmentTraversableWithCurrentBodySupport(
+      Eigen::Vector3d{0.39, 0.0, 1.5}, Eigen::Vector3d{0.5, 0.0, 1.5},
+      layer, policy, support));
 }
 
 TEST(MappingWorldSnapshot, IndexConversionRejectsNonRepresentableProduct) {

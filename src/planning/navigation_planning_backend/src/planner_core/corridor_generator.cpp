@@ -163,8 +163,7 @@ geometry_utils::Polytope acceptanceBallInnerCell(
         const auto first_state = map_ptr_->classify(
             corridor_path[first_id], navigation_world_model::GridLayer::kInflated);
         const bool first_point_body_supported =
-            first_id == 0U && first_state == navigation_world_model::CellState::kUnknown &&
-            current_body_support_ &&
+            first_id == 0U && current_body_support_ &&
             current_body_support_->contains(
                 corridor_path[first_id].cast<double>(), map_ptr_->identity(),
                 current_body_support_->source_stamp_ns);
@@ -176,9 +175,8 @@ geometry_utils::Polytope acceptanceBallInnerCell(
             return false;
         }
 
-        // A measured body witness is an ordered prefix contract. Keep it
-        // active only while the path remains in an UNKNOWN body cell; once a
-        // known-free cell is reached, every later edge is sensor-only.
+        // A measured body witness is an ordered geometric-prefix contract.
+        // Known-free evidence does not consume it; physical exit does.
         bool body_prefix_active = first_point_body_supported;
 
         if(first_id!=0){
@@ -334,13 +332,9 @@ geometry_utils::Polytope acceptanceBallInnerCell(
             if (body_prefix_active && current_body_support_ &&
                 second_id < corridor_path.size()) {
                 const auto endpoint = corridor_path[second_id].cast<double>();
-                body_prefix_active =
-                    map_ptr_->classify(
-                        endpoint, navigation_world_model::GridLayer::kInflated) ==
-                        navigation_world_model::CellState::kUnknown &&
-                    current_body_support_->contains(
-                        endpoint, map_ptr_->identity(),
-                        current_body_support_->source_stamp_ns);
+                body_prefix_active = current_body_support_->containsSegment(
+                    corridor_path[first_id].cast<double>(), endpoint,
+                    map_ptr_->identity(), current_body_support_->source_stamp_ns);
             }
             if (reached_route_boundary) {
                 Polytope boundary_poly;

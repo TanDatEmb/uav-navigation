@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -255,24 +254,19 @@ class MappingWorldSnapshot final
       navigation_world_model::GridLayer layer,
       navigation_world_model::UnknownPolicy unknown_policy,
       const navigation_world_model::CurrentBodySupportPtr& support = {}) const noexcept override {
-    std::fprintf(stderr, "PRE start=(%.3f %.3f %.3f) end=(%.3f %.3f %.3f) contains=%d/%d support=%d valid=%d\\n",
-                 start.x(), start.y(), start.z(), end.x(), end.y(), end.z(),
-                 containsLayer(start, layer), containsLayer(end, layer), static_cast<bool>(support),
-                 support ? support->valid : 0);
     if (!start.allFinite() || !end.allFinite() || !containsLayer(start, layer) ||
-        !containsLayer(end, layer) || !support || !support->valid) return false;
+        !containsLayer(end, layer) || !support ||
+        (unknown_policy != navigation_world_model::UnknownPolicy::kAllowUnknown &&
+         unknown_policy != navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+      return false;
+    }
     const auto delta = end - start;
     const double length = delta.norm();
     const double resolution = layer == navigation_world_model::GridLayer::kInflated
                                   ? rootGrid().inflated.layout.resolution_m
                                   : rootGrid().base_layout.resolution_m;
-    std::fprintf(stderr, "GUARD contains=%d/%d support=%d valid=%d len=%.3f id=%d\\n",
-                 containsLayer(start, layer), containsLayer(end, layer), static_cast<bool>(support),
-                 support ? support->valid : 0, length,
-                 support ? navigation_world_model::sameWorldSnapshotIdentity(support->snapshot_identity, identity_) : 0);
     if (!std::isfinite(length) || !std::isfinite(resolution) || resolution <= 0.0 ||
-        !navigation_world_model::sameWorldSnapshotIdentity(
-            support->snapshot_identity, identity_)) return false;
+        !support->matchesWorldSnapshot(identity_, support->source_stamp_ns)) return false;
     const auto original_start_index = positionToIndex(start, layer);
     auto start_index = original_start_index;
     const auto end_index = positionToIndex(end, layer);
@@ -308,7 +302,6 @@ class MappingWorldSnapshot final
                                       const double interval_end) {
       const auto state = classify(point, layer);
       using navigation_world_model::CellState;
-      std::fprintf(stderr, "STATE=%d p=(%.3f %.3f %.3f)\\n", static_cast<int>(state), point.x(), point.y(), point.z());
       if (state == CellState::kOccupied || state == CellState::kOutOfMap ||
           state == CellState::kUndefined) return false;
       if (state == CellState::kKnownFree) return true;
@@ -318,12 +311,9 @@ class MappingWorldSnapshot final
       // not consume the witness: UNKNOWN -> sensor-free -> UNKNOWN remains
       // valid while each unknown interval stays inside the physical OBB.
       if (state != CellState::kUnknown) return false;
-      const auto a = start + interval_begin * delta;
-      const auto b = start + interval_end * delta;
-      const bool contained = support->containsSegment(a, b, identity_, support->source_stamp_ns);
-      std::fprintf(stderr, "SUPPORT state=%d p=(%.3f %.3f %.3f) a=(%.3f %.3f %.3f) b=(%.3f %.3f %.3f) contained=%d\\n",
-                   static_cast<int>(state), point.x(), point.y(), point.z(), a.x(), a.y(), a.z(), b.x(), b.y(), b.z(), contained);
-      return contained;
+      return support->unknownIntervalWithinInitialBodyPrefix(
+          start, end, interval_begin, interval_end,
+          identity_, support->source_stamp_ns);
     };
     // A segment beginning exactly on a face/edge/corner touches both sides
     // of every such face at t=0. Check all adjacent cells before applying

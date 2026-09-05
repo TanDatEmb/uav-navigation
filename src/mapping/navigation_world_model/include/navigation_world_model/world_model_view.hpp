@@ -313,8 +313,15 @@ struct CurrentBodySupport {
     if (!body_point.allFinite()) return false;
     const Point3 local = body_box.orientation.conjugate() *
                          (body_point - body_box.center);
-    return local.allFinite() &&
-        (local.cwiseAbs().array() <= body_box.half_extent.array()).all();
+    if (!local.allFinite()) return false;
+    // Treat the mathematical OBB boundary as closed while absorbing the
+    // round-off introduced by the two rigid-frame transforms. The tolerance
+    // is scale-aware and remains far below any physical/map margin.
+    const double scale = std::max(1.0, body_box.half_extent.cwiseAbs().maxCoeff());
+    const double tolerance = 64.0 * std::numeric_limits<double>::epsilon() * scale;
+    return std::isfinite(tolerance) &&
+        (local.cwiseAbs().array() <=
+         (body_box.half_extent.array() + tolerance)).all();
   }
 
  private:
@@ -382,6 +389,32 @@ struct CurrentBodySupport {
     // body-frame boxes directly to world coordinates is only correct at the
     // origin with identity attitude.
     return contiguousBodyPrefixFraction(start, end, radius_m) >= 1.0 - 1.0e-12;
+  }
+
+  // An UNKNOWN interval may use this witness only while the evaluated
+  // segment remains in the initial contiguous prefix of the measured body.
+  // The prefix boundary is computed from the whole ordered segment, so a
+  // later geometric re-entry cannot reopen the exception.
+  [[nodiscard]] bool unknownIntervalWithinInitialBodyPrefix(
+      const Point3& start, const Point3& end,
+      const double interval_begin, const double interval_end,
+      const WorldSnapshotIdentity& identity,
+      const std::int64_t now_stamp_ns,
+      const double radius_m = 0.0) const noexcept {
+    constexpr double kIntervalTolerance = 1.0e-9;
+    if (!std::isfinite(interval_begin) || !std::isfinite(interval_end) ||
+        interval_begin < -kIntervalTolerance ||
+        interval_end < interval_begin - kIntervalTolerance ||
+        interval_end > 1.0 + kIntervalTolerance ||
+        !std::isfinite(radius_m) || radius_m < 0.0 ||
+        !matchesWorldSnapshot(identity, now_stamp_ns) ||
+        !contains(start, identity, now_stamp_ns)) {
+      return false;
+    }
+    const double prefix_fraction = contiguousBodyPrefixFraction(
+        start, end, radius_m);
+    return std::isfinite(prefix_fraction) &&
+        interval_end <= prefix_fraction + kIntervalTolerance;
   }
 };
 
