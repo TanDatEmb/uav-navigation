@@ -345,20 +345,12 @@ TEST(PlannerFsm, BackupAndEmergencyAreOneWayUntilCertifiedStop) {
                 ExecutionRecoveryEvent::kTerminalStopCompleted),
             ExecutionRecoveryState::kStoppedRecovery);
   EXPECT_TRUE(nominalPlanningAllowed(ExecutionRecoveryState::kStoppedRecovery));
-  EXPECT_EQ(transitionExecutionRecovery(
-                ExecutionRecoveryState::kStoppedRecovery,
-                ExecutionRecoveryEvent::kMotionObserved),
-            ExecutionRecoveryState::kStoppedRecovery);
 }
 
 TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
   EXPECT_EQ(transitionExecutionRecovery(
                 ExecutionRecoveryState::kTrackMain,
                 ExecutionRecoveryEvent::kEmergencyCertificationFailed),
-            ExecutionRecoveryState::kPx4Hold);
-  EXPECT_EQ(transitionExecutionRecovery(
-                ExecutionRecoveryState::kStoppedRecovery,
-                ExecutionRecoveryEvent::kRecoveryTimedOut),
             ExecutionRecoveryState::kPx4Hold);
 }
 

@@ -22,10 +22,7 @@ enum class ExecutionRecoveryEvent : std::uint8_t {
   // A nominal terminal STOP is a distinct completion event. A safety
   // endpoint must never be promoted by completion geometry alone.
   kTerminalStopCompleted,
-  kMotionObserved,
-  kRecoveryTimedOut,
   kEmergencyCertificationFailed,
-  kReset,
 };
 
 [[nodiscard]] constexpr bool executionRecoveryStateKnown(
@@ -54,14 +51,10 @@ enum class ExecutionRecoveryEvent : std::uint8_t {
   if (!executionRecoveryStateKnown(state)) {
     return ExecutionRecoveryState::kPx4Hold;
   }
-  if (event == ExecutionRecoveryEvent::kReset) {
-    return ExecutionRecoveryState::kInitialHold;
-  }
   if (state == ExecutionRecoveryState::kPx4Hold) {
     return state;
   }
-  if (event == ExecutionRecoveryEvent::kRecoveryTimedOut ||
-      event == ExecutionRecoveryEvent::kEmergencyCertificationFailed) {
+  if (event == ExecutionRecoveryEvent::kEmergencyCertificationFailed) {
     return ExecutionRecoveryState::kPx4Hold;
   }
   switch (state) {
@@ -84,12 +77,6 @@ enum class ExecutionRecoveryEvent : std::uint8_t {
       return event == ExecutionRecoveryEvent::kCertifiedStopObserved
           ? ExecutionRecoveryState::kStoppedRecovery : state;
     case ExecutionRecoveryState::kStoppedRecovery:
-      if (event == ExecutionRecoveryEvent::kMotionObserved) {
-        // This event alone does not prove that an emergency command was
-        // constructed and atomically committed. The runtime must perform that
-        // command transaction first, or fail closed to kPx4Hold.
-        return state;
-      }
       return event == ExecutionRecoveryEvent::kMainCommitted
           ? ExecutionRecoveryState::kTrackMain : state;
     case ExecutionRecoveryState::kPx4Hold:
