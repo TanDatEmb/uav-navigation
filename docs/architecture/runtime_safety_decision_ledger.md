@@ -18408,3 +18408,40 @@ release profiles must not use the former allowance.
 - **Verification:** `source /opt/ros/jazzy/setup.bash`; selected-package
   `colcon build`; per-package `ctest --output-on-failure`; O0-HANDOVER,
   C0-NEAR-OBSTACLE and RESET runs after a clean committed rebuild.
+
+### 2026-09-05 - Reject successors whose execution predecessor advanced
+
+- **Owner/status:** ExecutionTimelineStore owner; `IMPLEMENTED`, focused
+  execution regression/build evidence required; no SITL claim.
+- **Scope:** A successor staged from an `ExecutionAnchor` now revalidates the
+  current predecessor under the store mutex at staging. Activation requires a
+  valid committed and pending bundle under the current world identity. Every
+  semantic identity-changing operation that replaces or invalidates the
+  committed pointer already clears pending; a world-only recertification may
+  copy the same trajectory identity while retaining a validated pending
+  successor; rollback restores active and pending together. Generation,
+  localization/goal/request identity, exact activation-time role schedule,
+  declared main/bundle end times, and world identity are checked without adding
+  a second pending witness field. Existing dynamics, thresholds, timing and
+  candidate-admission gates remain unchanged.
+- **Safety impact:** A same-world/same-goal newer bundle cannot be silently
+  replaced by a successor planned from an older command anchor. If the active
+  predecessor is invalidated while a validated pending successor remains,
+  activation discards the pending command and fails closed. Recertified
+  pointers remain admissible only when their existing immutable generation,
+  declared trajectory semantics and current world identity remain valid; raw
+  pointer identity is not treated as the contract.
+- **Evidence:** Deterministic execution-store regressions cover stale
+  predecessor rejection for `stagePending` and `stagePendingAndFinalize`,
+  valid same-generation world recertification followed by activation, active
+  invalidation with retained pending rejection, and rollback preservation of a
+  previously staged pending successor. The affected package build passed and
+  navigation execution CTest passed 2/2; no SITL evidence is claimed here.
+- **Removal condition:** Remove only if an equivalent execution-owned atomic
+  transaction record validates the same predecessor identity at both staging
+  and activation; never remove the activation recheck or weaken generation,
+  identity, role, time, or world checks.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && colcon build
+  --packages-select navigation_execution --symlink-install
+  --cmake-args -DBUILD_TESTING=ON`; `ctest --test-dir
+  build/navigation_execution --output-on-failure`.

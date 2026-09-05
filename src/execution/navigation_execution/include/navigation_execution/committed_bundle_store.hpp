@@ -56,6 +56,12 @@ enum class StageDecision : std::uint8_t {
   kActivationTooLate,
   kCancelled,
   kFinalizationFailed,
+  // The execution command used to produce the successor anchor is no longer
+  // the current predecessor.  This is distinct from a goal/world rejection:
+  // the same mission and world may still be active while a newer bundle has
+  // replaced the predecessor. Keep this appended so existing diagnostic
+  // ordinals remain stable.
+  kPredecessorAdvanced,
 };
 
 // Sole owner of the product command candidate that is allowed to reach the
@@ -354,6 +360,9 @@ class ExecutionTimelineStore final {
         candidate->valid_until_ns < anchor.activation_stamp_ns) {
       return StageDecision::kActivationTooLate;
     }
+    if (!committed_ || !predecessorMatchesAnchor(*committed_, anchor)) {
+      return StageDecision::kPredecessorAdvanced;
+    }
     pending_ = std::move(candidate);
     pending_activation_ns_ = anchor.activation_stamp_ns;
     last_transaction_id_ = expected.transaction_id;
@@ -386,6 +395,9 @@ class ExecutionTimelineStore final {
     if (anchor.active_main_end_ns < anchor.activation_stamp_ns ||
         candidate->valid_until_ns < anchor.activation_stamp_ns) {
       return StageDecision::kActivationTooLate;
+    }
+    if (!committed_ || !predecessorMatchesAnchor(*committed_, anchor)) {
+      return StageDecision::kPredecessorAdvanced;
     }
     const auto previous_pending = pending_;
     const auto previous_pending_activation = pending_activation_ns_;
@@ -423,7 +435,10 @@ class ExecutionTimelineStore final {
         !navigation_world_model::sameWorldSnapshotIdentity(
             *world_identity_, pending_->world_identity) ||
         active_goal_epoch_ != pending_->goal_epoch ||
-        now_ns > pending_->valid_until_ns) {
+        now_ns > pending_->valid_until_ns || !pending_->valid() || !committed_ ||
+        !committed_->valid() ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, committed_->world_identity)) {
       pending_.reset();
       pending_activation_ns_ = 0;
       return false;
@@ -584,6 +599,49 @@ class ExecutionTimelineStore final {
   }
 
  private:
+  // Validate the immutable predecessor anchor without invoking its evaluator
+  // while holding the store mutex. All operations which replace or invalidate
+  // semantic replacements of committed_ clear pending_; a world-only
+  // recertification may copy the same trajectory identity. This stage check
+  // plus activation's current active/world check closes the interleaving
+  // without a second witness field.
+  [[nodiscard]] static bool predecessorMatchesAnchor(
+      const navigation_planning::CandidateBundle& predecessor,
+      const ExecutionAnchor& anchor) noexcept {
+    if (!anchor.valid() || !predecessor.valid() ||
+        predecessor.bundle_generation != anchor.active_bundle_generation ||
+        predecessor.localization_epoch != anchor.localization_epoch ||
+        predecessor.goal_epoch != anchor.goal_epoch ||
+        predecessor.request_id != anchor.request_id ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            predecessor.world_identity, anchor.command_world)) {
+      return false;
+    }
+    const auto start_ns = navigation_common::secondsToNanoseconds(
+        predecessor.start_wall_time_s);
+    const auto end_ns = predecessor.declared_end_ns > 0
+        ? std::optional<std::int64_t>{predecessor.declared_end_ns}
+        : std::optional<std::int64_t>{predecessor.valid_until_ns};
+    const auto main_end_ns = predecessor.backup_available
+        ? navigation_common::secondsSumToNanoseconds(
+              predecessor.start_wall_time_s, predecessor.backup_start_time_s)
+        : end_ns;
+    if (!start_ns || !main_end_ns || !end_ns ||
+        anchor.activation_stamp_ns < predecessor.valid_from_ns ||
+        anchor.activation_stamp_ns > predecessor.valid_until_ns ||
+        *start_ns > anchor.activation_stamp_ns ||
+        *main_end_ns != anchor.active_main_end_ns ||
+        *end_ns != anchor.active_bundle_end_ns ||
+        anchor.activation_stamp_ns > *end_ns) {
+      return false;
+    }
+    const auto elapsed_ns = anchor.activation_stamp_ns - *start_ns;
+    if (elapsed_ns < 0) return false;
+    const auto scheduled = predecessor.scheduledRole(
+        static_cast<double>(elapsed_ns) * 1.0e-9);
+    return scheduled.has_value() && *scheduled == anchor.active_role;
+  }
+
   [[nodiscard]] static bool advances(
       const navigation_world_model::WorldSnapshotIdentity& current,
       const navigation_world_model::WorldSnapshotIdentity& next) noexcept {

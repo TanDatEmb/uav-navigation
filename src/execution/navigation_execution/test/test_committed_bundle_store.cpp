@@ -43,6 +43,19 @@ navigation_planning::CandidateBundle candidateFor(
   return candidate;
 }
 
+std::shared_ptr<const navigation_planning::CandidateBundle> successorFor(
+    const navigation_execution::ExecutionAnchor& anchor,
+    std::uint64_t goal_epoch) {
+  auto successor = candidateFor(goal_epoch, anchor.command_world.revision);
+  successor.localization_epoch = anchor.localization_epoch;
+  successor.world_identity = anchor.command_world;
+  successor.pinned_world_identity = anchor.command_world;
+  successor.valid_from_ns = anchor.activation_stamp_ns;
+  successor.activation_stamp_ns = anchor.activation_stamp_ns;
+  successor.bundle_generation = anchor.active_bundle_generation + 100U;
+  return std::make_shared<const navigation_planning::CandidateBundle>(successor);
+}
+
 TEST(CommittedBundleStore, CommitRequiresCurrentWorldAndGoal) {
   navigation_execution::CommittedBundleStore store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
@@ -198,6 +211,177 @@ TEST(CommittedBundleStore, RetainedCommandStaysOldUntilSuccessorActivation) {
   EXPECT_EQ(store.load(), successor_ptr);
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 7)));
   EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 8)));
+}
+
+TEST(ExecutionTimelineStore, RejectsSuccessorWhenPredecessorAdvanced) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+
+  auto replacement_data = candidateFor(7, 1);
+  replacement_data.bundle_generation = active->bundle_generation + 1U;
+  auto replacement = std::make_shared<const navigation_planning::CandidateBundle>(
+      replacement_data);
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, replacement),
+            navigation_execution::CommitDecision::kCommitted);
+
+  EXPECT_EQ(store.stagePending({world, 7, 3}, *anchor, successorFor(*anchor, 7)),
+            navigation_execution::StageDecision::kPredecessorAdvanced);
+  EXPECT_EQ(store.load(), replacement);
+  EXPECT_FALSE(store.hasPending());
+}
+
+TEST(ExecutionTimelineStore, RejectsFinalizedSuccessorWhenPredecessorAdvanced) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+
+  auto replacement_data = candidateFor(7, 1);
+  replacement_data.bundle_generation = active->bundle_generation + 1U;
+  auto replacement = std::make_shared<const navigation_planning::CandidateBundle>(
+      replacement_data);
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, replacement),
+            navigation_execution::CommitDecision::kCommitted);
+
+  bool finalized = false;
+  EXPECT_EQ(store.stagePendingAndFinalize(
+                {world, 7, 3}, *anchor, successorFor(*anchor, 7),
+                [&finalized] {
+                  finalized = true;
+                  return true;
+                }),
+            navigation_execution::StageDecision::kPredecessorAdvanced);
+  EXPECT_FALSE(finalized);
+  EXPECT_EQ(store.load(), replacement);
+  EXPECT_FALSE(store.hasPending());
+}
+
+TEST(ExecutionTimelineStore, FailedPendingFinalizationRestoresPriorPending) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+
+  const auto first_anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(first_anchor);
+  auto first_pending = successorFor(*first_anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *first_anchor, first_pending),
+            navigation_execution::StageDecision::kStaged);
+
+  const auto replacement_anchor = store.reserveAnchor(60, 70);
+  ASSERT_TRUE(replacement_anchor);
+  auto replacement_pending = successorFor(*replacement_anchor, 7);
+  EXPECT_EQ(store.stagePendingAndFinalize(
+                {world, 7, 3}, *replacement_anchor, replacement_pending,
+                [] { return false; }),
+            navigation_execution::StageDecision::kFinalizationFailed);
+  EXPECT_EQ(store.loadPending(), first_pending);
+  EXPECT_EQ(store.pendingActivationNs(), 50);
+  EXPECT_TRUE(store.activatePendingIfDue(50));
+  EXPECT_EQ(store.load(), first_pending);
+}
+
+TEST(ExecutionTimelineStore, AcceptsAnchorAtExactMainBackupBoundary) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active_data = candidateFor(7, 1);
+  active_data.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  active_data.backup_available = true;
+  active_data.backup_start_time_s = 49.0e-9;
+  active_data.role_schedule = {
+      {0.0, 49.0e-9, navigation_planning::CandidateRole::kMain},
+      {49.0e-9, 399.0e-9, navigation_planning::CandidateRole::kBackup}};
+  active_data.evaluator = [](std::int64_t stamp,
+                             navigation_planning::TrajectoryPoint& point) {
+    point.position_world.x() = static_cast<double>(stamp);
+    point.trajectory_time_s = static_cast<double>(stamp - 1) * 1.0e-9;
+    point.role = stamp >= 50 ? navigation_planning::CandidateRole::kBackup
+                             : navigation_planning::CandidateRole::kMain;
+    return true;
+  };
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(active_data);
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  EXPECT_EQ(anchor->active_role, navigation_planning::CandidateRole::kBackup);
+  EXPECT_EQ(store.stagePending({world, 7, 2}, *anchor, successorFor(*anchor, 7)),
+            navigation_execution::StageDecision::kStaged);
+}
+
+TEST(ExecutionTimelineStore, RecertifiedPredecessorKeepsSuccessorActivationValid) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto successor = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successor),
+            navigation_execution::StageDecision::kStaged);
+  const auto old_timeline = store.snapshot();
+  const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
+
+  ASSERT_EQ(store.publishWorldIdentityIfCurrent(
+                next_world, old_timeline.version, old_timeline.active, true, 300,
+                old_timeline.pending, true),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+  EXPECT_NE(store.load(), active);
+  EXPECT_TRUE(store.hasPending());
+  EXPECT_TRUE(store.activatePendingIfDue(50));
+  EXPECT_EQ(store.load()->bundle_generation, successor->bundle_generation);
+}
+
+TEST(ExecutionTimelineStore, RejectsActivationWhenActiveWasInvalidatedButPendingRetained) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(store.publishWorldIdentity(world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto successor = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successor),
+            navigation_execution::StageDecision::kStaged);
+  const auto old_timeline = store.snapshot();
+  const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
+
+  ASSERT_EQ(store.publishWorldIdentityIfCurrent(
+                next_world, old_timeline.version, old_timeline.active, false, 0,
+                old_timeline.pending, true),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+  EXPECT_FALSE(store.load());
+  EXPECT_TRUE(store.hasPending());
+  EXPECT_FALSE(store.activatePendingIfDue(50));
+  EXPECT_FALSE(store.hasPending());
 }
 
 TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
