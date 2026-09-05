@@ -1,5 +1,32 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-05 - Keep runtime timer ownership in one product timing contract
+
+- **Owner/status:** navigation runtime and planning maintainers; `IMPLEMENTED`,
+  focused constructor/timer and runtime contract verification remains required.
+- **Scope:** planner and command scheduler rates, mapping snapshot cadence,
+  command-stream timeout, and stopped-recovery timeout are product-locked in
+  `navigation_planning::PlanningTimingContract`. The planner and command rates
+  are derived from their period constants. Their ROS/YAML declarations and
+  exact-value startup guards are removed. `deployment_profile` remains a
+  fail-closed deployment restriction, while `data_freshness_window_s` and
+  `planner_watchdog_timeout_s` remain runtime-adjustable gates.
+- **Safety impact:** timing behavior and all safety values are unchanged from
+  the existing product contract; this removes fake configuration ownership and
+  does not relax freshness, watchdog, command-admission, recovery, map, or PX4
+  gates. Runtime evidence metadata and report schemas remain unchanged.
+- **Evidence:** the constructor now converts typed product rates and timeouts
+  into the same nanosecond timer values, and the focused runtime contract test
+  verifies the five locked keys are absent from the mapping surface while
+  deployment and adjustable gates remain present. No SITL acceptance claim is
+  made by this cleanup.
+- **Removal/review condition:** revisit only when a measured product change
+  establishes a new timing owner and updates the runtime contract with
+  representative evidence; do not reintroduce deployment knobs as aliases.
+- **Verification:** `python3 -m unittest tools.runtime.tests.test_runtime_contract`
+  (or the repository's focused runtime test command), the navigation planning
+  timing compile checks, and the affected navigation runtime build/tests.
+
 ### 2026-09-05 - Publish one immutable execution decision trace
 
 - **Owner/status:** navigation runtime decision trace; `IMPLEMENTED`, repeated

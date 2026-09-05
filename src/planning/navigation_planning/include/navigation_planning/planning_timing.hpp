@@ -3,7 +3,11 @@
 namespace navigation_planning {
 
 struct PlanningTimingContract final {
+  // These values are product scheduler contracts, not deployment knobs. The
+  // runtime owns the timers, while this header is the single typed source for
+  // their cadence and bounded safety windows.
   static constexpr double kPlannerPeriodS = 0.20;
+  static constexpr double kPlannerRateHz = 1.0 / kPlannerPeriodS;
   static constexpr double kSolveDeadlineS = 0.18;
   static constexpr double kStitchDurationS = 0.40;
   static constexpr double kCommitGuardS = 0.02;
@@ -11,6 +15,7 @@ struct PlanningTimingContract final {
       kSolveDeadlineS + kStitchDurationS + kPlannerPeriodS + kCommitGuardS;
   static constexpr double kUrgentBaselineThresholdS = 1.0;
   static constexpr double kCommandPeriodS = 0.02;
+  static constexpr double kCommandRateHz = 1.0 / kCommandPeriodS;
   static constexpr double kCommandStreamTimeoutS = 0.10;
   static constexpr double kExternalModeStateAgeS = 0.20;
   static constexpr double kSnapshotPeriodS = 0.10;

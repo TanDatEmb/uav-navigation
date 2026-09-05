@@ -542,9 +542,14 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertNotIn("corrected_odometry_topic", navigation)
         self.assertNotIn("odometry_topic", navigation)
         self.assertEqual(navigation["planner_watchdog_timeout_s"], 1.0)
-        self.assertEqual(navigation["mapping_snapshot_publication_period_s"], 0.1)
-        self.assertEqual(navigation["command_stream_timeout_s"], 0.1)
-        self.assertEqual(navigation["stopped_recovery_timeout_s"], 5.0)
+        for locked_name in (
+            "planner_rate_hz",
+            "command_rate_hz",
+            "mapping_snapshot_publication_period_s",
+            "command_stream_timeout_s",
+            "stopped_recovery_timeout_s",
+        ):
+            self.assertNotIn(locked_name, navigation)
         self.assertNotIn("planner_solve_timeout_s", navigation)
         self.assertEqual(navigation["command_topic"], "/navigation/navigation_command")
         runtime_source = (
@@ -627,7 +632,7 @@ class RuntimeContractTest(unittest.TestCase):
             )
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(parameters["planner_rate_hz"], 5.0)
+            self.assertNotIn("planner_rate_hz", parameters)
             self.assertEqual(parameters["mission_file"], str(mission.resolve()))
             self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 12.0)
             self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 12.0)
