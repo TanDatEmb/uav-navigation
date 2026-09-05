@@ -15,6 +15,7 @@ import math
 from pathlib import Path
 import signal
 import time
+import re
 from typing import Any
 
 
@@ -65,6 +66,38 @@ def _rot_enu_to_ned(values: list[float | None] | None) -> list[float | None] | N
     if values is None or any(value is None for value in values):
         return None
     return [float(values[1]), float(values[0]), -float(values[2])]
+
+
+def _field_if_present(objects: tuple[Any, ...], names: tuple[str, ...]) -> dict[str, Any]:
+    """Retain producer supplied epoch/reset fields without inventing values."""
+    result: dict[str, Any] = {}
+    for name in names:
+        for obj in objects:
+            if obj is None or not hasattr(obj, name):
+                continue
+            value = getattr(obj, name)
+            if value is None:
+                continue
+            if isinstance(value, bool):
+                result[name] = value
+            elif isinstance(value, (int, str)):
+                result[name] = value
+            else:
+                number = _finite(value)
+                if number is not None:
+                    result[name] = int(number) if number.is_integer() else number
+            break
+    return result
+
+
+def _synchronization_contract() -> tuple[float | None, str]:
+    config_path = Path(__file__).resolve().parents[2] / "config" / "runtime" / "common.yaml"
+    try:
+        text = config_path.read_text(encoding="utf-8")
+        match = re.search(r"maximum_synchronization_tolerance_ms:\s*([0-9]+(?:\.[0-9]+)?)", text)
+        return (float(match.group(1)), str(config_path)) if match else (None, str(config_path))
+    except OSError:
+        return None, str(config_path)
 
 
 def _arc_final_angle(radius: float, speed: float, ramp_s: float,
@@ -208,17 +241,42 @@ class Characterization:
         self.latest_status = {"timestamp_us": int(message.timestamp), "arming_state": int(message.arming_state), "nav_state": int(message.nav_state), "failsafe": bool(message.failsafe)}
 
     def _px4_state(self, message: Any) -> None:
-        self.latest_px4 = {"source_stamp_ns": int(message.timestamp_sample) * 1000, "receive_stamp_ns": self.sim_now_ns, "position_ned": _vec([message.x, message.y, message.z]), "velocity_ned": _vec([message.vx, message.vy, message.vz]), "xy_valid": bool(message.xy_valid), "z_valid": bool(message.z_valid), "v_xy_valid": bool(message.v_xy_valid), "v_z_valid": bool(message.v_z_valid)}
+        self.latest_px4 = {"source_stamp_ns": int(message.timestamp_sample) * 1000, "source_clock": "px4_dds_ns", "receive_stamp_ns": self.sim_now_ns, "position_ned": _vec([message.x, message.y, message.z]), "velocity_ned": _vec([message.vx, message.vy, message.vz]), "xy_valid": bool(message.xy_valid), "z_valid": bool(message.z_valid), "v_xy_valid": bool(message.v_xy_valid), "v_z_valid": bool(message.v_z_valid), "reset_metadata": _field_if_present((message,), ("xy_reset_counter", "z_reset_counter", "vxy_reset_counter", "vz_reset_counter", "heading_reset_counter"))}
 
     def _px4_sp(self, message: Any) -> None:
-        self.latest_px4_sp = {"source_stamp_ns": int(message.timestamp) * 1000, "receive_stamp_ns": self.sim_now_ns, "position_ned": _vec([message.x, message.y, message.z]), "velocity_ned": _vec([message.vx, message.vy, message.vz]), "acceleration_ned": _vec(getattr(message, "acceleration", []))}
+        self.latest_px4_sp = {"source_stamp_ns": int(message.timestamp) * 1000, "source_clock": "px4_dds_ns", "receive_stamp_ns": self.sim_now_ns, "position_ned": _vec([message.x, message.y, message.z]), "velocity_ned": _vec([message.vx, message.vy, message.vz]), "acceleration_ned": _vec(getattr(message, "acceleration", []))}
 
     @staticmethod
     def _odom(message: Any) -> dict[str, Any]:
         odometry = getattr(message, "odometry", message)
+        header = getattr(odometry, "header", None)
         pose = getattr(getattr(odometry, "pose", None), "pose", getattr(odometry, "pose", None))
         twist = getattr(getattr(odometry, "twist", None), "twist", getattr(odometry, "twist", None))
-        return {"source_stamp_ns": _stamp_ns(getattr(odometry, "header", None).stamp), "position": _vec([pose.position.x, pose.position.y, pose.position.z]), "velocity": _vec([twist.linear.x, twist.linear.y, twist.linear.z])}
+        orientation = getattr(pose, "orientation", None)
+        frame_id = str(getattr(header, "frame_id", ""))
+        child_frame_id = str(getattr(odometry, "child_frame_id", ""))
+        epoch_metadata = _field_if_present(
+            (message, odometry),
+            ("epoch", "localization_epoch", "odometry_epoch", "reset_id", "reset_counter", "sequence"),
+        )
+        return {
+            "source_stamp_ns": _stamp_ns(getattr(header, "stamp", None)),
+            "source_clock": "ros_sim_ns",
+            "receive_stamp_ns": None,
+            "frame_id": frame_id,
+            "child_frame_id": child_frame_id,
+            "position_frame_id": frame_id,
+            "velocity_frame_id": child_frame_id,
+            "position": _vec([getattr(getattr(pose, "position", None), name, None) for name in ("x", "y", "z")]),
+            "q_xyzw": _vec([getattr(orientation, name, None) for name in ("x", "y", "z", "w")], 4),
+            "velocity": _vec([getattr(getattr(twist, "linear", None), name, None) for name in ("x", "y", "z")]),
+            "velocity_semantics": "twist_linear_in_child_frame",
+            "epoch_metadata": epoch_metadata,
+            "epoch": epoch_metadata.get("localization_epoch", epoch_metadata.get("epoch")),
+            "reset_counter": epoch_metadata.get("reset_counter"),
+            "reset_id": epoch_metadata.get("reset_id"),
+            "sequence": epoch_metadata.get("sequence"),
+        }
 
     def _ground_truth(self, message: Any) -> None:
         self.latest_gt = self._odom(message) | {"receive_stamp_ns": self.sim_now_ns}
@@ -351,7 +409,7 @@ class Characterization:
             self.initial_px4 = [float(value) for value in self.latest_px4["position_ned"]]
             self.initial_gt = [float(value) for value in self.latest_gt["position"]]
             self.initial_lio = [float(value) for value in self.latest_lio["position"]]
-            self._event("fixed_frame_initialized", initial_px4_local_ned=self.initial_px4, initial_gt_enu=self.initial_gt, initial_lio_enu=self.initial_lio, mode=self.mode)
+            self._event("fixed_frame_initialized", initial_px4_local_ned=self.initial_px4, initial_px4_source_stamp_ns=self.latest_px4.get("source_stamp_ns"), initial_gt_enu=self.initial_gt, initial_gt_metadata={key: self.latest_gt.get(key) for key in ("source_stamp_ns", "source_clock", "frame_id", "child_frame_id", "q_xyzw", "epoch", "epoch_metadata", "reset_counter", "reset_id")}, initial_lio_enu=self.initial_lio, initial_lio_metadata={key: self.latest_lio.get(key) for key in ("source_stamp_ns", "source_clock", "frame_id", "child_frame_id", "q_xyzw", "epoch", "epoch_metadata", "reset_counter", "reset_id")}, mode=self.mode)
         elapsed = self.elapsed_s()
         segment, local_elapsed = self._segment(elapsed)
         if str(segment["id"]) != self.last_segment:
@@ -377,7 +435,12 @@ class Characterization:
         if self.finished:
             return
         self.finished = True
-        summary = {"reason": reason, "profile": self.profile, "mode": self.mode, "duration_s": self.elapsed_s(), "wall_elapsed_s": time.monotonic() - self.wall_start, "initial_px4_local_ned": self.initial_px4, "initial_gt_enu": self.initial_gt, "initial_lio_enu": self.initial_lio, "segments": self.segments, "status": self.latest_status, "land_commanded": self.land_commanded, "failures": [self.failure] if self.failure else [], "harness_isolation": "direct analytic PX4-local reference; no NavigationRuntime command source"}
+        sync_tolerance_ms, sync_source = _synchronization_contract()
+        summary = {"schema_version": 2, "reason": reason, "profile": self.profile, "mode": self.mode, "duration_s": self.elapsed_s(), "wall_elapsed_s": time.monotonic() - self.wall_start, "initial_px4_local_ned": self.initial_px4, "initial_gt_enu": self.initial_gt, "initial_lio_enu": self.initial_lio, "segments": self.segments, "status": self.latest_status, "land_commanded": self.land_commanded, "failures": [self.failure] if self.failure else [], "harness_isolation": "direct analytic PX4-local reference; no NavigationRuntime command source", "source_clock_witness": {"ros_sim_ns": "Clock and ROS header stamps share simulation epoch", "px4_dds_ns": "PX4 timestamp_sample/timestamp retained as DDS transport time in nanoseconds", "px4_to_ros_mapping": MISSING}, "evidence_contract": {"evaluation_frame": "PX4 local NED", "ground_truth_position": "source header.frame_id; expected ENU only when explicitly labeled", "lio_position": "source header.frame_id; expected ENU only when explicitly labeled", "maximum_synchronization_tolerance_ms": sync_tolerance_ms, "maximum_synchronization_tolerance_source": sync_source, "epoch_policy": "preserve producer epoch/reset metadata; compare reset continuity within each stream; missing or discontinuous metadata is insufficient evidence"}}
+        summary["evidence_contract"]["frame_conventions"] = {
+            "ground_truth": {"position_frame_id": self.latest_gt.get("frame_id") if self.latest_gt else MISSING, "position_convention": "ENU", "velocity_frame_id": self.latest_gt.get("child_frame_id") if self.latest_gt else MISSING, "velocity_convention": "BODY_FLU", "continuity": "ros_sim_session"},
+            "lio": {"position_frame_id": self.latest_lio.get("frame_id") if self.latest_lio else MISSING, "position_convention": "ENU", "velocity_frame_id": self.latest_lio.get("child_frame_id") if self.latest_lio else MISSING, "velocity_convention": "BODY_FLU", "continuity": "producer_epoch_or_reset"},
+        }
         self.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         self._event("finish", reason=reason, failures=summary["failures"])
         self.trace.close()
