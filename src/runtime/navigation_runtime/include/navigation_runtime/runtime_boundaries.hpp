@@ -76,6 +76,40 @@ inline std::optional<std::uint64_t> advanceMonotonicId(
   return std::nullopt;
 }
 
+// Own the watchdog marker for exactly the backend solve scope.  A late scope
+// destructor must not clear a newer solve that has reused the same node.
+class PlannerSolveActivityScope final {
+ public:
+  PlannerSolveActivityScope(
+      std::atomic_int64_t& started_steady_ns,
+      std::atomic_uint64_t& active_generation,
+      const std::uint64_t generation,
+      const std::int64_t started_ns) noexcept
+      : started_steady_ns_(started_steady_ns),
+        active_generation_(active_generation),
+        generation_(generation) {
+    started_steady_ns_.store(started_ns, std::memory_order_release);
+    active_generation_.store(generation_, std::memory_order_release);
+  }
+
+  PlannerSolveActivityScope(const PlannerSolveActivityScope&) = delete;
+  PlannerSolveActivityScope& operator=(const PlannerSolveActivityScope&) = delete;
+
+  ~PlannerSolveActivityScope() {
+    std::uint64_t expected = generation_;
+    if (active_generation_.compare_exchange_strong(
+            expected, 0U, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      started_steady_ns_.store(0, std::memory_order_release);
+    }
+  }
+
+ private:
+  std::atomic_int64_t& started_steady_ns_;
+  std::atomic_uint64_t& active_generation_;
+  std::uint64_t generation_;
+};
+
 inline std::optional<std::chrono::nanoseconds> ratePeriodNanoseconds(
     const double rate_hz) noexcept {
   if (!std::isfinite(rate_hz) || rate_hz <= 0.0) return std::nullopt;

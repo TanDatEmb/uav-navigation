@@ -19008,3 +19008,30 @@ release profiles must not use the former allowance.
   `./build/navigation_execution/test_committed_bundle_store --gtest_color=no`
   and `./build/navigation_runtime/test_planner_fsm --gtest_color=no` with the
   same setup; `git diff --check`.
+
+### 2026-09-05 - Arm planner watchdog marker only for an active backend solve
+
+- **Owner/status:** Navigation runtime; CODE implemented, focused unit
+  verification passed. Component reproduction and SITL remain pending.
+- **Scope:** The watchdog solve generation and steady start timestamp are now
+  owned by a scope-bound marker created only after the complete
+  `PlanningRequest`, activation timing, and reserved execution anchor are
+  valid, immediately before `Planner::plan()`. Its destructor clears only its
+  own generation with an ownership-safe CAS.
+- **Safety impact:** Early request/timing/anchor failures no longer appear as
+  active optimizer work to the watchdog and cannot trigger cancellation for a
+  solve that never started. No numerical threshold, planner gate, recovery
+  policy, or command admission rule changed. Transition timing/latency effects
+  have not been confirmed by runtime traces or SITL.
+- **Evidence:** The isolated `test_planner_fsm` build and direct run passed
+  57/57, including normal disarm and stale-scope preservation of a newer
+  generation. `navigation_runtime_core` built after rebuilding the clean
+  world-model, ROG-Map, mapping, planning, and backend dependency chain into
+  a temporary prefix. No component-level reserve-anchor failure harness is
+  claimed.
+- **Removal condition:** Revisit only if watchdog activity becomes an
+  immutable backend-owned completion token with equivalent stale-generation
+  protection and no pre-solve false activity.
+- **Verification:** Build/run `test_planner_fsm` and build
+  `navigation_runtime_core` in the isolated dependency-aware worktree;
+  `git diff --check`.

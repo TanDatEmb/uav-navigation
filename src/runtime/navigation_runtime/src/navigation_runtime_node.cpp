@@ -3991,8 +3991,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
   // cannot inherit retry metrics from the previous planning generation.
   planner_->resetOptimizationDiagnostics();
-  planner_solve_started_steady_ns_.store(navigation_common::steadyClockNowNanoseconds());
-  active_planner_solve_generation_.store(solve_generation);
   planner_->resetSolveCancellation();
   const auto solve_started_ros_ns = now().nanoseconds();
   const double execution_age_at_solve_ms =
@@ -4068,26 +4066,34 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
           std::chrono::duration<double>(planner_->solveDeadlineSeconds()));
   navigation_planning::PlanningOutcome planning_outcome;
-  try {
-    planning_outcome = planner_->plan(planning_request);
-    if (planning_outcome.outcome ==
-            navigation_planning::CompletePlanningOutcome::kRetainedCommittedBundle) {
-      result = navigation_planning::PlannerStatus::kNoNeed;
-    } else if (navigation_planning::completePlanningSucceeded(
-                   planning_outcome.outcome)) {
-      result = navigation_planning::PlannerStatus::kSuccess;
-    } else {
-      result = navigation_planning::PlannerStatus::kFailed;
+  {
+    // Arm only after the immutable request, activation timing, and execution
+    // anchor have all been accepted.  The scope ends as soon as the backend
+    // returns, so post-solve admission work is not reported as an active solve.
+    const PlannerSolveActivityScope solve_activity(
+        planner_solve_started_steady_ns_, active_planner_solve_generation_,
+        solve_generation, navigation_common::steadyClockNowNanoseconds());
+    try {
+      planning_outcome = planner_->plan(planning_request);
+      if (planning_outcome.outcome ==
+              navigation_planning::CompletePlanningOutcome::kRetainedCommittedBundle) {
+        result = navigation_planning::PlannerStatus::kNoNeed;
+      } else if (navigation_planning::completePlanningSucceeded(
+                     planning_outcome.outcome)) {
+        result = navigation_planning::PlannerStatus::kSuccess;
+      } else {
+        result = navigation_planning::PlannerStatus::kFailed;
+      }
+    } catch (const std::exception& error) {
+      RCLCPP_ERROR(get_logger(), "planner backend planner exception: %s", error.what());
+      result = navigation_planning::PlannerStatus::kEmergency;
+      planning_outcome.outcome =
+          navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+      planning_outcome.failure_stage =
+          navigation_planning::PlanningFailureStage::kInput;
+      planning_outcome.failure_reason =
+          navigation_planning::PlanningFailureReason::kInvalidInput;
     }
-  } catch (const std::exception& error) {
-    RCLCPP_ERROR(get_logger(), "planner backend planner exception: %s", error.what());
-    result = navigation_planning::PlannerStatus::kEmergency;
-    planning_outcome.outcome =
-        navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
-    planning_outcome.failure_stage =
-        navigation_planning::PlanningFailureStage::kInput;
-    planning_outcome.failure_reason =
-        navigation_planning::PlanningFailureReason::kInvalidInput;
   }
   // Test/debug-only observability hook. It is deliberately applied after the
   // real planner call and before admission, so the old committed bundle is
@@ -4170,9 +4176,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       static_cast<int>(planning_outcome.failure_stage), std::memory_order_release);
   last_planning_failure_reason_.store(
       static_cast<int>(planning_outcome.failure_reason), std::memory_order_release);
-  std::uint64_t expected_active_generation = solve_generation;
-  active_planner_solve_generation_.compare_exchange_strong(
-      expected_active_generation, 0U);
   last_planner_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - planner_started).count();
   const bool timed_out =
