@@ -193,28 +193,77 @@ inline std::optional<std::pair<double, double>> segmentAabbInterval(
 inline constexpr double kMaximumCurveDeviationFraction = 0.25;
 inline constexpr std::size_t kMaximumCertificateCellsPerSegment = 4096U;
 
-inline double polynomialAccelerationBound(
-        const geometry_utils::Piece& piece) noexcept {
+inline double polynomialAccelerationBoundOverInterval(
+        const geometry_utils::Piece& piece,
+        const double interval_begin_t,
+        const double interval_end_t) noexcept {
     const double duration = piece.getDuration();
     const auto& coefficients = piece.getCoeffMat();
     const int degree = piece.getDegree();
     if (!std::isfinite(duration) || duration < 0.0 || degree < 2 ||
-        coefficients.rows() != 3 || coefficients.cols() != degree + 1 ||
-        !coefficients.allFinite()) {
+        coefficients.rows() != 3 || coefficients.cols() !=
+            static_cast<Eigen::Index>(degree) + 1 ||
+        !coefficients.allFinite() || !std::isfinite(interval_begin_t) ||
+        !std::isfinite(interval_end_t) || interval_begin_t < 0.0 ||
+        interval_end_t < interval_begin_t || interval_end_t > duration) {
         return std::numeric_limits<double>::infinity();
     }
 
+    // Shift the acceleration polynomial to the local interval
+    // u = t - interval_begin_t.  The triangle inequality over the shifted
+    // coefficients is a conservative bound for every u in
+    // [0, interval_end_t - interval_begin_t], but unlike the whole-piece
+    // bound it does not charge a short initial segment for acceleration that
+    // occurs much later in the same polynomial piece.
+    const int acceleration_degree = degree - 2;
+    const double interval_duration = interval_end_t - interval_begin_t;
+    if (!std::isfinite(interval_duration) || interval_duration < 0.0) {
+        return std::numeric_limits<double>::infinity();
+    }
     double bound = 0.0;
-    for (int column = 0; column <= degree - 2; ++column) {
-        const int power = degree - column;
-        const double coefficient = static_cast<double>(power * (power - 1));
-        const double time_bound = std::pow(duration, power - 2);
-        const double term = coefficient * coefficients.col(column).norm() * time_bound;
+    for (int local_power = 0; local_power <= acceleration_degree; ++local_power) {
+        double shifted_coefficient_bound = 0.0;
+        double binomial = 1.0;
+        for (int global_power = local_power;
+             global_power <= acceleration_degree; ++global_power) {
+            if (global_power > local_power) {
+                const double numerator = static_cast<double>(global_power);
+                const double denominator = static_cast<double>(
+                    global_power - local_power);
+                binomial *= numerator / denominator;
+            }
+            const int coefficient_column = degree - (global_power + 2);
+            const double derivative_power = static_cast<double>(global_power + 2);
+            const double derivative_scale = derivative_power *
+                static_cast<double>(global_power + 1);
+            const int shift_power = global_power - local_power;
+            const double shift_scale = shift_power == 0
+                ? 1.0 : std::pow(interval_begin_t, shift_power);
+            const double term = derivative_scale *
+                coefficients.col(coefficient_column).norm() * binomial *
+                shift_scale;
+            if (!std::isfinite(term)) {
+                return std::numeric_limits<double>::infinity();
+            }
+            shifted_coefficient_bound += term;
+            if (!std::isfinite(shifted_coefficient_bound)) {
+                return std::numeric_limits<double>::infinity();
+            }
+        }
+        const double interval_scale = local_power == 0
+            ? 1.0 : std::pow(interval_duration, local_power);
+        const double term = shifted_coefficient_bound * interval_scale;
         if (!std::isfinite(term)) return std::numeric_limits<double>::infinity();
         bound += term;
         if (!std::isfinite(bound)) return std::numeric_limits<double>::infinity();
     }
     return bound;
+}
+
+inline double polynomialAccelerationBound(
+        const geometry_utils::Piece& piece) noexcept {
+    return polynomialAccelerationBoundOverInterval(
+        piece, 0.0, piece.getDuration());
 }
 
 inline bool certificateTubeIsSafe(
@@ -585,11 +634,6 @@ inline SweptValidationResult validateExecutableCandidate(
         }
         const int piece_index = piece_location->index;
         const auto& piece = candidate.position[piece_index];
-        const double acceleration_bound = polynomialAccelerationBound(piece);
-        if (!std::isfinite(acceleration_bound)) {
-            result.failure = SweptValidationResult::Failure::kNonFiniteTrajectory;
-            return result;
-        }
         const double speed_norm = candidate.position.getVel(t).norm();
         if (!std::isfinite(speed_norm)) {
             result.failure = SweptValidationResult::Failure::kNonFiniteTrajectory;
@@ -619,6 +663,14 @@ inline SweptValidationResult validateExecutableCandidate(
             next = candidate.position.getPos(next_t);
         }
         double segment_dt = next_t - t;
+        const double local_segment_end_t = std::clamp(
+            piece_location->local_time + segment_dt, 0.0, piece.getDuration());
+        double acceleration_bound = polynomialAccelerationBoundOverInterval(
+            piece, piece_location->local_time, local_segment_end_t);
+        if (!std::isfinite(acceleration_bound)) {
+            result.failure = SweptValidationResult::Failure::kNonFiniteTrajectory;
+            return result;
+        }
         double curve_deviation_bound =
             acceleration_bound * segment_dt * segment_dt / 8.0;
         while (std::isfinite(curve_deviation_bound) &&
@@ -634,6 +686,10 @@ inline SweptValidationResult validateExecutableCandidate(
             }
             next = candidate.position.getPos(next_t);
             segment_dt = next_t - t;
+            const double local_end_t = std::clamp(
+                piece_location->local_time + segment_dt, 0.0, piece.getDuration());
+            acceleration_bound = polynomialAccelerationBoundOverInterval(
+                piece, piece_location->local_time, local_end_t);
             curve_deviation_bound =
                 acceleration_bound * segment_dt * segment_dt / 8.0;
         }

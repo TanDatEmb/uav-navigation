@@ -224,13 +224,16 @@ ActualMappingFixture actualMappingWorldSnapshot() {
   // One raycast call coalesces repeated voxel operations. Advance the real
   // MappingActor through successive timestamps so its probability map reaches
   // sensor-free evidence while the measured body cell remains UNKNOWN.
+  // Keep the ray on a voxel-centre-aligned y coordinate and end the free-space
+  // witness beyond the mission goal: the raycaster excludes its endpoint cell,
+  // while the goal at x=1.0 must still be known-free.
   for (std::int64_t iteration = 1; iteration <= 20; ++iteration) {
     const auto stamp_ns = iteration * 1'000'000'000LL;
     auto cloud = std::make_unique<navigation_mapping::PointCloud>();
-    cloud->push_back(navigation_mapping::PointXYZI{4.0F, 0.0F, 1.5F, 0.0F});
+    cloud->push_back(navigation_mapping::PointXYZI{4.0F, 0.1F, 1.5F, 0.0F});
     auto free_endpoints = std::make_unique<navigation_mapping::PointCloud>();
     free_endpoints->push_back(
-        navigation_mapping::PointXYZI{1.0F, 0.0F, 1.5F, 0.0F});
+        navigation_mapping::PointXYZI{1.2F, 0.1F, 1.5F, 0.0F});
     nav_msgs::msg::Odometry odometry;
     odometry.header.stamp.sec = static_cast<std::int32_t>(iteration);
     odometry.header.stamp.nanosec = 0U;
@@ -242,7 +245,7 @@ ActualMappingFixture actualMappingWorldSnapshot() {
         std::move(cloud), std::move(odometry), 1U,
         static_cast<std::uint64_t>(iteration), stamp_ns, 0};
     observation.free_space_endpoints = std::move(free_endpoints);
-    observation.sensor_origin_world = Eigen::Vector3d{0.35, 0.0, 1.5};
+    observation.sensor_origin_world = Eigen::Vector3d{0.1, 0.1, 1.5};
     observation.sensor_origin_localization_epoch = 1U;
     observation.sensor_origin_stamp_ns = stamp_ns;
     const auto update = fixture.actor->process(observation);
@@ -251,7 +254,7 @@ ActualMappingFixture actualMappingWorldSnapshot() {
   if (!fixture.snapshot) return fixture;
 
   const auto support = navigation_mapping::makeX500Mid360CurrentBodySupport(
-      Eigen::Vector3d{0.01, 0.01, 1.5}, Eigen::Quaterniond::Identity(),
+      Eigen::Vector3d{0.1, 0.1, 1.5}, Eigen::Quaterniond::Identity(),
       fixture.snapshot->identity(), "lio_odom", "base_link", 1U,
       kStampNs);
   if (!support.valid) return fixture;
@@ -264,17 +267,17 @@ ActualMappingFixture actualMappingWorldSnapshot() {
   mission.planning.requested_cruise_speed_mps = 1.0;
   mission.waypoints = {
       navigation_mission::MissionWaypoint{
-          "start", Eigen::Vector3d{0.01, 0.01, 1.5}, 0.2, 0.0,
+          "start", Eigen::Vector3d{0.1, 0.1, 1.5}, 0.2, 0.0,
           navigation_mission::MissionWaypoint::Behavior::PassThrough},
       navigation_mission::MissionWaypoint{
-          "goal", Eigen::Vector3d{1.0, 0.0, 1.5}, 0.3, 0.0,
+          "goal", Eigen::Vector3d{1.0, 0.1, 1.5}, 0.3, 0.0,
           navigation_mission::MissionWaypoint::Behavior::Stop},
   };
   navigation_mission::RouteProgress progress(mission);
-  if (!progress.update(Eigen::Vector3d{0.01, 0.01, 1.5}).valid) return fixture;
+  if (!progress.update(Eigen::Vector3d{0.1, 0.1, 1.5}).valid) return fixture;
   fixture.route = progress.snapshot(mission.id, mission.frame, 1U, 17U, 1U);
 
-  fixture.start_state.position_world = Eigen::Vector3d{0.01, 0.01, 1.5};
+  fixture.start_state.position_world = Eigen::Vector3d{0.1, 0.1, 1.5};
   fixture.start_state.orientation_world_body = Eigen::Quaterniond::Identity();
   fixture.start_state.source_stamp_ns = kStampNs;
   fixture.start_state.receive_stamp_ns = kStampNs;
@@ -494,41 +497,41 @@ TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {
                 navigation_world_model::GridLayer::kInflated),
             navigation_world_model::CellState::kUnknown);
   ASSERT_TRUE(fixture.body_support->containsSegment(
-      fixture.start_state.position_world, Eigen::Vector3d{0.11, 0.01, 1.5},
+      fixture.start_state.position_world, Eigen::Vector3d{0.11, 0.1, 1.5},
       fixture.snapshot->identity(), fixture.snapshot->identity().observation_stamp_ns));
   ASSERT_NEAR(fixture.body_support->contiguousBodyPrefixFraction(
-      fixture.start_state.position_world, Eigen::Vector3d{0.11, 0.01, 1.5}),
+      fixture.start_state.position_world, Eigen::Vector3d{0.11, 0.1, 1.5}),
       1.0, 1.0e-12);
   EXPECT_EQ(fixture.snapshot->classify(
                 Eigen::Vector3d{0.1, 0.1, 1.5},
                 navigation_world_model::GridLayer::kEvidence),
             navigation_world_model::CellState::kUnknown);
   ASSERT_TRUE(fixture.snapshot->isSegmentTraversableWithCurrentBodySupport(
-      fixture.start_state.position_world, Eigen::Vector3d{0.11, 0.01, 1.5},
+      fixture.start_state.position_world, Eigen::Vector3d{0.11, 0.1, 1.5},
       navigation_world_model::GridLayer::kEvidence,
       navigation_world_model::UnknownPolicy::kRequireKnownFree,
       fixture.body_support));
   ASSERT_TRUE(fixture.snapshot->isSegmentTraversable(
-      Eigen::Vector3d{0.5, 0.0, 1.5}, Eigen::Vector3d{0.5, 0.0, 1.5},
+      Eigen::Vector3d{0.5, 0.1, 1.5}, Eigen::Vector3d{0.5, 0.1, 1.5},
       navigation_world_model::GridLayer::kEvidence,
       navigation_world_model::UnknownPolicy::kRequireKnownFree));
   EXPECT_EQ(fixture.snapshot->classify(
-                Eigen::Vector3d{0.5, 0.0, 1.5},
+                Eigen::Vector3d{0.5, 0.1, 1.5},
                 navigation_world_model::GridLayer::kInflated),
             navigation_world_model::CellState::kKnownFree);
   ASSERT_TRUE(fixture.snapshot->isSegmentTraversable(
-      Eigen::Vector3d{0.5, 0.0, 1.5}, Eigen::Vector3d{0.5, 0.0, 1.5},
+      Eigen::Vector3d{0.5, 0.1, 1.5}, Eigen::Vector3d{0.5, 0.1, 1.5},
       navigation_world_model::GridLayer::kInflated,
       navigation_world_model::UnknownPolicy::kRequireKnownFree));
   ASSERT_TRUE(fixture.snapshot->isSegmentTraversable(
-      Eigen::Vector3d{0.35, 0.0, 1.5}, Eigen::Vector3d{1.0, 0.0, 1.5},
+      Eigen::Vector3d{0.35, 0.1, 1.5}, Eigen::Vector3d{1.0, 0.1, 1.5},
       navigation_world_model::GridLayer::kInflated,
       navigation_world_model::UnknownPolicy::kRequireKnownFree));
   ASSERT_TRUE(fixture.body_support->containsSegment(
-      fixture.start_state.position_world, Eigen::Vector3d{0.1, 0.0, 1.5},
+      fixture.start_state.position_world, Eigen::Vector3d{0.1, 0.1, 1.5},
       fixture.snapshot->identity(), fixture.snapshot->identity().observation_stamp_ns));
 
-  double ros_time_s = 1.0;
+  double ros_time_s = 20.0;
   TestCommitAuthorizer authorizer(fixture.snapshot);
   navigation_planning_backend::PlannerFacade facade(
       PLANNER_FACADE_CONFIG_PATH, fixture.snapshot, std::nullopt,
@@ -545,7 +548,12 @@ TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {
                               << ":" << static_cast<int>(outcome.failure_reason);
   ASSERT_TRUE(navigation_planning::completePlanningSucceeded(outcome.outcome));
   ASSERT_TRUE(outcome.candidate.has_value());
-  ros_time_s = 1.2;
+  // plan() leaves the candidate staged until execution accepts its generation.
+  // Validate after activation and after the trajectory has entered the
+  // sensor-known-free corridor; committed-future validation receives no body
+  // exception.
+  facade.onExecutionTimelineActivated(outcome.candidate->bundle_generation);
+  ros_time_s = 22.0;
   EXPECT_TRUE(facade.validateCommittedTrajectory(
       fixture.snapshot, ros_time_s).valid);
 

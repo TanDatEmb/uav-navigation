@@ -1840,6 +1840,38 @@ TEST(PlannerTrajectory, InitialBodyAdmissionCertifiesFullCandidateBeforeAdvancin
   EXPECT_FALSE(recertified.valid);
 }
 
+TEST(PlannerTrajectory, InitialBodyAdmissionUsesLocalCurveCertificate) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  // The polynomial is stationary at the measured start but accelerates later
+  // in the same piece. A whole-piece acceleration bound would charge the
+  // initial 50 ms segment for that future curvature and erode the physical
+  // body OBB away entirely.
+  position_coefficients(0, 0) = 3.2;
+  position_coefficients(0, 7) = -0.1;
+  candidate.position = geometry_utils::Trajectory(
+      {1.0}, {position_coefficients});
+  candidate.yaw = stationaryTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {{0.0, 1.0,
+      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  BodyHandoverWorld world;
+  const auto support = testBodySupport(
+      navigation_world_model::Point3{-0.1, 0.0, 0.0},
+      navigation_world_model::Point3{0.2, 0.2, 0.025});
+  ASSERT_TRUE(support);
+  EXPECT_GT(navigation_planning_backend::polynomialAccelerationBound(
+      candidate.position[0]), 100.0);
+  EXPECT_LT(navigation_planning_backend::polynomialAccelerationBoundOverInterval(
+      candidate.position[0], 0.0, 0.05), 1.0);
+
+  const auto validation = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, support, true);
+  EXPECT_TRUE(validation.valid);
+}
+
 TEST(PlannerTrajectory, BodyAdmissionSurvivesKnownFreeCellInsideInitialBody) {
   BodyPrefixCertificateWorld world;
   const auto support = testBodySupport(
