@@ -1094,6 +1094,152 @@ double knownFreeGuideSupport(
         return route_yaw_reference_.valid;
     }
 
+    std::optional<bool> Planner::tryStageMeasuredTerminalStopHold(
+            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline) {
+        if (!terminal_stop_required_ || !route_snapshot_.has_value() ||
+            route_snapshot_->active_waypoint_index >= route_snapshot_->waypoints.size() ||
+            !map_ptr_ || !solve_state_.rcv || !solve_state_.p.allFinite() ||
+            !solve_state_.v.allFinite() || !std::isfinite(solve_state_.v.norm()) ||
+            solve_state_.v.norm() >
+                navigation_planning::PlanningTimingContract::kStationarySpeedMps + 1.0e-9 ||
+            !goal_p.allFinite() || !current_body_support_matches_start_ ||
+            !current_body_support_admission_pending_ || !current_body_support_) {
+            return std::nullopt;
+        }
+
+        const auto& waypoint = route_snapshot_->waypoints[
+            route_snapshot_->active_waypoint_index];
+        if (waypoint.behavior != navigation_mission::MissionWaypoint::Behavior::Stop ||
+            !waypoint.position_enu.allFinite() ||
+            !std::isfinite(waypoint.acceptance_radius_m) ||
+            waypoint.acceptance_radius_m <= 0.0 ||
+            (goal_p.cast<double>() - waypoint.position_enu).norm() > 1.0e-6) {
+            return std::nullopt;
+        }
+
+        const auto world_identity = map_ptr_->identity();
+        const auto measured_cell = map_ptr_->classify(
+            solve_state_.p, navigation_world_model::GridLayer::kInflated);
+        const bool measured_unknown =
+            measured_cell == navigation_world_model::CellState::kUnknown;
+        const bool measured_body_supported =
+            current_body_support_->matchesWorldSnapshot(
+                world_identity, current_body_support_->source_stamp_ns) &&
+            current_body_support_->contains(
+                solve_state_.p, world_identity,
+                current_body_support_->source_stamp_ns);
+        const double measured_goal_distance =
+            (solve_state_.p - waypoint.position_enu).norm();
+        if (!measured_unknown || !measured_body_supported ||
+            !std::isfinite(measured_goal_distance) ||
+            measured_goal_distance > waypoint.acceptance_radius_m + 1.0e-9 ||
+            !map_ptr_->contains(solve_state_.p)) {
+            return std::nullopt;
+        }
+
+        // The stop seed is derived from the actual measured boundary.  No
+        // endpoint or duration is relaxed for the UNKNOWN case; if stopping
+        // would leave the physical support, the ordinary authorization pass
+        // below rejects the candidate and this request fails closed.
+        const auto initial_state = makeCommandBoundaryPVAJ(
+            solve_state_, solve_acceleration_estimated_, solve_jerk_estimated_);
+        const auto seed = makeBackupBrakingSeed(
+            0.0, initial_state, cfg_.exp_traj_cfg.max_vel,
+            cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
+            cfg_.sample_traj_dt_s, 0.0);
+        if (!seed.feasible || !std::isfinite(seed.duration_s) ||
+            seed.duration_s <= 0.0 || solve_deadline.expired(
+                planner_context_->getSimTime()) || solve_deadline.steadyExpired()) {
+            latest_replan.setRetCode(PLANNER_EXP_FAILED);
+            planner_context_->warn(
+                " -- [planner] measured terminal STOP hold has no feasible stop seed "
+                "speed={} duration={}",
+                solve_state_.v.norm(), seed.duration_s);
+            return false;
+        }
+
+        double stop_duration_s = seed.duration_s;
+        Trajectory position_trajectory;
+        Trajectory yaw_trajectory;
+        traj_opt::TrajectoryDynamicReport dynamic_report;
+        bool dynamic_certificate_valid = false;
+        for (int attempt = 0; attempt < 24; ++attempt) {
+            position_trajectory = Trajectory{};
+            position_trajectory.emplace_back(
+                minimumSnapStopPiece(initial_state, stop_duration_s));
+            const double start_wall_time_s = planner_context_->getSimTime();
+            position_trajectory.start_WT = start_wall_time_s;
+
+            StatePVAJ yaw_state = StatePVAJ::Zero();
+            yaw_state(0, 0) = solve_state_.yaw;
+            yaw_trajectory = Trajectory{};
+            yaw_trajectory.emplace_back(
+                minimumSnapStopPiece(yaw_state, stop_duration_s));
+            yaw_trajectory.start_WT = start_wall_time_s;
+
+            const double yaw_rate = yaw_trajectory.getMaxVelRate();
+            const double yaw_acceleration = yaw_trajectory.getMaxAccRate();
+            if (std::isfinite(yaw_rate) &&
+                yaw_rate <= cfg_.yaw_rate_max_rad_s + 1.0e-6 &&
+                std::isfinite(yaw_acceleration) &&
+                yaw_acceleration <= cfg_.yaw_acceleration_max_rad_s2 + 1.0e-6 &&
+                traj_opt::trajectorySatisfiesFlatnessEnvelope(
+                    position_trajectory, cfg_.exp_traj_cfg, &dynamic_report,
+                    0.005, &yaw_trajectory)) {
+                dynamic_certificate_valid = true;
+                break;
+            }
+            stop_duration_s *= 1.15;
+            if (!std::isfinite(stop_duration_s) || stop_duration_s <= 0.0) break;
+        }
+        if (!dynamic_certificate_valid) {
+            latest_replan.setRetCode(PLANNER_EXP_FAILED);
+            planner_context_->warn(
+                " -- [planner] measured terminal STOP hold failed dynamic certificate "
+                "speed={} duration={} body_rate={} thrust=[{},{}]",
+                solve_state_.v.norm(), stop_duration_s,
+                dynamic_report.maximum_body_rate_rad_s,
+                dynamic_report.minimum_thrust_n, dynamic_report.maximum_thrust_n);
+            return false;
+        }
+
+        ExpTraj hold_exp;
+        hold_exp.setTrajectory(
+            position_trajectory.start_WT, position_trajectory,
+            yaw_trajectory);
+        hold_exp.setGoalConnectedFlag(true);
+        hold_exp.setPreserveIncomingRouteTangentFlag(false);
+        if (!hold_exp.setRequiredMainPrefixDuration(0.0)) {
+            latest_replan.setRetCode(PLANNER_CANDIDATE_REJECTED);
+            return false;
+        }
+
+        auto candidate = CmdTraj::buildCandidate(
+            hold_exp, nullptr, BackupDisposition::FINISH, true);
+        if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            latest_replan.setRetCode(PLANNER_CANDIDATE_REJECTED);
+            planner_context_->warn(
+                " -- [planner] measured terminal STOP hold rejected by final "
+                "world/route authorization");
+            return false;
+        }
+        if (!stageCommandHistoryForCandidate(hold_exp)) {
+            discardCommandCandidate();
+            latest_replan.setRetCode(PLANNER_CANDIDATE_REJECTED);
+            return false;
+        }
+        candidate_terminal_stop_active_ = true;
+        baseline_candidate_ready_for_refinement_ = true;
+        latest_replan.setExpYawTraj(yaw_trajectory);
+        latest_replan.setExpTraj(position_trajectory);
+        latest_replan.setRetCode(PLANNER_SUCCESS_NO_BACKUP);
+        planner_context_->info(
+            " -- [planner] staged measured terminal STOP hold inside acceptance "
+            "distance={} radius={} duration={} body_support=1",
+            measured_goal_distance, waypoint.acceptance_radius_m, stop_duration_s);
+        return true;
+    }
+
     RET_CODE
     Planner::planInitialFromStoppedState(const Vec3f &goal_p,
                                          const double &goal_yaw,
@@ -1185,6 +1331,12 @@ double knownFreeGuideSupport(
                     measured_start_is_traversable ? 1 : 0);
         }
         latest_replan.setLocalStartP(local_star_pt);
+
+        const auto measured_terminal_hold =
+            tryStageMeasuredTerminalStopHold(goal_p, solve_deadline);
+        if (measured_terminal_hold.has_value()) {
+            return *measured_terminal_hold ? SUCCESS : FAILED;
+        }
 
         /// 2) Generate Exp traj
         ExpTraj exp_traj_info;

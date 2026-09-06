@@ -87,6 +87,25 @@ struct ImmutableRouteSnapshot {
           navigation_world_model::kGoalConnectionToleranceM + 1.0e-6;
 }
 
+// The same terminal boundary viewed after MissionController has advanced to
+// the STOP successor.  This is used only to retain the predecessor's finite
+// terminal endpoint while the successor identity is being published; it does
+// not authorize a new trajectory or extend the predecessor lease.
+[[nodiscard]] inline bool stopHasCoincidentPassThroughPredecessor(
+    const ImmutableRouteSnapshot& route) noexcept {
+  if (route.active_waypoint_index == 0U ||
+      route.active_waypoint_index >= route.waypoints.size()) {
+    return false;
+  }
+  const auto& previous = route.waypoints[route.active_waypoint_index - 1U];
+  const auto& active = route.waypoints[route.active_waypoint_index];
+  return previous.behavior == MissionWaypoint::Behavior::PassThrough &&
+      active.behavior == MissionWaypoint::Behavior::Stop &&
+      previous.position_enu.allFinite() && active.position_enu.allFinite() &&
+      (active.position_enu - previous.position_enu).norm() <=
+          navigation_world_model::kGoalConnectionToleranceM + 1.0e-6;
+}
+
 // Pure route geometry/progress owner shared by mission and planner-facing
 // adapters. It never accepts a waypoint; acceptance remains a measured-state
 // policy owned by MissionController.

@@ -180,6 +180,17 @@ TEST(NavigationCommandContract, CompletedMainTerminalCommandCannotBridgeWaypoint
   EXPECT_TRUE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(command));
 }
 
+TEST(NavigationCommandContract, CompletedMainTerminalCommandBridgesOnlyCoincidentStopSuccessor) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+
+  EXPECT_TRUE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(
+      command, true));
+  EXPECT_FALSE(px4_navigation_external_mode::commandMayBeRetainedAcrossWaypointHandoff(
+      command, false));
+}
+
 TEST(NavigationCommandContract, CompletedBackupCannotBridgeWaypointHandoff) {
   navigation_contracts::msg::NavigationCommand command;
   command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
@@ -213,12 +224,33 @@ TEST(NavigationCommandContract, PriorPassThroughMainCommandBridgesUntilSuccessor
   command.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
   command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
 
-  EXPECT_TRUE(px4_navigation_external_mode::priorPassThroughMainCommandIdentityMatches(
+  EXPECT_TRUE(px4_navigation_external_mode::priorPassThroughCommandIdentityMatches(
       command, "mission", 1U, 2U, true));
-  EXPECT_FALSE(px4_navigation_external_mode::priorPassThroughMainCommandIdentityMatches(
+  EXPECT_FALSE(px4_navigation_external_mode::priorPassThroughCommandIdentityMatches(
       command, "mission", 1U, 2U, false));
   command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
-  EXPECT_FALSE(px4_navigation_external_mode::priorPassThroughMainCommandIdentityMatches(
+  EXPECT_FALSE(px4_navigation_external_mode::priorPassThroughCommandIdentityMatches(
+      command, "mission", 1U, 2U, true));
+  EXPECT_TRUE(px4_navigation_external_mode::priorPassThroughCommandIdentityMatches(
+      command, "mission", 1U, 2U, true, true));
+}
+
+TEST(NavigationCommandContract, PriorPassThroughBackupSuffixBridgesUntilSuccessorActivation) {
+  navigation_contracts::msg::NavigationCommand command;
+  command.mission_id = "mission";
+  command.waypoint_index = 0U;
+  command.request_id = 1U;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+
+  EXPECT_TRUE(px4_navigation_external_mode::priorPassThroughCommandIdentityMatches(
+      command, "mission", 1U, 2U, true));
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
+  EXPECT_FALSE(px4_navigation_external_mode::priorPassThroughCommandIdentityMatches(
+      command, "mission", 1U, 2U, true));
+  command.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  command.role = navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY;
+  EXPECT_FALSE(px4_navigation_external_mode::priorPassThroughCommandIdentityMatches(
       command, "mission", 1U, 2U, true));
 }
 

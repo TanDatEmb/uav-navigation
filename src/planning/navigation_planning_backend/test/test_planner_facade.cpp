@@ -3,6 +3,7 @@
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/mapping_observation.hpp>
 #include <planner_core/route_yaw_reference.hpp>
+#include <navigation_planning/planning_timing.hpp>
 #include <navigation_world_model/continuous_clearance.hpp>
 
 #include <algorithm>
@@ -316,11 +317,11 @@ navigation_planning::PlanningRequest productionRequest(
 
 navigation_planning::PlanningRequest plannerBodySupportRequest(
     const navigation_world_model::WorldModelViewPtr& world,
-    const navigation_world_model::CurrentBodySupportPtr& body_support) {
+    const navigation_world_model::CurrentBodySupportPtr& body_support,
+    const Eigen::Vector3d& goal = Eigen::Vector3d{5.0, 0.0, 2.0}) {
   constexpr std::int64_t kStampNs = 100;
   constexpr std::uint64_t kRequestId = 31U;
   const Eigen::Vector3d start{0.0, 0.0, 2.0};
-  const Eigen::Vector3d goal{5.0, 0.0, 2.0};
 
   navigation_mission::Mission mission;
   mission.id = "current-body-planner-level";
@@ -623,6 +624,46 @@ TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
       plannerBodySupportRequest(blocked_world, blocked_support));
   EXPECT_FALSE(blocked.candidate.has_value());
   EXPECT_FALSE(navigation_planning::completePlanningSucceeded(blocked.outcome));
+}
+
+TEST(PlannerFacade,
+     StagesTerminalStopHoldWhenUnknownMeasuredStateIsAlreadyAccepted) {
+  auto world = std::make_shared<PlannerBodySupportWorld>();
+  const auto support = plannerBodySupport(world->identity());
+  ASSERT_TRUE(support);
+
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      [] { return 10.0; });
+  const auto request = plannerBodySupportRequest(
+      world, support, Eigen::Vector3d{0.01, 0.0, 2.0});
+  ASSERT_TRUE(request.valid());
+
+  const auto outcome = facade.plan(request);
+  ASSERT_TRUE(outcome.valid())
+      << static_cast<int>(outcome.failure_stage) << ":"
+      << static_cast<int>(outcome.failure_reason);
+  ASSERT_TRUE(outcome.candidate.has_value());
+  EXPECT_TRUE(navigation_planning::completePlanningSucceeded(outcome.outcome));
+  EXPECT_TRUE(outcome.candidate->terminal_stop);
+
+  navigation_planning::TrajectoryPoint initial;
+  ASSERT_TRUE(outcome.candidate->evaluator(
+      outcome.candidate->declared_start_ns, initial));
+  EXPECT_EQ(initial.role, navigation_planning::CandidateRole::kMain);
+  EXPECT_LE((initial.position_world - Eigen::Vector3d{0.0, 0.0, 2.0}).norm(),
+            1.0e-9);
+  EXPECT_LE(initial.velocity_world.norm(),
+            navigation_planning::PlanningTimingContract::kStationarySpeedMps +
+                1.0e-9);
+
+  navigation_planning::TrajectoryPoint terminal;
+  ASSERT_TRUE(outcome.candidate->evaluator(
+      outcome.candidate->declared_end_ns, terminal));
+  EXPECT_LE((terminal.position_world - Eigen::Vector3d{0.01, 0.0, 2.0}).norm(),
+            0.3 + 1.0e-9);
+  EXPECT_NEAR(terminal.velocity_world.norm(), 0.0, 1.0e-9);
 }
 
 TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {

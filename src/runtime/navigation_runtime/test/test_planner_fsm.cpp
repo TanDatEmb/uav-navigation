@@ -912,6 +912,35 @@ TEST(PlannerFsm, RetainsVisibleMainOnlyTrajectoryAfterTransientReplanFailure) {
       false, 1.395, 1.395, 1.395, 0.187, 0.75, true));
 }
 
+TEST(PlannerFsm, RetainsPredecessorAcrossDesiredWaypointEpochAdvance) {
+  // The desired successor is already current, but the predecessor remains the
+  // physical execution owner until its certified successor takes over.
+  EXPECT_TRUE(retainedCommandMatchesExecutionIdentity(
+      true, true, 4U, 4U, 7U, 7U, 10U, true, 10U, true));
+
+  EXPECT_FALSE(retainedCommandMatchesExecutionIdentity(
+      true, true, 4U, 4U, 7U, 8U, 10U, true, 10U, true));
+  EXPECT_FALSE(retainedCommandMatchesExecutionIdentity(
+      true, true, 4U, 4U, 7U, 7U, 10U, true, 11U, true));
+  EXPECT_FALSE(retainedCommandMatchesExecutionIdentity(
+      true, true, 4U, 4U, 7U, 7U, 10U, true, 10U, false));
+  EXPECT_FALSE(retainedCommandMatchesExecutionIdentity(
+      true, true, 4U, 5U, 7U, 7U, 10U, true, 10U, true));
+}
+
+TEST(PlannerFsm, TransfersOnlyAValidatedCoincidentTerminalSuccessorHold) {
+  EXPECT_TRUE(terminalSuccessorHoldMayTransfer(
+      true, true, true, true, true, true, true, true, true, true, true));
+
+  for (const auto index : {0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U}) {
+    bool facts[] = {true, true, true, true, true, true, true, true, true, true, true};
+    facts[index] = false;
+    EXPECT_FALSE(terminalSuccessorHoldMayTransfer(
+        facts[0], facts[1], facts[2], facts[3], facts[4], facts[5], facts[6],
+        facts[7], facts[8], facts[9], facts[10])) << index;
+  }
+}
+
 TEST(PlannerFsm, PassThroughHotRetargetsFromCertifiedFiniteCommand) {
   EXPECT_TRUE(canHotRetargetAtWaypointTransition(false, true, true, false, false));
   EXPECT_FALSE(canHotRetargetAtWaypointTransition(true, true, true, false, false));

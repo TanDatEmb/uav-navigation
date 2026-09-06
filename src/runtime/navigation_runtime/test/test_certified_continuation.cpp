@@ -25,7 +25,7 @@ CertifiedMainContinuationBoundaryFacts validFacts() {
   facts.declared_start_ns = 1'000'000'000LL;
   facts.declared_end_ns = 3'000'000'000LL;
   facts.main_interval_begin_ns = 0LL;
-  facts.main_interval_end_ns = 2'000'000'000LL;
+  facts.main_interval_end_ns = 2'500'000'000LL;
   return facts;
 }
 
@@ -45,6 +45,28 @@ TEST(CertifiedContinuation, RejectsBoundarySampledInBackup) {
   auto facts = validFacts();
   facts.boundary_role = navigation_planning::CandidateRole::kBackup;
   EXPECT_FALSE(certifiedMainContinuationBoundaryEligible(facts));
+}
+
+TEST(CertifiedContinuation, RejectsBoundaryWithoutFullMainHandoffReserve) {
+  auto facts = validFacts();
+  facts.main_interval_end_ns = 1'299'999'999LL;
+  EXPECT_FALSE(certifiedMainContinuationBoundaryEligible(facts));
+}
+
+TEST(CertifiedContinuation, HandoffReadinessUsesMainExpiryNotBoundaryOrdering) {
+  const CertifiedMainContinuationWindow ready{
+      1'000'000'000LL, 2'000'000'000LL};
+  EXPECT_TRUE(certifiedMainContinuationHandoffReady(ready, 1'050'000'000LL));
+
+  const CertifiedMainContinuationWindow insufficient{
+      1'000'000'000LL, 1'400'000'000LL};
+  EXPECT_FALSE(certifiedMainContinuationHandoffReady(
+      insufficient, 1'050'000'000LL));
+
+  const CertifiedMainContinuationWindow boundary_already_passed{
+      1'000'000'000LL, 1'900'000'000LL};
+  EXPECT_TRUE(certifiedMainContinuationHandoffReady(
+      boundary_already_passed, 1'050'000'000LL));
 }
 
 TEST(CertifiedContinuation, RejectsTerminalAndCoincidentPassThrough) {

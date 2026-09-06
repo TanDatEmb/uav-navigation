@@ -19413,3 +19413,117 @@ release profiles must not use the former allowance.
   immutable external artifact store with equivalent provenance and retention.
 - **Verification:** `python3 -m pytest -q tools/tests/test_data.py` and the full
   Python suite; `git diff --check`.
+
+### 2026-09-06 - Certify an UNKNOWN measured terminal STOP with a bounded hold
+
+- **Owner/status:** Planning backend; `IMPLEMENTED`, focused and planning
+  backend CTest passed. No SITL or flight-acceptance claim.
+- **Scope:** When a stopped measured start is UNKNOWN but already lies inside
+  the active mission STOP acceptance ball and its request-local physical
+  `CurrentBodySupport` is valid, the planner may stage a new terminal-stop
+  hold generated from the measured PVAJ boundary. The candidate remains under
+  the existing request identity, dynamic/yaw checks, route checks, and final
+  immutable-world validator; committed-future replanning is unchanged.
+- **Safety impact:** This avoids unnecessary motion toward an already accepted
+  terminal waypoint. The hold never converts UNKNOWN to FREE, never overrides
+  OCCUPIED/OUT_OF_MAP/UNDEFINED, and is rejected if its swept trajectory cannot
+  remain inside the initial physical body support. UNKNOWN traversal outside
+  that support remains fail-closed.
+- **Evidence:** `PlannerFacade.StagesTerminalStopHoldWhenUnknownMeasuredStateIsAlreadyAccepted`
+  proves the semantic candidate and zero terminal velocity. The planning
+  backend CTest passed 8/8 after the change; targeted T1 must be rerun before
+  SITL qualification is considered.
+- **Removal condition:** Revisit if the execution contract gains an explicit
+  zero-motion terminal-hold transaction that carries the same world, request,
+  identity, and physical-support certificates.
+- **Verification:** `ctest --test-dir build/navigation_planning_backend
+  --output-on-failure`; `git diff --check`; rerun the sequential T1-T4 runtime
+  qualification gates after rebuilding the canonical Release workspace.
+
+### 2026-09-06 - Retain the certified predecessor across a PASS_THROUGH handoff
+
+- **Owner/status:** Runtime execution lifecycle; `IMPLEMENTED`, focused FSM
+  regression added. No SITL or flight-acceptance claim.
+- **Scope:** During a same-mission PASS_THROUGH waypoint transition, retained
+  command validation compares the still-executing predecessor bundle with its
+  immutable execution identity (`command_goal_epoch_`, predecessor request,
+  localization epoch), while the desired successor keeps its newer active goal
+  epoch. The predecessor remains valid only under its existing bundle lease and
+  world recertification; a successor commit still owns the handoff.
+- **Safety impact:** Prevents a valid predecessor MAIN+BACKUP command from being
+  discarded solely because the desired waypoint epoch advanced. It does not
+  relabel or extend the predecessor, does not retain across missions, and still
+  fail-closes on stale identity, invalid world, expired lease, tracking error,
+  or missing suffix.
+- **Evidence:** `PlannerFsm.RetainsPredecessorAcrossDesiredWaypointEpochAdvance`
+  covers matching and mismatched execution identities. The targeted T1 runtime
+  artifact identified the prior mismatch: predecessor bundle generation 2 was
+  still the active physical command while desired waypoint 3 used the next goal
+  epoch, causing `backup=0` despite a finite certified suffix.
+- **Removal condition:** Revisit if the execution timeline gains an explicit
+  predecessor-to-successor identity bridge that makes this validation local to
+  the store rather than the runtime retention path.
+- **Verification:** `ctest --test-dir build/navigation_runtime --output-on-failure`;
+  `git diff --check`; rerun canonical Release build and sequential T1-T4 gates.
+
+### 2026-09-06 - Keep a certified BACKUP suffix across a PASS_THROUGH handoff
+
+- **Owner/status:** PX4 External Mode command admission; `IMPLEMENTED`, focused
+  identity regression passed. No SITL or flight-acceptance claim.
+- **Scope:** When MissionController has advanced to the immediately following
+  PASS_THROUGH waypoint, an unfinished command from the preceding waypoint may
+  remain admissible while the successor timeline activates. This includes the
+  same bundle's validated `BACKUP` suffix when it becomes the sampled role
+  after the handoff callback; the command retains its original mission,
+  waypoint, and request identity.
+- **Safety impact:** Prevents a valid finite safety suffix from being rejected
+  solely because the desired waypoint advanced. The bridge remains limited to
+  the adjacent same-mission checkpoint, `READY` commands, and MAIN/BACKUP roles;
+  completed, emergency, skipped, STOP, cross-mission, stale, or non-monotonic
+  commands remain fail-closed. It does not extend the suffix lease or relabel
+  it as the successor.
+- **Evidence:** T1 R3 recorded the exact rejected predecessor command
+  (`waypoint=2/request=3`) after active waypoint 3/request 4, while the
+  predecessor bundle had transitioned to BACKUP. The focused
+  `PriorPassThroughBackupSuffixBridgesUntilSuccessorActivation` regression
+  covers the allowed READY suffix and rejects completion/emergency roles.
+- **Removal condition:** Revisit if the command/timeline contract exposes an
+  explicit predecessor-to-successor identity bridge at the execution store,
+  making this External Mode admission exception redundant.
+- **Verification:** `ctest --test-dir build/px4_navigation_external_mode
+  -R test_navigation_command --output-on-failure`; canonical Release build;
+  sequential T1 gate; `git diff --check`.
+
+### 2026-09-06 - Retain a bounded terminal endpoint for a coincident STOP successor
+
+- **Owner/status:** Runtime/PX4 handoff contract; `IMPLEMENTED`, focused
+  regressions added. No SITL or flight-acceptance claim.
+- **Scope:** When a completed MAIN terminal endpoint belongs to a PASS_THROUGH
+  waypoint whose immediately following STOP waypoint is geometrically
+  coincident, the predecessor command remains the physical owner while the
+  newer STOP identity is published. Runtime transfer requires the same mission,
+  adjacent waypoint/request identity, validated endpoint equality, measured
+  position inside the successor tolerance, current execution identity, and
+  command exposure. The endpoint remains bounded by its existing finite
+  certificate; no new trajectory, UNKNOWN exception, lease extension, or
+  relabeling is created.
+- **Safety impact:** Prevents a zero-length terminal successor transaction from
+  discarding the only valid predecessor command and entering an unnecessary
+  committed-future solve from an UNKNOWN measured state. Noncoincident STOP
+  successors still use the existing fresh PlanFromRest path. Completed BACKUP,
+  emergency, skipped, cross-mission, stale, invalid, and non-monotonic commands
+  remain fail-closed; a successor solve or finite endpoint expiry still closes
+  the predecessor authority.
+- **Evidence:** `PlannerFsm.TransfersOnlyAValidatedCoincidentTerminalSuccessorHold`,
+  `RouteProgress.RecognizesOnlyTheCoincidentStopSuccessorView`, and the PX4
+  completed-main handoff regressions cover the identity and geometry gates.
+  The T1 R4 artifact showed the prior failure: the completed predecessor was
+  rejected when MissionController published the coincident STOP, followed by a
+  committed-future UNKNOWN rejection and `PAUSED_SAFETY_STOP`.
+- **Removal condition:** Revisit only when the execution timeline exposes an
+  explicit atomic terminal-successor transaction that transfers physical
+  authority without relying on the predecessor command bridge.
+- **Verification:** `ctest --test-dir build/navigation_runtime
+  --output-on-failure`; `ctest --test-dir build/navigation_mission
+  --output-on-failure`; `ctest --test-dir build/px4_navigation_external_mode
+  --output-on-failure`; canonical Release build; T1 only; `git diff --check`.

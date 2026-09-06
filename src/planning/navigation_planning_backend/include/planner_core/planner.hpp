@@ -229,6 +229,14 @@ namespace navigation_planning_backend {
 
         [[nodiscard]] Vec3f resolveGoalForPlanning(const Vec3f& requested_goal);
 
+        // A measured STOP successor may already be inside its mission-owned
+        // acceptance ball while its current voxel is UNKNOWN.  In that case
+        // a zero-progress terminal hold is the only safe completion route:
+        // it may use the request-local body witness, but it must still pass
+        // the normal dynamic and immutable-world certificates.
+        [[nodiscard]] std::optional<bool> tryStageMeasuredTerminalStopHold(
+            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline);
+
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 

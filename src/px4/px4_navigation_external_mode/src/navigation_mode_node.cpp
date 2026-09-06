@@ -572,7 +572,7 @@ void NavigationMode::onNavigationCommand(
   bool terminal_recovery_needed = false;
   bool terminal_stop_settle_required = false;
   bool prior_safety_suffix_command = false;
-  bool prior_pass_through_main_command = false;
+  bool prior_pass_through_command = false;
   bool recovery_deadline_invalid = false;
   std::optional<nav_msgs::msg::Odometry> completed_command_odometry;
   navigation_contracts::ExecutionStateFreshness odometry_freshness;
@@ -603,17 +603,22 @@ void NavigationMode::onNavigationCommand(
     const auto previous_waypoint = mission_controller_ && active_waypoint_index > 0U
         ? mission_controller_->waypointAt(active_waypoint_index - 1U)
         : std::nullopt;
-    prior_pass_through_main_command = mission_ && mission_controller_ &&
-        priorPassThroughMainCommandIdentityMatches(
+    const auto route_snapshot = mission_controller_
+        ? mission_controller_->routeSnapshot() : navigation_mission::ImmutableRouteSnapshot{};
+    const bool terminal_successor =
+        navigation_mission::stopHasCoincidentPassThroughPredecessor(route_snapshot);
+    prior_pass_through_command = mission_ && mission_controller_ &&
+        priorPassThroughCommandIdentityMatches(
             *message, mission_->id, active_waypoint_index, active_request_id,
             previous_waypoint.has_value() &&
-                previous_waypoint->behavior == MissionWaypoint::Behavior::PassThrough);
+                previous_waypoint->behavior == MissionWaypoint::Behavior::PassThrough,
+            terminal_successor);
     const bool command_identity_monotonic = !navigation_command_.has_value() ||
         navigation_contracts::commandWorldIdentityNonRegressing(
             *message, *navigation_command_);
     if (!health_epoch_matches ||
         (!mission_identity_matches && !prior_safety_suffix_command &&
-         !prior_pass_through_main_command) ||
+         !prior_pass_through_command) ||
         !command_identity_monotonic) {
       ++trajectory_rejected_count_;
       navigation_command_ = transitionCertifiedCommand(
@@ -1078,12 +1083,16 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
     }
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      const auto route = mission_controller_->routeSnapshot();
+      const bool terminal_successor =
+          navigation_mission::stopHasCoincidentPassThroughPredecessor(route);
       // Waypoint acceptance and planner publication run on independent
       // callbacks. Preserve the exact old accepted command under its old
       // identity until a new command is committed atomically. Never relabel it
       // here; normal validity/freshness expiry remains fail-closed.
       if (navigation_command_.has_value() &&
-          commandMayBeRetainedAcrossWaypointHandoff(*navigation_command_)) {
+          commandMayBeRetainedAcrossWaypointHandoff(
+              *navigation_command_, terminal_successor)) {
         ++waypoint_handoff_retained_command_count_;
         const auto& retained = *navigation_command_;
         safety_suffix_handoff_pending_ =

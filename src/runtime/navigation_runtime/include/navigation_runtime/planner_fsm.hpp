@@ -295,6 +295,24 @@ inline bool terminalStopEndpointContractValid(
          endpoint_role_valid;
 }
 
+// A completed terminal PASS_THROUGH bundle may also be the endpoint hold for
+// the immediately following coincident STOP waypoint. This is a bounded
+// identity handoff, not a new planning exception: every fact below must still
+// be true before the old finite endpoint can remain the command owner.
+inline bool terminalSuccessorHoldMayTransfer(
+    bool predecessor_terminal_stop, bool predecessor_pass_through,
+    bool successor_stop, bool coincident_route,
+    bool successor_identity_newer, bool predecessor_endpoint_valid,
+    bool endpoint_matches_successor, bool measured_inside_successor,
+    bool execution_identity_current, bool desired_identity_current,
+    bool command_exposure_allowed) noexcept {
+  return predecessor_terminal_stop && predecessor_pass_through && successor_stop &&
+         coincident_route && successor_identity_newer && predecessor_endpoint_valid &&
+         endpoint_matches_successor && measured_inside_successor &&
+         execution_identity_current && desired_identity_current &&
+         command_exposure_allowed;
+}
+
 
 // Return a conservative upper bound for the distance needed to stop from the
 // configured cruise speed. The jerk term deliberately over-approximates the
@@ -647,6 +665,25 @@ inline bool committedSafetySuffixIsUsable(
     return std::abs(safety_transition_s - elapsed_s) <= 1.0e-9;
   }
   return safety_transition_s >= elapsed_s && safety_transition_s <= total_duration_s;
+}
+
+// During a same-mission PASS_THROUGH handoff the desired goal epoch advances
+// before the successor is committed, while the predecessor command deliberately
+// keeps its own execution identity. Retained-command validation must therefore
+// compare the bundle with the executing predecessor, not the desired successor.
+inline bool retainedCommandMatchesExecutionIdentity(
+    bool bundle_present, bool bundle_has_trajectory_metadata,
+    std::uint64_t bundle_localization_epoch,
+    std::uint64_t execution_localization_epoch,
+    std::uint64_t bundle_goal_epoch, std::uint64_t command_goal_epoch,
+    std::uint64_t bundle_request_id, bool executing_goal_present,
+    std::uint64_t executing_request_id, bool same_mission_as_desired) noexcept {
+  return bundle_present && bundle_has_trajectory_metadata &&
+         executing_goal_present && same_mission_as_desired &&
+         command_goal_epoch != 0U &&
+         bundle_localization_epoch == execution_localization_epoch &&
+         bundle_goal_epoch == command_goal_epoch &&
+         bundle_request_id == executing_request_id;
 }
 
 // A retained bundle is still executing geometry certified with the planner's

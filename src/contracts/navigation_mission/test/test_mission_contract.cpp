@@ -183,6 +183,27 @@ TEST(RouteProgress, TreatsCoincidentPassThroughThenStopAsTerminalBoundary) {
       navigation_mission::passThroughNextWaypointIsCoincidentStop(separated));
 }
 
+TEST(RouteProgress, RecognizesOnlyTheCoincidentStopSuccessorView) {
+  auto mission = makeRouteMission();
+  mission.waypoints = {
+      {"pass", Eigen::Vector3d{7.0, 0.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"stop", Eigen::Vector3d{7.0, 0.0, 3.0}, 0.5, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::Stop},
+  };
+  navigation_mission::RouteProgress progress(mission);
+  const auto successor = progress.snapshot(mission.id, mission.frame, 1U, 2U, 1U);
+  EXPECT_TRUE(navigation_mission::stopHasCoincidentPassThroughPredecessor(successor));
+
+  mission.waypoints[1].position_enu.x() +=
+      navigation_world_model::kGoalConnectionToleranceM + 0.01;
+  navigation_mission::RouteProgress separated_progress(mission);
+  const auto separated = separated_progress.snapshot(
+      mission.id, mission.frame, 1U, 2U, 1U);
+  EXPECT_FALSE(
+      navigation_mission::stopHasCoincidentPassThroughPredecessor(separated));
+}
+
 TEST(RouteProgress, ProgressDoesNotRegressWithinOrBeyondNoiseTolerance) {
   navigation_mission::RouteProgress route(
       makeRouteMission(), navigation_mission::RouteProgressConfig{0.5});

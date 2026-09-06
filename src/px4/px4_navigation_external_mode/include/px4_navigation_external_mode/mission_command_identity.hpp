@@ -46,21 +46,31 @@ inline bool priorSafetySuffixCommandIdentityMatches(
 
 // MissionController publishes the next pass-through goal as soon as the
 // previous checkpoint is accepted.  The planner successor is intentionally a
-// later execution-timeline activation, so one unfinished MAIN command from
-// the immediately previous pass-through checkpoint must remain admissible in
-// the interim.  This is an explicit continuity bridge, not a goal rebind:
-// the command keeps its old {waypoint, request} identity and may not bridge a
-// STOP, safety suffix, skipped waypoint, or completed command.
-inline bool priorPassThroughMainCommandIdentityMatches(
+// later execution-timeline activation, so one unfinished command from the
+// immediately previous pass-through checkpoint must remain admissible in the
+// interim. The retained bundle may legitimately have crossed from MAIN into
+// its certified BACKUP suffix after the handoff callback. This is an explicit
+// continuity bridge, not a goal rebind: the command keeps its old
+// {waypoint, request} identity and may not bridge a STOP, emergency command,
+// safety suffix from another checkpoint, skipped waypoint, or completed
+// command. The only completed-command exception is a MAIN terminal endpoint
+// handed to its coincident STOP successor, which is separately bounded by the
+// runtime terminal-successor validation.
+inline bool priorPassThroughCommandIdentityMatches(
     const navigation_contracts::msg::NavigationCommand& command,
     const std::string& mission_id, std::uint32_t active_waypoint_index,
-    std::uint64_t active_request_id, bool previous_waypoint_is_pass_through) noexcept {
+    std::uint64_t active_request_id, bool previous_waypoint_is_pass_through,
+    bool terminal_successor = false) noexcept {
   return previous_waypoint_is_pass_through && active_waypoint_index > 0U &&
          command.mission_id == mission_id &&
          command.waypoint_index + 1U == active_waypoint_index &&
          command.request_id < active_request_id && command.request_id != 0U &&
-         command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
-         command.status == navigation_contracts::msg::NavigationCommand::STATUS_READY;
+         (command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN ||
+          command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) &&
+         (command.status == navigation_contracts::msg::NavigationCommand::STATUS_READY ||
+          (terminal_successor &&
+           command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+           command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED));
 }
 
 }  // namespace px4_navigation_external_mode

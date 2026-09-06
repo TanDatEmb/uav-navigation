@@ -1,9 +1,12 @@
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_planning/planning_timing.hpp>
 
 namespace navigation_runtime {
 
@@ -37,6 +40,21 @@ struct CertifiedMainContinuationBoundaryFacts final {
   std::int64_t main_interval_end_ns{-1};
 };
 
+struct CertifiedMainContinuationWindow final {
+  std::int64_t boundary_stamp_ns{0};
+  std::int64_t main_end_stamp_ns{0};
+};
+
+[[nodiscard]] inline std::int64_t minimumMainContinuationReserveNs() noexcept {
+  constexpr long double reserve_ns = static_cast<long double>(
+      navigation_planning::PlanningTimingContract::kMinimumMainReserveS) * 1.0e9L;
+  if (!std::isfinite(reserve_ns) ||
+      reserve_ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+    return std::numeric_limits<std::int64_t>::max();
+  }
+  return static_cast<std::int64_t>(std::llround(reserve_ns));
+}
+
 [[nodiscard]] inline bool certifiedMainContinuationBoundaryEligible(
     const CertifiedMainContinuationBoundaryFacts& facts) noexcept {
   if (!facts.pass_through_goal || facts.coincident_terminal_stop ||
@@ -59,11 +77,24 @@ struct CertifiedMainContinuationBoundaryFacts final {
     return false;
   }
   const auto boundary_offset_ns = facts.boundary_stamp_ns - facts.declared_start_ns;
+  const auto main_reserve_ns = minimumMainContinuationReserveNs();
   return facts.main_interval_begin_ns >= 0 &&
          facts.main_interval_end_ns > facts.main_interval_begin_ns &&
          boundary_offset_ns >= facts.main_interval_begin_ns &&
          boundary_offset_ns < facts.main_interval_end_ns &&
-         facts.main_interval_end_ns > boundary_offset_ns;
+         facts.main_interval_end_ns - boundary_offset_ns >= main_reserve_ns;
+}
+
+[[nodiscard]] inline bool certifiedMainContinuationHandoffReady(
+    const CertifiedMainContinuationWindow& window,
+    const std::int64_t now_ns) noexcept {
+  if (now_ns <= 0 || window.boundary_stamp_ns <= 0 ||
+      window.main_end_stamp_ns <= window.boundary_stamp_ns ||
+      window.main_end_stamp_ns <= now_ns) {
+    return false;
+  }
+  return window.main_end_stamp_ns - now_ns >=
+      minimumMainContinuationReserveNs();
 }
 
 }  // namespace navigation_runtime
