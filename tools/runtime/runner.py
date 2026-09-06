@@ -505,13 +505,28 @@ def _capture_build_provenance(session: Session, px4_dir: Path | None = None) -> 
             text=True, capture_output=True, check=False,
         )
         px4_status = subprocess.run(
-            ["git", "-C", str(px4_dir), "status", "--porcelain"],
+            ["git", "-C", str(px4_dir), "status", "--porcelain=v1"],
             text=True, capture_output=True, check=False,
+        )
+        px4_status_text = px4_status.stdout if px4_status.returncode == 0 else ""
+        px4_diff = subprocess.run(
+            ["git", "-C", str(px4_dir), "diff", "--binary", "HEAD"],
+            capture_output=True, check=False,
+        )
+        px4_diff_sha256 = (
+            hashlib.sha256(px4_diff.stdout).hexdigest()
+            if px4_diff.returncode == 0 else ""
         )
         evidence["external_px4"] = {
             "path": str(px4_dir.resolve()),
             "git_head": px4_head.stdout.strip() if px4_head.returncode == 0 else "",
-            "git_dirty": bool(px4_status.stdout.strip()) if px4_status.returncode == 0 else None,
+            "git_dirty": bool(px4_status_text.strip()) if px4_status.returncode == 0 else None,
+            "provenance_policy": "project_customized",
+            "dirty_entries": px4_status_text.splitlines(),
+            "dirty_status_sha256": hashlib.sha256(
+                px4_status_text.encode("utf-8")
+            ).hexdigest() if px4_status.returncode == 0 else "",
+            "tracked_diff_sha256": px4_diff_sha256,
         }
     _write_runtime(session, build_provenance=evidence)
     return evidence

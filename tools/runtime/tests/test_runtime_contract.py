@@ -3101,6 +3101,30 @@ class RuntimeContractTest(unittest.TestCase):
             ["runtime did not capture a validated authoritative Release build manifest"],
         )
 
+    def test_project_customized_dirty_px4_provenance_is_explicitly_accepted(self) -> None:
+        captured = _valid_captured_provenance()
+        captured["external_px4"] = {
+            "path": "/tmp/px4",
+            "git_head": "px4-head",
+            "git_dirty": True,
+            "provenance_policy": "project_customized",
+            "dirty_entries": [" M src/modules/custom.yaml"],
+            "dirty_status_sha256": "a" * 64,
+            "tracked_diff_sha256": "b" * 64,
+        }
+        self.assertEqual(report._provenance_reasons({"build_provenance": captured}), [])
+        captured["external_px4"]["provenance_policy"] = "undeclared"
+        self.assertEqual(
+            report._provenance_reasons({"build_provenance": captured}),
+            ["dirty external PX4 checkout lacks project-customized provenance policy"],
+        )
+        captured["external_px4"]["provenance_policy"] = "project_customized"
+        captured["external_px4"]["dirty_status_sha256"] = "short"
+        self.assertEqual(
+            report._provenance_reasons({"build_provenance": captured}),
+            ["dirty external PX4 provenance is incomplete"],
+        )
+
     def test_captured_provenance_rechecks_artifact_digest(self) -> None:
         captured = _valid_captured_provenance()
         self.assertTrue(report._captured_provenance_valid(captured))

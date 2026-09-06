@@ -52,6 +52,11 @@ print(json.dumps(json.loads(p.read_text()), indent=2))
 PY
 ```
 
+The PX4 checkout may be dirty only for the explicitly project-customized
+variant used by this repository. The runner records its exact HEAD, dirty
+status entries and tracked-diff fingerprints in the session provenance; an
+unknown or undeclared dirty state remains fail-closed for qualification.
+
 ## 3. Which command to use
 
 `make sim` starts an interactive PX4/Gazebo/RViz session and does not publish

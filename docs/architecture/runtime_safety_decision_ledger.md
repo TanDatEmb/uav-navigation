@@ -19350,6 +19350,28 @@ release profiles must not use the former allowance.
 - **Verification:** `python3 -m pytest -q tools/runtime/tests/test_runtime_contract.py`;
   `git diff --check`.
 
+### 2026-09-06 - Accept explicitly provenance-recorded project-customized PX4 dirty state
+
+- **Owner/status:** Runtime qualification/provenance; `IMPLEMENTED`, focused
+  contract test passes. This supersedes the earlier clean-only policy for the
+  repository's intentionally customized PX4 checkout.
+- **Scope:** A dirty external PX4 checkout is accepted only when the runner
+  records a non-empty path and git HEAD, policy `project_customized`, dirty
+  status entries, a status fingerprint, and a tracked-diff fingerprint. A
+  missing/unknown state or undeclared policy remains fail-closed.
+- **Safety impact:** Allows the project-specific PX4 patch set to be used while
+  preserving explicit provenance and preventing an unexplained dirty checkout
+  from becoming qualification evidence. No planner, command, controller or
+  sensor behavior changes.
+- **Evidence:** The current PX4 checkout is the declared customized variant;
+  the contract test covers accepted dirty provenance and rejects undeclared or
+  incomplete dirty metadata. Targeted SITL remains unclaimed until T1-T4 run.
+- **Removal condition:** Replace with a committed/pinned PX4 patch set or an
+  equivalent immutable external dependency manifest.
+- **Verification:** `python3 -m pytest -q tools/runtime/tests/test_runtime_contract.py`;
+  `git diff --check`; targeted T1-T4 SITL artifacts must retain the recorded
+  dirty provenance.
+
 ### 2026-09-06 - Record registered-scan handoff evidence
 
 - **Owner/status:** Runtime observability/qualification; `IMPLEMENTED`,

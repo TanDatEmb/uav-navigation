@@ -143,6 +143,27 @@ def _provenance_reasons(runtime: dict[str, Any]) -> list[str]:
     captured = runtime.get("build_provenance") if isinstance(runtime, dict) else None
     if not _captured_provenance_valid(captured):
         return ["runtime did not capture a validated authoritative Release build manifest"]
+    external = captured.get("external_px4") if isinstance(captured, dict) else None
+    if external is None:
+        return []
+    if not isinstance(external, dict):
+        return ["runtime captured incomplete external PX4 provenance"]
+    if not isinstance(external.get("path"), str) or not external["path"]:
+        return ["runtime captured incomplete external PX4 provenance"]
+    if not isinstance(external.get("git_head"), str) or not external["git_head"]:
+        return ["runtime captured incomplete external PX4 provenance"]
+    if external.get("git_dirty") is None:
+        return ["external PX4 checkout clean state is unknown"]
+    if external.get("git_dirty") and external.get("provenance_policy") != "project_customized":
+        return ["dirty external PX4 checkout lacks project-customized provenance policy"]
+    if external.get("git_dirty") and (
+        not isinstance(external.get("dirty_entries"), list)
+        or not isinstance(external.get("dirty_status_sha256"), str)
+        or len(external["dirty_status_sha256"]) != 64
+        or not isinstance(external.get("tracked_diff_sha256"), str)
+        or len(external["tracked_diff_sha256"]) != 64
+    ):
+        return ["dirty external PX4 provenance is incomplete"]
     return []
 
 
