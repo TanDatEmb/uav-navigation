@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 #include <rog_map/rog_map_core/config.hpp>
 #include <planner_core/backup_braking.hpp>
@@ -144,6 +145,58 @@ TEST(GuideVerticalEnvelope, FollowsEachGuideSegmentAndPreservesOverlap) {
   EXPECT_DOUBLE_EQ(climbing_planes(7, 3), 2.8);
   EXPECT_GT(corridor[1].overlap_depth_with_last_one, 0.0);
   EXPECT_TRUE(corridor[1].interior_pt_with_last_one.allFinite());
+}
+
+TEST(GuideVerticalEnvelope, RepairsLocalJunctionCollapseWithoutCreatingOverlap) {
+  const auto make_box = [](const double min_x, const double max_x) {
+    navigation_math::MatD4f planes(6, 4);
+    planes <<
+        1.0, 0.0, 0.0, -max_x,
+       -1.0, 0.0, 0.0, min_x,
+        0.0, 1.0, 0.0, -2.0,
+        0.0,-1.0, 0.0, -2.0,
+        0.0, 0.0, 1.0, -10.0,
+        0.0, 0.0,-1.0, -10.0;
+    return geometry_utils::Polytope(std::move(planes));
+  };
+
+  const navigation_math::Vec3f p0{0.0, 0.0, 0.0};
+  const navigation_math::Vec3f p1{1.0, 0.0, 0.0};
+  // Make the local Z envelopes meet at an IEEE-754-sized seam. The old
+  // positive-depth-only check could accept this as a junction even though
+  // MINCO's vertex enumeration had no full-dimensional hull.
+  const double nearly_tangent_z = std::nextafter(0.4, 0.0);
+  const navigation_math::Vec3f p2{1.0, 0.0, nearly_tangent_z};
+  const navigation_math::Vec3f p3{2.0, 0.0, nearly_tangent_z};
+  const navigation_math::vec_Vec3f guide{p0, p1, p2, p3};
+  const auto envelope =
+      navigation_planning_backend::deriveGuideVerticalEnvelope(guide, 0.2);
+
+  geometry_utils::Polytope first = make_box(-1.0, 2.0);
+  first.SetSeedLine({p0, p1});
+  geometry_utils::Polytope second = make_box(1.0, 3.0);
+  second.SetSeedLine({p2, p3});
+  geometry_utils::PolytopeVec corridor{first, second};
+
+  ASSERT_TRUE(navigation_planning_backend::applyGuideVerticalEnvelope(
+      corridor, envelope));
+  EXPECT_DOUBLE_EQ(corridor[0].GetPlanes()(6, 3), -0.6);
+  EXPECT_DOUBLE_EQ(corridor[1].GetPlanes()(6, 3), -0.6);
+  EXPECT_GT(corridor[1].overlap_depth_with_last_one, 0.0);
+  Eigen::Matrix3Xd overlap_vertices;
+  const auto repaired_overlap = corridor[0].CrossWith(corridor[1]);
+  ASSERT_TRUE(geometry_utils::enumerateVs(
+      repaired_overlap.GetPlanes(), overlap_vertices));
+  EXPECT_GT(overlap_vertices.cols(), 0);
+
+  geometry_utils::Polytope tangent_first = make_box(-1.0, 1.0);
+  tangent_first.SetSeedLine({p0, p1});
+  geometry_utils::Polytope tangent_second = make_box(1.0, 3.0);
+  tangent_second.SetSeedLine({p1, p3});
+  geometry_utils::PolytopeVec tangent_corridor{
+      tangent_first, tangent_second};
+  EXPECT_FALSE(navigation_planning_backend::applyGuideVerticalEnvelope(
+      tangent_corridor, envelope));
 }
 
 TEST(GuideVerticalEnvelope, RejectsInvalidScaleOrGuide) {

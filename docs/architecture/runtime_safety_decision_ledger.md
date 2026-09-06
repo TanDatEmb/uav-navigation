@@ -19783,3 +19783,39 @@ release profiles must not use the former allowance.
 - **Verification:** `ctest --test-dir build/navigation_runtime
   -R test_planner_fsm --output-on-failure`; focused Q1 scenario with the same
   difficulty fingerprint; canonical Release build; `git diff --check`.
+
+### 2026-09-06 - Require full-dimensional guide junctions after vertical binding
+
+- **Owner/status:** Nominal corridor preprocessing and guide vertical envelope;
+  `IMPLEMENTED`, focused geometry regression added. No SITL or flight-acceptance
+  claim.
+- **Scope:** After applying the scale-aware guide vertical envelope, every
+  adjacent corridor intersection must pass the same finite 3-D vertex
+  enumeration consumed by MINCO. If a local segment envelope collapses an
+  otherwise CIRI-certified junction at numerical precision, the affected pair
+  is retried with the guide-wide bounded vertical envelope. The original CIRI
+  half-spaces, guide samples, unknown-space policy and final certificates are
+  unchanged.
+- **Safety impact:** Prevents a tiny positive LP radius from being mistaken for
+  an executable corridor when the downstream vertex enumerator has no
+  full-dimensional hull. The pair fallback cannot create occupancy-free space
+  outside CIRI because it only changes the added vertical bounds; a true
+  tangential or empty intersection remains rejected.
+- **False-accept/false-reject consequences:** Numerically collapsed but
+  geometrically supported vertical junctions may proceed inside their original
+  CIRI cells. Tangential, malformed, non-finite or still non-enumerable
+  junctions fail closed before MINCO.
+- **Evidence:** Q1 artifact
+  `.artifacts/runtime/external-mode-check-20260906T130950-1228799` repeatedly
+  recorded `Corridor overlap 2 cannot be vertex-enumerated` with reported
+  overlap depth `2.4e-15` to `3.8e-15`; the optimizer therefore never reached
+  numerical MINCO refinement. `GuideVerticalEnvelope.RepairsLocalJunctionCollapseWithoutCreatingOverlap`
+  reproduces an IEEE-754-sized vertical seam, verifies repaired vertex
+  enumeration, and rejects a tangential XY junction.
+- **Removal condition:** Revisit when corridor junctions use an immutable
+  validated full-dimensional intersection type shared by CIRI and MINCO.
+- **Verification:** `cmake --build build/navigation_planning_backend --target
+  test_planner_config`; `./build/navigation_planning_backend/test_planner_config
+  --gtest_filter=GuideVerticalEnvelope.*`; full backend/runtime/mapping
+  regressions; canonical Release build; exact-fingerprint Q1 rerun;
+  `git diff --check`.
