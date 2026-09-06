@@ -1041,6 +1041,17 @@ TEST(PlannerFsm, AcceptsSafetySuffixWhenVehicleIsAlreadyOnBackup) {
       true, elapsed_s, 4.0, effective_safety_start_s, 0.2, 0.75, true));
 }
 
+TEST(PlannerFsm, DoesNotEnterBackupBeforeRetainedBundleReachesBackupInterval) {
+  EXPECT_FALSE(retainedSafetyTransitionMayActivateBackup(
+      true, true, navigation_planning::CandidateRole::kMain));
+  EXPECT_TRUE(retainedSafetyTransitionMayActivateBackup(
+      true, true, navigation_planning::CandidateRole::kBackup));
+  EXPECT_FALSE(retainedSafetyTransitionMayActivateBackup(
+      false, true, navigation_planning::CandidateRole::kBackup));
+  EXPECT_FALSE(retainedSafetyTransitionMayActivateBackup(
+      true, false, navigation_planning::CandidateRole::kBackup));
+}
+
 TEST(PlannerFsm, RepeatedBackupFailuresRetainModeBeforeAnchorInvalidation) {
   // This models the product transition sequence observed in the Phase C
   // trace: planner backend returns FAILED after backup generation, so the current

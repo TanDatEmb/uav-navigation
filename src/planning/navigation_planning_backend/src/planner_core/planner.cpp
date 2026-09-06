@@ -958,7 +958,14 @@ double knownFreeGuideSupport(
             return true;
         };
         bool route_boundary_required = false;
-        if (route_snapshot_.has_value() &&
+        // An emergency brake is a measured-state safety replacement, not a
+        // nominal MAIN trajectory crossing a mission waypoint.  Do not derive
+        // a route-boundary witness from the active PASS_THROUGH goal for it:
+        // the emergency evaluator intentionally reports the EMERGENCY role,
+        // so treating its measured stop as a MAIN boundary would make the
+        // runtime apply the nominal pass-through boundary contract to the
+        // safety replacement and reject an otherwise certified brake.
+        if (!emergency_candidate && route_snapshot_.has_value() &&
             route_snapshot_->active_waypoint_index < route_snapshot_->waypoints.size()) {
             const auto& waypoint =
                 route_snapshot_->waypoints[route_snapshot_->active_waypoint_index];

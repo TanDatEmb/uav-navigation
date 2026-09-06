@@ -1,5 +1,69 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-06 - Keep measured emergency brakes out of nominal route-boundary certification
+
+- **Owner/status:** planning candidate export and runtime execution boundary;
+  `IMPLEMENTED`, Q1 complex-mission rerun required.
+- **Scope:** A `kEmergencyBrake` candidate is a measured-state safety
+  replacement and is certified through its emergency role, dynamic, world,
+  freshness, tracking, and finite-lease checks. Candidate export must not
+  derive a nominal PASS_THROUGH `RouteBoundaryEvent` or
+  `RouteBoundaryConstraint` from the active mission route for that emergency
+  candidate. Nominal MAIN/terminal candidates retain the existing route-
+  boundary contract.
+- **Safety impact:** removes a false cross-role interpretation that caused a
+  certified emergency trajectory to be checked as a nominal MAIN waypoint
+  crossing and rejected. This does not permit UNKNOWN traversal, relax route
+  geometry, dynamic/flatness/world certificates, measured-state continuity,
+  command-anchor, lease, or PX4 fail-closed gates. Emergency candidates still
+  require their independent executable certificates.
+- **Evidence:** the Q1 diagnostic log rejected the one-shot emergency
+  candidate with a valid route event but an emergency sampled role. The focused
+  `PlannerFacade.EmergencyBrakeDoesNotAdvertiseNominalPassThroughBoundary`
+  regression now verifies that an emergency candidate on a PASS_THROUGH route
+  carries no nominal route-boundary metadata, while the existing nominal
+  boundary tests remain enabled.
+- **Removal/review condition:** retain until emergency candidates have an
+  explicitly separate, equivalent safety-transition boundary contract; do not
+  reapply nominal PASS_THROUGH boundary validation to the emergency role.
+- **Verification:** build and run `test_planner_facade`; run the unchanged Q1
+  complex-mission scenario and all affected planning/runtime/mapping/Python
+  gates.
+
+### 2026-09-06 - Bind committed-future anchors to the executing predecessor
+
+- **Owner/status:** planning request contract and runtime execution handoff;
+  `IMPLEMENTED`, focused contract and complex-mission successor regression
+  required.
+- **Scope:** A committed-future `ExecutionAnchor` identifies the active
+  predecessor bundle being sampled for the splice. Its generation,
+  localization epoch, command-world identity, activation stamp, PVAJ state,
+  and active role remain exact. The successor mission/waypoint/request
+  identity remains in `PlanningKey`/`GoalIdentity`; an authorized same-mission
+  handoff may advance that identity without making the predecessor anchor
+  invalid. Runtime transition and command-store admission remain the owners
+  of authorization and predecessor matching.
+- **Safety impact:** removes an over-constrained input rejection that prevented
+  valid committed-future waypoint handoffs. It does not accept an anchor with
+  a mismatched active generation, localization epoch, world snapshot, or
+  activation boundary, and it does not widen UNKNOWN, candidate, dynamic,
+  world, tracking, lease, or PX4 command gates. Unauthorized transitions
+  remain rejected by runtime identity and execution-store checks.
+- **Evidence:** the planning contract regression accepts a future request
+  whose anchor retains a different predecessor goal/request identity while
+  preserving all immutable handoff fields. The Q1 complex mission must pass
+  the unchanged `long_three_pillars_multiwaypoint` scenario through the exact
+  successor planning and activation path.
+- **Removal/review condition:** retain until the successor transaction carries
+  an explicitly separate predecessor-owner identity with equivalent or
+  stronger validation; do not restore equality between predecessor anchor
+  identity and successor request identity without an equivalent handoff
+  representation.
+- **Verification:** source ROS Jazzy and the workspace overlay; run
+  `test_planning_contracts`, focused runtime/planning regressions, planning
+  backend/runtime/mapping CTest, the full current Python suite, canonical
+  Release build, and the unchanged Q1 complex-mission scenario.
+
 ### 2026-09-06 - Preserve committed-future candidate activation contract
 
 - **Owner/status:** planning backend transaction boundary; `IMPLEMENTED`,
@@ -19596,3 +19660,30 @@ release profiles must not use the former allowance.
   --output-on-failure`; `ctest --test-dir build/navigation_mission
   --output-on-failure`; `ctest --test-dir build/px4_navigation_external_mode
   --output-on-failure`; canonical Release build; T1 only; `git diff --check`.
+
+### 2026-09-06 - Keep ordinary renewal retries in MAIN until BACKUP is sampled
+
+- **Owner/status:** Runtime execution recovery; `IMPLEMENTED`, focused FSM
+  regression added. No SITL or flight-acceptance claim.
+- **Scope:** A failed moving renewal may retain a currently certified bundle
+  whose immutable timeline contains a future BACKUP suffix. The runtime enters
+  `kTrackBackup` only after the retained command sample is actually in the
+  BACKUP interval; mere suffix availability while the sample is still MAIN
+  does not consume the ordinary-renewal retry window.
+- **Safety impact:** This preserves the existing one-way BACKUP rule after the
+  physical safety suffix begins, while allowing a transient world-revision
+  commit race to retry before that boundary. No suffix is extended, no
+  UNKNOWN/clearance policy is changed, and invalid/stale/expired commands
+  remain fail-closed.
+- **Evidence:** `PlannerFsm.DoesNotEnterBackupBeforeRetainedBundleReachesBackupInterval`
+  covers the MAIN-versus-BACKUP sampled-role boundary and the availability
+  predicates. The Q1 diagnostic artifact
+  `external-mode-check-20260906T101530-1164186` showed the prior defect:
+  `WorldAdvanced` rejection at cycle 303 was followed by no retry while the
+  retained sample was still MAIN, then the old finite bundle expired.
+- **Removal condition:** Revisit if the execution timeline gains an atomic
+  retry/backup handoff transaction that makes this runtime state distinction
+  unnecessary.
+- **Verification:** `ctest --test-dir build/navigation_runtime
+  -R test_planner_fsm --output-on-failure`; focused Q1 scenario with the same
+  difficulty fingerprint; canonical Release build; `git diff --check`.

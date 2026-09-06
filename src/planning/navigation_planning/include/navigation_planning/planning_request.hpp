@@ -93,14 +93,18 @@ struct PlanningRequest {
   PlanningBudget budget;
 
   [[nodiscard]] bool startModeContractValid() const noexcept {
+    // The anchor identifies the currently executing predecessor bundle.  On
+    // an authorized same-mission handoff, its goal/request identity may
+    // differ from the successor request carried by key/goal.  The runtime
+    // owns that transition authorization; this typed planning contract still
+    // binds the anchor to the same localization epoch, active generation,
+    // world snapshot and exact activation boundary.
     const bool successor_anchor_valid =
         key.start_mode != PlanningStartMode::kCommittedFutureState ||
         (anchor.has_value() && anchor->valid() && activation_stamp_ns > 0 &&
          anchor->activation_stamp_ns == activation_stamp_ns &&
          anchor->active_bundle_generation == key.committed_bundle_generation &&
          anchor->localization_epoch == key.localization_epoch &&
-         anchor->goal_epoch == key.goal_epoch &&
-         anchor->request_id == key.request_id &&
          anchor->command_world.generation == key.pinned_world_generation &&
          anchor->command_world.revision == key.pinned_world_revision);
     const bool stopped_activation_valid =

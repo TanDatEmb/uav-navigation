@@ -962,4 +962,60 @@ TEST(PlannerFacade, PassThroughEntryAfterBackupDoesNotAdvertiseBoundaryEvent) {
   EXPECT_FALSE(candidate->route_boundary_constraint.has_value());
 }
 
+TEST(PlannerFacade, EmergencyBrakeDoesNotAdvertiseNominalPassThroughBoundary) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer, [] { return 10.0; });
+
+  navigation_mission::Mission mission;
+  mission.id = "emergency-pass-through-boundary-contract";
+  mission.frame = "lio_odom";
+  navigation_mission::MissionWaypoint active;
+  active.id = "active";
+  active.position_enu = Eigen::Vector3d{10.0, 0.0, 3.0};
+  active.behavior = navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  active.acceptance_radius_m = 0.5;
+  navigation_mission::MissionWaypoint next;
+  next.id = "next";
+  next.position_enu = Eigen::Vector3d{20.0, 0.0, 3.0};
+  next.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
+  next.acceptance_radius_m = 0.5;
+  mission.waypoints = {active, next};
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(Eigen::Vector3d{9.8, 0.0, 3.0}).valid);
+  ASSERT_TRUE(facade.setRouteSnapshot(progress.snapshot(
+      mission.id, mission.frame, 1U, 1U, 0U)));
+
+  navigation_planning::KinematicState state;
+  state.position_world = Eigen::Vector3d{9.8, 0.0, 3.0};
+  state.source_stamp_ns = 1;
+  state.receive_stamp_ns = 1;
+  state.localization_epoch = 1U;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+  ASSERT_TRUE(facade.setState(state));
+  facade.setCommandIdentity(1U, 1U, 1U);
+
+  navigation_planning::TrajectoryPoint measured_command;
+  measured_command.position_world = state.position_world;
+  measured_command.velocity_world = Eigen::Vector3d{0.5, 0.0, 0.0};
+  measured_command.acceleration_world = Eigen::Vector3d::Zero();
+  measured_command.jerk_world = Eigen::Vector3d::Zero();
+  measured_command.yaw = 0.0;
+  measured_command.yaw_rate = 0.0;
+  ASSERT_TRUE(measured_command.finite());
+  ASSERT_TRUE(facade.commitEmergencyBrake(measured_command, 10.0));
+
+  const auto candidate = facade.exportCommandCandidate(
+      1U, 1U, 1U, 10000000000LL, 20000000000LL);
+  ASSERT_TRUE(candidate);
+  ASSERT_TRUE(candidate->valid());
+  EXPECT_EQ(candidate->kind,
+            navigation_planning::CandidateBundleKind::kEmergencyBrake);
+  EXPECT_EQ(candidate->role, navigation_planning::CandidateRole::kEmergency);
+  EXPECT_FALSE(candidate->route_boundary_event.has_value());
+  EXPECT_FALSE(candidate->route_boundary_constraint.has_value());
+}
+
 }  // namespace

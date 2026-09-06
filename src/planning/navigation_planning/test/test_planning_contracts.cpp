@@ -340,6 +340,15 @@ TEST(PlanningRequest, CommittedFutureStateCannotOmitOrMoveItsAnchor) {
   EXPECT_TRUE(request.startModeContractValid());
   EXPECT_FALSE(request.valid());
 
+  // A committed-future successor is anchored to the currently executing
+  // predecessor.  Its mission/waypoint request identity is carried by the
+  // request key and may legitimately advance at the handoff boundary.
+  request.anchor->goal_epoch = 6;
+  request.anchor->request_id = 8;
+  EXPECT_TRUE(request.startModeContractValid());
+  request.anchor->goal_epoch = request.key.goal_epoch;
+  request.anchor->request_id = request.key.request_id;
+
   request.activation_stamp_ns = 501;
   EXPECT_FALSE(request.startModeContractValid());
   request.activation_stamp_ns = 500;
@@ -357,10 +366,10 @@ TEST(PlanningRequest, CommittedFutureStateCannotOmitOrMoveItsAnchor) {
   request.activation_stamp_ns = 500;
 
   request.anchor->request_id = 10;
-  EXPECT_FALSE(request.startModeContractValid());
+  EXPECT_TRUE(request.startModeContractValid());
   request.anchor->request_id = request.key.request_id;
   request.anchor->goal_epoch = 8;
-  EXPECT_FALSE(request.startModeContractValid());
+  EXPECT_TRUE(request.startModeContractValid());
 }
 
 TEST(PlanningRequest, RequiresCanonicalRouteValueAndRejectsMalformedSnapshot) {

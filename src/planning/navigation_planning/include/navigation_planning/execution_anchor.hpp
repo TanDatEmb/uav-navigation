@@ -12,6 +12,8 @@ namespace navigation_planning {
 struct ExecutionAnchor final {
   std::uint64_t active_bundle_generation{0U};
   std::uint64_t localization_epoch{0U};
+  // These identify the active predecessor bundle, not necessarily the
+  // successor request being planned at the activation boundary.
   std::uint64_t goal_epoch{0U};
   std::uint64_t request_id{0U};
   std::int64_t request_stamp_ns{0};

@@ -712,6 +712,18 @@ inline bool committedSafetySuffixIsUsable(
   return safety_transition_s >= elapsed_s && safety_transition_s <= total_duration_s;
 }
 
+// A retained bundle may contain a certified BACKUP suffix before the vehicle
+// reaches it. That future availability is not itself a recovery-state
+// transition: ordinary renewal must keep retrying while the current command
+// sample is still MAIN. Only the sampled role can transfer ownership to
+// BACKUP.
+inline bool retainedSafetyTransitionMayActivateBackup(
+    bool safety_suffix_usable, bool backup_available,
+    navigation_planning::CandidateRole sampled_role) noexcept {
+  return safety_suffix_usable && backup_available &&
+         sampled_role == navigation_planning::CandidateRole::kBackup;
+}
+
 // During a same-mission PASS_THROUGH handoff the desired goal epoch advances
 // before the successor is committed, while the predecessor command deliberately
 // keeps its own execution identity. Retained-command validation must therefore

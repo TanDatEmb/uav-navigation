@@ -5281,8 +5281,12 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             retained_execution_goal && executingCommandIdentityMatchesLocked(
                 *retained_execution_goal, retained_command_epoch,
                 localization_epoch_at_solve, committed_bundle->bundle_generation);
-        if (use_safety_suffix && backup_available && !emergency_brake_committed &&
-            retained_identity_current) {
+        if (retainedSafetyTransitionMayActivateBackup(
+                use_safety_suffix, backup_available,
+                command_anchor_valid
+                    ? command_anchor_sample.role
+                    : navigation_planning::CandidateRole::kEmergency) &&
+            !emergency_brake_committed && retained_identity_current) {
           applyExecutionRecoveryEventLocked(
               ExecutionRecoveryEvent::kBackupActivated);
         }
