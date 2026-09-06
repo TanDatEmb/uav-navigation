@@ -763,7 +763,37 @@ double knownFreeGuideSupport(
         staged_planner_candidate_.reset();
     }
 
-    std::optional<navigation_planning::CandidateBundle>
+    const char* Planner::candidateExportFailureName(
+            const CandidateExportFailure failure) noexcept {
+        switch (failure) {
+            case CandidateExportFailure::kNone: return "none";
+            case CandidateExportFailure::kNoStagedCandidate:
+                return "no_staged_candidate";
+            case CandidateExportFailure::kInvalidInputIdentity:
+                return "invalid_input_identity";
+            case CandidateExportFailure::kStagedIdentityMismatch:
+                return "staged_identity_mismatch";
+            case CandidateExportFailure::kInvalidTrajectory:
+                return "invalid_trajectory";
+            case CandidateExportFailure::kInvalidTimeWindow:
+                return "invalid_time_window";
+            case CandidateExportFailure::kInvalidEndpointMetadata:
+                return "invalid_endpoint_metadata";
+            case CandidateExportFailure::kInvalidRoleSchedule:
+                return "invalid_role_schedule";
+            case CandidateExportFailure::kIncompleteRouteBoundary:
+                return "incomplete_route_boundary";
+            case CandidateExportFailure::kInvalidWorldIdentity:
+                return "invalid_world_identity";
+            case CandidateExportFailure::kInvalidProtectedRegion:
+                return "invalid_protected_region";
+            case CandidateExportFailure::kInvalidCandidate:
+                return "invalid_candidate";
+        }
+        return "unknown";
+    }
+
+    Planner::CandidateExportResult
     Planner::exportStagedCommandCandidate(
             const CandidateCommandBundle& command,
             const CommandCertificate& certificate,
@@ -774,32 +804,47 @@ double knownFreeGuideSupport(
             const std::int64_t valid_from_ns,
             const std::int64_t valid_until_ns) const {
         if (localization_epoch == 0U || goal_epoch == 0U || request_id == 0U ||
-            generation == 0U || valid_from_ns <= 0 || valid_until_ns < valid_from_ns ||
+            generation == 0U) {
+            return {std::nullopt, CandidateExportFailure::kInvalidInputIdentity};
+        }
+        if (valid_from_ns <= 0 || valid_until_ns < valid_from_ns) {
+            return {std::nullopt, CandidateExportFailure::kInvalidTimeWindow};
+        }
+        if (certificate.pinned_world.localization_epoch == 0U ||
+            certificate.pinned_world.generation == 0U ||
+            certificate.pinned_world.revision == 0U ||
+            certificate.pinned_world.observation_stamp_ns <= 0 ||
             certificate.validated_world.localization_epoch == 0U ||
             certificate.validated_world.generation == 0U ||
             certificate.validated_world.revision == 0U ||
-            certificate.validated_world.observation_stamp_ns <= 0 ||
-            command.localization_epoch != localization_epoch ||
-            command.goal_epoch != goal_epoch || command.request_id != request_id ||
-            command.position.empty() || command.yaw.empty() ||
+            certificate.validated_world.observation_stamp_ns <= 0) {
+            return {std::nullopt, CandidateExportFailure::kInvalidWorldIdentity};
+        }
+        if (command.localization_epoch != localization_epoch ||
+            command.goal_epoch != goal_epoch || command.request_id != request_id) {
+            return {std::nullopt, CandidateExportFailure::kStagedIdentityMismatch};
+        }
+        if (command.position.empty() || command.yaw.empty() ||
             !std::isfinite(command.position.start_WT) ||
             !std::isfinite(command.position.getTotalDuration()) ||
             command.position.getTotalDuration() < 0.0) {
-            return std::nullopt;
+            return {std::nullopt, CandidateExportFailure::kInvalidTrajectory};
         }
 
         const double start_wall_time_s = command.position.start_WT;
         const double end_wall_time_s = start_wall_time_s +
             command.position.getTotalDuration();
         if (!std::isfinite(end_wall_time_s) || end_wall_time_s < start_wall_time_s) {
-            return std::nullopt;
+            return {std::nullopt, CandidateExportFailure::kInvalidEndpointMetadata};
         }
         const auto start_ns = navigation_common::secondsToNanoseconds(start_wall_time_s);
         const auto end_ns = navigation_common::secondsToNanoseconds(end_wall_time_s);
         const auto declared_end_ns = navigation_common::secondsSumToNanoseconds(
             start_wall_time_s, command.position.getTotalDuration());
         if (!start_ns || !end_ns || !declared_end_ns ||
-            *end_ns < *start_ns || *declared_end_ns < *start_ns) return std::nullopt;
+            *end_ns < *start_ns || *declared_end_ns < *start_ns) {
+            return {std::nullopt, CandidateExportFailure::kInvalidEndpointMetadata};
+        }
 
         navigation_planning::CandidateBundle candidate;
         candidate.pinned_world_identity = certificate.pinned_world;
@@ -863,7 +908,9 @@ double knownFreeGuideSupport(
         }
         candidate.valid_from_ns = candidate_valid_from_ns;
         candidate.valid_until_ns = std::min(valid_until_ns, *declared_end_ns);
-        if (candidate.valid_until_ns < candidate.valid_from_ns) return std::nullopt;
+        if (candidate.valid_until_ns < candidate.valid_from_ns) {
+            return {std::nullopt, CandidateExportFailure::kInvalidTimeWindow};
+        }
         candidate.evaluator = [position = command.position,
                                yaw = command.yaw,
                                roles = command.roles,
@@ -963,7 +1010,10 @@ double knownFreeGuideSupport(
                         constexpr double kBoundaryProbeDtS = 0.005;
                         const std::size_t probe_count = static_cast<std::size_t>(
                             std::ceil(total_duration / kBoundaryProbeDtS));
-                        if (probe_count > 10000000U) return std::nullopt;
+                        if (probe_count > 10000000U) {
+                            return {std::nullopt,
+                                    CandidateExportFailure::kIncompleteRouteBoundary};
+                        }
                         for (std::size_t probe = 1U; probe <= probe_count; ++probe) {
                             const double current_t = std::min(
                                 total_duration,
@@ -1048,7 +1098,8 @@ double knownFreeGuideSupport(
                         const auto boundary_stamp_ns = navigation_common::secondsSumToNanoseconds(
                             start_wall_time_s, *boundary_entry_tt);
                         if (!boundary_entry_position.allFinite() || !boundary_stamp_ns) {
-                            return std::nullopt;
+                            return {std::nullopt,
+                                    CandidateExportFailure::kIncompleteRouteBoundary};
                         }
                         candidate.route_boundary_event = navigation_planning::RouteBoundaryEvent{
                             command.terminal_stop
@@ -1067,10 +1118,40 @@ double knownFreeGuideSupport(
             planner_context_->warn(
                 " -- [planner] pass-through endpoint reached without a complete "
                 "RouteBoundaryConstraint/Event; rejecting candidate");
-            return std::nullopt;
+            return {std::nullopt, CandidateExportFailure::kIncompleteRouteBoundary};
         }
-        return candidate.valid() ? std::optional<navigation_planning::CandidateBundle>{
-            std::move(candidate)} : std::nullopt;
+        if (!candidate.hasDeclaredEndpointMetadata()) {
+            return {std::nullopt, CandidateExportFailure::kInvalidEndpointMetadata};
+        }
+        if (!candidate.roleScheduleValid()) {
+            return {std::nullopt, CandidateExportFailure::kInvalidRoleSchedule};
+        }
+        if (!candidate.protected_region.valid()) {
+            return {std::nullopt, CandidateExportFailure::kInvalidProtectedRegion};
+        }
+        const auto world_identity_valid = [](const auto& identity) {
+            return identity.localization_epoch != 0U &&
+                   identity.generation != 0U && identity.revision != 0U &&
+                   identity.observation_stamp_ns > 0;
+        };
+        if (!world_identity_valid(candidate.pinned_world_identity) ||
+            !world_identity_valid(candidate.world_identity) ||
+            candidate.pinned_world_identity.localization_epoch != localization_epoch ||
+            candidate.world_identity.localization_epoch != localization_epoch) {
+            return {std::nullopt, CandidateExportFailure::kInvalidWorldIdentity};
+        }
+        if ((!candidate.route_boundary_constraint && candidate.route_boundary_event) ||
+            (candidate.route_boundary_constraint &&
+             (!candidate.route_boundary_event ||
+              !candidate.route_boundary_constraint->valid() ||
+              !candidate.route_boundary_event->valid()))) {
+            return {std::nullopt, CandidateExportFailure::kIncompleteRouteBoundary};
+        }
+        if (!candidate.valid()) {
+            return {std::nullopt, CandidateExportFailure::kInvalidCandidate};
+        }
+        return {std::optional<navigation_planning::CandidateBundle>{
+                    std::move(candidate)}, CandidateExportFailure::kNone};
     }
 
     bool Planner::updateRouteYawReference() noexcept {
@@ -1856,17 +1937,27 @@ double knownFreeGuideSupport(
             outcome.failure_reason = failure_reason;
             return finish();
         }
-        const auto candidate = exportCommandCandidate(
+        const auto candidate_valid_from_ns = request.key.start_mode ==
+                navigation_planning::PlanningStartMode::kCommittedFutureState
+            ? request.activation_stamp_ns
+            : request.key.anchor_stamp_ns;
+        const auto export_result = exportCommandCandidateDetailed(
             request.key.localization_epoch, request.key.goal_epoch,
-            request.key.request_id, request.key.anchor_stamp_ns,
+            request.key.request_id, candidate_valid_from_ns,
             std::numeric_limits<std::int64_t>::max());
-        if (!candidate) {
+        if (!export_result.candidate) {
+            planner_context_->warn(
+                " -- [planner] successful solve could not export staged candidate: "
+                "export_failure={} export_failure_code={} deadline_observed={}",
+                candidateExportFailureName(export_result.failure),
+                static_cast<int>(export_result.failure),
+                last_nominal_deadline_observed_ ? 1 : 0);
             outcome.outcome = navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
             outcome.failure_stage = navigation_planning::PlanningFailureStage::kCommitRecertification;
-            outcome.failure_reason = navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline;
+            outcome.failure_reason = navigation_planning::PlanningFailureReason::kCandidateExportInvalid;
             return finish();
         }
-        outcome.candidate = *candidate;
+        outcome.candidate = *export_result.candidate;
         outcome.outcome = last_nominal_deadline_observed_
             ? navigation_planning::CompletePlanningOutcome::kDeadlineWithCompleteBundle
             : last_nominal_solve_status_ == traj_opt::NominalSolveStatus::kCertifiedSeed
@@ -1959,10 +2050,23 @@ double knownFreeGuideSupport(
             const std::uint64_t request_id,
             const std::int64_t valid_from_ns,
             const std::int64_t valid_until_ns) const {
+        return exportCommandCandidateDetailed(
+            localization_epoch, goal_epoch, request_id, valid_from_ns,
+            valid_until_ns).candidate;
+    }
+
+    Planner::CandidateExportResult Planner::exportCommandCandidateDetailed(
+            const std::uint64_t localization_epoch,
+            const std::uint64_t goal_epoch,
+            const std::uint64_t request_id,
+            const std::int64_t valid_from_ns,
+            const std::int64_t valid_until_ns) const {
         std::optional<StagedCommandCandidate> staged;
         {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-            if (!staged_planner_candidate_) return std::nullopt;
+            if (!staged_planner_candidate_) {
+                return {std::nullopt, CandidateExportFailure::kNoStagedCandidate};
+            }
             staged = staged_planner_candidate_;
         }
         return exportStagedCommandCandidate(

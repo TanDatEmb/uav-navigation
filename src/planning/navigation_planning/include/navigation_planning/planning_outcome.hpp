@@ -60,6 +60,10 @@ enum class PlanningFailureReason : std::uint8_t {
   // Keep this new telemetry reason at the end: preceding enum ordinals are
   // serialized in runtime diagnostics and are therefore wire-compatible.
   kMainKnownFreeInsufficient,
+  // Candidate construction/export failed after the planner transaction. This
+  // remains distinct from a deadline failure; the internal exporter records
+  // the first violated invariant.
+  kCandidateExportInvalid,
 };
 
 [[nodiscard]] constexpr bool completePlanningSucceeded(

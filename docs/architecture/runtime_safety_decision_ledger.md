@@ -1,5 +1,36 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-06 - Preserve committed-future candidate activation contract
+
+- **Owner/status:** planning backend transaction boundary; `IMPLEMENTED`,
+  focused request and committed-future export regressions required.
+- **Scope:** enforce `PlanningRequest::startModeContractValid()` during request
+  validation; bind a committed-future candidate's executable valid-from and
+  activation to `request.activation_stamp_ns` (conservatively clamped only when
+  the producer-declared polynomial starts later); and keep staged-candidate
+  export failures distinct from deadline failures through internal typed
+  reasons. The exporter retains its final `CandidateBundle::valid()` guard.
+- **Safety impact:** malformed future identity, time, world, route, role, or
+  candidate metadata is rejected fail-closed and cannot be relabeled as an
+  expired deadline. No solve deadline, replan horizon, certificate, map,
+  CurrentBodySupport/UNKNOWN policy, PX4 contract, or execution authority is
+  widened or changed.
+- **Evidence:** request-contract regressions cover missing/mismatched anchor,
+  activation, generation, world, and identity fields; the planner-facade
+  regression completes an initial commit followed by a valid committed-future
+  request with no CurrentBodySupport and verifies staged export plus the future
+  activation boundary. The baseline T2-A planner transaction remains a
+  separate qualification result; no SITL or hardware claim follows here.
+- **Removal/review condition:** retain until the immutable request/candidate
+  transaction is replaced by an explicitly versioned successor contract with
+  equivalent identity and activation evidence; do not remove the final
+  candidate validity guard or collapse typed export failures into deadline
+  telemetry.
+- **Verification:** source the ROS Jazzy/workspace overlays; run
+  `test_planning_contracts` and the committed-future `test_planner_facade`
+  regression, planning backend/runtime/mapping CTest, the full current Python
+  suite, canonical Release build, and `git diff --check`.
+
 ### 2026-09-06 - Add deterministic same-identity renewal failure injection
 
 - **Owner/status:** navigation runtime integration qualification; DIAGNOSTIC-ONLY,

@@ -111,6 +111,29 @@ namespace navigation_planning_backend {
         };
         std::optional<StagedCommandCandidate> staged_planner_candidate_;
 
+        enum class CandidateExportFailure : std::uint8_t {
+            kNone,
+            kNoStagedCandidate,
+            kInvalidInputIdentity,
+            kStagedIdentityMismatch,
+            kInvalidTrajectory,
+            kInvalidTimeWindow,
+            kInvalidEndpointMetadata,
+            kInvalidRoleSchedule,
+            kIncompleteRouteBoundary,
+            kInvalidWorldIdentity,
+            kInvalidProtectedRegion,
+            kInvalidCandidate,
+        };
+
+        struct CandidateExportResult {
+            std::optional<navigation_planning::CandidateBundle> candidate;
+            CandidateExportFailure failure{CandidateExportFailure::kNone};
+        };
+
+        [[nodiscard]] static const char* candidateExportFailureName(
+            CandidateExportFailure failure) noexcept;
+
         Vec3f local_start_p_;
 
         // Keep the mission target for diagnostics, but allow the geometric
@@ -206,11 +229,18 @@ namespace navigation_planning_backend {
 
         bool stageCommandHistoryForCandidate(const ExpTraj& exp_traj);
 
-        [[nodiscard]] std::optional<navigation_planning::CandidateBundle>
+        [[nodiscard]] CandidateExportResult
         exportStagedCommandCandidate(
             const CandidateCommandBundle& command,
             const CommandCertificate& certificate,
             std::uint64_t generation,
+            std::uint64_t localization_epoch,
+            std::uint64_t goal_epoch,
+            std::uint64_t request_id,
+            std::int64_t valid_from_ns,
+            std::int64_t valid_until_ns) const;
+
+        [[nodiscard]] CandidateExportResult exportCommandCandidateDetailed(
             std::uint64_t localization_epoch,
             std::uint64_t goal_epoch,
             std::uint64_t request_id,

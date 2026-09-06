@@ -342,8 +342,25 @@ TEST(PlanningRequest, CommittedFutureStateCannotOmitOrMoveItsAnchor) {
 
   request.activation_stamp_ns = 501;
   EXPECT_FALSE(request.startModeContractValid());
-  request.anchor->activation_stamp_ns = 501;
-  EXPECT_TRUE(request.startModeContractValid());
+  request.activation_stamp_ns = 500;
+
+  request.anchor->active_bundle_generation = 10;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.anchor->active_bundle_generation = request.key.committed_bundle_generation;
+
+  request.anchor->command_world.generation = 5;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.anchor->command_world.generation = request.key.pinned_world_generation;
+
+  request.activation_stamp_ns = request.key.anchor_stamp_ns;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.activation_stamp_ns = 500;
+
+  request.anchor->request_id = 10;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.anchor->request_id = request.key.request_id;
+  request.anchor->goal_epoch = 8;
+  EXPECT_FALSE(request.startModeContractValid());
 }
 
 TEST(PlanningRequest, RequiresCanonicalRouteValueAndRejectsMalformedSnapshot) {

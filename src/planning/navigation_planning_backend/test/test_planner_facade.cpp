@@ -626,6 +626,116 @@ TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
   EXPECT_FALSE(navigation_planning::completePlanningSucceeded(blocked.outcome));
 }
 
+TEST(PlannerFacade, RejectsInvalidCommittedFutureRequestBeforeSolve) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      [] { return 10.0; });
+
+  auto request = plannerBodySupportRequest(world, nullptr);
+  request.key.start_mode =
+      navigation_planning::PlanningStartMode::kCommittedFutureState;
+  request.key.committed_bundle_generation = 11U;
+  request.current_body_support.reset();
+  request.anchor.reset();
+  request.activation_stamp_ns = 0;
+
+  EXPECT_FALSE(request.startModeContractValid());
+  EXPECT_FALSE(request.valid());
+  const auto outcome = facade.plan(request);
+  EXPECT_EQ(outcome.outcome,
+            navigation_planning::CompletePlanningOutcome::kInvalidRequest);
+  EXPECT_EQ(outcome.failure_stage,
+            navigation_planning::PlanningFailureStage::kInput);
+  EXPECT_EQ(outcome.failure_reason,
+            navigation_planning::PlanningFailureReason::kInvalidInput);
+  EXPECT_EQ(facade.solveStage(), 0);
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
+}
+
+TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      [&ros_time_s] { return ros_time_s; });
+
+  auto initial_request = plannerBodySupportRequest(world, nullptr);
+  ASSERT_TRUE(initial_request.valid());
+  const auto initial = facade.plan(initial_request);
+  ASSERT_TRUE(initial.valid())
+      << static_cast<int>(initial.failure_stage) << ":"
+      << static_cast<int>(initial.failure_reason);
+  ASSERT_TRUE(initial.candidate.has_value());
+  ASSERT_TRUE(initial.candidate->valid());
+  facade.onExecutionTimelineActivated(initial.candidate->bundle_generation);
+
+  const auto& committed = *initial.candidate;
+  const double main_end_time_s = committed.backup_available
+      ? committed.backup_start_time_s
+      : committed.duration_s;
+  ASSERT_TRUE(std::isfinite(main_end_time_s));
+  ASSERT_GT(main_end_time_s, 0.0);
+  const double activation_offset_s = std::min(0.1, main_end_time_s * 0.5);
+  ASSERT_GT(activation_offset_s, 0.0);
+  const auto activation_stamp_ns = committed.declared_start_ns +
+      static_cast<std::int64_t>(std::llround(activation_offset_s * 1.0e9));
+  ASSERT_GT(activation_stamp_ns, initial_request.key.anchor_stamp_ns);
+  ASSERT_LT(activation_stamp_ns,
+            committed.declared_start_ns +
+                static_cast<std::int64_t>(std::llround(main_end_time_s * 1.0e9)));
+
+  const auto anchor_sample = committed.sampleAtDeclaredStamp(activation_stamp_ns);
+  ASSERT_TRUE(anchor_sample.has_value());
+
+  auto successor_request = initial_request;
+  successor_request.key.start_mode =
+      navigation_planning::PlanningStartMode::kCommittedFutureState;
+  successor_request.key.committed_bundle_generation =
+      committed.bundle_generation;
+  successor_request.current_body_support.reset();
+  successor_request.activation_stamp_ns = activation_stamp_ns;
+  navigation_planning::ExecutionAnchor anchor;
+  anchor.active_bundle_generation = committed.bundle_generation;
+  anchor.localization_epoch = successor_request.key.localization_epoch;
+  anchor.goal_epoch = successor_request.key.goal_epoch;
+  anchor.request_id = successor_request.key.request_id;
+  anchor.request_stamp_ns = successor_request.key.anchor_stamp_ns;
+  anchor.activation_stamp_ns = activation_stamp_ns;
+  anchor.state = *anchor_sample;
+  anchor.active_role = anchor_sample->role;
+  anchor.active_main_end_ns = committed.declared_start_ns +
+      static_cast<std::int64_t>(std::llround(main_end_time_s * 1.0e9));
+  anchor.active_bundle_end_ns = committed.declared_end_ns;
+  anchor.command_world = committed.world_identity;
+  successor_request.anchor = anchor;
+  successor_request.history.previous_bundle_generation =
+      committed.bundle_generation;
+  successor_request.history.previous_velocity_world =
+      anchor_sample->velocity_world;
+
+  ASSERT_TRUE(successor_request.startModeContractValid());
+  ASSERT_TRUE(successor_request.valid());
+  const auto successor = facade.plan(successor_request);
+  ASSERT_TRUE(successor.valid())
+      << static_cast<int>(successor.failure_stage) << ":"
+      << static_cast<int>(successor.failure_reason);
+  ASSERT_TRUE(successor.candidate.has_value());
+  ASSERT_TRUE(successor.candidate->valid());
+  EXPECT_EQ(successor.candidate->localization_epoch,
+            successor_request.key.localization_epoch);
+  EXPECT_EQ(successor.candidate->goal_epoch, successor_request.key.goal_epoch);
+  EXPECT_EQ(successor.candidate->request_id, successor_request.key.request_id);
+  EXPECT_EQ(successor.candidate->activation_stamp_ns,
+            successor_request.activation_stamp_ns);
+  EXPECT_EQ(successor.candidate->valid_from_ns,
+            successor_request.activation_stamp_ns);
+  EXPECT_NE(successor.candidate->activation_stamp_ns,
+            successor_request.key.anchor_stamp_ns);
+}
+
 TEST(PlannerFacade,
      StagesTerminalStopHoldWhenUnknownMeasuredStateIsAlreadyAccepted) {
   auto world = std::make_shared<PlannerBodySupportWorld>();
@@ -738,6 +848,8 @@ TEST(PlannerFacade, PassThroughLookaheadExportsRouteBoundaryEvent) {
   const auto candidate = facade.exportCommandCandidate(1U, 1U, 1U, 10000000000LL,
                                                        20000000000LL);
   ASSERT_TRUE(candidate);
+  EXPECT_EQ(candidate->activation_stamp_ns, 10000000000LL);
+  EXPECT_EQ(candidate->valid_from_ns, 10000000000LL);
   ASSERT_TRUE(candidate->route_boundary_constraint.has_value());
   ASSERT_TRUE(candidate->route_boundary_event.has_value());
   EXPECT_EQ(candidate->route_boundary_event->kind,

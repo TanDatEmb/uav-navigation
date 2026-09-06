@@ -99,6 +99,8 @@ struct PlanningRequest {
          anchor->activation_stamp_ns == activation_stamp_ns &&
          anchor->active_bundle_generation == key.committed_bundle_generation &&
          anchor->localization_epoch == key.localization_epoch &&
+         anchor->goal_epoch == key.goal_epoch &&
+         anchor->request_id == key.request_id &&
          anchor->command_world.generation == key.pinned_world_generation &&
          anchor->command_world.revision == key.pinned_world_revision);
     const bool stopped_activation_valid =
@@ -126,6 +128,7 @@ struct PlanningRequest {
     return key.valid() && goal.valid() && route_contract_valid &&
            key.localization_epoch == goal.localization_epoch &&
            key.goal_epoch == goal.goal_epoch && key.request_id == goal.request_id &&
+           startModeContractValid() &&
            key.anchor_stamp_ns == start_state.source_stamp_ns &&
            start_state.finite() &&
            static_cast<bool>(world) && world->identity().localization_epoch ==
