@@ -113,6 +113,36 @@
   sufficient three-dimensional KNOWN_FREE evidence. SITL remains owned by the
   integration agent.
 
+### 2026-09-06 - Qualify the PlannerFacade mapping fixture against endpoint semantics
+
+- **Owner/status:** planning and mapping test owners; `QUALIFIED`.
+- **Scope:** The real `PlannerFacade` fixture now places the sensor origin at
+  the voxel-centre-aligned `(0.1, 0.1, 1.5)` pose and places the explicit
+  no-return endpoint at `(1.2, 0.1, 1.5)`, beyond the mission goal at
+  `x=1.0`. This keeps the goal strictly before the endpoint while preserving
+  the measured-start UNKNOWN and request-local `CurrentBodySupport` witness.
+- **Safety impact:** no production safety policy or current-body exception is
+  relaxed. The fixture now reflects the mapping contract that a no-return ray
+  contributes miss evidence only before its endpoint voxel; it does not turn
+  the endpoint voxel into `KNOWN_FREE`.
+- **Evidence:** The former `.35 -> 1.0` precondition was false because `0.35`
+  was the synthetic sensor origin: with the 0.1 m ray minimum, the miss ray
+  begins at 0.45 m, so the origin voxel itself remains UNKNOWN. The old `1.0`
+  endpoint also coincided with the no-return endpoint, which cannot itself
+  certify its endpoint voxel. The corrected fixture moves the origin to 0.1 m,
+  aligns the ray to voxel-centre y=0.1 m, and ends it at 1.2 m beyond the goal.
+  The full candidate path passes `test_planner_facade`; planning backend CTest
+  is 8/8, mapping CTest is 3/3, the canonical Release build finishes 23/23
+  packages, and the current Python suite passes 247/247. No SITL or hardware
+  acceptance claim is made.
+- **Removal/review condition:** retain this regression while the explicit
+  no-return endpoint contract remains in the mapping backend; revisit only if
+  that backend contract is deliberately changed and covered by its own tests.
+- **Verification:** source `/opt/ros/jazzy/setup.bash` and the workspace
+  overlay, then run the planning and mapping package CTest suites, the focused
+  current-body regressions, `python3 -m pytest -q tools/runtime/tests`, and
+  `python3 tools/runtime/build.py --mode release build`.
+
 ### 2026-09-05 - Keep runtime timer ownership in one product timing contract
 
 - **Owner/status:** navigation runtime and planning maintainers; `IMPLEMENTED`,
