@@ -393,6 +393,16 @@ navigation_world_model::CurrentBodySupportPtr plannerBodySupport(
   return std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
 }
 
+// These tests exercise request/route/body-support and boundary-event
+// semantics, not the product MAIN-envelope stress profile. Pin their
+// requested speed to the pre-stress nominal value so a production envelope
+// change cannot turn a semantic fixture into a numerical-feasibility test.
+std::optional<navigation_planning::DynamicLimits> semanticFixtureMissionLimits() {
+  navigation_planning::DynamicLimits limits;
+  limits.intent.requested_cruise_speed_mps = 0.5624988750005627;
+  return limits;
+}
+
 struct BoundaryEntrySample final {
   double trajectory_time_s{0.0};
   navigation_planning::CandidateRole role{navigation_planning::CandidateRole::kMain};
@@ -483,8 +493,8 @@ TEST(PlannerFacade, ExposesOnlyProductStateBeforeFirstCommit) {
   EXPECT_EQ(diagnostics.module_time_us[0], 0.0);
   EXPECT_EQ(diagnostics.route_yaw_source,
             static_cast<int>(navigation_planning_backend::RouteYawSource::kInvalidRoute));
-  EXPECT_DOUBLE_EQ(diagnostics.yaw_rate_limit_rad_s, 1.5);
-  EXPECT_DOUBLE_EQ(diagnostics.yaw_acceleration_limit_rad_s2, 1.0);
+  EXPECT_DOUBLE_EQ(diagnostics.yaw_rate_limit_rad_s, 2.0);
+  EXPECT_DOUBLE_EQ(diagnostics.yaw_acceleration_limit_rad_s2, 2.0);
 }
 
 TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {
@@ -582,7 +592,7 @@ TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
   TestCommitAuthorizer authorizer(world);
   double ros_time_s = 10.0;
   navigation_planning_backend::PlannerFacade facade(
-      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      PLANNER_FACADE_CONFIG_PATH, world, semanticFixtureMissionLimits(), authorizer,
       [&ros_time_s] { return ros_time_s; });
 
   // The synthetic world has UNKNOWN only at the measured pose and KNOWN_FREE
@@ -618,7 +628,7 @@ TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
   const auto blocked_support = plannerBodySupport(blocked_world->identity());
   TestCommitAuthorizer blocked_authorizer(blocked_world);
   navigation_planning_backend::PlannerFacade blocked_facade(
-      PLANNER_FACADE_CONFIG_PATH, blocked_world, std::nullopt,
+      PLANNER_FACADE_CONFIG_PATH, blocked_world, semanticFixtureMissionLimits(),
       blocked_authorizer, [] { return 10.0; });
   const auto blocked = blocked_facade.plan(
       plannerBodySupportRequest(blocked_world, blocked_support));
@@ -810,7 +820,8 @@ TEST(PlannerFacade, PassThroughLookaheadExportsRouteBoundaryEvent) {
   auto world = std::make_shared<IdentityOnlyWorld>();
   TestCommitAuthorizer authorizer(world);
   navigation_planning_backend::PlannerFacade facade(
-      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer, [] { return 10.0; });
+      PLANNER_FACADE_CONFIG_PATH, world, semanticFixtureMissionLimits(), authorizer,
+      [] { return 10.0; });
 
   navigation_mission::Mission mission;
   mission.id = "lookahead-boundary-contract";
@@ -863,7 +874,8 @@ TEST(PlannerFacade, PassThroughLookaheadPrefixWithoutBoundaryEntryStaysValid) {
   auto world = std::make_shared<IdentityOnlyWorld>();
   TestCommitAuthorizer authorizer(world);
   navigation_planning_backend::PlannerFacade facade(
-      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer, [] { return 10.0; });
+      PLANNER_FACADE_CONFIG_PATH, world, semanticFixtureMissionLimits(), authorizer,
+      [] { return 10.0; });
 
   navigation_mission::Mission mission;
   mission.id = "lookahead-prefix-contract";
@@ -909,14 +921,17 @@ TEST(PlannerFacade, PassThroughEntryAfterBackupDoesNotAdvertiseBoundaryEvent) {
   auto world = std::make_shared<IdentityOnlyWorld>();
   TestCommitAuthorizer authorizer(world);
   navigation_planning_backend::PlannerFacade facade(
-      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer, [] { return 10.0; });
+      PLANNER_FACADE_CONFIG_PATH, world, semanticFixtureMissionLimits(), authorizer,
+      [] { return 10.0; });
 
   navigation_mission::Mission mission;
   mission.id = "backup-boundary-contract";
   mission.frame = "lio_odom";
   navigation_mission::MissionWaypoint active;
   active.id = "active";
-  active.position_enu = Eigen::Vector3d{5.55, 0.0, 1.736};
+  // Keep the route-boundary witness on the currently certified BACKUP suffix
+  // after the development envelope changed from the former low-speed profile.
+  active.position_enu = Eigen::Vector3d{6.17, 0.0, 1.925};
   active.behavior = navigation_mission::MissionWaypoint::Behavior::PassThrough;
   active.acceptance_radius_m = 0.2;
   navigation_mission::MissionWaypoint next;

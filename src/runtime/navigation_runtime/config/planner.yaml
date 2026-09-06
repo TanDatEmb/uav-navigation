@@ -68,11 +68,11 @@ planner:
   localization_error_budget_m: 0.05
   mapping_error_budget_m: 0.10
   planning_margin_m: 0.05
-  # Development nominal yaw envelope for the Q1 responsiveness
-  # characterization. The final yaw-rate and yaw-acceleration certificates
-  # remain active; actual PX4 limits are captured independently.
-  yaw_rate_max_rad_s: 1.5
-  yaw_acceleration_max_rad_s2: 1.0
+  # Development stress envelope for the 3 m/s Q1 characterization. The final
+  # yaw-rate and yaw-acceleration certificates remain active; actual PX4
+  # limits are captured independently.
+  yaw_rate_max_rad_s: 2.0
+  yaw_acceleration_max_rad_s2: 2.0
   route_yaw:
     minimum_lookahead_m: 2.0
     maximum_lookahead_m: 12.0
@@ -84,15 +84,15 @@ planner:
   # yaw anchor. This is a continuity recovery envelope, not a safety/waypoint
   # acceptance threshold; calibrate it from repeated tracking distributions.
   yaw_tracking_error_budget_rad: 0.35
-  # P0_PROVISIONAL_MAIN_PROFILE: a provisional candidate from the isolated
-  # MODE_PX4_LOCAL characterization harness. It is not product closed-loop or
-  # vehicle-capability evidence and remains subject to repeated, corrected
-  # evidence. It informs nominal MAIN only, not a physical or actuator limit;
-  # keep the hard physical boundary below unchanged for BACKUP/EMERGENCY.
+  # Q1_DEVELOPMENT_STRESS_PROFILE: a development-only operating point for
+  # closed-loop attribution at 3 m/s. It is not product closed-loop or
+  # vehicle-capability evidence and is not a flight limit. It informs nominal
+  # MAIN only, not a physical or actuator limit; keep the hard physical
+  # boundary below unchanged for BACKUP/EMERGENCY.
   control_envelope:
-    maximum_velocity_mps: 0.5624988750005627
-    maximum_acceleration_mps2: 0.2165062314375
-    maximum_jerk_mps3: 0.2804066718750005
+    maximum_velocity_mps: 3.0
+    maximum_acceleration_mps2: 2.0
+    maximum_jerk_mps3: 4.0
 
 traj_opt:
   switch:

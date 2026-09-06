@@ -19819,3 +19819,42 @@ release profiles must not use the former allowance.
   --gtest_filter=GuideVerticalEnvelope.*`; full backend/runtime/mapping
   regressions; canonical Release build; exact-fingerprint Q1 rerun;
   `git diff --check`.
+
+### 2026-09-07 - Enable 3 m/s development stress envelope and faster yaw
+
+- **Owner/status:** Nominal MAIN planning envelope and yaw parameterization;
+  `EXPERIMENTAL`, development characterization only. No SITL, flight, or
+  hardware qualification claim.
+- **Scope:** `planner.yaml` raises the development-only nominal MAIN target to
+  `maximum_velocity_mps=3.0`, `maximum_acceleration_mps2=2.0`,
+  `maximum_jerk_mps3=4.0`, `yaw_rate_max_rad_s=2.0`, and
+  `yaw_acceleration_max_rad_s2=2.0`. The hard `traj_opt/boundary` physical
+  limits remain `12/12/30`; BACKUP and EMERGENCY continue to use their
+  existing physical certificates. Mission-requested speed remains an intent
+  and is still clamped by the nominal MAIN envelope.
+- **Safety impact:** This intentionally increases nominal commanded dynamics
+  to expose tracking, estimator, controller, and planner feasibility limits
+  in the unchanged Q1 scenario. Tracking budget `0.25 m`, yaw budget `0.35
+  rad`, world/unknown/collision/freshness/lease/authority gates, command
+  timeout, and fail-closed recovery are unchanged. A candidate that cannot
+  satisfy the independent certificates remains rejected.
+- **False-accept/false-reject consequences:** No safety gate is relaxed and
+  no physical limit is increased. The development run may reject more
+  candidates or enter recovery when the closed loop cannot support the stress
+  point; such a result is diagnostic evidence, not permission to increase a
+  threshold.
+- **Evidence:** Current Q1 artifact proves the prior `5.0 m/s` request was
+  loaded but reduced to the old `0.562498875... m/s` nominal envelope before
+  trajectory generation. PX4 captured `MPC_XY_VEL_MAX=12`; the current
+  path-to-PX4 conversion contract has zero frame violations. The 3 m/s point
+  is therefore introduced as a source-owned diagnostic configuration, not as
+  a claim that PX4 or the vehicle can track it.
+- **Removal condition:** Replace this profile only after repeated open-space,
+  structured-obstacle, and multiwaypoint measurements establish a defensible
+  closed-loop envelope; do not promote it to flight qualification from one
+  run.
+- **Verification:** `test_planner_config`; planning/runtime/mapping and
+  contract suites; canonical Release build with clean manifest; exact Q1
+  fingerprint run recording requested/effective/command/measured speed,
+  tracking raw/aligned residuals, yaw response, certificates, authority
+  margin, command gaps, recovery, and collisions; `git diff --check`.
