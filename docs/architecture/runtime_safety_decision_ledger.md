@@ -8,14 +8,18 @@
   result to a failed result only after a coherent committed-future renewal
   snapshot proves desired and executing mission/waypoint/request identity,
   certified MAIN ownership, fresh state/world, valid anchor, no transition,
-  no pending successor, and no CurrentBodySupport. The existing cycle-id and
-  PASS_THROUGH handoff hooks remain separate legacy diagnostics.
+  no pending successor, and no CurrentBodySupport. The legacy ordinary
+  `inject_failed_replan_when_safe` hook is armed only in the first
+  scheduler-period-sized window after the scheduler's `kRenewalDue` boundary,
+  using `remaining_main_horizon_s` and `required_lead_time_s`; it does not use
+  an independent hard-coded horizon. The PASS_THROUGH handoff hook remains a
+  separate forced-transition diagnostic.
 - **Safety impact:** no default product behavior, command timeout, recovery
   state, planner policy, or execution authority is changed. When explicitly
-  enabled, the hook is admitted only in a same-identity normal renewal and the
-  prior certified command remains the sole authority until normal admission
-  decides otherwise. The dedicated two-waypoint open-world profile is a
-  harness fixture, not a production mission or safety bypass.
+  enabled, the hook is admitted only in a same-identity normal scheduler-due
+  renewal and the prior certified command remains the sole authority until
+  normal admission decides otherwise. The dedicated two-waypoint open-world
+  profile is a harness fixture, not a production mission or safety bypass.
 - **Evidence:** H1-H9 unit tests cover ordinary eligibility, waypoint/hot
   retarget/PlanFromRest/BACKUP/pending/stale/body-support rejection, one-shot
   behavior, and ordinal selection. T2-A/B/C must record identity, start mode,

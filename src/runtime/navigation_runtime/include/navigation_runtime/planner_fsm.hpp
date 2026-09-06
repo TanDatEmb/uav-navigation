@@ -414,6 +414,28 @@ inline PlannerRenewalDecision classifyPlannerRenewal(
           remaining_s, lead_time_s};
 }
 
+// The legacy ordinary failure hook is a scheduler diagnostic, not a second
+// renewal policy. Arm it only on the first scheduler-period-sized window after
+// the normal lead-time boundary. The lower edge is derived from the scheduler
+// interval and the command-clock conversion tolerance; it deliberately does
+// not introduce an independent safety horizon.
+inline bool ordinaryRenewalFailureInjectionMayArm(
+    const PlannerRenewalDecision& decision,
+    const double scheduling_interval_s) noexcept {
+  if (decision.reason != PlannerRenewalReason::kRenewalDue ||
+      !std::isfinite(decision.remaining_main_horizon_s) ||
+      decision.remaining_main_horizon_s <= 0.0 ||
+      !std::isfinite(decision.required_lead_time_s) ||
+      decision.required_lead_time_s <= 0.0 ||
+      !std::isfinite(scheduling_interval_s) || scheduling_interval_s <= 0.0) {
+    return false;
+  }
+  constexpr double kCommandClockToleranceS = 1.0e-9;
+  return decision.remaining_main_horizon_s >=
+      decision.required_lead_time_s - scheduling_interval_s -
+      kCommandClockToleranceS;
+}
+
 inline RetainedValidationTransition retainedValidationTransition(bool usable) noexcept {
   return usable ? RetainedValidationTransition::PreserveExistingState
                 : RetainedValidationTransition::FailClosed;
@@ -601,6 +623,29 @@ inline bool supersedingBundleMayRemainAvailable(
          bundle_localization_epoch == active_localization_epoch &&
          bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
          !planner_failure_latched && execution_lease_allows_command;
+}
+
+enum class StaleCommandPublicationDisposition : std::uint8_t {
+  // The callback no longer owns the execution identity. It must not mutate
+  // the newer execution, even when no replacement bundle is available yet.
+  kDropStale,
+  // A newer valid bundle still owns the same execution epochs. Keep it
+  // available for the next sampling callback without clearing the lease.
+  kRetainSuperseding,
+  // The callback still owns execution, but no valid successor remains. The
+  // current command must fail closed rather than silently continue.
+  kFailClosed,
+};
+
+[[nodiscard]] inline StaleCommandPublicationDisposition classifyStaleCommandPublication(
+    bool sampled_execution_still_current,
+    bool superseding_bundle_may_remain_available) noexcept {
+  if (!sampled_execution_still_current) {
+    return StaleCommandPublicationDisposition::kDropStale;
+  }
+  return superseding_bundle_may_remain_available
+      ? StaleCommandPublicationDisposition::kRetainSuperseding
+      : StaleCommandPublicationDisposition::kFailClosed;
 }
 
 inline PlannerResultDisposition classifyPlannerResult(

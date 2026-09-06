@@ -25,13 +25,21 @@ navigation_contracts::msg::NavigationGoal goal(
 
 TEST(PlannerFsm, ClassifiesDesiredAndExecutingIdentityTransitions) {
   const auto executing = goal("mission", 2U, 3U, 7U);
+  EXPECT_EQ(classifyGoalTransition(std::nullopt, std::nullopt),
+            GoalTransitionKind::kSteady);
   EXPECT_EQ(classifyGoalTransition(std::nullopt, executing),
             GoalTransitionKind::kCancelOrLocalizationReset);
   EXPECT_EQ(classifyGoalTransition(goal("mission", 2U, 3U, 7U), std::nullopt),
             GoalTransitionKind::kInitialGoal);
+  EXPECT_EQ(classifyGoalTransition(goal("mission", 2U, 3U, 7U), executing),
+            GoalTransitionKind::kSteady);
   EXPECT_EQ(classifyGoalTransition(goal("mission", 3U, 4U, 7U), executing),
             GoalTransitionKind::kSameRouteWaypointAdvance);
   EXPECT_EQ(classifyGoalTransition(goal("mission", 3U, 4U, 8U), executing),
+            GoalTransitionKind::kRouteReplacement);
+  EXPECT_EQ(classifyGoalTransition(goal("mission", 2U, 4U, 7U), executing),
+            GoalTransitionKind::kRouteReplacement);
+  EXPECT_EQ(classifyGoalTransition(goal("mission", 2U, 3U, 8U), executing),
             GoalTransitionKind::kRouteReplacement);
   EXPECT_EQ(classifyGoalTransition(goal("other", 0U, 1U, 1U), executing),
             GoalTransitionKind::kMissionReplacement);
@@ -173,6 +181,40 @@ TEST(PlannerFsm, ProductionRenewalLeadIncludesTwoForwardIntervals) {
           navigation_planning::PlanningTimingContract::kPlannerPeriodS +
           navigation_planning::PlanningTimingContract::kCommitGuardS);
   EXPECT_DOUBLE_EQ(decision.remaining_main_horizon_s, 1.2);
+}
+
+TEST(PlannerFsm, ArmsOrdinaryFailureInjectionOnlyInFreshDueWindow) {
+  const auto fresh_due = classifyPlannerRenewal(
+      false, true, false, navigation_planning::CandidateRole::kMain,
+      true, 2.1, 3.2,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+      navigation_planning::PlanningTimingContract::kStitchDurationS,
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS);
+  EXPECT_EQ(fresh_due.reason, PlannerRenewalReason::kRenewalDue);
+  EXPECT_TRUE(ordinaryRenewalFailureInjectionMayArm(
+      fresh_due, navigation_planning::PlanningTimingContract::kPlannerPeriodS));
+
+  const auto late_due = classifyPlannerRenewal(
+      false, true, false, navigation_planning::CandidateRole::kMain,
+      true, 2.3, 3.2,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+      navigation_planning::PlanningTimingContract::kStitchDurationS,
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS);
+  EXPECT_EQ(late_due.reason, PlannerRenewalReason::kRenewalDue);
+  EXPECT_FALSE(ordinaryRenewalFailureInjectionMayArm(
+      late_due, navigation_planning::PlanningTimingContract::kPlannerPeriodS));
+
+  const auto retained = classifyPlannerRenewal(
+      false, true, false, navigation_planning::CandidateRole::kMain,
+      true, 1.0, 4.0, 0.18, 0.2, 0.2);
+  EXPECT_EQ(retained.reason, PlannerRenewalReason::kRetainCertifiedMain);
+  EXPECT_FALSE(ordinaryRenewalFailureInjectionMayArm(retained, 0.2));
+
+  const auto forced = classifyPlannerRenewal(
+      true, true, false, navigation_planning::CandidateRole::kMain,
+      true, 0.0, 10.0, 0.18, 0.4, 0.2);
+  EXPECT_EQ(forced.reason, PlannerRenewalReason::kForcedTransition);
+  EXPECT_FALSE(ordinaryRenewalFailureInjectionMayArm(forced, 0.2));
 }
 
 TEST(PlannerFsm, StartsAnchorRecoveryBeforeExecutionLeaseIsExhausted) {
@@ -674,6 +716,18 @@ TEST(PlannerFsm, SupersedingCertifiedBundleDoesNotRevokeCommandAvailability) {
       41, 41, 7, 9, 7, 9, 1200, 1100, true, true, true));
   EXPECT_FALSE(supersedingBundleMayRemainAvailable(
       41, 41, 7, 9, 7, 9, 1200, 1100, true, false, false));
+}
+
+TEST(PlannerFsm, StaleCommandPublicationCannotMutateNewExecution) {
+  EXPECT_EQ(
+      classifyStaleCommandPublication(false, false),
+      StaleCommandPublicationDisposition::kDropStale);
+  EXPECT_EQ(
+      classifyStaleCommandPublication(true, true),
+      StaleCommandPublicationDisposition::kRetainSuperseding);
+  EXPECT_EQ(
+      classifyStaleCommandPublication(true, false),
+      StaleCommandPublicationDisposition::kFailClosed);
 }
 
 TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {

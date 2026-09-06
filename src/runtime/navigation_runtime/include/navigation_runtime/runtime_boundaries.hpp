@@ -25,6 +25,15 @@ enum class GoalTransitionKind : std::uint8_t {
   kCancelOrLocalizationReset,
 };
 
+[[nodiscard]] inline bool sameGoalIdentity(
+    const std::optional<navigation_contracts::msg::NavigationGoal>& lhs,
+    const std::optional<navigation_contracts::msg::NavigationGoal>& rhs) noexcept {
+  return lhs && rhs && lhs->mission_id == rhs->mission_id &&
+         lhs->route.route_revision == rhs->route.route_revision &&
+         lhs->waypoint_index == rhs->waypoint_index &&
+         lhs->request_id == rhs->request_id;
+}
+
 [[nodiscard]] constexpr const char* goalTransitionKindName(
     const GoalTransitionKind kind) noexcept {
   switch (kind) {
@@ -50,6 +59,9 @@ enum class GoalTransitionKind : std::uint8_t {
   if (!executing) return GoalTransitionKind::kInitialGoal;
   if (desired->mission_id != executing->mission_id) {
     return GoalTransitionKind::kMissionReplacement;
+  }
+  if (sameGoalIdentity(desired, executing)) {
+    return GoalTransitionKind::kSteady;
   }
   if (desired->route.route_revision == executing->route.route_revision &&
       desired->waypoint_index != executing->waypoint_index) {
