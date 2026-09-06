@@ -72,7 +72,6 @@ class PlanningWorker {
       return PlanningSubmitDisposition::kRejectedInvalid;
     }
 
-    bool cancel_backend = false;
     PlanningSubmitDisposition disposition = PlanningSubmitDisposition::kAccepted;
     {
       std::lock_guard lock(mutex_);
@@ -91,7 +90,11 @@ class PlanningWorker {
         if (active_->stop_source.request_stop()) {
           ++snapshot_.cancelled;
         }
-        cancel_backend = true;
+        // PlannerFacade cancellation is ambient to the backend solve. Keep
+        // the worker lifecycle mutex through this call so the old active item
+        // cannot finish, promote a replacement, and then be hit by this
+        // stale cancellation before the backend interrupt linearizes.
+        planner_->cancelActiveSolve();
       }
 
       const auto incumbent_priority = pending_
@@ -111,7 +114,6 @@ class PlanningWorker {
       ++snapshot_.submitted;
       snapshot_.pending = true;
     }
-    if (cancel_backend) planner_->cancelActiveSolve();
     cv_.notify_one();
     return disposition;
   }
@@ -119,15 +121,13 @@ class PlanningWorker {
   // Cancellation is an interrupt signal only. The planner remains owned and
   // executed by worker_; callers cannot run arbitrary backend operations.
   void cancelActive() noexcept {
-    bool cancel_backend = false;
-    {
-      std::lock_guard lock(mutex_);
-      if (active_) {
-        if (active_->stop_source.request_stop()) ++snapshot_.cancelled;
-        cancel_backend = true;
-      }
+    std::lock_guard lock(mutex_);
+    if (active_) {
+      if (active_->stop_source.request_stop()) ++snapshot_.cancelled;
+      // See submit(): this backend operation must be in the same lifecycle
+      // critical section as the active-item identity it cancels.
+      planner_->cancelActiveSolve();
     }
-    if (cancel_backend) planner_->cancelActiveSolve();
   }
 
   // A command-sampler callback may observe the terminal sample of an older
@@ -164,7 +164,6 @@ class PlanningWorker {
   }
 
   void shutdown() noexcept {
-    bool cancel_backend = false;
     {
       std::unique_lock lock(mutex_);
       if (shutdown_started_) {
@@ -177,10 +176,9 @@ class PlanningWorker {
       snapshot_.pending = false;
       if (active_) {
         if (active_->stop_source.request_stop()) ++snapshot_.cancelled;
-        cancel_backend = true;
+        planner_->cancelActiveSolve();
       }
     }
-    if (cancel_backend) planner_->cancelActiveSolve();
     worker_.request_stop();
     cv_.notify_all();
     if (worker_.joinable()) worker_.join();

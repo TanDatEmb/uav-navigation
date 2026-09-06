@@ -239,6 +239,91 @@ TEST(PlanningWorker, GoalIdentityChangeCancelsInflightAndKeepsReplacement) {
   EXPECT_GE(worker.snapshot().cancelled, 1U);
 }
 
+TEST(PlanningWorker, SerializesAmbientCancelBeforeReplacementCanStart) {
+  auto planner = std::make_unique<FakePlanner>();
+  auto* planner_view = planner.get();
+  PlanningWorker<FakePlanner> worker(std::move(planner));
+  worker.start();
+
+  JobGate gate;
+  std::mutex turnover_mutex;
+  std::condition_variable turnover_condition;
+  bool cancel_entered = false;
+  bool first_finished = false;
+  bool replacement_started = false;
+  std::atomic_int planner_job{0};
+  std::atomic_int cancel_target{0};
+
+  planner_view->cancel_hook = [&] {
+    {
+      std::lock_guard lock(turnover_mutex);
+      cancel_entered = true;
+      turnover_condition.notify_all();
+    }
+    gate.release();
+    std::unique_lock lock(turnover_mutex);
+    ASSERT_TRUE(turnover_condition.wait_for(lock, 2s, [&] {
+      return first_finished;
+    }));
+    // With serialized lifecycle cancellation the worker still owns the old
+    // active item here. Under the old unlock-before-cancel implementation,
+    // the pending replacement could already have been promoted and changed
+    // this observable job identity to 2.
+    cancel_target.store(planner_job.load(std::memory_order_acquire),
+                        std::memory_order_release);
+  };
+
+  const auto first_key = makeKey(1U);
+  ASSERT_EQ(worker.submit(
+      first_key, PlanningPriority::kNormalRenewal,
+      [&](FakePlanner&, std::stop_token stop) {
+        planner_job.store(1, std::memory_order_release);
+        gate.started();
+        gate.waitUntilReleased(stop);
+        {
+          std::lock_guard lock(turnover_mutex);
+          first_finished = true;
+          turnover_condition.notify_all();
+        }
+      }),
+      PlanningSubmitDisposition::kAccepted);
+  ASSERT_TRUE(gate.waitUntilStarted());
+
+  PlanningSubmitDisposition replacement_result =
+      PlanningSubmitDisposition::kRejectedInvalid;
+  std::thread replacement_submit([&] {
+    replacement_result = worker.submit(
+        makeKey(2U), PlanningPriority::kGoalTransition,
+        [&](FakePlanner&, std::stop_token) {
+          planner_job.store(2, std::memory_order_release);
+          {
+            std::lock_guard lock(turnover_mutex);
+            replacement_started = true;
+            turnover_condition.notify_all();
+          }
+        });
+  });
+
+  {
+    std::unique_lock lock(turnover_mutex);
+    ASSERT_TRUE(turnover_condition.wait_for(lock, 2s, [&] {
+      return cancel_entered;
+    }));
+  }
+  replacement_submit.join();
+  EXPECT_EQ(replacement_result, PlanningSubmitDisposition::kAccepted);
+  EXPECT_EQ(cancel_target.load(std::memory_order_acquire), 1);
+
+  {
+    std::unique_lock lock(turnover_mutex);
+    ASSERT_TRUE(turnover_condition.wait_for(lock, 2s, [&] {
+      return replacement_started;
+    }));
+  }
+  worker.shutdown();
+  EXPECT_EQ(planner_view->cancel_calls.load(), 1U);
+}
+
 TEST(PlanningWorker, TerminalCancelKeepsWorkerIdentityThroughBackendInterrupt) {
   auto planner = std::make_unique<FakePlanner>();
   auto* planner_view = planner.get();
