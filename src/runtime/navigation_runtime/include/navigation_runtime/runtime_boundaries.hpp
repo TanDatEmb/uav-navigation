@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include <navigation_contracts/msg/navigation_goal.hpp>
+#include <navigation_planning/planning_timing.hpp>
 
 namespace navigation_runtime {
 
@@ -145,6 +146,14 @@ inline bool plannerPeriodCoversSolveBudget(
     return false;
   }
   return solve_deadline_s < 1.0 / planner_rate_hz;
+}
+
+inline bool plannerSolveDeadlineMatchesContract(
+    const double solve_deadline_s) noexcept {
+  return std::isfinite(solve_deadline_s) &&
+         std::abs(solve_deadline_s -
+                  navigation_planning::PlanningTimingContract::kSolveDeadlineS) <=
+             1.0e-9;
 }
 
 inline std::optional<std::size_t> boundedTrajectorySampleCount(

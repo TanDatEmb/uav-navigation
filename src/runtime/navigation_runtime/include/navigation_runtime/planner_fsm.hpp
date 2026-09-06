@@ -380,7 +380,7 @@ inline PlannerRenewalDecision classifyPlannerRenewal(
 
   // Renew before the command enters its braking/backup phase.  The two
   // forward intervals cover the committed future splice and solver timing.
-  // Candidate admission independently enforces the 0.80 s MAIN reserve
+  // Candidate admission independently enforces its derived MAIN reserve
   // contract; the scheduler must not invent a second reserve value here.
   const long double lead_time =
       static_cast<long double>(solve_deadline_s) +

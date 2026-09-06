@@ -134,7 +134,12 @@ TEST(NavigationRuntimeCadence, RejectsPlannerPeriodShorterThanSolveBudget) {
   // to provoke an exception causes rclcpp Context double-shutdown during
   // exception unwinding (verified by ASan), obscuring the product predicate.
   EXPECT_FALSE(plannerPeriodCoversSolveBudget(10.0, 0.18));
-  EXPECT_TRUE(plannerPeriodCoversSolveBudget(5.0, 0.18));
+  EXPECT_TRUE(plannerPeriodCoversSolveBudget(
+      navigation_planning::PlanningTimingContract::kPlannerRateHz,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS));
+  EXPECT_TRUE(plannerSolveDeadlineMatchesContract(
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS));
+  EXPECT_FALSE(plannerSolveDeadlineMatchesContract(0.18));
 }
 
 TEST(NavigationRuntimeBoundaries, ClassifiesSensorOriginContract) {
@@ -340,7 +345,6 @@ TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {
       rclcpp::Parameter("navigation_runtime.command_topic", prefix + "/command"),
       rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
       rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
-      rclcpp::Parameter("navigation_runtime.planner_rate_hz", 5.0),
       rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
   });
 
@@ -434,7 +438,6 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
       rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
       rclcpp::Parameter("navigation_runtime.body_frame_id", "base_link"),
       rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
-      rclcpp::Parameter("navigation_runtime.planner_rate_hz", 5.0),
       rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
       rclcpp::Parameter("navigation_runtime.mission_file",
                         NAVIGATION_HANDOVER_MISSION_FILE_PATH),

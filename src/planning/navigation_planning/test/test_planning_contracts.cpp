@@ -155,7 +155,7 @@ TEST(PlanningCandidate, RequiresExplicitTerminalStopSemanticForMainWithBackup) {
   EXPECT_FALSE(candidate.valid());
 }
 
-TEST(PlanningCandidate, AdmissionRequiresEightHundredMillisecondsOfMain) {
+TEST(PlanningCandidate, AdmissionRequiresDerivedMainReserve) {
   auto candidate = validCandidate();
   candidate.start_wall_time_s = 10.0;
   candidate.duration_s = 2.0;
@@ -175,10 +175,13 @@ TEST(PlanningCandidate, AdmissionRequiresEightHundredMillisecondsOfMain) {
         : navigation_planning::CandidateRole::kBackup;
     return true;
   };
+  const double exactly_reserved_now =
+      candidate.start_wall_time_s + candidate.backup_start_time_s -
+      navigation_planning::PlanningTimingContract::kMinimumMainReserveS;
   EXPECT_TRUE(navigation_planning::candidateHasRequiredMainReserve(
-      candidate, 10.20));
+      candidate, exactly_reserved_now));
   EXPECT_FALSE(navigation_planning::candidateHasRequiredMainReserve(
-      candidate, 10.200000002));
+      candidate, exactly_reserved_now + 2.0e-9));
 }
 
 TEST(PlanningCandidate, CertifiedTerminalStopIsReserveExempt) {

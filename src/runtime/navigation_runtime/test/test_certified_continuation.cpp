@@ -49,7 +49,9 @@ TEST(CertifiedContinuation, RejectsBoundarySampledInBackup) {
 
 TEST(CertifiedContinuation, RejectsBoundaryWithoutFullMainHandoffReserve) {
   auto facts = validFacts();
-  facts.main_interval_end_ns = 1'299'999'999LL;
+  facts.main_interval_end_ns =
+      facts.boundary_stamp_ns - facts.declared_start_ns +
+      minimumMainContinuationReserveNs() - 1;
   EXPECT_FALSE(certifiedMainContinuationBoundaryEligible(facts));
 }
 

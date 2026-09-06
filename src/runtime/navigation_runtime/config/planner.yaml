@@ -39,11 +39,11 @@ planner:
   # Replan from a short future state to preserve PVA continuity without
   # committing the vehicle to a one-second blind prefix near obstacles.
   # The retained-prefix handoff must cover the complete 0.4 s stitch contract;
-  # using 0.2 s left only ~20 ms after a solve at the 180 ms deadline for
-  # recertification and atomic command publication.
+  # the typed 0.1 s scheduler period and 0.08 s solve deadline leave bounded
+  # time for recertification and atomic command publication.
   replan_forward_dt_s: 0.4
   # One absolute budget spans A*, corridor, EXP, yaw and backup validation.
-  solve_deadline_s: 0.18
+  solve_deadline_s: 0.08
   # Stop optional nominal refinement early enough to construct and certify the
   # complete yaw+BACKUP bundle. This is the locked initial value; increases
   # require a measured p99 distribution, never a single run.
@@ -200,12 +200,12 @@ astar:
   heuristic_weight: 1.5
   # PathSearch can retry once on the probabilistic map. Give each bounded
   # attempt enough time to route around a newly revealed obstacle while keeping
-  # both attempts inside the single 0.12 s A* stage budget.
-  search_time_limit_s: 0.06
+  # both attempts inside the single 0.06 s A* stage budget.
+  search_time_limit_s: 0.03
   # Preferred-altitude and unrestricted fallback share this stage budget. The
-  # remaining 0.06 s of the 0.18 s solve deadline is reserved for corridor,
+  # remaining 0.02 s of the 0.08 s solve deadline is reserved for corridor,
   # MINCO, yaw, backup construction and final certification.
-  total_time_limit_s: 0.12
+  total_time_limit_s: 0.06
   visual_process: false
   allow_diag: true
   heu_type: 2

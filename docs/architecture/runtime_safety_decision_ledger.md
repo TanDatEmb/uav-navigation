@@ -1,5 +1,40 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-06 - Adopt a bounded 10 Hz development planner contract
+
+- **Owner/status:** navigation runtime scheduler and planning backend timing;
+  `IMPLEMENTED`, development characterization only, not yet product-qualified.
+- **Scope:** Change the typed planner period/rate from `0.20 s`/`5 Hz` to
+  `0.10 s`/`10 Hz` and the absolute backend solve deadline from `0.18 s` to
+  `0.08 s`. Command sampling (`0.02 s`), command timeout (`0.10 s`),
+  replan-forward interval (`0.40 s`), stitch duration, and commit guard remain
+  unchanged. The runtime rejects a backend deadline that does not match the
+  typed contract or fit inside one scheduler period. A* budgets are reduced to
+  `0.03 s`/`0.06 s` only to satisfy the same absolute deadline; all candidate,
+  dynamic, world, tracking, and fail-closed certificates remain active.
+- **Safety impact:** a shorter solve budget can cause more clean planning
+  failures, but cannot extend command leases, overlap solves, bypass a
+  certificate, or authorize an unbounded successor. The derived candidate
+  MAIN reserve is recomputed from the timing formula rather than retaining the
+  historical `0.80 s` literal. This is a development timing candidate based
+  on one Q1 latency dataset; it is not a claim that every scenario meets the
+  10 Hz deadline.
+- **Evidence:** the frozen Q1 run measured total planning p50 `20.673 ms`,
+  p95 `32.544 ms`, and maximum `42.626 ms` before this timing change. Focused
+  timing tests verify `10 Hz`, `0.10 s`, `0.08 s`, unchanged command timing,
+  deadline ordering, and derived reserve arithmetic. Requalification on the
+  unchanged complex Q1 scenario is required before accepting this as a stable
+  product cadence.
+- **Removal/review condition:** remove or revise the development contract if
+  repeated Q1 evidence shows deadline misses, command-authority loss, or
+  quality regression; promote it only after the Q1 E1/E3 distributions meet
+  the stated latency and continuity criteria. Do not solve concurrently or
+  compensate by increasing the command timeout.
+- **Verification:** source ROS Jazzy and the workspace overlay; run the
+  focused timing/planner tests, all planning/runtime/mapping/execution and
+  contract CTest suites, the full Python suite, canonical Release build with
+  clean manifest, and the unchanged Q1 scenario.
+
 ### 2026-09-06 - Keep measured emergency brakes out of nominal route-boundary certification
 
 - **Owner/status:** planning candidate export and runtime execution boundary;

@@ -11,6 +11,7 @@
 #include <planner_core/backup_braking.hpp>
 #include <planner_core/route_yaw_reference.hpp>
 #include <navigation_planning/planning_limits.hpp>
+#include <navigation_planning/planning_timing.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 #include <path_search/config.hpp>
 #include <traj_opt/config.hpp>
@@ -159,7 +160,7 @@ namespace navigation_planning_backend {
             loader.LoadParam("astar/total_time_limit_s", astar_total_time_limit_s,
                              2.0 * astar_search_time_limit_s);
             loader.LoadParam("planner/solve_deadline_s", solve_deadline_s,
-                             0.9 * replan_forward_dt_s);
+                             navigation_planning::PlanningTimingContract::kSolveDeadlineS);
             loader.LoadParam("planner/finalization_reserve_s",
                              finalization_reserve_s, 0.04);
             loader.LoadParam("planner/corridor_bound_distance_m", corridor_bound_distance_m, 3.0);

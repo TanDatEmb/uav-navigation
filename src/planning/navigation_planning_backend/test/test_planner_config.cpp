@@ -17,6 +17,7 @@
 #include <planner_core/pass_through_terminal_velocity.hpp>
 #include <planner_core/route_boundary_timing.hpp>
 #include <navigation_planning/planning_limits.hpp>
+#include <navigation_planning/planning_timing.hpp>
 #include <utils/optimization/optimization_utils.h>
 
 TEST(PlannerDynamicLimits, BoundaryAccountingIsUlpsOnly) {
@@ -410,6 +411,10 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_LE(planner.astar_search_time_limit_s, planner.replan_forward_dt_s * 0.25);
   EXPECT_GE(planner.astar_total_time_limit_s, planner.astar_search_time_limit_s);
   EXPECT_LT(planner.astar_total_time_limit_s, planner.solve_deadline_s);
+  EXPECT_DOUBLE_EQ(
+      planner.solve_deadline_s,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS);
+  EXPECT_DOUBLE_EQ(planner.solve_deadline_s, 0.08);
   EXPECT_LE(planner.solve_deadline_s, planner.replan_forward_dt_s);
   EXPECT_DOUBLE_EQ(planner.finalization_reserve_s, 0.04);
   EXPECT_DOUBLE_EQ(planner.local_window_m, 20.0);

@@ -590,11 +590,11 @@ def _write_runtime_evidence_metadata(
         "ros_version": os.environ.get("ROS_DISTRO", "jazzy"),
         "mission_file": str(mission_file.resolve()) if mission_file else None,
         "planner_config": str((ROOT / "src/runtime/navigation_runtime/config/planner.yaml").resolve()),
-        "planner_rate_hz": 5.0,
+        "planner_rate_hz": 10.0,
         "command_rate_hz": 50.0,
         "replan_forward_s": 0.4,
         "stitch_duration_s": 0.4,
-        "solve_deadline_s": 0.18,
+        "solve_deadline_s": 0.08,
         "requested_cruise_speed_mps": requested_cruise_speed_mps,
         "environment": {
             "map_profile": map_profile,

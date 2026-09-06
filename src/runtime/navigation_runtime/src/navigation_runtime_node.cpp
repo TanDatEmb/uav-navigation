@@ -1411,11 +1411,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       world_snapshot_store_, [this]() { return now().seconds(); });
   planner_ = planner.get();
   const double solve_deadline_s = planner_->solveDeadlineSeconds();
-  if (!plannerPeriodCoversSolveBudget(
+  if (!plannerSolveDeadlineMatchesContract(solve_deadline_s) ||
+      !plannerPeriodCoversSolveBudget(
           navigation_planning::PlanningTimingContract::kPlannerRateHz, solve_deadline_s)) {
     throw std::invalid_argument(
-        "the product planner rate must leave a complete timer period "
-        "for planner.solve_deadline_s");
+        "planner.solve_deadline_s must match the typed product timing contract "
+        "and fit inside one planner period");
   }
   planning_worker_ = std::make_unique<
       PlanningWorker<navigation_planning_backend::PlannerFacade>>(

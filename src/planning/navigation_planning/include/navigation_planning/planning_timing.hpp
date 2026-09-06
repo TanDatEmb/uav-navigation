@@ -6,9 +6,9 @@ struct PlanningTimingContract final {
   // These values are product scheduler contracts, not deployment knobs. The
   // runtime owns the timers, while this header is the single typed source for
   // their cadence and bounded safety windows.
-  static constexpr double kPlannerPeriodS = 0.20;
+  static constexpr double kPlannerPeriodS = 0.10;
   static constexpr double kPlannerRateHz = 1.0 / kPlannerPeriodS;
-  static constexpr double kSolveDeadlineS = 0.18;
+  static constexpr double kSolveDeadlineS = 0.08;
   static constexpr double kStitchDurationS = 0.40;
   static constexpr double kCommitGuardS = 0.02;
   static constexpr double kMinimumMainReserveS =
@@ -25,6 +25,11 @@ struct PlanningTimingContract final {
   static constexpr double kStationarySpeedMps = 0.15;
 };
 
-static_assert(PlanningTimingContract::kMinimumMainReserveS == 0.80);
+static_assert(
+    PlanningTimingContract::kMinimumMainReserveS ==
+    PlanningTimingContract::kSolveDeadlineS +
+        PlanningTimingContract::kStitchDurationS +
+        PlanningTimingContract::kPlannerPeriodS +
+        PlanningTimingContract::kCommitGuardS);
 
 }  // namespace navigation_planning

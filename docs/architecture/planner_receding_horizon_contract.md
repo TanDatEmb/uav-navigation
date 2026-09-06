@@ -13,8 +13,8 @@ At each planning timer tick:
    retains a bounded prefix (`receding_distance_m: 3.0`) so position, velocity, and
    acceleration remain continuous. `ReplanOnce` is scheduled when the time to
    the certified BACKUP switch (or a main-only endpoint) is no greater than
-   one scheduler period plus one solve deadline plus the replan-forward
-   interval. Goal transitions, recovery, missing commands and malformed
+   one scheduler period plus one solve deadline plus two replan-forward
+   intervals. Goal transitions, recovery, missing commands and malformed
    horizon metadata bypass this deferral gate.
 3. ROG-Map and the planner validate the committed path against the current
    inflated map. A hot-replan failure may retain a valid backup suffix.
@@ -51,11 +51,11 @@ The relevant runtime bounds are:
 
 | Contract | Current value |
 |---|---:|
-| Planning loop | 5 Hz |
+| Planning loop | 10 Hz |
 | Command sampling | 50 Hz |
 | Input pair maximum skew | 0.1 s |
 | Input maximum age | 0.5 s |
-| Planner solve timeout | 0.18 s |
+| Planner solve timeout | 0.08 s |
 | Replan-forward interval | 0.4 s |
 | Receding distance | 3.0 m |
 | Planning horizon | 45.0 m |

@@ -158,17 +158,41 @@ TEST(PlannerFsm, RetainsOnlyCertifiedPassThroughTerminalAcknowledgement) {
 TEST(PlannerFsm, DefersOptimizerWhileCertifiedMainHasRenewalMargin) {
   const auto decision = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 1.0, 4.0, 0.18, 0.2, 0.2);
+      true, 1.0, 4.0,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+      navigation_planning::PlanningTimingContract::kStitchDurationS,
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS);
   EXPECT_FALSE(decision.run_optimizer);
   EXPECT_EQ(decision.reason, PlannerRenewalReason::kRetainCertifiedMain);
   EXPECT_DOUBLE_EQ(decision.remaining_main_horizon_s, 3.0);
-  EXPECT_NEAR(decision.required_lead_time_s, 0.80, 1.0e-15);
+  EXPECT_DOUBLE_EQ(
+      decision.required_lead_time_s,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS +
+          2.0 * navigation_planning::PlanningTimingContract::kStitchDurationS +
+          navigation_planning::PlanningTimingContract::kPlannerPeriodS +
+          navigation_planning::PlanningTimingContract::kCommitGuardS);
+}
+
+TEST(PlannerFsm, UsesCoherentTenHertzTimingContract) {
+  EXPECT_DOUBLE_EQ(navigation_planning::PlanningTimingContract::kPlannerPeriodS, 0.10);
+  EXPECT_DOUBLE_EQ(navigation_planning::PlanningTimingContract::kPlannerRateHz, 10.0);
+  EXPECT_DOUBLE_EQ(navigation_planning::PlanningTimingContract::kSolveDeadlineS, 0.08);
+  EXPECT_LT(navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+            navigation_planning::PlanningTimingContract::kPlannerPeriodS);
+  EXPECT_DOUBLE_EQ(navigation_planning::PlanningTimingContract::kCommandPeriodS, 0.02);
+  EXPECT_DOUBLE_EQ(navigation_planning::PlanningTimingContract::kCommandStreamTimeoutS, 0.10);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning::PlanningTimingContract::kMinimumMainReserveS,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS +
+          navigation_planning::PlanningTimingContract::kStitchDurationS +
+          navigation_planning::PlanningTimingContract::kPlannerPeriodS +
+          navigation_planning::PlanningTimingContract::kCommitGuardS);
 }
 
 TEST(PlannerFsm, ProductionRenewalLeadIncludesTwoForwardIntervals) {
   const auto decision = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 2.0, 3.2,
+      true, 2.0, 3.0,
       navigation_planning::PlanningTimingContract::kSolveDeadlineS,
       navigation_planning::PlanningTimingContract::kStitchDurationS,
       navigation_planning::PlanningTimingContract::kPlannerPeriodS);
@@ -180,13 +204,19 @@ TEST(PlannerFsm, ProductionRenewalLeadIncludesTwoForwardIntervals) {
           2.0 * navigation_planning::PlanningTimingContract::kStitchDurationS +
           navigation_planning::PlanningTimingContract::kPlannerPeriodS +
           navigation_planning::PlanningTimingContract::kCommitGuardS);
-  EXPECT_DOUBLE_EQ(decision.remaining_main_horizon_s, 1.2);
+  EXPECT_DOUBLE_EQ(decision.remaining_main_horizon_s, 1.0);
 }
 
 TEST(PlannerFsm, ArmsOrdinaryFailureInjectionOnlyInFreshDueWindow) {
+  const double required_lead_time =
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS +
+      2.0 * navigation_planning::PlanningTimingContract::kStitchDurationS +
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS +
+      navigation_planning::PlanningTimingContract::kCommitGuardS;
   const auto fresh_due = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 2.1, 3.2,
+      true, 3.2 - (required_lead_time -
+                   0.5 * navigation_planning::PlanningTimingContract::kPlannerPeriodS), 3.2,
       navigation_planning::PlanningTimingContract::kSolveDeadlineS,
       navigation_planning::PlanningTimingContract::kStitchDurationS,
       navigation_planning::PlanningTimingContract::kPlannerPeriodS);
@@ -196,7 +226,8 @@ TEST(PlannerFsm, ArmsOrdinaryFailureInjectionOnlyInFreshDueWindow) {
 
   const auto late_due = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 2.3, 3.2,
+      true, 3.2 - (required_lead_time -
+                   1.5 * navigation_planning::PlanningTimingContract::kPlannerPeriodS), 3.2,
       navigation_planning::PlanningTimingContract::kSolveDeadlineS,
       navigation_planning::PlanningTimingContract::kStitchDurationS,
       navigation_planning::PlanningTimingContract::kPlannerPeriodS);
@@ -206,15 +237,23 @@ TEST(PlannerFsm, ArmsOrdinaryFailureInjectionOnlyInFreshDueWindow) {
 
   const auto retained = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
-      true, 1.0, 4.0, 0.18, 0.2, 0.2);
+      true, 1.0, 4.0,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+      navigation_planning::PlanningTimingContract::kStitchDurationS,
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS);
   EXPECT_EQ(retained.reason, PlannerRenewalReason::kRetainCertifiedMain);
-  EXPECT_FALSE(ordinaryRenewalFailureInjectionMayArm(retained, 0.2));
+  EXPECT_FALSE(ordinaryRenewalFailureInjectionMayArm(
+      retained, navigation_planning::PlanningTimingContract::kPlannerPeriodS));
 
   const auto forced = classifyPlannerRenewal(
       true, true, false, navigation_planning::CandidateRole::kMain,
-      true, 0.0, 10.0, 0.18, 0.4, 0.2);
+      true, 0.0, 10.0,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+      navigation_planning::PlanningTimingContract::kStitchDurationS,
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS);
   EXPECT_EQ(forced.reason, PlannerRenewalReason::kForcedTransition);
-  EXPECT_FALSE(ordinaryRenewalFailureInjectionMayArm(forced, 0.2));
+  EXPECT_FALSE(ordinaryRenewalFailureInjectionMayArm(
+      forced, navigation_planning::PlanningTimingContract::kPlannerPeriodS));
 }
 
 TEST(PlannerFsm, StartsAnchorRecoveryBeforeExecutionLeaseIsExhausted) {
