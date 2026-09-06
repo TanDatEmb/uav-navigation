@@ -19270,3 +19270,103 @@ release profiles must not use the former allowance.
 - **Verification:** Clean-prefix Release build; runtime 9/9, planning 1/1,
   execution 2/2, and PX4 4/4 CTest; Python runtime contracts 247/247; and
   `git diff --check`.
+
+### 2026-09-06 - Preserve certified PASS_THROUGH command across terminal acknowledgement
+
+- **Owner/status:** Navigation runtime; `IMPLEMENTED`, focused runtime CTest
+  passed. No SITL or flight-acceptance claim.
+- **Scope:** A successful terminal `PASS_THROUGH` acknowledgement may retain
+  the currently executing MAIN command only when the acknowledgement matches
+  the active identity and all route, command-certificate, continuation-boundary,
+  execution-identity, lease, exposure, failure-latch, and safety-suffix gates
+  are simultaneously valid. All other terminal paths keep the existing
+  destructive cleanup and fail-closed hold behavior.
+- **Safety impact:** Removes the old-authority-to-no-command gap at the
+  callback ordering boundary without extending command authority, lease time,
+  or current-body semantics. A missing or stale certificate still revokes the
+  command.
+- **Evidence:** `test_planner_fsm` covers the positive predicate and each of
+  its eleven negative gates. Full runtime CTest passed 10/10 after the change.
+- **Removal condition:** Revisit only if terminal acknowledgement is replaced
+  by an equivalent transaction that atomically transfers command ownership and
+  preserves the same fail-closed gates.
+- **Verification:** `ctest --test-dir build/navigation_runtime
+  --output-on-failure`; `git diff --check`.
+
+### 2026-09-06 - Serialize PlanningWorker ambient backend cancellation
+
+- **Owner/status:** Navigation runtime; `IMPLEMENTED`, focused and full
+  runtime CTest passed. No SITL or flight-acceptance claim.
+- **Scope:** Worker lifecycle serialization now holds the existing worker
+  mutex through `PlannerFacade::cancelActiveSolve()` during replacement,
+  explicit cancellation, and shutdown. The backend API and cancellation
+  policy are unchanged.
+- **Safety impact:** Prevents an old request's ambient cancellation from
+  arriving after a successor has been promoted and interrupting the successor.
+  No planner gate, priority, timeout, or execution authority is broadened.
+- **Evidence:** `test_planning_worker.SerializesAmbientCancelBeforeReplacementCanStart`
+  deterministically observes the cancelled job identity; the complete runtime
+  CTest passed 10/10.
+- **Removal condition:** Revisit only if backend cancellation becomes
+  execution-identity-bound with an equivalent lifecycle linearization.
+- **Verification:** `ctest --test-dir build/navigation_runtime
+  --output-on-failure`; `git diff --check`.
+
+### 2026-09-06 - Keep no-path qualification fail-closed without requiring a rejected sample
+
+- **Owner/status:** Runtime qualification harness; `IMPLEMENTED`, contract
+  tests passed. This is harness behavior only; no production planner behavior
+  is changed and no SITL qualification is claimed.
+- **Scope:** A no-path case is accepted as fail-closed when mission completion
+  is absent, a mode failure or safety pause is present, and no executable
+  trajectory authority was emitted. A rejected/invalid trajectory sample is
+  useful evidence but is not made a prerequisite for an explicit planner
+  failure.
+- **Safety impact:** Does not accept a command or completion; it removes a
+  false negative in the diagnostic harness only. Any executable trajectory
+  still fails the no-path contract.
+- **Evidence:** Runtime contract test covers explicit mode failure with zero
+  invalid/rejected samples and rejects executable authority.
+- **Removal condition:** Revisit if the harness receives a typed planner
+  failure contract that makes the explicit mode-failure evidence redundant.
+- **Verification:** `python3 -m pytest -q tools/runtime/tests/test_runtime_contract.py`.
+
+### 2026-09-06 - Make structured-obstacle scenario identity explicit
+
+- **Owner/status:** Runtime qualification harness/configuration; `IMPLEMENTED`,
+  contract tests passed. No SITL or flight-acceptance claim.
+- **Scope:** The structured-obstacle positive/detour variants resolve to the
+  dedicated `structured_obstacle` profile backed by the existing pillar world
+  and mission. Requested/resolved profile, world, mission, alias declaration,
+  and configuration hashes are recorded in runtime evidence. Undeclared
+  aliases fail setup; declared aliases are not treated as independent
+  geometry evidence.
+- **Safety impact:** Provenance and scenario de-aliasing only. No map geometry,
+  planner threshold, collision gate, or controller behavior changes.
+- **Evidence:** Runtime contract tests cover dedicated profile resolution and
+  scenario identity metadata. A dedicated SITL run has not yet been executed.
+- **Removal condition:** Revisit if the scenario registry gains an equivalent
+  signed/immutable configuration identity contract.
+- **Verification:** `python3 -m pytest -q tools/runtime/tests/test_runtime_contract.py`;
+  `git diff --check`.
+
+### 2026-09-06 - Record registered-scan handoff evidence
+
+- **Owner/status:** Runtime observability/qualification; `IMPLEMENTED`,
+  behavior-neutral contract tests passed. Stage A-E runtime localization is
+  pending; no SITL or flight-acceptance claim.
+- **Scope:** The monitor records bounded typed `/lio/mapping_observation`
+  evidence including source stamp, frame, localization epoch, scan sequence,
+  point/free-space counts, sensor-origin validity, and visibility metadata.
+  Runtime mapping diagnostics remain the source for accepted/replaced/dropped
+  and world-snapshot counters.
+- **Safety impact:** Observation only. No QoS, freshness threshold, mapping
+  admission, planner behavior, or safety gate is changed.
+- **Evidence:** Typed payload and stream-registration contract tests pass;
+  existing source review confirms publication and mapping accounting fields.
+  A new run is required to establish the complete A-E chain.
+- **Removal condition:** Revisit if an authoritative typed runtime evidence
+  stream exposes the same provenance and stage counters without this monitor
+  decoder.
+- **Verification:** `python3 -m pytest -q tools/runtime/tests/test_runtime_contract.py`;
+  `git diff --check`; targeted runtime evidence run for stages A-E.
