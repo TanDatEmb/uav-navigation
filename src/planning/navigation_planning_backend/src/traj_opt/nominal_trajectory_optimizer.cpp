@@ -878,9 +878,16 @@ bool ExpTrajOpt::setInitPsAndTs(const vec_Vec3f &init_ps, const vector<double> &
     return true;
 }
 
-double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
+double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
+                            const bool suppress_optional_refinement) {
     resetDiagnostics();
     diagnostics_.valid = true;
+    if (opt_vars.steady_deadline_ns > 0) {
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        diagnostics_.refinement_budget_at_entry_us = std::max<std::int64_t>(
+                0, (opt_vars.steady_deadline_ns - now_ns) / 1000);
+    }
 
     if (!std::isfinite(relCostTol) || relCostTol <= 0.0 ||
         opt_vars.times.size() <= 0) {
@@ -1203,24 +1210,25 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
 //    cout << " -- [ExpOpt] waypoint_attractor_dead_d: " << opt_vars.waypoint_attractor_dead_d.transpose() << endl;
     // TimeConsuming ttt(" -- [ExpTrajOpt]", false);
     opt_vars.iter_num = 0;
+    if ((baseline_only_ || suppress_optional_refinement) &&
+        deterministic_seed_certificate.valid &&
+        !deterministic_nominal_seed.empty()) {
+        traj = deterministic_nominal_seed;
+        diagnostics_.used_certified_seed = true;
+        diagnostics_.last_candidate_maximum_velocity_mps =
+                deterministic_seed_certificate.maximum_velocity_mps;
+        diagnostics_.last_candidate_maximum_acceleration_mps2 =
+                deterministic_seed_certificate.maximum_acceleration_mps2;
+        diagnostics_.last_candidate_maximum_jerk_mps3 =
+                deterministic_seed_certificate.maximum_jerk_mps3;
+        diagnostics_.final_duration_s = traj.getTotalDuration();
+        planner_context_->info(
+                " -- [ExpOpt] certified nominal seed selected before optional "
+                "refinement duration={} suppress_optional_refinement={}",
+                diagnostics_.final_duration_s, suppress_optional_refinement);
+        return true;
+    }
     if (baseline_only_) {
-        if (deterministic_seed_certificate.valid &&
-            !deterministic_nominal_seed.empty()) {
-            traj = deterministic_nominal_seed;
-            diagnostics_.used_certified_seed = true;
-            diagnostics_.last_candidate_maximum_velocity_mps =
-                    deterministic_seed_certificate.maximum_velocity_mps;
-            diagnostics_.last_candidate_maximum_acceleration_mps2 =
-                    deterministic_seed_certificate.maximum_acceleration_mps2;
-            diagnostics_.last_candidate_maximum_jerk_mps3 =
-                    deterministic_seed_certificate.maximum_jerk_mps3;
-            diagnostics_.final_duration_s = traj.getTotalDuration();
-            planner_context_->info(
-                    " -- [ExpOpt] complete baseline requested; returning certified "
-                    "nominal seed before optional refinement duration={}",
-                    diagnostics_.final_duration_s);
-            return true;
-        }
         // A complete baseline is required before the planner can publish a
         // command, but the deterministic seed is a preferred construction,
         // not the only way to obtain one.  A moving stopped-state restart can
@@ -2215,7 +2223,8 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                           const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
                           PolytopeVec &sfcs,
                           Trajectory &out_traj,
-                          const bool baseline_only) {
+                          const bool baseline_only,
+                          const bool suppress_optional_refinement) {
     baseline_only_ = baseline_only;
     /// Check if hot init is valid
     if (guide_path.empty() || guide_path.size() != guide_t.size()) {
@@ -2318,7 +2327,8 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
 
 
     if (success) {
-        const double optimization_result = optimize(out_traj, cfg_.opt_accuracy);
+        const double optimization_result = optimize(
+                out_traj, cfg_.opt_accuracy, suppress_optional_refinement);
         // optimize() returns a numeric objective, but the baseline-only path
         // historically returned bool false when no certified seed existed.
         // Treat an empty output as failure as well; otherwise 0.0 is finite
@@ -2362,10 +2372,11 @@ NominalSolveResult ExpTrajOpt::solve(
         const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
         PolytopeVec &sfcs, Trajectory &out_traj,
         const bool deadline_observed,
-        const bool baseline_only) {
+        const bool baseline_only,
+        const bool suppress_optional_refinement) {
     const bool success = optimize(
         headPVAJ, tailPVAJ, guide_path, guide_t, sfcs, out_traj,
-        baseline_only);
+        baseline_only, suppress_optional_refinement);
     baseline_only_ = false;
     return classifyNominalSolveResult(success, diagnostics_, deadline_observed);
 }
@@ -2481,7 +2492,8 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
 
     out_traj.clear();
 
-    if (success && !std::isfinite(optimize(out_traj, cfg_.opt_accuracy))) {
+    if (success && !std::isfinite(optimize(
+            out_traj, cfg_.opt_accuracy, false))) {
         cout << YELLOW << " -- [planner] Minco exp_traj opt failed." << RESET << endl;
         success = false;
     }

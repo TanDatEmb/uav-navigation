@@ -97,6 +97,10 @@ namespace traj_opt {
         double retry_free_duration_seed_max_s{
                 std::numeric_limits<double>::quiet_NaN()};
         std::int64_t retry_budget_remaining_us{-1};
+        // Remaining steady-clock budget when MINCO enters. This distinguishes
+        // an absolute solve deadline from an optional-refinement cutoff in
+        // runtime evidence; it never participates in candidate admission.
+        std::int64_t refinement_budget_at_entry_us{-1};
         int nonfinite_evaluation_count{0};
         int first_nonfinite_stage{0}; // 1=input, 2=duration, 3=points, 4=MINCO, 5=objective, 6=gradient
         int first_nonfinite_value_mask{0};
@@ -287,7 +291,8 @@ namespace traj_opt {
 
         bool setInitPsAndTs(const vec_Vec3f &init_ps, const vector<double> &init_ts);
 
-        double optimize(Trajectory &traj, const double &relCostTol);
+        double optimize(Trajectory &traj, const double &relCostTol,
+                        bool suppress_optional_refinement);
 
         static int monitorProgress(void *instance,
                                    const VecDf &x,
@@ -331,14 +336,16 @@ namespace traj_opt {
                       const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
                       PolytopeVec &sfcs,
                       Trajectory &out_traj,
-                      bool baseline_only = false);
+                      bool baseline_only = false,
+                      bool suppress_optional_refinement = false);
 
         NominalSolveResult solve(
                       const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                       const vec_E<Vec3f> &guide_path, const vector<double> &guide_t,
                       PolytopeVec &sfcs, Trajectory &out_traj,
                       bool deadline_observed = false,
-                      bool baseline_only = false);
+                      bool baseline_only = false,
+                      bool suppress_optional_refinement = false);
 
         void getInitValue(VecDf &ts, vec_Vec3f &ps) const {
             ts = opt_vars.init_ts;

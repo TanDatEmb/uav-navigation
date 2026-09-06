@@ -56,6 +56,7 @@ struct OptimizationDiagnostics {
   double retry_free_duration_seed_min_s{std::numeric_limits<double>::quiet_NaN()};
   double retry_free_duration_seed_max_s{std::numeric_limits<double>::quiet_NaN()};
   std::int64_t retry_budget_remaining_us{-1};
+  std::int64_t refinement_budget_at_entry_us{-1};
   int nonfinite_evaluation_count{0};
   int first_nonfinite_stage{0};
   int first_nonfinite_value_mask{0};

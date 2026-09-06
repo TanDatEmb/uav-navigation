@@ -3585,19 +3585,25 @@ double knownFreeGuideSupport(
             remaining_main_before_refinement_s <=
                 navigation_planning::PlanningTimingContract::
                     kUrgentBaselineThresholdS;
-        const auto refinement_deadline_ns = urgent_baseline
-            ? std::chrono::duration_cast<std::chrono::nanoseconds>(
-                  std::chrono::steady_clock::now().time_since_epoch()).count()
-            : solve_deadline.refinementDeadlineNanoseconds(
-                  cfg_.finalization_reserve_s);
+        // Urgency suppresses optional refinement only when a complete
+        // deterministic seed exists. If that seed is unavailable, the
+        // bounded optimizer is mandatory feasibility work and must retain
+        // the ordinary hard-deadline-minus-finalization reserve.
+        const auto refinement_deadline_ns =
+            solve_deadline.refinementDeadlineNanoseconds(
+                    cfg_.finalization_reserve_s);
+        const bool refinement_cutoff_observed =
+            solve_deadline.conservativeRemaining(
+                    planner_context_->getSimTime()) <=
+            cfg_.finalization_reserve_s;
         exp_traj_opt_->setSolveBudget(
                 &solve_cancelled_, refinement_deadline_ns);
         const auto nominal_result = exp_traj_opt_->solve(
             pos_init_state, pos_fina_state, guide_path, guide_stamp,
             sfc, out_traj,
-            urgent_baseline || solve_deadline.conservativeRemaining(
-                planner_context_->getSimTime()) <= cfg_.finalization_reserve_s,
-            baseline_only);
+            refinement_cutoff_observed,
+            baseline_only,
+            urgent_baseline);
         last_nominal_solve_status_ = nominal_result.status;
         last_nominal_deadline_observed_ = nominal_result.deadline_observed;
         temp_ret = nominal_result.candidateAvailable();

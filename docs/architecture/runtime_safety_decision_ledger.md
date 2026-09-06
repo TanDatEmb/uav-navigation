@@ -1,5 +1,35 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-06 - Preserve mandatory nominal feasibility budget during urgent baseline fallback
+
+- **Owner/status:** EXP nominal solve budget and urgent baseline selection;
+  `IMPLEMENTED`, focused regression/build and the unchanged Q1 rerun required.
+- **Scope:** The urgent-main condition still suppresses optional MINCO
+  refinement when an independently certified deterministic nominal seed is
+  available. If that seed fails its independent certificate, the fallback
+  optimizer is mandatory feasibility work and now receives the normal
+  steady-clock refinement deadline (`absolute solve deadline - finalization
+  reserve`) instead of an already-expired timestamp. The hard `0.08 s` solve
+  deadline, `0.04 s` finalization reserve, and all candidate certificates are
+  unchanged.
+- **Safety impact:** This can spend the already-authorized bounded feasibility
+  budget on finding a certified candidate; it cannot accept an uncertified
+  seed, extend the lease, bypass cancellation, or consume finalization time.
+  When no certified candidate is produced, the planner remains fail-closed.
+- **Evidence:** E1 first failure showed a dynamics-invalid deterministic seed,
+  followed by L-BFGS cancellation after two evaluations because the urgent
+  branch set its deadline to the current time. The focused regression verifies
+  that urgent suppression retains a finite bounded fallback budget and only a
+  certified result is returned. The same Q1 fingerprint must be rerun with a
+  clean manifest.
+- **Removal/review condition:** Keep while moving-state baseline construction
+  can fail the deterministic seed certificate; remove only after deterministic
+  seed completeness is proven for accepted execution anchors. Revisit if the
+  fallback creates deadline misses or reduces complete-candidate quality.
+- **Verification:** `test_exp_optimizer_seed`; planning backend, runtime,
+  mapping, contract, Python and Release gates; inspect the new
+  `exp_refinement_budget_at_entry_us` trace field and rerun the unchanged Q1.
+
 ### 2026-09-06 - Raise nominal yaw envelope for Q1 development characterization
 
 - **Owner/status:** planning backend nominal yaw configuration and final

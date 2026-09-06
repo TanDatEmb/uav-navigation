@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <memory>
 #include <utility>
 
@@ -404,6 +405,42 @@ TEST(ExpOptimizer, BaselineUsesBoundedDurationRetryWhenSeedFails) {
       navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
           trajectory, corridors.front().GetPlanes()),
       config.corridor_plane_tolerance_m);
+}
+
+TEST(ExpOptimizer, UrgentBaselineSuppressesOptionalRefinementForCertifiedSeed) {
+  const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makeMovingPositionState(0.0, 2.0);
+  const auto tail = makePositionState(8.0);
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path;
+  guide_path.emplace_back(head.col(0));
+  guide_path.emplace_back(navigation_math::Vec3f(4.0, 0.0, 1.0));
+  guide_path.emplace_back(tail.col(0));
+  const std::vector<double> guide_times{0.0, 2.0, 4.0};
+  geometry_utils::PolytopeVec corridors{makeConvexBox()};
+  geometry_utils::Trajectory trajectory;
+
+  // Model an already exhausted optional-refinement cutoff. A certified
+  // deterministic seed must be returned without entering L-BFGS; this is
+  // the urgent-baseline contract that prevents a mandatory fallback from
+  // inheriting an expired optional-refinement deadline.
+  const auto deadline = std::chrono::steady_clock::now();
+  optimizer.setSolveBudget(nullptr,
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          deadline.time_since_epoch()).count());
+  const auto result = optimizer.solve(
+      head, tail, guide_path, guide_times, corridors, trajectory,
+      false, false, true);
+
+  ASSERT_TRUE(result.candidateAvailable());
+  EXPECT_EQ(optimizer.diagnostics().refinement_budget_at_entry_us, 0);
+  EXPECT_EQ(optimizer.diagnostics().lbfgs_attempt_count, 0);
+  EXPECT_TRUE(optimizer.diagnostics().used_certified_seed);
+  ASSERT_FALSE(trajectory.empty());
 }
 
 TEST(DeterministicNominalSeed, RequiresExactPieceCorridorMappingAndPvajContinuity) {

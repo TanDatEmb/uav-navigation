@@ -210,6 +210,7 @@ class PlannerTraceTest(unittest.TestCase):
                                     "certified_lookahead_m": "6.0",
                                     "lookahead_complete": "0",
                                     "exp_retry_budget_remaining_us": "42000",
+                                    "exp_refinement_budget_at_entry_us": "39000",
                                     "exp_nonfinite_evaluation_count": "2",
                                     "exp_first_nonfinite_stage": "5",
                                     "exp_first_nonfinite_value_mask": "9",
@@ -322,6 +323,9 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["certified_lookahead_m"], 6.0)
         self.assertFalse(records[0]["lookahead_complete"])
         self.assertEqual(records[0]["exp_retry_budget_remaining_us"], 42000.0)
+        self.assertEqual(
+            records[0]["exp_refinement_budget_at_entry_us"], 39000.0
+        )
         self.assertEqual(records[0]["exp_nonfinite_evaluation_count"], 2)
         self.assertEqual(records[0]["exp_first_nonfinite_stage"], 5)
         self.assertEqual(records[0]["exp_first_nonfinite_value_mask"], 9)

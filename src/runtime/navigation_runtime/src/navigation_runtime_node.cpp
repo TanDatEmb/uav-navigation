@@ -6111,6 +6111,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                     planner_diagnostics.candidate_maximum_yaw_acceleration_rad_s2);
     add_trace_value("exp_retry_budget_remaining_us",
                     exp_diagnostics.retry_budget_remaining_us);
+    add_trace_value("exp_refinement_budget_at_entry_us",
+                    exp_diagnostics.refinement_budget_at_entry_us);
     add_trace_value("exp_nonfinite_evaluation_count",
                     exp_diagnostics.nonfinite_evaluation_count);
     add_trace_value("exp_first_nonfinite_stage",

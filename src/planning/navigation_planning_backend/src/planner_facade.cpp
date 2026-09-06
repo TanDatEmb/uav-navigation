@@ -97,6 +97,7 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
   output.retry_free_duration_seed_min_s = source.retry_free_duration_seed_min_s;
   output.retry_free_duration_seed_max_s = source.retry_free_duration_seed_max_s;
   output.retry_budget_remaining_us = source.retry_budget_remaining_us;
+  output.refinement_budget_at_entry_us = source.refinement_budget_at_entry_us;
   output.nonfinite_evaluation_count = source.nonfinite_evaluation_count;
   output.first_nonfinite_stage = source.first_nonfinite_stage;
   output.first_nonfinite_value_mask = source.first_nonfinite_value_mask;

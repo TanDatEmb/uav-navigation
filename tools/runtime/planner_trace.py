@@ -160,6 +160,9 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "certified_lookahead_m": ("certified_lookahead_m",),
     "lookahead_complete": ("lookahead_complete",),
     "exp_retry_budget_remaining_us": ("exp_retry_budget_remaining_us",),
+    "exp_refinement_budget_at_entry_us": (
+        "exp_refinement_budget_at_entry_us",
+    ),
     "exp_nonfinite_evaluation_count": ("exp_nonfinite_evaluation_count",),
     "exp_first_nonfinite_stage": ("exp_first_nonfinite_stage",),
     "exp_first_nonfinite_value_mask": ("exp_first_nonfinite_value_mask",),
@@ -225,6 +228,7 @@ _EXECUTION_TIMING_FIELDS = frozenset({
     "exp_opt_us",
     "backup_frontend_us",
     "backup_opt_us",
+    "exp_refinement_budget_at_entry_us",
 })
 
 
@@ -505,6 +509,9 @@ def normalize_planner_trace_record(
         "lookahead_complete": _bool(values["lookahead_complete"]),
         "exp_retry_budget_remaining_us": _float(
             values["exp_retry_budget_remaining_us"]
+        ),
+        "exp_refinement_budget_at_entry_us": _float(
+            values["exp_refinement_budget_at_entry_us"]
         ),
         "exp_nonfinite_evaluation_count": _int(
             values["exp_nonfinite_evaluation_count"]
