@@ -393,6 +393,52 @@ def _pointcloud_payload(message: Any) -> tuple[dict[str, Any], int]:
     return payload, nonfinite_points
 
 
+def _registered_scan_payload(message: Any) -> dict[str, Any]:
+    """Capture bounded identity/payload evidence at the mapping ingress.
+
+    The monitor observes this typed handoff; it does not decode or copy the
+    cloud.  Counts and source stamps are sufficient to distinguish a missing
+    FAST-LIO registration from a mapping-side admission/update gap.
+    """
+    header = getattr(message, "header", None)
+    points = getattr(message, "points", None)
+    free_space = getattr(message, "free_space_endpoints", None)
+    points_header = getattr(points, "header", None)
+    free_space_header = getattr(free_space, "header", None)
+    sensor_origin = getattr(message, "sensor_origin_pose", None)
+    origin_position = getattr(sensor_origin, "position", None)
+    return {
+        "stamp_ns": _time_ns(getattr(header, "stamp", None)),
+        "frame_id": str(getattr(header, "frame_id", "")),
+        "localization_epoch": int(getattr(message, "localization_epoch", 0)),
+        "scan_sequence": int(getattr(message, "scan_sequence", 0)),
+        "body_frame_id": str(getattr(message, "body_frame_id", "")),
+        "points_stamp_ns": _time_ns(getattr(points_header, "stamp", None)),
+        "points_frame_id": str(getattr(points_header, "frame_id", "")),
+        "point_count": int(getattr(points, "width", 0)) * int(getattr(points, "height", 0)),
+        "free_space_stamp_ns": _time_ns(getattr(free_space_header, "stamp", None)),
+        "free_space_frame_id": str(getattr(free_space_header, "frame_id", "")),
+        "free_space_point_count": int(getattr(free_space, "width", 0)) * int(getattr(free_space, "height", 0)),
+        "sensor_origin_valid": bool(getattr(message, "sensor_origin_valid", False)),
+        "sensor_origin_position": [
+            _finite(getattr(origin_position, name, None))
+            for name in ("x", "y", "z")
+        ],
+        "visibility_observation_present": bool(
+            getattr(message, "visibility_observation_present", False)
+        ),
+        "visibility_source_ray_count": int(
+            getattr(message, "visibility_source_ray_count", 0)
+        ),
+        "visibility_no_return_count": int(
+            getattr(message, "visibility_no_return_count", 0)
+        ),
+        "visibility_stamp_skew_ns": int(
+            getattr(message, "visibility_stamp_skew_ns", 0)
+        ),
+    }
+
+
 def _pointcloud_nonfinite_message(
     payload: dict[str, Any], sampled_nonfinite_points: int
 ) -> bool:
@@ -511,6 +557,7 @@ class RuntimeMonitor:
         from diagnostic_msgs.msg import DiagnosticArray
         from nav_msgs.msg import Odometry
         from navigation_contracts.msg import PropagatedOdometry
+        from navigation_contracts.msg import RegisteredScan
         from rosgraph_msgs.msg import Clock
         from sensor_msgs.msg import Imu, PointCloud2
 
@@ -528,6 +575,10 @@ class RuntimeMonitor:
                 "/lio/odometry_propagated",
                 PropagatedOdometry,
                 _propagated_odom_payload,
+            ),
+            TopicSpec(
+                "registered_scan", "/lio/mapping_observation", RegisteredScan,
+                _registered_scan_payload,
             ),
             TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
             TopicSpec("mapping_diagnostics", "/navigation/diagnostics", DiagnosticArray, _diagnostic_payload),

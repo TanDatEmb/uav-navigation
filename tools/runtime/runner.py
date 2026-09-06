@@ -122,6 +122,7 @@ RUNTIME_EVIDENCE_TOPICS = (
     "/lidar/imu",
     "/lio/odometry_corrected",
     "/lio/odometry_propagated",
+    "/lio/mapping_observation",
     "/lio/diagnostics",
     "/navigation/diagnostics",
     "/navigation/navigation_command",
@@ -527,6 +528,7 @@ def _write_runtime_evidence_metadata(
     requested_cruise_speed_mps: float | None,
     ros_domain_id: int,
     xrce_port: int,
+    scenario_identity: dict[str, Any] | None = None,
 ) -> None:
     """Write a self-contained run manifest without changing runtime policy."""
     snapshot = session.directory / "config_snapshot"
@@ -546,6 +548,20 @@ def _write_runtime_evidence_metadata(
     px4_head = _git(px4_dir, "rev-parse", "HEAD")
     px4_msgs_head = _git(ROOT / "src/external/px4_msgs", "rev-parse", "HEAD")
     planner = _mission_planning(mission_file)
+    identity = dict(scenario_identity or {})
+    identity_files = {
+        "scenario_config_sha256": scenario_config_path,
+        "map_descriptor_sha256": session.directory / "map_descriptor.json",
+    }
+    if mission_file is not None:
+        identity_files["resolved_mission_sha256"] = mission_file
+    for key, path in identity_files.items():
+        if path.is_file():
+            identity[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+    identity_material = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    identity["configuration_sha256"] = hashlib.sha256(
+        identity_material.encode("utf-8")
+    ).hexdigest()
     metadata = {
         "schema_version": 1,
         "experiment_id": experiment_id,
@@ -572,6 +588,7 @@ def _write_runtime_evidence_metadata(
             "px4_dir": str(px4_dir.resolve()),
         },
         "mission_planning": planner,
+        "scenario_identity": identity,
         "topics": list(RUNTIME_EVIDENCE_TOPICS),
         "raw_evidence": {
             "rosbag": str((session.directory / "rosbag").resolve()),
@@ -790,7 +807,7 @@ def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
             box("long_featured_texture_05", [39.0, 5.2, 1.45], [0.7, 0.3, 1.45]),
             box("long_featured_texture_06", [47.0, -5.5, 1.65], [0.35, 0.8, 1.65]),
         ]
-    if map_profile == "pillar":
+    if map_profile in {"pillar", "structured_obstacle"}:
         return [
             cylinder("pillar_obstacle", [-4.5, 2.5, 2.5], 0.55, 2.5),
             box("wall_east", [7.0, 1.0, 2.5], [0.125, 9.0, 2.5]),
@@ -857,7 +874,7 @@ def _acceptance_threshold_for_profile(
         # tracking/map-estimator allowance while the independent |y|<=8 m
         # benchmark envelope remains the hard out-of-map gate.
         return 4.5
-    if map_profile == "pillar":
+    if map_profile in {"pillar", "structured_obstacle"}:
         # The origin-to-detour mission segment geometrically intersects the
         # 0.55 m pillar.  A 0.5 m polyline gate would forbid the lateral
         # displacement required by the independently enforced collision and
@@ -920,8 +937,9 @@ def _scene_registry() -> dict[str, Any]:
     """Return the compact public scene registry used by Make/CI.
 
     The legacy ``profiles`` mapping remains authoritative for assets and
-    collision truth.  Scenes are only a stable user-facing grouping layer, so
-    adding a new geometry variant does not add another public Make profile.
+    collision truth.  Scenes are a stable user-facing grouping layer; a scene
+    may have an explicit variant alias, but a dedicated qualification profile
+    is used when the scene must own its geometry/mission identity.
     """
     registry = yaml.safe_load((RUNTIME_CONFIG / "map_profiles.yaml").read_text(encoding="utf-8"))
     scenes = registry.get("scenes", {}) if isinstance(registry, dict) else {}
@@ -946,7 +964,7 @@ def _resolve_scene_profile(
     test_case: str,
     motion_preset: str,
     map_profile: str | None,
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, dict[str, Any]]:
     """Resolve canonical scene knobs to one legacy asset profile.
 
     ``MAP_PROFILE`` remains an escape hatch for old scripts.  When a scene is
@@ -958,9 +976,17 @@ def _resolve_scene_profile(
             "scene": map_scene or "legacy",
             "test_case": test_case,
             "motion_preset": motion_preset,
+            "requested_scene": map_scene or "legacy",
+            "requested_test_case": test_case,
+            "requested_motion_preset": motion_preset,
+            "resolved_profile": map_profile,
         }
     if not map_scene or map_scene == "smoke":
-        return "smoke", {"scene": "smoke", "test_case": test_case, "motion_preset": motion_preset}
+        return "smoke", {
+            "scene": "smoke", "test_case": test_case, "motion_preset": motion_preset,
+            "requested_scene": "smoke", "requested_test_case": test_case,
+            "requested_motion_preset": motion_preset, "resolved_profile": "smoke",
+        }
     scenes = _scene_registry()
     if map_scene not in scenes:
         raise ValueError(f"unknown canonical map scene: {map_scene}")
@@ -977,6 +1003,51 @@ def _resolve_scene_profile(
         "scene": map_scene,
         "test_case": test_case,
         "motion_preset": motion_preset,
+        "requested_scene": map_scene,
+        "requested_test_case": test_case,
+        "requested_motion_preset": motion_preset,
+        "resolved_profile": str(profile_name),
+    }
+
+
+def _scenario_identity(
+    scene_descriptor: dict[str, Any],
+    resolved_profile: str,
+    resolved_world: str,
+    resolved_mission: str,
+) -> dict[str, Any]:
+    """Describe requested versus resolved scenario identity explicitly."""
+    requested = {
+        "scene": str(scene_descriptor.get("requested_scene", scene_descriptor["scene"])),
+        "test_case": str(scene_descriptor.get("requested_test_case", scene_descriptor["test_case"])),
+        "motion_preset": str(scene_descriptor.get("requested_motion_preset", scene_descriptor["motion_preset"])),
+    }
+    resolved = {
+        "profile": str(resolved_profile),
+        "world": str(resolved_world),
+        "mission": str(resolved_mission),
+    }
+    alias = requested["scene"] not in {"legacy", resolved["profile"]}
+    declared_profiles = set()
+    if requested["scene"] not in {"legacy", "smoke"}:
+        declared_profiles = set(
+            _scene_registry().get(requested["scene"], {}).get("variants", {}).values()
+        )
+    alias_declared = not alias or resolved["profile"] in declared_profiles
+    if not alias_declared:
+        raise ValueError(
+            "scenario resolved to an undeclared profile alias: "
+            f"{requested['scene']} -> {resolved['profile']}"
+        )
+    return {
+        "requested": requested,
+        "resolved": resolved,
+        "intentional_profile_alias": alias,
+        "alias_declared": alias_declared,
+        "configuration_key": (
+            f"{requested['scene']}/{requested['test_case']}/{requested['motion_preset']}"
+            f"->{resolved['profile']}/{resolved['world']}/{resolved['mission']}"
+        ),
     }
 
 
@@ -1720,6 +1791,10 @@ def _run_sim_unlocked(
         "map_scene": scene_descriptor["scene"],
         "test_case": scene_descriptor["test_case"],
         "motion_preset": scene_descriptor["motion_preset"],
+        "requested_scene": scene_descriptor["requested_scene"],
+        "requested_test_case": scene_descriptor["requested_test_case"],
+        "requested_motion_preset": scene_descriptor["requested_motion_preset"],
+        "resolved_profile": map_profile,
         "manual_takeoff": bool(manual_takeoff),
         "interactive_handover": bool(not headless and auto_scenario),
     })
@@ -1839,7 +1914,7 @@ def _run_sim_unlocked(
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
         elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 300.0)
-        if map_profile in {"pillar", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
+        if map_profile in {"pillar", "structured_obstacle", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
             # This profile has three route obstacles; use the multi-obstacle
             # ground-truth metric instead of the legacy single-pillar check.
             scenario["planned_clearance_check"] = False
@@ -1923,10 +1998,27 @@ def _run_sim_unlocked(
     os.environ["RCUTILS_LOGGING_DIRECTORY"] = str(session.logs)
     os.environ["GZ_LOG_DIR"] = str(session.logs)
     world_name, map_descriptor = _resolve_map_descriptor(session, map_profile, map_seed)
+    scenario_identity = _scenario_identity(
+        scene_descriptor,
+        str(map_descriptor.get("profile", map_profile)),
+        world_name,
+        str(map_descriptor.get("mission", map_profile)),
+    )
     map_descriptor.update({
         "scene": scene_descriptor["scene"],
         "test_case": scene_descriptor["test_case"],
         "motion_preset": scene_descriptor["motion_preset"],
+        "requested_scene": scene_descriptor["requested_scene"],
+        "requested_test_case": scene_descriptor["requested_test_case"],
+        "requested_motion_preset": scene_descriptor["requested_motion_preset"],
+        "resolved_profile": scenario_identity["resolved"]["profile"],
+        "scenario_identity": scenario_identity,
+    })
+    scenario_config["scenario"].update({
+        "resolved_profile": scenario_identity["resolved"]["profile"],
+        "resolved_world": scenario_identity["resolved"]["world"],
+        "resolved_mission": scenario_identity["resolved"]["mission"],
+        "scenario_identity": scenario_identity,
     })
     scenario_config.setdefault("scenario", {})["route_obstacles"] = list(
         map_descriptor.get("route_obstacles", [])
@@ -1983,6 +2075,7 @@ def _run_sim_unlocked(
         requested_cruise_speed_mps=requested_cruise_speed_mps,
         ros_domain_id=isolated_domain,
         xrce_port=isolated_xrce_port,
+        scenario_identity=scenario_identity,
     )
     if characterization_profile:
         metadata_path = session.directory / "metadata.json"

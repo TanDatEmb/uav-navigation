@@ -120,6 +120,36 @@ def _speed_contract_failures(
     return failures
 
 
+def _fail_closed_contract_failures(
+    *,
+    mission_complete_observed: bool,
+    mode_failure_observed: bool,
+    safety_pause_observed: bool,
+    executable_trajectory_count: int,
+) -> list[str]:
+    """Check the negative mission contract without requiring a rejection sample.
+
+    A rejected terminal command is useful diagnostic evidence, but it is not
+    guaranteed when the planner fails before producing a candidate.  The
+    safety contract is instead: the mission must not complete, the runtime
+    must expose a terminal fail-closed state, and no executable trajectory
+    authority may have been published.
+    """
+    failures: list[str] = []
+    if mission_complete_observed:
+        failures.append("fail-closed scenario unexpectedly completed mission")
+    if not (mode_failure_observed or safety_pause_observed):
+        failures.append(
+            "fail-closed scenario observed neither ModeCompleted failure "
+            "nor terminal safety pause"
+        )
+    if executable_trajectory_count > 0:
+        failures.append(
+            "fail-closed scenario exposed executable trajectory authority"
+        )
+    return failures
+
+
 _MODE_STATUS_NAMES = {
     0: "ACTIVE",
     1: "BRAKING",
@@ -242,6 +272,7 @@ class ExternalModeScenario:
         self.waypoint_acceptance_events: list[dict[str, Any]] = []
         self.trajectory_received = 0
         self.trajectory_success_count = 0
+        self.executable_trajectory_count = 0
         self.latest_trajectory: dict[str, Any] = {}
         self.trajectory_records: list[dict[str, Any]] = []
         # Keep one bounded, timestamped observation summary per LiDAR scan.
@@ -716,6 +747,8 @@ class ExternalModeScenario:
         executable_command = (
             not terminal_failure and int(getattr(message, "bundle_generation", 0)) > 0
         )
+        if executable_command:
+            self.executable_trajectory_count += 1
         if terminal_failure:
             self.trajectory_failure_count += 1
         else:
@@ -1768,6 +1801,7 @@ class ExternalModeScenario:
             "external_mode_id": self.external_mode_id,
             "trajectory_received": self.trajectory_received,
             "trajectory_success_count": self.trajectory_success_count,
+            "executable_trajectory_count": self.executable_trajectory_count,
             "trajectory_failure_count": self.trajectory_failure_count,
             "pva_command_received": self.pva_command_received,
             "pva_command_success_count": self.pva_command_success_count,
@@ -1879,8 +1913,6 @@ class ExternalModeScenario:
             expected_count = int(self.config.get("mission_waypoint_count", 0))
             expected_indices = list(range(expected_count))
             if expected_outcome == "fail_closed":
-                if self.mission_complete_observed:
-                    failures.append("fail-closed scenario unexpectedly completed mission")
                 safety_pause_observed = (
                     self.terminal_outcome == "PAUSED_SAFETY_STOP" or
                     (
@@ -1888,13 +1920,12 @@ class ExternalModeScenario:
                         self.mode_status_reason == int(self.NavigationModeStatus.SAFETY_STOP)
                     )
                 )
-                if not (self.mode_failure_observed or safety_pause_observed):
-                    failures.append(
-                        "fail-closed scenario observed neither ModeCompleted failure "
-                        "nor terminal safety pause"
-                    )
-                if self.trajectory_failure_count <= 0:
-                    failures.append("fail-closed scenario observed no invalid trajectory")
+                failures.extend(_fail_closed_contract_failures(
+                    mission_complete_observed=self.mission_complete_observed,
+                    mode_failure_observed=self.mode_failure_observed,
+                    safety_pause_observed=safety_pause_observed,
+                    executable_trajectory_count=self.executable_trajectory_count,
+                ))
             elif expected_count <= 0:
                 failures.append("mission_waypoint_count is not configured")
             elif summary["outcome"] == "COMPLETE" and self.goal_indices != expected_indices:

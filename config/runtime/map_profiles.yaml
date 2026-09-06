@@ -251,6 +251,19 @@ profiles:
     stochastic: false
     seed: 0
     collision_truth: [near_feature_west, near_feature_east, sealed_wall]
+  structured_obstacle:
+    family: structured_obstacle
+    world: pillar
+    mission: pillar
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [pillar_obstacle, wall_east, wall_north]
+    route_obstacles: [pillar_obstacle]
+    route_segment_waypoints: [2, 3]
+    benchmark:
+      objective: structured_pillar_route
+      max_cross_track_m: 1.5
 
 # Public benchmark surface.  Keep the geometry variants above as the registry
 # source of truth, but expose only a small number of canonical scenes to CI and
@@ -263,9 +276,9 @@ scenes:
       fast: speed
   structured_obstacle:
     variants:
-      positive: occlusion_featured
+      positive: structured_obstacle
       degenerate: occlusion_degenerate
-      detour: pillar
+      detour: structured_obstacle
   long_route:
     variants:
       nominal: long_featured

@@ -273,6 +273,10 @@ Required diagnostic streams include `/lio/health`, `/lio/diagnostics`,
 `/navigation/diagnostics`, `/navigation/navigation_command`,
 `/navigation/mode_status`, `/navigation/mission_complete`, and PX4
 trajectory setpoints. Propagated odometry is required for active navigation.
+The monitor also records `/lio/mapping_observation` as the bounded typed
+handoff witness between FAST-LIO and the mapping inbox; its source stamp,
+localization epoch, scan sequence, payload count and visibility counters are
+diagnostic evidence only.
 
 ## 9. Artifacts and report commands
 

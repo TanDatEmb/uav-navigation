@@ -465,6 +465,7 @@ def _samples(path: Path) -> list[dict[str, Any]]:
 
 _PERCEPTION_STREAMS = {
     "imu", "lidar", "corrected_odometry", "propagated_odometry",
+    "registered_scan",
     "diagnostics", "mapping_diagnostics", "tf", "tf_static",
 }
 _EXECUTION_STREAMS = {
@@ -2864,7 +2865,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     thresholds = config.get("runtime", {}).get("thresholds", {})
     names = (
         "simulation_clock", "imu", "lidar", "corrected_odometry",
-        "propagated_odometry", "ground_truth_odometry", "external_odometry",
+        "propagated_odometry", "registered_scan", "ground_truth_odometry", "external_odometry",
         "px4_odometry", "vehicle_status", "local_position",
         "estimator_status_flags", "px4_local_position_setpoint",
         "px4_attitude_setpoint", "px4_thrust_setpoint", "px4_actuator_motors",

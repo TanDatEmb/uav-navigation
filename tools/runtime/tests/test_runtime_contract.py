@@ -109,6 +109,80 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(motors["finite_control_min"], -1.0)
         self.assertEqual(motors["finite_control_max"], 1.0)
 
+    def test_registered_scan_monitor_payload_preserves_mapping_boundary_identity(self) -> None:
+        stamp = SimpleNamespace(sec=12, nanosec=345)
+        message = SimpleNamespace(
+            header=SimpleNamespace(stamp=stamp, frame_id="lio_odom"),
+            localization_epoch=4,
+            scan_sequence=17,
+            body_frame_id="base_link",
+            points=SimpleNamespace(
+                header=SimpleNamespace(stamp=stamp, frame_id="lio_odom"),
+                width=11, height=3,
+            ),
+            free_space_endpoints=SimpleNamespace(
+                header=SimpleNamespace(stamp=stamp, frame_id="lio_odom"),
+                width=2, height=1,
+            ),
+            sensor_origin_pose=SimpleNamespace(
+                position=SimpleNamespace(x=1.0, y=2.0, z=3.0),
+            ),
+            sensor_origin_valid=True,
+            visibility_observation_present=True,
+            visibility_source_ray_count=5,
+            visibility_no_return_count=2,
+            visibility_stamp_skew_ns=0,
+        )
+        payload = monitor._registered_scan_payload(message)
+        self.assertEqual(payload["stamp_ns"], 12_000_000_345)
+        self.assertEqual(payload["localization_epoch"], 4)
+        self.assertEqual(payload["scan_sequence"], 17)
+        self.assertEqual(payload["points_stamp_ns"], 12_000_000_345)
+        self.assertEqual(payload["point_count"], 33)
+        self.assertEqual(payload["free_space_point_count"], 2)
+        self.assertEqual(payload["sensor_origin_position"], [1.0, 2.0, 3.0])
+        self.assertEqual(payload["visibility_no_return_count"], 2)
+
+    def test_fail_closed_does_not_require_rejected_trajectory_sample(self) -> None:
+        import external_mode_scenario
+
+        self.assertEqual(
+            runner._resolve_scene_profile("planner_negative", "no_path", "nominal", None)[0],
+            "no_path",
+        )
+        self.assertEqual(
+            external_mode_scenario._fail_closed_contract_failures(
+                mission_complete_observed=False,
+                mode_failure_observed=True,
+                safety_pause_observed=False,
+                executable_trajectory_count=0,
+            ),
+            [],
+        )
+        failures = external_mode_scenario._fail_closed_contract_failures(
+            mission_complete_observed=False,
+            mode_failure_observed=True,
+            safety_pause_observed=False,
+            executable_trajectory_count=1,
+        )
+        self.assertTrue(any("executable trajectory authority" in item for item in failures))
+
+    def test_scene_resolution_records_requested_and_resolved_identity(self) -> None:
+        profile, descriptor = runner._resolve_scene_profile(
+            "structured_obstacle", "positive", "nominal", None
+        )
+        identity = runner._scenario_identity(
+            descriptor, profile, "pillar", "pillar"
+        )
+        self.assertEqual(identity["requested"]["scene"], "structured_obstacle")
+        self.assertEqual(identity["resolved"]["profile"], "structured_obstacle")
+        self.assertFalse(identity["intentional_profile_alias"])
+        self.assertIn("structured_obstacle/positive/nominal", identity["configuration_key"])
+        with self.assertRaisesRegex(ValueError, "undeclared profile alias"):
+            runner._scenario_identity(
+                descriptor, "occlusion_featured", "occlusion", "occlusion"
+            )
+
     def test_planning_stability_qualification_matrix_is_locked(self) -> None:
         matrix = yaml.safe_load(
             (ROOT / "config/runtime/planning_stability_qualification.yaml").read_text(
@@ -867,6 +941,7 @@ class RuntimeContractTest(unittest.TestCase):
             "navigation_generalization": 5.0,
             "single_pillar_speed": 8.0,
             "no_path": 1.0,
+            "structured_obstacle": 1.0,
             "occlusion_featured": 1.0,
             "occlusion_degenerate": 1.0,
             "tunnel_irregular": 1.5,
@@ -892,7 +967,7 @@ class RuntimeContractTest(unittest.TestCase):
     def test_stress_profiles_have_ground_truth_collision_geometry(self) -> None:
         for profile in (
             "open", "speed", "long_open", "long_open_slow", "long_featured",
-            "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
+            "corridor", "pillar", "structured_obstacle", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path",
         ):
             obstacles = runner._collision_obstacles(profile)
@@ -905,7 +980,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_map_registry_is_deterministic_and_truth_names_are_unique(self) -> None:
         registry = runner._map_registry()
-        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path"):
+        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path", "structured_obstacle"):
             descriptor = registry[profile]
             self.assertIn("world", descriptor)
             self.assertIn("mission", descriptor)
@@ -1189,10 +1264,10 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(profile, "navigation_generalization")
         self.assertEqual(metadata["scene"], "navigation_generalization")
 
-    def test_canonical_scene_resolver_collapses_variants_without_new_make_profiles(self) -> None:
+    def test_canonical_scene_resolver_uses_dedicated_structured_profile(self) -> None:
         self.assertEqual(
             runner._resolve_scene_profile("structured_obstacle", "positive", "nominal", None)[0],
-            "occlusion_featured",
+            "structured_obstacle",
         )
         self.assertEqual(
             runner._resolve_scene_profile("structured_obstacle", "degenerate", "nominal", None)[0],
@@ -2126,6 +2201,10 @@ class RuntimeContractTest(unittest.TestCase):
         report_source = (RUNTIME / "report.py").read_text(encoding="utf-8")
         self.assertIn(
             'if name == "simulation_clock"', report_source
+        )
+        self.assertIn(
+            '"registered_scan", "/lio/mapping_observation", RegisteredScan',
+            monitor_source,
         )
 
     def test_clock_arrival_gap_is_detected_without_a_monitor_tick(self) -> None:
