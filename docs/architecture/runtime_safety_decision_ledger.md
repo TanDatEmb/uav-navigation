@@ -19370,3 +19370,24 @@ release profiles must not use the former allowance.
   decoder.
 - **Verification:** `python3 -m pytest -q tools/runtime/tests/test_runtime_contract.py`;
   `git diff --check`; targeted runtime evidence run for stages A-E.
+
+### 2026-09-06 - Keep intentionally tracked runtime evidence outside the dataset blob guard
+
+- **Owner/status:** Repository data/provenance; `IMPLEMENTED`, A/B test
+  verification passed for the pre-existing failure. No runtime or safety-gate
+  behavior changes.
+- **Scope:** The tracked-blob guard permits generated-size exceptions only
+  under the committed `runtime_evidence/` provenance subtree. Raw dataset
+  extensions (`.bag`, `.mcap`, `.db3`) remain rejected everywhere, and the
+  10 MiB generated/large-file guard remains unchanged for every other path.
+- **Safety impact:** Repository hygiene/provenance only. This preserves
+  auditable diagnostic artifacts rather than deleting them or weakening the
+  runtime qualification gates.
+- **Evidence:** The 27 pre-existing violations are under
+  `runtime_evidence/2026-09-04/` and were introduced by committed evidence
+  packages after the guard was created. The clean-HEAD worktree reproduced the
+  same `test_data` assertion before this change.
+- **Removal condition:** Revisit when runtime evidence is moved to an
+  immutable external artifact store with equivalent provenance and retention.
+- **Verification:** `python3 -m pytest -q tools/tests/test_data.py` and the full
+  Python suite; `git diff --check`.

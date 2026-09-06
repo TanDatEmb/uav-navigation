@@ -23,6 +23,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CATALOG = ROOT / "datasets" / "catalog"
 RAW_SUFFIXES = {".bag", ".mcap", ".db3"}
 GENERATED_LIMIT = 10 * 1024 * 1024
+# Runtime evidence is intentionally tracked so reports remain auditable and
+# content-addressed.  Raw dataset extensions remain forbidden below even in
+# this subtree; the exception applies only to the generated-size check.
+TRACKED_EVIDENCE_ROOT = Path("runtime_evidence")
 PREPARED_SCHEMA_VERSION = 2
 CANONICAL_LIDAR_FRAME = "livox_frame"
 CANONICAL_IMU_FRAME = "livox_imu_frame"
@@ -243,7 +247,11 @@ def check_tracked_blobs() -> list[str]:
         path = ROOT / relative
         if relative.suffix.lower() in RAW_SUFFIXES:
             violations.append(f"tracked raw dataset: {relative}")
-        if path.is_file() and path.stat().st_size > GENERATED_LIMIT:
+        is_tracked_evidence = (
+            relative == TRACKED_EVIDENCE_ROOT or
+            TRACKED_EVIDENCE_ROOT in relative.parents
+        )
+        if path.is_file() and path.stat().st_size > GENERATED_LIMIT and not is_tracked_evidence:
             violations.append(f"tracked generated/large file: {relative}")
     return violations
 
