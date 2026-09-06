@@ -753,6 +753,7 @@ def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
     }
     world_name = {
         "smoke": "px4_lio_smoke", "speed": "open", "long_open_slow": "long_open",
+        "t2_same_identity_renewal": "open",
         "occlusion": "occlusion", "occlusion_featured": "occlusion",
         "long_open_featured_core_60": "long_open_featured_speed",
         "long_open_featured_core_60_pv": "long_open_featured_speed",
@@ -788,8 +789,10 @@ def _collision_obstacles(map_profile: str) -> list[dict[str, Any]]:
             parsed = []
         if parsed:
             return parsed
-    if map_profile in {"open", "speed", "long_open", "long_open_slow"}:
-        if map_profile in {"long_open", "long_open_slow"}:
+    if map_profile in {"open", "speed", "long_open", "long_open_slow",
+                       "t2_same_identity_renewal"}:
+        if map_profile in {"long_open", "long_open_slow",
+                           "t2_same_identity_renewal"}:
             return [
                 box("long_open_wall_east", [55.0, 0.0, 2.5], [0.125, 8.0, 2.5]),
                 box("long_open_wall_north", [25.0, 3.0, 2.5], [30.0, 0.125, 2.5]),
@@ -938,6 +941,7 @@ def _world_name_for_profile(map_profile: str) -> str:
         "smoke": "px4_lio_smoke",
         "speed": "open",
         "long_open_slow": "long_open",
+        "t2_same_identity_renewal": "long_open",
         "occlusion_featured": "occlusion",
         "occlusion_degenerate": "occlusion_degenerate",
         "long_open_featured_core_60": "long_open_featured_speed",
@@ -1183,6 +1187,7 @@ def _mapping_params(
     inject_failed_replan_after_handoff: bool = False,
     inject_failed_replan_repeated: bool = False,
     inject_failed_plan_from_rest_repeated: bool = False,
+    inject_failed_same_identity_renewal_ordinal: int | None = None,
 ) -> Path:
     """Create the only ROS parameter file used by native planner backend navigation."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -1222,6 +1227,13 @@ def _mapping_params(
     planner_parameters["inject_failed_plan_from_rest_repeated"] = bool(
         inject_failed_plan_from_rest_repeated
     )
+    if inject_failed_same_identity_renewal_ordinal is not None:
+        ordinal = int(inject_failed_same_identity_renewal_ordinal)
+        if ordinal < 1:
+            raise ValueError(
+                "inject_failed_same_identity_renewal_ordinal must be positive"
+            )
+        planner_parameters["inject_failed_same_identity_renewal_ordinal"] = ordinal
     # The canonical planner profile owns map evidence production. Do not
     # silently disable sensor-origin raycasting here: BACKUP certification
     # requires KNOWN_FREE evidence, while MAIN unknown-space policy is applied
@@ -1777,6 +1789,7 @@ def _run_sim_unlocked(
     inject_failed_replan_after_handoff: bool = False,
     inject_failed_replan_repeated: bool = False,
     inject_failed_plan_from_rest_repeated: bool = False,
+    inject_failed_same_identity_renewal_ordinal: int | None = None,
     characterization_profile: str | None = None,
     characterization_mode: str = "MODE_PX4_LOCAL",
 ) -> int:
@@ -1867,6 +1880,7 @@ def _run_sim_unlocked(
             "speed": -1,
             "long_open": -1,
             "long_open_slow": -1,
+            "t2_same_identity_renewal": -1,
             "long_featured": -1,
             "long_three_pillars": -1,
             "long_three_pillars_multiwaypoint": -1,
@@ -1927,7 +1941,7 @@ def _run_sim_unlocked(
             scenario["mission_timeout_s"] = min(float(scenario.get("mission_timeout_s", 120.0)), 60.0)
         elif map_profile == "corridor":
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 180.0)
-        elif map_profile in {"long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
+        elif map_profile in {"long_open", "long_open_slow", "t2_same_identity_renewal", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
             scenario["mission_timeout_s"] = max(float(scenario.get("mission_timeout_s", 120.0)), 300.0)
         if map_profile in {"pillar", "structured_obstacle", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization"}:
             # This profile has three route obstacles; use the multi-obstacle
@@ -2157,6 +2171,7 @@ def _run_sim_unlocked(
             inject_failed_replan_after_handoff=inject_failed_replan_after_handoff,
             inject_failed_replan_repeated=inject_failed_replan_repeated,
             inject_failed_plan_from_rest_repeated=inject_failed_plan_from_rest_repeated,
+            inject_failed_same_identity_renewal_ordinal=inject_failed_same_identity_renewal_ordinal,
         )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
@@ -2732,7 +2747,7 @@ def main() -> int:
     external_mode.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "t2_same_identity_renewal", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -2780,6 +2795,10 @@ def main() -> int:
         help="diagnostic-only one-shot hot-replan failure cycle; off by default",
     )
     external_mode.add_argument(
+        "--inject-failed-same-identity-renewal-ordinal", type=int, default=None,
+        help="diagnostic-only failure on the Nth eligible same-identity renewal; off by default",
+    )
+    external_mode.add_argument(
         "--inject-failed-replan-once", action="store_true",
         help="enable the diagnostic-only one-shot failure hook",
     )
@@ -2808,7 +2827,7 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--map-profile",
         choices=(
-            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
+            "smoke", "open", "speed", "long_open", "long_open_slow", "long_featured", "t2_same_identity_renewal", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "long_open_featured_core_60", "long_open_featured_core_60_pv", "single_pillar_speed", "single_pillar_speed_pv", "navigation_generalization",
             "corridor", "pillar", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "no_path",
         ),
@@ -2858,6 +2877,10 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--inject-failed-replan-cycle-id", type=int, default=None,
         help="diagnostic-only one-shot hot-replan failure cycle; off by default",
+    )
+    external_mode_gui.add_argument(
+        "--inject-failed-same-identity-renewal-ordinal", type=int, default=None,
+        help="diagnostic-only failure on the Nth eligible same-identity renewal; off by default",
     )
     external_mode_gui.add_argument(
         "--inject-failed-replan-once", action="store_true",
@@ -2925,6 +2948,8 @@ def main() -> int:
             inject_failed_replan_when_safe=args.inject_failed_replan_when_safe,
             inject_failed_replan_after_handoff=args.inject_failed_replan_after_handoff,
             inject_failed_replan_repeated=args.inject_failed_replan_repeated,
+            inject_failed_same_identity_renewal_ordinal=
+                args.inject_failed_same_identity_renewal_ordinal,
             inject_failed_plan_from_rest_repeated=args.inject_failed_plan_from_rest_repeated,
         )
     if args.command == "sim":
@@ -2950,6 +2975,8 @@ def main() -> int:
             inject_failed_replan_when_safe=args.inject_failed_replan_when_safe,
             inject_failed_replan_after_handoff=args.inject_failed_replan_after_handoff,
             inject_failed_replan_repeated=args.inject_failed_replan_repeated,
+            inject_failed_same_identity_renewal_ordinal=
+                args.inject_failed_same_identity_renewal_ordinal,
             inject_failed_plan_from_rest_repeated=args.inject_failed_plan_from_rest_repeated,
         )
     if args.command == "status":

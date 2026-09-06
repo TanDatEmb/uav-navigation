@@ -158,6 +158,11 @@ if(BUILD_TESTING)
     test/test_certified_continuation.cpp)
   target_include_directories(test_certified_continuation PRIVATE include)
   ament_target_dependencies(test_certified_continuation navigation_planning)
+  ament_add_gtest(test_same_identity_renewal_injection
+    test/test_same_identity_renewal_injection.cpp)
+  target_include_directories(test_same_identity_renewal_injection PRIVATE include)
+  ament_target_dependencies(test_same_identity_renewal_injection
+    navigation_execution navigation_planning navigation_contracts builtin_interfaces)
 endif()
 
 ament_package()

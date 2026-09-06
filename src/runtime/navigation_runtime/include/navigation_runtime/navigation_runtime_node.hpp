@@ -29,6 +29,7 @@
 #include <navigation_mapping/observation_accounting.hpp>
 #include <navigation_planning/planning_outcome.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/same_identity_renewal_injection.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
 #include "navigation_runtime/execution_episode.hpp"
 #include "navigation_runtime/trajectory_completion.hpp"
@@ -285,6 +286,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   bool inject_failed_replan_after_handoff_{false};
   bool inject_failed_replan_repeated_{false};
   bool inject_failed_plan_from_rest_repeated_{false};
+  SameIdentityRenewalInjectionController same_identity_renewal_injection_;
   std::uint64_t dynamics_hash_{1U};
   navigation_planning::DynamicLimits mission_dynamic_limits_{};
 

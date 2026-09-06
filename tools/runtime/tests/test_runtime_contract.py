@@ -761,6 +761,28 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertNotIn("velocity_tracker", external_parameters["navigation"])
             self.assertNotIn("prefer_velocity_output", external_parameters["navigation"])
 
+    def test_same_identity_renewal_injection_uses_positive_ordinal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                mission_file=ROOT / "config/runtime/missions/t2_same_identity_renewal.yaml",
+                inject_failed_same_identity_renewal_ordinal=2,
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))[
+                "navigation_runtime_node"
+            ]["ros__parameters"]["navigation_runtime"]
+            self.assertEqual(
+                parameters["inject_failed_same_identity_renewal_ordinal"], 2
+            )
+            with self.assertRaisesRegex(ValueError, "must be positive"):
+                runner._mapping_params(
+                    session,
+                    ROOT / "config/runtime/mapping.yaml",
+                    inject_failed_same_identity_renewal_ordinal=0,
+                )
+
     def test_blocked_policy_is_forwarded_to_planner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")
@@ -932,6 +954,7 @@ class RuntimeContractTest(unittest.TestCase):
             "speed": 2.0,
             "long_open": 1.5,
             "long_open_slow": 0.8,
+            "t2_same_identity_renewal": 1.5,
             "long_featured": 1.5,
             "long_three_pillars": 3.0,
             "long_three_pillars_speed": 5.0,
@@ -967,6 +990,7 @@ class RuntimeContractTest(unittest.TestCase):
     def test_stress_profiles_have_ground_truth_collision_geometry(self) -> None:
         for profile in (
             "open", "speed", "long_open", "long_open_slow", "long_featured",
+            "t2_same_identity_renewal",
             "corridor", "pillar", "structured_obstacle", "occlusion", "occlusion_featured", "occlusion_degenerate",
             "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path",
         ):
@@ -980,7 +1004,7 @@ class RuntimeContractTest(unittest.TestCase):
 
     def test_map_registry_is_deterministic_and_truth_names_are_unique(self) -> None:
         registry = runner._map_registry()
-        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path", "structured_obstacle"):
+        for profile in ("occlusion_featured", "occlusion_degenerate", "tunnel_irregular", "tunnel_smooth", "forest_clutter", "long_three_pillars", "long_three_pillars_speed", "long_three_pillars_multiwaypoint", "long_cross_obstacles", "long_open_featured_speed", "single_pillar_speed", "navigation_generalization", "no_path", "structured_obstacle", "t2_same_identity_renewal"):
             descriptor = registry[profile]
             self.assertIn("world", descriptor)
             self.assertIn("mission", descriptor)

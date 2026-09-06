@@ -1,5 +1,36 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-06 - Add deterministic same-identity renewal failure injection
+
+- **Owner/status:** navigation runtime integration qualification; DIAGNOSTIC-ONLY,
+  disabled by default, focused harness tests and targeted T2 evidence required.
+- **Scope:** Add an ordinal-triggered hook that converts exactly one real planner
+  result to a failed result only after a coherent committed-future renewal
+  snapshot proves desired and executing mission/waypoint/request identity,
+  certified MAIN ownership, fresh state/world, valid anchor, no transition,
+  no pending successor, and no CurrentBodySupport. The existing cycle-id and
+  PASS_THROUGH handoff hooks remain separate legacy diagnostics.
+- **Safety impact:** no default product behavior, command timeout, recovery
+  state, planner policy, or execution authority is changed. When explicitly
+  enabled, the hook is admitted only in a same-identity normal renewal and the
+  prior certified command remains the sole authority until normal admission
+  decides otherwise. The dedicated two-waypoint open-world profile is a
+  harness fixture, not a production mission or safety bypass.
+- **Evidence:** H1-H9 unit tests cover ordinary eligibility, waypoint/hot
+  retarget/PlanFromRest/BACKUP/pending/stale/body-support rejection, one-shot
+  behavior, and ordinal selection. T2-A/B/C must record identity, start mode,
+  active/pending generations, failed-result disposition, authority margins,
+  command gaps, and PX4 identity outcomes. No SITL or flight acceptance claim
+  follows from the hook alone.
+- **Removal/review condition:** remove the hook and dedicated profile after
+  same-identity renewal continuity is qualified by a stable non-injected
+  integration contract and the diagnostic evidence is no longer needed; never
+  enable it in deployment defaults.
+- **Verification:** source ROS Jazzy and the workspace overlay; build/run
+  test_same_identity_renewal_injection, run runtime CTest and the full Python
+  contract suite, then run only the dedicated T2-A, T2-B and T2-C scenarios
+  with the canonical Release manifest.
+
 ### 2026-09-05 - Decouple internal execution phase ordinals from v1 telemetry
 
 - **Owner/status:** navigation runtime execution episode; `IMPLEMENTED`, focused

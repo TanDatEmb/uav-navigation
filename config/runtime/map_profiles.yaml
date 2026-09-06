@@ -66,6 +66,14 @@ profiles:
     stochastic: false
     seed: 0
     collision_truth: [long_open_wall_north, long_open_wall_south, long_open_wall_end]
+  t2_same_identity_renewal:
+    family: planning_runtime_renewal
+    world: open
+    mission: t2_same_identity_renewal
+    expected_outcome: mission_complete
+    stochastic: false
+    seed: 0
+    collision_truth: [open_wall_east, open_wall_north]
   long_three_pillars:
     family: long_route
     world: long_three_pillars

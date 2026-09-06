@@ -597,6 +597,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.inject_failed_replan_repeated", false);
   inject_failed_plan_from_rest_repeated_ = declare_parameter(
       "navigation_runtime.inject_failed_plan_from_rest_repeated", false);
+  const auto inject_failed_same_identity_renewal_ordinal = declare_parameter(
+      "navigation_runtime.inject_failed_same_identity_renewal_ordinal", std::int64_t{0});
+  if (inject_failed_same_identity_renewal_ordinal < 0) {
+    throw std::invalid_argument(
+        "navigation_runtime.inject_failed_same_identity_renewal_ordinal must be non-negative");
+  }
+  same_identity_renewal_injection_.setTargetOrdinal(
+      static_cast<std::uint64_t>(inject_failed_same_identity_renewal_ordinal));
   planner_config_path_ = declare_parameter("navigation_runtime.config_path", std::string{});
   const auto mission_file =
       declare_parameter("navigation_runtime.mission_file", std::string{});
@@ -2930,6 +2938,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   std::shared_ptr<const navigation_execution::ExecutionStateLease> propagated_state;
   std::optional<navigation_contracts::msg::NavigationGoal> goal;
   std::optional<navigation_contracts::msg::NavigationGoal> cycle_goal;
+  std::optional<navigation_contracts::msg::NavigationGoal> executing_goal_at_cycle;
+  ExecutionEpisodeSnapshot episode_at_cycle;
+  ExecutionRecoveryState recovery_state_at_cycle = ExecutionRecoveryState::kPx4Hold;
+  std::uint64_t command_goal_epoch_at_cycle = 0U;
   bool new_goal = false;
   bool hot_goal_transition = false;
   bool restart_from_rest = false;
@@ -2957,6 +2969,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         std::chrono::steady_clock::now() - input_lock_started).count();
     goal = active_goal_;
     cycle_goal = goal;
+    executing_goal_at_cycle = executing_goal_;
+    episode_at_cycle = execution_episode_.snapshot();
+    recovery_state_at_cycle = execution_recovery_state_.load(std::memory_order_acquire);
+    command_goal_epoch_at_cycle = command_goal_epoch_.load(std::memory_order_acquire);
     new_goal = new_goal_;
     hot_goal_transition = hot_goal_transition_;
     restart_from_rest = execution_episode_.snapshot().restart_from_rest;
@@ -3029,6 +3045,12 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_value("trajectory_publish_count", cycle_success_count_);
   add_value("optimizer_deferred_count", optimizer_deferred_count_);
   add_value("optimizer_renewal_due_count", optimizer_renewal_due_count_);
+  add_value("same_identity_renewal_target_ordinal",
+            same_identity_renewal_injection_.targetOrdinal());
+  add_value("same_identity_renewal_eligible_ordinal",
+            same_identity_renewal_injection_.eligibleOrdinal());
+  add_value("same_identity_renewal_injection_fired",
+            same_identity_renewal_injection_.injectionFired() ? 1U : 0U);
   add_value("execution_recovery_state", static_cast<std::uint64_t>(
       execution_recovery_state_.load(std::memory_order_acquire)));
   add_value("stale_input_count", stale_input_count_);
@@ -4234,6 +4256,56 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
     }
   }
+  const auto active_bundle_at_renewal = expected_timeline_at_cycle.active;
+  const bool desired_identity_matches_executing = goal && executing_goal_at_cycle &&
+      goal->mission_id == executing_goal_at_cycle->mission_id &&
+      goal->waypoint_index == executing_goal_at_cycle->waypoint_index &&
+      goal->request_id == executing_goal_at_cycle->request_id;
+  const bool active_bundle_identity_current = active_bundle_at_renewal &&
+      goal && executing_goal_at_cycle &&
+      active_bundle_at_renewal->localization_epoch == localization_epoch_at_cycle &&
+      active_bundle_at_renewal->goal_epoch == command_goal_epoch_at_cycle &&
+      active_bundle_at_renewal->request_id == executing_goal_at_cycle->request_id &&
+      active_bundle_at_renewal->bundle_generation == episode_at_cycle.active_generation;
+  SameIdentityRenewalFacts same_identity_renewal_facts;
+  same_identity_renewal_facts.start_mode = planning_request.key.start_mode;
+  same_identity_renewal_facts.transition_kind = classifyGoalTransition(
+      goal, executing_goal_at_cycle);
+  same_identity_renewal_facts.recovery_state = recovery_state_at_cycle;
+  same_identity_renewal_facts.execution_phase = episode_at_cycle.phase;
+  same_identity_renewal_facts.desired_goal_valid = goal.has_value();
+  same_identity_renewal_facts.executing_goal_valid = executing_goal_at_cycle.has_value();
+  same_identity_renewal_facts.desired_identity_matches_executing =
+      desired_identity_matches_executing;
+  same_identity_renewal_facts.goal_epoch_matches_command =
+      goal_epoch_at_cycle != 0U && goal_epoch_at_cycle == command_goal_epoch_at_cycle;
+  same_identity_renewal_facts.active_bundle_valid = active_bundle_at_renewal &&
+      active_bundle_at_renewal->valid();
+  same_identity_renewal_facts.active_bundle_is_main = active_bundle_at_renewal &&
+      active_bundle_at_renewal->role == navigation_planning::CandidateRole::kMain;
+  same_identity_renewal_facts.active_bundle_identity_current =
+      active_bundle_identity_current;
+  same_identity_renewal_facts.no_new_goal = !new_goal;
+  same_identity_renewal_facts.no_hot_goal_transition = !hot_goal_transition;
+  same_identity_renewal_facts.ordinary_renewal =
+      !plan_from_rest_with_transition && !replan_for_new_goal &&
+      !anchor_renewal_replan;
+  same_identity_renewal_facts.no_pending_successor =
+      !expected_timeline_at_cycle.pending;
+  same_identity_renewal_facts.command_available = episode_at_cycle.command_available;
+  same_identity_renewal_facts.failure_latched = episode_at_cycle.failure_latched;
+  same_identity_renewal_facts.safety_suffix_active = episode_at_cycle.safety_suffix_active;
+  same_identity_renewal_facts.restart_from_rest = restart_from_rest;
+  same_identity_renewal_facts.command_exposure_allowed =
+      command_execution_lease_failure_latch_.allowsCommandExposure();
+  same_identity_renewal_facts.execution_state_fresh =
+      execution_freshness == navigation_execution::TimestampFreshness::VALID;
+  same_identity_renewal_facts.world_fresh =
+      world_freshness == navigation_execution::TimestampFreshness::VALID;
+  same_identity_renewal_facts.valid_future_anchor = false;
+  same_identity_renewal_facts.current_body_support_present =
+      planning_request.current_body_support != nullptr;
+  same_identity_renewal_facts.terminal_hold_pending = false;
   planning_request.history.previous_bundle_generation =
       transition_bundle ? transition_bundle->bundle_generation : 0U;
   // PlanningHistory describes a prior executable bundle, not the measured
@@ -4286,7 +4358,12 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     }
     planning_request.anchor = *anchor;
     planning_request.activation_stamp_ns = activation_stamp_ns;
+    same_identity_renewal_facts.valid_future_anchor = anchor->valid();
   }
+  const auto same_identity_renewal_eligible_ordinal =
+      same_identity_renewal_injection_.observe(same_identity_renewal_facts);
+  const bool same_identity_renewal_eligible =
+      sameIdentityRenewalInjectionEligible(same_identity_renewal_facts);
   planning_request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
       std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
           std::chrono::duration<double>(planner_->solveDeadlineSeconds()));
@@ -4321,6 +4398,70 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           navigation_planning::PlanningFailureReason::kInvalidInput;
     }
   }
+  const auto planner_result_before_injection = result;
+  const auto same_identity_renewal_still_current = [&]() {
+    std::optional<navigation_contracts::msg::NavigationGoal> current_goal;
+    std::optional<navigation_contracts::msg::NavigationGoal> current_executing_goal;
+    navigation_execution::ExecutionTimelineSnapshot current_timeline;
+    ExecutionEpisodeSnapshot current_episode;
+    ExecutionRecoveryState current_recovery = ExecutionRecoveryState::kPx4Hold;
+    std::uint64_t current_goal_epoch = 0U;
+    std::uint64_t current_command_goal_epoch = 0U;
+    std::uint64_t current_localization_epoch = 0U;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      current_goal = active_goal_;
+      current_executing_goal = executing_goal_;
+      current_timeline = command_bundle_store_.snapshot();
+      current_episode = execution_episode_.snapshot();
+      current_recovery = execution_recovery_state_.load(std::memory_order_acquire);
+      current_goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
+      current_command_goal_epoch = command_goal_epoch_.load(std::memory_order_acquire);
+      current_localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+      if (!current_goal || !current_executing_goal || !goal || !executing_goal_at_cycle ||
+          current_goal->mission_id != goal->mission_id ||
+          current_goal->waypoint_index != goal->waypoint_index ||
+          current_goal->request_id != goal->request_id ||
+          current_goal->route.route_revision != goal->route.route_revision ||
+          current_executing_goal->mission_id != executing_goal_at_cycle->mission_id ||
+          current_executing_goal->waypoint_index != executing_goal_at_cycle->waypoint_index ||
+          current_executing_goal->request_id != executing_goal_at_cycle->request_id ||
+          current_goal_epoch != goal_epoch_at_cycle ||
+          current_command_goal_epoch != command_goal_epoch_at_cycle ||
+          current_localization_epoch != localization_epoch_at_cycle ||
+          classifyGoalTransition(current_goal, current_executing_goal) !=
+              GoalTransitionKind::kSteady ||
+          new_goal_ || hot_goal_transition_ || current_timeline.pending ||
+          !current_timeline.active ||
+          current_timeline.active->bundle_generation != episode_at_cycle.active_generation ||
+          current_timeline.active->localization_epoch != current_localization_epoch ||
+          current_timeline.active->goal_epoch != current_command_goal_epoch ||
+          current_timeline.active->request_id != current_executing_goal->request_id ||
+          current_timeline.active->role != navigation_planning::CandidateRole::kMain ||
+          !current_timeline.active->valid() ||
+          current_episode.phase != ExecutionEpisodePhase::kTrackingMain ||
+          current_recovery != ExecutionRecoveryState::kTrackMain ||
+          !current_episode.command_available || current_episode.failure_latched ||
+          current_episode.safety_suffix_active || current_episode.restart_from_rest ||
+          !command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        return false;
+      }
+    }
+    const auto current_world = world_snapshot_store_.load();
+    const auto current_execution = execution_state_store_.load();
+    const auto current_now_ns = now().nanoseconds();
+    return current_world && current_execution &&
+           navigation_execution::classifyTimestampFreshness(
+               current_now_ns, current_world.identity.observation_stamp_ns,
+               data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID &&
+           navigation_execution::classifyTimestampFreshness(
+               current_now_ns, current_execution->state.source_stamp_ns,
+               data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID &&
+           current_execution->state.finite();
+  };
   // Test/debug-only observability hook. It is deliberately applied after the
   // real planner call and before admission, so the old committed bundle is
   // still available to the normal retained-command path. With the default
@@ -4379,13 +4520,21 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       plan_from_rest_with_transition &&
       execution_recovery_state_.load(std::memory_order_acquire) ==
           ExecutionRecoveryState::kStoppedRecovery;
+  const bool same_identity_renewal_injection =
+      same_identity_renewal_eligible &&
+      same_identity_renewal_injection_.shouldInject(
+          same_identity_renewal_eligible_ordinal) &&
+      same_identity_renewal_still_current();
   const bool injected_failure = injected_replan_failure || safe_margin_injection ||
       handoff_safe_margin_injection || repeated_replan_failure ||
-      repeated_plan_from_rest_failure;
+      repeated_plan_from_rest_failure || same_identity_renewal_injection;
   if (injected_failure) {
     if (!inject_failed_replan_repeated_ &&
         !inject_failed_plan_from_rest_repeated_) {
       inject_failed_replan_once_ = false;
+    }
+    if (same_identity_renewal_injection) {
+      same_identity_renewal_injection_.markInjected();
     }
     result = navigation_planning::PlannerStatus::kFailed;
     planning_outcome.outcome =
@@ -5537,6 +5686,28 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     add_trace_value("planning_cycle_id", cycle_count_);
     add_trace_value("bundle_id", committed_generation);
     add_trace_value("solve_generation", solve_generation);
+    add_trace_value("planning_start_mode",
+                    static_cast<int>(planning_request.key.start_mode));
+    add_trace_value("same_identity_renewal_eligible",
+                    same_identity_renewal_eligible ? 1 : 0);
+    add_trace_value("same_identity_renewal_ordinary",
+                    same_identity_renewal_facts.ordinary_renewal ? 1 : 0);
+    add_trace_value("same_identity_renewal_eligible_ordinal",
+                    same_identity_renewal_eligible_ordinal);
+    add_trace_value("same_identity_renewal_target_ordinal",
+                    same_identity_renewal_injection_.targetOrdinal());
+    add_trace_value("same_identity_renewal_injected",
+                    same_identity_renewal_injection ? 1 : 0);
+    add_trace_value("same_identity_renewal_injection_fired",
+                    same_identity_renewal_injection_.injectionFired() ? 1 : 0);
+    add_trace_string(
+        "same_identity_renewal_injection_reason",
+        same_identity_renewal_injection
+            ? "SAME_IDENTITY_NORMAL_RENEWAL" : "NONE");
+    add_trace_value("current_body_support_present",
+                    planning_request.current_body_support ? 1 : 0);
+    add_trace_value("planner_result_before_injection",
+                    static_cast<int>(planner_result_before_injection));
     add_trace_value("injected_replan_failure", injected_failure ? 1 : 0);
     add_trace_value("commit_observed_this_cycle", commit_observed_this_cycle ? 1 : 0);
     add_trace_value("execution_stamp_ns", execution_stamp_ns);
