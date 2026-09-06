@@ -38,6 +38,7 @@ struct SameIdentityRenewalFacts final {
   bool execution_state_fresh{false};
   bool world_fresh{false};
   bool valid_future_anchor{false};
+  bool fresh_renewal_due_window{false};
   bool current_body_support_present{false};
   bool terminal_hold_pending{false};
 };
@@ -59,7 +60,8 @@ struct SameIdentityRenewalFacts final {
          !facts.failure_latched && !facts.safety_suffix_active &&
          !facts.restart_from_rest && facts.command_exposure_allowed &&
          facts.execution_state_fresh && facts.world_fresh &&
-         facts.valid_future_anchor && !facts.current_body_support_present &&
+         facts.valid_future_anchor && facts.fresh_renewal_due_window &&
+         !facts.current_body_support_present &&
          !facts.terminal_hold_pending;
 }
 

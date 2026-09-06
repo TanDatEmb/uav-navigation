@@ -4303,6 +4303,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   same_identity_renewal_facts.world_fresh =
       world_freshness == navigation_execution::TimestampFreshness::VALID;
   same_identity_renewal_facts.valid_future_anchor = false;
+  same_identity_renewal_facts.fresh_renewal_due_window =
+      ordinaryRenewalFailureInjectionMayArm(renewal_decision, planning_interval_s);
   same_identity_renewal_facts.current_body_support_present =
       planning_request.current_body_support != nullptr;
   same_identity_renewal_facts.terminal_hold_pending = false;

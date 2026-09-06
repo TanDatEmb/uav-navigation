@@ -90,6 +90,7 @@ SameIdentityRenewalFacts eligibleFacts() {
   facts.execution_state_fresh = true;
   facts.world_fresh = true;
   facts.valid_future_anchor = true;
+  facts.fresh_renewal_due_window = true;
   return facts;
 }
 
@@ -145,6 +146,12 @@ TEST(SameIdentityRenewalInjection, H7RejectsStaleEvidenceAndBodySupport) {
   EXPECT_FALSE(sameIdentityRenewalInjectionEligible(facts));
   facts = eligibleFacts();
   facts.current_body_support_present = true;
+  EXPECT_FALSE(sameIdentityRenewalInjectionEligible(facts));
+}
+
+TEST(SameIdentityRenewalInjection, RejectsLateRenewalOutsideFreshDueWindow) {
+  auto facts = eligibleFacts();
+  facts.fresh_renewal_due_window = false;
   EXPECT_FALSE(sameIdentityRenewalInjectionEligible(facts));
 }
 

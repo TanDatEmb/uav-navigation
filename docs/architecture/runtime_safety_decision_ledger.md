@@ -8,7 +8,8 @@
   result to a failed result only after a coherent committed-future renewal
   snapshot proves desired and executing mission/waypoint/request identity,
   certified MAIN ownership, fresh state/world, valid anchor, no transition,
-  no pending successor, and no CurrentBodySupport. The legacy ordinary
+  no pending successor, no CurrentBodySupport, and the scheduler-derived
+  fresh `kRenewalDue` window. The legacy ordinary
   `inject_failed_replan_when_safe` hook is armed only in the first
   scheduler-period-sized window after the scheduler's `kRenewalDue` boundary,
   using `remaining_main_horizon_s` and `required_lead_time_s`; it does not use
