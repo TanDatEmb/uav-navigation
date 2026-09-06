@@ -102,6 +102,36 @@ inline bool canHotRetargetAtWaypointTransition(
          !planner_failure_latched && !safety_suffix_active;
 }
 
+// A terminal acknowledgement is not by itself permission to revoke the
+// executing command.  A PASS_THROUGH predecessor may bridge the callback
+// ordering boundary only when the next route leg and the immutable execution
+// certificate are both still present.  The caller supplies facts captured
+// under its lifecycle transaction; this predicate owns no mutable state.
+struct PassThroughTerminalAckFacts final {
+  bool successful_terminal_status{false};
+  bool status_matches_active_identity{false};
+  bool active_goal_is_pass_through{false};
+  bool outgoing_route_exists{false};
+  bool certified_main_command{false};
+  bool certified_continuation_boundary{false};
+  bool execution_identity_current{false};
+  bool failure_latched{false};
+  bool safety_suffix_active{false};
+  bool command_exposure_allowed{false};
+  bool command_lease_valid{false};
+};
+
+[[nodiscard]] inline bool passThroughTerminalAckMayRetainCommand(
+    const PassThroughTerminalAckFacts& facts) noexcept {
+  return facts.successful_terminal_status &&
+         facts.status_matches_active_identity &&
+         facts.active_goal_is_pass_through && facts.outgoing_route_exists &&
+         facts.certified_main_command && facts.certified_continuation_boundary &&
+         facts.execution_identity_current && !facts.failure_latched &&
+         !facts.safety_suffix_active && facts.command_exposure_allowed &&
+         facts.command_lease_valid;
+}
+
 inline bool watchdogTimeoutMayRetainSafetySuffix(
     ExecutionRecoveryState state, bool command_available,
     bool safety_suffix_active) noexcept {

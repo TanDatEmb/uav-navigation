@@ -2107,6 +2107,65 @@ void NavigationRuntimeNode::onModeStatus(
     deferred_terminal_status_ = *active_goal_;
     return;
   }
+  const auto episode = execution_episode_.snapshot();
+  const auto timeline = command_bundle_store_.snapshot();
+  const auto current_bundle = timeline.active;
+  const auto localization_epoch =
+      active_localization_epoch_.load(std::memory_order_acquire);
+  const auto goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
+  const auto command_goal_epoch =
+      command_goal_epoch_.load(std::memory_order_acquire);
+  const auto now_ns = now().nanoseconds();
+  const bool successful_terminal_status =
+      message->state == navigation_contracts::msg::NavigationModeStatus::COMPLETE &&
+      message->reason == navigation_contracts::msg::NavigationModeStatus::NONE &&
+      message->waypoint_accepted &&
+      message->accepted_waypoint_index == message->waypoint_index;
+  const bool outgoing_route_exists = active_goal_ && active_goal_->has_next_target &&
+      active_goal_->waypoint_index < active_goal_->route.waypoint_positions.size() &&
+      active_goal_->waypoint_index + 1U < active_goal_->route.waypoint_positions.size() &&
+      active_goal_->waypoint_index + 1U < active_goal_->route.waypoint_behaviors.size();
+  const bool command_lease_valid = current_bundle && now_ns > 0 &&
+      current_bundle->valid_from_ns <= now_ns && now_ns <= current_bundle->valid_until_ns;
+  const bool execution_identity_current = current_bundle && executing_goal_ &&
+      executingCommandIdentityMatchesLocked(
+          *executing_goal_, command_goal_epoch, localization_epoch,
+          current_bundle->bundle_generation);
+  const bool certified_main_command = current_bundle && current_bundle->valid() &&
+      current_bundle->role == navigation_planning::CandidateRole::kMain &&
+      episode.command_available;
+  const bool certified_continuation_boundary = current_bundle && active_goal_ &&
+      [&]() {
+        const auto boundary = certifiedMainContinuationBoundary(
+            *current_bundle, *active_goal_, localization_epoch, goal_epoch, false);
+        return boundary.has_value() && now_ns > 0 &&
+            *boundary > static_cast<std::uint64_t>(now_ns);
+      }();
+  const PassThroughTerminalAckFacts retention_facts{
+      successful_terminal_status,
+      matches_active,
+      active_goal_ && active_goal_->behavior ==
+          navigation_contracts::msg::NavigationGoal::BEHAVIOR_PASS_THROUGH,
+      outgoing_route_exists,
+      certified_main_command,
+      certified_continuation_boundary,
+      execution_identity_current,
+      episode.failure_latched,
+      episode.safety_suffix_active,
+      command_execution_lease_failure_latch_.allowsCommandExposure(),
+      command_lease_valid};
+  if (passThroughTerminalAckMayRetainCommand(retention_facts)) {
+    // The acknowledgement records successful checkpoint progress, but the
+    // predecessor remains the physical command owner until a certified
+    // successor activation or the existing finite lease/stop path closes it.
+    RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "retaining certified MAIN command across PASS_THROUGH terminal acknowledgement "
+        "mission=%s waypoint=%u request=%lu",
+        message->mission_id.c_str(), message->waypoint_index,
+        static_cast<unsigned long>(message->request_id));
+    return;
+  }
   RCLCPP_INFO(get_logger(),
               "Cancelling planner backend goal after terminal mission status state=%u reason=%u "
               "mission=%s waypoint=%u request=%lu",

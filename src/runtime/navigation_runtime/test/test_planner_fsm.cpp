@@ -107,6 +107,46 @@ TEST(PlannerFsm, ClearsForcedHotRetargetAfterEitherSuccessfulTransitionPath) {
   EXPECT_FALSE(clearHotGoalTransitionAfterCommit(false, false));
 }
 
+TEST(PlannerFsm, RetainsOnlyCertifiedPassThroughTerminalAcknowledgement) {
+  const PassThroughTerminalAckFacts valid{
+      true, true, true, true, true, true, true, false, false, true, true};
+  EXPECT_TRUE(passThroughTerminalAckMayRetainCommand(valid));
+
+  auto facts = valid;
+  facts.successful_terminal_status = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.status_matches_active_identity = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.active_goal_is_pass_through = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.outgoing_route_exists = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.certified_main_command = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.certified_continuation_boundary = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.execution_identity_current = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.failure_latched = true;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.safety_suffix_active = true;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.command_exposure_allowed = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+  facts = valid;
+  facts.command_lease_valid = false;
+  EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
+}
+
 TEST(PlannerFsm, DefersOptimizerWhileCertifiedMainHasRenewalMargin) {
   const auto decision = classifyPlannerRenewal(
       false, true, false, navigation_planning::CandidateRole::kMain,
