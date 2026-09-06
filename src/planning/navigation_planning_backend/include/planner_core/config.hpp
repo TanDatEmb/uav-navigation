@@ -194,9 +194,9 @@ namespace navigation_planning_backend {
             loader.LoadParam("planner/mapping_error_budget_m", mapping_error_budget_m, 0.10);
             loader.LoadParam("planner/planning_margin_m", planning_margin_m, 0.05);
             loader.LoadParam("planner/iris_iter_num", iris_iter_num, 1);
-            loader.LoadParam("planner/yaw_rate_max_rad_s", yaw_rate_max_rad_s, 3.14);
+            loader.LoadParam("planner/yaw_rate_max_rad_s", yaw_rate_max_rad_s, 1.5);
             loader.LoadParam("planner/yaw_acceleration_max_rad_s2",
-                             yaw_acceleration_max_rad_s2, 0.3);
+                             yaw_acceleration_max_rad_s2, 1.0);
             const navigation_planning::VehicleDynamicModel exp_physical_model{
                 exp_traj_cfg.max_vel, exp_traj_cfg.max_acc, exp_traj_cfg.max_jerk,
                 exp_traj_cfg.max_omg, exp_traj_cfg.max_omg,

@@ -1,5 +1,36 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-06 - Raise nominal yaw envelope for Q1 development characterization
+
+- **Owner/status:** planning backend nominal yaw configuration and final
+  candidate certificates; `IMPLEMENTED`, development characterization only,
+  not flight-qualified.
+- **Scope:** Raise the planner nominal yaw-rate limit from `1.0` to `1.5`
+  rad/s and the yaw-acceleration limit from `0.3` to `1.0` rad/s2. The
+  unchanged `yaw_tracking_error_budget_rad=0.35` and all final composed
+  yaw-rate, yaw-acceleration, flatness, body-rate, thrust, world, and
+  execution certificates remain authoritative for MAIN, BACKUP, and
+  EMERGENCY candidates. No ROS/PX4 message or PX4 source change is included.
+- **Safety impact:** This permits faster planner-generated heading profiles
+  only inside the existing final certificate gates; it does not enlarge the
+  tracking budget, command lease, or physical translational envelope. The
+  Q1 artifact records PX4 autonomous defaults `MPC_YAWRAUTO_MAX=60 deg/s`
+  and `MPC_YAWRAUTO_ACC=20 deg/s2`, which are below the new planner targets;
+  therefore downstream yaw capability is a separate `PX4_YAW_LIMIT` finding
+  and this entry does not claim that PX4 follows the new limits.
+- **Evidence:** Product-config, facade-diagnostic, yaw-optimizer, and final
+  rate/acceleration certificate regressions are updated for `1.5`/`1.0`.
+  The unchanged Q1 scenario must be rerun as a yaw-only A/B after the 10 Hz
+  cadence result is understood; no SITL or hardware acceptance is claimed.
+- **Removal/review condition:** Revisit if repeated Q1 evidence shows yaw
+  tracking, position tracking, dynamic-certificate, recovery, or PX4-limit
+  regression. Do not increase the limits further without measured closed-loop
+  evidence and explicit downstream parameter capture.
+- **Verification:** source the ROS Jazzy workspace; run the planner config,
+  facade, trajectory/yaw certificate, planning/runtime/mapping/contract,
+  Python, and Release gates; inspect the PX4 parameter capture and rerun the
+  unchanged Q1 A/B when the cadence gate permits.
+
 ### 2026-09-06 - Adopt a bounded 10 Hz development planner contract
 
 - **Owner/status:** navigation runtime scheduler and planning backend timing;

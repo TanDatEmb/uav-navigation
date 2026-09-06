@@ -175,11 +175,13 @@ yaw_target = bearing(measured_position,
 The route point may lie on the outgoing segment before the active waypoint is
 accepted, so the target identity does not change at the acceptance event. The
 target is unwrapped with shortest angular distance and passed through explicit
-yaw-rate and yaw-acceleration limits. The initial operating limits must not
-exceed the active PX4 autonomous yaw limits recorded by the runner; upstream
-defaults of 60 deg/s and 20 deg/s^2 are starting references, not unverified
-vehicle certification. The current planner-only 3 rad/s rate cap is not an
-acceptable stability argument by itself.
+yaw-rate and yaw-acceleration limits. The Q1 development characterization
+target is 1.5 rad/s and 1.0 rad/s^2, while the active PX4 autonomous yaw
+limits must still be captured by the runner. Any downstream limit below that
+target is a `PX4_YAW_LIMIT` blocker, not permission to claim the faster
+response; upstream defaults of 60 deg/s and 20 deg/s^2 are comparison values,
+not vehicle certification. Planner-side final yaw certificates remain
+authoritative in either case.
 
 At low horizontal speed, pure vertical motion, a STOP hold, or missing finite
 route support, the system holds the last valid yaw with zero requested yaw-rate.

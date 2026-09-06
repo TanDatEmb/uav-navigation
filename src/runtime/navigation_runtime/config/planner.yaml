@@ -68,11 +68,11 @@ planner:
   localization_error_budget_m: 0.05
   mapping_error_budget_m: 0.10
   planning_margin_m: 0.05
-  # Conservative initial envelope below PX4 upstream autonomous defaults
-  # (60 deg/s, 20 deg/s^2). Acceptance still requires the runner to capture
-  # the active vehicle parameters; these are not hardware certification.
-  yaw_rate_max_rad_s: 1.0
-  yaw_acceleration_max_rad_s2: 0.3
+  # Development nominal yaw envelope for the Q1 responsiveness
+  # characterization. The final yaw-rate and yaw-acceleration certificates
+  # remain active; actual PX4 limits are captured independently.
+  yaw_rate_max_rad_s: 1.5
+  yaw_acceleration_max_rad_s2: 1.0
   route_yaw:
     minimum_lookahead_m: 2.0
     maximum_lookahead_m: 12.0

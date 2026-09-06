@@ -483,8 +483,8 @@ TEST(PlannerFacade, ExposesOnlyProductStateBeforeFirstCommit) {
   EXPECT_EQ(diagnostics.module_time_us[0], 0.0);
   EXPECT_EQ(diagnostics.route_yaw_source,
             static_cast<int>(navigation_planning_backend::RouteYawSource::kInvalidRoute));
-  EXPECT_DOUBLE_EQ(diagnostics.yaw_rate_limit_rad_s, 1.0);
-  EXPECT_DOUBLE_EQ(diagnostics.yaw_acceleration_limit_rad_s2, 0.3);
+  EXPECT_DOUBLE_EQ(diagnostics.yaw_rate_limit_rad_s, 1.5);
+  EXPECT_DOUBLE_EQ(diagnostics.yaw_acceleration_limit_rad_s2, 1.0);
 }
 
 TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {

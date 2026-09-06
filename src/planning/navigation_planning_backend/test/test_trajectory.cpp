@@ -974,10 +974,36 @@ TEST(PlannerTrajectory, YawHandoffRequiresRateAndAccelerationCertificate) {
 
   const auto certified = navigation_planning_backend::
       minimumSnapStateTransitionPieceWithinRateAccelerationLimits(
-          initial, terminal, 5.0, 1.0, 0.3);
+          initial, terminal, 5.0, 1.5, 1.0);
   ASSERT_TRUE(certified.has_value());
-  EXPECT_LE(certified->getMaxVelRate(), 1.0 + 1.0e-6);
-  EXPECT_LE(certified->getMaxAccRate(), 0.3 + 1.0e-6);
+  EXPECT_LE(certified->getMaxVelRate(), 1.5 + 1.0e-6);
+  EXPECT_LE(certified->getMaxAccRate(), 1.0 + 1.0e-6);
+}
+
+TEST(PlannerTrajectory, DevelopmentYawEnvelopeRejectsRateAndAccelerationOverflow) {
+  const std::vector<double> durations{5.0};
+  const Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  const geometry_utils::Trajectory position(durations, {coefficients});
+  traj_opt::YawTrajOpt optimizer(1.5, 1.0);
+  geometry_utils::Trajectory output;
+
+  navigation_math::Vec4f valid_initial = navigation_math::Vec4f::Zero();
+  ASSERT_TRUE(optimizer.optimizeToTarget(valid_initial, M_PI_2, position, output));
+  EXPECT_LE(output.getMaxVelRate(), 1.5 + 1.0e-6);
+  EXPECT_LE(output.getMaxAccRate(), 1.0 + 1.0e-6);
+
+  auto excessive_rate = valid_initial;
+  excessive_rate(1) = 1.5 + 2.0e-6;
+  EXPECT_FALSE(optimizer.optimizeToTarget(excessive_rate, M_PI_2, position, output));
+  EXPECT_EQ(optimizer.lastDiagnostics().failure,
+            traj_opt::YawOptimizationFailure::kInvalidInput);
+
+  auto excessive_acceleration = valid_initial;
+  excessive_acceleration(2) = 1.0 + 2.0e-6;
+  EXPECT_FALSE(optimizer.optimizeToTarget(
+      excessive_acceleration, M_PI_2, position, output));
+  EXPECT_EQ(optimizer.lastDiagnostics().failure,
+            traj_opt::YawOptimizationFailure::kInvalidInput);
 }
 
 TEST(PlannerTrajectory, OnlySuccessfulExpResultMayBuildAndCommitNewCandidate) {
