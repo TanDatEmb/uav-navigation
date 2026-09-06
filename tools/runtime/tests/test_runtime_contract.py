@@ -783,6 +783,22 @@ class RuntimeContractTest(unittest.TestCase):
                     inject_failed_same_identity_renewal_ordinal=0,
                 )
 
+    def test_scheduler_failure_injection_switch_is_forwarded_without_cycle_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                inject_failed_replan_once=True,
+                inject_failed_replan_when_safe=True,
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))[
+                "navigation_runtime_node"
+            ]["ros__parameters"]["navigation_runtime"]
+            self.assertTrue(parameters["inject_failed_replan_once"])
+            self.assertTrue(parameters["inject_failed_replan_when_safe"])
+            self.assertNotIn("inject_failed_replan_cycle_id", parameters)
+
     def test_blocked_policy_is_forwarded_to_planner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")

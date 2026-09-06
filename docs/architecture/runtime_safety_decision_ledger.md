@@ -13,7 +13,9 @@
   scheduler-period-sized window after the scheduler's `kRenewalDue` boundary,
   using `remaining_main_horizon_s` and `required_lead_time_s`; it does not use
   an independent hard-coded horizon. The PASS_THROUGH handoff hook remains a
-  separate forced-transition diagnostic.
+  separate forced-transition diagnostic. The runtime runner forwards the
+  explicit one-shot enable switch independently of the cycle-id hook, so a
+  scheduler-gated invocation cannot silently become a no-op.
 - **Safety impact:** no default product behavior, command timeout, recovery
   state, planner policy, or execution authority is changed. When explicitly
   enabled, the hook is admitted only in a same-identity normal scheduler-due

@@ -1218,7 +1218,11 @@ def _mapping_params(
         if int(inject_failed_replan_cycle_id) <= 0:
             raise ValueError("inject_failed_replan_cycle_id must be positive")
         planner_parameters["inject_failed_replan_cycle_id"] = int(inject_failed_replan_cycle_id)
-        planner_parameters["inject_failed_replan_once"] = bool(inject_failed_replan_once)
+    # The one-shot switch also controls the scheduler-gated hooks.  Keep it
+    # independent from the cycle-id hook so an explicit
+    # --inject-failed-replan-once --inject-failed-replan-when-safe invocation
+    # reaches the runtime with the requested diagnostic enabled.
+    planner_parameters["inject_failed_replan_once"] = bool(inject_failed_replan_once)
     planner_parameters["inject_failed_replan_when_safe"] = bool(inject_failed_replan_when_safe)
     planner_parameters["inject_failed_replan_after_handoff"] = bool(
         inject_failed_replan_after_handoff
