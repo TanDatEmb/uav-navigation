@@ -1,5 +1,41 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-07 - Freeze Q1 nominal-seed investigation without a production fallback
+
+- **Owner/status:** Nominal planning diagnostics and Q1 qualification;
+  `DIAGNOSTIC ONLY`, root classification remains `UNRESOLVED`. No production
+  fallback, threshold or safety-semantic change was made.
+- **Scope:** Capture one immutable `NominalProblemSnapshot` at the boundary
+  before nominal optimization, then serialize it outside the timed solve. The
+  snapshot records execution/world identity, head/tail PVAJ, guide, durations,
+  spatial variables, corridor planes, route gates, timing and every duration
+  retry. An offline fixture compares the deterministic corridor-Bezier seed,
+  duration-varied family, immutable MINCO seed and general MINCO/L-BFGS under
+  unchanged physical contracts.
+- **Safety impact:** None to runtime behavior. The capture does not alter
+  UNKNOWN policy, execution-owned PVAJ, corridor geometry, V/A/J limits,
+  world/flatness certificates, hard deadline, command lease or PX4 behavior.
+  Diagnostic high-effort optimization is not qualification evidence and cannot
+  authorize a candidate.
+- **Evidence:** Fixture
+  `.artifacts/runtime/external-mode-check-20260907T040103-63283/diagnostic_nominal_fixture/nominal_problem_snapshot_2_2_0.json`
+  has SHA-256
+  `1a36166219f5f99ff451b8de45a034f8e81966db1f9180163ffdce2f5b9e5372`.
+  The uniform deterministic Bezier family has disjoint corridor- and
+  dynamics-feasible scale ranges, while production MINCO/L-BFGS passes the
+  replayable local certificates within 80 ms. Raw occupancy/world state is
+  absent, so the result does not prove full executable-bundle feasibility.
+- **Removal/review condition:** Remove the diagnostic capture only after the
+  generation-independent target signature has a stable replay fixture with
+  sufficient world data and the Q1 first-failure owner is classified. Do not
+  add a new fallback unless an existing optimizer path is proven semantically
+  incapable of representing the required certified candidate.
+- **Verification:** Reproduce the exact fixture with the archived diagnostic
+  executable and replay output; run focused planner tests and the affected
+  planning/runtime/mapping/contract gates after any future semantic patch;
+  rebuild the Release manifest; inspect `git diff --check`; rerun the unchanged
+  Q1 scenario only after the offline seam is closed.
+
 ### 2026-09-06 - Preserve mandatory nominal feasibility budget during urgent baseline fallback
 
 - **Owner/status:** EXP nominal solve budget and urgent baseline selection;
