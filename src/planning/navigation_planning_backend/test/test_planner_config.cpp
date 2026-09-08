@@ -603,6 +603,43 @@ TEST(PlannerPassThrough, CornerTerminalSpeedUsesAcceptanceRoomEnvelope) {
       0.0);
 }
 
+TEST(PlannerPassThrough, CornerTimingCoversBoundedVelocityRotation) {
+  const Eigen::Vector3d incoming_velocity{2.94, 0.0, 0.0};
+  const Eigen::Vector3d outgoing_velocity{0.0, std::sqrt(1.8), 0.0};
+  const double required_duration =
+      navigation_planning_backend::passThroughMinimumVelocityTransitionDuration(
+          (outgoing_velocity - incoming_velocity).norm(), 2.0, 4.0);
+
+  ASSERT_GT(required_duration, 0.0);
+  EXPECT_GE(
+      navigation_planning_backend::passThroughMaximumVelocityChange(
+          required_duration, 2.0, 4.0),
+      (outgoing_velocity - incoming_velocity).norm() - 1.0e-12);
+  EXPECT_LT(
+      navigation_planning_backend::passThroughMaximumVelocityChange(
+          required_duration * 0.99, 2.0, 4.0),
+      (outgoing_velocity - incoming_velocity).norm());
+}
+
+TEST(PlannerPassThrough, GuideTimingCoversVelocityDirectionTransition) {
+  const Eigen::Vector3d incoming_velocity{2.29, -1.01, 0.0};
+  const Eigen::Vector3d outgoing_velocity{2.94, 0.0, 0.0};
+  const double base_duration_s = 0.704;
+  const double scale =
+      navigation_planning_backend::passThroughVelocityTransitionTimeScale(
+          incoming_velocity, outgoing_velocity, base_duration_s, 2.0, 4.0);
+
+  ASSERT_GT(scale, 1.0);
+  EXPECT_GE(
+      navigation_planning_backend::passThroughMaximumVelocityChange(
+          base_duration_s * scale, 2.0, 4.0),
+      (outgoing_velocity - incoming_velocity).norm() - 1.0e-12);
+  EXPECT_LT(
+      navigation_planning_backend::passThroughMaximumVelocityChange(
+          base_duration_s * scale * 0.99, 2.0, 4.0),
+      (outgoing_velocity - incoming_velocity).norm());
+}
+
 TEST(PlannerPassThrough, RouteWindowMovesEndpointAlongOutgoingCornerTangent) {
   const auto endpoint = navigation_planning_backend::passThroughRouteWindowEndpoint(
       Eigen::Vector3d{50.0, 5.0, 3.0}, Eigen::Vector3d{50.0, -5.0, 3.0},

@@ -30,6 +30,59 @@ inline double passThroughMaximumVelocityChange(
   return std::isfinite(maximum_delta) ? std::max(0.0, maximum_delta) : 0.0;
 }
 
+// Invert the jerk/acceleration-bounded velocity-change envelope.  This is
+// used only to allocate time for a certified corner guide; it does not alter
+// the dynamic limits or certify a trajectory by itself.
+inline double passThroughMinimumVelocityTransitionDuration(
+    const double velocity_change_mps,
+    const double maximum_acceleration_mps2,
+    const double maximum_jerk_mps3) noexcept {
+  if (!std::isfinite(velocity_change_mps) || velocity_change_mps <= 0.0 ||
+      !std::isfinite(maximum_acceleration_mps2) ||
+      maximum_acceleration_mps2 <= 0.0 ||
+      !std::isfinite(maximum_jerk_mps3) || maximum_jerk_mps3 <= 0.0) {
+    return 0.0;
+  }
+  const double acceleration_ramp_s =
+      maximum_acceleration_mps2 / maximum_jerk_mps3;
+  const double full_ramp_delta_mps =
+      maximum_acceleration_mps2 * maximum_acceleration_mps2 /
+      maximum_jerk_mps3;
+  if (!std::isfinite(acceleration_ramp_s) ||
+      !std::isfinite(full_ramp_delta_mps)) {
+    return 0.0;
+  }
+  const double duration_s = velocity_change_mps <= full_ramp_delta_mps
+      ? 2.0 * std::sqrt(velocity_change_mps / maximum_jerk_mps3)
+      : velocity_change_mps / maximum_acceleration_mps2 +
+            acceleration_ramp_s;
+  return std::isfinite(duration_s) ? std::max(0.0, duration_s) : 0.0;
+}
+
+// Convert the bounded vector-velocity transition into a guide-time scale.
+// Guide timing is only an optimizer seed; the final polynomial certificates
+// remain authoritative for the accepted trajectory.
+inline double passThroughVelocityTransitionTimeScale(
+    const Eigen::Vector3d& incoming_velocity,
+    const Eigen::Vector3d& outgoing_velocity,
+    const double base_duration_s,
+    const double maximum_acceleration_mps2,
+    const double maximum_jerk_mps3) noexcept {
+  if (!incoming_velocity.allFinite() || !outgoing_velocity.allFinite() ||
+      !std::isfinite(base_duration_s) || base_duration_s <= 1.0e-6) {
+    return 1.0;
+  }
+  const double required_duration =
+      passThroughMinimumVelocityTransitionDuration(
+          (outgoing_velocity - incoming_velocity).norm(),
+          maximum_acceleration_mps2, maximum_jerk_mps3);
+  if (!std::isfinite(required_duration) || required_duration <= 0.0) {
+    return 1.0;
+  }
+  const double scale = required_duration / base_duration_s;
+  return std::isfinite(scale) ? std::max(1.0, scale) : 1.0;
+}
+
 // Upper bound for a terminal speed that can be reached over a guide path
 // with a fixed time seed when the incoming speed is projected on its tangent.
 // This is a parameterization guard, not a dynamic-limit relaxation; the

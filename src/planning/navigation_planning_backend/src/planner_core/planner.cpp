@@ -2794,6 +2794,72 @@ double knownFreeGuideSupport(
                             cfg_.exp_traj_cfg.max_vel);
                     return FAILED;
                 }
+                if (!terminal_stop_required && !allocation.points.empty() &&
+                    std::isfinite(guide_path_end_vel) && guide_path_end_vel >= 0.0) {
+                    const Eigen::Vector3d outgoing_delta =
+                        allocation.points.front().cast<double>() -
+                        guide_path.back().cast<double>();
+                    Eigen::Vector3d incoming_velocity = Eigen::Vector3d::Zero();
+                    const Eigen::Vector3d measured_velocity =
+                        pos_init_state.col(1).cast<double>();
+                    if (measured_velocity.allFinite() &&
+                        measured_velocity.norm() > 1.0e-6) {
+                        // The optimizer boundary is fixed to this PVAJ state.
+                        // A scalar speed reconstructed from the previous guide
+                        // loses lateral velocity exactly when a receding route
+                        // turns, making the seed appear feasible while MINCO
+                        // must still rotate the measured boundary velocity.
+                        incoming_velocity = measured_velocity.normalized() *
+                            std::clamp(measured_velocity.norm(), 0.0,
+                                       cfg_.exp_traj_cfg.max_vel);
+                    } else {
+                        Eigen::Vector3d incoming_direction =
+                            Eigen::Vector3d::Zero();
+                        for (std::size_t index = guide_path.size(); index > 1U; --index) {
+                            const Eigen::Vector3d delta =
+                                (guide_path[index - 1U] - guide_path[index - 2U])
+                                    .cast<double>();
+                            if (delta.allFinite() && delta.norm() > 1.0e-6) {
+                                incoming_direction = delta.normalized();
+                                break;
+                            }
+                        }
+                        incoming_velocity = incoming_direction * std::clamp(
+                            guide_path_end_vel, 0.0, cfg_.exp_traj_cfg.max_vel);
+                    }
+                    if (incoming_velocity.allFinite() &&
+                        incoming_velocity.norm() > 1.0e-6 &&
+                        outgoing_delta.allFinite() &&
+                        outgoing_delta.norm() > 1.0e-6) {
+                        const double incoming_speed = incoming_velocity.norm();
+                        const double outgoing_speed = std::clamp(
+                            std::max(incoming_speed,
+                                     allocation.terminal_velocity_mps),
+                            0.0, cfg_.exp_traj_cfg.max_vel);
+                        const Eigen::Vector3d outgoing_velocity =
+                            outgoing_delta.normalized() * outgoing_speed;
+                        const double transition_time_scale =
+                            passThroughVelocityTransitionTimeScale(
+                                incoming_velocity, outgoing_velocity,
+                                allocation.elapsed_s.front(),
+                                cfg_.exp_traj_cfg.max_acc,
+                                cfg_.exp_traj_cfg.max_jerk);
+                        if (transition_time_scale > 1.0 + 1.0e-6) {
+                            for (double& elapsed : allocation.elapsed_s) {
+                                elapsed *= transition_time_scale;
+                            }
+                            planner_context_->info(
+                                " -- [planner] stretched guide timing for "
+                                "velocity-direction transition scale={:.3f} "
+                                "first_segment={:.3f} incoming_speed={:.3f} "
+                                "outgoing_speed={:.3f}",
+                                transition_time_scale,
+                                allocation.elapsed_s.front() /
+                                    transition_time_scale,
+                                incoming_speed, outgoing_speed);
+                        }
+                    }
+                }
                 const double guide_time_origin_s = guide_stamp.back();
                 for (std::size_t i = 0; i < allocation.points.size(); ++i) {
                     guide_path.emplace_back(allocation.points[i]);
@@ -3098,12 +3164,97 @@ double knownFreeGuideSupport(
                                         guide_stamp.size() >= 2U
                                             ? guide_stamp[guide_stamp.size() - 2U]
                                             : guide_stamp.back();
-                                    const auto segment_duration = [this](
+                                    const Eigen::Vector3d outgoing_delta =
+                                        next_target - current_endpoint;
+                                    const double outgoing_distance =
+                                        outgoing_delta.norm();
+                                    const Eigen::Vector3d outgoing_direction =
+                                        outgoing_distance > 1.0e-6 &&
+                                                std::isfinite(outgoing_distance)
+                                            ? Eigen::Vector3d(
+                                                  outgoing_delta / outgoing_distance)
+                                            : Eigen::Vector3d::Zero();
+                                    double incoming_speed = 0.0;
+                                    if (std::isfinite(guide_path_end_vel)) {
+                                        incoming_speed = std::max(
+                                            incoming_speed, guide_path_end_vel);
+                                    }
+                                    const double measured_speed =
+                                        pos_init_state.col(1).cast<double>().norm();
+                                    if (std::isfinite(measured_speed)) {
+                                        incoming_speed = std::max(
+                                            incoming_speed, measured_speed);
+                                    }
+                                    incoming_speed = std::clamp(
+                                        incoming_speed, 0.0,
+                                        cfg_.exp_traj_cfg.max_vel);
+                                    const double corner_terminal_speed =
+                                        passThroughCornerSpeedCap(
+                                            goal_acceptance_radius_m_,
+                                            cfg_.exp_traj_cfg.max_acc,
+                                            route_terminal_speed_cap_mps);
+                                    Eigen::Vector3d incoming_velocity =
+                                        pos_init_state.col(1).cast<double>();
+                                    if (!incoming_velocity.allFinite() ||
+                                        incoming_velocity.norm() <= 1.0e-6) {
+                                        incoming_velocity = Eigen::Vector3d::Zero();
+                                        if (incoming_tangent.allFinite() &&
+                                            incoming_tangent.norm() > 1.0e-6) {
+                                            incoming_velocity =
+                                                incoming_tangent.normalized() * incoming_speed;
+                                        }
+                                    } else {
+                                        incoming_velocity =
+                                            incoming_velocity.normalized() * std::clamp(
+                                                incoming_velocity.norm(), 0.0,
+                                                cfg_.exp_traj_cfg.max_vel);
+                                    }
+                                    Eigen::Vector3d outgoing_velocity =
+                                        Eigen::Vector3d::Zero();
+                                    if (outgoing_direction.allFinite()) {
+                                        outgoing_velocity =
+                                            outgoing_direction * corner_terminal_speed;
+                                    }
+                                    const double required_transition_duration =
+                                        passThroughMinimumVelocityTransitionDuration(
+                                            (outgoing_velocity - incoming_velocity).norm(),
+                                            cfg_.exp_traj_cfg.max_acc,
+                                            cfg_.exp_traj_cfg.max_jerk);
+                                    const double base_window_duration =
+                                        ((corner_window->entry -
+                                          guide_path[guide_path.size() - 2U].cast<double>()).norm() +
+                                         (current_endpoint -
+                                          corner_window->entry).norm() +
+                                         (corner_window->outgoing_blend -
+                                          current_endpoint).norm() +
+                                         (corner_window->endpoint -
+                                          corner_window->outgoing_blend).norm()) /
+                                        cfg_.exp_traj_cfg.max_vel;
+                                    const double corner_time_scale =
+                                        std::isfinite(base_window_duration) &&
+                                                base_window_duration > 1.0e-6 &&
+                                                std::isfinite(required_transition_duration)
+                                            ? std::max(
+                                                  1.0,
+                                                  required_transition_duration /
+                                                      base_window_duration)
+                                            : 1.0;
+                                    const auto segment_duration = [this,
+                                                                   corner_time_scale](
                                             const Eigen::Vector3d& start,
                                             const Eigen::Vector3d& end) {
                                         return (end - start).norm() /
-                                            cfg_.exp_traj_cfg.max_vel;
+                                            cfg_.exp_traj_cfg.max_vel *
+                                            corner_time_scale;
                                     };
+                                    if (corner_time_scale > 1.0 + 1.0e-6) {
+                                        planner_context_->info(
+                                            " -- [planner] stretched corner guide timing "
+                                            "scale={:.3f} base_duration={:.3f} "
+                                            "required_velocity_transition={:.3f}",
+                                            corner_time_scale, base_window_duration,
+                                            required_transition_duration);
+                                    }
                                     guide_path.back() = corner_window->entry;
                                     guide_stamp.back() = predecessor_stamp +
                                         segment_duration(
