@@ -116,6 +116,15 @@ DEFAULT_ROS_DOMAIN_ID = 42
 DEFAULT_DATASET_ROS_DOMAIN_ID = 43
 DEFAULT_XRCE_PORT = 8892
 
+# This project-owned log is emitted only after NodeWithModeExecutor has
+# completed all doRegister()/API-compatibility checks and the state-input node
+# has been constructed.  The PX4 interface library's
+# ``Got RegisterExtComponentReply`` message is emitted before those checks and
+# is therefore not a readiness witness.
+EXTERNAL_MODE_READY_MARKER = (
+    "External Mode state inputs use an independent single-thread receiver node"
+)
+
 RUNTIME_EVIDENCE_TOPICS = (
     "/clock",
     "/lidar/points",
@@ -1484,11 +1493,6 @@ def _wait_for_log_fragment(
     deadline = time.monotonic() + timeout_s
     log_path = session.directory / "logs" / f"{role}.log"
     while time.monotonic() < deadline:
-        try:
-            if fragment in log_path.read_text(encoding="utf-8", errors="replace"):
-                return
-        except OSError:
-            pass
         live_pgids = {
             int(record["pgid"])
             for record in session.live_records()
@@ -1497,6 +1501,25 @@ def _wait_for_log_fragment(
         for record in session.records():
             if record.get("role") == role and int(record.get("pgid", -1)) not in live_pgids:
                 raise RuntimeError(f"runtime process {role} exited before {description}")
+        try:
+            if fragment in log_path.read_text(encoding="utf-8", errors="replace"):
+                # A log line alone is not sufficient if the process exited
+                # before the caller observed it.  Recheck liveness at the
+                # success boundary so readiness includes a live owner.
+                live_pgids = {
+                    int(record["pgid"])
+                    for record in session.live_records()
+                    if record.get("pgid") is not None
+                }
+                if any(
+                    record.get("role") == role and
+                    int(record.get("pgid", -1)) in live_pgids
+                    for record in session.records()
+                ):
+                    return
+                raise RuntimeError(f"runtime process {role} exited before {description}")
+        except OSError:
+            pass
         time.sleep(0.1)
     raise TimeoutError(f"timed out waiting for {description}")
 
@@ -2487,9 +2510,9 @@ def _run_sim_unlocked(
                 _wait_for_log_fragment(
                     session,
                     "external_mode",
-                    "Got RegisterExtComponentReply",
+                    EXTERNAL_MODE_READY_MARKER,
                     float(config["runtime"]["timeouts"].get("external_mode_registration_s", 15.0)),
-                    "External Mode PX4 component registration",
+                    "successful External Mode registration and startup",
                 )
 
             scenario = session.start(scenario_role, _ros_shell(scenario_command), cwd=ROOT)

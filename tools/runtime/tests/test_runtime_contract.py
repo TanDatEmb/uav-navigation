@@ -2644,6 +2644,87 @@ class RuntimeContractTest(unittest.TestCase):
         scenario._tick()
         self.assertEqual(scenario.failure, "")
 
+    def test_external_mode_readiness_requires_post_registration_marker(self) -> None:
+        class FakeSession:
+            def __init__(self, directory: Path, live: bool) -> None:
+                self.directory = directory
+                self._live = live
+
+            def live_records(self) -> list[dict[str, object]]:
+                return [{"role": "external_mode", "pgid": 123}] if self._live else []
+
+            def records(self) -> list[dict[str, object]]:
+                return [{"role": "external_mode", "pgid": 123}]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            (directory / "logs").mkdir()
+            (directory / "logs" / "external_mode.log").write_text(
+                "Got RegisterExtComponentReply\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(TimeoutError):
+                runner._wait_for_log_fragment(
+                    FakeSession(directory, live=True),
+                    "external_mode",
+                    runner.EXTERNAL_MODE_READY_MARKER,
+                    0.0,
+                    "successful External Mode registration and startup",
+                )
+
+    def test_external_mode_readiness_accepts_live_post_registration_marker(self) -> None:
+        class FakeSession:
+            def __init__(self, directory: Path) -> None:
+                self.directory = directory
+
+            def live_records(self) -> list[dict[str, object]]:
+                return [{"role": "external_mode", "pgid": 123}]
+
+            def records(self) -> list[dict[str, object]]:
+                return [{"role": "external_mode", "pgid": 123}]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            (directory / "logs").mkdir()
+            (directory / "logs" / "external_mode.log").write_text(
+                runner.EXTERNAL_MODE_READY_MARKER + "\n",
+                encoding="utf-8",
+            )
+            runner._wait_for_log_fragment(
+                FakeSession(directory),
+                "external_mode",
+                runner.EXTERNAL_MODE_READY_MARKER,
+                1.0,
+                "successful External Mode registration and startup",
+            )
+
+    def test_external_mode_readiness_rejects_registration_failure_and_exit(self) -> None:
+        class FakeSession:
+            def __init__(self, directory: Path) -> None:
+                self.directory = directory
+
+            def live_records(self) -> list[dict[str, object]]:
+                return []
+
+            def records(self) -> list[dict[str, object]]:
+                return [{"role": "external_mode", "pgid": 123}]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            (directory / "logs").mkdir()
+            (directory / "logs" / "external_mode.log").write_text(
+                "Got RegisterExtComponentReply\nRegistration failed\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError):
+                runner._wait_for_log_fragment(
+                    FakeSession(directory),
+                    "external_mode",
+                    runner.EXTERNAL_MODE_READY_MARKER,
+                    1.0,
+                    "successful External Mode registration and startup",
+                )
+
     def test_external_mode_watchdog_separates_post_completion_drift(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario_watchdog",
