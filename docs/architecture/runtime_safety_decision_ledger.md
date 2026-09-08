@@ -264,6 +264,37 @@
   mapping, contract, Python and Release gates; inspect the new
   `exp_refinement_budget_at_entry_us` trace field and rerun the unchanged Q1.
 
+### 2026-09-09 - Keep mandatory baseline feasibility on the absolute solve budget
+
+- **Owner/status:** EXP nominal solve budget for `baseline_only` requests with
+  no independently certified seed; `IMPLEMENTED` in the isolated candidate,
+  development Q1 rerun still required.
+- **Scope:** Optional MINCO refinement keeps the
+  `absolute solve deadline - finalization reserve` cutoff. When the baseline
+  seed is unavailable, the bounded optimizer is mandatory feasibility work and
+  its monitor uses the absolute hard deadline instead of cancelling at the
+  optional-refinement cutoff. The `0.08 s` hard deadline, all physical
+  certificates, lease/freshness gates, and fail-closed post-solve checks are
+  unchanged.
+- **Safety impact:** This does not accept an uncertified candidate or extend
+  the solve deadline. If feasibility work consumes the remaining budget, the
+  subsequent certificate/backup/staging checks reject the request and the
+  runtime remains fail-closed. The trade-off is that this path does not reserve
+  a fixed 40 ms for finalization; that policy must be reviewed against the Q1
+  latency distribution.
+- **Evidence:** Q1 generation 4-6 returned `LBFGS_CANCELED` with only
+  `36.7-37.7 ms` remaining at optimizer entry while the `80 ms` hard deadline
+  was not exceeded. The isolated RED fixture has a certified solution with no
+  refinement cutoff but no candidate with an expired cutoff; the isolated
+  candidate patch is GREEN without changing physical limits.
+- **Removal/review condition:** Revert or redesign if the unchanged Q1 rerun
+  shows hard-deadline tail growth, backup/finalization starvation, or any
+  authority gap. Do not increase the hard deadline or weaken a certificate to
+  retain this behavior.
+- **Verification:** focused mandatory-feasibility regression, full
+  `test_exp_optimizer_seed`, direct planning-backend binaries, Release build,
+  clean-manifest Q1 rerun, and `git diff --check`.
+
 ### 2026-09-06 - Raise nominal yaw envelope for Q1 development characterization
 
 - **Owner/status:** planning backend nominal yaw configuration and final

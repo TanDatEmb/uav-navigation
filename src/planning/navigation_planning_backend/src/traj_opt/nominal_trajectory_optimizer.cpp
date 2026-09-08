@@ -1281,6 +1281,19 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                 static_cast<int>(deterministic_seed_certificate.failure_stage));
     }
 
+    // When no independently certified seed exists, the optimizer is doing
+    // mandatory feasibility work rather than optional refinement. Do not let
+    // the optional refinement cutoff cancel that only path while the
+    // absolute solve deadline is still available. The hard deadline remains
+    // authoritative; all post-solve certificates and staging still fail
+    // closed if no time remains.
+    const bool mandatory_feasibility = baseline_only_ &&
+            (!deterministic_seed_certificate.valid ||
+             deterministic_nominal_seed.empty());
+    if (mandatory_feasibility && opt_vars.hard_deadline_ns > 0) {
+        opt_vars.steady_deadline_ns = opt_vars.hard_deadline_ns;
+    }
+
     int ret = run_lbfgs(false);
     if (ret == lbfgs::LBFGS_CANCELED) {
         diagnostics_.retry_stop_reason = 2;
