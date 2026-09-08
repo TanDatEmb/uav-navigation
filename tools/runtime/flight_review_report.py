@@ -2453,6 +2453,14 @@ def render(session: Path, output: Path) -> Path:
     target_speed_mps = requested_speed_mps if requested_speed_mps is not None else _mission_target_speed_mps(session)
     governed_speed_mps = finite(speed_contract.get("effective_cruise_speed_mps"))
     physical_speed_mps = finite(speed_contract.get("physical_max_velocity_mps"))
+    try:
+        metadata = json.loads((session / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        metadata = {}
+    sitl_profile = metadata.get("sitl_profile", {}) if isinstance(metadata, dict) else {}
+    profile_name = str(sitl_profile.get("name", "default")) if isinstance(sitl_profile, dict) else "default"
+    qualification_eligible = sitl_profile.get("qualification_eligible") if isinstance(sitl_profile, dict) else None
+    hold_contract = sitl_profile.get("hold_contract") if isinstance(sitl_profile, dict) else None
     measured_peak_speed_mps = finite(tracking.get("speed_mps", {}).get("maximum"))
     sim_duration_s = finite(mission.get("duration_sim_s"))
     wall_elapsed_s = finite(mission.get("wall_elapsed_s"))
@@ -2479,7 +2487,9 @@ def render(session: Path, output: Path) -> Path:
         f"Overall acceptance verdict: {evaluation['overall']}. "
         f"The estimator and PX4 validity signals are {gates['lio']} and {gates['px4']}. "
         f"The longest route leg is {fmt(mission.get('longest_leg_m'), 1, ' m')}; the maximum measured known-free horizon is {fmt(known_free.get('maximum'), 1, ' m')}. "
-        "Unavailable planner measurements are shown as N/A and are not treated as zero."
+        "Unavailable planner measurements are shown as N/A and are not treated as zero. "
+        f"SITL profile={profile_name}; qualification_eligible={qualification_eligible}. "
+        + (f"Hold contract: {hold_contract}." if hold_contract else "")
     )
     timing_rows = _timing_rows(report)
     timing_html = "".join(
@@ -2614,7 +2624,7 @@ def render(session: Path, output: Path) -> Path:
     <div class="hero-right">{status_chip(evaluation["overall"], evaluation["overall"])}</div>
   </header>
 
-  <div class="run-log" aria-label="Simulation runtime and experiment context"><span><strong>Experiment time</strong> {esc(experiment_time)}</span><span><strong>Requested speed</strong> {fmt(target_speed_mps, 2, ' m/s')}</span><span><strong>Governed speed</strong> {fmt(governed_speed_mps, 2, ' m/s')}</span><span><strong>Physical ceiling</strong> {fmt(physical_speed_mps, 2, ' m/s')}</span><span><strong>Measured peak</strong> {fmt(measured_peak_speed_mps, 2, ' m/s')}</span><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
+  <div class="run-log" aria-label="Simulation runtime and experiment context"><span><strong>Experiment time</strong> {esc(experiment_time)}</span><span><strong>SITL profile</strong> {esc(profile_name)}</span><span><strong>Qualification eligible</strong> {esc(qualification_eligible)}</span><span><strong>Requested speed</strong> {fmt(target_speed_mps, 2, ' m/s')}</span><span><strong>Governed speed</strong> {fmt(governed_speed_mps, 2, ' m/s')}</span><span><strong>Physical ceiling</strong> {fmt(physical_speed_mps, 2, ' m/s')}</span><span><strong>Measured peak</strong> {fmt(measured_peak_speed_mps, 2, ' m/s')}</span><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
 
   <p class="lede">Acceptance is computed from explicit mission completion, waypoint acceptance, tracking, collision, LIO and PX4 evidence. Telemetry verdict: {esc(evaluation["telemetry_verdict"])}.</p>
 

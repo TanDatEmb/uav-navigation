@@ -73,6 +73,11 @@ def test_launcher_disables_px4_gazebo_truth_odometry_source():
     assert "export PX4_PARAM_SIM_GZ_EN_GPS=1" in launcher
     assert "export PX4_PARAM_SIM_GPS_USED=10" in launcher
     assert "export PX4_PARAM_EKF2_GPS_CTRL=7" in launcher
+    assert 'PX4_NAVIGATION_SITL_PROFILE="${PX4_NAVIGATION_SITL_PROFILE:-default}"' in launcher
+    assert "gps_off_ev_12mps" in launcher
+    assert "export PX4_PARAM_EKF2_GPS_CTRL=0" in launcher
+    assert "export PX4_PARAM_EKF2_HGT_REF=3" in launcher
+    assert "export PX4_PARAM_EKF2_EV_CTRL=15" in launcher
     assert 'export PX4_PARAM_COM_RC_IN_MODE="${PX4_PARAM_COM_RC_IN_MODE:-4}"' in launcher
     # EKF2 must not fuse barometer data into the LIO external-vision estimate.
     assert "export PX4_PARAM_EKF2_BARO_CTRL=1" in launcher

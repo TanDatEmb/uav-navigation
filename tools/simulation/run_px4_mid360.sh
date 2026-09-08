@@ -163,22 +163,39 @@ export PX4_PARAM_COM_RC_IN_MODE="${PX4_PARAM_COM_RC_IN_MODE:-4}"
 # Ground-truth model odometry must never compete with ROS LIO external vision.
 export PX4_PARAM_SIM_GZ_EN_ODOM=0
 
-# Use PX4's normal multisensor estimator contract and fuse propagated LIO as
-# external vision in addition to GNSS/barometer/range/magnetometer aiding.
-# Ground-truth odometry remains disabled above, so EV still has exactly one
-# product-owned source.
-export PX4_PARAM_SIM_GZ_EN_GPS=1
+# Use PX4's normal multisensor estimator contract by default and fuse
+# propagated LIO as external vision in addition to GNSS/barometer/range/
+# magnetometer aiding. The explicit GPS-off profile is a non-qualification A/B
+# experiment: GPS simulation remains available for telemetry, but EKF2 GNSS
+# aiding is disabled and EV is selected as the height reference. Other aiding
+# sources remain enabled by the profile's existing values.
+PX4_NAVIGATION_SITL_PROFILE="${PX4_NAVIGATION_SITL_PROFILE:-default}"
+case "${PX4_NAVIGATION_SITL_PROFILE}" in
+  default)
+    export PX4_PARAM_SIM_GZ_EN_GPS=1
+    export PX4_PARAM_EKF2_GPS_CTRL=7
+    export PX4_PARAM_EKF2_EV_CTRL="${PX4_PARAM_EKF2_EV_CTRL:-15}"
+    export PX4_PARAM_EKF2_HGT_REF=1
+    ;;
+  gps_off_ev_12mps)
+    export PX4_PARAM_SIM_GZ_EN_GPS=1
+    export PX4_PARAM_EKF2_GPS_CTRL=0
+    export PX4_PARAM_EKF2_EV_CTRL=15
+    export PX4_PARAM_EKF2_HGT_REF=3
+    echo "WARNING: gps_off_ev_12mps is diagnostic-only; qualification_eligible=false."
+    echo "WARNING: GPS sensor remains simulated, but EKF2 GNSS aiding is disabled."
+    echo "WARNING: PX4 Hold handover may be unavailable in this GPS-off EV A/B profile; Hold rejection is not a mission PASS."
+    ;;
+  *)
+    echo "ERROR: unsupported PX4_NAVIGATION_SITL_PROFILE=${PX4_NAVIGATION_SITL_PROFILE}" >&2
+    exit 2
+    ;;
+esac
 export PX4_PARAM_SIM_GZ_EN_BARO=1
 export PX4_PARAM_SIM_GPS_USED=10
-export PX4_PARAM_EKF2_GPS_CTRL=7
 export PX4_PARAM_EKF2_BARO_CTRL=1
 export PX4_PARAM_EKF2_RNG_CTRL=1
 export PX4_PARAM_EKF2_MAG_TYPE=0
-export PX4_PARAM_EKF2_HGT_REF=1
-# Keep the normal multisensor contract by default, while allowing an explicit
-# SITL A/B experiment to select a documented EV subset without editing the
-# launcher. Production callers must still choose the value deliberately.
-export PX4_PARAM_EKF2_EV_CTRL="${PX4_PARAM_EKF2_EV_CTRL:-15}"
 
 
 if [[ -v PX4_SIM_MODEL ]]; then unset PX4_SIM_MODEL; fi
@@ -188,7 +205,8 @@ echo
 echo "PX4 is attaching to the existing Gazebo model."
 echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
 echo "PX4 COM_RC_IN_MODE: ${PX4_PARAM_COM_RC_IN_MODE}"
-echo "PX4 estimator: normal GNSS/baro/range/mag aiding + ROS LIO EV=15 (Gazebo truth odom disabled)"
+echo "PX4 estimator profile: ${PX4_NAVIGATION_SITL_PROFILE}; GPS_CTRL=${PX4_PARAM_EKF2_GPS_CTRL}; EV_CTRL=${PX4_PARAM_EKF2_EV_CTRL}; HGT_REF=${PX4_PARAM_EKF2_HGT_REF}"
+echo "PX4 estimator: ROS LIO EV + configured baro/range/mag aiding (Gazebo truth odom disabled)"
 echo "Runtime stack is started by tools/runtime/runner.py."
 echo
 cd "${PX4_ROOTFS}"

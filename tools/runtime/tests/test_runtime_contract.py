@@ -1087,6 +1087,31 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIsNone(no_request["requested_cruise_speed_mps"])
         self.assertEqual(no_request["effective_cruise_speed_mps"], 3.0)
 
+    def test_gps_off_ev_12mps_profile_changes_only_nominal_velocity_cap(self) -> None:
+        profile = runner._sitl_profile_contract("gps_off_ev_12mps")
+        self.assertEqual(profile["control_envelope_max_velocity_mps"], 12.0)
+        self.assertFalse(profile["qualification_eligible"])
+        self.assertEqual(profile["px4_parameters"], {
+            "EKF2_GPS_CTRL": 0,
+            "EKF2_EV_CTRL": 15,
+            "EKF2_HGT_REF": 3,
+        })
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                mission_file=ROOT / "config/runtime/missions/long_three_pillars_speed.yaml",
+                control_envelope_max_velocity_mps=12.0,
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))[
+                "navigation_runtime_node"
+            ]["ros__parameters"]["navigation_runtime"]
+            planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(planner["planner"]["control_envelope"]["maximum_velocity_mps"], 12.0)
+            self.assertEqual(planner["planner"]["control_envelope"]["maximum_acceleration_mps2"], 2.0)
+            self.assertEqual(planner["planner"]["control_envelope"]["maximum_jerk_mps3"], 4.0)
+
     def test_allow_unknown_policy_is_forwarded_to_exploration_planner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")

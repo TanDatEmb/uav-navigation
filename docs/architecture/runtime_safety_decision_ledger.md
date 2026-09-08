@@ -757,6 +757,34 @@
   `python3 -m unittest tools.runtime.tests.test_html_report`, plus
   `git diff --check`.
 
+### 2026-09-09 - Add opt-in GPS-off EV 12 m/s SITL profile
+
+- **Owner/status:** simulation and PX4 estimator integration; `IMPLEMENTED`,
+  diagnostic A/B only and `qualification_eligible=false`.
+- **Scope:** the explicit `gps_off_ev_12mps` profile sets the generated nominal
+  MAIN velocity envelope to 12 m/s while retaining acceleration 2 m/s² and
+  jerk 4 m/s³. It sets PX4 `EKF2_GPS_CTRL=0`, `EKF2_EV_CTRL=15` (horizontal
+  position, vertical position, 3D velocity, yaw), and `EKF2_HGT_REF=3`
+  (vision). The simulated GPS sensor remains available for telemetry;
+  barometer/range/magnetometer remain at their existing profile values, so the
+  profile is not described as EV-only full aiding.
+- **Safety impact:** this is not a product default and does not change PX4
+  source, tracking, collision, freshness, planner safety certificates, or
+  mission acceptance. PX4 Hold handover is explicitly diagnostic-only and may
+  be unavailable in this profile; Hold rejection remains a raw failure/limitation
+  and never converts an incomplete mission into PASS.
+- **Evidence:** the launcher prints the selected profile and effective PX4
+  parameters; the run metadata and generated planner snapshot record the
+  profile, control envelope, requested/effective/physical speeds, and
+  `qualification_eligible=false`.
+- **Removal/review condition:** remove or promote only after matched default
+  3 m/s, requested-speed, and higher-speed runs establish estimator, tracking,
+  planner, collision, and mission behavior distributions. Do not assume 12 m/s
+  is feasible on every map or route.
+- **Verification:** runtime/profile tests, `bash -n` on both PX4 launcher
+  scripts, canonical Release build/manifest, then one profile SITL run per
+  requested experiment with raw Hold and mission outcomes retained.
+
 ### 2026-09-04 - Add immutable retained-command temporal-alignment telemetry
 
 - **Owner/status:** navigation runtime evidence collection; `IMPLEMENTED`,

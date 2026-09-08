@@ -106,6 +106,7 @@ TEST_CASES = (
 )
 MOTION_PRESETS = ("nominal", "slow", "fast")
 TRACKING_EXPERIMENT_MODES = ("off", "adaptive", "relaxed")
+SITL_PROFILES = ("default", "gps_off_ev_12mps")
 
 # Keep the complete SITL stack off the default DDS domain and off the PX4
 # default XRCE port.  A physical vehicle (or another developer's SITL) on the
@@ -635,6 +636,43 @@ def _tracking_experiment_payload(
     }
 
 
+def _sitl_profile_contract(profile: str) -> dict[str, Any]:
+    """Return explicit opt-in SITL estimator and nominal-speed semantics."""
+    if profile not in SITL_PROFILES:
+        raise ValueError(
+            "sitl_profile must be one of: " + ", ".join(SITL_PROFILES)
+        )
+    if profile == "default":
+        return {
+            "name": "default",
+            "control_envelope_max_velocity_mps": None,
+            "px4_parameters": {
+                "EKF2_GPS_CTRL": 7,
+                "EKF2_EV_CTRL": 15,
+                "EKF2_HGT_REF": 1,
+            },
+            "gps_sensor": "enabled; EKF2 GNSS aiding enabled",
+            "qualification_eligible": None,
+            "hold_contract": "normal PX4 Hold handover remains in scope",
+        }
+    return {
+        "name": "gps_off_ev_12mps",
+        "control_envelope_max_velocity_mps": 12.0,
+        "px4_parameters": {
+            "EKF2_GPS_CTRL": 0,
+            "EKF2_EV_CTRL": 15,
+            "EKF2_HGT_REF": 3,
+        },
+        "gps_sensor": "enabled for simulation; EKF2 GNSS fusion disabled",
+        "other_aiding": "barometer/range/magnetometer remain at default profile values",
+        "qualification_eligible": False,
+        "hold_contract": (
+            "PX4 Hold handover is diagnostic-only and may be unavailable in "
+            "GPS-off EV A/B SITL; this does not turn mission failure into PASS"
+        ),
+    }
+
+
 def _apply_tracking_experiment_parameters(
     ros_parameters: dict[str, Any],
     experiment: dict[str, Any],
@@ -709,6 +747,7 @@ def _write_runtime_evidence_metadata(
     requested_cruise_speed_mps: float | None,
     ros_domain_id: int,
     xrce_port: int,
+    sitl_profile: dict[str, Any] | None = None,
     scenario_identity: dict[str, Any] | None = None,
     tracking_experiment: dict[str, Any] | None = None,
 ) -> None:
@@ -737,6 +776,7 @@ def _write_runtime_evidence_metadata(
     speed_contract = _planner_speed_contract(
         ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
         resolved_requested_speed,
+        (sitl_profile or {}).get("control_envelope_max_velocity_mps"),
     )
     identity = dict(scenario_identity or {})
     identity_files = {
@@ -772,6 +812,7 @@ def _write_runtime_evidence_metadata(
         "solve_deadline_s": 0.08,
         "requested_cruise_speed_mps": requested_cruise_speed_mps,
         "speed_contract": speed_contract,
+        "sitl_profile": sitl_profile or _sitl_profile_contract("default"),
         "tracking_experiment": tracking_experiment or _tracking_experiment_payload(),
         "environment": {
             "map_profile": map_profile,
@@ -876,6 +917,7 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
 def _planner_speed_contract(
     planner_source: Path,
     requested_cruise_speed_mps: float | None,
+    control_envelope_max_velocity_mps: float | None = None,
 ) -> dict[str, Any]:
     """Resolve mission intent against the physical and nominal speed owners."""
     document = yaml.safe_load(planner_source.read_text(encoding="utf-8"))
@@ -897,9 +939,17 @@ def _planner_speed_contract(
         return number
 
     physical = finite_positive(boundary["max_vel"], "traj_opt.boundary.max_vel")
-    control_max = finite_positive(
+    configured_control_max = finite_positive(
         control["maximum_velocity_mps"],
         "control_envelope.maximum_velocity_mps",
+    )
+    control_max = (
+        finite_positive(
+            control_envelope_max_velocity_mps,
+            "profile.control_envelope.maximum_velocity_mps",
+        )
+        if control_envelope_max_velocity_mps is not None
+        else configured_control_max
     )
     requested = None
     if requested_cruise_speed_mps is not None:
@@ -918,12 +968,21 @@ def _planner_speed_contract(
             if requested is not None else None
         ),
         "physical_limit_source": "planner.traj_opt.boundary.max_vel",
-        "control_limit_source": "planner.control_envelope.maximum_velocity_mps",
+        "control_limit_source": (
+            "sitl_profile.control_envelope.maximum_velocity_mps"
+            if control_envelope_max_velocity_mps is not None
+            else "planner.control_envelope.maximum_velocity_mps"
+        ),
         "effective_speed_source": (
             "min(mission.planning.requested_cruise_speed_mps, "
-            "planner.control_envelope.maximum_velocity_mps)"
+            f"{('sitl_profile.control_envelope' if control_envelope_max_velocity_mps is not None else 'planner.control_envelope')}"
+            ".maximum_velocity_mps)"
             if requested is not None
-            else "planner.control_envelope.maximum_velocity_mps"
+            else (
+                "sitl_profile.control_envelope.maximum_velocity_mps"
+                if control_envelope_max_velocity_mps is not None
+                else "planner.control_envelope.maximum_velocity_mps"
+            )
         ),
     }
 
@@ -1423,6 +1482,7 @@ def _mapping_params(
     *,
     mission_file: Path | None = None,
     speed_cap_mps: float | None = None,
+    control_envelope_max_velocity_mps: float | None = None,
     inject_failed_replan_cycle_id: int | None = None,
     inject_failed_replan_once: bool = False,
     inject_failed_replan_when_safe: bool = False,
@@ -1492,6 +1552,20 @@ def _mapping_params(
         target_speed = planning.get("requested_cruise_speed_mps")
     boundary = planner.setdefault("traj_opt", {}).setdefault("boundary", {})
     product_max_velocity = float(boundary["max_vel"])
+    control_envelope = planner.setdefault("planner", {}).setdefault("control_envelope", {})
+    configured_control_velocity = float(control_envelope["maximum_velocity_mps"])
+    if control_envelope_max_velocity_mps is not None:
+        profile_velocity = float(control_envelope_max_velocity_mps)
+        if (
+            not math.isfinite(profile_velocity)
+            or profile_velocity <= 0.0
+            or profile_velocity > product_max_velocity
+        ):
+            raise ValueError(
+                "control envelope velocity must be finite, positive, and no greater "
+                f"than physical max {product_max_velocity:g} m/s"
+            )
+        control_envelope["maximum_velocity_mps"] = profile_velocity
     if target_speed is not None:
         target_speed = float(target_speed)
         if not math.isfinite(target_speed) or target_speed <= 0.0:
@@ -1517,7 +1591,15 @@ def _mapping_params(
         yaml.safe_dump({"navigation_runtime_node": value["navigation_runtime_node"]}, sort_keys=False),
         encoding="utf-8",
     )
-    _write_runtime(session, planner_config=str(planner_target), target_speed_mps=target_speed)
+    _write_runtime(
+        session,
+        planner_config=str(planner_target),
+        target_speed_mps=target_speed,
+        configured_control_envelope_max_velocity_mps=configured_control_velocity,
+        effective_control_envelope_max_velocity_mps=float(
+            control_envelope["maximum_velocity_mps"]
+        ),
+    )
     return target
 
 def _mapping_ready(snapshot: dict[str, Any]) -> bool:
@@ -2075,6 +2157,7 @@ def _run_sim_unlocked(
     auto_scenario: bool = False,
     manual_takeoff: bool = False,
     speed_cap_mps: float | None = None,
+    sitl_profile: str = "default",
     gazebo_native_diagnostic: bool = False,
     experiment_id: str | None = None,
     inject_failed_replan_cycle_id: int | None = None,
@@ -2099,6 +2182,7 @@ def _run_sim_unlocked(
         tracking_experiment_lateral_alpha_s,
         tracking_experiment_longitudinal_beta_s,
     )
+    sitl_profile_contract = _sitl_profile_contract(sitl_profile)
     if characterization_profile is not None:
         if control_interface != "offboard":
             raise ValueError("closed-loop characterization requires the direct offboard interface")
@@ -2130,6 +2214,7 @@ def _run_sim_unlocked(
         "manual_takeoff": bool(manual_takeoff),
         "interactive_handover": bool(not headless and auto_scenario),
         "tracking_experiment": tracking_experiment,
+        "sitl_profile": sitl_profile_contract,
     })
     if manual_takeoff:
         if headless or control_interface != "external_mode" or not auto_scenario:
@@ -2403,13 +2488,14 @@ def _run_sim_unlocked(
     speed_contract = _planner_speed_contract(
         ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
         requested_cruise_speed_mps,
+        sitl_profile_contract["control_envelope_max_velocity_mps"],
     )
     scenario_config["scenario"]["requested_cruise_speed_mps"] = requested_cruise_speed_mps
     scenario_config["scenario"]["speed_contract"] = speed_contract
-    # The upper setpoint gate describes the governed nominal contract, not the
-    # mission's unbounded request.  Keep the request separately for attainment
-    # reporting; do not silently turn a 3 m/s control envelope into a 5 m/s
-    # execution claim.
+    scenario_config["scenario"]["sitl_profile"] = sitl_profile_contract
+    # The upper setpoint gate describes the governed profile contract, not the
+    # mission's unbounded request. Keep the request separately for attainment
+    # reporting; do not silently turn a profile limit into an execution claim.
     scenario_config["scenario"]["expected_max_velocity_mps"] = speed_contract[
         "effective_cruise_speed_mps"
     ]
@@ -2426,6 +2512,7 @@ def _run_sim_unlocked(
         requested_cruise_speed_mps=requested_cruise_speed_mps,
         ros_domain_id=isolated_domain,
         xrce_port=isolated_xrce_port,
+        sitl_profile=sitl_profile_contract,
         scenario_identity=scenario_identity,
         tracking_experiment=tracking_experiment,
     )
@@ -2490,6 +2577,9 @@ def _run_sim_unlocked(
             # The mission file above already owns the resolved speed contract.
             # Do not create a second planner-only source of truth here.
             speed_cap_mps=None if mission_file is not None else speed_cap_mps,
+            control_envelope_max_velocity_mps=sitl_profile_contract[
+                "control_envelope_max_velocity_mps"
+            ],
             inject_failed_replan_cycle_id=inject_failed_replan_cycle_id,
             inject_failed_replan_once=inject_failed_replan_once,
             inject_failed_replan_when_safe=inject_failed_replan_when_safe,
@@ -2512,6 +2602,29 @@ def _run_sim_unlocked(
             target = generated_snapshot / "navigation_runtime_params.yaml"
             copy2(mapping_config, target)
             generated_config_snapshot["navigation_runtime_params"] = str(target)
+            mapping_document = yaml.safe_load(mapping_config.read_text(encoding="utf-8"))
+            navigation_runtime = (
+                mapping_document.get("navigation_runtime_node", {})
+                .get("ros__parameters", {})
+                .get("navigation_runtime", {})
+                if isinstance(mapping_document, dict) else {}
+            )
+            generated_planner = Path(str(navigation_runtime["config_path"]))
+            planner_snapshot = generated_snapshot / "planner.yaml"
+            copy2(generated_planner, planner_snapshot)
+            generated_config_snapshot["planner"] = str(planner_snapshot)
+            metadata_path = session.directory / "metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["planner_config"] = str(generated_planner.resolve())
+            metadata["speed_contract"] = _planner_speed_contract(
+                generated_planner,
+                requested_cruise_speed_mps,
+            )
+            metadata["sitl_profile"] = sitl_profile_contract
+            metadata_path.write_text(
+                json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         if external_mode_config is not None:
             target = generated_snapshot / "external_mode_params.yaml"
             copy2(external_mode_config, target)
@@ -2548,6 +2661,7 @@ def _run_sim_unlocked(
                 "SESSION_DIR": str(session.directory),
                 "GZ_COMMAND": gz_command or "",
                 "PX4_GZ_WORLD": world_name,
+                "PX4_NAVIGATION_SITL_PROFILE": sitl_profile_contract["name"],
                 # Automated scenarios use the same PX4 input policy in GUI
                 # and headless runs; `make sim` remains the manual mode.
                 "PX4_PARAM_COM_RC_IN_MODE": _px4_manual_control_mode(
@@ -3182,6 +3296,10 @@ def main() -> int:
         help="temporary planner/tracker velocity upper bound for one benchmark run",
     )
     external_mode.add_argument(
+        "--sitl-profile", choices=SITL_PROFILES, default="default",
+        help="explicit SITL estimator/speed profile; default preserves normal aiding",
+    )
+    external_mode.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
@@ -3263,6 +3381,10 @@ def main() -> int:
         help="temporary planner/tracker velocity upper bound for one benchmark run",
     )
     external_mode_gui.add_argument(
+        "--sitl-profile", choices=SITL_PROFILES, default="default",
+        help="explicit SITL estimator/speed profile; default preserves normal aiding",
+    )
+    external_mode_gui.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
@@ -3342,6 +3464,7 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
+            sitl_profile=args.sitl_profile,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             experiment_id=args.experiment_id,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
@@ -3371,6 +3494,7 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
+            sitl_profile=args.sitl_profile,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
