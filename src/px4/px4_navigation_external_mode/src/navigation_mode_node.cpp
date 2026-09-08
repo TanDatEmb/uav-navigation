@@ -115,6 +115,14 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.trajectory_wait_timeout_s", 5.0)),
       planner_recovery_wait_timeout_s_(node.declare_parameter<double>(
           "navigation.planner_recovery_wait_timeout_s", 5.0)) {
+  tracking_experiment_ = navigation_contracts::loadTrackingExperimentPolicy(node);
+  if (tracking_experiment_.enabled) {
+    RCLCPP_WARN(node.get_logger(),
+        "SITL TRACKING EXPERIMENT: increased collision risk; base=%.3fm alpha=%.3fs beta=%.3fs "
+        "suppress_MAIN_tracking_braking=%d; not flight qualification",
+        tracking_experiment_.base_m, tracking_experiment_.lateral_alpha_s,
+        tracking_experiment_.longitudinal_beta_s, tracking_experiment_.suppress_braking);
+  }
   const auto stale_after_ns = navigation_common::secondsToNanoseconds(stale_after_s_);
   const auto state_stale_after_ns = navigation_common::secondsToNanoseconds(state_stale_after_s_);
   const auto planner_recovery_wait_timeout_ns =
@@ -874,6 +882,36 @@ void NavigationMode::onNavigationCommand(
           navigation_contracts::kCommandAnchorErrorLimitM,
           main_phase_tracking ? navigation_contracts::kMainTrackingPhaseWindowS : 0.0);
       anchor_invalid = !tracking_envelope.valid;
+      if (tracking_experiment_.enabled && main_phase_tracking) {
+        const auto& twist = odometry_->twist.twist.linear;
+        const auto& q = odometry_->pose.pose.orientation;
+        const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
+        const Eigen::Vector3d measured_velocity = isNormalizableOdometryQuaternion(orientation)
+            ? (orientation.normalized() * Eigen::Vector3d(twist.x, twist.y, twist.z)).eval()
+            : Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+        const auto adaptive = navigation_contracts::assessAdaptiveTracking(
+            tracking_experiment_, measured, measured_velocity, command_position, command_velocity);
+        const bool permitted = navigation_contracts::experimentPermitsTracking(
+            tracking_experiment_, adaptive);
+        if (permitted && tracking_experiment_.suppress_braking &&
+            (anchor_invalid || !adaptive.within_limits)) {
+          ++experimental_tracking_suppressed_count_;
+          RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 1000,
+              "TRACKING_EXPERIMENT_BYPASS total=%lu lateral=%.3f/%.3fm longitudinal=%.3f/%.3fm",
+              static_cast<unsigned long>(experimental_tracking_suppressed_count_),
+              adaptive.lateral_error_m, adaptive.lateral_limit_m,
+              adaptive.longitudinal_error_m, adaptive.longitudinal_limit_m);
+        }
+        anchor_invalid = !permitted;
+        // Keep rejection logs in the same units as the actual experiment gate.
+        tracking_envelope.valid = permitted;
+        tracking_envelope.longitudinal_error_m = adaptive.longitudinal_error_m;
+        tracking_envelope.longitudinal_limit_m = adaptive.longitudinal_limit_m;
+        tracking_envelope.reverse_error_m = 0.0;
+        tracking_envelope.reverse_limit_m = adaptive.longitudinal_limit_m;
+        tracking_envelope.lateral_error_m = adaptive.lateral_error_m;
+        tracking_envelope.lateral_limit_m = adaptive.lateral_limit_m;
+      }
       if (anchor_invalid) {
         reject_provenance = buildRejectProvenance(
             node().get_clock()->now().nanoseconds(), last_odometry_receive_ns_,
@@ -943,7 +981,7 @@ void NavigationMode::onNavigationCommand(
                  tracking_envelope.reverse_error_m,
                  tracking_envelope.reverse_limit_m,
                  tracking_envelope.lateral_error_m,
-                 navigation_contracts::kCommandAnchorErrorLimitM,
+                 tracking_envelope.lateral_limit_m,
                  provenance.measured_position.x(), provenance.measured_position.y(),
                  provenance.measured_position.z(),
                  message->position.x, message->position.y, message->position.z,
@@ -1579,6 +1617,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
   std::uint64_t trajectories_received;
   std::uint64_t trajectories_accepted;
   std::uint64_t trajectories_rejected;
+  std::uint64_t experimental_tracking_suppressed;
   std::uint64_t waypoint_handoffs_retaining_command;
   std::uint64_t setpoint_updates;
   std::uint64_t stale_state_failures;
@@ -1597,6 +1636,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
     trajectories_received = trajectory_received_count_;
     trajectories_accepted = trajectory_accepted_count_;
     trajectories_rejected = trajectory_rejected_count_;
+    experimental_tracking_suppressed = experimental_tracking_suppressed_count_;
     waypoint_handoffs_retaining_command = waypoint_handoff_retained_command_count_;
     setpoint_updates = setpoint_update_count_;
     stale_state_failures = stale_state_failure_count_;
@@ -1612,7 +1652,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               "waypoint_handoffs_retaining_command=%lu "
               "setpoint_updates=%lu setpoint_max_gap_us=%ld last_state_age_s=%.6f "
               "stale_state_failures=%lu velocity_command_enu=(%.3f,%.3f,%.3f) "
-              "forward_guard_count=%lu",
+              "forward_guard_count=%lu experimental_tracking_suppressed=%lu",
               static_cast<unsigned long>(odometry_callbacks),
               static_cast<long>(odometry_gap_us),
               static_cast<unsigned long>(trajectories_received),
@@ -1623,7 +1663,8 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               static_cast<long>(setpoint_gap_us), state_age_s,
               static_cast<unsigned long>(stale_state_failures), velocity_command_enu.x(),
               velocity_command_enu.y(), velocity_command_enu.z(),
-              static_cast<unsigned long>(forward_guard_count));
+              static_cast<unsigned long>(forward_guard_count),
+              static_cast<unsigned long>(experimental_tracking_suppressed));
 }
 
 void NavigationMode::safetyStopNavigation(const char* reason) {

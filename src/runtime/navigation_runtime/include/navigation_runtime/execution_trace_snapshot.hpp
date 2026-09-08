@@ -86,6 +86,15 @@ struct ExecutionTraceSnapshot final {
   unsigned path_relative_evaluation_count{0U};
   bool path_relative_tracking_accepted{false};
   bool path_relative_bridge_usable{false};
+  bool experimental_tracking_bridge_usable{false};
+  bool experimental_tracking_override_used{false};
+  bool experimental_tracking_brake_suppressed{false};
+  double experimental_lateral_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double experimental_longitudinal_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double experimental_lateral_limit_m{std::numeric_limits<double>::quiet_NaN()};
+  double experimental_longitudinal_limit_m{std::numeric_limits<double>::quiet_NaN()};
+  double experimental_predicted_lateral_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double experimental_predicted_longitudinal_error_m{std::numeric_limits<double>::quiet_NaN()};
   double retained_elapsed_s{std::numeric_limits<double>::quiet_NaN()};
   double committed_bundle_duration_s{std::numeric_limits<double>::quiet_NaN()};
   double committed_safety_transition_time_s{std::numeric_limits<double>::quiet_NaN()};

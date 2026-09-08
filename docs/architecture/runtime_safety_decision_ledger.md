@@ -1,5 +1,59 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-08 - Opt-in speed-adaptive and relaxed MAIN tracking SITL experiment
+
+- **Owner/status:** Runtime/PX4 tracking experiment, implemented by the review
+  task and exercised by task 01a07215-a562-7a02-b359-70d35135c5d0. Explicitly
+  requested by the user for mission-completion characterization. Default OFF;
+  enabled nodes require `use_sim_time=true` (this is a configuration guard,
+  not authentication of a simulator). This is not flight qualification.
+- **Scope/units:** Shared `tracking_experiment` parameters use base 0.20 m,
+  lateral alpha 0.05 s and longitudinal beta 0.15 s. Limits are base+alpha*v
+  and base+beta*v with v=max(measured, reference speed) in m/s. The normal
+  error is 3D (including altitude); longitudinal error is absolute tangent
+  displacement. Both zero speeds use the finite base radius. Coefficients
+  are experimental starting values, not distribution-calibrated optima.
+- **Behavior:** `adaptive` uses these bounds instead of the fixed MAIN
+  tracking/phase witness. `relaxed` additionally permits finite MAIN tracking
+  errors outside these bounds: suppresses eligible retained-MAIN tracking
+  emergency triggers and ordinary MAIN/READY PX4 tracking rejection. Scheduler
+  anchor pressure follows the selected witness. The runtime checks current
+  source-time and predicted analytic samples within the same MAIN interval;
+  no fixed 100 ms phase cap is imposed on this experimental witness.
+- **Retained ownership/guards:** Fresh finite state, known-free body and
+  certified path, localization/goal/bundle identity, lease/next interval,
+  bounded final witness age, planner feasibility and PVA checks remain. No
+  existing safety-suffix owner is converted back to MAIN. Existing suffix
+  activation after an unsuccessful renewal may still brake. BACKUP,
+  EMERGENCY, terminal stops and recovery remain on existing strict paths.
+- **Safety impact:** Greater obstacle-collision risk is explicitly accepted
+  for this SITL experiment. Tangent-plane normal distance is approximate on
+  curved paths; enlarged tolerances do not enlarge certified free space.
+  Relaxed tracking can leave the planned tube despite a clear planned path.
+  Startup warnings, DECISION_TRACE experimental settings/actual retention
+  flags/errors and PX4 suppressed-event counters expose this tradeoff.
+  Experimental mission completion must remain separate from qualification;
+  the runner/report marks enabled experiments qualification_eligible=false.
+- **Evidence:** Focused 12/12 runtime tracking tests (including five new
+  adaptive/relaxed tests) and current runtime/PX4 translation-unit syntax
+  checks pass. Runner/report contract suite reported 196/196. These do not
+  establish closed-loop completion. Baseline 255c133c run 151219 completed
+  4/9 waypoints with six emergency commits; compare modes on the SAME final
+  source to isolate experiment effects from subsequent planner fixes.
+- **Removal/review condition:** Review exact artifacts and suppressed gates
+  after the requested campaign. Remove the relaxed mode once diagnosis is
+  complete or retain only as explicit SITL opt-in with this ledger; never
+  silently make it a flight default. Production adoption requires a separate
+  measured design decision and appropriate clearance/ownership evidence.
+- **Verification:** `python3 tools/runtime/build.py --mode release build`
+  after freezing final source; validate its manifest before SITL. Run runtime
+  path-relative and PX4 tracking-envelope tests, Python runtime contracts,
+  and same-build off/adaptive/relaxed long_three_pillars_multiwaypoint seed0
+  at 3 m/s. Record mission/waypoints, actual speed, tracking distributions,
+  collisions/clearance, PVA/freshness, source/config provenance and remaining
+  braking causes. Exact commands and outputs live in
+  `.artifacts/review/sitl-stabilization-20260908/SITL_EXPERIMENT_HANDOFF.md`.
+
 ### 2026-09-08 - Align PX4 MAIN longitudinal acceptance with path phase
 
 - **Owner/status:** Runtime/PX4 command-envelope contract; implemented for

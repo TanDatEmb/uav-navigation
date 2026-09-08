@@ -11,6 +11,7 @@
 #include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/certified_continuation.hpp"
 #include "navigation_runtime/path_relative_tracking.hpp"
+#include "navigation_runtime/experimental_tracking.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include "navigation_runtime/mapping_observation_contract.hpp"
 #include <navigation_execution/timestamp_freshness.hpp>
@@ -580,6 +581,15 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   body_frame_id_ = declare_parameter("navigation_runtime.body_frame_id", std::string("base_link"));
   deployment_profile_ = declare_parameter(
       "navigation_runtime.deployment_profile", std::string("sitl"));
+  tracking_experiment_ = navigation_contracts::loadTrackingExperimentPolicy(*this);
+  if (tracking_experiment_.enabled) {
+    RCLCPP_WARN(get_logger(),
+        "SITL TRACKING EXPERIMENT: increased collision risk accepted for characterization; "
+        "base=%.3fm lateral_alpha=%.3fs longitudinal_beta=%.3fs suppress_MAIN_tracking_braking=%d; "
+        "not flight qualification",
+        tracking_experiment_.base_m, tracking_experiment_.lateral_alpha_s,
+        tracking_experiment_.longitudinal_beta_s, tracking_experiment_.suppress_braking);
+  }
   data_freshness_window_s_ = declare_parameter(
       "navigation_runtime.data_freshness_window_s", 0.5);
   planner_watchdog_timeout_s_ = declare_parameter(
@@ -4013,10 +4023,19 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       : PathRelativeTrackingResult{};
   const bool transition_path_relative_accepted =
       transition_path_relative_tracking.accepted();
+  const auto transition_experimental_tracking = transition_bundle
+      ? assessExperimentalTracking(
+            tracking_experiment_, *transition_bundle, execution_state.position_world,
+            execution_state.velocity_world, now_ns, execution_stamp_ns,
+            planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+            true, transition_state_known_free, true)
+      : ExperimentalTrackingResult{};
+  const bool transition_tracking_accepted = tracking_experiment_.enabled
+      ? transition_experimental_tracking.accepted : transition_path_relative_accepted;
   const bool anchor_recovery_due = commandAnchorRecoveryDue(
       execution_episode_.snapshot().command_available, transition_role,
       transition_anchor_error_m,
-      retained_tracking_limit_m) && !transition_path_relative_accepted;
+      retained_tracking_limit_m) && !transition_tracking_accepted;
   // Anchor pressure and hot retargeting may schedule a solve,
   // but every moving nominal renewal is anchored to committed future PVAJ.
   // Exceeding the certificate is handled by the one-shot emergency path after
@@ -5059,6 +5078,14 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
               fresh_vehicle_state, current_vehicle_state_known_free, sampled_path_clear)
         : PathRelativeTrackingResult{};
     const bool path_relative_tracking_accepted = path_relative_tracking.accepted();
+    const auto experimental_tracking = committed
+        ? assessExperimentalTracking(
+              tracking_experiment_, *committed_bundle,
+              current_vehicle_position, current_vehicle_velocity, retained_validation_now_ns,
+              retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,
+              planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+              fresh_vehicle_state, current_vehicle_state_known_free, sampled_path_clear)
+        : ExperimentalTrackingResult{};
     causal_snapshot.path_relative_projected_stamp_ns =
         path_relative_tracking.projected_stamp_ns;
     causal_snapshot.path_relative_phase_offset_s =
@@ -5137,7 +5164,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // ordinary command publisher still enforces the existing lease and the
     // next validation cycle must re-establish this witness.
     const bool phase_execution_bridge_usable = phaseExecutionBridgeMayPreserveMain(
-        path_relative_tracking_accepted, committed, fresh_vehicle_state,
+        tracking_experiment_.enabled
+            ? experimental_tracking.accepted && !retained_episode.safety_suffix_active
+            : path_relative_tracking_accepted,
+        committed, fresh_vehicle_state,
         command_anchor_valid, plan_from_rest_with_transition, retained_recovery_state,
         retained_execution_state ? retained_execution_state->state.localization_epoch : 0U,
         committed_bundle ? committed_bundle->localization_epoch : 0U,
@@ -5157,6 +5187,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         ? path_relative_tracking.predicted_path_error_m
         : projected_anchor_error_m;
     const bool projected_tracking_certificate_exceeded =
+        !(tracking_experiment_.enabled && phase_execution_bridge_usable) &&
         std::isfinite(projected_execution_error_m) &&
         projected_execution_error_m > retained_tracking_limit_m;
     const bool emergency_authorized = measuredStateEmergencyMayReplaceCommittedCommand(
@@ -5332,6 +5363,17 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         : PathRelativeTrackingResult{};
     const bool prepared_final_command_anchor_valid = committed &&
         committed_bundle->sample(prepared_final_retained_now_ns).has_value();
+    const auto prepared_final_experimental_tracking = committed
+        ? assessExperimentalTracking(
+              tracking_experiment_, *committed_bundle,
+              prepared_final_vehicle_position, prepared_final_vehicle_velocity,
+              prepared_final_retained_now_ns,
+              prepared_final_execution_state
+                  ? prepared_final_execution_state->state.source_stamp_ns : 0,
+              planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+              prepared_final_fresh_vehicle_state,
+              prepared_final_vehicle_state_known_free, sampled_path_clear)
+        : ExperimentalTrackingResult{};
     // A visible main-only trajectory remains a MAIN command. Only an actual
     // atomic main-to-backup bundle is marked safety-owned at the PX4 boundary.
     {
@@ -5405,7 +5447,10 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
               static_cast<std::int64_t>(
                   navigation_planning::PlanningTimingContract::kCommandPeriodS * 1.0e9);
       const bool phase_execution_bridge_current = phaseExecutionBridgeMayPreserveMain(
-          final_path_relative_tracking.accepted(), committed,
+          tracking_experiment_.enabled
+              ? prepared_final_experimental_tracking.accepted && !retained_episode.safety_suffix_active
+              : final_path_relative_tracking.accepted(),
+          committed,
           final_fresh_vehicle_state && final_witness_age_bounded,
           final_command_anchor_valid,
           plan_from_rest_with_transition, retained_recovery_state,
@@ -5415,7 +5460,18 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           committed_bundle ? committed_bundle->valid_until_ns : 0,
           static_cast<std::int64_t>(planning_period_us_) * 1000);
       causal_snapshot.phase_execution_bridge_usable = phase_execution_bridge_current;
-      causal_snapshot.path_relative_bridge_usable = phase_execution_bridge_current;
+      causal_snapshot.path_relative_bridge_usable =
+          !tracking_experiment_.enabled && phase_execution_bridge_current;
+      causal_snapshot.experimental_tracking_bridge_usable =
+          false;
+      const auto& adaptive = prepared_final_experimental_tracking.current;
+      const auto& predicted_adaptive = prepared_final_experimental_tracking.predicted;
+      causal_snapshot.experimental_lateral_error_m = adaptive.lateral_error_m;
+      causal_snapshot.experimental_longitudinal_error_m = adaptive.longitudinal_error_m;
+      causal_snapshot.experimental_lateral_limit_m = adaptive.lateral_limit_m;
+      causal_snapshot.experimental_longitudinal_limit_m = adaptive.longitudinal_limit_m;
+      causal_snapshot.experimental_predicted_lateral_error_m = predicted_adaptive.lateral_error_m;
+      causal_snapshot.experimental_predicted_longitudinal_error_m = predicted_adaptive.longitudinal_error_m;
       causal_snapshot.phase_execution_final_evaluation_stamp_ns = final_retained_now_ns;
       const auto retained_transition = retainedValidationTransition(
           use_safety_suffix || phase_execution_bridge_current);
@@ -5495,6 +5551,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         }
         trajectory_completion_witness_.reset();
       } else if (phase_execution_bridge_current && !use_safety_suffix) {
+        causal_snapshot.experimental_tracking_bridge_usable = tracking_experiment_.enabled;
+        causal_snapshot.experimental_tracking_override_used = tracking_experiment_.enabled &&
+            !final_path_relative_tracking.accepted();
+        causal_snapshot.experimental_tracking_brake_suppressed = tracking_experiment_.enabled &&
+            tracking_experiment_.suppress_braking &&
+            (prepared_final_experimental_tracking.suppression_used ||
+             !final_path_relative_tracking.accepted());
         // Preserve the current MAIN owner for this bounded source-time
         // witness. Deliberately do not mark a safety suffix or activate
         // BACKUP from this branch.
@@ -6216,6 +6279,20 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                     causal_trace.path_relative_tracking_accepted ? 1 : 0);
     add_trace_value("path_relative_bridge_usable",
                     causal_trace.path_relative_bridge_usable ? 1 : 0);
+    add_trace_value("tracking_experiment_enabled", tracking_experiment_.enabled ? 1 : 0);
+    add_trace_value("tracking_experiment_suppress_braking", tracking_experiment_.suppress_braking ? 1 : 0);
+    add_trace_value("tracking_experiment_base_m", tracking_experiment_.base_m);
+    add_trace_value("tracking_experiment_lateral_alpha_s", tracking_experiment_.lateral_alpha_s);
+    add_trace_value("tracking_experiment_longitudinal_beta_s", tracking_experiment_.longitudinal_beta_s);
+    add_trace_value("experimental_tracking_bridge_usable", causal_trace.experimental_tracking_bridge_usable ? 1 : 0);
+    add_trace_value("experimental_tracking_override_used", causal_trace.experimental_tracking_override_used ? 1 : 0);
+    add_trace_value("experimental_tracking_brake_suppressed", causal_trace.experimental_tracking_brake_suppressed ? 1 : 0);
+    add_trace_value("experimental_lateral_error_m", causal_trace.experimental_lateral_error_m);
+    add_trace_value("experimental_longitudinal_error_m", causal_trace.experimental_longitudinal_error_m);
+    add_trace_value("experimental_lateral_limit_m", causal_trace.experimental_lateral_limit_m);
+    add_trace_value("experimental_longitudinal_limit_m", causal_trace.experimental_longitudinal_limit_m);
+    add_trace_value("experimental_predicted_lateral_error_m", causal_trace.experimental_predicted_lateral_error_m);
+    add_trace_value("experimental_predicted_longitudinal_error_m", causal_trace.experimental_predicted_longitudinal_error_m);
     add_trace_value("causal_execution_localization_epoch",
                     causal_trace.execution_localization_epoch);
     add_trace_value("causal_execution_goal_epoch", causal_trace.execution_goal_epoch);

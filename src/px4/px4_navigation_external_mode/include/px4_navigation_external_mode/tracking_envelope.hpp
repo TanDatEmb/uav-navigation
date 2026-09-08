@@ -18,6 +18,7 @@ struct TrackingEnvelopeResult {
   double lateral_error_m{0.0};
   double longitudinal_limit_m{0.0};
   double reverse_limit_m{0.0};
+  double lateral_limit_m{0.0};
 };
 
 // The runtime owns the analytic path tube. This consumer's outer guard allows
@@ -47,6 +48,7 @@ inline TrackingEnvelopeResult evaluateTrackingEnvelope(
   }
   result.longitudinal_limit_m = geometric_limit_m;
   result.reverse_limit_m = geometric_limit_m;
+  result.lateral_limit_m = geometric_limit_m;
   if (speed <= 1e-3) {
     result.longitudinal_error_m = stableVectorNorm(error);
     if (!std::isfinite(result.longitudinal_error_m)) {

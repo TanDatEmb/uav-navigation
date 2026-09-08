@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <navigation_runtime/path_relative_tracking.hpp>
+#include <navigation_runtime/experimental_tracking.hpp>
 
 namespace {
 
@@ -178,6 +179,102 @@ TEST(PathRelativeTracking, RejectsAmbiguousFigureEightProjection) {
   const auto result = assess(bundle, {0.0, 0.0, 0.0}, {5.0, 0.0, 0.0});
   EXPECT_EQ(result.status, PathRelativeTrackingStatus::kAmbiguousProjection);
   EXPECT_LT(result.evaluation_count, 150U);
+}
+
+
+TEST(TrackingExperiment, BaseAndVelocityCoefficientsHaveMetreUnits) {
+  navigation_contracts::TrackingExperimentPolicy policy;
+  policy.enabled = true;
+  for (double speed : {0.0, 1.0, 3.0, 8.0}) {
+    const auto a = navigation_contracts::assessAdaptiveTracking(
+        policy, Eigen::Vector3d::Zero(), {speed, 0, 0},
+        Eigen::Vector3d::Zero(), {speed, 0, 0});
+    ASSERT_TRUE(a.valid);
+    EXPECT_NEAR(a.lateral_limit_m, .2 + .05 * speed, 1e-12);
+    EXPECT_NEAR(a.longitudinal_limit_m, .2 + .15 * speed, 1e-12);
+  }
+  const auto stopped_vehicle = navigation_contracts::assessAdaptiveTracking(
+      policy, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d::Zero(), {3, 0, 0});
+  EXPECT_NEAR(stopped_vehicle.lateral_limit_m, .35, 1e-12);
+  EXPECT_TRUE(navigation_contracts::assessAdaptiveTracking(policy,
+      {.2, 0, 0}, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d::Zero()).within_limits);
+  EXPECT_FALSE(navigation_contracts::assessAdaptiveTracking(policy,
+      {.201, 0, 0}, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d::Zero()).within_limits);
+}
+
+TEST(TrackingExperiment, AdaptiveModeAllowsMetreProgressBeyondOldPhaseWindow) {
+  navigation_contracts::TrackingExperimentPolicy policy;
+  policy.enabled = true;
+  const auto b = makeLinearMainBundle(3.0);
+  for (double phase : {-.15, .15}) {
+    const Eigen::Vector3d p(3 * (.6 + phase), 0, 0);
+    EXPECT_FALSE(assess(b, p, {3, 0, 0}).accepted());
+    const auto r = navigation_runtime::assessExperimentalTracking(
+        policy, b, p, {3, 0, 0}, 10'600'000'000LL, 10'600'000'000LL,
+        .12, true, true, true);
+    EXPECT_TRUE(r.accepted);
+    EXPECT_FALSE(r.suppression_used);
+  }
+}
+
+TEST(TrackingExperiment, RelaxedModeExplicitlyRecordsBypassedTracking) {
+  navigation_contracts::TrackingExperimentPolicy policy;
+  policy.enabled = true;
+  const auto b = makeLinearMainBundle(3.0);
+  auto run = [&](const auto& p) { return navigation_runtime::assessExperimentalTracking(
+      p, b, {1.8, .5, .5}, {3, 0, 0}, 10'600'000'000LL, 10'600'000'000LL,
+      .12, true, true, true); };
+  EXPECT_FALSE(run(policy).accepted);
+  policy.suppress_braking = true;
+  const auto relaxed = run(policy);
+  EXPECT_TRUE(relaxed.accepted);
+  EXPECT_TRUE(relaxed.suppression_used);
+  EXPECT_GT(relaxed.current.lateral_error_m, relaxed.current.lateral_limit_m);
+}
+
+TEST(TrackingExperiment, RelaxedNeverBypassesInputWorldLeaseOrRoleChecks) {
+  navigation_contracts::TrackingExperimentPolicy policy;
+  policy.enabled = policy.suppress_braking = true;
+  auto b = makeLinearMainBundle(3.0);
+  auto run = [&](bool fresh, bool body, bool path) {
+    return navigation_runtime::assessExperimentalTracking(
+        policy, b, {1.8, .5, 0}, {3, 0, 0}, 10'600'000'000LL,
+        10'600'000'000LL, .12, fresh, body, path);
+  };
+  EXPECT_FALSE(run(false, true, true).accepted);
+  EXPECT_FALSE(run(true, false, true).accepted);
+  EXPECT_FALSE(run(true, true, false).accepted);
+  b.valid_until_ns = 10'650'000'000LL;
+  EXPECT_FALSE(run(true, true, true).accepted);
+  b = makeLinearMainBundle(3.0);
+  b.terminal_stop = true;
+  b.certificates.terminal_stop = true;
+  EXPECT_FALSE(run(true, true, true).accepted);
+  b = makeLinearMainBundle(3.0);
+  b.role = navigation_planning::CandidateRole::kBackup;
+  EXPECT_FALSE(run(true, true, true).accepted);
+  b = makeLinearMainBundle(3.0);
+  EXPECT_FALSE(navigation_runtime::assessExperimentalTracking(policy, b,
+      Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN()),
+      {3, 0, 0}, 10'600'000'000LL, 10'600'000'000LL, .12, true, true, true).accepted);
+}
+
+TEST(TrackingExperiment, RejectsInvalidCoefficientsAndDisabledBypass) {
+  navigation_contracts::TrackingExperimentPolicy policy;
+  policy.suppress_braking = true;
+  EXPECT_FALSE(policy.valid());
+  policy.enabled = true;
+  policy.base_m = 0;
+  EXPECT_FALSE(policy.valid());
+  policy.base_m = .2;
+  policy.lateral_alpha_s = -1;
+  EXPECT_FALSE(policy.valid());
+  policy.lateral_alpha_s = 0;
+  policy.longitudinal_beta_s = std::numeric_limits<double>::infinity();
+  EXPECT_FALSE(policy.valid());
 }
 
 }  // namespace

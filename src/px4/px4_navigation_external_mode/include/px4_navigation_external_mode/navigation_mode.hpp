@@ -8,6 +8,7 @@
 #include <string>
 
 #include <navigation_contracts/msg/navigation_goal.hpp>
+#include <tracking_experiment.hpp>
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
 #include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/estimator_health.hpp>
@@ -103,6 +104,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::string goal_topic_;
   std::string state_topic_;
   std::string planning_frame_;
+  navigation_contracts::TrackingExperimentPolicy tracking_experiment_;
+  std::uint64_t experimental_tracking_suppressed_count_{0};
   std::string body_frame_;
   double stale_after_s_{0.10};
   double state_stale_after_s_{0.20};

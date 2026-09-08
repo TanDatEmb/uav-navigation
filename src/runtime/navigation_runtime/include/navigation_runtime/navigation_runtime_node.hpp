@@ -14,6 +14,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <navigation_contracts/msg/estimator_health.hpp>
+#include <tracking_experiment.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
 #include <navigation_contracts/msg/navigation_goal.hpp>
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
@@ -272,6 +273,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::string planning_frame_;
   std::string body_frame_id_;
   std::string deployment_profile_;
+  navigation_contracts::TrackingExperimentPolicy tracking_experiment_;
   double data_freshness_window_s_{0.5};
   std::int64_t data_freshness_window_ns_{500'000'000};
   std::int64_t command_stream_timeout_ns_{100'000'000};
