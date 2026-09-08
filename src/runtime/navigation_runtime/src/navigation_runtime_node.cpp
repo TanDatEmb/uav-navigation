@@ -10,6 +10,7 @@
 #include "navigation_runtime/planning_supervisor.hpp"
 #include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/certified_continuation.hpp"
+#include "navigation_runtime/path_relative_tracking.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include "navigation_runtime/mapping_observation_contract.hpp"
 #include <navigation_execution/timestamp_freshness.hpp>
@@ -3991,10 +3992,31 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   const double retained_tracking_limit_m = retainedCommandTrackingLimit(
       planner_->trackingErrorBudgetMeters(),
       navigation_contracts::kCommandAnchorErrorLimitM);
+  const bool transition_state_known_free = transition_bundle && execution_state.finite() &&
+      latest_world && latest_world.view &&
+      latest_world.view->classify(
+          execution_state.position_world,
+          navigation_world_model::GridLayer::kInflated) ==
+          navigation_world_model::CellState::kKnownFree;
+  // This is only scheduler pressure.  The authoritative path/world decision is
+  // repeated after committed-trajectory validation below; an accepted local
+  // projection may suppress an unnecessary early renewal but never authorizes
+  // command exposure by itself.
+  const auto transition_path_relative_tracking = transition_bundle
+      ? assessPathRelativeTracking(
+            *transition_bundle, execution_state.position_world,
+            execution_state.velocity_world, now_ns, execution_stamp_ns,
+            planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+            planning_interval_s, retained_tracking_limit_m,
+            navigation_contracts::kCommandAnchorErrorLimitM,
+            true, transition_state_known_free, true)
+      : PathRelativeTrackingResult{};
+  const bool transition_path_relative_accepted =
+      transition_path_relative_tracking.accepted();
   const bool anchor_recovery_due = commandAnchorRecoveryDue(
       execution_episode_.snapshot().command_available, transition_role,
       transition_anchor_error_m,
-      retained_tracking_limit_m);
+      retained_tracking_limit_m) && !transition_path_relative_accepted;
   // Anchor pressure and hot retargeting may schedule a solve,
   // but every moving nominal renewal is anchored to committed future PVAJ.
   // Exceeding the certificate is handled by the one-shot emergency path after
@@ -5026,6 +5048,35 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         : PhaseExecutionCertificate{};
     const bool phase_execution_certificate_accepted =
         phase_execution_certificate.accepted();
+    const auto path_relative_tracking = committed
+        ? assessPathRelativeTracking(
+              *committed_bundle, current_vehicle_position, current_vehicle_velocity,
+              retained_validation_now_ns,
+              retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,
+              planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
+              planning_interval_s, retained_tracking_limit_m,
+              navigation_contracts::kCommandAnchorErrorLimitM,
+              fresh_vehicle_state, current_vehicle_state_known_free, sampled_path_clear)
+        : PathRelativeTrackingResult{};
+    const bool path_relative_tracking_accepted = path_relative_tracking.accepted();
+    causal_snapshot.path_relative_projected_stamp_ns =
+        path_relative_tracking.projected_stamp_ns;
+    causal_snapshot.path_relative_phase_offset_s =
+        path_relative_tracking.phase_offset_s;
+    causal_snapshot.path_relative_predicted_phase_offset_s =
+        path_relative_tracking.predicted_phase_offset_s;
+    causal_snapshot.path_relative_error_m = path_relative_tracking.path_error_m;
+    causal_snapshot.path_relative_cross_track_error_m =
+        path_relative_tracking.cross_track_error_m;
+    causal_snapshot.path_relative_vertical_error_m =
+        path_relative_tracking.vertical_error_m;
+    causal_snapshot.path_relative_predicted_error_m =
+        path_relative_tracking.predicted_path_error_m;
+    causal_snapshot.path_relative_progress_rate = path_relative_tracking.progress_rate;
+    causal_snapshot.path_relative_raw_error_m = path_relative_tracking.raw_error_m;
+    causal_snapshot.path_relative_evaluation_count =
+        path_relative_tracking.evaluation_count;
+    causal_snapshot.path_relative_tracking_accepted = path_relative_tracking_accepted;
     causal_snapshot.phase_execution_lag_s = phase_execution_certificate.phase_lag_s;
     causal_snapshot.phase_execution_source_error_m =
         phase_execution_certificate.source_time_error_m;
@@ -5086,7 +5137,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // ordinary command publisher still enforces the existing lease and the
     // next validation cycle must re-establish this witness.
     const bool phase_execution_bridge_usable = phaseExecutionBridgeMayPreserveMain(
-        phase_execution_certificate_accepted, committed, fresh_vehicle_state,
+        path_relative_tracking_accepted, committed, fresh_vehicle_state,
         command_anchor_valid, plan_from_rest_with_transition, retained_recovery_state,
         retained_execution_state ? retained_execution_state->state.localization_epoch : 0U,
         committed_bundle ? committed_bundle->localization_epoch : 0U,
@@ -5094,6 +5145,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         committed_bundle ? committed_bundle->valid_until_ns : 0,
         static_cast<std::int64_t>(planning_period_us_) * 1000);
     causal_snapshot.phase_execution_bridge_usable = phase_execution_bridge_usable;
+    causal_snapshot.path_relative_bridge_usable = phase_execution_bridge_usable;
     // Only a fully eligible MAIN bridge may replace the raw retained-command
     // certificate. A phase measurement that is valid in isolation but is in
     // PlanFromRest, recovery, epoch mismatch, or outside the next lease keeps
@@ -5102,7 +5154,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         !phase_execution_bridge_usable && std::isfinite(anchor_error_m) &&
         anchor_error_m > retained_tracking_limit_m;
     const double projected_execution_error_m = phase_execution_bridge_usable
-        ? phase_execution_certificate.predicted_source_error_m
+        ? path_relative_tracking.predicted_path_error_m
         : projected_anchor_error_m;
     const bool projected_tracking_certificate_exceeded =
         std::isfinite(projected_execution_error_m) &&
@@ -5272,6 +5324,18 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                 retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM,
                 final_vehicle_state_known_free, sampled_path_clear)
           : PhaseExecutionCertificate{};
+      const auto final_path_relative_tracking = committed
+          ? assessPathRelativeTracking(
+                *committed_bundle, final_vehicle_position, final_vehicle_velocity,
+                final_retained_now_ns,
+                final_execution_state ? final_execution_state->state.source_stamp_ns : 0,
+                planning_interval_s +
+                    navigation_planning::PlanningTimingContract::kCommandPeriodS,
+                planning_interval_s, retained_tracking_limit_m,
+                navigation_contracts::kCommandAnchorErrorLimitM,
+                final_fresh_vehicle_state, final_vehicle_state_known_free,
+                sampled_path_clear)
+          : PathRelativeTrackingResult{};
       causal_snapshot.phase_execution_final_source_stamp_ns = final_execution_state
           ? final_execution_state->state.source_stamp_ns : 0;
       causal_snapshot.phase_execution_final_lag_s =
@@ -5284,10 +5348,32 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           final_phase_execution_certificate.relative_velocity_mps;
       causal_snapshot.phase_execution_final_certificate_accepted =
           final_phase_execution_certificate.accepted();
+      causal_snapshot.path_relative_projected_stamp_ns =
+          final_path_relative_tracking.projected_stamp_ns;
+      causal_snapshot.path_relative_phase_offset_s =
+          final_path_relative_tracking.phase_offset_s;
+      causal_snapshot.path_relative_predicted_phase_offset_s =
+          final_path_relative_tracking.predicted_phase_offset_s;
+      causal_snapshot.path_relative_error_m =
+          final_path_relative_tracking.path_error_m;
+      causal_snapshot.path_relative_cross_track_error_m =
+          final_path_relative_tracking.cross_track_error_m;
+      causal_snapshot.path_relative_vertical_error_m =
+          final_path_relative_tracking.vertical_error_m;
+      causal_snapshot.path_relative_predicted_error_m =
+          final_path_relative_tracking.predicted_path_error_m;
+      causal_snapshot.path_relative_progress_rate =
+          final_path_relative_tracking.progress_rate;
+      causal_snapshot.path_relative_raw_error_m =
+          final_path_relative_tracking.raw_error_m;
+      causal_snapshot.path_relative_evaluation_count =
+          final_path_relative_tracking.evaluation_count;
+      causal_snapshot.path_relative_tracking_accepted =
+          final_path_relative_tracking.accepted();
       const bool final_command_anchor_valid = committed &&
           committed_bundle->sample(final_retained_now_ns).has_value();
       const bool phase_execution_bridge_current = phaseExecutionBridgeMayPreserveMain(
-          final_phase_execution_certificate.accepted(), committed,
+          final_path_relative_tracking.accepted(), committed,
           final_fresh_vehicle_state, final_command_anchor_valid,
           plan_from_rest_with_transition, retained_recovery_state,
           final_execution_state ? final_execution_state->state.localization_epoch : 0U,
@@ -5296,6 +5382,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           committed_bundle ? committed_bundle->valid_until_ns : 0,
           static_cast<std::int64_t>(planning_period_us_) * 1000);
       causal_snapshot.phase_execution_bridge_usable = phase_execution_bridge_current;
+      causal_snapshot.path_relative_bridge_usable = phase_execution_bridge_current;
       causal_snapshot.phase_execution_final_evaluation_stamp_ns = final_retained_now_ns;
       const auto retained_transition = retainedValidationTransition(
           use_safety_suffix || phase_execution_bridge_current);
@@ -6073,6 +6160,29 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                     causal_trace.phase_execution_final_relative_velocity_mps);
     add_trace_value("phase_execution_final_certificate_accepted",
                     causal_trace.phase_execution_final_certificate_accepted ? 1 : 0);
+    add_trace_value("path_relative_projected_stamp_ns",
+                    causal_trace.path_relative_projected_stamp_ns);
+    add_trace_value("path_relative_phase_offset_s",
+                    causal_trace.path_relative_phase_offset_s);
+    add_trace_value("path_relative_predicted_phase_offset_s",
+                    causal_trace.path_relative_predicted_phase_offset_s);
+    add_trace_value("path_relative_error_m", causal_trace.path_relative_error_m);
+    add_trace_value("path_relative_cross_track_error_m",
+                    causal_trace.path_relative_cross_track_error_m);
+    add_trace_value("path_relative_vertical_error_m",
+                    causal_trace.path_relative_vertical_error_m);
+    add_trace_value("path_relative_predicted_error_m",
+                    causal_trace.path_relative_predicted_error_m);
+    add_trace_value("path_relative_progress_rate",
+                    causal_trace.path_relative_progress_rate);
+    add_trace_value("path_relative_raw_error_m",
+                    causal_trace.path_relative_raw_error_m);
+    add_trace_value("path_relative_evaluation_count",
+                    causal_trace.path_relative_evaluation_count);
+    add_trace_value("path_relative_tracking_accepted",
+                    causal_trace.path_relative_tracking_accepted ? 1 : 0);
+    add_trace_value("path_relative_bridge_usable",
+                    causal_trace.path_relative_bridge_usable ? 1 : 0);
     add_trace_value("causal_execution_localization_epoch",
                     causal_trace.execution_localization_epoch);
     add_trace_value("causal_execution_goal_epoch", causal_trace.execution_goal_epoch);

@@ -74,6 +74,18 @@ struct ExecutionTraceSnapshot final {
   double phase_execution_final_relative_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
   bool phase_execution_final_certificate_accepted{false};
   bool phase_execution_bridge_usable{false};
+  std::int64_t path_relative_projected_stamp_ns{0};
+  double path_relative_phase_offset_s{std::numeric_limits<double>::quiet_NaN()};
+  double path_relative_predicted_phase_offset_s{std::numeric_limits<double>::quiet_NaN()};
+  double path_relative_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double path_relative_cross_track_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double path_relative_vertical_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double path_relative_predicted_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double path_relative_progress_rate{std::numeric_limits<double>::quiet_NaN()};
+  double path_relative_raw_error_m{std::numeric_limits<double>::quiet_NaN()};
+  unsigned path_relative_evaluation_count{0U};
+  bool path_relative_tracking_accepted{false};
+  bool path_relative_bridge_usable{false};
   double retained_elapsed_s{std::numeric_limits<double>::quiet_NaN()};
   double committed_bundle_duration_s{std::numeric_limits<double>::quiet_NaN()};
   double committed_safety_transition_time_s{std::numeric_limits<double>::quiet_NaN()};

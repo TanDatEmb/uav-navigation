@@ -1,5 +1,41 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-08 - Add bounded local path-relative MAIN execution witness
+
+- **Owner/status:** runtime MAIN retention and scheduler renewal pressure;
+  `IMPLEMENTED`, development characterization only. The committed analytic
+  bundle, lease, planner cadence and recovery state machine remain unchanged.
+- **Scope:** For a fresh known-free execution state, project the state position
+  onto the declared local MAIN curve with a bounded analytic search. Evaluate
+  3D path/contour error, cross-track and vertical error, signed phase offset,
+  measured progress rate and a constant-velocity continuation over the
+  existing planner-plus-command validation interval. The source-time prefix
+  may precede activation for geometric lookback, but publication remains
+  lease-bound and the projection cannot cross a MAIN/BACKUP seam or choose an
+  ambiguous branch.
+- **Safety impact:** The existing `0.25 m` contour budget, absolute command
+  cap, world/path certificates, PVA command stream, lease, bundle ownership,
+  freshness and fail-closed recovery gates remain unchanged. This replaces a
+  pointwise timed-position decision for ordinary MAIN retention only; it does
+  not retime commands, extend a lease, authorize BACKUP or add a recovery
+  state. Projection runs outside owner/world locks and the final owner/lease
+  decision is rechecked before preserving MAIN.
+- **Evidence:** The bounded helper has independent tests for physical phase
+  lead/lag at 3/5/8 m/s, curved paths, activation-prefix lookback,
+  lateral/vertical excursions, future phase drift, ambiguous projections,
+  freshness, reverse motion and MAIN/BACKUP boundaries. The evaluation budget
+  is fixed and allocation-free; the diagnostic benchmark records a sub-ms
+  worst case on the local test fixture.
+- **Removal/review condition:** Remove or revise if synchronized Q1 evidence
+  shows a physical contour/branch error, command-authority regression,
+  increased recovery or lease failures, or if repeated qualification shows
+  the bounded projection is insufficient. This is not a nonlinear MPCC or a
+  general progress-retiming controller.
+- **Verification:** Run the focused path-relative tests, affected runtime and
+  planning contracts, `git diff --check`, canonical Release build and one
+  unchanged Q1 run. No Q1 or flight qualification is claimed from the
+  component fixture alone.
+
 ### 2026-09-08 - Bound retained MAIN tracking through a source-time phase witness
 
 - **Owner/status:** runtime retained-command safety certificate;
