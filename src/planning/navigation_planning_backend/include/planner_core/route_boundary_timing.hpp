@@ -3,9 +3,46 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 namespace navigation_planning_backend {
+
+// Use the geometric route-boundary point as the temporal anchor.  An overlap
+// interior can be closer to an unrelated early guide sample than the point
+// that the boundary contract actually requires the trajectory to reach.
+template <typename PointContainer, typename Point>
+inline int nearestGuideSampleIndex(
+    const PointContainer& guide_path,
+    const Point& boundary_point,
+    const std::size_t begin_index,
+    const std::size_t end_index) noexcept {
+  if (guide_path.empty() || !boundary_point.allFinite() ||
+      begin_index >= guide_path.size() || begin_index >= end_index) {
+    return -1;
+  }
+  const std::size_t bounded_end = std::min(end_index, guide_path.size());
+  int nearest_index = -1;
+  double nearest_distance = std::numeric_limits<double>::infinity();
+  for (std::size_t index = begin_index; index < bounded_end; ++index) {
+    if (!guide_path[index].allFinite()) continue;
+    const double distance =
+        (guide_path[index] - boundary_point).norm();
+    if (std::isfinite(distance) && distance < nearest_distance) {
+      nearest_distance = distance;
+      nearest_index = static_cast<int>(index);
+    }
+  }
+  return nearest_index;
+}
+
+template <typename PointContainer, typename Point>
+inline int nearestGuideSampleIndex(
+    const PointContainer& guide_path,
+    const Point& boundary_point) noexcept {
+  return nearestGuideSampleIndex(
+      guide_path, boundary_point, 0U, guide_path.size());
+}
 
 // Return the guide time for the junction after a marked route-boundary cell.
 // A direct look-ahead can expose only its final endpoint after the mission

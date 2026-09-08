@@ -805,6 +805,40 @@ TEST(PlannerPassThrough, RouteBoundaryTimingSplitsDirectEndpointInterval) {
       10.0);
 }
 
+TEST(PlannerPassThrough, RouteBoundaryUsesItsOwnGuideTimeAnchor) {
+  const std::vector<Eigen::Vector3f> guide_path{
+      Eigen::Vector3f{0.0F, 0.0F, 0.0F},
+      Eigen::Vector3f{0.1F, 0.0F, 0.0F},
+      Eigen::Vector3f{20.0F, 5.0F, 3.0F}};
+  const Eigen::Vector3f boundary{20.0F, 5.0F, 3.0F};
+  EXPECT_EQ(
+      navigation_planning_backend::nearestGuideSampleIndex(
+          guide_path, boundary),
+      2);
+}
+
+TEST(PlannerPassThrough, RouteBoundaryGuideSampleLookupPreservesRouteOrder) {
+  const std::vector<Eigen::Vector3f> guide_path{
+      Eigen::Vector3f{0.0F, 0.0F, 0.0F},
+      Eigen::Vector3f{9.2F, 0.0F, 0.0F},
+      Eigen::Vector3f{10.01F, 0.0F, 0.0F},
+      Eigen::Vector3f{10.0F, 5.0F, 0.0F}};
+  const Eigen::Vector3f boundary{10.0F, 0.0F, 0.0F};
+
+  EXPECT_EQ(
+      navigation_planning_backend::nearestGuideSampleIndex(
+          guide_path, boundary),
+      2);
+  EXPECT_EQ(
+      navigation_planning_backend::nearestGuideSampleIndex(
+          guide_path, boundary, 0U, 2U),
+      1);
+  EXPECT_EQ(
+      navigation_planning_backend::nearestGuideSampleIndex(
+          guide_path, boundary, 2U, guide_path.size()),
+      2);
+}
+
 TEST(PlannerPassThrough, BackupCannotCrossUncompletedAcceptanceAndStopBeyondIt) {
   navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
   state.col(1) = Eigen::Vector3d{5.0, 0.0, 0.0};

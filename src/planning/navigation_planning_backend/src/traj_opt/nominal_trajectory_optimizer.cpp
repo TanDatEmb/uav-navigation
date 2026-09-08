@@ -609,6 +609,18 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
     time_stamps(0) = 0.0;
     time_stamps(opt_vars.waypoint_attractor.cols() + 1) = opt_vars.guide_t.back();
     min_id.setConstant(0);
+    std::vector<int> route_boundary_guide_indices(
+        opt_vars.route_boundary_gates.size(), -1);
+    for (std::size_t gate_index = 0;
+         gate_index < opt_vars.route_boundary_gates.size(); ++gate_index) {
+        if (opt_vars.route_boundary_gates[gate_index] == 0U ||
+            gate_index >= opt_vars.route_boundary_points.size()) {
+            continue;
+        }
+        route_boundary_guide_indices[gate_index] =
+            navigation_planning_backend::nearestGuideSampleIndex(
+                opt_vars.guide_path, opt_vars.route_boundary_points[gate_index]);
+    }
     int first_guide_index = 0;
     for (int j = 0; j < opt_vars.waypoint_attractor.cols(); j++) {
         const Vec3f interior = opt_vars.waypoint_attractor.col(j);
@@ -623,16 +635,45 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         const bool outgoing_from_route_gate =
                 j < static_cast<int>(opt_vars.route_boundary_gates.size()) &&
                 opt_vars.route_boundary_gates[static_cast<std::size_t>(j)] != 0U;
-        const int guide_search_start = outgoing_from_route_gate &&
+        std::size_t guide_search_start = outgoing_from_route_gate &&
                 first_guide_index + 1 < static_cast<int>(opt_vars.guide_path.size())
-                ? first_guide_index + 1
-                : first_guide_index;
-        for (int i = guide_search_start; i < static_cast<int>(opt_vars.guide_path.size()); i++) {
+                ? static_cast<std::size_t>(first_guide_index + 1)
+                : static_cast<std::size_t>(std::max(first_guide_index, 0));
+        std::size_t guide_search_end = opt_vars.guide_path.size();
+        // A guide can pass close to a corner on both sides of a mission
+        // boundary. Match each overlap interior to the guide interval it
+        // belongs to; otherwise a pre-boundary overlap can select an outgoing
+        // sample and make the boundary timestamp run backwards.
+        for (std::size_t gate_index = 0;
+             gate_index < route_boundary_guide_indices.size(); ++gate_index) {
+            const int boundary_guide_index =
+                route_boundary_guide_indices[gate_index];
+            if (boundary_guide_index < 0) continue;
+            if (static_cast<std::size_t>(j) < gate_index) {
+                guide_search_end = std::min(
+                    guide_search_end,
+                    static_cast<std::size_t>(boundary_guide_index) + 1U);
+            } else {
+                guide_search_start = std::max(
+                    guide_search_start,
+                    static_cast<std::size_t>(boundary_guide_index) + 1U);
+            }
+        }
+        for (std::size_t i = guide_search_start; i < guide_search_end; ++i) {
             const double distance = (opt_vars.guide_path[i] - interior).norm();
             if (distance < nearest_distance) {
                 nearest_distance = distance;
-                nearest_index = i;
+                nearest_index = static_cast<int>(i);
             }
+        }
+
+        if (nearest_index < 0 ||
+            nearest_index >= static_cast<int>(opt_vars.guide_path.size())) {
+            planner_context_->warn(
+                " -- [ExpOpt] route-boundary guide interval has no sample "
+                "overlap={} range=[{}, {})",
+                j, guide_search_start, guide_search_end);
+            return false;
         }
 
         min_id[j] = nearest_index;
@@ -654,6 +695,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
                 ? guide_point
                 : interior;
         const int boundary_cell_index = j + 1;
+        double junction_guide_time = opt_vars.guide_t[nearest_index];
         if (boundary_cell_index < static_cast<int>(opt_vars.route_boundary_points.size()) &&
             boundary_cell_index < static_cast<int>(opt_vars.route_boundary_radii.size()) &&
             opt_vars.route_boundary_points[static_cast<std::size_t>(boundary_cell_index)].allFinite() &&
@@ -677,10 +719,22 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
             // check below is the hard acceptance authority.
             opt_vars.points.col(j) = boundary_point;
             opt_vars.route_reference_points.col(j) = boundary_point;
+            const int boundary_guide_index =
+                boundary_cell_index >= 0 &&
+                        static_cast<std::size_t>(boundary_cell_index) <
+                            route_boundary_guide_indices.size()
+                    ? route_boundary_guide_indices[
+                          static_cast<std::size_t>(boundary_cell_index)]
+                    : -1;
+            if (boundary_guide_index >= 0 &&
+                static_cast<std::size_t>(boundary_guide_index) <
+                    opt_vars.guide_t.size()) {
+                junction_guide_time = opt_vars.guide_t[boundary_guide_index];
+            }
         }
         time_stamps(j + 1) = navigation_planning_backend::routeBoundaryJunctionTime(
                 outgoing_from_route_gate, nearest_index, opt_vars.guide_t.size(), j,
-                time_stamps(j), opt_vars.guide_t.back(), opt_vars.guide_t[nearest_index]);
+                time_stamps(j), opt_vars.guide_t.back(), junction_guide_time);
     }
 
     for (std::size_t gate_index = 0;
