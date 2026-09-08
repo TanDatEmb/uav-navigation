@@ -863,9 +863,16 @@ void NavigationMode::onNavigationCommand(
                                               message->position.z};
       const Eigen::Vector3d command_velocity{message->velocity.x, message->velocity.y,
                                              message->velocity.z};
+      // Use authoritative command/lifecycle fields, never diagnostic trace
+      // flags. Runtime retains its stricter analytic and terminal checks.
+      const bool main_phase_tracking =
+          message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+          message->status == navigation_contracts::msg::NavigationCommand::STATUS_READY &&
+          !prior_safety_suffix_command && !planner_recovery_pending_ && !mission_terminal_;
       tracking_envelope = evaluateTrackingEnvelope(
           measured, command_position, command_velocity,
-          navigation_contracts::kCommandAnchorErrorLimitM);
+          navigation_contracts::kCommandAnchorErrorLimitM,
+          main_phase_tracking ? navigation_contracts::kMainTrackingPhaseWindowS : 0.0);
       anchor_invalid = !tracking_envelope.valid;
       if (anchor_invalid) {
         reject_provenance = buildRejectProvenance(
@@ -934,7 +941,7 @@ void NavigationMode::onNavigationCommand(
                  tracking_envelope.longitudinal_error_m,
                  tracking_envelope.longitudinal_limit_m,
                  tracking_envelope.reverse_error_m,
-                 navigation_contracts::kCommandAnchorErrorLimitM,
+                 tracking_envelope.reverse_limit_m,
                  tracking_envelope.lateral_error_m,
                  navigation_contracts::kCommandAnchorErrorLimitM,
                  provenance.measured_position.x(), provenance.measured_position.y(),

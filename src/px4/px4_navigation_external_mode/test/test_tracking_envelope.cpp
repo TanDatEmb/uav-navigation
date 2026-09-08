@@ -63,9 +63,9 @@ TEST(TrackingEnvelope, ReportsReverseOvershootSeparatelyFromForwardError) {
 TEST(TrackingEnvelope, PhaseCDiagnosticRejectsMeasuredVehicleAheadOfReference) {
   // Values captured from the delayed-activation Phase C artifact.  The command
   // is finite and has a modest lateral error, but the measured vehicle is
-  // already 0.76 m ahead of the command along its tangent.  This must remain a
-  // genuine reverse-envelope rejection; it must not be relabelled as a
-  // permissible forward tracking allowance.
+  // already 0.76 m ahead of the command along its tangent.  With the default zero phase window this remains a
+  // reverse-envelope rejection. Ordinary MAIN explicitly enables the finite
+  // lead/lag contract in the command callback.
   const auto result = evaluateTrackingEnvelope(
       Eigen::Vector3d{1.867377580704609, -0.18677978882325794,
                      3.086457165904786},
@@ -126,4 +126,47 @@ TEST(TrackingEnvelope, RejectsFiniteVelocityWhoseNormOverflows) {
       Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
       Eigen::Vector3d{huge, huge, huge}, 0.75);
   EXPECT_FALSE(result.valid);
+}
+
+TEST(TrackingEnvelope, RealLeadLagAtHighSpeedAndStrictDefault) {
+  for (double speed : {3., 5., 8., 12.}) for (double sign : {-1., 1.}) {
+    const Eigen::Vector3d position(sign * speed * .09, 0., 0.);
+    const auto result = evaluateTrackingEnvelope(position, Eigen::Vector3d::Zero(),
+        {speed,0.,0.}, .75, .1);
+    EXPECT_TRUE(result.valid);
+    EXPECT_NEAR(result.longitudinal_limit_m, .75+speed*.1, 1e-12);
+    if (speed == 12.) {
+      EXPECT_FALSE(evaluateTrackingEnvelope(position,
+          Eigen::Vector3d::Zero(),{speed,0.,0.},.75).valid);
+    }
+  }
+}
+TEST(TrackingEnvelope, LateralAndVerticalLimitsRemainUnscaled) {
+  for (double sign : {-1., 1.}) {
+    EXPECT_FALSE(evaluateTrackingEnvelope({sign*1.08,.751,0.},
+        Eigen::Vector3d::Zero(),{12.,0.,0.},.75,.1).valid);
+    EXPECT_FALSE(evaluateTrackingEnvelope({sign*1.08,0.,.751},
+        Eigen::Vector3d::Zero(),{12.,0.,0.},.75,.1).valid);
+    EXPECT_FALSE(evaluateTrackingEnvelope({sign*1.951,0.,0.},
+        Eigen::Vector3d::Zero(),{12.,0.,0.},.75,.1).valid);
+  }
+}
+TEST(TrackingEnvelope, RotationAndStationaryBehavior) {
+  const Eigen::Vector3d tangent=Eigen::Vector3d(1.,2.,3.).normalized();
+  const Eigen::Vector3d normal=Eigen::Vector3d(2.,-1.,0.).normalized();
+  for (double sign : {-1.,1.}) {
+    EXPECT_TRUE(evaluateTrackingEnvelope(sign*1.08*tangent,
+        Eigen::Vector3d::Zero(),12.*tangent,.75,.1).valid);
+    EXPECT_FALSE(evaluateTrackingEnvelope(sign*1.08*tangent+.751*normal,
+        Eigen::Vector3d::Zero(),12.*tangent,.75,.1).valid);
+  }
+  EXPECT_FALSE(evaluateTrackingEnvelope({.751,0.,0.},
+      Eigen::Vector3d::Zero(),Eigen::Vector3d::Zero(),.75,.1).valid);
+}
+TEST(TrackingEnvelope, InvalidPhaseWindowCannotAccept) {
+  for (double window : {-1.,std::numeric_limits<double>::infinity(),
+                       std::numeric_limits<double>::quiet_NaN()}) {
+    EXPECT_FALSE(evaluateTrackingEnvelope(Eigen::Vector3d::Zero(),
+        Eigen::Vector3d::Zero(),{12.,0.,0.},.75,window).valid);
+  }
 }

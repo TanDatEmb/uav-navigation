@@ -9,6 +9,12 @@ namespace navigation_contracts {
 // PX4 command consumer must enforce the same geometric acceptance limit.
 inline constexpr double kCommandAnchorErrorLimitM = 0.75;
 
+// Ordinary MAIN tracking separates progress from geometric path error. This
+// finite phase window equals the established 100 ms planner cadence; both
+// runtime projection and the PX4 longitudinal guard consume this contract.
+// It does not extend command freshness, validity or recovery authority.
+inline constexpr double kMainTrackingPhaseWindowS = 0.10;
+
 [[nodiscard]] constexpr bool estimatorHealthAllowsCommand(
     const bool typed_health_seen,
     const bool health_valid,

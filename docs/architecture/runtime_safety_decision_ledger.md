@@ -1,5 +1,40 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-08 - Align PX4 MAIN longitudinal acceptance with path phase
+
+- **Owner/status:** Runtime/PX4 command-envelope contract; implemented for
+  development characterization. This is a deliberate longitudinal gate
+  redesign, not a flight qualification or a scalar collision-margin increase.
+- **Scope:** Share a finite `kMainTrackingPhaseWindowS=0.10` contract, matching
+  the established planner cadence. For authoritative `ROLE_MAIN` plus
+  `STATUS_READY`, outside an existing recovery/terminal lifecycle or adjacent
+  safety-suffix ownership, PX4 allows both longitudinal lag and lead up to
+  `0.75 m + command_speed * phase_window`. The default helper argument is zero:
+  BACKUP, EMERGENCY, COMPLETED, recovery and stationary holds keep their strict
+  geometric guard. Diagnostic message fields do not grant this authority.
+- **Safety impact:** The runtime's analytic 3D path tube remains `0.25 m`,
+  with bounded current/predicted phase, path/world validation and independent
+  freshness, identity, lease and dynamics checks. PX4 keeps its lateral
+  `0.75 m` outer guard. This consumer tangent check is not an analytic path
+  certificate. MAIN/READY terminal approaches can use the PX4 outer allowance;
+  the runtime's terminal-stop decisions remain strict. No command PVA is
+  retimed and no BACKUP activation or lease extension is authorized.
+- **Evidence:** `test_tracking_envelope` covers physical lead/lag at
+  3/5/8/12 m/s, strict default behavior, lateral/vertical excursions, rotated
+  coordinates, stationary commands and invalid/overflowing inputs. Runtime
+  projection independently accepts same-timestamp phase +/-90 ms at 12 m/s
+  with approximately zero path error while retaining contour rejection.
+  These are component fixtures, not evidence of 12 m/s SITL completion.
+- **Removal/review condition:** Revisit if representative SITL shows incorrect
+  path/branch acceptance, recovery authority regression, or an inconsistent
+  runtime/PX4 phase allowance. A future path-progress controller must replace
+  this contract explicitly; do not silently increase its phase window.
+- **Verification:** `ctest --test-dir build/px4_navigation_external_mode
+  -R test_tracking_envelope --output-on-failure`; runtime path-relative tests;
+  canonical Release build and manifest validation on the combined source;
+  representative SITL with contour/phase, clearance, command-gap and mission
+  completion evidence; `git diff --check`.
+
 ### 2026-09-08 - Add bounded local path-relative MAIN execution witness
 
 - **Owner/status:** runtime MAIN retention and scheduler renewal pressure;
