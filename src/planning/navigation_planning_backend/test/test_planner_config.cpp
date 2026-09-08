@@ -734,6 +734,31 @@ TEST(PlannerPassThrough, VisibilityPrefixCannotMasqueradeAsMissionBoundary) {
       Eigen::Vector3d::Constant(NAN), mission_waypoint, 0.2));
 }
 
+TEST(PlannerPassThrough, RemotePrefixCannotConsumeOutgoingMissionTangent) {
+  const Eigen::Vector3d local_prefix{36.9, 4.9, 3.0};
+  const Eigen::Vector3d mission_waypoint{50.0, 5.0, 3.0};
+
+  // The local endpoint is connected to the planner's bounded goal, but it
+  // has not reached the mission waypoint that owns the outgoing tangent.
+  const bool local_goal_connected =
+      navigation_planning_backend::passThroughGuideReachesMissionBoundary(
+          local_prefix, local_prefix, 0.2);
+  const bool mission_goal_connected =
+      navigation_planning_backend::passThroughGuideReachesMissionBoundary(
+          local_prefix, mission_waypoint, 0.2);
+  EXPECT_TRUE(local_goal_connected);
+  EXPECT_FALSE(mission_goal_connected);
+  EXPECT_FALSE(
+      navigation_planning_backend::passThroughOutgoingVelocityRequiresMissionBoundary(
+          mission_goal_connected, true));
+  EXPECT_TRUE(
+      navigation_planning_backend::passThroughOutgoingVelocityRequiresMissionBoundary(
+          true, true));
+  EXPECT_FALSE(
+      navigation_planning_backend::passThroughOutgoingVelocityRequiresMissionBoundary(
+          true, false));
+}
+
 TEST(PlannerPassThrough, CollinearPassThroughLegStillUsesLookaheadEnvelope) {
   const Eigen::Vector3d waypoint{20.0, 5.0, 3.0};
   const Eigen::Vector3d next_target{50.0, 5.0, 3.0};

@@ -238,6 +238,15 @@ inline bool passThroughGuideReachesMissionBoundary(
   return std::isfinite(error) && error <= connection_tolerance_m + 1.0e-6;
 }
 
+// Outgoing velocity is owned by the mission waypoint boundary, not by a
+// receding-horizon endpoint that merely happens to be connected to the
+// planner's locally bounded goal.
+inline bool passThroughOutgoingVelocityRequiresMissionBoundary(
+    const bool mission_goal_connected,
+    const bool has_next_target) noexcept {
+  return mission_goal_connected && has_next_target;
+}
+
 // Compute a bounded outgoing velocity for a pass-through waypoint. The
 // direction comes from the mission-owned next target; the planner's dynamic
 // certificates still validate the complete polynomial afterwards.

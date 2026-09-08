@@ -3491,7 +3491,13 @@ double knownFreeGuideSupport(
         pos_fina_state.setZero();
         pos_fina_state.col(0) = guide_path.back();
         bool connected_goal_is_genuine_corner = false;
-        if (connected_goal && pass_through_next_target_.has_value()) {
+        // A receding-horizon prefix can be connected to the planner's local
+        // endpoint after gi_.goal_p is bounded, but that is not a mission
+        // waypoint boundary.  Only the actual mission boundary may consume
+        // the outgoing pass-through tangent; a remote prefix must retain its
+        // current guide tangent below.
+        if (passThroughOutgoingVelocityRequiresMissionBoundary(
+                mission_goal_connected, pass_through_next_target_.has_value())) {
             // Keep the outgoing tangent just inside the optimizer's declared
             // interior search target. The mission/product V/A/J limits below
             // remain unchanged; this only avoids asking a short MINCO guide
@@ -3604,7 +3610,7 @@ double knownFreeGuideSupport(
                 }
             }
         }
-        if (!connected_goal && guide_path.size() >= 2U) {
+        if (!mission_goal_connected && guide_path.size() >= 2U) {
             // A frontier endpoint must continue along the current guide leg.
             // Applying the next waypoint tangent here would turn toward a
             // corner before the active waypoint is reached; leaving the
