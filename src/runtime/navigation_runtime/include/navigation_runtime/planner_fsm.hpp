@@ -759,6 +759,139 @@ inline double retainedCommandTrackingLimit(
   return std::min(planner_tracking_budget_m, execution_anchor_limit_m);
 }
 
+enum class PhaseExecutionCertificateStatus : std::uint8_t {
+  kInvalid,
+  kAccepted,
+  kRejected,
+};
+
+struct PhaseExecutionCertificate final {
+  PhaseExecutionCertificateStatus status{PhaseExecutionCertificateStatus::kInvalid};
+  double phase_lag_s{std::numeric_limits<double>::quiet_NaN()};
+  double source_time_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double predicted_source_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double raw_divergence_m{std::numeric_limits<double>::quiet_NaN()};
+  double source_speed_mps{std::numeric_limits<double>::quiet_NaN()};
+  double measured_speed_mps{std::numeric_limits<double>::quiet_NaN()};
+  double relative_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
+
+  [[nodiscard]] bool accepted() const noexcept {
+    return status == PhaseExecutionCertificateStatus::kAccepted;
+  }
+};
+
+// A source-time phase witness is deliberately narrower than a nearest-point
+// path projection. It uses one ordered, locally adjacent pair of samples from
+// the same immutable MAIN bundle. The witness may replace the retained MAIN
+// tracking decision only when the measured state is inside the existing
+// tracking tube at its source time and the current command remains inside the
+// existing absolute command-anchor cap. No command time, lease, bundle, or
+// candidate ownership is changed by this predicate.
+inline PhaseExecutionCertificate assessPhaseExecutionCertificate(
+    const navigation_planning::CandidateBundle& bundle,
+    const Eigen::Vector3d& measured_position,
+    const Eigen::Vector3d& measured_velocity,
+    const std::int64_t now_ns,
+    const std::int64_t source_stamp_ns,
+    const std::int64_t maximum_phase_lag_ns,
+    const double validation_interval_s,
+    const double tracking_position_budget_m,
+    const double absolute_command_anchor_cap_m,
+    const bool measured_state_known_free,
+    const bool sampled_path_clear) noexcept {
+  PhaseExecutionCertificate result;
+  if (!bundle.valid() || bundle.kind != navigation_planning::CandidateBundleKind::kMainWithBackup ||
+      bundle.role != navigation_planning::CandidateRole::kMain || bundle.terminal_stop ||
+      !bundle.backup_available ||
+      !measured_position.allFinite() || !measured_velocity.allFinite() || now_ns <= 0 ||
+      source_stamp_ns <= 0 || maximum_phase_lag_ns <= 0 || source_stamp_ns > now_ns ||
+      !std::isfinite(validation_interval_s) || validation_interval_s <= 0.0 ||
+      !std::isfinite(tracking_position_budget_m) || tracking_position_budget_m <= 0.0 ||
+      !std::isfinite(absolute_command_anchor_cap_m) || absolute_command_anchor_cap_m <= 0.0 ||
+      !measured_state_known_free || !sampled_path_clear) {
+    return result;
+  }
+
+  // Bind both samples to the same immutable bundle and to its executable
+  // lease. The caller cannot substitute a point from another generation or
+  // sample the declared polynomial outside the current command interval.
+  if (now_ns < bundle.valid_from_ns || now_ns > bundle.valid_until_ns ||
+      source_stamp_ns < bundle.valid_from_ns || source_stamp_ns > bundle.valid_until_ns) {
+    return result;
+  }
+  const long double lease_remaining_s =
+      (static_cast<long double>(bundle.valid_until_ns) -
+       static_cast<long double>(now_ns)) * 1.0e-9L;
+  if (!std::isfinite(lease_remaining_s) ||
+      static_cast<long double>(validation_interval_s) > lease_remaining_s + 1.0e-12L) {
+    return result;
+  }
+  const auto command_now = bundle.sampleAtDeclaredStamp(now_ns);
+  const auto command_at_source = bundle.sampleAtDeclaredStamp(source_stamp_ns);
+  if (!command_now || !command_at_source ||
+      command_now->role != navigation_planning::CandidateRole::kMain ||
+      command_at_source->role != navigation_planning::CandidateRole::kMain) {
+    return result;
+  }
+
+  const auto phase_lag_ns = now_ns - source_stamp_ns;
+  if (phase_lag_ns <= 0 || phase_lag_ns > maximum_phase_lag_ns ||
+      command_at_source->trajectory_time_s > command_now->trajectory_time_s + 1.0e-9 ||
+      command_now->trajectory_time_s + validation_interval_s >
+          bundle.backup_start_time_s + 1.0e-9) {
+    return result;
+  }
+  result.phase_lag_s = static_cast<double>(phase_lag_ns) * 1.0e-9;
+  result.source_time_error_m =
+      (command_at_source->position_world - measured_position).norm();
+  result.raw_divergence_m = (command_now->position_world - measured_position).norm();
+  result.source_speed_mps = command_at_source->velocity_world.norm();
+  result.measured_speed_mps = measured_velocity.norm();
+  result.relative_velocity_mps =
+      (command_at_source->velocity_world - measured_velocity).norm();
+  result.predicted_source_error_m = result.source_time_error_m +
+      result.relative_velocity_mps * (result.phase_lag_s + validation_interval_s);
+  if (!std::isfinite(result.phase_lag_s) || !std::isfinite(result.source_time_error_m) ||
+      !std::isfinite(result.predicted_source_error_m) ||
+      !std::isfinite(result.raw_divergence_m) || !std::isfinite(result.source_speed_mps) ||
+      !std::isfinite(result.measured_speed_mps) ||
+      !std::isfinite(result.relative_velocity_mps) || result.source_speed_mps <= 1.0e-3 ||
+      result.measured_speed_mps <= 1.0e-3 ||
+      result.source_time_error_m > tracking_position_budget_m ||
+      result.predicted_source_error_m > tracking_position_budget_m ||
+      result.raw_divergence_m > absolute_command_anchor_cap_m ||
+      command_at_source->velocity_world.dot(measured_velocity) < 0.0) {
+    result.status = PhaseExecutionCertificateStatus::kRejected;
+    return result;
+  }
+  result.status = PhaseExecutionCertificateStatus::kAccepted;
+  return result;
+}
+
+// A phase witness can preserve only the current MAIN owner. It is not a
+// recovery transition, a BACKUP admission, or a lease extension. Keep these
+// owner/lifecycle checks together so the retained-command transaction cannot
+// accidentally turn a temporal measurement into new safety authority.
+inline bool phaseExecutionBridgeMayPreserveMain(
+    bool phase_certificate_accepted, bool committed, bool fresh_vehicle_state,
+    bool command_anchor_valid, bool plan_from_rest,
+    ExecutionRecoveryState recovery_state, std::uint64_t state_localization_epoch,
+    std::uint64_t bundle_localization_epoch, bool failure_latched,
+    std::int64_t now_ns, std::int64_t valid_until_ns,
+    std::int64_t validation_interval_ns) noexcept {
+  if (!phase_certificate_accepted || !committed || !fresh_vehicle_state ||
+      !command_anchor_valid || plan_from_rest ||
+      recovery_state != ExecutionRecoveryState::kTrackMain || failure_latched ||
+      state_localization_epoch == 0U ||
+      state_localization_epoch != bundle_localization_epoch || now_ns <= 0 ||
+      valid_until_ns < now_ns || validation_interval_ns <= 0) {
+    return false;
+  }
+  return static_cast<long double>(valid_until_ns) -
+             static_cast<long double>(now_ns) >=
+         static_cast<long double>(validation_interval_ns);
+}
+
 // A retained trajectory remains the command until the next planning
 // validation boundary.  Checking only the instantaneous anchor error can
 // consume the entire tracking allowance between two planner ticks.  The

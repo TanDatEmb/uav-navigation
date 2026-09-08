@@ -4873,11 +4873,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     const bool fresh_vehicle_state = retained_execution_state &&
                                      retained_execution_state->state.finite() &&
                                      retained_state_freshness.valid();
-    // Diagnostic-only temporal decomposition. The recovery predicates below
-    // intentionally continue to use command_anchor_sample/anchor_error_m,
-    // preserving the production evidence-phase decision. These samples use
-    // the same immutable committed evaluator at the two exact timestamps and
-    // do not widen the executable lease.
+    // Diagnostic-only temporal decomposition. These samples use the same
+    // immutable committed evaluator at the two exact timestamps and do not
+    // widen the executable lease.
     navigation_planning::TrajectoryPoint command_sample_at_now;
     navigation_planning::TrajectoryPoint command_sample_at_state_source;
     const auto sampleCommittedBundleAtDeclaredStamp =
@@ -5016,6 +5014,37 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         first_blocked_grid = state;
       }
     }
+    const auto phase_execution_certificate = committed
+        ? assessPhaseExecutionCertificate(
+              *committed_bundle, current_vehicle_position, current_vehicle_velocity,
+              retained_validation_now_ns,
+              retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,
+              static_cast<std::int64_t>(planning_period_us_) * 1000,
+              static_cast<double>(planning_period_us_) * 1.0e-6,
+              retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM,
+              current_vehicle_state_known_free, sampled_path_clear)
+        : PhaseExecutionCertificate{};
+    const bool phase_execution_certificate_accepted =
+        phase_execution_certificate.accepted();
+    causal_snapshot.phase_execution_lag_s = phase_execution_certificate.phase_lag_s;
+    causal_snapshot.phase_execution_source_error_m =
+        phase_execution_certificate.source_time_error_m;
+    causal_snapshot.phase_execution_predicted_error_m =
+        phase_execution_certificate.predicted_source_error_m;
+    causal_snapshot.phase_execution_relative_velocity_mps =
+        phase_execution_certificate.relative_velocity_mps;
+    causal_snapshot.phase_execution_certificate_accepted =
+        phase_execution_certificate_accepted;
+    // A phase witness is allowed to replace only the retained MAIN tracking
+    // measurement. It never changes the raw diagnostic, command timestamp,
+    // lease, bundle identity, or the scheduler's conservative anchor pressure.
+    // The source-time tube is already reserved by the planner's tracking
+    // budget; the absolute current-command cap remains an independent guard.
+    // Safety-suffix and backup ownership remain strict current-anchor
+    // decisions. The phase witness may preserve the existing MAIN command
+    // for one bounded validation interval, but it cannot make a future
+    // BACKUP suffix usable from a raw out-of-tube anchor.
+    const double strict_execution_anchor_error_m = anchor_error_m;
     // If replanning fails after the main-to-backup switch, the usable safety
     // suffix starts at the current command anchor, not in the past.
     const double safety_transition_s = backup_available
@@ -5033,7 +5062,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     bool use_safety_suffix = committedSafetySuffixIsUsable(
         backup_available, elapsed_s, total_duration_s,
         safety_transition_s,
-        anchor_error_m, retained_tracking_limit_m, sampled_path_clear);
+        strict_execution_anchor_error_m, retained_tracking_limit_m,
+        sampled_path_clear);
     // A measured-state PlanFromRest attempt may fail while the currently
     // executing bundle is still a fresh, continuously certified bridge. Keep
     // that bridge alive until the bounded recovery budget is exhausted; a
@@ -5046,16 +5076,37 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         fresh_vehicle_state && command_anchor_valid && sampled_path_clear &&
         std::isfinite(elapsed_s) && elapsed_s >= 0.0 &&
         std::isfinite(total_duration_s) && elapsed_s <= total_duration_s + 1.0e-9 &&
-        std::isfinite(anchor_error_m) && anchor_error_m <= retained_tracking_limit_m;
+        std::isfinite(strict_execution_anchor_error_m) &&
+        strict_execution_anchor_error_m <= retained_tracking_limit_m;
     bool emergency_brake_committed = false;
     bool emergency_certification_failed = false;
     bool emergency_boundary_failed = false;
+    // This is a bounded MAIN-continuity disposition only. It does not mark a
+    // BACKUP suffix usable and does not transfer recovery ownership. The
+    // ordinary command publisher still enforces the existing lease and the
+    // next validation cycle must re-establish this witness.
+    const bool phase_execution_bridge_usable = phaseExecutionBridgeMayPreserveMain(
+        phase_execution_certificate_accepted, committed, fresh_vehicle_state,
+        command_anchor_valid, plan_from_rest_with_transition, retained_recovery_state,
+        retained_execution_state ? retained_execution_state->state.localization_epoch : 0U,
+        committed_bundle ? committed_bundle->localization_epoch : 0U,
+        retained_episode.failure_latched, retained_validation_now_ns,
+        committed_bundle ? committed_bundle->valid_until_ns : 0,
+        static_cast<std::int64_t>(planning_period_us_) * 1000);
+    causal_snapshot.phase_execution_bridge_usable = phase_execution_bridge_usable;
+    // Only a fully eligible MAIN bridge may replace the raw retained-command
+    // certificate. A phase measurement that is valid in isolation but is in
+    // PlanFromRest, recovery, epoch mismatch, or outside the next lease keeps
+    // the original fail-closed tracking decision.
     const bool tracking_certificate_exceeded =
-        std::isfinite(anchor_error_m) &&
+        !phase_execution_bridge_usable && std::isfinite(anchor_error_m) &&
         anchor_error_m > retained_tracking_limit_m;
+    const double projected_execution_error_m = phase_execution_bridge_usable
+        ? phase_execution_certificate.predicted_source_error_m
+        : projected_anchor_error_m;
     const bool projected_tracking_certificate_exceeded =
-        std::isfinite(projected_anchor_error_m) &&
-        projected_anchor_error_m > retained_tracking_limit_m;
+        std::isfinite(projected_execution_error_m) &&
+        projected_execution_error_m > retained_tracking_limit_m;
     const bool emergency_authorized = measuredStateEmergencyMayReplaceCommittedCommand(
         validate_without_new_commit, use_safety_suffix,
         fresh_vehicle_state, committed, command_anchor_valid,
@@ -5159,7 +5210,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                    "execution boundary rejected the one-shot measured emergency candidate; "
                    "clearing command exposure");
     }
-    const auto retained_transition = retainedValidationTransition(use_safety_suffix);
     const auto executionEpisodeSnapshotsEqual = [](
         const ExecutionEpisodeSnapshot& lhs,
         const ExecutionEpisodeSnapshot& rhs) noexcept {
@@ -5188,6 +5238,67 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           std::memory_order_acquire);
       const auto current_localization_epoch = active_localization_epoch_.load(
           std::memory_order_acquire);
+      const auto final_retained_now_ns = now().nanoseconds();
+      const auto final_execution_state = execution_state_store_.load();
+      const auto final_state_freshness = final_execution_state
+          ? navigation_contracts::evaluateExecutionStateFreshness(
+                final_retained_now_ns, final_execution_state->state.source_stamp_ns,
+                navigation_common::steadyClockNowNanoseconds(),
+                final_execution_state->state.receive_stamp_ns, data_freshness_window_s_)
+          : navigation_contracts::ExecutionStateFreshness{};
+      const bool final_fresh_vehicle_state = final_execution_state &&
+          final_execution_state->state.finite() && final_state_freshness.valid();
+      const Eigen::Vector3d final_vehicle_position = final_fresh_vehicle_state
+          ? final_execution_state->state.position_world : Eigen::Vector3d::Zero();
+      const Eigen::Vector3d final_vehicle_velocity = final_fresh_vehicle_state
+          ? final_execution_state->state.velocity_world : Eigen::Vector3d::Zero();
+      // Keep the final state witness bound to the same immutable world view
+      // used by sampled_path_clear; do not mix a newer revision with an older
+      // path certificate while the transaction is being finalized.
+      const auto final_world = latest_world;
+      const bool final_vehicle_state_known_free = final_fresh_vehicle_state && final_world &&
+          final_world.view &&
+          final_world.view->classify(
+              final_vehicle_position,
+              navigation_world_model::GridLayer::kInflated) ==
+              navigation_world_model::CellState::kKnownFree;
+      const auto final_phase_execution_certificate = committed
+          ? assessPhaseExecutionCertificate(
+                *committed_bundle, final_vehicle_position, final_vehicle_velocity,
+                final_retained_now_ns,
+                final_execution_state ? final_execution_state->state.source_stamp_ns : 0,
+                static_cast<std::int64_t>(planning_period_us_) * 1000,
+                static_cast<double>(planning_period_us_) * 1.0e-6,
+                retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM,
+                final_vehicle_state_known_free, sampled_path_clear)
+          : PhaseExecutionCertificate{};
+      causal_snapshot.phase_execution_final_source_stamp_ns = final_execution_state
+          ? final_execution_state->state.source_stamp_ns : 0;
+      causal_snapshot.phase_execution_final_lag_s =
+          final_phase_execution_certificate.phase_lag_s;
+      causal_snapshot.phase_execution_final_source_error_m =
+          final_phase_execution_certificate.source_time_error_m;
+      causal_snapshot.phase_execution_final_predicted_error_m =
+          final_phase_execution_certificate.predicted_source_error_m;
+      causal_snapshot.phase_execution_final_relative_velocity_mps =
+          final_phase_execution_certificate.relative_velocity_mps;
+      causal_snapshot.phase_execution_final_certificate_accepted =
+          final_phase_execution_certificate.accepted();
+      const bool final_command_anchor_valid = committed &&
+          committed_bundle->sample(final_retained_now_ns).has_value();
+      const bool phase_execution_bridge_current = phaseExecutionBridgeMayPreserveMain(
+          final_phase_execution_certificate.accepted(), committed,
+          final_fresh_vehicle_state, final_command_anchor_valid,
+          plan_from_rest_with_transition, retained_recovery_state,
+          final_execution_state ? final_execution_state->state.localization_epoch : 0U,
+          committed_bundle ? committed_bundle->localization_epoch : 0U,
+          retained_episode.failure_latched, final_retained_now_ns,
+          committed_bundle ? committed_bundle->valid_until_ns : 0,
+          static_cast<std::int64_t>(planning_period_us_) * 1000);
+      causal_snapshot.phase_execution_bridge_usable = phase_execution_bridge_current;
+      causal_snapshot.phase_execution_final_evaluation_stamp_ns = final_retained_now_ns;
+      const auto retained_transition = retainedValidationTransition(
+          use_safety_suffix || phase_execution_bridge_current);
       // The desired goal may legitimately be ahead of the executing
       // predecessor during PASS_THROUGH. It is therefore not part of the
       // execution-owner token. It is checked separately below to ensure this
@@ -5263,6 +5374,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           execution_episode_.setSafetySuffix(use_safety_suffix);
         }
         trajectory_completion_witness_.reset();
+      } else if (phase_execution_bridge_current && !use_safety_suffix) {
+        // Preserve the current MAIN owner for this bounded source-time
+        // witness. Deliberately do not mark a safety suffix or activate
+        // BACKUP from this branch.
+        trajectory_completion_witness_.reset();
       } else if (use_safety_suffix && validate_without_new_commit) {
         const auto retained_execution_goal = executing_goal_;
         const auto retained_command_epoch =
@@ -5314,6 +5430,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       RCLCPP_WARN(get_logger(),
                   "planner backend recovery solve missed; retaining the fresh certified "
                   "command bridge while bounded recovery continues");
+    } else if (causal_snapshot.phase_execution_bridge_usable) {
+      RCLCPP_DEBUG(get_logger(),
+                   "retaining current MAIN command for bounded source-time phase witness; "
+                   "raw_anchor=%.3f final_source_error=%.3f final_predicted=%.3f",
+                   anchor_error_m,
+                   causal_snapshot.phase_execution_final_source_error_m,
+                   causal_snapshot.phase_execution_final_predicted_error_m);
     } else if (use_safety_suffix) {
       RCLCPP_WARN(get_logger(),
                   "planner backend hot replan failed (%d); retaining visible committed trajectory "
@@ -5929,6 +6052,27 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                     causal_trace.command_motion_over_state_age_m);
     add_trace_value("velocity_residual_time_aligned_mps",
                     causal_trace.velocity_residual_time_aligned_mps);
+    add_trace_value("phase_execution_lag_s", causal_trace.phase_execution_lag_s);
+    add_trace_value("phase_execution_source_error_m",
+                    causal_trace.phase_execution_source_error_m);
+    add_trace_value("phase_execution_certificate_accepted",
+                    causal_trace.phase_execution_certificate_accepted ? 1 : 0);
+    add_trace_value("phase_execution_bridge_usable",
+                    causal_trace.phase_execution_bridge_usable ? 1 : 0);
+    add_trace_value("phase_execution_final_source_stamp_ns",
+                    causal_trace.phase_execution_final_source_stamp_ns);
+    add_trace_value("phase_execution_final_evaluation_stamp_ns",
+                    causal_trace.phase_execution_final_evaluation_stamp_ns);
+    add_trace_value("phase_execution_final_lag_s",
+                    causal_trace.phase_execution_final_lag_s);
+    add_trace_value("phase_execution_final_source_error_m",
+                    causal_trace.phase_execution_final_source_error_m);
+    add_trace_value("phase_execution_final_predicted_error_m",
+                    causal_trace.phase_execution_final_predicted_error_m);
+    add_trace_value("phase_execution_final_relative_velocity_mps",
+                    causal_trace.phase_execution_final_relative_velocity_mps);
+    add_trace_value("phase_execution_final_certificate_accepted",
+                    causal_trace.phase_execution_final_certificate_accepted ? 1 : 0);
     add_trace_value("causal_execution_localization_epoch",
                     causal_trace.execution_localization_epoch);
     add_trace_value("causal_execution_goal_epoch", causal_trace.execution_goal_epoch);

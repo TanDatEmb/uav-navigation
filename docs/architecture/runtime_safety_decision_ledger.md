@@ -1,5 +1,52 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-08 - Bound retained MAIN tracking through a source-time phase witness
+
+- **Owner/status:** runtime retained-command safety certificate;
+  `IMPLEMENTED`, development characterization only. The planner, PX4 setpoint
+  clock, command lease, and recovery state machine remain unchanged.
+- **Scope:** When the active bundle is an ordinary MAIN-with-BACKUP command,
+  the execution state is fresh/known-free, the certified path remains clear,
+  and the source-time command sample is on the same ordered MAIN segment, the
+  runtime may evaluate the existing `tracking_error_budget_m` at the execution
+  state's source timestamp. The current-command position must still remain
+  below the existing absolute command-anchor cap; a bounded forecast using
+  source/vehicle relative velocity must remain inside the same tube through
+  the next planner validation interval; and the MAIN horizon must not cross
+  the immutable MAIN/BACKUP seam or lease end. The witness is rejected for
+  BACKUP, EMERGENCY, terminal, stale, ambiguous, nonfinite, non-known-free,
+  reversed, epoch-mismatched, or recovery-state execution. The raw and
+  time-aligned values remain in the execution trace.
+- **Safety impact:** This does not increase the `0.25 m` geometric tracking
+  budget, change corridor/world/dynamic/flatness/yaw certificates, retime a
+  polynomial, extend a lease, alter bundle ownership, or grant BACKUP/recovery
+  authority. The phase witness can only preserve the existing MAIN owner for
+  one bounded validation interval after the existing path/world checks pass;
+  the raw current-command decision remains strict for suffix/recovery use, and
+  invalid or ambiguous input uses the prior conservative fail-closed path.
+  The final retained-command transaction re-samples the execution state and
+  the same immutable world view before preserving MAIN; it does not carry an
+  earlier forecast across a delayed lock/validation boundary.
+- **Evidence:** The Q1 failure mixed a raw command-now/state-source residual
+  above `0.25 m` with a source-time residual below the same budget. The design
+  review selected a bounded source-time witness over a path-progress governor
+  or MPCC because the current executor owns an already-certified timed PVAJ
+  bundle and PX4 consumes timed P/V/A setpoints. The current forecast is a
+  constant-relative-velocity monitor over one existing planner interval; it is
+  not a nonlinear PX4 containment proof. Focused FSM tests cover valid phase
+  acceptance, raw residual above the old pointwise gate, forecast/lateral
+  excess, MAIN/BACKUP seam crossing, stale/role/stop/reversal rejection,
+  delayed final-transaction expiry, and unchanged command/lease identity.
+- **Removal/review condition:** Remove or revise if synchronized C/S/P/L/G
+  evidence shows that source-time acceptance hides a physical or estimator
+  excursion, if phase ambiguity occurs, or if repeated Q1 evidence shows
+  clearance, recovery, or command-authority regression. Promote only after a
+  focused RED/GREEN fixture and repeated representative Q1 evidence.
+- **Verification:** Run the phase-certificate focused tests, affected runtime
+  and PX4 external-mode tests, planning/mapping/contracts, canonical Release
+  build, `git diff --check`, then one unchanged Q1 run. Diagnostic high-effort
+  phase analysis is not qualification evidence.
+
 ### 2026-09-08 - Harden diagnostic evidence without changing runtime gates
 
 - **Owner/status:** Q1 evidence and replay tooling; `DIAGNOSTIC-ONLY`.

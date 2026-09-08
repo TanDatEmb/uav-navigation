@@ -922,6 +922,179 @@ TEST(PlannerFsm, SamplesExactFractionalMainWithBackupEndpointRole) {
   EXPECT_FALSE(inconsistent.valid());
 }
 
+TEST(PlannerFsm, AcceptsBoundedSourceTimeMainPhaseWithoutIncreasingTrackingTube) {
+  navigation_planning::CandidateBundle candidate;
+  candidate.world_identity.localization_epoch = 1U;
+  candidate.world_identity.generation = 1U;
+  candidate.world_identity.revision = 1U;
+  candidate.world_identity.observation_stamp_ns = 1;
+  candidate.pinned_world_identity = candidate.world_identity;
+  candidate.localization_epoch = 1U;
+  candidate.goal_epoch = 1U;
+  candidate.request_id = 1U;
+  candidate.bundle_generation = 1U;
+  candidate.start_wall_time_s = 10.0;
+  candidate.duration_s = 2.0;
+  candidate.backup_start_time_s = 1.5;
+  candidate.declared_start_ns = 10000000000LL;
+  candidate.declared_end_ns = 12000000000LL;
+  candidate.valid_from_ns = candidate.declared_start_ns;
+  candidate.valid_until_ns = candidate.declared_end_ns;
+  candidate.activation_stamp_ns = candidate.valid_from_ns;
+  candidate.role = navigation_planning::CandidateRole::kMain;
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.certificates = {true, true, true, false};
+  candidate.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  candidate.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  candidate.role_schedule = {
+      {0.0, 1.5, navigation_planning::CandidateRole::kMain},
+      {1.5, 2.0, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](const std::int64_t stamp_ns,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.trajectory_time_s = static_cast<double>(stamp_ns - 10000000000LL) * 1.0e-9;
+    point.position_world = Eigen::Vector3d{1.0 + 3.0 * point.trajectory_time_s, 0.0, 0.0};
+    point.velocity_world = Eigen::Vector3d{3.0, 0.0, 0.0};
+    point.role = point.trajectory_time_s < 1.5
+        ? navigation_planning::CandidateRole::kMain
+        : navigation_planning::CandidateRole::kBackup;
+    return true;
+  };
+
+  const auto now = candidate.sampleAtDeclaredStamp(10500000000LL);
+  const auto source = candidate.sampleAtDeclaredStamp(10476000000LL);
+  ASSERT_TRUE(now.has_value());
+  ASSERT_TRUE(source.has_value());
+  const auto result = assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.428, -0.24, 0.0}, Eigen::Vector3d{3.0, 0.0, 0.0},
+      10500000000LL, 10476000000LL,
+      100000000LL, 0.1, 0.25, 0.75, true, true);
+  EXPECT_TRUE(result.accepted());
+  EXPECT_NEAR(result.source_time_error_m, 0.24, 1.0e-12);
+  EXPECT_NEAR(result.predicted_source_error_m, 0.24, 1.0e-12);
+  EXPECT_NEAR(result.raw_divergence_m, std::sqrt(0.072 * 0.072 + 0.24 * 0.24), 1.0e-12);
+  EXPECT_GT(result.raw_divergence_m, 0.25);
+  EXPECT_LT(result.raw_divergence_m, 0.75);
+
+  // The same physical residual is initially admissible at .248 m, but a
+  // transaction delayed by 80 ms must recompute the forecast rather than
+  // carry the old witness across the next validation horizon.
+  const auto initial_delayed_case = assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.44, -0.23, 0.0},
+      Eigen::Vector3d{2.85, 0.0, 0.0}, 10500000000LL, 10480000000LL,
+      100000000LL, 0.1, 0.25, 0.75, true, true);
+  EXPECT_TRUE(initial_delayed_case.accepted());
+  EXPECT_NEAR(initial_delayed_case.predicted_source_error_m, 0.248, 1.0e-12);
+  EXPECT_FALSE(assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.44, -0.23, 0.0},
+      Eigen::Vector3d{2.85, 0.0, 0.0}, 10580000000LL, 10480000000LL,
+      100000000LL, 0.1, 0.25, 0.75, true, true).accepted());
+
+  // A source-time point can be inside the unchanged tracking tube while a
+  // large relative lateral velocity makes the next validation interval
+  // unsafe. The bounded forecast must reject that case.
+  EXPECT_FALSE(assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.464, -0.2443, 0.0},
+      Eigen::Vector3d{3.0, 1.0, 0.0}, 10500000000LL, 10488000000LL,
+      100000000LL, 0.1, 0.25, 0.75, true, true).accepted());
+
+  // The phase witness cannot cross the immutable MAIN/BACKUP seam. It is not
+  // a way to borrow a future role interval while the current sample is MAIN.
+  EXPECT_FALSE(assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{5.434, 0.0, 0.0},
+      Eigen::Vector3d{3.0, 0.0, 0.0}, 11490000000LL, 11478000000LL,
+      100000000LL, 0.1, 0.25, 0.75, true, true).accepted());
+}
+
+TEST(PlannerFsm, PhaseCertificateRejectsUnsafeOrAmbiguousMotion) {
+  navigation_planning::CandidateBundle candidate;
+  candidate.world_identity.localization_epoch = 1U;
+  candidate.world_identity.generation = 1U;
+  candidate.world_identity.revision = 1U;
+  candidate.world_identity.observation_stamp_ns = 1;
+  candidate.pinned_world_identity = candidate.world_identity;
+  candidate.localization_epoch = 1U;
+  candidate.goal_epoch = 1U;
+  candidate.request_id = 1U;
+  candidate.bundle_generation = 1U;
+  candidate.start_wall_time_s = 10.0;
+  candidate.duration_s = 2.0;
+  candidate.backup_start_time_s = 1.5;
+  candidate.declared_start_ns = 10000000000LL;
+  candidate.declared_end_ns = 12000000000LL;
+  candidate.valid_from_ns = candidate.declared_start_ns;
+  candidate.valid_until_ns = candidate.declared_end_ns;
+  candidate.activation_stamp_ns = candidate.valid_from_ns;
+  candidate.role = navigation_planning::CandidateRole::kMain;
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.certificates = {true, true, true, false};
+  candidate.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  candidate.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  candidate.role_schedule = {
+      {0.0, 1.5, navigation_planning::CandidateRole::kMain},
+      {1.5, 2.0, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](const std::int64_t stamp_ns,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.trajectory_time_s = static_cast<double>(stamp_ns - 10000000000LL) * 1.0e-9;
+    point.position_world = Eigen::Vector3d{1.0 + 3.0 * point.trajectory_time_s, 0.0, 0.0};
+    point.velocity_world = Eigen::Vector3d{3.0, 0.0, 0.0};
+    point.role = point.trajectory_time_s < 1.5
+        ? navigation_planning::CandidateRole::kMain
+        : navigation_planning::CandidateRole::kBackup;
+    return true;
+  };
+  const auto now = candidate.sampleAtDeclaredStamp(10500000000LL);
+  const auto source = candidate.sampleAtDeclaredStamp(10488000000LL);
+  ASSERT_TRUE(now.has_value());
+  ASSERT_TRUE(source.has_value());
+
+  EXPECT_FALSE(assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.464, 0.26, 0.0}, Eigen::Vector3d{3.0, 0.0, 0.0},
+      10500000000LL, 10488000000LL,
+      100000000LL, 0.1, 0.25, 0.75, true, true).accepted());
+  EXPECT_FALSE(assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.464, 0.0, 0.0}, Eigen::Vector3d{-3.0, 0.0, 0.0},
+      10500000000LL, 10488000000LL,
+      100000000LL, 0.1, 0.25, 0.75, true, true).accepted());
+  EXPECT_FALSE(assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.464, 0.0, 0.0}, Eigen::Vector3d{3.0, 0.0, 0.0},
+      10500000000LL, 10488000000LL,
+      100000000LL, 0.1, 0.25, 0.75, false, true).accepted());
+  EXPECT_FALSE(assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.464, 0.0, 0.0}, Eigen::Vector3d{3.0, 0.0, 0.0},
+      10500000000LL, 10488000000LL,
+      100000000LL, 0.1, 0.25, 0.75, true, false).accepted());
+  EXPECT_FALSE(assessPhaseExecutionCertificate(
+      candidate, Eigen::Vector3d{2.464, 0.0, 0.0}, Eigen::Vector3d{3.0, 0.0, 0.0},
+      10500000000LL, 10488000000LL, 10000000LL, 0.1, 0.25, 0.75,
+      true, true).accepted());
+}
+
+TEST(PlannerFsm, PhaseBridgePreservesOnlyCurrentMainWithinLease) {
+  const auto accepted = [&](bool plan_from_rest, ExecutionRecoveryState state,
+                            std::uint64_t state_epoch, bool failure_latched,
+                            std::int64_t valid_until_ns) {
+    return phaseExecutionBridgeMayPreserveMain(
+        true, true, true, true, plan_from_rest, state, state_epoch, 7U,
+        failure_latched, 10000000000LL, valid_until_ns, 100000000LL);
+  };
+
+  EXPECT_TRUE(accepted(false, ExecutionRecoveryState::kTrackMain, 7U, false,
+                      10200000000LL));
+  EXPECT_FALSE(accepted(true, ExecutionRecoveryState::kTrackMain, 7U, false,
+                       10200000000LL));
+  EXPECT_FALSE(accepted(false, ExecutionRecoveryState::kStoppedRecovery, 7U, false,
+                       10200000000LL));
+  EXPECT_FALSE(accepted(false, ExecutionRecoveryState::kTrackMain, 8U, false,
+                       10200000000LL));
+  EXPECT_FALSE(accepted(false, ExecutionRecoveryState::kTrackMain, 7U, true,
+                       10200000000LL));
+  EXPECT_FALSE(accepted(false, ExecutionRecoveryState::kTrackMain, 7U, false,
+                       10050000000LL));
+
+}
+
 TEST(PlannerFsm, RestartsAtLocalTrajectoryBoundary) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kRestartFromRest, false, true, false),
             PlannerResultDisposition::RestartFromRest);
