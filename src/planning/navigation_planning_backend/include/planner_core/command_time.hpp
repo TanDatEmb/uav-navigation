@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace navigation_planning_backend {
 
@@ -64,11 +65,36 @@ inline HotReplanWindow hotReplanWindow(double replan_start_wall_time_s,
       !std::isfinite(command_duration_s) || command_duration_s <= 0.0) {
     return {};
   }
-  const double start_tt_s =
+  double start_tt_s =
       replan_start_wall_time_s - command_start_wall_time_s;
+  if (!std::isfinite(start_tt_s)) {
+    return {};
+  }
+
+  // The runtime clock and the committed command start originate from the
+  // same nanosecond epoch, but this helper receives both as independently
+  // rounded doubles.  At an exact execution boundary their subtraction can
+  // therefore be a few ULPs below zero.  Admit only that representation error;
+  // a real replan-before-command condition remains fail-closed.
+  const double epoch_scale = std::max(
+      1.0, std::max(std::abs(replan_start_wall_time_s),
+                    std::abs(command_start_wall_time_s)));
+  const double next_epoch =
+      std::nextafter(epoch_scale, std::numeric_limits<double>::infinity());
+  const double epoch_ulp = next_epoch > epoch_scale
+      ? next_epoch - epoch_scale
+      : std::numeric_limits<double>::epsilon() * epoch_scale;
+  const double roundoff_tolerance_s = 4.0 * epoch_ulp;
+  if (start_tt_s < 0.0) {
+    if (!std::isfinite(roundoff_tolerance_s) ||
+        start_tt_s < -roundoff_tolerance_s) {
+      return {};
+    }
+    start_tt_s = 0.0;
+  }
+
   const double state_tt_s = start_tt_s + forward_time_s;
-  if (!std::isfinite(start_tt_s) || start_tt_s < 0.0 ||
-      !std::isfinite(state_tt_s) || state_tt_s < start_tt_s) {
+  if (!std::isfinite(state_tt_s) || state_tt_s < start_tt_s) {
     return {};
   }
   return {true, state_tt_s >= command_duration_s, start_tt_s, state_tt_s};

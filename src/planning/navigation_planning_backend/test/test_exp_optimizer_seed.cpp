@@ -244,6 +244,93 @@ TEST(ExpOptimizer, HighSpeedMultiCorridorSolveKeepsEachPieceCertified) {
   }
 }
 
+TEST(ExpOptimizer, MandatoryFeasibilityUsesHardDeadlineAfterRefinementCutoff) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.optimization_dynamic_reserve_ratio = 1.0;
+  config.max_vel = 8.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makeMovingPositionState(0.0, 8.0);
+  const auto tail = makePositionState(30.0);
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path;
+  guide_path.emplace_back(head.col(0));
+  guide_path.emplace_back(navigation_math::Vec3f(10.0, 0.0, 1.0));
+  guide_path.emplace_back(navigation_math::Vec3f(20.0, 0.0, 1.0));
+  guide_path.emplace_back(tail.col(0));
+  const std::vector<double> guide_times{0.0, 1.8, 3.6, 5.6};
+  geometry_utils::PolytopeVec corridors{
+      makeBox(-1.0, 12.0, -2.0, 2.0, 0.0, 3.0),
+      makeBox(8.0, 22.0, -2.0, 2.0, 0.0, 3.0),
+      makeBox(18.0, 31.0, -2.0, 2.0, 0.0, 3.0)};
+  geometry_utils::Trajectory trajectory;
+
+  const auto now = std::chrono::steady_clock::now();
+  const auto refinement_deadline = std::chrono::duration_cast<
+      std::chrono::nanoseconds>(now.time_since_epoch()).count();
+  const auto hard_deadline = std::chrono::duration_cast<
+      std::chrono::nanoseconds>((now + std::chrono::seconds(1)).time_since_epoch()).count();
+  optimizer.setSolveBudget(nullptr, refinement_deadline, hard_deadline);
+
+  const auto result = optimizer.solve(
+      head, tail, guide_path, guide_times, corridors, trajectory,
+      false, false, false);
+
+  ASSERT_TRUE(result.candidateAvailable());
+  ASSERT_FALSE(trajectory.empty());
+  const auto diagnostics = optimizer.diagnostics();
+  EXPECT_EQ(diagnostics.refinement_budget_at_entry_us, 0);
+  EXPECT_FALSE(diagnostics.hard_deadline_observed);
+  EXPECT_GT(diagnostics.lbfgs_attempt_count, 0);
+  EXPECT_EQ(diagnostics.certified_seed_failure_stage, 5);
+  EXPECT_LE(trajectory.getMaxVelRate(), config.max_vel);
+  EXPECT_LE(trajectory.getMaxAccRate(), config.max_acc);
+  EXPECT_LE(trajectory.getMaxJerRate(), config.max_jerk);
+}
+
+TEST(ExpOptimizer, MandatoryFeasibilityReportsExpiredHardDeadline) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.optimization_dynamic_reserve_ratio = 1.0;
+  config.max_vel = 8.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makeMovingPositionState(0.0, 8.0);
+  const auto tail = makePositionState(30.0);
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path;
+  guide_path.emplace_back(head.col(0));
+  guide_path.emplace_back(navigation_math::Vec3f(10.0, 0.0, 1.0));
+  guide_path.emplace_back(navigation_math::Vec3f(20.0, 0.0, 1.0));
+  guide_path.emplace_back(tail.col(0));
+  const std::vector<double> guide_times{0.0, 1.8, 3.6, 5.6};
+  geometry_utils::PolytopeVec corridors{
+      makeBox(-1.0, 12.0, -2.0, 2.0, 0.0, 3.0),
+      makeBox(8.0, 22.0, -2.0, 2.0, 0.0, 3.0),
+      makeBox(18.0, 31.0, -2.0, 2.0, 0.0, 3.0)};
+  geometry_utils::Trajectory trajectory;
+
+  const auto deadline = std::chrono::steady_clock::now();
+  const auto expired_deadline = std::chrono::duration_cast<
+      std::chrono::nanoseconds>(deadline.time_since_epoch()).count();
+  optimizer.setSolveBudget(nullptr, expired_deadline, expired_deadline);
+
+  const auto result = optimizer.solve(
+      head, tail, guide_path, guide_times, corridors, trajectory,
+      false, false, false);
+
+  EXPECT_FALSE(result.candidateAvailable());
+  EXPECT_TRUE(trajectory.empty());
+  EXPECT_TRUE(optimizer.diagnostics().hard_deadline_observed);
+}
+
 TEST(ExpOptimizer, PassThroughJunctionRemainsInsideAcceptanceBall) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.max_vel = 5.0;

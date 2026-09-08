@@ -894,6 +894,24 @@ TEST(PlannerTrajectory, HotReplanUsesExecutableCommandClock) {
   EXPECT_TRUE(stale_history.reaches_command_end);
 }
 
+TEST(PlannerTrajectory, HotReplanAcceptsNanosecondBoundaryRoundoffOnly) {
+  constexpr double replan_start_wall_time_s = 27.072;
+  const double command_start_wall_time_s = std::nextafter(
+      replan_start_wall_time_s, std::numeric_limits<double>::infinity());
+
+  const auto rounded_boundary = navigation_planning_backend::hotReplanWindow(
+      replan_start_wall_time_s, command_start_wall_time_s, 0.4, 2.0);
+  ASSERT_TRUE(rounded_boundary.valid);
+  EXPECT_DOUBLE_EQ(rounded_boundary.start_tt_s, 0.0);
+  EXPECT_DOUBLE_EQ(rounded_boundary.state_tt_s, 0.4);
+
+  const double one_ulp = command_start_wall_time_s - replan_start_wall_time_s;
+  const auto genuinely_early = navigation_planning_backend::hotReplanWindow(
+      replan_start_wall_time_s, command_start_wall_time_s + 8.0 * one_ulp,
+      0.4, 2.0);
+  EXPECT_FALSE(genuinely_early.valid);
+}
+
 TEST(PlannerTrajectory, HotReplanClockFailsClosedAtInvalidBoundaries) {
   const double nan = std::numeric_limits<double>::quiet_NaN();
   EXPECT_FALSE(navigation_planning_backend::hotReplanWindow(

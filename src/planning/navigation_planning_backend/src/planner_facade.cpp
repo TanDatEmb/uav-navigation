@@ -57,6 +57,7 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
   output.first_lbfgs_return_code = source.first_lbfgs_return_code;
   output.last_lbfgs_return_code = source.last_lbfgs_return_code;
   output.cancelled = source.cancelled;
+  output.hard_deadline_observed = source.hard_deadline_observed;
   output.valid = source.valid;
   output.used_certified_seed = source.used_certified_seed;
   output.certified_seed_failure_stage = source.certified_seed_failure_stage;

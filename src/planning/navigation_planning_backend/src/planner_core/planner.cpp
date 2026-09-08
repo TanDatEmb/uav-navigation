@@ -3592,16 +3592,16 @@ double knownFreeGuideSupport(
         const auto refinement_deadline_ns =
             solve_deadline.refinementDeadlineNanoseconds(
                     cfg_.finalization_reserve_s);
-        const bool refinement_cutoff_observed =
-            solve_deadline.conservativeRemaining(
-                    planner_context_->getSimTime()) <=
-            cfg_.finalization_reserve_s;
+        const bool hard_deadline_observed_before_nominal =
+            solve_deadline.expired(planner_context_->getSimTime()) ||
+            solve_deadline.steadyExpired();
         exp_traj_opt_->setSolveBudget(
-                &solve_cancelled_, refinement_deadline_ns);
+                &solve_cancelled_, refinement_deadline_ns,
+                solve_deadline.steadyDeadlineNanoseconds());
         const auto nominal_result = exp_traj_opt_->solve(
             pos_init_state, pos_fina_state, guide_path, guide_stamp,
             sfc, out_traj,
-            refinement_cutoff_observed,
+            hard_deadline_observed_before_nominal,
             baseline_only,
             urgent_baseline);
         last_nominal_solve_status_ = nominal_result.status;

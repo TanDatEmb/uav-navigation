@@ -53,6 +53,7 @@ namespace traj_opt {
         int first_lbfgs_return_code{-1};
         int last_lbfgs_return_code{-1};
         bool cancelled{false};
+        bool hard_deadline_observed{false};
         bool valid{false};
         bool used_certified_seed{false};
         bool baseline_fallback_to_optimizer{false};
@@ -241,6 +242,8 @@ namespace traj_opt {
 
             std::atomic_bool* solve_cancelled{nullptr};
             std::int64_t steady_deadline_ns{0};
+            std::int64_t refinement_deadline_ns{0};
+            std::int64_t hard_deadline_ns{0};
             int solver_attempt{0};
             int nonfinite_evaluation_count{0};
             int first_nonfinite_stage{0};
@@ -310,9 +313,13 @@ namespace traj_opt {
         ~ExpTrajOpt();
 
         void setSolveBudget(std::atomic_bool* solve_cancelled,
-                            std::int64_t steady_deadline_ns) noexcept {
+                            std::int64_t refinement_deadline_ns,
+                            std::int64_t hard_deadline_ns = 0) noexcept {
             opt_vars.solve_cancelled = solve_cancelled;
-            opt_vars.steady_deadline_ns = steady_deadline_ns;
+            opt_vars.refinement_deadline_ns = refinement_deadline_ns;
+            opt_vars.hard_deadline_ns = hard_deadline_ns > 0
+                    ? hard_deadline_ns : refinement_deadline_ns;
+            opt_vars.steady_deadline_ns = refinement_deadline_ns;
         }
 
         // Planning-thread-only recovery envelope. This lowers the velocity

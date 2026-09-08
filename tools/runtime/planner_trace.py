@@ -116,6 +116,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "exp_lbfgs_first_return_code": ("exp_lbfgs_first_return_code",),
     "exp_lbfgs_last_return_code": ("exp_lbfgs_last_return_code",),
     "exp_lbfgs_cancelled": ("exp_lbfgs_cancelled",),
+    "exp_hard_deadline_observed": ("exp_hard_deadline_observed",),
     "exp_initial_normalized_dynamic_violation": (
         "exp_initial_normalized_dynamic_violation",
     ),
@@ -464,6 +465,7 @@ def normalize_planner_trace_record(
             values["exp_lbfgs_last_return_code"]
         ),
         "exp_lbfgs_cancelled": _bool(values["exp_lbfgs_cancelled"]),
+        "exp_hard_deadline_observed": _bool(values["exp_hard_deadline_observed"]),
         "exp_initial_normalized_dynamic_violation": _float(
             values["exp_initial_normalized_dynamic_violation"]
         ),

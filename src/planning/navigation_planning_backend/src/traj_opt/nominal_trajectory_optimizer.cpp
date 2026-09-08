@@ -865,11 +865,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                             const bool suppress_optional_refinement) {
     resetDiagnostics();
     diagnostics_.valid = true;
-    if (opt_vars.steady_deadline_ns > 0) {
+    if (opt_vars.refinement_deadline_ns > 0) {
         const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
         diagnostics_.refinement_budget_at_entry_us = std::max<std::int64_t>(
-                0, (opt_vars.steady_deadline_ns - now_ns) / 1000);
+                0, (opt_vars.refinement_deadline_ns - now_ns) / 1000);
     }
 
     if (!std::isfinite(relCostTol) || relCostTol <= 0.0 ||
@@ -1147,6 +1147,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
             deterministic_seed_certificate.maximum_acceleration_mps2;
     diagnostics_.certified_seed_maximum_jerk_mps3 =
             deterministic_seed_certificate.maximum_jerk_mps3;
+    // A deterministic seed is the fast, certified path and may leave the
+    // remainder of the hard solve budget to optional refinement/finalization.
+    // If it is unavailable, however, MINCO is mandatory feasibility work; it
+    // must not inherit the optional-refinement cutoff.  The hard deadline is
+    // still absolute, and every post-solve certificate remains mandatory.
+    if (!deterministic_seed_certificate.valid && opt_vars.hard_deadline_ns > 0) {
+        opt_vars.steady_deadline_ns = opt_vars.hard_deadline_ns;
+    }
 
     const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;
@@ -1251,6 +1259,22 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                     "returning immutable seed duration={}",
                     diagnostics_.final_duration_s);
             return 0.0;
+        }
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        const bool hard_deadline_expired = opt_vars.hard_deadline_ns > 0 &&
+                now_ns >= opt_vars.hard_deadline_ns;
+        if (hard_deadline_expired) {
+            diagnostics_.hard_deadline_observed = true;
+        }
+        const bool explicit_cancellation =
+                opt_vars.solve_cancelled != nullptr &&
+                opt_vars.solve_cancelled->load(std::memory_order_relaxed);
+        if (explicit_cancellation || hard_deadline_expired) {
+            diagnostics_.final_normalized_dynamic_violation =
+                    std::numeric_limits<double>::infinity();
+            traj.clear();
+            return std::numeric_limits<double>::infinity();
         }
         diagnostics_.final_normalized_dynamic_violation =
                 std::numeric_limits<double>::infinity();
@@ -1744,10 +1768,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                         cfg_.max_jerk);
                 continue;
             }
-            diagnostics_.retry_duration_lower_bound_min_s = reserved_duration_s.minCoeff();
-            diagnostics_.retry_duration_lower_bound_max_s = reserved_duration_s.maxCoeff();
-            diagnostics_.retry_free_duration_seed_min_s = free_duration_seed_s.minCoeff();
-            diagnostics_.retry_free_duration_seed_max_s = free_duration_seed_s.maxCoeff();
+            diagnostics_.retry_duration_lower_bound_min_s =
+                    reserved_duration_s.minCoeff();
+            diagnostics_.retry_duration_lower_bound_max_s =
+                    reserved_duration_s.maxCoeff();
+            diagnostics_.retry_free_duration_seed_min_s =
+                    free_duration_seed_s.minCoeff();
+            diagnostics_.retry_free_duration_seed_max_s =
+                    free_duration_seed_s.maxCoeff();
             planner_context_->warn(
                     " -- [ExpOpt] accepted bounded time-stretched guide: "
                     "scale={} vel={}/{} acc={}/{} jerk={}/{}",
@@ -2361,7 +2389,9 @@ NominalSolveResult ExpTrajOpt::solve(
         headPVAJ, tailPVAJ, guide_path, guide_t, sfcs, out_traj,
         baseline_only, suppress_optional_refinement);
     baseline_only_ = false;
-    return classifyNominalSolveResult(success, diagnostics_, deadline_observed);
+    return classifyNominalSolveResult(success, diagnostics_,
+                                      deadline_observed ||
+                                          diagnostics_.hard_deadline_observed);
 }
 
 bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,

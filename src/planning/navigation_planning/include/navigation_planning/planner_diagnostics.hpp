@@ -26,6 +26,7 @@ struct OptimizationDiagnostics {
   int first_lbfgs_return_code{-1};
   int last_lbfgs_return_code{-1};
   bool cancelled{false};
+  bool hard_deadline_observed{false};
   bool valid{false};
   bool used_certified_seed{false};
   int certified_seed_failure_stage{0};
