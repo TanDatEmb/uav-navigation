@@ -2663,7 +2663,7 @@ class RuntimeContractTest(unittest.TestCase):
                 "Got RegisterExtComponentReply\n",
                 encoding="utf-8",
             )
-            with mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 0.1]), \
+            with mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 0.01, 0.06]), \
                 mock.patch.object(runner.time, "sleep"):
                 with self.assertRaises(TimeoutError):
                     runner._wait_for_log_fragment(
