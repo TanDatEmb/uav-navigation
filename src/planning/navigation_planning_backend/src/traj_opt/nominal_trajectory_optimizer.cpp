@@ -1147,15 +1147,6 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
             deterministic_seed_certificate.maximum_acceleration_mps2;
     diagnostics_.certified_seed_maximum_jerk_mps3 =
             deterministic_seed_certificate.maximum_jerk_mps3;
-    // A deterministic seed is the fast, certified path and may leave the
-    // remainder of the hard solve budget to optional refinement/finalization.
-    // If it is unavailable, however, MINCO is mandatory feasibility work; it
-    // must not inherit the optional-refinement cutoff.  The hard deadline is
-    // still absolute, and every post-solve certificate remains mandatory.
-    if (!deterministic_seed_certificate.valid && opt_vars.hard_deadline_ns > 0) {
-        opt_vars.steady_deadline_ns = opt_vars.hard_deadline_ns;
-    }
-
     const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;
         opt_vars.solver_attempt = diagnostics_.lbfgs_attempt_count;

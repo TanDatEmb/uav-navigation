@@ -244,7 +244,7 @@ TEST(ExpOptimizer, HighSpeedMultiCorridorSolveKeepsEachPieceCertified) {
   }
 }
 
-TEST(ExpOptimizer, MandatoryFeasibilityUsesHardDeadlineAfterRefinementCutoff) {
+TEST(ExpOptimizer, MandatoryFeasibilityPreservesFinalizationReserve) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.optimization_dynamic_reserve_ratio = 1.0;
   config.max_vel = 8.0;
@@ -280,16 +280,13 @@ TEST(ExpOptimizer, MandatoryFeasibilityUsesHardDeadlineAfterRefinementCutoff) {
       head, tail, guide_path, guide_times, corridors, trajectory,
       false, false, false);
 
-  ASSERT_TRUE(result.candidateAvailable());
-  ASSERT_FALSE(trajectory.empty());
+  EXPECT_FALSE(result.candidateAvailable());
+  EXPECT_TRUE(trajectory.empty());
   const auto diagnostics = optimizer.diagnostics();
   EXPECT_EQ(diagnostics.refinement_budget_at_entry_us, 0);
   EXPECT_FALSE(diagnostics.hard_deadline_observed);
   EXPECT_GT(diagnostics.lbfgs_attempt_count, 0);
   EXPECT_EQ(diagnostics.certified_seed_failure_stage, 5);
-  EXPECT_LE(trajectory.getMaxVelRate(), config.max_vel);
-  EXPECT_LE(trajectory.getMaxAccRate(), config.max_acc);
-  EXPECT_LE(trajectory.getMaxJerRate(), config.max_jerk);
 }
 
 TEST(ExpOptimizer, MandatoryFeasibilityReportsExpiredHardDeadline) {
