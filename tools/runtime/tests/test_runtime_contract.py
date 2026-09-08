@@ -2510,6 +2510,85 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(sample["z"], 3.0)
         self.assertIsNone(module._interpolate_pose_history(history, 2_500))
 
+    def test_truth_frame_witness_does_not_cross_lio_localization_epoch(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_epoch_witness",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        history = [
+            {
+                "source_stamp_ns": 1_000,
+                "receive_stamp_ns": 1_001,
+                "x": 0.0, "y": 0.0, "z": 0.0,
+                "q_xyzw": [0.0, 0.0, 0.0, 1.0],
+                "localization_epoch": 1,
+                "frame_id": "lio_odom",
+                "child_frame_id": "base_link",
+            },
+            {
+                "source_stamp_ns": 1_020,
+                "receive_stamp_ns": 1_021,
+                "x": 10.0, "y": 0.0, "z": 0.0,
+                "q_xyzw": [0.0, 0.0, 0.0, 1.0],
+                "localization_epoch": 2,
+                "frame_id": "lio_odom",
+                "child_frame_id": "base_link",
+            },
+        ]
+        self.assertIsNone(module._interpolate_pose_history(history, 1_010))
+
+        def make_scenario(lio_history: list[dict[str, object]], stamp: int):
+            scenario = object.__new__(module.ExternalModeScenario)
+            scenario.post_takeoff_mode_entered = True
+            scenario.latest_odom = {
+                "x": 10.0, "y": 0.0, "z": 0.0,
+                "vx": 0.0, "vy": 0.0, "vz": 0.0,
+                "q_xyzw": [0.0, 0.0, 0.0, 1.0],
+                "frame_id": "lio_odom", "child_frame_id": "base_link",
+                "localization_epoch": 2,
+            }
+            scenario.latest_ground_truth = {
+                "x": 0.0, "y": 0.0, "z": 0.0,
+                "vx": 0.0, "vy": 0.0, "vz": 0.0,
+                "q_xyzw": [0.0, 0.0, 0.0, 1.0],
+                "frame_id": "world", "child_frame_id": "base_link",
+            }
+            scenario.latest_odom_stamp_ns = stamp
+            scenario.latest_ground_truth_stamp_ns = stamp - 10
+            scenario.latest_odom_receive_ns = stamp + 1
+            scenario.latest_ground_truth_receive_ns = stamp - 9
+            scenario.odom_pose_history = lio_history
+            scenario.ground_truth_pose_history = [{
+                "source_stamp_ns": stamp - 10,
+                "receive_stamp_ns": stamp - 9,
+                "x": 0.0, "y": 0.0, "z": 0.0,
+                "q_xyzw": [0.0, 0.0, 0.0, 1.0],
+                "frame_id": "world", "child_frame_id": "base_link",
+            }]
+            scenario.latest_lio_health = {
+                "status": "TRACKING", "navigation_valid": True,
+            }
+            scenario.truth_frame_witness = None
+            scenario.truth_frame_witness_invalidated = False
+            scenario.sim_now_ns = 0
+            scenario.lio_gt_origin_offset = None
+            scenario._record = lambda _name, _value: None
+            return scenario
+
+        scenario = make_scenario(history, 1_020)
+        scenario._update_localization_watchdog()
+        self.assertIsNone(scenario.truth_frame_witness)
+
+        scenario = make_scenario([history[1]], 1_030)
+        scenario._update_localization_watchdog()
+        self.assertIsNotNone(scenario.truth_frame_witness)
+        self.assertEqual(scenario.truth_frame_witness["lio_localization_epoch"], 2)
+
     def test_external_mode_scenario_waits_for_registration_before_retrying_nav_state(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario",

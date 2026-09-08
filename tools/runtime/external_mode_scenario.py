@@ -182,6 +182,11 @@ def _interpolate_pose_history(
     left, right = bracket
     left_stamp = int(left["source_stamp_ns"])
     right_stamp = int(right["source_stamp_ns"])
+    for key in ("localization_epoch", "frame_id", "child_frame_id"):
+        left_value = left.get(key)
+        right_value = right.get(key)
+        if left_value is not None and right_value is not None and left_value != right_value:
+            return None
     alpha = (target_stamp_ns - left_stamp) / float(right_stamp - left_stamp)
     position = [
         (1.0 - alpha) * float(left[axis]) + alpha * float(right[axis])
@@ -583,6 +588,13 @@ class ExternalModeScenario:
         values = (float(position.x), float(position.y), float(position.z))
         if all(math.isfinite(value) for value in values):
             localization_epoch = int(message.localization_epoch)
+            previous_epoch = int(self.latest_odom.get("localization_epoch", 0)) \
+                if self.latest_odom is not None else 0
+            if previous_epoch > 0 and previous_epoch != localization_epoch:
+                # Do not let source-time interpolation bridge two LIO
+                # localization frames. Old samples are no longer valid
+                # replay evidence after a reset.
+                self.odom_pose_history.clear()
             truth_frame_witness = getattr(self, "truth_frame_witness", None)
             if (
                 truth_frame_witness is not None
@@ -834,7 +846,11 @@ class ExternalModeScenario:
             if (
                 lio_reference is not None and truth_reference is not None and
                 lio_q is not None and truth_q is not None and
-                int(lio.get("localization_epoch", 0)) > 0 and
+                int(lio_reference.get("localization_epoch", 0)) > 0 and
+                int(lio_reference.get("localization_epoch", 0)) ==
+                    int(lio.get("localization_epoch", 0)) and
+                lio_reference.get("frame_id") == lio.get("frame_id") and
+                lio_reference.get("child_frame_id") == lio.get("child_frame_id") and
                 health.get("status") == "TRACKING" and
                 health.get("navigation_valid") is True and
                 self.latest_odom_receive_ns is not None and
@@ -853,7 +869,7 @@ class ExternalModeScenario:
                     "reference_event": "first_post_takeoff_valid_lio_truth_pair",
                     "reference_sim_time_ns": int(self.sim_now_ns),
                     "reference_source_stamp_ns": int(reference_source_stamp_ns),
-                    "lio_localization_epoch": int(lio["localization_epoch"]),
+                    "lio_localization_epoch": int(lio_reference["localization_epoch"]),
                     "lio_source_stamp_ns": int(lio_reference["source_stamp_ns"]),
                     "lio_receive_stamp_ns": lio_reference.get("receive_stamp_ns"),
                     "gazebo_source_stamp_ns": int(truth_reference["source_stamp_ns"]),
