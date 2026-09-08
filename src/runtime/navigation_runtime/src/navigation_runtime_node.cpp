@@ -4007,7 +4007,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             *transition_bundle, execution_state.position_world,
             execution_state.velocity_world, now_ns, execution_stamp_ns,
             planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
-            planning_interval_s, retained_tracking_limit_m,
+            navigation_contracts::kMainTrackingPhaseWindowS, retained_tracking_limit_m,
             navigation_contracts::kCommandAnchorErrorLimitM,
             true, transition_state_known_free, true)
       : PathRelativeTrackingResult{};
@@ -5054,7 +5054,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
               retained_validation_now_ns,
               retained_execution_state ? retained_execution_state->state.source_stamp_ns : 0,
               planning_interval_s + navigation_planning::PlanningTimingContract::kCommandPeriodS,
-              planning_interval_s, retained_tracking_limit_m,
+              navigation_contracts::kMainTrackingPhaseWindowS, retained_tracking_limit_m,
               navigation_contracts::kCommandAnchorErrorLimitM,
               fresh_vehicle_state, current_vehicle_state_known_free, sampled_path_clear)
         : PathRelativeTrackingResult{};
@@ -5325,7 +5325,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                   ? prepared_final_execution_state->state.source_stamp_ns : 0,
               planning_interval_s +
                   navigation_planning::PlanningTimingContract::kCommandPeriodS,
-              planning_interval_s, retained_tracking_limit_m,
+              navigation_contracts::kMainTrackingPhaseWindowS, retained_tracking_limit_m,
               navigation_contracts::kCommandAnchorErrorLimitM,
               prepared_final_fresh_vehicle_state,
               prepared_final_vehicle_state_known_free, sampled_path_clear)
