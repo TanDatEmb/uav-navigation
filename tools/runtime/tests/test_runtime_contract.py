@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shlex
 import sys
 import tempfile
 import time
@@ -1394,6 +1395,21 @@ class RuntimeContractTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ROS_LOG_DIR": "/tmp/log dir;$unsafe"}, clear=False):
             command = runner._ros_shell(["echo", "ok"])[-1]
         self.assertIn("ROS_LOG_DIR='/tmp/log dir;$unsafe'", command)
+
+    def test_ros_shell_forwards_opt_in_nominal_snapshot_environment(self) -> None:
+        values = {
+            "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR": "/tmp/nominal snapshots",
+            "UAV_NAVIGATION_NOMINAL_SNAPSHOT_INCLUDE_WORLD": "1",
+            "UAV_NAVIGATION_NOMINAL_SNAPSHOT_FAILURE_ONLY": "1",
+            "UAV_NAVIGATION_SOURCE_COMMIT": "abc123",
+            "UAV_NAVIGATION_SOURCE_DIFF_SHA256": "def456",
+            "UAV_NAVIGATION_WORKSPACE": "/tmp/uav-navigation",
+            "UAV_NAVIGATION_BUILD_MANIFEST": "/tmp/manifest.json",
+        }
+        with mock.patch.dict(os.environ, values, clear=False):
+            command = runner._ros_shell(["echo", "ok"])[-1]
+        for key, value in values.items():
+            self.assertIn(f"{key}={shlex.quote(value)}", command)
 
     def test_process_registry_rejects_unvalidated_records_and_roles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

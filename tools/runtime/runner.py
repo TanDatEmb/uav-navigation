@@ -366,6 +366,16 @@ def _ros_shell(command: list[str], *, enable_rviz: bool = False) -> list[str]:
     for key in (
         "ROS_DOMAIN_ID", "PX4_UXRCE_DDS_PORT", "PX4_UXRCE_DDS_NS",
         "ROS_LOG_DIR", "RCUTILS_LOGGING_DIRECTORY", "GZ_LOG_DIR",
+        # Opt-in nominal-problem capture/provenance.  These remain unset for
+        # normal runs and are forwarded only so ROS child processes can emit
+        # the diagnostic snapshot requested by the caller.
+        "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR",
+        "UAV_NAVIGATION_NOMINAL_SNAPSHOT_INCLUDE_WORLD",
+        "UAV_NAVIGATION_NOMINAL_SNAPSHOT_FAILURE_ONLY",
+        "UAV_NAVIGATION_SOURCE_COMMIT",
+        "UAV_NAVIGATION_SOURCE_DIFF_SHA256",
+        "UAV_NAVIGATION_WORKSPACE",
+        "UAV_NAVIGATION_BUILD_MANIFEST",
     ):
         value = os.environ.get(key)
         if value:
@@ -406,6 +416,88 @@ def _start_rviz(session: Session, *, use_sim_time: bool = False) -> None:
 
 def _command_exists(name: str) -> bool:
     return which(name) is not None
+
+
+def _canonical_ros_environment_probe() -> dict[str, Any]:
+    """Validate the same ROS environment used by every ROS child process.
+
+    The runner itself is often invoked from a shell that has not sourced ROS.
+    Child commands already use ``_ros_shell``; preflight must therefore probe
+    that canonical shell rather than the parent's PATH.
+    """
+    ros_setup = Path("/opt/ros/jazzy/setup.bash")
+    workspace_setup = ROOT / "install/setup.bash"
+    result: dict[str, Any] = {
+        "ros_setup": str(ros_setup),
+        "workspace_setup": str(workspace_setup),
+        "ros_distro": None,
+        "ros2_path": None,
+        "microxrceagent_path": None,
+        "workspace_overlay_loaded": False,
+        "status": "INVALID",
+    }
+    if not ros_setup.is_file():
+        result["error"] = f"missing ROS setup: {ros_setup}"
+        return result
+    if not workspace_setup.is_file():
+        result["error"] = f"missing workspace overlay setup: {workspace_setup}"
+        return result
+    command = (
+        "set -e; "
+        f"source {shlex.quote(str(ros_setup))}; "
+        f"source {shlex.quote(str(workspace_setup))}; "
+        "printf 'ROS_DISTRO=%s\\n' \"${ROS_DISTRO:-}\"; "
+        "printf 'ROS2_PATH=%s\\n' \"$(command -v ros2 || true)\"; "
+        "printf 'XRCE_PATH=%s\\n' \"$(command -v MicroXRCEAgent || true)\"; "
+        "printf 'AMENT_PREFIX_PATH=%s\\n' \"${AMENT_PREFIX_PATH:-}\""
+    )
+    try:
+        probe = subprocess.run(
+            ["bash", "-lc", command],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=10.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        result["error"] = f"ROS environment probe failed: {error}"
+        return result
+    if probe.returncode != 0:
+        result["error"] = probe.stderr.strip() or "ROS environment probe exited unsuccessfully"
+        return result
+    values: dict[str, str] = {}
+    for line in probe.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            values[key] = value
+    result["ros_distro"] = values.get("ROS_DISTRO") or None
+    result["ros2_path"] = values.get("ROS2_PATH") or None
+    result["microxrceagent_path"] = values.get("XRCE_PATH") or None
+    prefix_entries = [item for item in values.get("AMENT_PREFIX_PATH", "").split(os.pathsep) if item]
+    install_root = (ROOT / "install").resolve()
+    result["workspace_overlay_loaded"] = any(
+        prefix == install_root or install_root in prefix.parents
+        for prefix in (Path(item).resolve() for item in prefix_entries)
+    )
+    result["status"] = (
+        "VALID"
+        if result["ros_distro"] == "jazzy"
+        and result["ros2_path"]
+        and result["microxrceagent_path"]
+        and result["workspace_overlay_loaded"]
+        else "INVALID"
+    )
+    if result["status"] != "VALID":
+        result["error"] = "; ".join(
+            item for item in (
+                None if result["ros_distro"] == "jazzy" else "ROS_DISTRO is not jazzy",
+                None if result["ros2_path"] else "ros2 is unavailable after sourcing ROS",
+                None if result["microxrceagent_path"] else "MicroXRCEAgent is unavailable after sourcing ROS",
+                None if result["workspace_overlay_loaded"] else "workspace overlay is not in AMENT_PREFIX_PATH",
+            ) if item
+        )
+    return result
 
 
 def _executable_candidates(name: str) -> list[str]:
@@ -1385,6 +1477,30 @@ def _wait_process(process: subprocess.Popen[Any], timeout_s: float, description:
     raise TimeoutError(f"timed out waiting for {description}")
 
 
+def _wait_for_log_fragment(
+    session: Session, role: str, fragment: str, timeout_s: float, description: str
+) -> None:
+    """Wait for a bounded process-readiness marker already emitted to its log."""
+    deadline = time.monotonic() + timeout_s
+    log_path = session.directory / "logs" / f"{role}.log"
+    while time.monotonic() < deadline:
+        try:
+            if fragment in log_path.read_text(encoding="utf-8", errors="replace"):
+                return
+        except OSError:
+            pass
+        live_pgids = {
+            int(record["pgid"])
+            for record in session.live_records()
+            if record.get("pgid") is not None
+        }
+        for record in session.records():
+            if record.get("role") == role and int(record.get("pgid", -1)) not in live_pgids:
+                raise RuntimeError(f"runtime process {role} exited before {description}")
+        time.sleep(0.1)
+    raise TimeoutError(f"timed out waiting for {description}")
+
+
 def _stop_and_report(session: Session, workflow: str, config_path: Path, *, px4_dir: Path | None = None, observation_complete: bool = False) -> dict[str, Any]:
     # Bound the measured interval before processes are stopped.  A monitor
     # timer can otherwise report a final stale event after its publishers have
@@ -1666,14 +1782,21 @@ def run_dataset(
     return 0 if result["verdict"] == "PASS" else 1
 
 
-def _sim_prerequisites(px4_dir: Path, gz_command: str | None) -> list[str]:
+def _sim_prerequisites(
+    px4_dir: Path,
+    gz_command: str | None,
+    ros_environment: dict[str, Any] | None = None,
+) -> list[str]:
     missing: list[str] = []
     python_error = canonical_python_error()
     if python_error:
         missing.append(python_error)
-    for command in ("ros2", "MicroXRCEAgent"):
-        if not _command_exists(command):
-            missing.append(f"missing command: {command}")
+    environment = ros_environment or _canonical_ros_environment_probe()
+    if environment.get("status") != "VALID":
+        missing.append(
+            "invalid canonical ROS environment: "
+            + str(environment.get("error", "validation failed"))
+        )
     if not gz_command:
         missing.append("missing Gazebo simulator command: no 'gz' binary with 'sim --versions' support")
     for path in (
@@ -2142,7 +2265,9 @@ def _run_sim_unlocked(
         ros_domain_id=isolated_domain,
         xrce_port=isolated_xrce_port,
     )
-    prereq = _sim_prerequisites(px4_dir, gz_command)
+    ros_environment = _canonical_ros_environment_probe()
+    _write_runtime(session, environment_validation=ros_environment)
+    prereq = _sim_prerequisites(px4_dir, gz_command, ros_environment)
     try:
         build_provenance = _capture_build_provenance(session, px4_dir)
         metadata_path = session.directory / "metadata.json"
@@ -2214,7 +2339,9 @@ def _run_sim_unlocked(
         if gazebo_native_diagnostic:
             _start_gazebo_native_observer(session, world, gz_command)
         session.start(
-            "xrce_agent", ["MicroXRCEAgent", "udp4", "-p", str(isolated_xrce_port)], cwd=ROOT
+            "xrce_agent",
+            _ros_shell(["MicroXRCEAgent", "udp4", "-p", str(isolated_xrce_port)]),
+            cwd=ROOT,
         )
         control_bridge_source = (
             ROOT / "src/uav_simulation/bridge/px4_mid360_control_bridge.yaml"
@@ -2342,7 +2469,13 @@ def _run_sim_unlocked(
                     str(CANONICAL_PYTHON), str(ROOT / "tools/runtime" / scenario_name),
                     "--output", str(session.directory / "scenario.json"), "--config", str(scenario_config_path),
                 ]
-            scenario = session.start(scenario_role, _ros_shell(scenario_command), cwd=ROOT)
+
+            # External Mode must complete PX4 component registration before the
+            # scenario can arm/take off. Starting the scenario first creates a
+            # startup race: PX4 may issue arming checks before the component's
+            # registration/reply path is ready, then enter failsafe and RTL.
+            # This is harness ordering only; it does not alter navigation or
+            # PX4 control semantics.
             if control_interface == "external_mode":
                 external_mode_args = _external_mode_launch_command(
                     _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml"),
@@ -2351,6 +2484,15 @@ def _run_sim_unlocked(
                 session.start("external_mode", _ros_shell([
                     *external_mode_args,
                 ], enable_rviz=not headless), cwd=ROOT)
+                _wait_for_log_fragment(
+                    session,
+                    "external_mode",
+                    "Got RegisterExtComponentReply",
+                    float(config["runtime"]["timeouts"].get("external_mode_registration_s", 15.0)),
+                    "External Mode PX4 component registration",
+                )
+
+            scenario = session.start(scenario_role, _ros_shell(scenario_command), cwd=ROOT)
             scenario_wait_timeout = (
                 math.inf
                 if bool(scenario_config["scenario"].get("interactive_handover", False))
