@@ -1065,6 +1065,28 @@ class RuntimeContractTest(unittest.TestCase):
                 )
             )
 
+    def test_planner_speed_contract_preserves_requested_physical_and_governed_values(self) -> None:
+        contract = runner._planner_speed_contract(
+            ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
+            5.0,
+        )
+        self.assertEqual(contract["requested_cruise_speed_mps"], 5.0)
+        self.assertEqual(contract["physical_max_velocity_mps"], 12.0)
+        self.assertEqual(contract["control_envelope_max_velocity_mps"], 3.0)
+        self.assertEqual(contract["effective_cruise_speed_mps"], 3.0)
+        self.assertEqual(
+            contract["effective_speed_source"],
+            "min(mission.planning.requested_cruise_speed_mps, "
+            "planner.control_envelope.maximum_velocity_mps)",
+        )
+
+        no_request = runner._planner_speed_contract(
+            ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
+            None,
+        )
+        self.assertIsNone(no_request["requested_cruise_speed_mps"])
+        self.assertEqual(no_request["effective_cruise_speed_mps"], 3.0)
+
     def test_allow_unknown_policy_is_forwarded_to_exploration_planner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")

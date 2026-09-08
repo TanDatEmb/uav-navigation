@@ -93,6 +93,23 @@ def _mission_target_speed_mps(session: Path) -> float | None:
     return finite(scenario.get("expected_max_velocity_mps")) if isinstance(scenario, dict) else None
 
 
+def _speed_contract(session: Path) -> dict[str, Any]:
+    """Return recorded requested/physical/governed speed semantics."""
+    try:
+        metadata = json.loads((session / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        metadata = {}
+    contract = metadata.get("speed_contract") if isinstance(metadata, dict) else None
+    if isinstance(contract, dict):
+        return contract
+    scenario = _yaml_mapping(session / "scenario_config.yaml").get("scenario", {})
+    fallback = finite(scenario.get("expected_max_velocity_mps")) if isinstance(scenario, dict) else None
+    return {
+        "requested_cruise_speed_mps": _mission_target_speed_mps(session),
+        "effective_cruise_speed_mps": fallback,
+    }
+
+
 def _dimension_text(value: Any, digits: int = 1) -> str:
     if not isinstance(value, (list, tuple)) or not value:
         return "—"
@@ -2376,7 +2393,11 @@ def render(session: Path, output: Path) -> Path:
 
     session_name = session.name
     experiment_time = _session_experiment_time(session_name)
-    target_speed_mps = _mission_target_speed_mps(session)
+    speed_contract = _speed_contract(session)
+    requested_speed_mps = finite(speed_contract.get("requested_cruise_speed_mps"))
+    target_speed_mps = requested_speed_mps if requested_speed_mps is not None else _mission_target_speed_mps(session)
+    governed_speed_mps = finite(speed_contract.get("effective_cruise_speed_mps"))
+    physical_speed_mps = finite(speed_contract.get("physical_max_velocity_mps"))
     measured_peak_speed_mps = finite(tracking.get("speed_mps", {}).get("maximum"))
     sim_duration_s = finite(mission.get("duration_sim_s"))
     wall_elapsed_s = finite(mission.get("wall_elapsed_s"))
@@ -2538,7 +2559,7 @@ def render(session: Path, output: Path) -> Path:
     <div class="hero-right">{status_chip(evaluation["overall"], evaluation["overall"])}</div>
   </header>
 
-  <div class="run-log" aria-label="Simulation runtime and experiment context"><span><strong>Experiment time</strong> {esc(experiment_time)}</span><span><strong>Target speed</strong> {fmt(target_speed_mps, 2, ' m/s')}</span><span><strong>Measured peak</strong> {fmt(measured_peak_speed_mps, 2, ' m/s')}</span><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
+  <div class="run-log" aria-label="Simulation runtime and experiment context"><span><strong>Experiment time</strong> {esc(experiment_time)}</span><span><strong>Requested speed</strong> {fmt(target_speed_mps, 2, ' m/s')}</span><span><strong>Governed speed</strong> {fmt(governed_speed_mps, 2, ' m/s')}</span><span><strong>Physical ceiling</strong> {fmt(physical_speed_mps, 2, ' m/s')}</span><span><strong>Measured peak</strong> {fmt(measured_peak_speed_mps, 2, ' m/s')}</span><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
 
   <p class="lede">Acceptance is computed from explicit mission completion, waypoint acceptance, tracking, collision, LIO and PX4 evidence. Telemetry verdict: {esc(evaluation["telemetry_verdict"])}.</p>
 

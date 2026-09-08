@@ -730,6 +730,14 @@ def _write_runtime_evidence_metadata(
     px4_head = _git(px4_dir, "rev-parse", "HEAD")
     px4_msgs_head = _git(ROOT / "src/external/px4_msgs", "rev-parse", "HEAD")
     planner = _mission_planning(mission_file)
+    resolved_requested_speed = (
+        float(planner["requested_cruise_speed_mps"])
+        if planner.get("requested_cruise_speed_mps") is not None else None
+    )
+    speed_contract = _planner_speed_contract(
+        ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
+        resolved_requested_speed,
+    )
     identity = dict(scenario_identity or {})
     identity_files = {
         "scenario_config_sha256": scenario_config_path,
@@ -763,6 +771,7 @@ def _write_runtime_evidence_metadata(
         "stitch_duration_s": 0.4,
         "solve_deadline_s": 0.08,
         "requested_cruise_speed_mps": requested_cruise_speed_mps,
+        "speed_contract": speed_contract,
         "tracking_experiment": tracking_experiment or _tracking_experiment_payload(),
         "environment": {
             "map_profile": map_profile,
@@ -862,6 +871,61 @@ def _mission_planning(source: Path | None) -> dict[str, Any]:
                 raise ValueError(f"mission planning {key} must be finite and positive")
             result[key] = number
     return result
+
+
+def _planner_speed_contract(
+    planner_source: Path,
+    requested_cruise_speed_mps: float | None,
+) -> dict[str, Any]:
+    """Resolve mission intent against the physical and nominal speed owners."""
+    document = yaml.safe_load(planner_source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError(f"planner config must be a mapping: {planner_source}")
+    planner_section = document.get("planner")
+    control = planner_section.get("control_envelope") if isinstance(planner_section, dict) else None
+    traj_opt = document.get("traj_opt")
+    boundary = traj_opt.get("boundary") if isinstance(traj_opt, dict) else None
+    if not isinstance(control, dict) or not isinstance(boundary, dict):
+        raise ValueError(
+            "planner config must contain control_envelope and traj_opt.boundary"
+        )
+
+    def finite_positive(value: Any, name: str) -> float:
+        number = float(value)
+        if not math.isfinite(number) or number <= 0.0:
+            raise ValueError(f"planner speed limit {name} must be finite and positive")
+        return number
+
+    physical = finite_positive(boundary["max_vel"], "traj_opt.boundary.max_vel")
+    control_max = finite_positive(
+        control["maximum_velocity_mps"],
+        "control_envelope.maximum_velocity_mps",
+    )
+    requested = None
+    if requested_cruise_speed_mps is not None:
+        requested = finite_positive(
+            requested_cruise_speed_mps,
+            "mission.planning.requested_cruise_speed_mps",
+        )
+    effective = min(control_max, requested) if requested is not None else control_max
+    return {
+        "requested_cruise_speed_mps": requested,
+        "physical_max_velocity_mps": physical,
+        "control_envelope_max_velocity_mps": control_max,
+        "effective_cruise_speed_mps": effective,
+        "requested_speed_source": (
+            "mission.planning.requested_cruise_speed_mps"
+            if requested is not None else None
+        ),
+        "physical_limit_source": "planner.traj_opt.boundary.max_vel",
+        "control_limit_source": "planner.control_envelope.maximum_velocity_mps",
+        "effective_speed_source": (
+            "min(mission.planning.requested_cruise_speed_mps, "
+            "planner.control_envelope.maximum_velocity_mps)"
+            if requested is not None
+            else "planner.control_envelope.maximum_velocity_mps"
+        ),
+    }
 
 
 def _resolved_mission_file(
@@ -2335,6 +2399,22 @@ def _run_sim_unlocked(
     requested_cruise_speed_mps = (
         float(planning["requested_cruise_speed_mps"])
         if planning.get("requested_cruise_speed_mps") is not None else None
+    )
+    speed_contract = _planner_speed_contract(
+        ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
+        requested_cruise_speed_mps,
+    )
+    scenario_config["scenario"]["requested_cruise_speed_mps"] = requested_cruise_speed_mps
+    scenario_config["scenario"]["speed_contract"] = speed_contract
+    # The upper setpoint gate describes the governed nominal contract, not the
+    # mission's unbounded request.  Keep the request separately for attainment
+    # reporting; do not silently turn a 3 m/s control envelope into a 5 m/s
+    # execution claim.
+    scenario_config["scenario"]["expected_max_velocity_mps"] = speed_contract[
+        "effective_cruise_speed_mps"
+    ]
+    scenario_config_path.write_text(
+        yaml.safe_dump(scenario_config, sort_keys=False), encoding="utf-8"
     )
     _write_runtime_evidence_metadata(
         session,
