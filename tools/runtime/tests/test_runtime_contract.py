@@ -2663,14 +2663,16 @@ class RuntimeContractTest(unittest.TestCase):
                 "Got RegisterExtComponentReply\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(TimeoutError):
-                runner._wait_for_log_fragment(
-                    FakeSession(directory, live=True),
-                    "external_mode",
-                    runner.EXTERNAL_MODE_READY_MARKER,
-                    0.0,
-                    "successful External Mode registration and startup",
-                )
+            with mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 0.1]), \
+                mock.patch.object(runner.time, "sleep"):
+                with self.assertRaises(TimeoutError):
+                    runner._wait_for_log_fragment(
+                        FakeSession(directory, live=True),
+                        "external_mode",
+                        runner.EXTERNAL_MODE_READY_MARKER,
+                        0.05,
+                        "successful External Mode registration and startup",
+                    )
 
     def test_external_mode_readiness_accepts_live_post_registration_marker(self) -> None:
         class FakeSession:
@@ -2714,6 +2716,34 @@ class RuntimeContractTest(unittest.TestCase):
             (directory / "logs").mkdir()
             (directory / "logs" / "external_mode.log").write_text(
                 "Got RegisterExtComponentReply\nRegistration failed\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError):
+                runner._wait_for_log_fragment(
+                    FakeSession(directory),
+                    "external_mode",
+                    runner.EXTERNAL_MODE_READY_MARKER,
+                    1.0,
+                    "successful External Mode registration and startup",
+                )
+
+    def test_external_mode_readiness_rejects_incompatible_api_and_exit(self) -> None:
+        class FakeSession:
+            def __init__(self, directory: Path) -> None:
+                self.directory = directory
+
+            def live_records(self) -> list[dict[str, object]]:
+                return []
+
+            def records(self) -> list[dict[str, object]]:
+                return [{"role": "external_mode", "pgid": 123}]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir)
+            (directory / "logs").mkdir()
+            (directory / "logs" / "external_mode.log").write_text(
+                "Got RegisterExtComponentReply\n"
+                "Incompatible ROS2 library API version\n",
                 encoding="utf-8",
             )
             with self.assertRaises(RuntimeError):
