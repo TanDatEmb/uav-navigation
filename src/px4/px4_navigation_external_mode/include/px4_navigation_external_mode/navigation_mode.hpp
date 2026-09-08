@@ -76,6 +76,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
       const std::optional<Eigen::Vector3f>& velocity_ned,
       const std::optional<Eigen::Vector3f>& acceleration_ned,
       float yaw_ned, float yaw_rate_ned);
+  void publishAlignmentLatchWitnessLocked();
   void publishStatus(std::uint8_t state, std::uint8_t reason,
                      const MissionControllerEvent* event = nullptr);
 
@@ -116,6 +117,21 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::optional<Eigen::Vector3d> lio_to_px4_local_translation_ned_;
   std::uint8_t px4_xy_reset_counter_{0U};
   std::uint8_t px4_z_reset_counter_{0U};
+  std::uint8_t px4_vxy_reset_counter_{0U};
+  std::uint8_t px4_vz_reset_counter_{0U};
+  std::uint8_t px4_heading_reset_counter_{0U};
+  std::uint64_t last_px4_local_position_timestamp_us_{0U};
+  std::uint64_t last_px4_local_position_timestamp_sample_us_{0U};
+  std::int64_t last_px4_local_position_receive_ns_{0};
+  bool last_px4_xy_valid_{false};
+  bool last_px4_z_valid_{false};
+  bool last_px4_vxy_valid_{false};
+  bool last_px4_vz_valid_{false};
+  bool last_px4_dead_reckoning_{false};
+  float last_px4_delta_xy_north_m_{0.0F};
+  float last_px4_delta_xy_east_m_{0.0F};
+  float last_px4_delta_z_m_{0.0F};
+  float last_px4_delta_heading_rad_{0.0F};
   std::int64_t last_px4_local_position_receive_steady_ns_{0};
   bool px4_local_frame_aligned_{false};
   std::optional<navigation_contracts::msg::NavigationCommand> navigation_command_;
@@ -132,6 +148,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t last_propagated_state_sequence_{0U};
   std::int64_t last_lio_diagnostics_ns_{0};
   std::int64_t last_health_source_stamp_ns_{0};
+  std::int64_t last_health_correction_stamp_ns_{0};
+  std::int64_t last_health_propagated_stamp_ns_{0};
   std::int64_t last_health_receive_steady_ns_{0};
   std::optional<Mission> mission_;
   std::unique_ptr<MissionController> mission_controller_;
@@ -180,6 +198,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   Eigen::Vector3d last_velocity_command_enu_{Eigen::Vector3d::Zero()};
   std::uint64_t last_forward_guard_count_{0U};
   std::uint64_t px4_input_trace_sequence_{0U};
+  std::uint64_t alignment_latch_generation_{0U};
 };
 
 class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {

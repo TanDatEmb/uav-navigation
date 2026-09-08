@@ -4221,6 +4221,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
   planner_->setCommandIdentity(
       localization_epoch_at_solve, goal_epoch, goal->request_id);
+  planner_->setNominalProblemDiagnosticIdentity(solve_generation, cycle_count_);
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
   // cannot inherit retry metrics from the previous planning generation.
   planner_->resetOptimizationDiagnostics();
@@ -6057,6 +6058,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     add_trace_value("exp_lbfgs_last_return_code",
                     exp_diagnostics.last_lbfgs_return_code);
     add_trace_value("exp_lbfgs_cancelled", exp_diagnostics.cancelled ? 1 : 0);
+    add_trace_value("exp_hard_deadline_observed",
+                    exp_diagnostics.hard_deadline_observed ? 1 : 0);
     add_trace_value("exp_initial_normalized_dynamic_violation",
                     exp_diagnostics.initial_normalized_dynamic_violation);
     add_trace_value("exp_best_normalized_dynamic_violation",

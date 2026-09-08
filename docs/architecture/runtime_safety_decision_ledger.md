@@ -1,5 +1,28 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-08 - Harden diagnostic evidence without changing runtime gates
+
+- **Owner/status:** Q1 evidence and replay tooling; `DIAGNOSTIC-ONLY`.
+- **Scope:** Keep polynomial-extrema detail logging out of the default timed
+  nominal solve, preserve replay guide/route coordinates as `double`, retain
+  ordinary setup-failed nominal snapshots, and construct the evaluation-only
+  truth-frame witness from source-time-interpolated poses. No planner,
+  estimator, recovery, tracking, lease, or PX4 behavior changes are included.
+- **Safety impact:** None to product behavior. Snapshot/replay capture remains
+  outside the timed transaction; the truth-frame witness is not consumed by
+  navigation or control. Existing fail-closed gates and thresholds remain
+  unchanged.
+- **Evidence:** Frozen Q1 review identified duplicate polynomial root-finding
+  in diagnostic formatting, replay precision loss, setup-failure admission
+  loss, and asynchronous truth-frame pose composition. Focused replay/runtime
+  tests cover the changed diagnostic seams.
+- **Removal/review condition:** Retain until Q1 attribution and replay
+  evidence are complete; remove only with equivalent provenance-preserving
+  tooling and regression coverage.
+- **Verification:** Run focused replay/runtime tests, affected CTest suites,
+  `git diff --check`, and inspect the dirty-WIP diff before any authoritative
+  SITL use.
+
 ### 2026-09-07 - Freeze Q1 nominal-seed investigation without a production fallback
 
 - **Owner/status:** Nominal planning diagnostics and Q1 qualification;

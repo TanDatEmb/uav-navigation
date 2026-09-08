@@ -1,6 +1,7 @@
 #include "px4_navigation_external_mode/navigation_mode.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -407,6 +408,141 @@ void NavigationMode::publishPx4InputTrace(
   add_vector("acceleration_ned", acceleration_ned);
   add("yaw_ned", std::to_string(yaw_ned));
   add("yaw_rate_ned", std::to_string(yaw_rate_ned));
+  array.status.push_back(std::move(status));
+  px4_input_trace_publisher_->publish(std::move(array));
+}
+
+void NavigationMode::publishAlignmentLatchWitnessLocked() {
+  if (!px4_input_trace_publisher_ || !odometry_.has_value() ||
+      !px4_local_position_ned_.has_value() || !px4_local_velocity_ned_.has_value()) {
+    return;
+  }
+  diagnostic_msgs::msg::DiagnosticArray array;
+  const auto latch_ros_time = node().get_clock()->now();
+  array.header.stamp = latch_ros_time;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "navigation_external_mode/ALIGNMENT_LATCH_WITNESS";
+  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = "ALIGNMENT_LATCH_WITNESS";
+  const auto add = [&status](const std::string& key, const std::string& value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = value;
+    status.values.push_back(std::move(item));
+  };
+  const auto add_i64 = [&add](const std::string& key, const std::int64_t value) {
+    add(key, std::to_string(value));
+  };
+  const auto add_u64 = [&add](const std::string& key, const std::uint64_t value) {
+    add(key, std::to_string(value));
+  };
+  const auto add_bool = [&add](const std::string& key, const bool value) {
+    add(key, value ? "true" : "false");
+  };
+  const auto add_double = [&add](const std::string& key, const double value) {
+    std::ostringstream stream;
+    stream << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+    add(key, stream.str());
+  };
+  const auto add_vector = [&add](const std::string& key,
+                                 const Eigen::Vector3d& value) {
+    std::ostringstream stream;
+    stream << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << '[' << value.x() << ',' << value.y() << ',' << value.z() << ']';
+    add(key, stream.str());
+  };
+  const auto add_covariance = [&add](const std::string& key,
+                                     const std::array<double, 36>& covariance) {
+    std::ostringstream stream;
+    stream << std::setprecision(std::numeric_limits<double>::max_digits10) << '[';
+    for (std::size_t index = 0; index < covariance.size(); ++index) {
+      if (index != 0U) stream << ',';
+      stream << covariance[index];
+    }
+    stream << ']';
+    add(key, stream.str());
+  };
+  const auto add_array4 = [&add](const std::string& key,
+                                 const double x, const double y,
+                                 const double z, const double w) {
+    std::ostringstream stream;
+    stream << std::setprecision(std::numeric_limits<double>::max_digits10)
+           << '[' << x << ',' << y << ',' << z << ',' << w << ']';
+    add(key, stream.str());
+  };
+  const auto px4_sample_ns = last_px4_local_position_timestamp_sample_us_ <=
+          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() / 1000)
+      ? static_cast<std::int64_t>(last_px4_local_position_timestamp_sample_us_ * 1000U)
+      : 0;
+  const auto px4_receive_ns = last_px4_local_position_receive_ns_;
+  const auto lio_source_ns = last_propagated_state_stamp_ns_;
+  const auto source_skew_ns = (lio_source_ns > 0 && px4_sample_ns > 0)
+      ? lio_source_ns - px4_sample_ns : 0;
+  const auto receive_skew_ns = (last_odometry_receive_ns_ > 0 && px4_receive_ns > 0)
+      ? last_odometry_receive_ns_ - px4_receive_ns : 0;
+  const auto lio_velocity = Eigen::Vector3d{
+      odometry_->twist.twist.linear.x, odometry_->twist.twist.linear.y,
+      odometry_->twist.twist.linear.z};
+  const auto lio_position = Eigen::Vector3d{
+      odometry_->pose.pose.position.x, odometry_->pose.pose.position.y,
+      odometry_->pose.pose.position.z};
+  add_u64("alignment_generation", alignment_latch_generation_);
+  add_i64("latch_ros_time_ns", latch_ros_time.nanoseconds());
+  add_i64("latch_steady_time_ns", navigation_common::steadyClockNowNanoseconds());
+  add("alignment_basis", "enu_to_ned_swap_xy_neg_z");
+  add("alignment_basis_matrix_ned_from_enu", "[[0,1,0],[1,0,0],[0,0,-1]]");
+  add_vector("t_align_ned", *lio_to_px4_local_translation_ned_);
+  add("lio_frame_id", odometry_->header.frame_id);
+  add("lio_child_frame_id", odometry_->child_frame_id);
+  add_u64("lio_localization_epoch", lio_localization_epoch_);
+  add_u64("lio_sequence", last_propagated_state_sequence_);
+  add_i64("lio_source_stamp_ns", lio_source_ns);
+  add_i64("lio_receive_stamp_ns", last_odometry_receive_ns_);
+  add_vector("lio_position", lio_position);
+  add_vector("lio_velocity", lio_velocity);
+  add_array4("lio_orientation_xyzw", odometry_->pose.pose.orientation.x,
+             odometry_->pose.pose.orientation.y, odometry_->pose.pose.orientation.z,
+             odometry_->pose.pose.orientation.w);
+  add_covariance("lio_pose_covariance", odometry_->pose.covariance);
+  add_covariance("lio_twist_covariance", odometry_->twist.covariance);
+  add_bool("lio_navigation_valid", last_health_navigation_valid_);
+  add_bool("lio_covariance_valid", last_health_covariance_valid_);
+  add_bool("lio_observability_valid", last_health_observability_valid_);
+  add_bool("lio_correction_fresh", last_health_correction_fresh_);
+  add_bool("lio_propagation_valid", last_health_propagation_valid_);
+  add_i64("lio_health_source_stamp_ns", last_health_source_stamp_ns_);
+  add_i64("lio_health_correction_stamp_ns", last_health_correction_stamp_ns_);
+  add_i64("lio_health_propagated_stamp_ns", last_health_propagated_stamp_ns_);
+  add_i64("lio_health_source_age_ns",
+          last_health_source_stamp_ns_ > 0
+              ? latch_ros_time.nanoseconds() - last_health_source_stamp_ns_ : 0);
+  add_i64("lio_correction_age_ns",
+          last_health_correction_stamp_ns_ > 0
+              ? latch_ros_time.nanoseconds() - last_health_correction_stamp_ns_ : 0);
+  add_bool("stationary_history_available", false);
+  add_double("lio_speed_mps", lio_velocity.norm());
+  add_double("px4_speed_mps", px4_local_velocity_ned_->norm());
+  add_u64("px4_timestamp_us", last_px4_local_position_timestamp_us_);
+  add_u64("px4_timestamp_sample_us", last_px4_local_position_timestamp_sample_us_);
+  add_i64("px4_receive_stamp_ns", px4_receive_ns);
+  add_i64("lio_px4_source_skew_ns", source_skew_ns);
+  add_i64("lio_px4_receive_skew_ns", receive_skew_ns);
+  add_vector("px4_position_ned", *px4_local_position_ned_);
+  add_vector("px4_velocity_ned", *px4_local_velocity_ned_);
+  add_bool("px4_xy_valid", last_px4_xy_valid_);
+  add_bool("px4_z_valid", last_px4_z_valid_);
+  add_bool("px4_vxy_valid", last_px4_vxy_valid_);
+  add_bool("px4_vz_valid", last_px4_vz_valid_);
+  add_bool("px4_dead_reckoning", last_px4_dead_reckoning_);
+  add_u64("px4_xy_reset_counter", px4_xy_reset_counter_);
+  add_u64("px4_z_reset_counter", px4_z_reset_counter_);
+  add_u64("px4_vxy_reset_counter", px4_vxy_reset_counter_);
+  add_u64("px4_vz_reset_counter", px4_vz_reset_counter_);
+  add_u64("px4_heading_reset_counter", px4_heading_reset_counter_);
+  add_double("px4_delta_xy_north_m", last_px4_delta_xy_north_m_);
+  add_double("px4_delta_xy_east_m", last_px4_delta_xy_east_m_);
+  add_double("px4_delta_z_m", last_px4_delta_z_m_);
+  add_double("px4_delta_heading_rad", last_px4_delta_heading_rad_);
   array.status.push_back(std::move(status));
   px4_input_trace_publisher_->publish(std::move(array));
 }
@@ -1323,6 +1459,8 @@ void NavigationMode::tryAlignPx4LocalFrameLocked() {
   if (!translation || translation->norm() > 2.0) return;
   lio_to_px4_local_translation_ned_ = *translation;
   px4_local_frame_aligned_ = true;
+  ++alignment_latch_generation_;
+  publishAlignmentLatchWitnessLocked();
   RCLCPP_INFO(node_.get_logger(),
               "PX4 local frame aligned to LIO: translation_ned=(%.3f,%.3f,%.3f)",
               translation->x(), translation->y(), translation->z());
@@ -1349,6 +1487,21 @@ void NavigationMode::onPx4LocalPosition(
   px4_local_velocity_ned_ = Eigen::Vector3d{message->vx, message->vy, message->vz};
   px4_xy_reset_counter_ = message->xy_reset_counter;
   px4_z_reset_counter_ = message->z_reset_counter;
+  px4_vxy_reset_counter_ = message->vxy_reset_counter;
+  px4_vz_reset_counter_ = message->vz_reset_counter;
+  px4_heading_reset_counter_ = message->heading_reset_counter;
+  last_px4_local_position_timestamp_us_ = message->timestamp;
+  last_px4_local_position_timestamp_sample_us_ = message->timestamp_sample;
+  last_px4_local_position_receive_ns_ = node().get_clock()->now().nanoseconds();
+  last_px4_xy_valid_ = message->xy_valid;
+  last_px4_z_valid_ = message->z_valid;
+  last_px4_vxy_valid_ = message->v_xy_valid;
+  last_px4_vz_valid_ = message->v_z_valid;
+  last_px4_dead_reckoning_ = message->dead_reckoning;
+  last_px4_delta_xy_north_m_ = message->delta_xy[0];
+  last_px4_delta_xy_east_m_ = message->delta_xy[1];
+  last_px4_delta_z_m_ = message->delta_z;
+  last_px4_delta_heading_rad_ = message->delta_heading;
   last_px4_local_position_receive_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
   tryAlignPx4LocalFrameLocked();
 }
@@ -1384,6 +1537,10 @@ void NavigationMode::onEstimatorHealth(
   last_health_correction_fresh_ = message->correction_fresh;
   last_health_propagation_valid_ = message->propagation_valid;
   last_health_source_stamp_ns_ = source_stamp_ns;
+  last_health_correction_stamp_ns_ = navigation_common::rosTimeToNanoseconds(
+      message->last_correction_stamp).value_or(0);
+  last_health_propagated_stamp_ns_ = navigation_common::rosTimeToNanoseconds(
+      message->last_propagated_state_stamp).value_or(0);
   last_health_receive_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
   if (lio_localization_epoch_ != 0U &&
       lio_localization_epoch_ != message->localization_epoch) {

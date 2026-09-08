@@ -86,6 +86,129 @@ def _heading_from_quaternion(quaternion: Any) -> float | None:
     )
 
 
+def _normalize_quaternion_xyzw(values: Any) -> list[float] | None:
+    try:
+        q = [float(value) for value in values]
+    except (TypeError, ValueError):
+        return None
+    if len(q) != 4 or not all(math.isfinite(value) for value in q):
+        return None
+    norm = math.sqrt(sum(value * value for value in q))
+    if not math.isfinite(norm) or norm <= 1.0e-9:
+        return None
+    return [value / norm for value in q]
+
+
+def _quaternion_inverse_xyzw(values: list[float]) -> list[float]:
+    return [-values[0], -values[1], -values[2], values[3]]
+
+
+def _quaternion_multiply_xyzw(left: list[float], right: list[float]) -> list[float]:
+    lx, ly, lz, lw = left
+    rx, ry, rz, rw = right
+    return [
+        lw * rx + lx * rw + ly * rz - lz * ry,
+        lw * ry - lx * rz + ly * rw + lz * rx,
+        lw * rz + lx * ry - ly * rx + lz * rw,
+        lw * rw - lx * rx - ly * ry - lz * rz,
+    ]
+
+
+def _rotation_matrix_from_quaternion_xyzw(values: list[float]) -> list[list[float]]:
+    x, y, z, w = values
+    return [
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+        [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+        [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+    ]
+
+
+def _matrix_vector(matrix: list[list[float]], vector: list[float]) -> list[float]:
+    return [sum(matrix[row][column] * vector[column] for column in range(3)) for row in range(3)]
+
+
+def _slerp_quaternion_xyzw(
+    left: list[float], right: list[float], alpha: float
+) -> list[float] | None:
+    """Interpolate two unit quaternions without extrapolating pose data."""
+    first = _normalize_quaternion_xyzw(left)
+    second = _normalize_quaternion_xyzw(right)
+    if first is None or second is None or not math.isfinite(alpha):
+        return None
+    dot = sum(first[index] * second[index] for index in range(4))
+    if dot < 0.0:
+        second = [-value for value in second]
+        dot = -dot
+    dot = min(1.0, max(-1.0, dot))
+    if dot > 0.9995:
+        return _normalize_quaternion_xyzw([
+            first[index] + alpha * (second[index] - first[index])
+            for index in range(4)
+        ])
+    theta = math.acos(dot)
+    sine_theta = math.sin(theta)
+    if not math.isfinite(sine_theta) or abs(sine_theta) <= 1.0e-12:
+        return None
+    first_weight = math.sin((1.0 - alpha) * theta) / sine_theta
+    second_weight = math.sin(alpha * theta) / sine_theta
+    return _normalize_quaternion_xyzw([
+        first_weight * first[index] + second_weight * second[index]
+        for index in range(4)
+    ])
+
+
+def _interpolate_pose_history(
+    history: list[dict[str, Any]], target_stamp_ns: int
+) -> dict[str, Any] | None:
+    """Sample a pose history at a source timestamp using interpolation only."""
+    ordered = sorted(
+        (sample for sample in history if sample.get("source_stamp_ns") is not None),
+        key=lambda sample: int(sample["source_stamp_ns"]),
+    )
+    if not ordered:
+        return None
+    for sample in ordered:
+        if int(sample["source_stamp_ns"]) == target_stamp_ns:
+            return dict(sample)
+    bracket = None
+    for left, right in zip(ordered, ordered[1:]):
+        left_stamp = int(left["source_stamp_ns"])
+        right_stamp = int(right["source_stamp_ns"])
+        if left_stamp <= target_stamp_ns <= right_stamp and right_stamp > left_stamp:
+            bracket = (left, right)
+            break
+    if bracket is None:
+        return None
+    left, right = bracket
+    left_stamp = int(left["source_stamp_ns"])
+    right_stamp = int(right["source_stamp_ns"])
+    alpha = (target_stamp_ns - left_stamp) / float(right_stamp - left_stamp)
+    position = [
+        (1.0 - alpha) * float(left[axis]) + alpha * float(right[axis])
+        for axis in ("x", "y", "z")
+    ]
+    quaternion = _slerp_quaternion_xyzw(
+        list(left.get("q_xyzw", [])), list(right.get("q_xyzw", [])), alpha)
+    if quaternion is None or not _finite_vector(position):
+        return None
+    result = dict(left)
+    result.update({
+        "x": position[0], "y": position[1], "z": position[2],
+        "q_xyzw": quaternion,
+        "source_stamp_ns": int(target_stamp_ns),
+        "source_bracket_start_ns": left_stamp,
+        "source_bracket_end_ns": right_stamp,
+        "source_bracket_gap_ns": right_stamp - left_stamp,
+    })
+    receive_stamps = (
+        left.get("receive_stamp_ns"), right.get("receive_stamp_ns"))
+    if all(stamp is not None for stamp in receive_stamps):
+        result["receive_stamp_ns"] = int(round(
+            (1.0 - alpha) * int(receive_stamps[0]) +
+            alpha * int(receive_stamps[1])))
+    return result
+
+
 def _percentile(values: list[float], fraction: float) -> float | None:
     if not values:
         return None
@@ -171,6 +294,7 @@ class ExternalModeScenario:
         import rclpy
         from geometry_msgs.msg import Point
         from nav_msgs.msg import Odometry
+        from diagnostic_msgs.msg import DiagnosticArray
         from navigation_contracts.msg import (
             NavigationGoal,
             NavigationModeStatus,
@@ -214,10 +338,18 @@ class ExternalModeScenario:
         self.wall_start = time.monotonic()
         self.sim_start_ns: int | None = None
         self.sim_now_ns = 0
-        self.latest_odom: dict[str, float] | None = None
+        self.latest_odom: dict[str, Any] | None = None
         self.latest_odom_stamp_ns: int | None = None
-        self.latest_ground_truth: dict[str, float] | None = None
+        self.latest_odom_receive_ns: int | None = None
+        self.odom_pose_history: list[dict[str, Any]] = []
+        self.latest_ground_truth: dict[str, Any] | None = None
         self.latest_ground_truth_stamp_ns: int | None = None
+        self.latest_ground_truth_receive_ns: int | None = None
+        self.ground_truth_pose_history: list[dict[str, Any]] = []
+        self.latest_lio_health: dict[str, Any] = {}
+        self.alignment_latch_witness: dict[str, Any] | None = None
+        self.truth_frame_witness: dict[str, Any] | None = None
+        self.truth_frame_witness_invalidated = False
         self.goal_publish_count = 0
         self.goal_received_count = 0
         self.goal_request_id = 0
@@ -338,6 +470,10 @@ class ExternalModeScenario:
             self._odometry,
             reliable_qos,
         )
+        self.node.create_subscription(
+            DiagnosticArray, "/lio/diagnostics", self._diagnostics, px4_qos)
+        self.node.create_subscription(
+            DiagnosticArray, "/navigation/diagnostics", self._diagnostics, reliable_qos)
         self.node.create_subscription(Odometry, "/sim/ground_truth/odometry", self._ground_truth, reliable_qos)
         self.node.create_subscription(PointCloud2, "/lidar/points", self._raw_lidar, px4_qos)
         self.node.create_subscription(VehicleLocalPosition, "/fmu/out/vehicle_local_position_v1", self._local_position, px4_qos)
@@ -374,6 +510,68 @@ class ExternalModeScenario:
         if self.sim_now_ns > 0 and self.sim_start_ns is None:
             self.sim_start_ns = self.sim_now_ns
 
+    def _receive_time_ns(self) -> int:
+        try:
+            return int(self.node.get_clock().now().nanoseconds)
+        except (AttributeError, TypeError, ValueError):
+            return int(self.sim_now_ns)
+
+    @staticmethod
+    def _diagnostic_values(status: Any) -> dict[str, str]:
+        return {str(item.key): str(item.value) for item in status.values}
+
+    @staticmethod
+    def _diagnostic_bool(values: dict[str, str], key: str) -> bool | None:
+        if key not in values:
+            return None
+        return values[key].lower() == "true"
+
+    @staticmethod
+    def _diagnostic_level(status: Any) -> int:
+        raw_level = getattr(status, "level", 0)
+        if isinstance(raw_level, (bytes, bytearray)):
+            if not raw_level:
+                return 0
+            return int.from_bytes(raw_level, byteorder="little", signed=False)
+        try:
+            return int(raw_level)
+        except (TypeError, ValueError):
+            return 0
+
+    def _diagnostics(self, message: Any) -> None:
+        receive_ns = self._receive_time_ns()
+        for status in message.status:
+            values = self._diagnostic_values(status)
+            if status.name == "navigation_external_mode/ALIGNMENT_LATCH_WITNESS":
+                witness = {
+                    "status_name": str(status.name),
+                    "level": self._diagnostic_level(status),
+                    "message": str(status.message),
+                    "diagnostic_source_stamp_ns": _time_ns(message.header.stamp),
+                    "diagnostic_receive_stamp_ns": receive_ns,
+                    "values": values,
+                }
+                # A latch record is immutable evidence. Preserve the first
+                # record and keep later re-latches as separate event records.
+                if self.alignment_latch_witness is None:
+                    self.alignment_latch_witness = witness
+                self._record("alignment_latch_witness", witness)
+            elif status.name == "fast_lio/estimator":
+                observability_valid = self._diagnostic_bool(values, "observability_valid")
+                if observability_valid is None:
+                    observability_valid = self._diagnostic_bool(
+                        values, "translation_observability_valid")
+                self.latest_lio_health = {
+                    "status": str(values.get("status", "")),
+                    "navigation_valid": self._diagnostic_bool(values, "navigation_valid"),
+                    "observability_valid": observability_valid,
+                    "correction_fresh": self._diagnostic_bool(values, "correction_fresh"),
+                    "propagation_valid": self._diagnostic_bool(values, "propagation_valid"),
+                    "diagnostic_source_stamp_ns": _time_ns(message.header.stamp),
+                    "diagnostic_receive_stamp_ns": receive_ns,
+                    "values": values,
+                }
+
     def _odometry(self, message: Any) -> None:
         # The product propagated topic is a typed envelope. Keep the nested
         # nav_msgs/Odometry as the state payload while preserving the envelope
@@ -384,6 +582,23 @@ class ExternalModeScenario:
         position = odometry.pose.pose.position
         values = (float(position.x), float(position.y), float(position.z))
         if all(math.isfinite(value) for value in values):
+            localization_epoch = int(message.localization_epoch)
+            truth_frame_witness = getattr(self, "truth_frame_witness", None)
+            if (
+                truth_frame_witness is not None
+                and truth_frame_witness.get("valid", False)
+                and int(truth_frame_witness.get("lio_localization_epoch", 0)) != localization_epoch
+            ):
+                truth_frame_witness["valid"] = False
+                truth_frame_witness["invalidated_at_sim_ns"] = int(self.sim_now_ns)
+                truth_frame_witness["invalidation_reason"] = "LIO_LOCALIZATION_EPOCH_CHANGED"
+                if not getattr(self, "truth_frame_witness_invalidated", False):
+                    self.truth_frame_witness_invalidated = True
+                    self._record("truth_frame_witness_invalidated", {
+                        "reason": "LIO_LOCALIZATION_EPOCH_CHANGED",
+                        "previous_epoch": int(truth_frame_witness.get("lio_localization_epoch", 0)),
+                        "current_epoch": localization_epoch,
+                    })
             velocity = tuple(float(value) for value in (
                 odometry.twist.twist.linear.x,
                 odometry.twist.twist.linear.y,
@@ -394,8 +609,24 @@ class ExternalModeScenario:
             self.latest_odom = {
                 "x": values[0], "y": values[1], "z": values[2],
                 "vx": velocity[0], "vy": velocity[1], "vz": velocity[2],
+                "q_xyzw": _json_vector([
+                    odometry.pose.pose.orientation.x,
+                    odometry.pose.pose.orientation.y,
+                    odometry.pose.pose.orientation.z,
+                    odometry.pose.pose.orientation.w,
+                ]),
+                "frame_id": str(odometry.header.frame_id),
+                "child_frame_id": str(odometry.child_frame_id),
+                "localization_epoch": localization_epoch,
+                "sequence": int(message.sequence),
             }
             self.latest_odom_stamp_ns = _time_ns(odometry.header.stamp)
+            self.latest_odom_receive_ns = self._receive_time_ns()
+            self.latest_odom["source_stamp_ns"] = self.latest_odom_stamp_ns
+            self.latest_odom["receive_stamp_ns"] = self.latest_odom_receive_ns
+            self.odom_pose_history.append(dict(self.latest_odom))
+            if len(self.odom_pose_history) > 8:
+                del self.odom_pose_history[:-8]
             self._update_localization_watchdog()
 
     def _ground_truth(self, message: Any) -> None:
@@ -414,8 +645,22 @@ class ExternalModeScenario:
             "x": values[0], "y": values[1], "z": values[2],
             "vx": velocity[0], "vy": velocity[1], "vz": velocity[2],
             "yaw": _heading_from_quaternion(message.pose.pose.orientation),
+            "q_xyzw": _json_vector([
+                message.pose.pose.orientation.x,
+                message.pose.pose.orientation.y,
+                message.pose.pose.orientation.z,
+                message.pose.pose.orientation.w,
+            ]),
+            "frame_id": str(message.header.frame_id),
+            "child_frame_id": str(message.child_frame_id),
         }
         self.latest_ground_truth_stamp_ns = _time_ns(message.header.stamp)
+        self.latest_ground_truth_receive_ns = self._receive_time_ns()
+        self.latest_ground_truth["source_stamp_ns"] = self.latest_ground_truth_stamp_ns
+        self.latest_ground_truth["receive_stamp_ns"] = self.latest_ground_truth_receive_ns
+        self.ground_truth_pose_history.append(dict(self.latest_ground_truth))
+        if len(self.ground_truth_pose_history) > 8:
+            del self.ground_truth_pose_history[:-8]
         self._update_localization_watchdog()
         vehicle_radius = float(self.config.get("vehicle_collision_radius_m", 0.35))
         if not math.isfinite(vehicle_radius) or vehicle_radius <= 0.0:
@@ -563,6 +808,96 @@ class ExternalModeScenario:
             return
         lio = self.latest_odom
         truth = self.latest_ground_truth
+        if getattr(self, "truth_frame_witness", None) is None:
+            lio_stamp = self.latest_odom_stamp_ns
+            truth_stamp = self.latest_ground_truth_stamp_ns
+            reference_source_stamp_ns: int | None = None
+            lio_reference: dict[str, Any] | None = None
+            truth_reference: dict[str, Any] | None = None
+            # Use the newest common source-time that can be bracketed by both
+            # histories.  The older stream is interpolated; no extrapolation
+            # is allowed.  This changes only the evaluation witness, not the
+            # watchdog or any navigation decision.
+            if lio_stamp is not None and truth_stamp is not None:
+                reference_source_stamp_ns = min(lio_stamp, truth_stamp)
+                lio_reference = _interpolate_pose_history(
+                    getattr(self, "odom_pose_history", []),
+                    reference_source_stamp_ns)
+                truth_reference = _interpolate_pose_history(
+                    getattr(self, "ground_truth_pose_history", []),
+                    reference_source_stamp_ns)
+            lio_q = _normalize_quaternion_xyzw(
+                lio_reference.get("q_xyzw") if lio_reference is not None else None)
+            truth_q = _normalize_quaternion_xyzw(
+                truth_reference.get("q_xyzw") if truth_reference is not None else None)
+            health = getattr(self, "latest_lio_health", {})
+            if (
+                lio_reference is not None and truth_reference is not None and
+                lio_q is not None and truth_q is not None and
+                int(lio.get("localization_epoch", 0)) > 0 and
+                health.get("status") == "TRACKING" and
+                health.get("navigation_valid") is True and
+                self.latest_odom_receive_ns is not None and
+                self.latest_ground_truth_receive_ns is not None
+            ):
+                rotation_lio_from_gazebo_q = _quaternion_multiply_xyzw(
+                    lio_q, _quaternion_inverse_xyzw(truth_q))
+                rotation_lio_from_gazebo = _rotation_matrix_from_quaternion_xyzw(
+                    rotation_lio_from_gazebo_q)
+                gazebo_position = [truth_reference[key] for key in ("x", "y", "z")]
+                lio_position = [lio_reference[key] for key in ("x", "y", "z")]
+                rotated_gazebo_position = _matrix_vector(
+                    rotation_lio_from_gazebo, gazebo_position)
+                witness = {
+                    "valid": True,
+                    "reference_event": "first_post_takeoff_valid_lio_truth_pair",
+                    "reference_sim_time_ns": int(self.sim_now_ns),
+                    "reference_source_stamp_ns": int(reference_source_stamp_ns),
+                    "lio_localization_epoch": int(lio["localization_epoch"]),
+                    "lio_source_stamp_ns": int(lio_reference["source_stamp_ns"]),
+                    "lio_receive_stamp_ns": lio_reference.get("receive_stamp_ns"),
+                    "gazebo_source_stamp_ns": int(truth_reference["source_stamp_ns"]),
+                    "gazebo_receive_stamp_ns": truth_reference.get("receive_stamp_ns"),
+                    "source_pair_skew_ns": 0,
+                    "receive_pair_skew_ns": (
+                        int(lio_reference["receive_stamp_ns"] -
+                            truth_reference["receive_stamp_ns"])
+                        if lio_reference.get("receive_stamp_ns") is not None and
+                        truth_reference.get("receive_stamp_ns") is not None
+                        else None),
+                    "lio_source_bracket_start_ns": lio_reference.get(
+                        "source_bracket_start_ns", lio_reference["source_stamp_ns"]),
+                    "lio_source_bracket_end_ns": lio_reference.get(
+                        "source_bracket_end_ns", lio_reference["source_stamp_ns"]),
+                    "gazebo_source_bracket_start_ns": truth_reference.get(
+                        "source_bracket_start_ns", truth_reference["source_stamp_ns"]),
+                    "gazebo_source_bracket_end_ns": truth_reference.get(
+                        "source_bracket_end_ns", truth_reference["source_stamp_ns"]),
+                    "lio_frame_id": str(lio.get("frame_id", "")),
+                    "lio_child_frame_id": str(lio.get("child_frame_id", "")),
+                    "gazebo_frame_id": str(truth.get("frame_id", "")),
+                    "gazebo_child_frame_id": str(truth.get("child_frame_id", "")),
+                    "T_L_G": {
+                        "translation_lio_from_gazebo": [
+                            lio_position[index] - rotated_gazebo_position[index]
+                            for index in range(3)
+                        ],
+                        "rotation_lio_from_gazebo_xyzw": rotation_lio_from_gazebo_q,
+                        "rotation_matrix_lio_from_gazebo": rotation_lio_from_gazebo,
+                    },
+                    "lio_base_pose_at_reference": {
+                        "position": lio_position,
+                        "orientation_xyzw": lio_q,
+                    },
+                    "gazebo_base_pose_at_reference": {
+                        "position": gazebo_position,
+                        "orientation_xyzw": truth_q,
+                    },
+                    "navigation_valid_at_reference": True,
+                    "lio_health": dict(health),
+                }
+                self.truth_frame_witness = witness
+                self._record("truth_frame_witness", witness)
         if self.lio_gt_origin_offset is None:
             self.lio_gt_origin_offset = tuple(lio[key] - truth[key] for key in ("x", "y", "z"))
             self._record("event", {"name": "ground_truth_watchdog_started"})
@@ -1846,6 +2181,8 @@ class ExternalModeScenario:
                 "fail_closed_trigger_m": 0.45 if expected_outcome == "fail_closed" else 0.5,
                 "failure": self.localization_divergence_failure,
             },
+            "alignment_latch_witness": self.alignment_latch_witness,
+            "truth_frame_witness": self.truth_frame_witness,
             "obstacle_evidence": {
                 "raw_lidar_scan_count": self.raw_lidar_scan_count,
                 "raw_lidar_roi_scan_count": self.raw_lidar_roi_scan_count,

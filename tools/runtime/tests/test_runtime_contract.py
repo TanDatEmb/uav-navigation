@@ -2476,6 +2476,40 @@ class RuntimeContractTest(unittest.TestCase):
         over = module._speed_contract_failures(2.0, 2.0, [2.101], [2.0])
         self.assertTrue(any("setpoint exceeded" in reason for reason in over))
 
+    def test_truth_frame_witness_interpolates_source_time_without_extrapolation(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "external_mode_scenario_truth_witness",
+            ROOT / "tools/runtime/external_mode_scenario.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        history = [
+            {
+                "source_stamp_ns": 1_000,
+                "receive_stamp_ns": 1_100,
+                "x": 0.0, "y": 0.0, "z": 0.0,
+                "q_xyzw": [0.0, 0.0, 0.0, 1.0],
+            },
+            {
+                "source_stamp_ns": 2_000,
+                "receive_stamp_ns": 2_100,
+                "x": 2.0, "y": 4.0, "z": 6.0,
+                "q_xyzw": [0.0, 0.0, 0.0, 1.0],
+            },
+        ]
+        sample = module._interpolate_pose_history(history, 1_500)
+        self.assertIsNotNone(sample)
+        self.assertEqual(sample["source_stamp_ns"], 1_500)
+        self.assertEqual(sample["source_bracket_gap_ns"], 1_000)
+        self.assertEqual(sample["receive_stamp_ns"], 1_600)
+        self.assertEqual(sample["x"], 1.0)
+        self.assertEqual(sample["y"], 2.0)
+        self.assertEqual(sample["z"], 3.0)
+        self.assertIsNone(module._interpolate_pose_history(history, 2_500))
+
     def test_external_mode_scenario_waits_for_registration_before_retrying_nav_state(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario",
