@@ -204,6 +204,26 @@ struct WorldSnapshotIdentity {
   std::int64_t observation_stamp_ns{0};
 };
 
+// Opt-in, diagnostic-only materialization of one immutable world view.  This
+// is intentionally a value object rather than a WorldModelView replacement:
+// production planners continue to consume the original immutable view, while
+// offline nominal-problem replay can reconstruct the exact cell queries made
+// by the view that was pinned for a solve.
+struct WorldModelDiagnosticSnapshot {
+  WorldSnapshotIdentity identity{};
+  WorldGeometry geometry{};
+  bool unknown_inflation_enabled{false};
+  bool virtual_ground_ceiling_enabled{true};
+  double virtual_ground_m{0.0};
+  double virtual_ceiling_m{0.0};
+  double inflated_virtual_ground_m{0.0};
+  double inflated_virtual_ceiling_m{0.0};
+  std::vector<std::uint8_t> evidence_states;
+  std::vector<std::uint8_t> inflated_states;
+  std::vector<GridIndex3> nearest_offsets;
+  bool complete{false};
+};
+
 // Ephemeral support for the latest measured rigid body only.  This is a
 // geometry witness, never a history or occupancy update.  The primitive
 // values are supplied by the mapping adapter's project-owned model contract.
@@ -455,6 +475,15 @@ class WorldModelView {
 
   [[nodiscard]] virtual WorldGeometry geometry() const noexcept = 0;
   [[nodiscard]] virtual WorldSnapshotIdentity identity() const noexcept = 0;
+
+  // Implementations may provide a complete immutable materialization for
+  // diagnostic/offline replay. The default is deliberately unavailable so
+  // a production view cannot accidentally be treated as replayable merely
+  // because it has a valid identity.
+  [[nodiscard]] virtual std::optional<WorldModelDiagnosticSnapshot>
+  diagnosticSnapshot() const {
+    return std::nullopt;
+  }
 
   // Return true unless the changes after `older` are proven disjoint from the
   // protected trajectory region. Implementations that cannot provide complete

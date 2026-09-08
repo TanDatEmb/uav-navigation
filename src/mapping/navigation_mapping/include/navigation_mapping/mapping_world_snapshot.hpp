@@ -146,6 +146,88 @@ class MappingWorldSnapshot final
     return identity_;
   }
 
+  // This materialization is intentionally opt-in at the caller and is used
+  // only to make a pinned mapping view replayable offline.  It walks the
+  // immutable view rather than exposing root/patch storage, so the exported
+  // arrays describe the logical snapshot visible at this identity.
+  [[nodiscard]] std::optional<navigation_world_model::WorldModelDiagnosticSnapshot>
+  diagnosticSnapshot() const override {
+    try {
+      const auto world_geometry = geometry();
+      if (!world_geometry.evidence_bounds.valid() ||
+          !world_geometry.inflated_bounds.valid()) {
+        return std::nullopt;
+      }
+
+      const auto cellCount = [](const navigation_world_model::GridBounds& bounds)
+          -> std::optional<std::size_t> {
+        std::size_t count = 1U;
+        for (int axis = 0; axis < 3; ++axis) {
+          const auto dimension = static_cast<std::size_t>(bounds.dimensions(axis));
+          if (dimension == 0U || count > std::numeric_limits<std::size_t>::max() /
+                                      dimension) {
+            return std::nullopt;
+          }
+          count *= dimension;
+        }
+        return count;
+      };
+
+      const auto evidence_count = cellCount(world_geometry.evidence_bounds);
+      const auto inflated_count = cellCount(world_geometry.inflated_bounds);
+      if (!evidence_count || !inflated_count) return std::nullopt;
+
+      navigation_world_model::WorldModelDiagnosticSnapshot result;
+      result.identity = identity_;
+      result.geometry = world_geometry;
+      const auto& grid = rootGrid();
+      result.unknown_inflation_enabled = grid.unknown_inflation_enabled;
+      result.virtual_ground_ceiling_enabled = grid.virtual_ground_ceiling_enabled;
+      result.virtual_ground_m = grid.virtual_ground_m;
+      result.virtual_ceiling_m = grid.virtual_ceiling_m;
+      result.inflated_virtual_ground_m = grid.inflated_virtual_ground_m;
+      result.inflated_virtual_ceiling_m = grid.inflated_virtual_ceiling_m;
+      result.evidence_states.reserve(*evidence_count);
+      result.inflated_states.reserve(*inflated_count);
+      if (grid.nearest_offsets) {
+        result.nearest_offsets = *grid.nearest_offsets;
+      }
+
+      const auto materialize = [this](
+          const navigation_world_model::GridBounds& bounds,
+          const navigation_world_model::GridLayer layer,
+          std::vector<std::uint8_t>& states) {
+        const auto minimum = bounds.global_min_index;
+        for (int x = 0; x < bounds.dimensions.x(); ++x) {
+          for (int y = 0; y < bounds.dimensions.y(); ++y) {
+            for (int z = 0; z < bounds.dimensions.z(); ++z) {
+              const navigation_world_model::GridIndex3 index{
+                  minimum.x() + x, minimum.y() + y, minimum.z() + z};
+              const auto point = indexToPosition(index, layer);
+              const auto state = classify(point, layer);
+              if (!navigation_world_model::isValidCellState(state)) {
+                throw std::runtime_error("diagnostic world state is invalid");
+              }
+              states.push_back(static_cast<std::uint8_t>(state));
+            }
+          }
+        }
+      };
+      materialize(world_geometry.evidence_bounds,
+                  navigation_world_model::GridLayer::kEvidence,
+                  result.evidence_states);
+      materialize(world_geometry.inflated_bounds,
+                  navigation_world_model::GridLayer::kInflated,
+                  result.inflated_states);
+      result.complete = result.evidence_states.size() == *evidence_count &&
+          result.inflated_states.size() == *inflated_count;
+      if (!result.complete) return std::nullopt;
+      return result;
+    } catch (...) {
+      return std::nullopt;
+    }
+  }
+
   [[nodiscard]] std::size_t patchDepth() const noexcept {
     return patch_ ? (parent_->patchDepth() + 1U) : 0U;
   }

@@ -101,6 +101,61 @@ TEST_F(MappingWorldModelTest, GeometryAndIdentityAreProductOwned) {
   EXPECT_EQ(view->identity().observation_stamp_ns, 123456789);
 }
 
+TEST_F(MappingWorldModelTest, DiagnosticSnapshotMaterializesLogicalImmutableView) {
+  const auto diagnostic = snapshot->diagnosticSnapshot();
+  ASSERT_TRUE(diagnostic.has_value());
+  EXPECT_TRUE(diagnostic->complete);
+  EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+      diagnostic->identity, snapshot->identity()));
+  EXPECT_EQ(diagnostic->geometry.evidence_bounds.global_min_index,
+            snapshot->geometry().evidence_bounds.global_min_index);
+  EXPECT_EQ(diagnostic->geometry.inflated_bounds.dimensions,
+            snapshot->geometry().inflated_bounds.dimensions);
+
+  const auto cellCount = [](const navigation_world_model::GridBounds& bounds) {
+    return static_cast<std::size_t>(bounds.dimensions.x()) *
+           static_cast<std::size_t>(bounds.dimensions.y()) *
+           static_cast<std::size_t>(bounds.dimensions.z());
+  };
+  EXPECT_EQ(diagnostic->evidence_states.size(),
+            cellCount(diagnostic->geometry.evidence_bounds));
+  EXPECT_EQ(diagnostic->inflated_states.size(),
+            cellCount(diagnostic->geometry.inflated_bounds));
+
+  const auto stateAt = [](const std::vector<std::uint8_t>& states,
+                          const navigation_world_model::GridBounds& bounds,
+                          const navigation_world_model::GridIndex3& index) {
+    const auto x = static_cast<std::size_t>(index.x() -
+                                             bounds.global_min_index.x());
+    const auto y = static_cast<std::size_t>(index.y() -
+                                             bounds.global_min_index.y());
+    const auto z = static_cast<std::size_t>(index.z() -
+                                             bounds.global_min_index.z());
+    const auto dy = static_cast<std::size_t>(bounds.dimensions.y());
+    const auto dz = static_cast<std::size_t>(bounds.dimensions.z());
+    return static_cast<navigation_world_model::CellState>(
+        states[(x * dy + y) * dz + z]);
+  };
+  for (const auto layer : {navigation_world_model::GridLayer::kEvidence,
+                           navigation_world_model::GridLayer::kInflated}) {
+    const auto& bounds = layer == navigation_world_model::GridLayer::kEvidence
+        ? diagnostic->geometry.evidence_bounds
+        : diagnostic->geometry.inflated_bounds;
+    const auto& states = layer == navigation_world_model::GridLayer::kEvidence
+        ? diagnostic->evidence_states
+        : diagnostic->inflated_states;
+    const std::array<navigation_world_model::GridIndex3, 3> indices{
+        bounds.global_min_index,
+        bounds.global_min_index + bounds.dimensions / 2,
+        bounds.global_min_index + bounds.dimensions -
+            navigation_world_model::GridIndex3::Ones()};
+    for (const auto& index : indices) {
+      const auto point = snapshot->indexToPosition(index, layer);
+      EXPECT_EQ(stateAt(states, bounds, index), snapshot->classify(point, layer));
+    }
+  }
+}
+
 TEST_F(MappingWorldModelTest, InvalidLayerAndDistanceFailClosed) {
   const auto invalid_layer = static_cast<navigation_world_model::GridLayer>(255);
   const auto point = Eigen::Vector3d::Zero();
