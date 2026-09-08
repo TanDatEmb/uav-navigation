@@ -5273,6 +5273,65 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
              lhs.safety_suffix_active == rhs.safety_suffix_active &&
              lhs.restart_from_rest == rhs.restart_from_rest;
     };
+    // Prepare the expensive analytic witnesses before taking the owner
+    // transaction locks.  The lock section below only rechecks freshness,
+    // ownership and lease metadata, so projection cannot block command or
+    // localization transitions.
+    const auto prepared_final_retained_now_ns = now().nanoseconds();
+    const auto prepared_final_execution_state = execution_state_store_.load();
+    const auto prepared_final_state_freshness = prepared_final_execution_state
+        ? navigation_contracts::evaluateExecutionStateFreshness(
+              prepared_final_retained_now_ns,
+              prepared_final_execution_state->state.source_stamp_ns,
+              navigation_common::steadyClockNowNanoseconds(),
+              prepared_final_execution_state->state.receive_stamp_ns,
+              data_freshness_window_s_)
+        : navigation_contracts::ExecutionStateFreshness{};
+    const bool prepared_final_fresh_vehicle_state = prepared_final_execution_state &&
+        prepared_final_execution_state->state.finite() &&
+        prepared_final_state_freshness.valid();
+    const Eigen::Vector3d prepared_final_vehicle_position =
+        prepared_final_fresh_vehicle_state
+        ? prepared_final_execution_state->state.position_world
+        : Eigen::Vector3d::Zero();
+    const Eigen::Vector3d prepared_final_vehicle_velocity =
+        prepared_final_fresh_vehicle_state
+        ? prepared_final_execution_state->state.velocity_world
+        : Eigen::Vector3d::Zero();
+    const auto prepared_final_world = latest_world;
+    const bool prepared_final_vehicle_state_known_free =
+        prepared_final_fresh_vehicle_state && prepared_final_world &&
+        prepared_final_world.view &&
+        prepared_final_world.view->classify(
+            prepared_final_vehicle_position,
+            navigation_world_model::GridLayer::kInflated) ==
+            navigation_world_model::CellState::kKnownFree;
+    const auto prepared_final_phase_execution_certificate = committed
+        ? assessPhaseExecutionCertificate(
+              *committed_bundle, prepared_final_vehicle_position,
+              prepared_final_vehicle_velocity, prepared_final_retained_now_ns,
+              prepared_final_execution_state
+                  ? prepared_final_execution_state->state.source_stamp_ns : 0,
+              static_cast<std::int64_t>(planning_period_us_) * 1000,
+              static_cast<double>(planning_period_us_) * 1.0e-6,
+              retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM,
+              prepared_final_vehicle_state_known_free, sampled_path_clear)
+        : PhaseExecutionCertificate{};
+    const auto prepared_final_path_relative_tracking = committed
+        ? assessPathRelativeTracking(
+              *committed_bundle, prepared_final_vehicle_position,
+              prepared_final_vehicle_velocity, prepared_final_retained_now_ns,
+              prepared_final_execution_state
+                  ? prepared_final_execution_state->state.source_stamp_ns : 0,
+              planning_interval_s +
+                  navigation_planning::PlanningTimingContract::kCommandPeriodS,
+              planning_interval_s, retained_tracking_limit_m,
+              navigation_contracts::kCommandAnchorErrorLimitM,
+              prepared_final_fresh_vehicle_state,
+              prepared_final_vehicle_state_known_free, sampled_path_clear)
+        : PathRelativeTrackingResult{};
+    const bool prepared_final_command_anchor_valid = committed &&
+        committed_bundle->sample(prepared_final_retained_now_ns).has_value();
     // A visible main-only trajectory remains a MAIN command. Only an actual
     // atomic main-to-backup bundle is marked safety-owned at the PX4 boundary.
     {
@@ -5290,52 +5349,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           std::memory_order_acquire);
       const auto current_localization_epoch = active_localization_epoch_.load(
           std::memory_order_acquire);
-      const auto final_retained_now_ns = now().nanoseconds();
-      const auto final_execution_state = execution_state_store_.load();
-      const auto final_state_freshness = final_execution_state
-          ? navigation_contracts::evaluateExecutionStateFreshness(
-                final_retained_now_ns, final_execution_state->state.source_stamp_ns,
-                navigation_common::steadyClockNowNanoseconds(),
-                final_execution_state->state.receive_stamp_ns, data_freshness_window_s_)
-          : navigation_contracts::ExecutionStateFreshness{};
-      const bool final_fresh_vehicle_state = final_execution_state &&
-          final_execution_state->state.finite() && final_state_freshness.valid();
-      const Eigen::Vector3d final_vehicle_position = final_fresh_vehicle_state
-          ? final_execution_state->state.position_world : Eigen::Vector3d::Zero();
-      const Eigen::Vector3d final_vehicle_velocity = final_fresh_vehicle_state
-          ? final_execution_state->state.velocity_world : Eigen::Vector3d::Zero();
-      // Keep the final state witness bound to the same immutable world view
-      // used by sampled_path_clear; do not mix a newer revision with an older
-      // path certificate while the transaction is being finalized.
-      const auto final_world = latest_world;
-      const bool final_vehicle_state_known_free = final_fresh_vehicle_state && final_world &&
-          final_world.view &&
-          final_world.view->classify(
-              final_vehicle_position,
-              navigation_world_model::GridLayer::kInflated) ==
-              navigation_world_model::CellState::kKnownFree;
-      const auto final_phase_execution_certificate = committed
-          ? assessPhaseExecutionCertificate(
-                *committed_bundle, final_vehicle_position, final_vehicle_velocity,
-                final_retained_now_ns,
-                final_execution_state ? final_execution_state->state.source_stamp_ns : 0,
-                static_cast<std::int64_t>(planning_period_us_) * 1000,
-                static_cast<double>(planning_period_us_) * 1.0e-6,
-                retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM,
-                final_vehicle_state_known_free, sampled_path_clear)
-          : PhaseExecutionCertificate{};
-      const auto final_path_relative_tracking = committed
-          ? assessPathRelativeTracking(
-                *committed_bundle, final_vehicle_position, final_vehicle_velocity,
-                final_retained_now_ns,
-                final_execution_state ? final_execution_state->state.source_stamp_ns : 0,
-                planning_interval_s +
-                    navigation_planning::PlanningTimingContract::kCommandPeriodS,
-                planning_interval_s, retained_tracking_limit_m,
-                navigation_contracts::kCommandAnchorErrorLimitM,
-                final_fresh_vehicle_state, final_vehicle_state_known_free,
-                sampled_path_clear)
-          : PathRelativeTrackingResult{};
+      const auto final_retained_now_ns = prepared_final_retained_now_ns;
+      const auto& final_execution_state = prepared_final_execution_state;
+      const bool final_fresh_vehicle_state = prepared_final_fresh_vehicle_state;
+      const auto& final_phase_execution_certificate =
+          prepared_final_phase_execution_certificate;
+      const auto& final_path_relative_tracking =
+          prepared_final_path_relative_tracking;
       causal_snapshot.phase_execution_final_source_stamp_ns = final_execution_state
           ? final_execution_state->state.source_stamp_ns : 0;
       causal_snapshot.phase_execution_final_lag_s =
@@ -5370,11 +5390,24 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           final_path_relative_tracking.evaluation_count;
       causal_snapshot.path_relative_tracking_accepted =
           final_path_relative_tracking.accepted();
-      const bool final_command_anchor_valid = committed &&
-          committed_bundle->sample(final_retained_now_ns).has_value();
+      const bool final_command_anchor_valid = prepared_final_command_anchor_valid;
+      const auto lock_recheck_now_ns = now().nanoseconds();
+      const auto lock_recheck_state_freshness = final_execution_state
+          ? navigation_contracts::evaluateExecutionStateFreshness(
+                lock_recheck_now_ns, final_execution_state->state.source_stamp_ns,
+                navigation_common::steadyClockNowNanoseconds(),
+                final_execution_state->state.receive_stamp_ns, data_freshness_window_s_)
+          : navigation_contracts::ExecutionStateFreshness{};
+      const bool final_witness_age_bounded = final_execution_state &&
+          lock_recheck_state_freshness.valid() &&
+          lock_recheck_now_ns >= prepared_final_retained_now_ns &&
+          lock_recheck_now_ns - prepared_final_retained_now_ns <=
+              static_cast<std::int64_t>(
+                  navigation_planning::PlanningTimingContract::kCommandPeriodS * 1.0e9);
       const bool phase_execution_bridge_current = phaseExecutionBridgeMayPreserveMain(
           final_path_relative_tracking.accepted(), committed,
-          final_fresh_vehicle_state, final_command_anchor_valid,
+          final_fresh_vehicle_state && final_witness_age_bounded,
+          final_command_anchor_valid,
           plan_from_rest_with_transition, retained_recovery_state,
           final_execution_state ? final_execution_state->state.localization_epoch : 0U,
           committed_bundle ? committed_bundle->localization_epoch : 0U,

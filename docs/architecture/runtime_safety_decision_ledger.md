@@ -18,8 +18,11 @@
   freshness and fail-closed recovery gates remain unchanged. This replaces a
   pointwise timed-position decision for ordinary MAIN retention only; it does
   not retime commands, extend a lease, authorize BACKUP or add a recovery
-  state. Projection runs outside owner/world locks and the final owner/lease
-  decision is rechecked before preserving MAIN.
+  state. The base absolute command cap remains strict for lateral/vertical
+  divergence; a bounded longitudinal allowance is derived from the existing
+  phase window and reference/measured speed. Projection and final analytic
+  evaluation run outside owner/world locks; the lock section only rechecks
+  freshness, preparation age, owner and lease metadata before preserving MAIN.
 - **Evidence:** The bounded helper has independent tests for physical phase
   lead/lag at 3/5/8 m/s, curved paths, activation-prefix lookback,
   lateral/vertical excursions, future phase drift, ambiguous projections,

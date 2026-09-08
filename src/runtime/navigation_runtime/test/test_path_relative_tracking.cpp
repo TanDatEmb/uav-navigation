@@ -55,7 +55,7 @@ PathRelativeTrackingResult assess(
 }
 
 TEST(PathRelativeTracking, AcceptsPhysicalPhaseLeadAndLagOnTheSamePath) {
-  for (const double speed : {3.0, 5.0, 8.0}) {
+  for (const double speed : {3.0, 5.0, 8.0, 12.0}) {
     for (const double phase : {-0.09, 0.09}) {
       const auto bundle = makeLinearMainBundle(speed);
       const auto result = assess(
@@ -123,6 +123,61 @@ TEST(PathRelativeTracking, RejectsAmbiguousOrUnsafeMotion) {
       bundle, (left->position_world + right->position_world) / 2.0,
       middle->velocity_world).status,
       PathRelativeTrackingStatus::kOutsidePathTube);
+}
+
+TEST(PathRelativeTracking, AcceptsCurvedPhysicalPhaseAndRejectsShortcut) {
+  auto bundle = makeLinearMainBundle();
+  bundle.evaluator = [](std::int64_t stamp, TrajectoryPoint& point) {
+    point.trajectory_time_s = (stamp - 10'000'000'000LL) * 1.0e-9;
+    const double angle = 1.25 * point.trajectory_time_s;
+    point.position_world = {4.0 * std::cos(angle), 4.0 * std::sin(angle), 0.0};
+    point.velocity_world = {-5.0 * std::sin(angle), 5.0 * std::cos(angle), 0.0};
+    point.role = point.trajectory_time_s < 1.5
+        ? CandidateRole::kMain : CandidateRole::kBackup;
+    return true;
+  };
+  for (const double phase : {-0.08, 0.08}) {
+    const auto state = bundle.sampleAtDeclaredStamp(
+        10'600'000'000LL + static_cast<std::int64_t>(phase * 1.0e9));
+    ASSERT_TRUE(state);
+    const auto result = assess(bundle, state->position_world, state->velocity_world);
+    EXPECT_TRUE(result.accepted()) << static_cast<int>(result.status);
+    EXPECT_NEAR(result.path_error_m, 0.0, 1.0e-5);
+  }
+  const auto left = bundle.sampleAtDeclaredStamp(10'200'000'000LL);
+  const auto right = bundle.sampleAtDeclaredStamp(11'000'000'000LL);
+  const auto middle = bundle.sampleAtDeclaredStamp(10'600'000'000LL);
+  ASSERT_TRUE(left && right && middle);
+  EXPECT_EQ(assess(
+      bundle, (left->position_world + right->position_world) / 2.0,
+      middle->velocity_world).status,
+      PathRelativeTrackingStatus::kOutsidePathTube);
+}
+
+TEST(PathRelativeTracking, RejectsPhaseOutsideLocalWindowAtSearchBoundary) {
+  const auto bundle = makeLinearMainBundle();
+  EXPECT_EQ(assess(bundle, {5.0 * 0.72, 0.0, 0.0}, {5.0, 0.0, 0.0}).status,
+            PathRelativeTrackingStatus::kPhaseExceeded);
+  EXPECT_EQ(assess(bundle, {5.0 * 0.48, 0.0, 0.0}, {5.0, 0.0, 0.0}).status,
+            PathRelativeTrackingStatus::kPhaseExceeded);
+}
+
+TEST(PathRelativeTracking, RejectsAmbiguousFigureEightProjection) {
+  auto bundle = makeLinearMainBundle();
+  bundle.evaluator = [](std::int64_t stamp, TrajectoryPoint& point) {
+    point.trajectory_time_s = (stamp - 10'000'000'000LL) * 1.0e-9;
+    const double omega = 2.0 * std::acos(-1.0) / 0.12;
+    const double t = point.trajectory_time_s;
+    point.position_world = {std::sin(omega * t), std::sin(2.0 * omega * t), 0.0};
+    point.velocity_world = {
+        omega * std::cos(omega * t), 2.0 * omega * std::cos(2.0 * omega * t), 0.0};
+    point.role = point.trajectory_time_s < 1.5
+        ? CandidateRole::kMain : CandidateRole::kBackup;
+    return true;
+  };
+  const auto result = assess(bundle, {0.0, 0.0, 0.0}, {5.0, 0.0, 0.0});
+  EXPECT_EQ(result.status, PathRelativeTrackingStatus::kAmbiguousProjection);
+  EXPECT_LT(result.evaluation_count, 150U);
 }
 
 }  // namespace
