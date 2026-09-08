@@ -572,6 +572,20 @@ bool geometry_utils::findInterior(const Eigen::MatrixX4d& hPoly,
     return minmaxsd < 0.0 && !std::isinf(minmaxsd);
 }
 
+bool geometry_utils::transitionRepresentable(
+    const Eigen::MatrixX4d& hPoly,
+    Eigen::Vector3d& interior,
+    Eigen::Matrix3Xd& vertices,
+    double& overlap_depth_m) {
+    vertices.resize(3, 0);
+    overlap_depth_m = findInteriorDist(hPoly, interior) / 2.0;
+    if (!std::isfinite(overlap_depth_m) || overlap_depth_m < 0.0) {
+        return false;
+    }
+    enumerateVs(hPoly, interior, vertices);
+    return vertices.cols() > 0 && vertices.allFinite();
+}
+
 bool geometry_utils::overlap(const Eigen::MatrixX4d& hPoly0,
                              const Eigen::MatrixX4d& hPoly1,
                              const double eps) {

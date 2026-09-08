@@ -196,8 +196,13 @@ namespace geometry_utils {
                 sfcs_final.push_back(sfcs_new[0]);
                 for (std::size_t i = 2; i < sfcs_new.size(); ++i) {
                     Polytope cross_poly = check_cand.CrossWith(sfcs_new[i]);
-                    Vec3f interior_pt;
-                    bool is_overlapped = geometry_utils::findInterior(cross_poly.GetPlanes(), interior_pt);
+                    Eigen::Vector3d interior_pt;
+                    Eigen::Matrix3Xd transition_vertices;
+                    double overlap_depth_m{std::numeric_limits<double>::quiet_NaN()};
+                    const bool is_overlapped =
+                        geometry_utils::transitionRepresentable(
+                            cross_poly.GetPlanes(), interior_pt,
+                            transition_vertices, overlap_depth_m);
                     if (is_overlapped) {
                         last_overlapped = sfcs_new[i];
                         if (last_overlapped.PointIsInside(path.back())) {

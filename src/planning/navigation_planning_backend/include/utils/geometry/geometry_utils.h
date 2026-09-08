@@ -668,6 +668,15 @@ namespace geometry_utils {
     bool findInterior(const Eigen::MatrixX4d& hPoly,
                       Eigen::Vector3d& interior);
 
+    // The nominal corridor consumer represents every junction as a finite
+    // 3-D vertex polytope. Keep this stronger consumer-domain predicate
+    // separate from findInterior(), whose callers also use weaker
+    // non-empty/strict-interior semantics.
+    bool transitionRepresentable(const Eigen::MatrixX4d& hPoly,
+                                 Eigen::Vector3d& interior,
+                                 Eigen::Matrix3Xd& vertices,
+                                 double& overlap_depth_m);
+
     bool overlap(const Eigen::MatrixX4d& hPoly0,
                  const Eigen::MatrixX4d& hPoly1,
                  const double eps = 1.0e-6);

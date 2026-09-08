@@ -116,6 +116,14 @@ if(BUILD_TESTING)
   target_link_libraries(test_trajectory ${PROJECT_NAME})
   configure_backend_test(test_trajectory)
 
+  ament_add_gtest(test_simplify_sfc_contract
+    test/test_simplify_sfc_contract.cpp)
+  target_compile_definitions(test_simplify_sfc_contract PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER)
+  target_link_libraries(test_simplify_sfc_contract ${PROJECT_NAME})
+  configure_backend_test(test_simplify_sfc_contract)
+
   ament_add_gtest(test_planner_config test/test_planner_config.cpp)
   target_compile_definitions(test_planner_config PRIVATE
     USE_ROS2

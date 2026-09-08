@@ -583,32 +583,15 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         curIH.topRows(opt_vars.hPolytopes[i].rows()) = opt_vars.hPolytopes[i];
         curIH.bottomRows(opt_vars.hPolytopes[i + 1].rows()) = opt_vars.hPolytopes[i + 1];
         opt_vars.hOverlapPolytopes[i] = curIH;
-        Vec3f interior;
-
-        const double dis = geometry_utils::findInteriorDist(curIH, interior) / 2;
-        if (!std::isfinite(dis) || dis < 0.0) {
-
+        Eigen::Vector3d interior;
+        double overlap_depth_m{std::numeric_limits<double>::quiet_NaN()};
+        if (!geometry_utils::transitionRepresentable(
+                curIH, interior, curIV, overlap_depth_m)) {
             cout << YELLOW << " -- [planner] in [ GcopterExpS4::processCorridor]: Failed findInteriorDist Vs." <<
                  RESET << endl;
             return false;
         }
-        curIV.resize(3, 0);
-        geometry_utils::enumerateVs(curIH, interior, curIV);
-        if (curIV.cols() == 0) {
-            planner_context_->warn(
-                    " -- [ExpOpt] Corridor overlap {} cannot be vertex-enumerated "
-                    "(corridors={}, overlap_depth={})",
-                    i, opt_vars.hPolytopes.size(), 2.0 * dis);
-            return false;
-        }
-        const double test_sum = curIV.sum();
-        if (std::isnan(test_sum) || std::isinf(test_sum)) {
-            planner_context_->warn(
-                    " -- [ExpOpt] Corridor overlap {} produced non-finite vertices "
-                    "(corridors={}, overlap_depth={})",
-                    i, opt_vars.hPolytopes.size(), 2.0 * dis);
-            return false;
-        }
+        const double dis = overlap_depth_m;
         opt_vars.waypoint_attractor.col(i) = interior;
         opt_vars.waypoint_attractor_dead_d(i) = dis;
         // Safe default when no guide sample belongs to this overlap.
