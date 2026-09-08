@@ -2656,6 +2656,9 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertTrue(any("did not reach" in reason for reason in missing))
         over = module._speed_contract_failures(2.0, 2.0, [2.101], [2.0])
         self.assertTrue(any("setpoint exceeded" in reason for reason in over))
+        governed = module._speed_contract_failures(3.0, 5.0, [3.2], [3.0])
+        self.assertTrue(any("setpoint exceeded" in reason for reason in governed))
+        self.assertTrue(any("did not reach" in reason for reason in governed))
 
     def test_truth_frame_witness_interpolates_source_time_without_extrapolation(self) -> None:
         spec = importlib.util.spec_from_file_location(

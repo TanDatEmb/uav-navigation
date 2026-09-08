@@ -730,6 +730,33 @@
   runtime contract tests, exact E5 Stage A/B, and matched open-control
   regression with candidate V/A/J compliance and unchanged safety invariants.
 
+### 2026-09-09 - Report governed speed separately from mission request
+
+- **Owner/status:** runtime validation and evidence tooling; `IMPLEMENTED`,
+  opt-in speed-cap-5 configuration remains a separate development task.
+- **Scope:** preserve the mission's `requested_cruise_speed_mps` as intent,
+  record the physical `traj_opt.boundary.max_vel`, the nominal
+  `planner.control_envelope.maximum_velocity_mps`, and their governed
+  effective speed. The scenario upper setpoint gate now uses the governed
+  effective speed; the independent measured-speed attainment gate continues
+  to use the requested speed.
+- **Safety impact:** no planner, controller, PX4, V/A/J, tracking, lease, or
+  timeout value changes. This prevents a 3 m/s nominal control envelope from
+  being reported as a 5 m/s executable limit and does not make a 5 m/s
+  request pass its attainment gate.
+- **Evidence:** runtime contract tests prove request 5 m/s with the current
+  3 m/s control envelope yields an effective 3 m/s upper gate while the
+  measured-speed requirement remains 5 m/s. Report reconstruction of older
+  artifacts uses an artifact-local planner snapshot; missing limit evidence
+  remains unknown rather than being inferred from the request.
+- **Removal/review condition:** remove only when a single authoritative speed
+  contract is emitted by every run producer and all historical report readers
+  can consume it without fallback inference.
+- **Verification:** `python3 -m unittest
+  tools.runtime.tests.test_runtime_contract` and
+  `python3 -m unittest tools.runtime.tests.test_html_report`, plus
+  `git diff --check`.
+
 ### 2026-09-04 - Add immutable retained-command temporal-alignment telemetry
 
 - **Owner/status:** navigation runtime evidence collection; `IMPLEMENTED`,

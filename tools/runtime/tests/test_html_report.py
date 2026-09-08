@@ -15,6 +15,7 @@ from flight_review_report import (
     _obstacle_footprint_points,
     _replay_payload,
     _session_experiment_time,
+    _speed_contract,
     replay_section,
     _safety_stop_status,
     _timing_distribution_chart,
@@ -348,6 +349,36 @@ rog_map:
             self.assertEqual(_mission_target_speed_mps(session), 8.0)
         timestamp = _session_experiment_time("external-mode-check-20260827T115832-1234")
         self.assertIn("session stamp 2026-08-27 11:58:32 UTC", timestamp)
+
+    def test_speed_contract_reconstructs_old_artifact_without_promoting_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            (session / "resolved_mission.yaml").write_text(
+                "mission:\n  planning:\n    requested_cruise_speed_mps: 5.0\n",
+                encoding="utf-8",
+            )
+            (session / "scenario_config.yaml").write_text(
+                "scenario:\n  expected_max_velocity_mps: 5.0\n",
+                encoding="utf-8",
+            )
+            planner = session / "config_snapshot" / "planner.yaml"
+            planner.parent.mkdir()
+            planner.write_text(
+                "planner:\n"
+                "  control_envelope:\n"
+                "    maximum_velocity_mps: 3.0\n"
+                "traj_opt:\n"
+                "  boundary:\n"
+                "    max_vel: 12.0\n",
+                encoding="utf-8",
+            )
+            contract = _speed_contract(session)
+            self.assertEqual(contract["requested_cruise_speed_mps"], 5.0)
+            self.assertEqual(contract["control_envelope_max_velocity_mps"], 3.0)
+            self.assertEqual(contract["effective_cruise_speed_mps"], 3.0)
+
+            planner.unlink()
+            self.assertIsNone(_speed_contract(session)["effective_cruise_speed_mps"])
 
     def test_map_focus_uses_obstacle_footprint_and_configured_padding(self) -> None:
         obstacle = {

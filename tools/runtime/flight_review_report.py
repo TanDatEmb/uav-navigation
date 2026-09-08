@@ -93,20 +93,75 @@ def _mission_target_speed_mps(session: Path) -> float | None:
     return finite(scenario.get("expected_max_velocity_mps")) if isinstance(scenario, dict) else None
 
 
+def _reconstruct_speed_contract(
+    session: Path,
+    requested_speed_mps: float | None,
+) -> dict[str, Any] | None:
+    """Reconstruct governed speed only from an artifact-local planner snapshot."""
+    for planner_path in (
+        session / "config_snapshot" / "planner.yaml",
+        session / "planner.yaml",
+    ):
+        document = _yaml_mapping(planner_path)
+        planner = document.get("planner") if isinstance(document.get("planner"), dict) else {}
+        traj_opt = document.get("traj_opt") if isinstance(document.get("traj_opt"), dict) else {}
+        control = planner.get("control_envelope") if isinstance(planner, dict) else {}
+        boundary = traj_opt.get("boundary") if isinstance(traj_opt, dict) else {}
+        control_max = finite(control.get("maximum_velocity_mps")) if isinstance(control, dict) else None
+        physical_max = finite(boundary.get("max_vel")) if isinstance(boundary, dict) else None
+        if control_max is None:
+            continue
+        effective = min(control_max, requested_speed_mps) if requested_speed_mps is not None else control_max
+        return {
+            "requested_cruise_speed_mps": requested_speed_mps,
+            "physical_max_velocity_mps": physical_max,
+            "control_envelope_max_velocity_mps": control_max,
+            "effective_cruise_speed_mps": effective,
+            "requested_speed_source": (
+                "mission.planning.requested_cruise_speed_mps"
+                if requested_speed_mps is not None else None
+            ),
+            "physical_limit_source": "planner.traj_opt.boundary.max_vel",
+            "control_limit_source": "planner.control_envelope.maximum_velocity_mps",
+            "effective_speed_source": (
+                "min(mission.planning.requested_cruise_speed_mps, "
+                "planner.control_envelope.maximum_velocity_mps)"
+                if requested_speed_mps is not None
+                else "planner.control_envelope.maximum_velocity_mps"
+            ),
+            "reconstructed_from": str(planner_path),
+        }
+    return None
+
+
 def _speed_contract(session: Path) -> dict[str, Any]:
-    """Return recorded requested/physical/governed speed semantics."""
+    """Return speed semantics without inferring governed speed from a request."""
     try:
         metadata = json.loads((session / "metadata.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         metadata = {}
+    mission_requested = _mission_target_speed_mps(session)
     contract = metadata.get("speed_contract") if isinstance(metadata, dict) else None
     if isinstance(contract, dict):
-        return contract
-    scenario = _yaml_mapping(session / "scenario_config.yaml").get("scenario", {})
-    fallback = finite(scenario.get("expected_max_velocity_mps")) if isinstance(scenario, dict) else None
+        recorded_requested = finite(contract.get("requested_cruise_speed_mps"))
+        if (
+            recorded_requested is None
+            or mission_requested is None
+            or math.isclose(recorded_requested, mission_requested, rel_tol=0.0, abs_tol=1e-9)
+        ) and finite(contract.get("effective_cruise_speed_mps")) is not None:
+            return contract
+    reconstructed = _reconstruct_speed_contract(session, mission_requested)
+    if reconstructed is not None:
+        return reconstructed
+    # Older artifacts may contain only the request and an expected setpoint
+    # field. That field historically mirrored the request, so it is not safe
+    # evidence of the governed control envelope.
     return {
-        "requested_cruise_speed_mps": _mission_target_speed_mps(session),
-        "effective_cruise_speed_mps": fallback,
+        "requested_cruise_speed_mps": mission_requested,
+        "effective_cruise_speed_mps": None,
+        "physical_max_velocity_mps": None,
+        "control_envelope_max_velocity_mps": None,
+        "effective_speed_source": "unavailable",
     }
 
 
