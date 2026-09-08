@@ -159,6 +159,60 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertFalse(marker["suppress_braking"])
             self.assertFalse(marker["qualification_eligible"])
 
+    def test_tracking_experiment_report_reconstructs_missing_marker_from_params(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary)
+            snapshot = session / "config_snapshot"
+            snapshot.mkdir()
+            params = {
+                "enabled": True,
+                "suppress_braking": True,
+                "base_m": 0.2,
+                "lateral_alpha_s": 0.05,
+                "longitudinal_beta_s": 0.15,
+            }
+            (snapshot / "navigation_runtime_params.yaml").write_text(
+                yaml.safe_dump({"navigation_runtime_node": {"ros__parameters": {
+                    "tracking_experiment": params,
+                }}}), encoding="utf-8"
+            )
+            (snapshot / "external_mode_params.yaml").write_text(
+                yaml.safe_dump({"px4_navigation_external_mode": {"ros__parameters": {
+                    "tracking_experiment": params,
+                }}}), encoding="utf-8"
+            )
+            marker = report._tracking_experiment(session)
+            self.assertEqual(marker["mode"], "relaxed")
+            self.assertEqual(marker["source"], "navigation_runtime_params.yaml+external_mode_params.yaml")
+            self.assertEqual(marker["status"], "OK")
+            self.assertFalse(marker["qualification_eligible"])
+
+    def test_tracking_experiment_report_rejects_node_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary)
+            snapshot = session / "config_snapshot"
+            snapshot.mkdir()
+            for filename, node_name, suppress in (
+                ("navigation_runtime_params.yaml", "navigation_runtime_node", False),
+                ("external_mode_params.yaml", "px4_navigation_external_mode", True),
+            ):
+                (snapshot / filename).write_text(
+                    yaml.safe_dump({node_name: {"ros__parameters": {
+                        "tracking_experiment": {
+                            "enabled": True,
+                            "suppress_braking": suppress,
+                            "base_m": 0.2,
+                            "lateral_alpha_s": 0.05,
+                            "longitudinal_beta_s": 0.15,
+                        },
+                    }}}), encoding="utf-8"
+                )
+            marker = report._tracking_experiment(session)
+            self.assertEqual(marker["mode"], "inconclusive")
+            self.assertEqual(marker["status"], "INCONCLUSIVE")
+            self.assertTrue(marker["config_mismatch"])
+            self.assertFalse(marker["qualification_eligible"])
+
     def test_closed_loop_lateral_arc_endpoint_matches_following_hold(self) -> None:
         harness = object.__new__(closed_loop_characterization.Characterization)
         harness.profile = "lateral"

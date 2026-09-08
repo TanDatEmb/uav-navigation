@@ -260,39 +260,102 @@ def _acceptance_threshold(config: dict[str, Any], scenario_config: dict[str, Any
 
 
 def _tracking_experiment(session: Path) -> dict[str, Any]:
-    """Load the immutable runner marker used for an opt-in SITL experiment."""
-    metadata = _load_json(session / "metadata.json", {})
-    value = metadata.get("tracking_experiment") if isinstance(metadata, dict) else None
-    if not isinstance(value, dict):
-        scenario_config = _load_yaml_dict(session / "scenario_config.yaml")
-        scenario = scenario_config.get("scenario", {})
-        value = scenario.get("tracking_experiment") if isinstance(scenario, dict) else None
-    if not isinstance(value, dict):
-        return {
-            "mode": "off",
-            "enabled": False,
-            "suppress_braking": False,
-            "base_m": 0.2,
-            "lateral_alpha_s": 0.05,
-            "longitudinal_beta_s": 0.15,
-            "suppressed_gates": [],
-            "qualification_eligible": None,
-            "risk_warning": None,
-            "source": "default_missing_marker",
-        }
-    mode = str(value.get("mode", "off"))
-    return {
-        "mode": mode,
-        "enabled": bool(value.get("enabled", mode != "off")),
-        "suppress_braking": bool(value.get("suppress_braking", mode == "relaxed")),
-        "base_m": value.get("base_m"),
-        "lateral_alpha_s": value.get("lateral_alpha_s"),
-        "longitudinal_beta_s": value.get("longitudinal_beta_s"),
-        "suppressed_gates": list(value.get("suppressed_gates", [])),
-        "qualification_eligible": False if mode != "off" else None,
-        "risk_warning": value.get("risk_warning"),
-        "source": "metadata.json",
+    """Load and cross-check the immutable tracking experiment configuration."""
+    defaults = {
+        "mode": "inconclusive",
+        "enabled": False,
+        "suppress_braking": False,
+        "base_m": 0.2,
+        "lateral_alpha_s": 0.05,
+        "longitudinal_beta_s": 0.15,
+        "suppressed_gates": [],
+        "qualification_eligible": False,
+        "risk_warning": None,
+        "source": "default_missing_marker",
+        "status": "INCONCLUSIVE",
+        "config_mismatch": True,
     }
+
+    def from_mapping(value: dict[str, Any], source: str) -> dict[str, Any]:
+        mode = str(value.get("mode", ""))
+        enabled = bool(value.get("enabled", mode != "off"))
+        suppress_braking = bool(value.get("suppress_braking", mode == "relaxed"))
+        if not mode:
+            mode = "relaxed" if suppress_braking else ("adaptive" if enabled else "off")
+        return {
+            "mode": mode,
+            "enabled": enabled,
+            "suppress_braking": suppress_braking,
+            "base_m": value.get("base_m", 0.2),
+            "lateral_alpha_s": value.get("lateral_alpha_s", 0.05),
+            "longitudinal_beta_s": value.get("longitudinal_beta_s", 0.15),
+            "suppressed_gates": list(value.get("suppressed_gates", [])) or (
+                [
+                    "tracking_triggered_main_emergency",
+                    "main_px4_anchor_reject",
+                ] if suppress_braking else []
+            ),
+            "qualification_eligible": False if mode != "off" else None,
+            "risk_warning": (
+                value.get("risk_warning") or
+                "Experimental tracking allowance is not qualification evidence."
+            ) if mode != "off" else None,
+            "source": source,
+            "status": "OK",
+            "config_mismatch": False,
+        }
+
+    def params_value(path: Path, node_name: str) -> dict[str, Any] | None:
+        document = _load_yaml_dict(path)
+        node = document.get(node_name, {})
+        parameters = node.get("ros__parameters", {}) if isinstance(node, dict) else {}
+        value = parameters.get("tracking_experiment") if isinstance(parameters, dict) else None
+        return value if isinstance(value, dict) else None
+
+    def signature(value: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            str(value.get("mode", "off")),
+            bool(value.get("enabled", False)),
+            bool(value.get("suppress_braking", False)),
+            value.get("base_m"),
+            value.get("lateral_alpha_s"),
+            value.get("longitudinal_beta_s"),
+        )
+
+    metadata = _load_json(session / "metadata.json", {})
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    metadata_value = metadata.get("tracking_experiment") if isinstance(metadata, dict) else None
+    if isinstance(metadata_value, dict):
+        candidates.append(("metadata.json", from_mapping(metadata_value, "metadata.json")))
+    scenario_value: dict[str, Any] | None = None
+    scenario_config = _load_yaml_dict(session / "scenario_config.yaml")
+    scenario = scenario_config.get("scenario", {})
+    scenario_value = scenario.get("tracking_experiment") if isinstance(scenario, dict) else None
+    if isinstance(scenario_value, dict):
+        candidates.append(("scenario_config.yaml", from_mapping(scenario_value, "scenario_config.yaml")))
+
+    snapshot = session / "config_snapshot"
+    param_candidates: list[tuple[str, dict[str, Any]]] = []
+    for filename, node_name in (
+        ("navigation_runtime_params.yaml", "navigation_runtime_node"),
+        ("external_mode_params.yaml", "px4_navigation_external_mode"),
+    ):
+        raw = params_value(snapshot / filename, node_name)
+        if raw is not None:
+            param_candidates.append((filename, from_mapping(raw, filename)))
+
+    all_candidates = candidates + param_candidates
+    if not all_candidates:
+        return defaults
+    if len({signature(value) for _, value in all_candidates}) != 1:
+        result = dict(defaults)
+        result["source"] = "config_mismatch"
+        result["risk_warning"] = "Tracking experiment provenance is inconsistent; qualification is ineligible."
+        result["suppressed_gates"] = ["config_mismatch"]
+        return result
+    result = dict(all_candidates[0][1])
+    result["source"] = "+".join(name for name, _ in all_candidates)
+    return result
 def _mission_waypoints_for_acceptance(
     session: Path,
     scenario_config: dict[str, Any],
@@ -2929,7 +2992,10 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     runtime = _load_json(session / "runtime.json", {})
     tracking_experiment = _tracking_experiment(session)
     experimental_bypasses: dict[str, Any] = {}
-    if tracking_experiment["mode"] != "off":
+    if (
+        tracking_experiment["mode"] != "off" or
+        tracking_experiment.get("status") != "OK"
+    ):
         experimental_bypasses["tracking_experiment"] = {
             "mode": tracking_experiment["mode"],
             "settings": {
@@ -3102,7 +3168,10 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "mission_outcome": {
             "scenario": scenario,
             "acceptance": acceptance,
-            "qualification_eligible": False if tracking_experiment["mode"] != "off" else None,
+            "qualification_eligible": (
+                False if tracking_experiment["mode"] != "off" or
+                tracking_experiment.get("status") != "OK" else None
+            ),
         },
         "gazebo_native_diagnostics": _gazebo_native_diagnostics(session, runtime),
         "tracking": {
