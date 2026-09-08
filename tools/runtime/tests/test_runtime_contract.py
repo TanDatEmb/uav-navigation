@@ -1,4 +1,5 @@
 import importlib.util
+import argparse
 import hashlib
 import io
 import json
@@ -70,6 +71,94 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_tracking_experiment_defaults_and_cli_values(self) -> None:
+        defaults = runner._tracking_experiment_payload()
+        self.assertEqual(defaults["mode"], "off")
+        self.assertFalse(defaults["enabled"])
+        self.assertFalse(defaults["suppress_braking"])
+        self.assertIsNone(defaults["qualification_eligible"])
+
+        parser = argparse.ArgumentParser()
+        runner._add_tracking_experiment_arguments(parser)
+        parsed_defaults = parser.parse_args([])
+        self.assertEqual(parsed_defaults.tracking_experiment, "off")
+        parsed = parser.parse_args([
+            "--tracking-experiment", "relaxed",
+            "--tracking-base-m", "0.25",
+            "--tracking-alpha-s", "0.06",
+            "--tracking-beta-s", "0.17",
+        ])
+        experiment = runner._tracking_experiment_payload(
+            parsed.tracking_experiment,
+            parsed.tracking_base_m,
+            parsed.tracking_alpha_s,
+            parsed.tracking_beta_s,
+        )
+        self.assertEqual(experiment["mode"], "relaxed")
+        self.assertTrue(experiment["enabled"])
+        self.assertTrue(experiment["suppress_braking"])
+        self.assertEqual(experiment["base_m"], 0.25)
+        self.assertEqual(experiment["suppressed_gates"], [
+            "tracking_triggered_main_emergency",
+            "main_px4_anchor_reject",
+        ])
+
+    def test_tracking_experiment_rejects_invalid_values(self) -> None:
+        with self.assertRaises(ValueError):
+            runner._tracking_experiment_payload("unknown")
+        with self.assertRaises(ValueError):
+            runner._tracking_experiment_payload("adaptive", 0.0)
+        with self.assertRaises(ValueError):
+            runner._tracking_experiment_payload("adaptive", 0.2, -0.01)
+        with self.assertRaises(ValueError):
+            runner._tracking_experiment_payload("adaptive", math.nan)
+
+    def test_tracking_experiment_propagates_to_both_generated_node_configs(self) -> None:
+        experiment = runner._tracking_experiment_payload("relaxed", 0.25, 0.06, 0.17)
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = SimpleNamespace(directory=Path(temporary))
+            mapping_path = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                tracking_experiment=experiment,
+            )
+            external_path = runner._external_mode_params(
+                session,
+                ROOT / "config/runtime/external_mode.yaml",
+                tracking_experiment=experiment,
+            )
+            mapping = yaml.safe_load(mapping_path.read_text(encoding="utf-8"))
+            external = yaml.safe_load(external_path.read_text(encoding="utf-8"))
+            expected = {
+                "enabled": True,
+                "suppress_braking": True,
+                "base_m": 0.25,
+                "lateral_alpha_s": 0.06,
+                "longitudinal_beta_s": 0.17,
+            }
+            self.assertEqual(
+                mapping["navigation_runtime_node"]["ros__parameters"]["tracking_experiment"],
+                expected,
+            )
+            self.assertEqual(
+                external["px4_navigation_external_mode"]["ros__parameters"]["tracking_experiment"],
+                expected,
+            )
+
+    def test_tracking_experiment_report_marker_is_read_posthoc(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary)
+            (session / "metadata.json").write_text(json.dumps({
+                "tracking_experiment": runner._tracking_experiment_payload(
+                    "adaptive", 0.22, 0.04, 0.12
+                ),
+            }), encoding="utf-8")
+            marker = report._tracking_experiment(session)
+            self.assertEqual(marker["mode"], "adaptive")
+            self.assertTrue(marker["enabled"])
+            self.assertFalse(marker["suppress_braking"])
+            self.assertFalse(marker["qualification_eligible"])
+
     def test_closed_loop_lateral_arc_endpoint_matches_following_hold(self) -> None:
         harness = object.__new__(closed_loop_characterization.Characterization)
         harness.profile = "lateral"

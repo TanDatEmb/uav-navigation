@@ -105,6 +105,7 @@ TEST_CASES = (
     "open_speed_calibration",
 )
 MOTION_PRESETS = ("nominal", "slow", "fast")
+TRACKING_EXPERIMENT_MODES = ("off", "adaptive", "relaxed")
 
 # Keep the complete SITL stack off the default DDS domain and off the PX4
 # default XRCE port.  A physical vehicle (or another developer's SITL) on the
@@ -584,6 +585,70 @@ def _write_runtime(session: Session, **values: Any) -> None:
     path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _tracking_experiment_payload(
+    mode: str = "off",
+    base_m: float = 0.2,
+    lateral_alpha_s: float = 0.05,
+    longitudinal_beta_s: float = 0.15,
+) -> dict[str, Any]:
+    """Validate and normalize the explicitly opt-in tracking experiment."""
+    if mode not in TRACKING_EXPERIMENT_MODES:
+        raise ValueError(
+            "tracking_experiment mode must be one of: "
+            + ", ".join(TRACKING_EXPERIMENT_MODES)
+        )
+    values = {
+        "base_m": base_m,
+        "lateral_alpha_s": lateral_alpha_s,
+        "longitudinal_beta_s": longitudinal_beta_s,
+    }
+    for name, value in values.items():
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ValueError(f"tracking_experiment {name} must be finite")
+    if float(base_m) <= 0.0:
+        raise ValueError("tracking_experiment base_m must be positive")
+    if float(lateral_alpha_s) < 0.0 or float(longitudinal_beta_s) < 0.0:
+        raise ValueError("tracking_experiment coefficients must be non-negative")
+    return {
+        "mode": mode,
+        "enabled": mode != "off",
+        "suppress_braking": mode == "relaxed",
+        "base_m": float(base_m),
+        "lateral_alpha_s": float(lateral_alpha_s),
+        "longitudinal_beta_s": float(longitudinal_beta_s),
+        "qualification_eligible": False if mode != "off" else None,
+        "risk_warning": (
+            "Experimental tracking allowance may increase obstacle-collision risk; "
+            "results are not qualification evidence."
+            if mode != "off" else None
+        ),
+        "suppressed_gates": (
+            [
+                "tracking_triggered_main_emergency",
+                "main_px4_anchor_reject",
+            ] if mode == "relaxed" else []
+        ),
+    }
+
+
+def _apply_tracking_experiment_parameters(
+    ros_parameters: dict[str, Any],
+    experiment: dict[str, Any],
+) -> None:
+    """Write the shared parameter namespace consumed by both runtime nodes."""
+    ros_parameters["tracking_experiment"] = {
+        "enabled": bool(experiment["enabled"]),
+        "suppress_braking": bool(experiment["suppress_braking"]),
+        "base_m": float(experiment["base_m"]),
+        "lateral_alpha_s": float(experiment["lateral_alpha_s"]),
+        "longitudinal_beta_s": float(experiment["longitudinal_beta_s"]),
+    }
+
+
 def _git(cwd: Path, *args: str) -> str:
     try:
         result = subprocess.run(
@@ -645,6 +710,7 @@ def _write_runtime_evidence_metadata(
     ros_domain_id: int,
     xrce_port: int,
     scenario_identity: dict[str, Any] | None = None,
+    tracking_experiment: dict[str, Any] | None = None,
 ) -> None:
     """Write a self-contained run manifest without changing runtime policy."""
     snapshot = session.directory / "config_snapshot"
@@ -697,6 +763,7 @@ def _write_runtime_evidence_metadata(
         "stitch_duration_s": 0.4,
         "solve_deadline_s": 0.08,
         "requested_cruise_speed_mps": requested_cruise_speed_mps,
+        "tracking_experiment": tracking_experiment or _tracking_experiment_payload(),
         "environment": {
             "map_profile": map_profile,
             "ros_domain_id": ros_domain_id,
@@ -1236,12 +1303,22 @@ def _resolve_map_descriptor(session: Session, map_profile: str, map_seed: int) -
     return world_name, descriptor
 
 
-def _external_mode_params(session: Session, source: Path) -> Path:
+def _external_mode_params(
+    session: Session,
+    source: Path,
+    *,
+    tracking_experiment: dict[str, Any] | None = None,
+) -> Path:
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "px4_navigation_external_mode" not in value:
         raise ValueError(f"runtime config is missing px4_navigation_external_mode: {source}")
     # Planner backend PVA is the nominal contract. Limits are injected into
     # planner backend by _mapping_params, never into this transport layer.
+    experiment = tracking_experiment or _tracking_experiment_payload()
+    _apply_tracking_experiment_parameters(
+        value["px4_navigation_external_mode"].setdefault("ros__parameters", {}),
+        experiment,
+    )
     target = session.directory / "external_mode_params.yaml"
     target.write_text(yaml.safe_dump({"px4_navigation_external_mode": value["px4_navigation_external_mode"]}, sort_keys=False), encoding="utf-8")
     return target
@@ -1289,12 +1366,15 @@ def _mapping_params(
     inject_failed_replan_repeated: bool = False,
     inject_failed_plan_from_rest_repeated: bool = False,
     inject_failed_same_identity_renewal_ordinal: int | None = None,
+    tracking_experiment: dict[str, Any] | None = None,
 ) -> Path:
     """Create the only ROS parameter file used by native planner backend navigation."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "navigation_runtime_node" not in value:
         raise ValueError(f"runtime config is missing navigation_runtime_node: {source}")
     node_parameters = value["navigation_runtime_node"].setdefault("ros__parameters", {})
+    experiment = tracking_experiment or _tracking_experiment_payload()
+    _apply_tracking_experiment_parameters(node_parameters, experiment)
     planner_parameters = node_parameters.setdefault("navigation_runtime", {})
     planner = yaml.safe_load(
         (ROOT / "src/runtime/navigation_runtime/config/planner.yaml").read_text(
@@ -1942,9 +2022,19 @@ def _run_sim_unlocked(
     inject_failed_same_identity_renewal_ordinal: int | None = None,
     characterization_profile: str | None = None,
     characterization_mode: str = "MODE_PX4_LOCAL",
+    tracking_experiment_mode: str = "off",
+    tracking_experiment_base_m: float = 0.2,
+    tracking_experiment_lateral_alpha_s: float = 0.05,
+    tracking_experiment_longitudinal_beta_s: float = 0.15,
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
+    tracking_experiment = _tracking_experiment_payload(
+        tracking_experiment_mode,
+        tracking_experiment_base_m,
+        tracking_experiment_lateral_alpha_s,
+        tracking_experiment_longitudinal_beta_s,
+    )
     if characterization_profile is not None:
         if control_interface != "offboard":
             raise ValueError("closed-loop characterization requires the direct offboard interface")
@@ -1975,6 +2065,7 @@ def _run_sim_unlocked(
         "resolved_profile": map_profile,
         "manual_takeoff": bool(manual_takeoff),
         "interactive_handover": bool(not headless and auto_scenario),
+        "tracking_experiment": tracking_experiment,
     })
     if manual_takeoff:
         if headless or control_interface != "external_mode" or not auto_scenario:
@@ -2225,6 +2316,7 @@ def _run_sim_unlocked(
         "map_descriptor": str(session.directory / "map_descriptor.json"),
         "ros_domain_id": isolated_domain,
         "xrce_port": isolated_xrce_port,
+        "tracking_experiment": tracking_experiment,
         "dds_isolation": (
             "ROS_DOMAIN_ID + dedicated MicroXRCEAgent UDP port + private GZ_PARTITION"
         ),
@@ -2255,6 +2347,7 @@ def _run_sim_unlocked(
         ros_domain_id=isolated_domain,
         xrce_port=isolated_xrce_port,
         scenario_identity=scenario_identity,
+        tracking_experiment=tracking_experiment,
     )
     if characterization_profile:
         metadata_path = session.directory / "metadata.json"
@@ -2324,7 +2417,37 @@ def _run_sim_unlocked(
             inject_failed_replan_repeated=inject_failed_replan_repeated,
             inject_failed_plan_from_rest_repeated=inject_failed_plan_from_rest_repeated,
             inject_failed_same_identity_renewal_ordinal=inject_failed_same_identity_renewal_ordinal,
+            tracking_experiment=tracking_experiment,
         )
+        external_mode_config: Path | None = None
+        if control_interface == "external_mode":
+            external_mode_config = _external_mode_params(
+                session,
+                RUNTIME_CONFIG / "external_mode.yaml",
+                tracking_experiment=tracking_experiment,
+            )
+        generated_snapshot = session.directory / "config_snapshot"
+        generated_config_snapshot: dict[str, str] = {}
+        if mapping_config is not None:
+            target = generated_snapshot / "navigation_runtime_params.yaml"
+            copy2(mapping_config, target)
+            generated_config_snapshot["navigation_runtime_params"] = str(target)
+        if external_mode_config is not None:
+            target = generated_snapshot / "external_mode_params.yaml"
+            copy2(external_mode_config, target)
+            generated_config_snapshot["external_mode_params"] = str(target)
+        _write_runtime(
+            session,
+            generated_config_snapshot=generated_config_snapshot,
+        )
+        if tracking_experiment["mode"] != "off":
+            print(
+                "WARNING: tracking experiment is enabled "
+                f"(mode={tracking_experiment['mode']}); "
+                "this run is not qualification evidence and may increase "
+                "obstacle-collision risk.",
+                flush=True,
+            )
         lidar_to_imu_xyz, lidar_to_imu_rpy = _lidar_to_imu_launch_arguments(config)
         monitor = session.start(
             "monitor",
@@ -2440,7 +2563,7 @@ def _run_sim_unlocked(
                 "external_mode",
                 _ros_shell(
                     _external_mode_launch_command(
-                        _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml"),
+                        external_mode_config,
                         mission_file,
                     ),
                     enable_rviz=True,
@@ -2501,7 +2624,7 @@ def _run_sim_unlocked(
             # PX4 control semantics.
             if control_interface == "external_mode":
                 external_mode_args = _external_mode_launch_command(
-                    _external_mode_params(session, RUNTIME_CONFIG / "external_mode.yaml"),
+                    external_mode_config,
                     mission_file,
                 )
                 session.start("external_mode", _ros_shell([
@@ -2874,6 +2997,33 @@ def _number(value: Any) -> float:
         return 0.0
 
 
+def _add_tracking_experiment_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--tracking-experiment",
+        choices=TRACKING_EXPERIMENT_MODES,
+        default="off",
+        help="explicit SITL-only tracking experiment mode; default: off",
+    )
+    parser.add_argument(
+        "--tracking-base-m",
+        type=float,
+        default=0.2,
+        help="base tracking allowance for the opt-in experiment",
+    )
+    parser.add_argument(
+        "--tracking-alpha-s",
+        type=float,
+        default=0.05,
+        help="lateral allowance coefficient in seconds",
+    )
+    parser.add_argument(
+        "--tracking-beta-s",
+        type=float,
+        default=0.15,
+        help="longitudinal allowance coefficient in seconds",
+    )
+
+
 def main() -> int:
     try:
         require_canonical_python()
@@ -2987,6 +3137,7 @@ def main() -> int:
         "--inject-failed-plan-from-rest-repeated", action="store_true",
         help="repeat diagnostic PlanFromRest failures in StoppedRecovery",
     )
+    _add_tracking_experiment_arguments(external_mode)
     sub.add_parser("sim")
     external_mode_gui = sub.add_parser(
         "external-mode-gui",
@@ -3071,6 +3222,7 @@ def main() -> int:
         "--inject-failed-plan-from-rest-repeated", action="store_true",
         help="repeat diagnostic PlanFromRest failures in StoppedRecovery",
     )
+    _add_tracking_experiment_arguments(external_mode_gui)
     sub.add_parser("status")
     sub.add_parser("stop")
     sub.add_parser("clean")
@@ -3120,6 +3272,10 @@ def main() -> int:
             inject_failed_same_identity_renewal_ordinal=
                 args.inject_failed_same_identity_renewal_ordinal,
             inject_failed_plan_from_rest_repeated=args.inject_failed_plan_from_rest_repeated,
+            tracking_experiment_mode=args.tracking_experiment,
+            tracking_experiment_base_m=args.tracking_base_m,
+            tracking_experiment_lateral_alpha_s=args.tracking_alpha_s,
+            tracking_experiment_longitudinal_beta_s=args.tracking_beta_s,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -3147,6 +3303,10 @@ def main() -> int:
             inject_failed_same_identity_renewal_ordinal=
                 args.inject_failed_same_identity_renewal_ordinal,
             inject_failed_plan_from_rest_repeated=args.inject_failed_plan_from_rest_repeated,
+            tracking_experiment_mode=args.tracking_experiment,
+            tracking_experiment_base_m=args.tracking_base_m,
+            tracking_experiment_lateral_alpha_s=args.tracking_alpha_s,
+            tracking_experiment_longitudinal_beta_s=args.tracking_beta_s,
         )
     if args.command == "status":
         return status()

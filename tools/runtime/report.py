@@ -259,6 +259,40 @@ def _acceptance_threshold(config: dict[str, Any], scenario_config: dict[str, Any
     return 0.5
 
 
+def _tracking_experiment(session: Path) -> dict[str, Any]:
+    """Load the immutable runner marker used for an opt-in SITL experiment."""
+    metadata = _load_json(session / "metadata.json", {})
+    value = metadata.get("tracking_experiment") if isinstance(metadata, dict) else None
+    if not isinstance(value, dict):
+        scenario_config = _load_yaml_dict(session / "scenario_config.yaml")
+        scenario = scenario_config.get("scenario", {})
+        value = scenario.get("tracking_experiment") if isinstance(scenario, dict) else None
+    if not isinstance(value, dict):
+        return {
+            "mode": "off",
+            "enabled": False,
+            "suppress_braking": False,
+            "base_m": 0.2,
+            "lateral_alpha_s": 0.05,
+            "longitudinal_beta_s": 0.15,
+            "suppressed_gates": [],
+            "qualification_eligible": None,
+            "risk_warning": None,
+            "source": "default_missing_marker",
+        }
+    mode = str(value.get("mode", "off"))
+    return {
+        "mode": mode,
+        "enabled": bool(value.get("enabled", mode != "off")),
+        "suppress_braking": bool(value.get("suppress_braking", mode == "relaxed")),
+        "base_m": value.get("base_m"),
+        "lateral_alpha_s": value.get("lateral_alpha_s"),
+        "longitudinal_beta_s": value.get("longitudinal_beta_s"),
+        "suppressed_gates": list(value.get("suppressed_gates", [])),
+        "qualification_eligible": False if mode != "off" else None,
+        "risk_warning": value.get("risk_warning"),
+        "source": "metadata.json",
+    }
 def _mission_waypoints_for_acceptance(
     session: Path,
     scenario_config: dict[str, Any],
@@ -2893,6 +2927,23 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
     )
     streams = {name: _rate_row(snapshot, name) for name in names}
     runtime = _load_json(session / "runtime.json", {})
+    tracking_experiment = _tracking_experiment(session)
+    experimental_bypasses: dict[str, Any] = {}
+    if tracking_experiment["mode"] != "off":
+        experimental_bypasses["tracking_experiment"] = {
+            "mode": tracking_experiment["mode"],
+            "settings": {
+                key: tracking_experiment[key]
+                for key in (
+                    "base_m",
+                    "lateral_alpha_s",
+                    "longitudinal_beta_s",
+                )
+            },
+            "suppressed_gates": tracking_experiment["suppressed_gates"],
+            "qualification_eligible": False,
+            "risk_warning": tracking_experiment["risk_warning"],
+        }
     failures = _process_failures(session)
     samples = _samples(session / "samples.jsonl")
     _annotate_stale_classification(streams, config, runtime, samples)
@@ -3046,7 +3097,13 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
         "conversion_contract": conversion_contract,
         "ground_truth_residuals": ground_truth_residuals,
         "acceptance": acceptance,
-        "experimental_bypasses": {},
+        "experimental_bypasses": experimental_bypasses,
+        "tracking_experiment": tracking_experiment,
+        "mission_outcome": {
+            "scenario": scenario,
+            "acceptance": acceptance,
+            "qualification_eligible": False if tracking_experiment["mode"] != "off" else None,
+        },
         "gazebo_native_diagnostics": _gazebo_native_diagnostics(session, runtime),
         "tracking": {
             "reference_vs_lio": "NOT_AVAILABLE",
