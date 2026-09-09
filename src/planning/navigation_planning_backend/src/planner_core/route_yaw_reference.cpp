@@ -56,41 +56,6 @@ double projectedProgressArc(
                   std::max(route.measured_progress.progress_arc_m, best_arc));
 }
 
-bool activeWaypointIsReversal(
-    const navigation_mission::ImmutableRouteSnapshot& route,
-    const double threshold_rad) noexcept {
-  const std::size_t active = route.active_waypoint_index;
-  const navigation_mission::RouteSegment* incoming = nullptr;
-  const navigation_mission::RouteSegment* outgoing = nullptr;
-  for (const auto& segment : route.segments) {
-    if (segment.end_waypoint_index == active) incoming = &segment;
-    if (segment.start_waypoint_index == active) {
-      outgoing = &segment;
-      break;
-    }
-  }
-  if (incoming == nullptr || outgoing == nullptr) return false;
-  const double incoming_horizontal_norm = incoming->tangent.head<2>().norm();
-  const double outgoing_horizontal_norm = outgoing->tangent.head<2>().norm();
-  if (incoming_horizontal_norm < 1.0e-6 || outgoing_horizontal_norm < 1.0e-6) {
-    return false;
-  }
-  const double cosine = std::clamp(
-      incoming->tangent.head<2>().dot(outgoing->tangent.head<2>()) /
-          (incoming_horizontal_norm * outgoing_horizontal_norm),
-      -1.0, 1.0);
-  return std::acos(cosine) >= threshold_rad;
-}
-
-bool previousWaypointWasReversal(
-    const navigation_mission::ImmutableRouteSnapshot& route,
-    const double threshold_rad) noexcept {
-  if (route.active_waypoint_index == 0U) return false;
-  auto previous = route;
-  previous.active_waypoint_index = route.active_waypoint_index - 1U;
-  return activeWaypointIsReversal(previous, threshold_rad);
-}
-
 RouteYawReference holdReference(
     const double yaw, const double progress, const Eigen::Vector3d& point,
     const RouteYawSource source) noexcept {
@@ -129,53 +94,38 @@ RouteYawReference computeRouteYawReference(
     return holdReference(measured_yaw_rad, 0.0, measured_position,
                          RouteYawSource::kInvalidRoute);
   }
-  const double horizontal_speed = measured_velocity.head<2>().norm();
   const double progress = projectedProgressArc(route, measured_position);
   const auto progress_point = route.pointAtArc(progress);
   if (!progress_point.has_value()) {
     return holdReference(measured_yaw_rad, progress, measured_position,
                          RouteYawSource::kInvalidRoute);
   }
-  const bool reversal_turn_in_place =
-      previousWaypointWasReversal(route, config.reversal_threshold_rad);
-  if ((!std::isfinite(horizontal_speed) ||
-       horizontal_speed < config.minimum_horizontal_speed_mps) &&
-      !reversal_turn_in_place) {
-    return holdReference(measured_yaw_rad, progress, *progress_point,
-                         RouteYawSource::kHoldLowSpeed);
-  }
 
-  const double lookahead = std::clamp(
-      std::max(config.minimum_lookahead_m,
-               horizontal_speed * config.lookahead_time_s),
-      config.minimum_lookahead_m, config.maximum_lookahead_m);
-  double target_arc = std::min(route.total_length_m, progress + lookahead);
-  if (activeWaypointIsReversal(route, config.reversal_threshold_rad)) {
-    target_arc = std::min(
-        target_arc, route.waypoint_arc_lengths_m[route.active_waypoint_index]);
+  // The active waypoint is the current mission-owned target.  Waypoint zero
+  // is the fixed start pose, so the first executable leg is zero -> one;
+  // after activation, each subsequent leg is (active - 1) -> active.  This
+  // makes a waypoint transition update the heading target immediately and
+  // never consumes a heading from a queued future waypoint or a lookahead
+  // point from the previous leg.
+  const std::size_t target_index = route.active_waypoint_index == 0U
+      ? 1U : route.active_waypoint_index;
+  if (target_index >= route.waypoints.size()) {
+    return holdReference(measured_yaw_rad, progress, *progress_point,
+                         RouteYawSource::kHoldNoHorizontalSupport);
   }
-  const auto target_point = route.pointAtArc(target_arc);
-  if (!target_point.has_value()) {
+  const std::size_t origin_index = target_index - 1U;
+  const Eigen::Vector3d& direction_origin =
+      route.waypoints[origin_index].position_enu;
+  const Eigen::Vector3d& target = route.waypoints[target_index].position_enu;
+  if (!direction_origin.allFinite() || !target.allFinite()) {
     return holdReference(measured_yaw_rad, progress, *progress_point,
                          RouteYawSource::kInvalidRoute);
   }
-  // Heading is a property of the mission route, not of the cross-track
-  // correction.  Using measured_position -> target_point makes yaw point back
-  // at the waypoint after a small overshoot, producing a near-180 degree turn
-  // while the position controller performs a short terminal correction.
-  // Follow the route chord instead.  At the terminal arc there is no forward
-  // chord, so use the incoming chord and preserve the final-leg heading.
-  Eigen::Vector3d direction_origin = *progress_point;
-  if (target_arc <= progress + config.minimum_horizontal_support_m) {
-    const auto trailing_point = route.pointAtArc(
-        std::max(0.0, target_arc - lookahead));
-    if (trailing_point.has_value()) direction_origin = *trailing_point;
-  }
   const Eigen::Vector2d direction =
-      (target_point->head<2>() - direction_origin.head<2>()).eval();
+      (target.head<2>() - direction_origin.head<2>()).eval();
   if (!direction.allFinite() ||
       direction.norm() < config.minimum_horizontal_support_m) {
-    return holdReference(measured_yaw_rad, progress, *target_point,
+    return holdReference(measured_yaw_rad, progress, target,
                          RouteYawSource::kHoldNoHorizontalSupport);
   }
 
@@ -184,16 +134,53 @@ RouteYawReference computeRouteYawReference(
   output.target_yaw_rad = unwrapNear(
       measured_yaw_rad, std::atan2(direction.y(), direction.x()));
   if (!std::isfinite(output.target_yaw_rad)) {
-    return holdReference(measured_yaw_rad, progress, *target_point,
+    return holdReference(measured_yaw_rad, progress, target,
                          RouteYawSource::kInvalidRoute);
   }
-  output.lookahead_m = lookahead;
+  output.lookahead_m = direction.norm();
   output.progress_arc_m = progress;
-  output.target_point = *target_point;
-  output.source = reversal_turn_in_place &&
-          horizontal_speed < config.minimum_horizontal_speed_mps
-      ? RouteYawSource::kRouteTurnInPlace
-      : RouteYawSource::kRouteLookahead;
+  output.target_point = target;
+  output.source = RouteYawSource::kRouteLookahead;
+  return output;
+}
+
+BoundedHeadingStep stepBoundedHeading(
+    const double current_yaw_rad, const double current_yaw_rate_rad_s,
+    const double target_yaw_rad, const double command_period_s,
+    const double maximum_yaw_rate_rad_s,
+    const double maximum_yaw_acceleration_rad_s2) noexcept {
+  BoundedHeadingStep output;
+  if (!std::isfinite(current_yaw_rad) ||
+      !std::isfinite(current_yaw_rate_rad_s) ||
+      !std::isfinite(target_yaw_rad) ||
+      !std::isfinite(command_period_s) || command_period_s <= 0.0 ||
+      !std::isfinite(maximum_yaw_rate_rad_s) || maximum_yaw_rate_rad_s <= 0.0 ||
+      !std::isfinite(maximum_yaw_acceleration_rad_s2) ||
+      maximum_yaw_acceleration_rad_s2 <= 0.0 ||
+      std::abs(current_yaw_rate_rad_s) > maximum_yaw_rate_rad_s + 1.0e-9) {
+    return output;
+  }
+
+  const double delta = std::remainder(
+      target_yaw_rad - current_yaw_rad, 2.0 * M_PI);
+  const double stopping_limited_rate = std::sqrt(std::max(
+      0.0, 2.0 * maximum_yaw_acceleration_rad_s2 * std::abs(delta)));
+  const double desired_rate =
+      std::copysign(std::min(maximum_yaw_rate_rad_s, stopping_limited_rate),
+                    delta);
+  const double maximum_rate_change =
+      maximum_yaw_acceleration_rad_s2 * command_period_s;
+  const double rate_change = std::clamp(
+      desired_rate - current_yaw_rate_rad_s,
+      -maximum_rate_change, maximum_rate_change);
+  const double next_rate = std::clamp(
+      current_yaw_rate_rad_s + rate_change,
+      -maximum_yaw_rate_rad_s, maximum_yaw_rate_rad_s);
+
+  output.valid = true;
+  output.yaw_rate_rad_s = next_rate;
+  output.yaw_acceleration_rad_s2 = rate_change / command_period_s;
+  output.yaw_rad = current_yaw_rad + next_rate * command_period_s;
   return output;
 }
 

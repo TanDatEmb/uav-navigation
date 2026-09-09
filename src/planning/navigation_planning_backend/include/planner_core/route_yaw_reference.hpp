@@ -36,6 +36,22 @@ struct RouteYawReference {
   RouteYawSource source{RouteYawSource::kInvalidRoute};
 };
 
+// A stateless, command-clock heading step. The caller supplies the current
+// active command state and route-owned target on every sample, so a waypoint
+// or goal-epoch change cannot leave stale heading state inside this helper.
+struct BoundedHeadingStep {
+  bool valid{false};
+  double yaw_rad{0.0};
+  double yaw_rate_rad_s{0.0};
+  double yaw_acceleration_rad_s2{0.0};
+};
+
+[[nodiscard]] BoundedHeadingStep stepBoundedHeading(
+    double current_yaw_rad, double current_yaw_rate_rad,
+    double target_yaw_rad, double command_period_s,
+    double maximum_yaw_rate_rad_s,
+    double maximum_yaw_acceleration_rad_s2) noexcept;
+
 // Derive semantic yaw from measured position and immutable mission-route
 // geometry. Position-trajectory shape is deliberately absent from this API.
 [[nodiscard]] RouteYawReference computeRouteYawReference(
