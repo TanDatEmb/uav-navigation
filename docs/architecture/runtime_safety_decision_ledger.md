@@ -1,5 +1,42 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Warm-start mandatory nominal feasibility from the best bounded duration retry
+
+- **Owner/status:** planning nominal optimizer; `IMPLEMENTED`, correctness fix;
+  representative SITL verification remains open.
+- **Scope/units:** When the corridor-contained deterministic nominal seed fails
+  only the independent V/A/J certificate, retain the finite retry duration with
+  the lowest normalized dynamic violation as an L-BFGS warm start. The retry
+  changes only optimizer initialization; it does not change endpoint PVAJ,
+  corridor cells, route-boundary provenance, the 80 ms absolute solve deadline,
+  finalization reserve, or any physical hard limit. A retry is never published
+  directly unless the existing complete candidate certificates pass.
+- **Safety impact:** This removes the avoidable restart from the original
+  high-dynamic MINCO interpolation after the bounded retry family has already
+  produced a geometrically valid, lower-violation proposal. The independent
+  corridor, route-boundary, V/A/J, flatness, world, candidate, lease and
+  fail-closed rejection gates remain authoritative. No timeout or limit is
+  relaxed, and an expired/cancelled solve still returns no candidate unless an
+  already-certified immutable seed exists.
+- **Evidence:** Exact snapshot
+  `.artifacts/runtime/diagnostic-snapshots-20260909T-current/nominal_problem_snapshot_2_2_0.json`
+  (SHA-256
+  `b755a95f01bce619649ef7481d6e2f41fc2fbe8c2018bbfb01c1b7c13c9c711c`) had
+  initial V/A/J `29.2397/296.5094/7473.4877`, while the best captured
+  geometrically valid retry had `4.1709/7.6579/33.5831`. Exact replay after
+  this change produced a complete candidate with V/A/J
+  `4.6551/1.7539/3.8442`, flatness/world PASS, one L-BFGS attempt and 1739
+  evaluations under the no-deadline replay path. This is source/replay evidence,
+  not SITL acceptance.
+- **Removal/review condition:** Revisit after repeated representative
+  three-pillar 5 m/s SITL and recorded-sensor evidence shows whether the
+  remaining first-failure owner is solver timing, route/guide geometry, or
+  PX4/LIO tracking. Do not increase the deadline or tune a gate from one run.
+- **Verification:** Exact snapshot replay, `navigation_planning_backend`
+  Release build/manifest, `git diff --check`, focused planner/backend tests,
+  then repeated map/profile-separated SITL with successor-commit and stopped
+  reactivation evidence.
+
 ### 2026-09-09 - Bind active-leg heading to mission start and command-clock continuity
 
 - **Owner/status:** navigation planning/runtime yaw integration; `IMPLEMENTED`

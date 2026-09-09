@@ -1767,6 +1767,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
             deterministic_seed_certificate;
     bool deterministic_seed_uses_corridor_bezier = false;
     double deterministic_seed_duration_scale = 1.0;
+    VecDf best_dynamic_warm_start_times;
+    double best_dynamic_warm_start_violation =
+            std::numeric_limits<double>::infinity();
     const bool capture_nominal_problem = nominalProblemSnapshotCaptureEnabled();
     auto append_duration_retry = [this](
             const int retry_type,
@@ -1907,11 +1910,27 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                             cfg_);
                 append_duration_retry(
                     retry_mode, retry_times, retry_seed,
-                    retry_certificate.valid
+                            retry_certificate.valid
                         ? 0 : static_cast<int>(retry_certificate.failure_stage));
                 diagnostics_.corridor_seed_retry_last_certificate_stage =
                     static_cast<int>(retry_certificate.failure_stage);
-                if (!retry_certificate.valid) continue;
+                if (!retry_certificate.valid) {
+                    const double retry_violation = std::max({
+                            retry_certificate.maximum_velocity_mps / cfg_.max_vel,
+                            std::sqrt(retry_certificate.maximum_acceleration_mps2 /
+                                      cfg_.max_acc),
+                            std::cbrt(retry_certificate.maximum_jerk_mps3 /
+                                      cfg_.max_jerk)});
+                    if (retry_certificate.failure_stage ==
+                            navigation_planning_backend::
+                                DeterministicNominalSeedFailureStage::kDynamics &&
+                        std::isfinite(retry_violation) &&
+                        retry_violation < best_dynamic_warm_start_violation) {
+                        best_dynamic_warm_start_violation = retry_violation;
+                        best_dynamic_warm_start_times = retry_times;
+                    }
+                    continue;
+                }
                 corridor_seed_result = std::move(retry_seed);
                 deterministic_nominal_seed = corridor_seed_result.trajectory;
                 deterministic_seed_certificate = retry_certificate;
@@ -1973,6 +1992,16 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
             deterministic_seed_certificate.maximum_acceleration_mps2;
     diagnostics_.certified_seed_maximum_jerk_mps3 =
             deterministic_seed_certificate.maximum_jerk_mps3;
+    if (!deterministic_seed_certificate.valid &&
+        best_dynamic_warm_start_times.size() == opt_vars.times.size()) {
+        opt_vars.times = best_dynamic_warm_start_times;
+        gcopter::backwardMapTToTau(opt_vars.times, tau);
+        planner_context_->info(
+                " -- [ExpOpt] dynamic certified-seed fallback warm-start: "
+                "normalized_violation={} duration={} min_piece={}",
+                best_dynamic_warm_start_violation,
+                opt_vars.times.sum(), opt_vars.times.minCoeff());
+    }
     const auto run_lbfgs = [&](const bool feasibility_retry) {
         ++diagnostics_.lbfgs_attempt_count;
         opt_vars.solver_attempt = diagnostics_.lbfgs_attempt_count;
