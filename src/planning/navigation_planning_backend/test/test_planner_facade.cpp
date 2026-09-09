@@ -564,7 +564,16 @@ TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {
   // sensor-known-free corridor; committed-future validation receives no body
   // exception.
   facade.onExecutionTimelineActivated(outcome.candidate->bundle_generation);
-  ros_time_s = 22.0;
+  const auto committed = facade.committedSnapshot();
+  ASSERT_FALSE(committed.empty());
+  navigation_planning::TrajectoryPoint terminal;
+  ASSERT_TRUE(committed.position.sample(committed.position.duration_s, terminal));
+  ASSERT_EQ(fixture.snapshot->classify(
+                terminal.position_world,
+                navigation_world_model::GridLayer::kInflated),
+            navigation_world_model::CellState::kKnownFree);
+  ros_time_s = committed.position.start_wall_time_s +
+      committed.position.duration_s;
   EXPECT_TRUE(facade.validateCommittedTrajectory(
       fixture.snapshot, ros_time_s).valid);
 

@@ -61,26 +61,53 @@ unknown or undeclared dirty state remains fail-closed for qualification.
 
 `make sim` starts an interactive PX4/Gazebo/RViz session and does not publish
 an automatic mission. `make sim-check` is a legacy headless offboard smoke
-workflow. The product External Mode acceptance command is:
+workflow.
+
+The normal External Mode policy is owned by config and code:
+
+| Setting | Default source | Normal value |
+|---|---|---|
+| Planner V/A/J | `src/runtime/navigation_runtime/config/planner.yaml` and planner config defaults | `5 m/s`, `5 m/s^2`, `8 m/s^3` |
+| Tracking gate | `tracking_experiment.base_m`, `lateral_alpha_s`, `longitudinal_beta_s` in both runtime param files | `0/0/0`; zero disables the tracking and fresh-health response gates |
+| PX4 estimator | default contract in `tools/runtime/runner.py` and `tools/simulation/run_px4_mid360.sh` | GPS sensor and EKF2 GNSS aiding enabled |
+
+Do not pass a dynamics profile, tracking mode, or GPS profile in a normal run.
+After changing an owned parameter, run `make build` so the manifest and install
+tree match the source. Because the default tracking gates are disabled, these
+runs are diagnostic and cannot be used as qualification evidence.
+
+Use one of these command combinations:
+
+| Command | Gazebo GUI | RViz | Mission | Takeoff |
+|---|---:|---:|---|---|
+| `make run` | No | No | Automatic External Mode mission | Automatic |
+| `make run-gui` | Yes | Yes | Automatic External Mode mission | Automatic |
+| `MANUAL_TAKEOFF=1 make run-gui` | Yes | Yes | Automatic after takeoff | Manual arm/takeoff |
+| `make sim` | Yes | Yes | None | Operator-owned |
+| `make sim-check` | No | No | Legacy offboard smoke | Automatic |
+
+The shortest headless mission command is:
 
 ```bash
-PX4_DIR="$HOME/Dev/Autopilot" make external-mode-check
+make run
 ```
 
-The GUI equivalent is:
+The shortest command with Gazebo GUI and RViz is:
 
 ```bash
-PX4_DIR="$HOME/Dev/Autopilot" make external-mode-gui
+make run-gui
 ```
 
-The GUI command accepts the same selectors and launches RViz. To require a
-manual takeoff/arm in the GUI session:
+Set `PX4_DIR` only when PX4 is not at the default path. Both run commands accept
+the same map selectors. To require manual takeoff/arm in the GUI session:
 
 ```bash
-PX4_DIR="$HOME/Dev/Autopilot" MANUAL_TAKEOFF=1 \
-  MAP_SCENE=sanity_open TEST_CASE=positive MOTION_PRESET=nominal \
-  make external-mode-gui
+MANUAL_TAKEOFF=1 MAP_SCENE=sanity_open make run-gui
 ```
+
+Compatibility names remain available: `make external-mode-check` equals
+`make run`; `make external-mode-gui` and `make external-mode` equal
+`make run-gui`.
 
 Useful lifecycle commands are:
 
@@ -104,7 +131,7 @@ runner resolves the declared fallback in `config/runtime/map_profiles.yaml`.
 | `TEST_CASE` | `positive`, `degenerate`, `detour`, `no_path`, `comprehensive` | Mission/behavior variant |
 | `MOTION_PRESET` | `nominal`, `slow`, `fast` | Motion variant |
 | `MAP_SEED` | Integer | Deterministic stochastic-map seed |
-| `SPEED_CAP_MPS` | Finite positive number | Per-run planner/tracker cap |
+| `SPEED_CAP_MPS` | Finite positive number | Optional mission cruise-speed request; does not change planner V/A/J |
 | `PX4_DIR` | Absolute path | PX4 source checkout |
 | `UAV_NAV_ROS_DOMAIN_ID` | `0..232` | Explicit SITL ROS domain |
 | `UAV_NAV_XRCE_PORT` | `1024..65535` | Explicit MicroXRCEAgent UDP port |
@@ -129,28 +156,28 @@ export PX4_DIR="$HOME/Dev/Autopilot"
 make build
 
 MAP_SCENE=sanity_open TEST_CASE=positive MOTION_PRESET=nominal \
-  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make external-mode-check
+  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make run
 
 MAP_SCENE=structured_obstacle TEST_CASE=positive MOTION_PRESET=nominal \
-  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make external-mode-check
+  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make run
 MAP_SCENE=structured_obstacle TEST_CASE=detour MOTION_PRESET=nominal \
-  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make external-mode-check
+  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make run
 
 MAP_SCENE=long_route TEST_CASE=positive MOTION_PRESET=nominal \
-  SPEED_CAP_MPS=2 PX4_DIR="$PX4_DIR" make external-mode-check
+  SPEED_CAP_MPS=2 PX4_DIR="$PX4_DIR" make run
 MAP_SCENE=long_route TEST_CASE=positive MOTION_PRESET=slow \
-  SPEED_CAP_MPS=2 PX4_DIR="$PX4_DIR" make external-mode-check
+  SPEED_CAP_MPS=2 PX4_DIR="$PX4_DIR" make run
 MAP_SCENE=long_route TEST_CASE=positive MOTION_PRESET=fast \
-  SPEED_CAP_MPS=5 PX4_DIR="$PX4_DIR" make external-mode-check
+  SPEED_CAP_MPS=5 PX4_DIR="$PX4_DIR" make run
 
 MAP_SCENE=tunnel TEST_CASE=positive MOTION_PRESET=nominal \
-  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make external-mode-check
+  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make run
 MAP_SCENE=clutter TEST_CASE=positive MOTION_PRESET=nominal MAP_SEED=11 \
-  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make external-mode-check
+  SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" make run
 
 MAP_SCENE=navigation_generalization TEST_CASE=comprehensive \
   MOTION_PRESET=nominal SPEED_CAP_MPS=3 PX4_DIR="$PX4_DIR" \
-  make external-mode-check
+  make run
 ```
 
 ### Direct profile matrix
@@ -173,7 +200,7 @@ for profile in \
   single_pillar_speed single_pillar_speed_pv navigation_generalization; do
   MAP_PROFILE="$profile" TEST_CASE=positive MOTION_PRESET=nominal \
     MAP_SEED=11 SPEED_CAP_MPS=1 PX4_DIR="$PX4_DIR" \
-    make external-mode-check
+    make run
 done
 ```
 
@@ -183,7 +210,7 @@ For the declared high-speed three-pillar matrix:
 for speed in 2 3 4 5 6 8; do
   MAP_PROFILE=long_three_pillars_speed TEST_CASE=positive \
     MOTION_PRESET=fast SPEED_CAP_MPS="$speed" PX4_DIR="$PX4_DIR" \
-    make external-mode-check
+    make run
 done
 ```
 
@@ -193,47 +220,44 @@ For the nine-waypoint three-pillar mission:
 for speed in 3 4 5; do
   MAP_PROFILE=long_three_pillars_multiwaypoint TEST_CASE=positive \
     MOTION_PRESET=fast SPEED_CAP_MPS="$speed" PX4_DIR="$PX4_DIR" \
-    make external-mode-check
+    make run
 done
 ```
 
 ## 6. GUI commands for each map family
 
-Run only one GUI session at a time:
+Run only one GUI session at a time. `TEST_CASE=positive` and
+`MOTION_PRESET=nominal` are already defaults, so omit them unless selecting a
+different variant:
 
 ```bash
-PX4_DIR="$HOME/Dev/Autopilot" MAP_SCENE=sanity_open \
-  TEST_CASE=positive MOTION_PRESET=nominal SPEED_CAP_MPS=1 \
-  make external-mode-gui
-
-PX4_DIR="$HOME/Dev/Autopilot" MAP_SCENE=structured_obstacle \
-  TEST_CASE=detour MOTION_PRESET=nominal SPEED_CAP_MPS=1 \
-  make external-mode-gui
-
-PX4_DIR="$HOME/Dev/Autopilot" MAP_SCENE=long_route \
-  TEST_CASE=positive MOTION_PRESET=slow SPEED_CAP_MPS=2 \
-  make external-mode-gui
-
-PX4_DIR="$HOME/Dev/Autopilot" MAP_SCENE=tunnel \
-  TEST_CASE=positive MOTION_PRESET=nominal SPEED_CAP_MPS=1 \
-  make external-mode-gui
-
-PX4_DIR="$HOME/Dev/Autopilot" MAP_SCENE=clutter MAP_SEED=11 \
-  TEST_CASE=positive MOTION_PRESET=nominal SPEED_CAP_MPS=1 \
-  make external-mode-gui
-
-PX4_DIR="$HOME/Dev/Autopilot" MAP_SCENE=navigation_generalization \
-  TEST_CASE=comprehensive MOTION_PRESET=nominal SPEED_CAP_MPS=3 \
-  make external-mode-gui
+make run-gui
+MAP_SCENE=structured_obstacle make run-gui
+MAP_SCENE=structured_obstacle TEST_CASE=detour make run-gui
+MAP_SCENE=long_route MOTION_PRESET=slow make run-gui
+MAP_SCENE=tunnel make run-gui
+MAP_SCENE=clutter MAP_SEED=11 make run-gui
+MAP_SCENE=navigation_generalization TEST_CASE=comprehensive make run-gui
 ```
 
-For a manually isolated GUI session:
+Use `SPEED_CAP_MPS` only to request a mission speed below or equal to the
+configured 5 m/s ceiling; it does not replace the `5/5/8` planner defaults:
+
+```bash
+MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=3 make run-gui
+```
+
+For manual takeoff:
+
+```bash
+MANUAL_TAKEOFF=1 MAP_SCENE=structured_obstacle make run-gui
+```
+
+For a manually isolated DDS/XRCE GUI session:
 
 ```bash
 UAV_NAV_ROS_DOMAIN_ID=52 UAV_NAV_XRCE_PORT=8893 \
-  PX4_DIR="$HOME/Dev/Autopilot" MAP_SCENE=structured_obstacle \
-  TEST_CASE=detour MOTION_PRESET=nominal SPEED_CAP_MPS=1 \
-  make external-mode-gui
+  MAP_SCENE=structured_obstacle make run-gui
 ```
 
 ## 7. Negative and malformed-input checks
@@ -243,13 +267,13 @@ stop safely and must never be included in the positive matrix:
 
 ```bash
 MAP_SCENE=planner_negative TEST_CASE=no_path MOTION_PRESET=nominal \
-  PX4_DIR="$HOME/Dev/Autopilot" make external-mode-check
+  PX4_DIR="$HOME/Dev/Autopilot" make run
 
 MAP_SCENE=tunnel TEST_CASE=degenerate MOTION_PRESET=nominal \
-  PX4_DIR="$HOME/Dev/Autopilot" make external-mode-check
+  PX4_DIR="$HOME/Dev/Autopilot" make run
 
 MAP_SCENE=structured_obstacle TEST_CASE=degenerate MOTION_PRESET=nominal \
-  PX4_DIR="$HOME/Dev/Autopilot" make external-mode-check
+  PX4_DIR="$HOME/Dev/Autopilot" make run
 ```
 
 Expected negative behavior is a verified fail-closed transition, safe PX4

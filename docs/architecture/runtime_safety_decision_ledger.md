@@ -1,5 +1,46 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Make GPS-on, 5/5/8 and zero-disabled tracking gates the run defaults
+
+- **Owner/status:** navigation runtime, planner backend, PX4 External Mode and
+  runtime tooling; `IMPLEMENTED` by explicit user request. This supersedes the
+  earlier requirement that relaxed tracking behavior be selected by a run
+  option.
+- **Scope/units:** The product-owned planner YAML and C++ loader defaults now
+  set the nominal control envelope to velocity `5 m/s`, acceleration `5 m/s^2`
+  and jerk `8 m/s^3`. Normal External Mode commands no longer accept or pass a
+  SITL dynamics profile, tracking-experiment mode, or GPS-off profile. The
+  normal estimator contract remains GPS sensor on with EKF2 GNSS aiding on.
+  `tracking_experiment.base_m`, `lateral_alpha_s` and
+  `longitudinal_beta_s` are stored in both runtime parameter files and default
+  to `0/0/0`; all three zero means the simulated tracking and fresh typed
+  estimator-health response gates are disabled. Positive finite values enable
+  the adaptive tracking envelope. The boolean `enabled`, `suppress_braking`
+  and `suppress_estimator_health_response` ROS parameters were removed; C++
+  derives their behavior from simulated time and the numeric gate values.
+- **Safety impact:** Default SITL runs may continue after finite tracking-anchor
+  divergence or a fresh typed unhealthy FAST-LIO sample, increasing collision
+  risk. Identity, command lease, finite input, stale/missing health, odometry
+  freshness, world/UNKNOWN/OUT_OF_MAP, continuous collision, V/A/J/flatness,
+  waypoint and terminal-handover checks remain active. Every run with the zero
+  gate is diagnostic-only and `qualification_eligible=false`; it cannot be
+  used for SITL or flight acceptance.
+- **Evidence:** The prior command surface required repeated GPS/dynamics/gate
+  selectors for the same requested campaign and could diverge between GUI and
+  headless invocations. The new `make run` and `make run-gui` aliases share one
+  runner default path; `make run-gui` still launches Gazebo GUI and RViz, while
+  `MANUAL_TAKEOFF=1 make run-gui` retains operator-owned takeoff.
+- **Removal/review condition:** Re-enable positive tracking coefficients and
+  fresh-health response before any qualification campaign. Revisit `5/5/8`
+  only through an owned config/code change with representative distributions;
+  do not restore per-run dynamics or GPS selectors as an undocumented bypass.
+- **Verification:** `make help`; runner CLI help proves the three policy options
+  are absent; runtime Python contracts cover `0 = disabled`, fixed GPS-on and
+  governed speed semantics; planner config tests cover source/default
+  `5/5/8`; canonical Release build; `git diff --check`. A follow-up GUI smoke
+  run must verify generated parameter snapshots, GPS parameters, artifact
+  suppressed-gate metadata, Gazebo/RViz startup and diagnostic-only status.
+
 ### 2026-09-09 - Close velocity-boundary review findings and provenance combination
 
 - **Owner/status:** `px4_navigation_external_mode` control experiment and

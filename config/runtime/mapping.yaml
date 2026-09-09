@@ -1,5 +1,11 @@
 navigation_runtime_node:
   ros__parameters:
+    # A zero tracking envelope disables the SITL tracking/health-response
+    # gates. Positive values enable the adaptive gate without run-time flags.
+    tracking_experiment:
+      base_m: 0.0
+      lateral_alpha_s: 0.0
+      longitudinal_beta_s: 0.0
     navigation_runtime:
       registered_scan_topic: /lio/mapping_observation
       propagated_odometry_topic: /lio/odometry_propagated

@@ -204,6 +204,9 @@ TEST(PathRelativeTracking, RejectsAmbiguousFigureEightProjection) {
 TEST(TrackingExperiment, BaseAndVelocityCoefficientsHaveMetreUnits) {
   navigation_contracts::TrackingExperimentPolicy policy;
   policy.enabled = true;
+  policy.base_m = 0.2;
+  policy.lateral_alpha_s = 0.05;
+  policy.longitudinal_beta_s = 0.15;
   for (double speed : {0.0, 1.0, 3.0, 8.0}) {
     const auto a = navigation_contracts::assessAdaptiveTracking(
         policy, Eigen::Vector3d::Zero(), {speed, 0, 0},
@@ -227,6 +230,9 @@ TEST(TrackingExperiment, BaseAndVelocityCoefficientsHaveMetreUnits) {
 TEST(TrackingExperiment, AdaptiveModeAllowsMetreProgressBeyondOldPhaseWindow) {
   navigation_contracts::TrackingExperimentPolicy policy;
   policy.enabled = true;
+  policy.base_m = 0.2;
+  policy.lateral_alpha_s = 0.05;
+  policy.longitudinal_beta_s = 0.15;
   const auto b = makeLinearMainBundle(3.0);
   for (double phase : {-.15, .15}) {
     const Eigen::Vector3d p(3 * (.6 + phase), 0, 0);
@@ -242,6 +248,9 @@ TEST(TrackingExperiment, AdaptiveModeAllowsMetreProgressBeyondOldPhaseWindow) {
 TEST(TrackingExperiment, RelaxedModeExplicitlyRecordsBypassedTracking) {
   navigation_contracts::TrackingExperimentPolicy policy;
   policy.enabled = true;
+  policy.base_m = 0.2;
+  policy.lateral_alpha_s = 0.05;
+  policy.longitudinal_beta_s = 0.15;
   const auto b = makeLinearMainBundle(3.0);
   auto run = [&](const auto& p) { return navigation_runtime::assessExperimentalTracking(
       p, b, {1.8, .5, .5}, {3, 0, 0}, 10'600'000'000LL, 10'600'000'000LL,
@@ -285,6 +294,9 @@ TEST(TrackingExperiment, RelaxedNeverBypassesInputWorldLeaseOrRoleChecks) {
 TEST(TrackingExperiment, TerminalMainUsesAdaptiveAllowanceUntilExactEndpoint) {
   navigation_contracts::TrackingExperimentPolicy policy;
   policy.enabled = true;
+  policy.base_m = 0.2;
+  policy.lateral_alpha_s = 0.05;
+  policy.longitudinal_beta_s = 0.15;
   const auto bundle = makeTerminalMainBundle();
   ASSERT_TRUE(bundle.valid());
   const auto reference = bundle.sample(11'880'000'000LL);
@@ -330,14 +342,28 @@ TEST(TrackingExperiment, TerminalMainUsesAdaptiveAllowanceUntilExactEndpoint) {
       11'880'000'000LL, 11'880'000'000LL, 0.12, true, true, true).accepted);
 }
 
-TEST(TrackingExperiment, RejectsInvalidCoefficientsAndDisabledBypass) {
+TEST(TrackingExperiment, ZeroCoefficientsDisableGateAndInvalidValuesFail) {
   navigation_contracts::TrackingExperimentPolicy policy;
+  policy.enabled = true;
+  policy.suppress_braking = true;
+  policy.suppress_estimator_health_response = true;
+  EXPECT_TRUE(policy.valid());
+  EXPECT_FALSE(policy.trackingGateEnabled());
+  const auto disabled = navigation_contracts::assessAdaptiveTracking(
+      policy, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+      Eigen::Vector3d{100.0, 0.0, 0.0}, Eigen::Vector3d::Zero());
+  EXPECT_TRUE(navigation_contracts::experimentPermitsTracking(policy, disabled));
+
+  policy.enabled = false;
+  policy.suppress_estimator_health_response = true;
+  EXPECT_FALSE(policy.valid());
+  policy.suppress_estimator_health_response = false;
   policy.suppress_braking = true;
   EXPECT_FALSE(policy.valid());
   policy.enabled = true;
-  policy.base_m = 0;
+  policy.base_m = -0.1;
   EXPECT_FALSE(policy.valid());
-  policy.base_m = .2;
+  policy.base_m = 0.2;
   policy.lateral_alpha_s = -1;
   EXPECT_FALSE(policy.valid());
   policy.lateral_alpha_s = 0;

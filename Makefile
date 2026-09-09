@@ -26,7 +26,6 @@ MOTION_PRESET ?= nominal
 MAP_SEED ?= 0
 MANUAL_TAKEOFF ?= 0
 SPEED_CAP_MPS ?=
-TRACKING_EXPERIMENT ?= adaptive
 MAP_PROFILE_ARG = $(if $(strip $(MAP_PROFILE)),--map-profile $(MAP_PROFILE),)
 MAP_SCENE_ARG = $(if $(strip $(MAP_PROFILE)),,--map-scene $(MAP_SCENE))
 TEST_CASE_ARG = --test-case $(TEST_CASE)
@@ -34,9 +33,8 @@ MOTION_PRESET_ARG = --motion-preset $(MOTION_PRESET)
 MAP_SEED_ARG = --map-seed $(MAP_SEED)
 MANUAL_TAKEOFF_ARG = $(if $(filter 1 true yes,$(MANUAL_TAKEOFF)),--manual-takeoff,)
 SPEED_CAP_MPS_ARG = $(if $(strip $(SPEED_CAP_MPS)),--speed-cap-mps $(SPEED_CAP_MPS),)
-TRACKING_EXPERIMENT_ARG = --tracking-experiment $(TRACKING_EXPERIMENT)
 
-.PHONY: help build test replay dataset-check sim-check external-mode-check external-mode-gui external-mode sim status stop clean
+.PHONY: help build test replay dataset-check sim-check run run-gui external-mode-check external-mode-gui external-mode sim status stop clean
 
 help:
 	@echo "uav-navigation runtime commands"
@@ -47,17 +45,17 @@ help:
 	@echo "  make dataset-check DATASET=<name> RATE=1.0 full dataset + bounded shadow planning; PX4 not required"
 	@echo "  DATASET_SHADOW_GOAL_M=0 make dataset-check ...  mapping-only replay without a synthetic goal"
 	@echo "  make sim-check                             headless PX4/Gazebo + offboard acceptance"
-	@echo "  make external-mode-check                  headless PX4/Gazebo + PX4 External Mode acceptance"
-	@echo "  make external-mode-gui                   GUI PX4/Gazebo + RViz + External Mode mission"
-	@echo "  MANUAL_TAKEOFF=1 make external-mode-gui  wait for manual Takeoff/arm; harness sends no ARM/TAKEOFF"
-	@echo "  make external-mode                       alias for external-mode-gui"
+	@echo "  make run                                  headless automatic External Mode mission"
+	@echo "  make run-gui                              automatic mission with Gazebo GUI + RViz"
+	@echo "  MANUAL_TAKEOFF=1 make run-gui             GUI mission; wait for manual arm/takeoff"
+	@echo "  Default run policy                        GPS on; planner V/A/J=5/5/8; tracking gates disabled by zero params"
+	@echo "  make external-mode-check                  compatibility alias for make run"
+	@echo "  make external-mode-gui | external-mode    compatibility aliases for make run-gui"
 	@echo "  MAP_SCENE=sanity_open|structured_obstacle|long_route|tunnel|clutter|planner_negative|navigation_generalization"
 	@echo "  TEST_CASE=positive|degenerate|detour|no_path|comprehensive  MOTION_PRESET=nominal|slow|fast"
-	@echo "  SPEED_CAP_MPS=<number>                      temporary speed cap for one mission run"
-	@echo "  TRACKING_EXPERIMENT=adaptive|relaxed|off    SITL tracking comparator (default: adaptive)"
 	@echo "  MAP_PROFILE=<legacy alias> (optional; overrides MAP_SCENE)"
 	@echo "  make sim                                   interactive PX4/Gazebo/RViz session; no auto flight"
-	@echo "  Map sweep: make build; then MAP_SCENE=<scene> TEST_CASE=positive SPEED_CAP_MPS=5 make external-mode-check"
+	@echo "  Map sweep: make build; then MAP_SCENE=<scene> TEST_CASE=positive make run"
 	@echo "  make status                                live state for the latest session"
 	@echo "  make stop                                  stop all workspace-owned runtime session process groups"
 	@echo "  Runtime guard                              one workspace-owned simulation; concurrent starts are rejected"
@@ -86,13 +84,17 @@ sim-check:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py sim-check
 
 external-mode-check:
-	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-check $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(SPEED_CAP_MPS_ARG) $(TRACKING_EXPERIMENT_ARG)
+	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-check $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(SPEED_CAP_MPS_ARG)
+
+run: external-mode-check
 
 sim:
 	@$(ROS_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py sim
 
 external-mode-gui:
-	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-gui $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG) $(SPEED_CAP_MPS_ARG) $(TRACKING_EXPERIMENT_ARG)
+	@$(ROS_GUI_ENV) export PX4_DIR="$(PX4_DIR)"; $(CANONICAL_PYTHON_ENV) $(PYTHON) tools/runtime/runner.py external-mode-gui $(MAP_PROFILE_ARG) $(MAP_SCENE_ARG) $(TEST_CASE_ARG) $(MOTION_PRESET_ARG) $(MAP_SEED_ARG) $(MANUAL_TAKEOFF_ARG) $(SPEED_CAP_MPS_ARG)
+
+run-gui: external-mode-gui
 
 external-mode: external-mode-gui
 

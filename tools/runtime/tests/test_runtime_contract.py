@@ -1,5 +1,4 @@
 import importlib.util
-import argparse
 import hashlib
 import io
 import json
@@ -71,34 +70,23 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
 
 
 class RuntimeContractTest(unittest.TestCase):
-    def test_tracking_experiment_defaults_and_cli_values(self) -> None:
+    def test_tracking_gate_defaults_to_zero_and_is_not_a_run_option(self) -> None:
         defaults = runner._tracking_experiment_payload()
-        self.assertEqual(defaults["mode"], "off")
-        self.assertFalse(defaults["enabled"])
-        self.assertFalse(defaults["suppress_braking"])
-        self.assertIsNone(defaults["qualification_eligible"])
+        self.assertEqual(defaults["mode"], "relaxed")
+        self.assertTrue(defaults["enabled"])
+        self.assertTrue(defaults["suppress_braking"])
+        self.assertTrue(defaults["suppress_estimator_health_response"])
+        self.assertEqual(defaults["base_m"], 0.0)
+        self.assertEqual(defaults["lateral_alpha_s"], 0.0)
+        self.assertEqual(defaults["longitudinal_beta_s"], 0.0)
+        self.assertFalse(defaults["qualification_eligible"])
+        runner_source = (ROOT / "tools/runtime/runner.py").read_text(encoding="utf-8")
+        parser_source = runner_source[runner_source.index("def main() -> int:"):]
+        self.assertNotIn('"--tracking-experiment"', parser_source)
+        self.assertNotIn('"--sitl-profile"', parser_source)
+        self.assertNotIn('"--sitl-dynamics-profile"', parser_source)
 
-        parser = argparse.ArgumentParser()
-        runner._add_tracking_experiment_arguments(parser)
-        parsed_defaults = parser.parse_args([])
-        self.assertEqual(
-            parsed_defaults.tracking_experiment,
-            runner.DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
-        )
-        campaign_default = runner._tracking_experiment_payload(
-            parsed_defaults.tracking_experiment,
-            parsed_defaults.tracking_base_m,
-            parsed_defaults.tracking_alpha_s,
-            parsed_defaults.tracking_beta_s,
-        )
-        self.assertEqual(campaign_default["mode"], "adaptive")
-        self.assertTrue(campaign_default["enabled"])
-        self.assertFalse(campaign_default["suppress_braking"])
-        self.assertEqual(campaign_default["base_m"], 0.2)
-        self.assertEqual(campaign_default["lateral_alpha_s"], 0.05)
-        self.assertEqual(campaign_default["longitudinal_beta_s"], 0.15)
-        self.assertFalse(campaign_default["qualification_eligible"])
-        for profile, expected_cap in (("default", 12.0), ("gps_off_ev_12mps", 12.0)):
+        for profile, expected_cap in (("default", 5.0), ("gps_off_ev_12mps", 12.0)):
             profile_contract = runner._sitl_profile_contract(profile)
             for requested in (3.0, 5.0, 12.0):
                 speed_contract = runner._planner_speed_contract(
@@ -111,38 +99,29 @@ class RuntimeContractTest(unittest.TestCase):
                     expected_cap,
                 )
                 self.assertEqual(
-                    campaign_default["mode"],
+                    defaults["mode"],
                     runner.DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
                 )
-        parsed = parser.parse_args([
-            "--tracking-experiment", "relaxed",
-            "--tracking-base-m", "0.25",
-            "--tracking-alpha-s", "0.06",
-            "--tracking-beta-s", "0.17",
-        ])
         experiment = runner._tracking_experiment_payload(
-            parsed.tracking_experiment,
-            parsed.tracking_base_m,
-            parsed.tracking_alpha_s,
-            parsed.tracking_beta_s,
+            "relaxed", 0.25, 0.06, 0.17,
         )
         self.assertEqual(experiment["mode"], "relaxed")
         self.assertTrue(experiment["enabled"])
         self.assertTrue(experiment["suppress_braking"])
+        self.assertTrue(experiment["suppress_estimator_health_response"])
         self.assertEqual(experiment["base_m"], 0.25)
         self.assertEqual(experiment["suppressed_gates"], [
             "tracking_triggered_main_emergency",
             "main_px4_anchor_reject",
+            "backup_px4_anchor_reject",
+            "emergency_px4_anchor_reject",
+            "fresh_typed_fast_lio_health_reject",
         ])
 
-        parsed = parser.parse_args([
-            "--tracking-experiment", "velocity-only",
-            "--tracking-experiment-relaxed",
-        ])
         experiment = runner._tracking_experiment_payload(
             "velocity-only", 0.2, 0.05, 0.15,
             1.0, 5.0, 5.0, 8.0, 0.20, 0.10, 0.0, 0.0,
-            parsed.tracking_experiment_relaxed,
+            True,
         )
         self.assertEqual(experiment["mode"], "velocity-only")
         self.assertTrue(experiment["velocity_only_enabled"])
@@ -150,13 +129,16 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(experiment["suppressed_gates"], [
             "tracking_triggered_main_emergency",
             "main_px4_anchor_reject",
+            "backup_px4_anchor_reject",
+            "emergency_px4_anchor_reject",
+            "fresh_typed_fast_lio_health_reject",
         ])
 
     def test_tracking_experiment_rejects_invalid_values(self) -> None:
         with self.assertRaises(ValueError):
             runner._tracking_experiment_payload("unknown")
-        with self.assertRaises(ValueError):
-            runner._tracking_experiment_payload("adaptive", 0.0)
+        zero = runner._tracking_experiment_payload("adaptive", 0.0, 0.0, 0.0)
+        self.assertTrue(zero["suppress_braking"])
         with self.assertRaises(ValueError):
             runner._tracking_experiment_payload("adaptive", 0.2, -0.01)
         with self.assertRaises(ValueError):
@@ -204,8 +186,6 @@ class RuntimeContractTest(unittest.TestCase):
             mapping = yaml.safe_load(mapping_path.read_text(encoding="utf-8"))
             external = yaml.safe_load(external_path.read_text(encoding="utf-8"))
             expected = {
-                "enabled": True,
-                "suppress_braking": True,
                 "base_m": 0.25,
                 "lateral_alpha_s": 0.06,
                 "longitudinal_beta_s": 0.17,
@@ -259,6 +239,32 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(marker["mode"], "relaxed")
             self.assertEqual(marker["source"], "navigation_runtime_params.yaml+external_mode_params.yaml")
             self.assertEqual(marker["status"], "OK")
+            self.assertFalse(marker["qualification_eligible"])
+
+    def test_tracking_report_derives_disabled_gate_from_zero_params(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary)
+            snapshot = session / "config_snapshot"
+            snapshot.mkdir()
+            params = {
+                "base_m": 0.0,
+                "lateral_alpha_s": 0.0,
+                "longitudinal_beta_s": 0.0,
+            }
+            for filename, node_name in (
+                ("navigation_runtime_params.yaml", "navigation_runtime_node"),
+                ("external_mode_params.yaml", "px4_navigation_external_mode"),
+            ):
+                (snapshot / filename).write_text(
+                    yaml.safe_dump({node_name: {"ros__parameters": {
+                        "tracking_experiment": params,
+                    }}}), encoding="utf-8"
+                )
+            marker = report._tracking_experiment(session)
+            self.assertEqual(marker["mode"], "relaxed")
+            self.assertTrue(marker["enabled"])
+            self.assertTrue(marker["suppress_braking"])
+            self.assertTrue(marker["suppress_estimator_health_response"])
             self.assertFalse(marker["qualification_eligible"])
 
     def test_tracking_experiment_report_preserves_velocity_only_from_real_artifact_shape(self) -> None:
@@ -971,6 +977,21 @@ class RuntimeContractTest(unittest.TestCase):
             parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
             self.assertTrue(Path(parameters["config_path"]).is_file())
 
+    def test_static_runtime_params_own_zero_disabled_tracking_gate(self) -> None:
+        for config_name, node_name in (
+            ("mapping.yaml", "navigation_runtime_node"),
+            ("external_mode.yaml", "px4_navigation_external_mode"),
+        ):
+            document = yaml.safe_load(
+                (ROOT / "config/runtime" / config_name).read_text(encoding="utf-8")
+            )
+            policy = document[node_name]["ros__parameters"]["tracking_experiment"]
+            self.assertEqual(policy, {
+                "base_m": 0.0,
+                "lateral_alpha_s": 0.0,
+                "longitudinal_beta_s": 0.0,
+            })
+
     def test_simulation_mapping_profile_preserves_collision_parameters(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = runner.Session(Path(temporary) / "session")
@@ -1214,7 +1235,7 @@ class RuntimeContractTest(unittest.TestCase):
         )
         self.assertEqual(contract["requested_cruise_speed_mps"], 5.0)
         self.assertEqual(contract["physical_max_velocity_mps"], 12.0)
-        self.assertEqual(contract["control_envelope_max_velocity_mps"], 12.0)
+        self.assertEqual(contract["control_envelope_max_velocity_mps"], 5.0)
         self.assertEqual(contract["effective_cruise_speed_mps"], 5.0)
         self.assertEqual(
             contract["effective_speed_source"],
@@ -1227,12 +1248,12 @@ class RuntimeContractTest(unittest.TestCase):
             None,
         )
         self.assertIsNone(no_request["requested_cruise_speed_mps"])
-        self.assertEqual(no_request["effective_cruise_speed_mps"], 12.0)
+        self.assertEqual(no_request["effective_cruise_speed_mps"], 5.0)
         for speed in (1.0, 3.0, 5.0, 7.0, 12.0):
             with self.subTest(speed=speed):
                 resolved = runner._planner_speed_contract(
                     ROOT / "src/runtime/navigation_runtime/config/planner.yaml", speed)
-                self.assertEqual(resolved["effective_cruise_speed_mps"], speed)
+                self.assertEqual(resolved["effective_cruise_speed_mps"], min(speed, 5.0))
         lower_cap = runner._planner_speed_contract(
             ROOT / "src/runtime/navigation_runtime/config/planner.yaml", 5.0, 3.0)
         self.assertEqual(lower_cap["effective_cruise_speed_mps"], 3.0)
@@ -1260,8 +1281,8 @@ class RuntimeContractTest(unittest.TestCase):
             ]["ros__parameters"]["navigation_runtime"]
             planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
             self.assertEqual(planner["planner"]["control_envelope"]["maximum_velocity_mps"], 12.0)
-            self.assertEqual(planner["planner"]["control_envelope"]["maximum_acceleration_mps2"], 2.0)
-            self.assertEqual(planner["planner"]["control_envelope"]["maximum_jerk_mps3"], 4.0)
+            self.assertEqual(planner["planner"]["control_envelope"]["maximum_acceleration_mps2"], 5.0)
+            self.assertEqual(planner["planner"]["control_envelope"]["maximum_jerk_mps3"], 8.0)
 
     def test_sitl_dynamics_profiles_are_explicit_and_preserve_physical_boundary(self) -> None:
         baseline = runner._sitl_dynamics_profile_contract("baseline_5mps_a2_j4")

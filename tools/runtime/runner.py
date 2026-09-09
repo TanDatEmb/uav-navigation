@@ -106,7 +106,7 @@ TEST_CASES = (
 )
 MOTION_PRESETS = ("nominal", "slow", "fast")
 TRACKING_EXPERIMENT_MODES = ("off", "adaptive", "relaxed", "velocity-only")
-DEFAULT_SITL_TRACKING_EXPERIMENT_MODE = "adaptive"
+DEFAULT_SITL_TRACKING_EXPERIMENT_MODE = "relaxed"
 SITL_PROFILES = ("default", "gps_off_ev_12mps")
 SITL_DYNAMICS_PROFILES = ("off", "baseline_5mps_a2_j4", "nominal_5mps_a5_j8")
 
@@ -589,10 +589,10 @@ def _write_runtime(session: Session, **values: Any) -> None:
 
 
 def _tracking_experiment_payload(
-    mode: str = "off",
-    base_m: float = 0.2,
-    lateral_alpha_s: float = 0.05,
-    longitudinal_beta_s: float = 0.15,
+    mode: str = DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
+    base_m: float = 0.0,
+    lateral_alpha_s: float = 0.0,
+    longitudinal_beta_s: float = 0.0,
     velocity_only_gain_s_inv: float = 0.0,
     velocity_only_cap_mps: float = 0.0,
     velocity_only_max_acceleration_mps2: float = 0.0,
@@ -625,17 +625,26 @@ def _tracking_experiment_payload(
             or not math.isfinite(float(value))
         ):
             raise ValueError(f"tracking_experiment {name} must be finite")
-    if float(base_m) <= 0.0:
-        raise ValueError("tracking_experiment base_m must be positive")
+    if float(base_m) < 0.0:
+        raise ValueError("tracking_experiment base_m must be non-negative")
     if float(lateral_alpha_s) < 0.0 or float(longitudinal_beta_s) < 0.0:
         raise ValueError("tracking_experiment coefficients must be non-negative")
+    gate_disabled = (
+        float(base_m) == 0.0 and
+        float(lateral_alpha_s) == 0.0 and
+        float(longitudinal_beta_s) == 0.0
+    )
+    suppress_tracking_response = bool(
+        mode != "off" and (gate_disabled or tracking_gate_relaxed or mode == "relaxed")
+    )
     values = {
         "mode": mode,
         # The velocity boundary is orthogonal to the existing adaptive
         # tracking gate. Keep the same gate active for A/B; only `off` disables
         # that control allowance explicitly.
         "enabled": mode != "off",
-        "suppress_braking": bool(tracking_gate_relaxed or mode == "relaxed"),
+        "suppress_braking": suppress_tracking_response,
+        "suppress_estimator_health_response": suppress_tracking_response,
         "base_m": float(base_m),
         "lateral_alpha_s": float(lateral_alpha_s),
         "longitudinal_beta_s": float(longitudinal_beta_s),
@@ -649,7 +658,10 @@ def _tracking_experiment_payload(
             [
                 "tracking_triggered_main_emergency",
                 "main_px4_anchor_reject",
-            ] if tracking_gate_relaxed or mode == "relaxed" else []
+                "backup_px4_anchor_reject",
+                "emergency_px4_anchor_reject",
+                "fresh_typed_fast_lio_health_reject",
+            ] if suppress_tracking_response else []
         ),
     }
     if mode == "velocity-only":
@@ -768,8 +780,6 @@ def _apply_tracking_experiment_parameters(
 ) -> None:
     """Write the shared parameter namespace consumed by both runtime nodes."""
     ros_parameters["tracking_experiment"] = {
-        "enabled": bool(experiment["enabled"]),
-        "suppress_braking": bool(experiment["suppress_braking"]),
         "base_m": float(experiment["base_m"]),
         "lateral_alpha_s": float(experiment["lateral_alpha_s"]),
         "longitudinal_beta_s": float(experiment["longitudinal_beta_s"]),
@@ -2291,9 +2301,9 @@ def _run_sim_unlocked(
     characterization_profile: str | None = None,
     characterization_mode: str = "MODE_PX4_LOCAL",
     tracking_experiment_mode: str = DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
-    tracking_experiment_base_m: float = 0.2,
-    tracking_experiment_lateral_alpha_s: float = 0.05,
-    tracking_experiment_longitudinal_beta_s: float = 0.15,
+    tracking_experiment_base_m: float = 0.0,
+    tracking_experiment_lateral_alpha_s: float = 0.0,
+    tracking_experiment_longitudinal_beta_s: float = 0.0,
     tracking_experiment_relaxed: bool = False,
     velocity_only_gain_s_inv: float = 0.0,
     velocity_only_cap_mps: float = 0.0,
@@ -3365,76 +3375,6 @@ def _number(value: Any) -> float:
         return 0.0
 
 
-def _add_tracking_experiment_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--tracking-experiment",
-        choices=TRACKING_EXPERIMENT_MODES,
-        default=DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
-        help=(
-            "SITL-only tracking experiment mode; campaign default: adaptive; "
-            "use relaxed or off explicitly for diagnostic comparators"
-        ),
-    )
-    parser.add_argument(
-        "--tracking-base-m",
-        type=float,
-        default=0.2,
-        help="base tracking allowance for the opt-in experiment",
-    )
-    parser.add_argument(
-        "--tracking-alpha-s",
-        type=float,
-        default=0.05,
-        help="lateral allowance coefficient in seconds",
-    )
-    parser.add_argument(
-        "--tracking-beta-s",
-        type=float,
-        default=0.15,
-        help="longitudinal allowance coefficient in seconds",
-    )
-    parser.add_argument(
-        "--tracking-experiment-relaxed",
-        action="store_true",
-        help=(
-            "independently suppress the two diagnostic tracking admission gates; "
-            "can be combined with velocity-only and does not relax geometry, health or collision gates"
-        ),
-    )
-    parser.add_argument(
-        "--velocity-only-gain-s-inv", type=float, default=0.0,
-        help="LIO position-error feedback gain; required for velocity-only mode",
-    )
-    parser.add_argument(
-        "--velocity-only-cap-mps", type=float, default=0.0,
-        help="velocity-only vector norm cap",
-    )
-    parser.add_argument(
-        "--velocity-only-max-acceleration-mps2", type=float, default=0.0,
-        help="velocity-only continuity acceleration bound",
-    )
-    parser.add_argument(
-        "--velocity-only-max-jerk-mps3", type=float, default=0.0,
-        help="velocity-only continuity jerk bound",
-    )
-    parser.add_argument(
-        "--velocity-only-max-timing-bound-s", type=float, default=0.0,
-        help="conservative velocity-only timing bound",
-    )
-    parser.add_argument(
-        "--velocity-only-max-reference-age-s", type=float, default=0.0,
-        help="maximum allowed LIO reference age",
-    )
-    parser.add_argument(
-        "--velocity-only-output-transport-bound-s", type=float, default=0.0,
-        help="configured output transport bound used by the timing witness",
-    )
-    parser.add_argument(
-        "--velocity-only-px4-consume-bound-s", type=float, default=0.0,
-        help="configured PX4 consume bound used by the timing witness",
-    )
-
-
 def main() -> int:
     try:
         require_canonical_python()
@@ -3510,15 +3450,7 @@ def main() -> int:
     )
     external_mode.add_argument(
         "--speed-cap-mps", type=float, default=None,
-        help="temporary planner/tracker velocity upper bound for one benchmark run",
-    )
-    external_mode.add_argument(
-        "--sitl-profile", choices=SITL_PROFILES, default="default",
-        help="explicit SITL estimator/speed profile; default preserves normal aiding",
-    )
-    external_mode.add_argument(
-        "--sitl-dynamics-profile", choices=SITL_DYNAMICS_PROFILES, default="off",
-        help="explicit SITL planner dynamics A/B; off preserves repository defaults",
+        help="optional mission cruise-speed request; planner V/A/J defaults live in planner.yaml",
     )
     external_mode.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
@@ -3556,7 +3488,6 @@ def main() -> int:
         "--inject-failed-plan-from-rest-repeated", action="store_true",
         help="repeat diagnostic PlanFromRest failures in StoppedRecovery",
     )
-    _add_tracking_experiment_arguments(external_mode)
     sub.add_parser("sim")
     external_mode_gui = sub.add_parser(
         "external-mode-gui",
@@ -3599,15 +3530,7 @@ def main() -> int:
     )
     external_mode_gui.add_argument(
         "--speed-cap-mps", type=float, default=None,
-        help="temporary planner/tracker velocity upper bound for one benchmark run",
-    )
-    external_mode_gui.add_argument(
-        "--sitl-profile", choices=SITL_PROFILES, default="default",
-        help="explicit SITL estimator/speed profile; default preserves normal aiding",
-    )
-    external_mode_gui.add_argument(
-        "--sitl-dynamics-profile", choices=SITL_DYNAMICS_PROFILES, default="off",
-        help="explicit SITL planner dynamics A/B; off preserves repository defaults",
+        help="optional mission cruise-speed request; planner V/A/J defaults live in planner.yaml",
     )
     external_mode_gui.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
@@ -3649,7 +3572,6 @@ def main() -> int:
         "--inject-failed-plan-from-rest-repeated", action="store_true",
         help="repeat diagnostic PlanFromRest failures in StoppedRecovery",
     )
-    _add_tracking_experiment_arguments(external_mode_gui)
     sub.add_parser("status")
     sub.add_parser("stop")
     sub.add_parser("clean")
@@ -3689,8 +3611,6 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
-            sitl_profile=args.sitl_profile,
-            sitl_dynamics_profile=args.sitl_dynamics_profile,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             experiment_id=args.experiment_id,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
@@ -3701,19 +3621,6 @@ def main() -> int:
             inject_failed_same_identity_renewal_ordinal=
                 args.inject_failed_same_identity_renewal_ordinal,
             inject_failed_plan_from_rest_repeated=args.inject_failed_plan_from_rest_repeated,
-            tracking_experiment_mode=args.tracking_experiment,
-            tracking_experiment_base_m=args.tracking_base_m,
-            tracking_experiment_lateral_alpha_s=args.tracking_alpha_s,
-            tracking_experiment_longitudinal_beta_s=args.tracking_beta_s,
-            tracking_experiment_relaxed=args.tracking_experiment_relaxed,
-            velocity_only_gain_s_inv=args.velocity_only_gain_s_inv,
-            velocity_only_cap_mps=args.velocity_only_cap_mps,
-            velocity_only_max_acceleration_mps2=args.velocity_only_max_acceleration_mps2,
-            velocity_only_max_jerk_mps3=args.velocity_only_max_jerk_mps3,
-            velocity_only_max_timing_bound_s=args.velocity_only_max_timing_bound_s,
-            velocity_only_max_reference_age_s=args.velocity_only_max_reference_age_s,
-            velocity_only_output_transport_bound_s=args.velocity_only_output_transport_bound_s,
-            velocity_only_px4_consume_bound_s=args.velocity_only_px4_consume_bound_s,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -3729,8 +3636,6 @@ def main() -> int:
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
-            sitl_profile=args.sitl_profile,
-            sitl_dynamics_profile=args.sitl_dynamics_profile,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
@@ -3743,19 +3648,6 @@ def main() -> int:
             inject_failed_same_identity_renewal_ordinal=
                 args.inject_failed_same_identity_renewal_ordinal,
             inject_failed_plan_from_rest_repeated=args.inject_failed_plan_from_rest_repeated,
-            tracking_experiment_mode=args.tracking_experiment,
-            tracking_experiment_base_m=args.tracking_base_m,
-            tracking_experiment_lateral_alpha_s=args.tracking_alpha_s,
-            tracking_experiment_longitudinal_beta_s=args.tracking_beta_s,
-            tracking_experiment_relaxed=args.tracking_experiment_relaxed,
-            velocity_only_gain_s_inv=args.velocity_only_gain_s_inv,
-            velocity_only_cap_mps=args.velocity_only_cap_mps,
-            velocity_only_max_acceleration_mps2=args.velocity_only_max_acceleration_mps2,
-            velocity_only_max_jerk_mps3=args.velocity_only_max_jerk_mps3,
-            velocity_only_max_timing_bound_s=args.velocity_only_max_timing_bound_s,
-            velocity_only_max_reference_age_s=args.velocity_only_max_reference_age_s,
-            velocity_only_output_transport_bound_s=args.velocity_only_output_transport_bound_s,
-            velocity_only_px4_consume_bound_s=args.velocity_only_px4_consume_bound_s,
         )
     if args.command == "status":
         return status()

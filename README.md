@@ -32,9 +32,9 @@ make test
 make replay DATASET=aist-mid360-drive RATE=1.0
 make dataset-check DATASET=aist-mid360-drive RATE=1.0
 make sim-check
-make external-mode-check
-make external-mode-gui
-make external-mode             # alias for external-mode-gui
+make run                       # headless, tự chạy mission
+make run-gui                   # Gazebo GUI + RViz, tự chạy mission
+MANUAL_TAKEOFF=1 make run-gui  # GUI, chờ arm/takeoff thủ công
 make sim
 make status
 make stop
@@ -42,11 +42,20 @@ make clean
 ```
 
 Set `PX4_DIR` when the PX4 checkout is not at `$HOME/Dev/Autopilot`. The
-headless `sim-check` workflow is retained legacy offboard smoke coverage. The
-product acceptance path is `external-mode-check` or its GUI equivalent.
+headless `sim-check` workflow is retained legacy offboard smoke coverage.
+`external-mode-check` remains an alias for `run`; `external-mode-gui` and
+`external-mode` remain aliases for `run-gui`.
+
+Every normal External Mode run reads its policy from source/config, not command
+flags: GPS aiding is enabled, planner V/A/J is `5/5/8`, and the tracking gate
+parameters are `0/0/0` (`0` means disabled). The resulting gate-disabled run is
+diagnostic and is not qualification evidence. Edit and rebuild the owned config
+when changing this policy; do not append GPS, dynamics-profile, or tracking-mode
+options to the run command.
+
 `make sim` chỉ mở phiên PX4/Gazebo/RViz tương tác, không tự chạy mission
 External Mode. Để kiểm tra từng map, chạy `make build` trước rồi dùng
-`make external-mode-check` với các selector bên dưới.
+`make run` hoặc `make run-gui` với các selector bên dưới.
 
 The product mission entrypoint is:
 
@@ -69,10 +78,10 @@ The canonical scene variables are `sanity_open`, `structured_obstacle`,
 `slow`, or `fast`.
 
 ```bash
-MAP_SCENE=sanity_open make external-mode-check
-MAP_SCENE=structured_obstacle TEST_CASE=detour make external-mode-check
-MAP_SCENE=long_route MOTION_PRESET=slow make external-mode-check
-MAP_SCENE=planner_negative TEST_CASE=no_path make external-mode-check
+MAP_SCENE=sanity_open make run
+MAP_SCENE=structured_obstacle TEST_CASE=detour make run
+MAP_SCENE=long_route MOTION_PRESET=slow make run-gui
+MAP_SCENE=planner_negative TEST_CASE=no_path make run
 ```
 
 Map sweep chạy tuần tự trong một workspace:
@@ -81,9 +90,9 @@ Map sweep chạy tuần tự trong một workspace:
 make build
 for scene in sanity_open structured_obstacle long_route tunnel clutter; do
   MAP_SCENE="$scene" TEST_CASE=positive MOTION_PRESET=nominal \
-    SPEED_CAP_MPS=5 make external-mode-check
+    make run
 done
-MAP_SCENE=planner_negative TEST_CASE=no_path make external-mode-check
+MAP_SCENE=planner_negative TEST_CASE=no_path make run
 ```
 
 Đây chỉ là screening sweep. Qualification bắt buộc tuân theo

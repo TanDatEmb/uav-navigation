@@ -265,9 +265,10 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
         "mode": "inconclusive",
         "enabled": False,
         "suppress_braking": False,
-        "base_m": 0.2,
-        "lateral_alpha_s": 0.05,
-        "longitudinal_beta_s": 0.15,
+        "suppress_estimator_health_response": False,
+        "base_m": 0.0,
+        "lateral_alpha_s": 0.0,
+        "longitudinal_beta_s": 0.0,
         "velocity_only_enabled": False,
         "velocity_only_gain_s_inv": 0.0,
         "velocity_only_cap_mps": 0.0,
@@ -289,11 +290,19 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
         explicit_mode = value.get("mode")
         mode = str(explicit_mode) if explicit_mode not in (None, "") else ""
         velocity_only_enabled = bool(value.get("velocity_only_enabled", False))
-        suppress_braking = bool(value.get("suppress_braking", False))
+        base_m = _number(value.get("base_m"), 0.0)
+        lateral_alpha_s = _number(value.get("lateral_alpha_s"), 0.0)
+        longitudinal_beta_s = _number(value.get("longitudinal_beta_s"), 0.0)
+        zero_disabled_gate = (
+            base_m == 0.0 and lateral_alpha_s == 0.0 and longitudinal_beta_s == 0.0
+        )
+        suppress_braking = bool(value.get("suppress_braking", zero_disabled_gate))
+        suppress_estimator_health_response = bool(value.get(
+            "suppress_estimator_health_response", suppress_braking))
         if not mode:
             if velocity_only_enabled:
                 mode = "velocity-only"
-            elif suppress_braking:
+            elif suppress_braking or zero_disabled_gate:
                 mode = "relaxed"
             else:
                 mode = "adaptive" if bool(value.get("enabled", False)) else "off"
@@ -304,9 +313,10 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
             "mode": mode,
             "enabled": enabled,
             "suppress_braking": suppress_braking,
-            "base_m": value.get("base_m", 0.2),
-            "lateral_alpha_s": value.get("lateral_alpha_s", 0.05),
-            "longitudinal_beta_s": value.get("longitudinal_beta_s", 0.15),
+            "suppress_estimator_health_response": suppress_estimator_health_response,
+            "base_m": base_m,
+            "lateral_alpha_s": lateral_alpha_s,
+            "longitudinal_beta_s": longitudinal_beta_s,
             "velocity_only_enabled": bool(
                 value.get("velocity_only_enabled", mode == "velocity-only")
             ),
@@ -327,6 +337,9 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
                 [
                     "tracking_triggered_main_emergency",
                     "main_px4_anchor_reject",
+                    "backup_px4_anchor_reject",
+                    "emergency_px4_anchor_reject",
+                    "fresh_typed_fast_lio_health_reject",
                 ] if suppress_braking else []
             ),
             "qualification_eligible": False if mode != "off" else None,
@@ -351,6 +364,7 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
             str(value.get("mode", "off")),
             bool(value.get("enabled", False)),
             bool(value.get("suppress_braking", False)),
+            bool(value.get("suppress_estimator_health_response", False)),
             value.get("base_m"),
             value.get("lateral_alpha_s"),
             value.get("longitudinal_beta_s"),

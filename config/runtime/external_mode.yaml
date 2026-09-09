@@ -1,5 +1,11 @@
 px4_navigation_external_mode:
   ros__parameters:
+    # Keep this identical to navigation_runtime_node. Zero means disabled;
+    # positive values enable the adaptive tracking gate.
+    tracking_experiment:
+      base_m: 0.0
+      lateral_alpha_s: 0.0
+      longitudinal_beta_s: 0.0
     navigation:
       navigation_command_topic: /navigation/navigation_command
       state_topic: /lio/odometry_propagated

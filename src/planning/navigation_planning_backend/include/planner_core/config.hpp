@@ -104,11 +104,11 @@ namespace navigation_planning_backend {
             back_traj_cfg = traj_opt::Config(loader, "backup_traj");
             astar_cfg = path_search::PathSearchConfig(loader);
             loader.LoadParam("planner/control_envelope/maximum_velocity_mps",
-                             control_envelope.maximum_velocity_mps, 0.0);
+                             control_envelope.maximum_velocity_mps, 5.0);
             loader.LoadParam("planner/control_envelope/maximum_acceleration_mps2",
-                             control_envelope.maximum_acceleration_mps2, 0.0);
+                             control_envelope.maximum_acceleration_mps2, 5.0);
             loader.LoadParam("planner/control_envelope/maximum_jerk_mps3",
-                             control_envelope.maximum_jerk_mps3, 0.0);
+                             control_envelope.maximum_jerk_mps3, 8.0);
             if (mission_limits.has_value()) {
                 const auto &limits = *mission_limits;
                 if (!limits.valid()) {
