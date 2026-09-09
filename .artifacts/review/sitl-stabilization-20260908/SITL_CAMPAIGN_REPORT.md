@@ -12,7 +12,9 @@ planner and replay WIP is intentionally unstaged.
 The campaign rows below are default GPS+LIO diagnostics unless their scenario
 snapshot says otherwise. The following two runs are a separate explicit
 `GPS-off EV` profile (`gps_off_ev_12mps`) with GPS disabled and EV aiding
-enabled. They are infrastructure-valid diagnostics, not qualification:
+enabled. This profile uses control envelope `V/A/J=12/2/4`; cap3 requests and
+effectively targets 3 m/s, while cap5 requests and effectively targets 5 m/s.
+They are infrastructure-valid diagnostics, not qualification:
 
 | Profile | Artifact | Bundles activated | Waypoints | Collision | PVA commands | Executable trajectories | Measured speed p95/max | Outcome |
 |---|---|---:|---:|---:|---|---|---:|---|

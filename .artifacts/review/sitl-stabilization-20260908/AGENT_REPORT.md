@@ -24,9 +24,11 @@ product defect and not permission to relax Hold validation.
 
 ### Latest GPS-off EV diagnostic runs
 
-Both runs use `long_three_pillars_multiwaypoint`, seed `0`, requested `5 m/s`,
-effective MAIN `3/2/4`, and planner `10 Hz`. They are infrastructure-valid
-diagnostics but `qualification_eligible=false` and mission-incomplete:
+Both runs use `long_three_pillars_multiwaypoint`, seed `0`, and planner
+`10 Hz`. The explicit GPS-off profile uses control envelope `V/A/J=12/2/4`;
+the cap3 run requests/effectively targets `3 m/s` and the cap5 run requests/
+effectively targets `5 m/s`. They are infrastructure-valid diagnostics but
+`qualification_eligible=false` and mission-incomplete:
 
 - `external-mode-check-20260909T004629-509425` (`cap3`): 8 bundles
   activated, `1/9` waypoint, collision `0`, PVA command `922/922` success

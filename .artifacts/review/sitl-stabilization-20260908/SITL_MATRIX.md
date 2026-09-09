@@ -29,12 +29,14 @@ separate diagnostic evidence.
 
 These rows are not part of the default GPS+LIO matrix. They use the explicit
 `gps_off_ev_12mps` profile (`GPS_CTRL=0`, `EV_CTRL=15`, `HGT_REF=3`) and are
-diagnostic-only. The profile's unavailable PX4 Hold interval is an environment
-limitation, not a product defect or a reason to relax Hold validation.
+diagnostic-only. Its control envelope is `V/A/J=12/2/4`; the requested and
+effective mission speeds are 3 m/s for cap3 and 5 m/s for cap5. The profile's
+unavailable PX4 Hold interval is an environment limitation, not a product
+defect or a reason to relax Hold validation.
 
 | Profile | Source | Artifact | Requested | Bundles | Accepted waypoints | Collision | PVA command | Executable trajectories | Measured speed p95/max | Planning p50/p95/max ms | Deadline flags | Outcome |
 |---|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|---|
-| GPS-off EV | `d4e34e5f` | [`004629-509425`](../../runtime/external-mode-check-20260909T004629-509425/report.json) | 5 | 8 | 1/9 | 0 | 922 success / 0 failure | 922/922 | 3.0044 / 3.0800 | 23.705/72.901/82.118 | 1 | `BLOCKED` |
+| GPS-off EV | `d4e34e5f` | [`004629-509425`](../../runtime/external-mode-check-20260909T004629-509425/report.json) | 3 | 8 | 1/9 | 0 | 922 success / 0 failure | 922/922 | 3.0044 / 3.0800 | 23.705/72.901/82.118 | 1 | `BLOCKED` |
 | GPS-off EV | `d4e34e5f` | [`005203-511728`](../../runtime/external-mode-check-20260909T005203-511728/report.json) | 5 | 4 | 1/9 | 0 | 369 success / 379 failure | 368/369 | 1.5382 / 2.4411 | 30.919 / — / — | 0 | `FAIL` |
 
 The cap5 row has a lidar timestamp/freshness/validity violation. Neither row
