@@ -15,7 +15,12 @@
   publisher forwards the exact sampled candidate yaw/rate; there is no
   post-certificate execution-side yaw override. A waypoint rebind is built by
   a separate latest-only worker from a locked immutable committed snapshot; it
-  never mutates optimizer state or warm-start history. A stale planner bundle
+  does not run the nominal optimizer. The backend reserves the exact next
+  generation in the planner activation registry, and only the execution-timeline
+  activation promotes that retained position/yaw suffix into warm-start state.
+  A bounded partial yaw turn is allowed when the retained position suffix is
+  shorter than the requested turn; it preserves the active-leg identity and
+  the configured yaw-rate/acceleration certificates. A stale planner bundle
   cannot change the active route target, and a successor is exposed only
   through its existing candidate/anchor/handoff contract.
 - **Safety impact:** This changes heading reference timing and preserves the
@@ -29,12 +34,14 @@
   transition, wraparound, zero-horizontal geometry, and bounded rate/acceleration.
   Planner trajectory regressions cover yaw rate/acceleration, flatness, and
   candidate handoff continuity. The retained-position heading-rebind path now
-  has a read-only backend builder, protected swept-region/world reuse through
-  the committed certificate, fresh flatness validation, command-clock-only
-  staging, and a worker latch regression proving the rebind completes before a
-  blocked position job and its stale completion cannot replace the newer
-  execution generation. These are focused source/component results, not SITL
-  acceptance.
+  has an immutable-input worker, exact-generation backend registration,
+  protected swept-region/world reuse through the committed certificate, fresh
+  flatness validation, strict command-clock activation lead, partial-turn
+  coverage, and a facade regression proving generic nominal discard preserves
+  the reserved owner. The worker latch regression also proves the rebind
+  completes before a blocked position job and its stale completion cannot
+  replace the newer execution generation. These are focused source/component
+  results, not SITL acceptance.
 - **Removal/review condition:** Revisit after repeated WP2->WP3->WP4 and
   reversal missions with command target/actual yaw/active identity timelines,
   plus representative recorded sensor data. Do not claim heading stability or

@@ -832,6 +832,16 @@ double knownFreeGuideSupport(
                 std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
                 if (solve_cancelled_.load()) return false;
                 if (!planner_warm_start_.canCommitCandidate(candidate)) return false;
+                // An out-of-band retained-position heading candidate owns the
+                // next activation slot once registered. A late nominal
+                // position solve must not replace that exact warm-start
+                // owner with a different candidate carrying the same
+                // arithmetic generation.
+                if (staged_planner_candidate_.has_value() &&
+                    staged_planner_candidate_->command
+                        .retained_position_heading_rebind) {
+                    return false;
+                }
                 staged_planner_candidate_ = StagedCommandCandidate{
                     std::move(candidate), certificate, planner_warm_start_.nextGeneration(),
                     std::nullopt, false};
@@ -886,7 +896,18 @@ double knownFreeGuideSupport(
 
     void Planner::discardCommandCandidate() noexcept {
         std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-        staged_planner_candidate_.reset();
+        if (!staged_planner_candidate_ ||
+            !staged_planner_candidate_->command.retained_position_heading_rebind) {
+            staged_planner_candidate_.reset();
+        }
+    }
+
+    void Planner::discardRetainedPositionHeadingCandidate() noexcept {
+        std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+        if (staged_planner_candidate_ &&
+            staged_planner_candidate_->command.retained_position_heading_rebind) {
+            staged_planner_candidate_.reset();
+        }
     }
 
     const char* Planner::candidateExportFailureName(
@@ -1455,12 +1476,12 @@ double knownFreeGuideSupport(
             const std::uint64_t goal_epoch,
             const std::uint64_t request_id,
             const std::int64_t valid_from_ns,
-            const std::int64_t valid_until_ns) const {
-        // This is deliberately a read-only path. CmdTraj::snapshot() takes
-        // its own mutex, while all other inputs are immutable request copies
-        // or planner configuration. In particular, do not call
-        // authorizeAndStage() here: that would race the serial solve's staged
-        // candidate and warm-start ownership.
+            const std::int64_t valid_until_ns) {
+        // CmdTraj::snapshot() takes its own mutex, while all other inputs are
+        // immutable request copies or planner configuration. The final
+        // registration below is deliberately separate from the nominal solve
+        // admission: it reserves the exact generation and activation owner
+        // that onExecutionTimelineActivated() will later promote.
         if (!world || !route.valid() || !measured_position.allFinite() ||
             !measured_velocity.allFinite() || !std::isfinite(measured_yaw_rad) ||
             !std::isfinite(activation_wall_time_s) || activation_wall_time_s <= 0.0 ||
@@ -1527,13 +1548,15 @@ double knownFreeGuideSupport(
             std::sqrt(8.0 * delta / yaw_acceleration_limit),
             2.0 * std::abs(static_cast<double>(initial_yaw(1))) /
                 yaw_acceleration_limit});
-        // A partial heading turn would make the next waypoint's semantic
-        // heading ambiguous. Keep the whole suffix certified or reject it.
-        if (!std::isfinite(requested_turn_duration) ||
-            requested_turn_duration > suffix_duration + 1.0e-6) {
+        if (!std::isfinite(requested_turn_duration)) {
             return std::nullopt;
         }
-        const double turn_duration = requested_turn_duration;
+        // Yaw is allowed to make a bounded partial advance when the retained
+        // position suffix is short. The active-leg identity remains the same;
+        // a later command tick continues the same bounded reference rather
+        // than inventing a new target or stretching the position horizon.
+        const double turn_duration = std::min(
+            suffix_duration, requested_turn_duration);
         Trajectory turn_window;
         turn_window.start_WT = activation_wall_time_s;
         turn_window.emplace_back(turn_duration, Eigen::MatrixXd::Zero(3, 6));
@@ -1615,11 +1638,24 @@ double knownFreeGuideSupport(
         CommandCertificate certificate{
             world->identity(), world->identity(), validation.begin_tt,
             validation.protected_region};
+        std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
+        const auto current = planner_warm_start_.snapshot();
+        if (current.generation != committed.generation ||
+            current.identity.localization_epoch != localization_epoch ||
+            staged_planner_candidate_.has_value() ||
+            !planner_warm_start_.canCommitCandidate(candidate)) {
+            return std::nullopt;
+        }
+        const auto generation = planner_warm_start_.nextGeneration();
+        staged_planner_candidate_ = StagedCommandCandidate{
+            candidate, certificate, generation, std::nullopt, false};
         const auto exported = exportStagedCommandCandidate(
-            candidate, certificate, committed.generation + 1U,
-            localization_epoch, goal_epoch, request_id,
-            valid_from_ns, valid_until_ns);
-        if (!exported.candidate.has_value()) return std::nullopt;
+            candidate, certificate, generation, localization_epoch,
+            goal_epoch, request_id, valid_from_ns, valid_until_ns);
+        if (!exported.candidate.has_value()) {
+            staged_planner_candidate_.reset();
+            return std::nullopt;
+        }
         return std::move(exported.candidate);
     }
 

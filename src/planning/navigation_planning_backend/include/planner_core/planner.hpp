@@ -422,6 +422,12 @@ namespace navigation_planning_backend {
         }
 
         void discardCommandCandidate() noexcept;
+
+        // A nominal solve may lose a race after an out-of-band retained
+        // position/heading candidate has reserved the activation slot.  Keep
+        // that exact owner alive in that case; callers rejecting the retained
+        // candidate itself must use the explicit clearing operation.
+        void discardRetainedPositionHeadingCandidate() noexcept;
         // Synchronize the planner's warm-start cache after the execution
         // timeline has already activated the immutable bundle. This is a
         // one-way observation; it cannot veto or roll back execution.
@@ -560,12 +566,12 @@ namespace navigation_planning_backend {
         // must admit the staged candidate through its normal boundary.
         bool stageImmediateHeadingRebind(double activation_wall_time_s);
 
-        // Read-only, out-of-band construction for a waypoint heading update.
-        // This method snapshots CmdTraj under its own lock and does not touch
-        // solve state, warm-start history, or staged-candidate state. It may
-        // therefore run beside the serial position optimizer; the runtime
-        // still admits the returned immutable candidate through its ordinary
-        // execution boundary.
+        // Out-of-band construction for a waypoint heading update. It snapshots
+        // CmdTraj under its own lock, then reserves the exact staged-candidate
+        // generation that the execution activation callback will promote. It
+        // does not touch solve state or nominal history and may run beside
+        // the serial position optimizer; the runtime still admits the returned
+        // immutable candidate through its ordinary execution boundary.
         [[nodiscard]] std::optional<navigation_planning::CandidateBundle>
         buildImmediateHeadingRebindCandidate(
             const navigation_world_model::WorldModelViewPtr& world,
@@ -579,7 +585,7 @@ namespace navigation_planning_backend {
             std::uint64_t goal_epoch,
             std::uint64_t request_id,
             std::int64_t valid_from_ns,
-            std::int64_t valid_until_ns) const;
+            std::int64_t valid_until_ns);
 
         void cancelActiveSolve() {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);

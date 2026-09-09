@@ -47,6 +47,7 @@ class PlannerFacade final {
       std::uint64_t solve_generation,
       std::uint64_t planner_cycle) noexcept;
   void discardCommandCandidate() noexcept;
+  void discardRetainedPositionHeadingCandidate() noexcept;
   void onExecutionTimelineActivated(std::uint64_t generation) noexcept;
   [[nodiscard]] bool hasStagedCommandCandidate() const;
   [[nodiscard]] navigation_planning::TrajectoryValidationResult
@@ -75,7 +76,7 @@ class PlannerFacade final {
       std::uint64_t goal_epoch,
       std::uint64_t request_id,
       std::int64_t valid_from_ns,
-      std::int64_t valid_until_ns) const;
+      std::int64_t valid_until_ns);
   void setPassThroughNextTarget(
       const std::optional<Eigen::Vector3d>& next_target) noexcept;
   bool setState(const navigation_planning::KinematicState& state);

@@ -2960,27 +2960,38 @@ void NavigationRuntimeNode::scheduleHeadingRebind(const PlanningKey& key) {
     return;
   }
   const auto now_ns = now().nanoseconds();
-  const auto guard_ns = static_cast<std::int64_t>(
-      navigation_planning::PlanningTimingContract::kCommitGuardS * 1.0e9);
-  if (now_ns <= 0 || guard_ns <= 0 ||
-      now_ns > std::numeric_limits<std::int64_t>::max() - guard_ns) {
+  // The candidate is produced off the planning timer and consumed by the
+  // command timer. Reserve two command periods plus two ordinary commit
+  // guards so commitPlannerCandidate's now+guard admission remains strict
+  // after one delayed command tick; this is a lead-time reservation, not a
+  // relaxed gate or an extended execution lease.
+  const double heading_lead_s =
+      2.0 * navigation_planning::PlanningTimingContract::kCommandPeriodS +
+      2.0 * navigation_planning::PlanningTimingContract::kCommitGuardS;
+  const auto heading_lead_ns = static_cast<std::int64_t>(heading_lead_s * 1.0e9);
+  if (now_ns <= 0 || heading_lead_ns <= 0 ||
+      now_ns > std::numeric_limits<std::int64_t>::max() - heading_lead_ns ||
+      data_freshness_window_ns_ <= 0 ||
+      now_ns > std::numeric_limits<std::int64_t>::max() -
+          data_freshness_window_ns_) {
     return;
   }
-  const auto activation_ns = now_ns + guard_ns;
+  const auto activation_ns = now_ns + heading_lead_ns;
   const double activation_wall_time_s =
       static_cast<double>(activation_ns) * 1.0e-9;
   const auto planner = planner_;
   (void)heading_rebind_worker_->submit(
       [this, planner, key, committed, route = *route, mission_start,
        world_view = world.view, execution_state = execution->state,
-       activation_wall_time_s, activation_ns, now_ns](std::stop_token stop) {
+       activation_wall_time_s, activation_ns, now_ns,
+       valid_until_ns = now_ns + data_freshness_window_ns_](std::stop_token stop) {
         if (stop.stop_requested()) return;
         const auto candidate = planner->buildImmediateHeadingRebindCandidate(
             world_view, route, execution_state.position_world,
             execution_state.velocity_world, execution_state.yaw_rad,
             mission_start, activation_wall_time_s, key.localization_epoch,
             key.goal_epoch, key.request_id, activation_ns,
-            now_ns + data_freshness_window_ns_);
+            valid_until_ns);
         if (stop.stop_requested() || !candidate || !candidate->valid()) return;
         std::lock_guard<std::mutex> lock(heading_rebind_mutex_);
         pending_heading_rebind_ = PendingHeadingRebind{key, *candidate};
@@ -3009,6 +3020,11 @@ void NavigationRuntimeNode::consumeHeadingRebind(const std::int64_t now_ns) {
         "accepted out-of-band waypoint heading rebind generation=%lu activation_ns=%lld",
         static_cast<unsigned long>(pending->candidate.bundle_generation),
         static_cast<long long>(pending->candidate.activation_stamp_ns));
+  } else {
+    // This candidate owns the exact planner activation slot.  Nominal solve
+    // rejection paths preserve retained candidates, so clear this owner only
+    // when the heading candidate itself failed the execution boundary.
+    planner_->discardRetainedPositionHeadingCandidate();
   }
 }
 

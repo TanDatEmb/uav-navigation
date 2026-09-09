@@ -244,6 +244,12 @@ void PlannerFacade::discardCommandCandidate() noexcept {
   if (impl_ && impl_->planner) impl_->planner->discardCommandCandidate();
 }
 
+void PlannerFacade::discardRetainedPositionHeadingCandidate() noexcept {
+  if (impl_ && impl_->planner) {
+    impl_->planner->discardRetainedPositionHeadingCandidate();
+  }
+}
+
 void PlannerFacade::onExecutionTimelineActivated(
     const std::uint64_t generation) noexcept {
   if (impl_ && impl_->planner) {
@@ -306,7 +312,7 @@ PlannerFacade::buildImmediateHeadingRebindCandidate(
     const std::uint64_t goal_epoch,
     const std::uint64_t request_id,
     const std::int64_t valid_from_ns,
-    const std::int64_t valid_until_ns) const {
+    const std::int64_t valid_until_ns) {
   if (!impl_ || !impl_->planner) return std::nullopt;
   return impl_->planner->buildImmediateHeadingRebindCandidate(
       world, route, measured_position, measured_velocity, measured_yaw_rad,

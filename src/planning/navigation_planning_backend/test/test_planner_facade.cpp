@@ -894,23 +894,25 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   EXPECT_TRUE(out_of_band->protected_region.valid());
   EXPECT_EQ(out_of_band->world_identity.generation, world->identity().generation);
 
-  // This models a position solve that has not returned yet: the heading
-  // successor is staged directly from the retained command suffix.
-  ASSERT_TRUE(facade.stageImmediateHeadingRebind(10.5));
-  const auto rebound = facade.exportCommandCandidate(
-      1U, 2U, 2U, 10500000000LL, 30000000000LL);
-  ASSERT_TRUE(rebound);
-  ASSERT_TRUE(rebound->valid());
-  EXPECT_FALSE(rebound->route_boundary_event.has_value());
+  // The out-of-band builder also registers the exact internal candidate
+  // generation. Activation must promote that same retained position/yaw
+  // bundle; a later nominal solve cannot substitute another candidate. The
+  // generic nominal discard path must not erase this reserved owner.
+  facade.discardCommandCandidate();
+  EXPECT_TRUE(facade.hasStagedCommandCandidate());
+  facade.onExecutionTimelineActivated(out_of_band->bundle_generation);
+  EXPECT_EQ(facade.committedGeneration(), out_of_band->bundle_generation);
+  const auto& rebound = *out_of_band;
+  EXPECT_FALSE(rebound.route_boundary_event.has_value());
   navigation_planning::TrajectoryPoint retained_at_activation;
   navigation_planning::TrajectoryPoint retained_after_turn;
   navigation_planning::TrajectoryPoint before_turn;
   navigation_planning::TrajectoryPoint after_turn;
-  ASSERT_TRUE(initial->evaluator(rebound->declared_start_ns, retained_at_activation));
-  ASSERT_TRUE(initial->evaluator(rebound->declared_start_ns + 1000000000LL,
+  ASSERT_TRUE(initial->evaluator(rebound.declared_start_ns, retained_at_activation));
+  ASSERT_TRUE(initial->evaluator(rebound.declared_start_ns + 1000000000LL,
                                  retained_after_turn));
-  ASSERT_TRUE(rebound->evaluator(rebound->declared_start_ns, before_turn));
-  ASSERT_TRUE(rebound->evaluator(rebound->declared_start_ns + 1000000000LL,
+  ASSERT_TRUE(rebound.evaluator(rebound.declared_start_ns, before_turn));
+  ASSERT_TRUE(rebound.evaluator(rebound.declared_start_ns + 1000000000LL,
                                  after_turn));
   EXPECT_NEAR(before_turn.position_world.x(), retained_at_activation.position_world.x(), 1.0e-9);
   EXPECT_NEAR(before_turn.position_world.y(), retained_at_activation.position_world.y(), 1.0e-9);
