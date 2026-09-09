@@ -303,9 +303,25 @@ TEST(TrackingExperiment, TerminalMainUsesAdaptiveAllowanceUntilExactEndpoint) {
   EXPECT_NEAR(endpoint->position_world.x(), 5.0, 1.0e-9);
   EXPECT_NEAR(endpoint->velocity_world.norm(), 0.0, 1.0e-9);
 
+  auto lease_ends_before_endpoint = bundle;
+  lease_ends_before_endpoint.valid_until_ns = 11'950'000'000LL;
   EXPECT_FALSE(navigation_runtime::assessExperimentalTracking(
-      policy, bundle, reference->position_world, reference->velocity_world,
-      11'900'000'000LL, 11'900'000'000LL, 0.2, true, true, true).accepted);
+      policy, lease_ends_before_endpoint, reference->position_world,
+      reference->velocity_world, 11'900'000'000LL, 11'900'000'000LL,
+      0.2, true, true, true).accepted);
+
+  auto near_endpoint_policy = policy;
+  near_endpoint_policy.base_m = 0.3;
+  const auto near_endpoint = bundle.sample(11'950'000'000LL);
+  ASSERT_TRUE(near_endpoint);
+  const auto clamped = navigation_runtime::assessExperimentalTracking(
+      near_endpoint_policy, bundle,
+      near_endpoint->position_world + Eigen::Vector3d{0.0, 0.0, 0.3},
+      near_endpoint->velocity_world, 11'950'000'000LL, 11'950'000'000LL,
+      0.12, true, true, true);
+  EXPECT_TRUE(clamped.accepted);
+  EXPECT_TRUE(clamped.predicted.valid);
+  EXPECT_GT(near_endpoint_policy.base_m, 0.25);
 
   auto backup = bundle;
   backup.role = CandidateRole::kBackup;

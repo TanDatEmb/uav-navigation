@@ -51,8 +51,9 @@
 - **Scope/units:** Optional `UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR` capture uses
   a writer-owned queue bounded to four immutable jobs. Full world materialization
   and JSON I/O run on that writer after solve return. `FAILURE_ONLY=1` retains
-  only setup/failure/recovery evidence; unset or `0` records every captured
-  request. Queue overflow is dropped and counted; shutdown drains queued jobs
+  only requests whose actual nominal solve produced no candidate (including
+  moving failures outside the target signature); unset or `0` records every
+  captured request. Queue overflow is dropped and counted; shutdown drains queued jobs
   and joins the writer. POST corridor/provenance fields are copied only after
   the current request binds its own optimizer input. Replay restores every
   serialized optimizer field, including booleans; legacy snapshots with missing
@@ -90,8 +91,10 @@
 - **Scope/units:** A valid terminal STOP whose bundle owner is MAIN may use the
   existing adaptive allowance `base_m + coefficient_s *
   max(measured_speed, reference_speed)` while its moving MAIN sample is still
-  before the declared endpoint, including a validation interval ending exactly
-  at that endpoint. The witness remains bounded by fresh state, known-free body,
+  before the declared endpoint, including a validation interval that crosses
+  the endpoint: its future sample and projection horizon are clamped to the
+  producer-declared endpoint without extending the execution lease. The witness
+  remains bounded by fresh state, known-free body,
   clear sampled path, valid immutable bundle, and MAIN role/schedule checks.
   BACKUP and EMERGENCY roles never use this allowance. The fixed path-relative
   witness remains conservative for terminal commands.
@@ -103,9 +106,10 @@
   exact endpoint position, measured position, speed settling, and dwell/hold
   acceptance remain owned by the terminal completion contract.
 - **Evidence:** Regression covers a decelerating terminal MAIN trajectory whose
-  prediction lands exactly at the declared endpoint, verifies endpoint finished
-  and zero-speed metadata, rejects a future interval beyond the endpoint, and
-  rejects a BACKUP-role mutation. The full focused tracking suite passes.
+  prediction lands exactly at the declared endpoint, a final-window forecast
+  with an adaptive allowance larger than the fixed 0.25 m comparator, a lease
+  ending before the endpoint, and a BACKUP-role mutation. Endpoint finished and
+  zero-speed metadata remain verified. The full focused tracking suite passes.
 - **Removal/review condition:** Revisit after repeated terminal-stop tracking
   distributions and representative SITL/recorded-data evidence. Remove the
   opt-in bridge if endpoint/hold completion, role handoff, or emergency

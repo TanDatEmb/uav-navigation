@@ -3944,9 +3944,12 @@ double knownFreeGuideSupport(
         time_consuming_[EXP_TRAJ_OPT] = t_exp_opt.stop();
         const bool capture_failure_only = nominalProblemSnapshotFailureOnly();
         auto snapshot = exp_traj_opt_->takeNominalProblemSnapshot();
+        // FAILURE_ONLY is an outcome filter, not a heuristic over the
+        // diagnostic signature.  A moving solve may fail before producing the
+        // signature's retry pattern, while a recovery request may complete
+        // successfully and must not be mislabeled as a failure capture.
         const bool snapshot_is_failure = snapshot.has_value() &&
-            (!snapshot->setup_completed || snapshot->target_failure_signature ||
-             snapshot->recovery_request);
+            !nominal_result.candidateAvailable();
         if (nominal_problem_snapshot_writer_ && snapshot.has_value() &&
             (!capture_failure_only || snapshot_is_failure)) {
             // World materialization and JSON I/O are outside the planner

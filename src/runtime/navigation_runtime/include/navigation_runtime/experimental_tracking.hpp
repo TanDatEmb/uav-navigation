@@ -42,16 +42,32 @@ inline ExperimentalTrackingResult assessExperimentalTracking(
     return out;
   const long double future_ns = static_cast<long double>(now_ns) + interval_s * 1.0e9L;
   if (future_ns > std::numeric_limits<std::int64_t>::max()) return out;
+  std::int64_t future_sample_ns = static_cast<std::int64_t>(future_ns);
+  double effective_interval_s = interval_s;
+  if (terminal_main && future_sample_ns > bundle.declared_end_ns) {
+    // The command-clock forecast may straddle the terminal endpoint during
+    // the last validation window. Clamp the witness to the producer-declared
+    // endpoint instead of extending the lease or sampling a post-command
+    // role. The measured-state projection uses the same shortened horizon.
+    if (bundle.declared_end_ns <= now_ns ||
+        bundle.declared_end_ns > bundle.valid_until_ns) return out;
+    future_sample_ns = bundle.declared_end_ns;
+    effective_interval_s = static_cast<double>(
+        bundle.declared_end_ns - now_ns) * 1.0e-9;
+    if (!std::isfinite(effective_interval_s) || effective_interval_s <= 0.0) {
+      return out;
+    }
+  }
   const auto source = bundle.sampleAtDeclaredStamp(source_ns);
   const auto current = bundle.sample(now_ns);
-  const auto future = bundle.sample(static_cast<std::int64_t>(future_ns));
+  const auto future = bundle.sample(future_sample_ns);
   if (!source || !current || !future || source->role != CandidateRole::kMain ||
       current->role != CandidateRole::kMain || future->role != CandidateRole::kMain)
     return out;
   const double source_local_s = static_cast<double>(
       (static_cast<long double>(source_ns) - bundle.declared_start_ns) * 1.0e-9L);
   const double future_local_s = static_cast<double>(
-      (future_ns - bundle.declared_start_ns) * 1.0e-9L);
+      (static_cast<long double>(future_sample_ns) - bundle.declared_start_ns) * 1.0e-9L);
   bool same_main_interval = false;
   for (const auto& interval : bundle.role_schedule) {
     const bool terminal_endpoint = terminal_main &&
@@ -65,7 +81,8 @@ inline ExperimentalTrackingResult assessExperimentalTracking(
   if (!same_main_interval) return out;
   out.current = navigation_contracts::assessAdaptiveTracking(
       policy, position, velocity, source->position_world, source->velocity_world);
-  const double horizon_s = static_cast<double>(now_ns - source_ns) * 1.0e-9 + interval_s;
+  const double horizon_s = static_cast<double>(now_ns - source_ns) * 1.0e-9 +
+      effective_interval_s;
   out.predicted = navigation_contracts::assessAdaptiveTracking(
       policy, position + velocity * horizon_s, velocity,
       future->position_world, future->velocity_world);
