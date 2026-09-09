@@ -88,7 +88,8 @@ RouteYawReference computeRouteYawReference(
     const Eigen::Vector3d& measured_position,
     const Eigen::Vector3d& measured_velocity,
     const double measured_yaw_rad,
-    const RouteYawConfig& config) noexcept {
+    const RouteYawConfig& config,
+    const std::optional<Eigen::Vector3d>& mission_start_position_enu) noexcept {
   if (!route.valid() || !config.valid() || !measured_position.allFinite() ||
       !measured_velocity.allFinite() || !std::isfinite(measured_yaw_rad)) {
     return holdReference(measured_yaw_rad, 0.0, measured_position,
@@ -107,15 +108,24 @@ RouteYawReference computeRouteYawReference(
   // makes a waypoint transition update the heading target immediately and
   // never consumes a heading from a queued future waypoint or a lookahead
   // point from the previous leg.
-  const std::size_t target_index = route.active_waypoint_index == 0U
-      ? 1U : route.active_waypoint_index;
+  const std::size_t target_index = route.active_waypoint_index;
   if (target_index >= route.waypoints.size()) {
     return holdReference(measured_yaw_rad, progress, *progress_point,
                          RouteYawSource::kHoldNoHorizontalSupport);
   }
-  const std::size_t origin_index = target_index - 1U;
-  const Eigen::Vector3d& direction_origin =
-      route.waypoints[origin_index].position_enu;
+  Eigen::Vector3d direction_origin = Eigen::Vector3d::Constant(
+      std::numeric_limits<double>::quiet_NaN());
+  if (target_index == 0U) {
+    if (!mission_start_position_enu.has_value() ||
+        !mission_start_position_enu->allFinite()) {
+      return holdReference(measured_yaw_rad, progress,
+                           route.waypoints[target_index].position_enu,
+                           RouteYawSource::kHoldNoHorizontalSupport);
+    }
+    direction_origin = *mission_start_position_enu;
+  } else {
+    direction_origin = route.waypoints[target_index - 1U].position_enu;
+  }
   const Eigen::Vector3d& target = route.waypoints[target_index].position_enu;
   if (!direction_origin.allFinite() || !target.allFinite()) {
     return holdReference(measured_yaw_rad, progress, *progress_point,
@@ -163,13 +173,34 @@ BoundedHeadingStep stepBoundedHeading(
 
   const double delta = std::remainder(
       target_yaw_rad - current_yaw_rad, 2.0 * M_PI);
+  const double maximum_rate_change =
+      maximum_yaw_acceleration_rad_s2 * command_period_s;
+  // Once the target lies inside the one-step braking distance, finish the
+  // step at the target and explicitly zero the rate.  This is bounded by the
+  // same acceleration limit and avoids a tiny-target sign flip/oscillation in
+  // the discrete command loop.
+  const double one_step_braking_distance =
+      std::abs(current_yaw_rate_rad_s) * command_period_s +
+      0.5 * maximum_yaw_acceleration_rad_s2 * command_period_s *
+          command_period_s;
+  const bool rate_points_toward_target =
+      std::abs(current_yaw_rate_rad_s) <= 1.0e-12 ||
+      current_yaw_rate_rad_s * delta >= 0.0;
+  if (rate_points_toward_target &&
+      std::abs(current_yaw_rate_rad_s) <= maximum_rate_change + 1.0e-12 &&
+      std::abs(delta) <= one_step_braking_distance + 1.0e-12) {
+    output.valid = true;
+    output.yaw_rad = current_yaw_rad + delta;
+    output.yaw_rate_rad_s = 0.0;
+    output.yaw_acceleration_rad_s2 =
+        -current_yaw_rate_rad_s / command_period_s;
+    return output;
+  }
   const double stopping_limited_rate = std::sqrt(std::max(
       0.0, 2.0 * maximum_yaw_acceleration_rad_s2 * std::abs(delta)));
   const double desired_rate =
       std::copysign(std::min(maximum_yaw_rate_rad_s, stopping_limited_rate),
                     delta);
-  const double maximum_rate_change =
-      maximum_yaw_acceleration_rad_s2 * command_period_s;
   const double rate_change = std::clamp(
       desired_rate - current_yaw_rate_rad_s,
       -maximum_rate_change, maximum_rate_change);
@@ -180,7 +211,8 @@ BoundedHeadingStep stepBoundedHeading(
   output.valid = true;
   output.yaw_rate_rad_s = next_rate;
   output.yaw_acceleration_rad_s2 = rate_change / command_period_s;
-  output.yaw_rad = current_yaw_rad + next_rate * command_period_s;
+  output.yaw_rad = current_yaw_rad +
+      0.5 * (current_yaw_rate_rad_s + next_rate) * command_period_s;
   return output;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include <Eigen/Core>
 
@@ -59,6 +60,8 @@ struct BoundedHeadingStep {
     const Eigen::Vector3d& measured_position,
     const Eigen::Vector3d& measured_velocity,
     double measured_yaw_rad,
-    const RouteYawConfig& config = {}) noexcept;
+    const RouteYawConfig& config = {},
+    const std::optional<Eigen::Vector3d>& mission_start_position_enu =
+        std::nullopt) noexcept;
 
 }  // namespace navigation_planning_backend

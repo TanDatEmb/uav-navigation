@@ -1,5 +1,6 @@
 #include "planner_core/route_yaw_reference.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -39,10 +40,11 @@ TEST(RouteYawReference, FacesEveryHorizontalBearingWithShortestUnwrap) {
   for (const double bearing : bearings) {
     const Eigen::Vector3d end{
         20.0 * std::cos(bearing), 20.0 * std::sin(bearing), 3.0};
-    const auto route = makeSnapshot({Eigen::Vector3d{0.0, 0.0, 3.0}, end});
+    const auto route = makeSnapshot({end});
     const auto reference = navigation_planning_backend::computeRouteYawReference(
         route, Eigen::Vector3d{0.0, 0.0, 3.0},
-        Eigen::Vector3d{std::cos(bearing), std::sin(bearing), 0.0}, 3.0);
+        Eigen::Vector3d{std::cos(bearing), std::sin(bearing), 0.0}, 3.0, {},
+        Eigen::Vector3d{0.0, 0.0, 3.0});
     ASSERT_TRUE(reference.valid);
     EXPECT_EQ(reference.source,
               navigation_planning_backend::RouteYawSource::kRouteLookahead);
@@ -54,9 +56,10 @@ TEST(RouteYawReference, FacesEveryHorizontalBearingWithShortestUnwrap) {
 
 TEST(RouteYawReference, HoldsMeasuredYawAtStandstillAndPureVerticalMotion) {
   const auto horizontal = makeSnapshot({
-      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{20.0, 0.0, 3.0}});
+      Eigen::Vector3d{20.0, 0.0, 3.0}});
   const auto stopped = navigation_planning_backend::computeRouteYawReference(
-      horizontal, Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d::Zero(), 1.2);
+      horizontal, Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d::Zero(), 1.2,
+      {}, Eigen::Vector3d{0.0, 0.0, 3.0});
   EXPECT_TRUE(stopped.valid);
   EXPECT_EQ(stopped.source,
             navigation_planning_backend::RouteYawSource::kRouteLookahead);
@@ -75,10 +78,10 @@ TEST(RouteYawReference, HoldsMeasuredYawAtStandstillAndPureVerticalMotion) {
 
 TEST(RouteYawReference, ExtremeFiniteMeasuredYawDoesNotProduceNaN) {
   const auto route = makeSnapshot({
-      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{20.0, 0.0, 3.0}});
+      Eigen::Vector3d{20.0, 0.0, 3.0}});
   const auto reference = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{4.0, 0.0, 0.0},
-      std::numeric_limits<double>::max());
+      std::numeric_limits<double>::max(), {}, Eigen::Vector3d{0.0, 0.0, 3.0});
   ASSERT_TRUE(reference.valid);
   EXPECT_TRUE(std::isfinite(reference.target_yaw_rad));
   EXPECT_NEAR(reference.target_yaw_rad, 0.0, 1.0e-12);
@@ -86,11 +89,13 @@ TEST(RouteYawReference, ExtremeFiniteMeasuredYawDoesNotProduceNaN) {
 
 TEST(RouteYawReference, StraightLegTargetDoesNotDependOnTrajectoryGeneration) {
   const auto route = makeSnapshot({
-      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{50.0, 0.0, 3.0}});
+      Eigen::Vector3d{50.0, 0.0, 3.0}});
   const auto first = navigation_planning_backend::computeRouteYawReference(
-      route, Eigen::Vector3d{8.0, 0.2, 3.0}, Eigen::Vector3d{5.0, 0.0, 0.0}, 0.1);
+      route, Eigen::Vector3d{8.0, 0.2, 3.0}, Eigen::Vector3d{5.0, 0.0, 0.0},
+      0.1, {}, Eigen::Vector3d{0.0, 0.0, 3.0});
   const auto replan = navigation_planning_backend::computeRouteYawReference(
-      route, Eigen::Vector3d{8.0, 0.2, 3.0}, Eigen::Vector3d{5.0, 0.0, 0.0}, 0.1);
+      route, Eigen::Vector3d{8.0, 0.2, 3.0}, Eigen::Vector3d{5.0, 0.0, 0.0},
+      0.1, {}, Eigen::Vector3d{0.0, 0.0, 3.0});
   ASSERT_TRUE(first.valid);
   ASSERT_TRUE(replan.valid);
   EXPECT_DOUBLE_EQ(first.target_yaw_rad, replan.target_yaw_rad);
@@ -99,10 +104,11 @@ TEST(RouteYawReference, StraightLegTargetDoesNotDependOnTrajectoryGeneration) {
 
 TEST(RouteYawReference, CrossTrackCorrectionDoesNotSteerYawAwayFromRouteTangent) {
   const auto route = makeSnapshot({
-      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{50.0, 0.0, 3.0}});
+      Eigen::Vector3d{50.0, 0.0, 3.0}});
   const auto reference = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{8.0, 4.0, 3.0},
-      Eigen::Vector3d{3.0, -1.0, 0.0}, 0.4);
+      Eigen::Vector3d{3.0, -1.0, 0.0}, 0.4, {},
+      Eigen::Vector3d{0.0, 0.0, 3.0});
   ASSERT_TRUE(reference.valid);
   EXPECT_EQ(reference.source,
             navigation_planning_backend::RouteYawSource::kRouteLookahead);
@@ -126,7 +132,8 @@ TEST(RouteYawReference, TerminalOvershootKeepsIncomingRouteHeading) {
   ASSERT_TRUE(route.valid());
   const auto reference = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{20.8, 5.2, 3.0},
-      Eigen::Vector3d{-0.8, -0.2, 0.0}, 0.2);
+      Eigen::Vector3d{-0.8, -0.2, 0.0}, 0.2, {},
+      route.waypoints.front().position_enu);
   ASSERT_TRUE(reference.valid);
   EXPECT_EQ(reference.source,
             navigation_planning_backend::RouteYawSource::kRouteLookahead);
@@ -147,13 +154,35 @@ TEST(RouteYawReference, ActiveWaypointUsesItsIncomingLegHeading) {
   route.measured_progress.projection.tangent = Eigen::Vector3d::UnitX();
   ASSERT_TRUE(route.valid());
   const auto reference = navigation_planning_backend::computeRouteYawReference(
-      route, Eigen::Vector3d{8.0, 0.0, 3.0}, Eigen::Vector3d{5.0, 0.0, 0.0}, 0.0);
+      route, Eigen::Vector3d{8.0, 0.0, 3.0}, Eigen::Vector3d{5.0, 0.0, 0.0},
+      0.0, {}, route.waypoints.front().position_enu);
   ASSERT_TRUE(reference.valid);
   EXPECT_EQ(reference.source,
             navigation_planning_backend::RouteYawSource::kRouteLookahead);
   EXPECT_NEAR(reference.target_yaw_rad, 0.0, 1.0e-9);
   EXPECT_TRUE(reference.target_point.isApprox(
       Eigen::Vector3d{10.0, 0.0, 3.0}, 1.0e-12));
+}
+
+TEST(RouteYawReference, FirstWaypointUsesLatchedMissionStartNotQueuedWaypoint) {
+  const auto route = makeSnapshot({
+      Eigen::Vector3d{10.0, 0.0, 3.0},
+      Eigen::Vector3d{10.0, 10.0, 3.0}}, 0U);
+  const auto reference = navigation_planning_backend::computeRouteYawReference(
+      route, Eigen::Vector3d{9.0, 0.0, 3.0}, Eigen::Vector3d::Zero(), 0.0,
+      {}, Eigen::Vector3d{0.0, 0.0, 3.0});
+  ASSERT_TRUE(reference.valid);
+  EXPECT_NEAR(reference.target_yaw_rad, 0.0, 1.0e-9);
+  EXPECT_TRUE(reference.target_point.isApprox(
+      Eigen::Vector3d{10.0, 0.0, 3.0}, 1.0e-12));
+
+  const auto missing_anchor =
+      navigation_planning_backend::computeRouteYawReference(
+          route, Eigen::Vector3d{9.0, 0.0, 3.0}, Eigen::Vector3d::Zero(), 0.0);
+  ASSERT_TRUE(missing_anchor.valid);
+  EXPECT_EQ(missing_anchor.source,
+            navigation_planning_backend::RouteYawSource::kHoldNoHorizontalSupport);
+  EXPECT_DOUBLE_EQ(missing_anchor.target_yaw_rad, 0.0);
 }
 
 TEST(RouteYawReference, ActiveWaypointChangeUpdatesHeadingLegImmediately) {
@@ -201,7 +230,8 @@ TEST(RouteYawReference, ReversalDoesNotTurnBeforeStopTurnGoBoundary) {
   route.measured_progress.projection.tangent = Eigen::Vector3d::UnitX();
   ASSERT_TRUE(route.valid());
   const auto approaching = navigation_planning_backend::computeRouteYawReference(
-      route, Eigen::Vector3d{8.0, 0.0, 3.0}, Eigen::Vector3d{4.0, 0.0, 0.0}, 0.0);
+      route, Eigen::Vector3d{8.0, 0.0, 3.0}, Eigen::Vector3d{4.0, 0.0, 0.0},
+      0.0, {}, route.waypoints.front().position_enu);
   ASSERT_TRUE(approaching.valid);
   EXPECT_NEAR(approaching.target_yaw_rad, 0.0, 1.0e-9);
   EXPECT_LE(approaching.target_point.x(), 10.0);
@@ -222,7 +252,8 @@ TEST(RouteYawReference, ReversalTurnsTowardOutgoingLegOnlyAfterTransition) {
   ASSERT_TRUE(route.valid());
 
   const auto turning = navigation_planning_backend::computeRouteYawReference(
-      route, Eigen::Vector3d{10.0, 0.0, 3.0}, Eigen::Vector3d::Zero(), 0.0);
+      route, Eigen::Vector3d{10.0, 0.0, 3.0}, Eigen::Vector3d::Zero(), 0.0,
+      {}, route.waypoints.front().position_enu);
   ASSERT_TRUE(turning.valid);
   EXPECT_EQ(turning.source,
             navigation_planning_backend::RouteYawSource::kRouteLookahead);
@@ -247,7 +278,8 @@ TEST(RouteYawReference, CrossingGeometryCannotJumpBeyondActiveWaypoint) {
 
   const auto reference = navigation_planning_backend::computeRouteYawReference(
       route, Eigen::Vector3d{0.0, 0.0, 3.0},
-      Eigen::Vector3d{2.0, 0.0, 0.0}, 0.0);
+      Eigen::Vector3d{2.0, 0.0, 0.0}, 0.0, {},
+      route.waypoints.front().position_enu);
   ASSERT_TRUE(reference.valid);
   EXPECT_LE(reference.progress_arc_m,
             route.waypoint_arc_lengths_m[route.active_waypoint_index]);
@@ -276,4 +308,26 @@ TEST(RouteYawReference, BoundedHeadingStepRejectsInvalidOrStaleInputs) {
   const auto stale_rate = navigation_planning_backend::stepBoundedHeading(
       0.0, 2.0, 1.0, 0.02, 1.5, 1.0);
   EXPECT_FALSE(stale_rate.valid);
+}
+
+TEST(RouteYawReference, BoundedHeadingStepConvergesWithoutTinyTargetOscillation) {
+  constexpr double target = 1.0e-3;
+  double yaw = 0.0;
+  double rate = 0.0;
+  double maximum_rate = 0.0;
+  double maximum_acceleration = 0.0;
+  for (int sample = 0; sample < 1000; ++sample) {
+    const auto step = navigation_planning_backend::stepBoundedHeading(
+        yaw, rate, target, 0.02, 2.0, 2.0);
+    ASSERT_TRUE(step.valid);
+    yaw = step.yaw_rad;
+    rate = step.yaw_rate_rad_s;
+    maximum_rate = std::max(maximum_rate, std::abs(rate));
+    maximum_acceleration =
+        std::max(maximum_acceleration, std::abs(step.yaw_acceleration_rad_s2));
+  }
+  EXPECT_NEAR(yaw, target, 1.0e-12);
+  EXPECT_NEAR(rate, 0.0, 1.0e-12);
+  EXPECT_LE(maximum_rate, 2.0 + 1.0e-12);
+  EXPECT_LE(maximum_acceleration, 2.0 + 1.0e-12);
 }
