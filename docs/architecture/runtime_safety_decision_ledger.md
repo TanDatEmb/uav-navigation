@@ -2,9 +2,9 @@
 
 ### 2026-09-09 - Bind active-leg heading to mission start and command-clock continuity
 
-- **Owner/status:** navigation planning/runtime yaw integration; `IMPLEMENTED`,
-  focused evidence complete and representative SITL/recorded-data verification
-  still required. The change is not flight-acceptance evidence.
+- **Owner/status:** navigation planning/runtime yaw integration; `OPEN` pending
+  focused immediate-waypoint and repeated representative SITL/recorded-data
+  verification. The change is not flight-acceptance evidence.
 - **Scope/units:** The first active leg uses the measured mission-activation
   position as its origin and the active waypoint as its target. Later legs use
   the previous active waypoint and current active waypoint. Runtime latches the
@@ -25,10 +25,11 @@
 - **Evidence:** Route-yaw regressions cover latched first-leg origin, active-leg
   transition, wraparound, zero-horizontal geometry, and bounded rate/acceleration.
   Planner trajectory regressions cover yaw rate/acceleration, flatness, and
-  candidate handoff continuity. The planner and runtime consume the same
-  optional mission-start anchor; the runtime no longer mutates a certified
-  command after those checks. These are focused source/component results, not
-  SITL acceptance.
+  candidate handoff continuity. The remaining closure is the new retained-
+  position heading-rebind path: while the position solve is blocked, a waypoint
+  change must stage the bounded yaw-only successor at the next valid activation,
+  while a stale solve cannot overwrite it. These are focused source/component
+  results, not SITL acceptance.
 - **Removal/review condition:** Revisit after repeated WP2->WP3->WP4 and
   reversal missions with command target/actual yaw/active identity timelines,
   plus representative recorded sensor data. Do not claim heading stability or
@@ -37,6 +38,29 @@
   tests, `navigation_runtime_core` Release build, `git diff --check`, then
   repeated identity/handoff runtime tests and map/profile-separated SITL
   artifacts.
+
+### 2026-09-09 - Convert PX4 external-mode shutdown exceptions into fail-closed exits
+
+- **Owner/status:** `px4_navigation_external_mode` process lifecycle; `IMPLEMENTED`,
+  focused build/test and representative SITL verification pending.
+- **Scope/units:** Catch exceptions from the PX4 mode executor and paired state-input
+  executor, request shutdown of the other executor, join the receiver thread, and
+  return a nonzero process status. The patch does not change PX4 leases,
+  freshness windows, watchdogs, tracking limits, or command publication.
+- **Safety impact:** A lost FMU or receiver exception is logged and terminates the
+  process cleanly instead of escaping `main`, invoking `std::terminate`, or leaving
+  a live executor paired with a dead state-input path. Existing PX4 Hold/fail-closed
+  handover remains the safety owner; no exception is swallowed.
+- **Evidence:** The baseline GUI artifact recorded
+  `px4_ros2::Exception: Timeout, no request received from FMU, exiting` from
+  `health_and_arming_checks.cpp` followed by process exit `-6`; no watchdog or
+  freshness relaxation is inferred from that symptom.
+- **Removal/review condition:** Revisit after repeated normal shutdown, FMU
+  disconnect, PX4 Hold handover, and mission-completion runs show no uncaught
+  lifecycle exception and preserve the expected nonzero failure classification.
+- **Verification:** `px4_navigation_external_mode` Release build/tests,
+  `git diff --check`, then exact map/profile-separated SITL artifacts with PX4
+  process exit and Hold/handover evidence.
 
 ### 2026-09-09 - Apply the requested 12 m/s MAIN ceiling to the shared development config
 

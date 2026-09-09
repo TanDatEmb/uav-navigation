@@ -287,6 +287,12 @@ void PlannerFacade::setMissionStartPosition(
   }
 }
 
+bool PlannerFacade::stageImmediateHeadingRebind(
+    const double activation_wall_time_s) {
+  return impl_ && impl_->planner &&
+      impl_->planner->stageImmediateHeadingRebind(activation_wall_time_s);
+}
+
 void PlannerFacade::setPassThroughNextTarget(
     const std::optional<Eigen::Vector3d>& next_target) noexcept {
   if (impl_ && impl_->planner) impl_->planner->setPassThroughNextTarget(next_target);

@@ -60,6 +60,8 @@ class PlannerFacade final {
       const navigation_mission::ImmutableRouteSnapshot& route) noexcept;
   void setMissionStartPosition(
       const std::optional<Eigen::Vector3d>& mission_start) noexcept;
+  [[nodiscard]] bool stageImmediateHeadingRebind(
+      double activation_wall_time_s);
   void setPassThroughNextTarget(
       const std::optional<Eigen::Vector3d>& next_target) noexcept;
   bool setState(const navigation_planning::KinematicState& state);

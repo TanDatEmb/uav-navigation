@@ -18,6 +18,7 @@
 #include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/replan_contract.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
+#include <utils/optimization/polynomial_interpolation.h>
 #include <navigation_world_model/continuous_clearance.hpp>
 #include <navigation_world_model/goal_contract.hpp>
 #include <navigation_common/time.hpp>
@@ -771,7 +772,8 @@ double knownFreeGuideSupport(
             const auto route_certificate = certifyMainRouteRegression(
                 candidate, *route_snapshot_, begin_tt,
                 route_regression_tolerance_m, bounded_terminal_stop_recovery);
-            if (route_certificate.applicable && !route_certificate.valid) {
+            if (!candidate.retained_position_heading_rebind &&
+                route_certificate.applicable && !route_certificate.valid) {
                 latest_commit_decision_.store(static_cast<int>(
                     navigation_world_model::WorldCommitDecision::kCandidateRejected));
                 planner_context_->warn(
@@ -1089,7 +1091,8 @@ double knownFreeGuideSupport(
         // so treating its measured stop as a MAIN boundary would make the
         // runtime apply the nominal pass-through boundary contract to the
         // safety replacement and reject an otherwise certified brake.
-        if (!emergency_candidate && route_snapshot_.has_value() &&
+        if (!command.retained_position_heading_rebind &&
+            !emergency_candidate && route_snapshot_.has_value() &&
             route_snapshot_->active_waypoint_index < route_snapshot_->waypoints.size()) {
             const auto& waypoint =
                 route_snapshot_->waypoints[route_snapshot_->active_waypoint_index];
@@ -1304,6 +1307,137 @@ double knownFreeGuideSupport(
             last_route_yaw_target_rad_ = route_yaw_reference_.target_yaw_rad;
         }
         return route_yaw_reference_.valid;
+    }
+
+    bool Planner::stageImmediateHeadingRebind(
+            const double activation_wall_time_s) {
+        if (!std::isfinite(activation_wall_time_s) ||
+            !updateRouteYawReference()) {
+            return false;
+        }
+        const auto committed = planner_warm_start_.snapshot();
+        if (committed.empty || committed.position.empty() || committed.yaw.empty() ||
+            committed.roles.empty() || !std::isfinite(committed.position.start_WT) ||
+            !std::isfinite(committed.position.getTotalDuration()) ||
+            activation_wall_time_s <= committed.position.start_WT) {
+            return false;
+        }
+        const double committed_duration = committed.position.getTotalDuration();
+        const double start_tt = activation_wall_time_s - committed.position.start_WT;
+        if (!std::isfinite(start_tt) || start_tt <= 1.0e-6 ||
+            start_tt >= committed_duration - 1.0e-4) {
+            return false;
+        }
+        const double suffix_duration = committed_duration - start_tt;
+        Trajectory position_suffix;
+        if (!committed.position.getPartialTrajectoryByTime(
+                start_tt, committed_duration, position_suffix)) {
+            return false;
+        }
+        position_suffix.start_WT = activation_wall_time_s;
+        const auto initial_yaw_state = committed.yaw.getState(start_tt);
+        if (initial_yaw_state.rows() < 1 || initial_yaw_state.cols() < 3 ||
+            !initial_yaw_state.allFinite()) {
+            return false;
+        }
+        Vec4f initial_yaw = Vec4f::Zero();
+        initial_yaw(0) = static_cast<float>(initial_yaw_state(0, 0));
+        initial_yaw(1) = static_cast<float>(initial_yaw_state(0, 1));
+        initial_yaw(2) = static_cast<float>(initial_yaw_state(0, 2));
+        const double target_yaw = route_yaw_reference_.target_yaw_rad;
+        const double delta = std::abs(std::remainder(
+            target_yaw - static_cast<double>(initial_yaw(0)), 2.0 * M_PI));
+        const double yaw_rate_limit = cfg_.yaw_rate_max_rad_s;
+        const double yaw_acceleration_limit = cfg_.yaw_acceleration_max_rad_s2;
+        if (!std::isfinite(delta) || !std::isfinite(yaw_rate_limit) ||
+            yaw_rate_limit <= 0.0 || !std::isfinite(yaw_acceleration_limit) ||
+            yaw_acceleration_limit <= 0.0 ||
+            std::abs(static_cast<double>(initial_yaw(1))) > yaw_rate_limit + 1.0e-6 ||
+            std::abs(static_cast<double>(initial_yaw(2))) >
+                yaw_acceleration_limit + 1.0e-6) {
+            return false;
+        }
+        const double requested_turn_duration = std::max({
+            0.20,
+            2.0 * delta / yaw_rate_limit,
+            std::sqrt(8.0 * delta / yaw_acceleration_limit),
+            2.0 * std::abs(static_cast<double>(initial_yaw(1))) /
+                yaw_acceleration_limit});
+        const double turn_duration = std::min(suffix_duration,
+                                              requested_turn_duration);
+        if (!std::isfinite(turn_duration) || turn_duration <= 1.0e-4) {
+            return false;
+        }
+        Trajectory turn_window;
+        turn_window.start_WT = activation_wall_time_s;
+        turn_window.emplace_back(turn_duration, Eigen::MatrixXd::Zero(3, 6));
+        Trajectory yaw_turn;
+        if (!yaw_traj_opt_->optimizeToTarget(
+                initial_yaw, target_yaw, turn_window, yaw_turn) ||
+            yaw_turn.empty()) {
+            return false;
+        }
+        yaw_turn.start_WT = activation_wall_time_s;
+        Trajectory yaw_suffix = yaw_turn;
+        const double hold_duration = suffix_duration - turn_duration;
+        if (hold_duration > 1.0e-5) {
+            const auto final_yaw_state = yaw_turn.getState(yaw_turn.getTotalDuration());
+            if (final_yaw_state.rows() < 1 || final_yaw_state.cols() < 3 ||
+                !final_yaw_state.allFinite()) {
+                return false;
+            }
+            Eigen::MatrixXd hold_coeff = Eigen::MatrixXd::Zero(3, 6);
+            hold_coeff(0, 5) = final_yaw_state(0, 0);
+            Trajectory hold;
+            hold.start_WT = activation_wall_time_s + turn_duration;
+            hold.emplace_back(hold_duration, hold_coeff);
+            yaw_suffix = yaw_turn + hold;
+        }
+        yaw_suffix.start_WT = activation_wall_time_s;
+        if (std::abs(yaw_suffix.getTotalDuration() - suffix_duration) > 1.0e-5 ||
+            !std::isfinite(yaw_suffix.getMaxVelRate()) ||
+            yaw_suffix.getMaxVelRate() > yaw_rate_limit + 1.0e-6 ||
+            !std::isfinite(yaw_suffix.getMaxAccRate()) ||
+            yaw_suffix.getMaxAccRate() > yaw_acceleration_limit + 1.0e-6) {
+            return false;
+        }
+
+        CandidateCommandBundle candidate;
+        candidate.position = std::move(position_suffix);
+        candidate.yaw = std::move(yaw_suffix);
+        candidate.start_wall_time = activation_wall_time_s;
+        candidate.retained_position_heading_rebind = true;
+        candidate.backup_disposition = BackupDisposition::SUCCESS;
+        double first_backup_start = std::numeric_limits<double>::infinity();
+        for (const auto& role : committed.roles) {
+            const double begin = std::max(0.0, role.begin_tt - start_tt);
+            const double end = std::min(suffix_duration, role.end_tt - start_tt);
+            if (end <= begin + 1.0e-6) continue;
+            candidate.roles.push_back({begin, end, role.role});
+            if (role.role == CandidateTrajectoryRole::BACKUP) {
+                first_backup_start = std::min(first_backup_start, begin);
+            }
+        }
+        if (candidate.roles.empty() ||
+            candidate.roles.back().end_tt < suffix_duration - 1.0e-5 ||
+            !std::isfinite(first_backup_start)) {
+            return false;
+        }
+        candidate.backup_suffix_available = true;
+        candidate.backup_start_tt = first_backup_start;
+        traj_opt::TrajectoryDynamicReport dynamic_report;
+        if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
+                candidate.position, cfg_.exp_traj_cfg, &dynamic_report,
+                0.01, &candidate.yaw)) {
+            planner_context_->warn(
+                " -- [planner] immediate heading rebind rejected by flatness "
+                "body_rate={} thrust=[{},{}]",
+                dynamic_report.maximum_body_rate_rad_s,
+                dynamic_report.minimum_thrust_n,
+                dynamic_report.maximum_thrust_n);
+            return false;
+        }
+        return authorizeAndStage(std::move(candidate));
     }
 
     std::optional<bool> Planner::tryStageMeasuredTerminalStopHold(

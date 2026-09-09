@@ -816,6 +816,98 @@ TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {
   EXPECT_TRUE(facade.setRouteSnapshot(snapshot));
 }
 
+TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, semanticFixtureMissionLimits(), authorizer,
+      [] { return 10.0; });
+
+  navigation_mission::Mission mission;
+  mission.id = "immediate-heading-rebind";
+  mission.frame = "lio_odom";
+  navigation_mission::MissionWaypoint start;
+  start.id = "start";
+  start.position_enu = Eigen::Vector3d{0.0, 0.0, 3.0};
+  start.acceptance_radius_m = 0.5;
+  navigation_mission::MissionWaypoint first;
+  first.id = "first";
+  first.position_enu = Eigen::Vector3d{8.0, 0.0, 3.0};
+  first.behavior = navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  first.acceptance_radius_m = 0.5;
+  navigation_mission::MissionWaypoint second;
+  second.id = "second";
+  second.position_enu = Eigen::Vector3d{8.0, 8.0, 3.0};
+  second.behavior = navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  second.acceptance_radius_m = 0.5;
+  navigation_mission::MissionWaypoint terminal;
+  terminal.id = "terminal";
+  terminal.position_enu = Eigen::Vector3d{0.0, 8.0, 3.0};
+  terminal.acceptance_radius_m = 0.5;
+  mission.waypoints = {first, second, terminal};
+
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(start.position_enu).valid);
+  const auto first_route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
+  ASSERT_TRUE(first_route.valid());
+  ASSERT_EQ(first_route.active_waypoint_index, 0U);
+  ASSERT_TRUE(facade.setRouteSnapshot(first_route));
+
+  navigation_planning::KinematicState state;
+  state.position_world = start.position_enu;
+  state.source_stamp_ns = 1;
+  state.receive_stamp_ns = 1;
+  state.localization_epoch = 1U;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+  ASSERT_TRUE(facade.setState(state));
+  facade.setMissionStartPosition(start.position_enu);
+  facade.setCommandIdentity(1U, 1U, 1U);
+  facade.setGoalAcceptanceRadius(first.acceptance_radius_m);
+  ASSERT_EQ(facade.planInitialFromStoppedState(
+                first.position_enu, 0.0, true),
+            navigation_planning::PlannerStatus::kSuccess);
+  const auto initial = facade.exportCommandCandidate(
+      1U, 1U, 1U, 10000000000LL, 30000000000LL);
+  ASSERT_TRUE(initial);
+  ASSERT_GT(initial->bundle_generation, 0U);
+  facade.onExecutionTimelineActivated(initial->bundle_generation);
+
+  ASSERT_TRUE(progress.update(first.position_enu).valid);
+  const auto second_route = progress.snapshot(mission.id, mission.frame, 1U, 2U, 1U);
+  ASSERT_TRUE(second_route.valid());
+  ASSERT_EQ(second_route.active_waypoint_index, 1U);
+  ASSERT_TRUE(facade.setRouteSnapshot(second_route));
+  state.position_world = Eigen::Vector3d{7.8, 0.0, 3.0};
+  ASSERT_TRUE(facade.setState(state));
+  facade.setCommandIdentity(1U, 2U, 2U);
+
+  // This models a position solve that has not returned yet: the heading
+  // successor is staged directly from the retained command suffix.
+  ASSERT_TRUE(facade.stageImmediateHeadingRebind(10.5));
+  const auto rebound = facade.exportCommandCandidate(
+      1U, 2U, 2U, 10500000000LL, 30000000000LL);
+  ASSERT_TRUE(rebound);
+  ASSERT_TRUE(rebound->valid());
+  EXPECT_FALSE(rebound->route_boundary_event.has_value());
+  navigation_planning::TrajectoryPoint retained_at_activation;
+  navigation_planning::TrajectoryPoint retained_after_turn;
+  navigation_planning::TrajectoryPoint before_turn;
+  navigation_planning::TrajectoryPoint after_turn;
+  ASSERT_TRUE(initial->evaluator(rebound->declared_start_ns, retained_at_activation));
+  ASSERT_TRUE(initial->evaluator(rebound->declared_start_ns + 1000000000LL,
+                                 retained_after_turn));
+  ASSERT_TRUE(rebound->evaluator(rebound->declared_start_ns, before_turn));
+  ASSERT_TRUE(rebound->evaluator(rebound->declared_start_ns + 1000000000LL,
+                                 after_turn));
+  EXPECT_NEAR(before_turn.position_world.x(), retained_at_activation.position_world.x(), 1.0e-9);
+  EXPECT_NEAR(before_turn.position_world.y(), retained_at_activation.position_world.y(), 1.0e-9);
+  EXPECT_NEAR(after_turn.position_world.x(), retained_after_turn.position_world.x(), 1.0e-9);
+  EXPECT_NEAR(after_turn.position_world.y(), retained_after_turn.position_world.y(), 1.0e-9);
+  EXPECT_GT(after_turn.yaw, before_turn.yaw + 1.0e-3);
+  EXPECT_LE(std::abs(after_turn.yaw_rate), facade.yawRateLimitRadS() + 1.0e-6);
+}
+
 TEST(PlannerFacade, PassThroughLookaheadExportsRouteBoundaryEvent) {
   auto world = std::make_shared<IdentityOnlyWorld>();
   TestCommitAuthorizer authorizer(world);

@@ -555,6 +555,11 @@ namespace navigation_planning_backend {
 
         bool updateRouteYawReference() noexcept;
 
+        // Stage a bounded yaw-only successor from the retained committed
+        // position suffix. The execution runtime still owns activation and
+        // must admit the staged candidate through its normal boundary.
+        bool stageImmediateHeadingRebind(double activation_wall_time_s);
+
         void cancelActiveSolve() {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
             solve_cancelled_.store(true);

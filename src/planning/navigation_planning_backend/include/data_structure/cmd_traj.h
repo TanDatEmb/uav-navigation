@@ -51,6 +51,11 @@ namespace navigation_planning_backend {
         double backup_start_tt{0.0};
         bool connected_goal{false};
         bool preserve_incoming_route_tangent{false};
+        // Narrow internal admission mode for an immediate waypoint-heading
+        // rebind. Position and role intervals are retained from the already
+        // certified command; world, dynamic, yaw, anchor and handoff checks
+        // still run. This is never exported as a general route exception.
+        bool retained_position_heading_rebind{false};
         // CandidateBundleKind describes the executable role partition; it
         // cannot distinguish a terminal STOP with a braking suffix from an
         // ordinary moving MAIN+BACKUP command.

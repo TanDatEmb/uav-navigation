@@ -4,8 +4,10 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <limits>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -2280,15 +2282,71 @@ int main(int argc, char* argv[]) {
   using Node = px4_ros2::NodeWithModeExecutor<
       px4_navigation_external_mode::NavigationModeExecutor,
       px4_navigation_external_mode::NavigationMode>;
-  const auto mode_node = std::make_shared<Node>("px4_navigation_external_mode", true);
-  const auto state_input_node =
-      std::make_shared<rclcpp::Node>("px4_navigation_external_mode_state_input");
-  mode_node->getMode().attachStateInputNode(*state_input_node);
-  std::thread state_input_thread([state_input_node]() {
-    rclcpp::spin(state_input_node);
-  });
-  rclcpp::spin(mode_node);
-  rclcpp::shutdown();
-  state_input_thread.join();
-  return 0;
+  int exit_code = 0;
+  std::thread state_input_thread;
+  std::exception_ptr state_input_exception;
+  std::mutex state_input_exception_mutex;
+  const auto logException = [](const char* component,
+                               const std::exception_ptr& exception) noexcept {
+    try {
+      if (exception) std::rethrow_exception(exception);
+    } catch (const std::exception& error) {
+      RCLCPP_FATAL(rclcpp::get_logger("px4_navigation_external_mode"),
+                   "%s terminated with exception: %s", component, error.what());
+    } catch (...) {
+      RCLCPP_FATAL(rclcpp::get_logger("px4_navigation_external_mode"),
+                   "%s terminated with a non-standard exception", component);
+    }
+  };
+
+  try {
+    const auto mode_node = std::make_shared<Node>("px4_navigation_external_mode", true);
+    const auto state_input_node =
+        std::make_shared<rclcpp::Node>("px4_navigation_external_mode_state_input");
+    mode_node->getMode().attachStateInputNode(*state_input_node);
+    state_input_thread = std::thread([
+        state_input_node, &state_input_exception, &state_input_exception_mutex]() {
+      try {
+        rclcpp::spin(state_input_node);
+      } catch (...) {
+        {
+          std::lock_guard<std::mutex> lock(state_input_exception_mutex);
+          state_input_exception = std::current_exception();
+        }
+        // A receiver failure must terminate the paired mode executor too;
+        // otherwise the main thread can continue publishing against a dead
+        // FMU/state-input path until the process is forcibly aborted.
+        if (rclcpp::ok()) rclcpp::shutdown();
+      }
+    });
+    try {
+      rclcpp::spin(mode_node);
+    } catch (...) {
+      const auto exception = std::current_exception();
+      logException("mode executor", exception);
+      exit_code = 1;
+      // px4_ros2 may throw when the FMU disappears during shutdown. Convert
+      // that lifecycle failure into a logged nonzero exit and let the paired
+      // receiver thread observe shutdown and join cleanly.
+      if (rclcpp::ok()) rclcpp::shutdown();
+    }
+  } catch (...) {
+    const auto exception = std::current_exception();
+    logException("node setup", exception);
+    exit_code = 1;
+    if (rclcpp::ok()) rclcpp::shutdown();
+  }
+
+  if (rclcpp::ok()) rclcpp::shutdown();
+  if (state_input_thread.joinable()) state_input_thread.join();
+  std::exception_ptr captured_state_input_exception;
+  {
+    std::lock_guard<std::mutex> lock(state_input_exception_mutex);
+    captured_state_input_exception = state_input_exception;
+  }
+  if (captured_state_input_exception) {
+    logException("state input executor", captured_state_input_exception);
+    exit_code = 1;
+  }
+  return exit_code;
 }

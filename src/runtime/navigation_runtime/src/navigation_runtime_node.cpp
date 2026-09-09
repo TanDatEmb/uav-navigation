@@ -4315,6 +4315,38 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
   planner_->setCommandIdentity(
       localization_epoch_at_solve, goal_epoch, goal->request_id);
+  // A hot waypoint handoff must not wait for the long position solve before
+  // the active-leg heading changes. Stage a retained-position yaw-only
+  // successor through the same planner/world/flatness and execution-boundary
+  // contracts; the subsequent nominal solve may replace this pending command,
+  // but a failed or stale solve cannot roll it back.
+  if (replan_for_new_goal && !plan_from_rest_with_transition) {
+    const auto heading_rebind_now_ns = now().nanoseconds();
+    const auto heading_guard_ns = static_cast<std::int64_t>(
+        navigation_planning::PlanningTimingContract::kCommitGuardS * 1.0e9);
+    if (heading_rebind_now_ns > 0 && heading_guard_ns > 0 &&
+        heading_rebind_now_ns <=
+            std::numeric_limits<std::int64_t>::max() - heading_guard_ns) {
+      const double activation_wall_time_s = static_cast<double>(
+          heading_rebind_now_ns + heading_guard_ns) * 1.0e-9;
+      if (planner_->stageImmediateHeadingRebind(activation_wall_time_s)) {
+        if (!commitPlannerCandidate(
+                *goal, goal_epoch, localization_epoch_at_solve,
+                heading_rebind_now_ns, effective_scheduled_key)) {
+          planner_->discardCommandCandidate();
+          RCLCPP_WARN(
+              get_logger(),
+              "immediate waypoint heading rebind failed execution admission; "
+              "retaining current command while nominal solve continues");
+        } else {
+          RCLCPP_INFO(
+              get_logger(),
+              "staged immediate waypoint heading rebind activation=%.6f target_wp=%u",
+              activation_wall_time_s, goal->waypoint_index);
+        }
+      }
+    }
+  }
   planner_->setNominalProblemDiagnosticIdentity(
       solve_generation, cycle_count_);
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
