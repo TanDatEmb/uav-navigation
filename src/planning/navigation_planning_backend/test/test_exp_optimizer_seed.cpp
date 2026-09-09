@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <chrono>
 #include <memory>
@@ -244,7 +245,7 @@ TEST(ExpOptimizer, HighSpeedMultiCorridorSolveKeepsEachPieceCertified) {
   }
 }
 
-TEST(ExpOptimizer, MandatoryFeasibilityPreservesFinalizationReserve) {
+TEST(ExpOptimizer, MandatoryFeasibilityUsesHardDeadlineWhenNoCertifiedSeed) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.optimization_dynamic_reserve_ratio = 1.0;
   config.max_vel = 8.0;
@@ -280,8 +281,8 @@ TEST(ExpOptimizer, MandatoryFeasibilityPreservesFinalizationReserve) {
       head, tail, guide_path, guide_times, corridors, trajectory,
       false, false, false);
 
-  EXPECT_FALSE(result.candidateAvailable());
-  EXPECT_TRUE(trajectory.empty());
+  EXPECT_TRUE(result.candidateAvailable());
+  EXPECT_FALSE(trajectory.empty());
   const auto diagnostics = optimizer.diagnostics();
   EXPECT_EQ(diagnostics.refinement_budget_at_entry_us, 0);
   EXPECT_FALSE(diagnostics.hard_deadline_observed);
@@ -289,7 +290,7 @@ TEST(ExpOptimizer, MandatoryFeasibilityPreservesFinalizationReserve) {
   EXPECT_EQ(diagnostics.certified_seed_failure_stage, 5);
 }
 
-TEST(ExpOptimizer, MandatoryFeasibilityDoesNotInheritExpiredRefinementCutoff) {
+TEST(ExpOptimizer, ExplicitCancellationStillStopsMandatoryFeasibility) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.optimization_dynamic_reserve_ratio = 1.0;
   config.max_vel = 8.0;
@@ -311,48 +312,24 @@ TEST(ExpOptimizer, MandatoryFeasibilityDoesNotInheritExpiredRefinementCutoff) {
       makeBox(-1.0, 12.0, -2.0, 2.0, 0.0, 3.0),
       makeBox(8.0, 22.0, -2.0, 2.0, 0.0, 3.0),
       makeBox(18.0, 31.0, -2.0, 2.0, 0.0, 3.0)};
-  auto reference_corridors = corridors;
-  auto mandatory_corridors = corridors;
-
-  // Establish that this exact problem is solvable when the optional
-  // refinement cutoff is absent. The fixture has no certified deterministic
-  // seed, so a complete candidate requires the bounded optimizer.
-  traj_opt::ExpTrajOpt reference_optimizer(config, planner_context);
-  geometry_utils::Trajectory reference_trajectory;
-  const auto hard_deadline = std::chrono::duration_cast<
-      std::chrono::nanoseconds>(
-          (std::chrono::steady_clock::now() + std::chrono::seconds(1))
-              .time_since_epoch())
-                                 .count();
-  reference_optimizer.setSolveBudget(nullptr, 0, hard_deadline);
-  const auto reference_result = reference_optimizer.solve(
-      head, tail, guide_path, guide_times, reference_corridors,
-      reference_trajectory,
-      false, false, false);
-  ASSERT_TRUE(reference_result.candidateAvailable());
-  ASSERT_FALSE(reference_trajectory.empty());
-  EXPECT_EQ(reference_optimizer.diagnostics().certified_seed_failure_stage, 5);
-
-  // An expired optional refinement cutoff must not cancel mandatory
-  // feasibility when the absolute hard deadline still has budget. This is
-  // intentionally RED on the current implementation: monitorProgress uses
-  // the refinement cutoff even when no certified seed exists.
-  traj_opt::ExpTrajOpt mandatory_optimizer(config, planner_context);
-  geometry_utils::Trajectory mandatory_trajectory;
+  geometry_utils::Trajectory trajectory;
+  std::atomic_bool cancelled{true};
+  const auto now = std::chrono::steady_clock::now();
   const auto expired_refinement = std::chrono::duration_cast<
-      std::chrono::nanoseconds>(
-          std::chrono::steady_clock::now().time_since_epoch())
-                                    .count();
-  mandatory_optimizer.setSolveBudget(
-      nullptr, expired_refinement, hard_deadline);
-  const auto mandatory_result = mandatory_optimizer.solve(
-      head, tail, guide_path, guide_times, mandatory_corridors,
-      mandatory_trajectory,
-      false, true, false);
+      std::chrono::nanoseconds>(now.time_since_epoch()).count();
+  const auto hard_deadline = std::chrono::duration_cast<
+      std::chrono::nanoseconds>((now + std::chrono::seconds(1)).time_since_epoch()).count();
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+  optimizer.setSolveBudget(&cancelled, expired_refinement, hard_deadline);
 
-  EXPECT_TRUE(mandatory_result.candidateAvailable());
-  EXPECT_FALSE(mandatory_trajectory.empty());
-  EXPECT_FALSE(mandatory_optimizer.diagnostics().hard_deadline_observed);
+  const auto result = optimizer.solve(
+      head, tail, guide_path, guide_times, corridors, trajectory,
+      false, false, false);
+
+  EXPECT_FALSE(result.candidateAvailable());
+  EXPECT_TRUE(trajectory.empty());
+  EXPECT_TRUE(optimizer.diagnostics().cancelled);
+  EXPECT_FALSE(optimizer.diagnostics().hard_deadline_observed);
 }
 
 TEST(ExpOptimizer, MandatoryFeasibilityReportsExpiredHardDeadline) {

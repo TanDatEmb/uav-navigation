@@ -1287,9 +1287,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
     // absolute solve deadline is still available. The hard deadline remains
     // authoritative; all post-solve certificates and staging still fail
     // closed if no time remains.
-    const bool mandatory_feasibility = baseline_only_ &&
-            (!deterministic_seed_certificate.valid ||
-             deterministic_nominal_seed.empty());
+    const bool mandatory_feasibility =
+            !deterministic_seed_certificate.valid ||
+            deterministic_nominal_seed.empty();
     if (mandatory_feasibility && opt_vars.hard_deadline_ns > 0) {
         opt_vars.steady_deadline_ns = opt_vars.hard_deadline_ns;
     }

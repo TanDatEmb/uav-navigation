@@ -1,5 +1,40 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Use the current nominal seed to allocate mandatory feasibility time
+
+- **Owner/status:** planning nominal optimizer; `IMPLEMENTED`, correctness fix.
+  A successor renewal is classified from the certified seed produced by that
+  solve, not from whether the previous bundle was ready for optional
+  refinement.
+- **Scope/units:** When the current solve has no independently certified
+  deterministic nominal seed, the bounded MINCO feasibility search uses the
+  authoritative absolute solve deadline. When a certified seed exists, the
+  existing optional-refinement cutoff remains in force. The 80 ms hard solve
+  deadline, 40 ms finalization reserve, physical V/A/J limits, independent
+  certificates, BACKUP generation and staging contracts are unchanged.
+- **Safety impact:** This removes a false early cancellation of mandatory
+  feasibility on moving renewals. No candidate is admitted without the
+  existing hard certificates; explicit cancellation and hard-deadline expiry
+  still fail closed. The change does not add a retry, fallback, state or
+  timeout exception.
+- **Evidence:** GPS-off cap5 artifact
+  `external-mode-check-20260909T003119-500230` showed generations 2--8
+  stopping at 40.122--40.436 ms with `solve_deadline_exceeded=0`,
+  `exp_lbfgs_cancelled=true`, `retry_count=0`, and no committed successor;
+  their current deterministic seed failed stage 5. The focused renewal
+  regression proves a feasible fixture is not cancelled by an expired
+  refinement cutoff when the hard deadline remains available, while explicit
+  cancellation remains rejecting.
+- **Removal/review condition:** Revisit if full MAIN+BACKUP/certificate/staging
+  measurements show that using the hard nominal budget leaves insufficient
+  time for the authoritative transaction reserve, or if repeated runs show a
+  new lifecycle/authority regression. Do not increase the hard deadline or
+  reduce finalization reserve as part of this fix.
+- **Verification:** Focused optimizer tests, planning backend tests, relevant
+  runtime/contract tests, canonical Release build, `git diff --check`, then
+  one unchanged GPS-off diagnostic run per requested speed. These runs remain
+  non-qualification evidence.
+
 ### 2026-09-09 - Use bounded local-NED takeoff for GPS-off EV diagnostic profile
 
 - **Owner/status:** SITL External Mode harness and PX4 estimator A/B profile;
