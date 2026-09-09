@@ -26,6 +26,9 @@
   `HGT_REF=3` but stopped at `GLOBAL_ALTITUDE_TIMEOUT` before any planner PVA
   command. Focused source-contract coverage is added for local-state validity,
   local-NED setpoint ownership and the External Mode handoff.
+  If the bounded handoff triggers PX4 automatic preflight disarm, the profile
+  re-arms after the handoff and waits for the authoritative armed state before
+  starting the local Offboard prestream; the default AMSL path is unchanged.
 - **Removal/review condition:** Remove or redesign the profile path if PX4
   provides a supported local takeoff contract without temporary Offboard, if
   local state freshness/validity is not observable, or if repeated diagnostic

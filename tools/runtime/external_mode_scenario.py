@@ -1958,6 +1958,23 @@ class ExternalModeScenario:
                     if self.sim_now_ns - self.arm_ack_success_sim_ns < settle_ns:
                         return
                     if self.takeoff_reference == "local_ned":
+                        # The bounded External Mode -> Hold handoff can take
+                        # long enough for PX4's automatic preflight disarm to
+                        # clear the original arm ACK.  Re-arm only after the
+                        # handoff, then wait for the authoritative armed state
+                        # before starting the local Offboard prestream.
+                        armed_state = int(self.VehicleStatus.ARMING_STATE_ARMED)
+                        if int(self.latest_status.get("arming_state", -1)) != armed_state:
+                            arm_retry_ns = int(float(
+                                self.config.get("arm_retry_period_s", 5.0)) * 1e9)
+                            if self.sim_now_ns - self.last_command_ns.get(
+                                    "local_takeoff_arm", -10**18) >= arm_retry_ns:
+                                self._command(
+                                    "local_takeoff_arm",
+                                    self.VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
+                                    1.0)
+                                self.last_command_ns["local_takeoff_arm"] = self.sim_now_ns
+                            return
                         if self.local_takeoff_started_sim_ns is None:
                             self.local_takeoff_started_sim_ns = self.sim_now_ns
                         if not self._publish_local_takeoff_setpoint(takeoff_altitude_m):
