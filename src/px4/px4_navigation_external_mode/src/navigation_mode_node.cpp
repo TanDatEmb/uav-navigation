@@ -122,9 +122,11 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
   if (tracking_experiment_.enabled) {
     RCLCPP_WARN(node.get_logger(),
         "SITL TRACKING EXPERIMENT: increased collision risk; base=%.3fm alpha=%.3fs beta=%.3fs "
-        "suppress_MAIN_tracking_braking=%d; not flight qualification",
+        "suppress_geometric_tracking=%d suppress_fresh_typed_health_response=%d; "
+        "not flight qualification",
         tracking_experiment_.base_m, tracking_experiment_.lateral_alpha_s,
-        tracking_experiment_.longitudinal_beta_s, tracking_experiment_.suppress_braking);
+        tracking_experiment_.longitudinal_beta_s, tracking_experiment_.suppress_braking,
+        tracking_experiment_.suppress_estimator_health_response);
   }
   if (tracking_experiment_.velocity_only_enabled) {
     RCLCPP_WARN(node.get_logger(),
@@ -240,50 +242,6 @@ void NavigationMode::attachStateInputNode(rclcpp::Node& state_input_node) {
               "External Mode state inputs use an independent single-thread receiver node");
 }
 
-void NavigationMode::setPx4HoldConfirmed(const bool confirmed,
-                                         const std::int64_t now_steady_ns) {
-  std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  automatic_recovery_gate_.setHoldConfirmed(confirmed, now_steady_ns);
-}
-
-bool NavigationMode::consumeAutomaticRecoveryReady(
-    const bool armed, const std::int64_t now_ros_ns,
-    const std::int64_t now_steady_ns) {
-  std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  if (!automatic_recovery_gate_.pending() || mode_active_ || !odometry_.has_value()) {
-    return false;
-  }
-  const auto odometry_source_ns = navigation_common::rosTimeToNanoseconds(
-      odometry_->header.stamp).value_or(0);
-  const auto state_freshness = navigation_contracts::evaluateExecutionStateFreshness(
-      now_ros_ns, odometry_source_ns, now_steady_ns,
-      last_odometry_receive_steady_ns_, state_stale_after_s_);
-  const auto health_freshness = navigation_contracts::evaluateExecutionStateFreshness(
-      now_ros_ns, last_health_source_stamp_ns_, now_steady_ns,
-      last_health_receive_steady_ns_, state_stale_after_s_);
-  const auto& velocity = odometry_->twist.twist.linear;
-  const double speed_mps = Eigen::Vector3d{velocity.x, velocity.y, velocity.z}.norm();
-  const bool health_allows_recovery = typed_health_seen_ && lio_health_valid_ &&
-      last_health_state_ == navigation_contracts::msg::EstimatorHealth::TRACKING &&
-      last_health_navigation_valid_ && last_health_covariance_valid_ &&
-      last_health_observability_valid_ && last_health_correction_fresh_ &&
-      last_health_propagation_valid_;
-  return automatic_recovery_gate_.consumeIfReady(
-      armed, state_freshness.valid(),
-      health_allows_recovery && health_freshness.valid(), speed_mps,
-      now_steady_ns);
-}
-
-void NavigationMode::cancelAutomaticRecovery() {
-  std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  automatic_recovery_gate_.cancel();
-}
-
-void NavigationMode::resetAutomaticRecoveryBudget() {
-  std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  automatic_recovery_gate_.resetBudget();
-}
-
 void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason,
                                    const MissionControllerEvent* event) {
   if (!status_publisher_ || !mission_ || !mission_controller_) return;
@@ -317,7 +275,9 @@ void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason,
     if (mission_controller_->waitingForAirborne()) {
       status.external_mode_state =
           navigation_contracts::msg::NavigationModeStatus::WAIT_AIRBORNE;
-    } else if (!typed_health_seen_ || !lio_health_valid_) {
+    } else if (!typed_health_seen_ ||
+               (!lio_health_valid_ &&
+                !tracking_experiment_.suppress_estimator_health_response)) {
       status.external_mode_state =
           navigation_contracts::msg::NavigationModeStatus::WAIT_HEALTH;
     } else if (!navigation_command_.has_value()) {
@@ -623,7 +583,6 @@ void NavigationMode::onActivate() {
     // completed and both sources are stationary again.
     px4_local_frame_aligned_ = false;
     lio_to_px4_local_translation_ned_.reset();
-    automatic_recovery_gate_.cancel();
     last_completed_waypoint_index_ = 0U;
     last_completed_request_id_ = 0U;
     completion_position_.reset();
@@ -661,6 +620,16 @@ void NavigationMode::onDeactivate() {
     safety_suffix_request_id_ = 0U;
     velocity_only_previous_.reset();
     velocity_only_reset_counters_seen_ = false;
+    velocity_only_last_reason_.clear();
+    last_goal_publish_ns_ = 0;
+    last_command_receive_ns_ = 0;
+    px4_local_frame_aligned_ = false;
+    lio_to_px4_local_translation_ned_.reset();
+    last_completed_waypoint_index_ = 0U;
+    last_completed_request_id_ = 0U;
+    completion_position_.reset();
+    safety_hold_position_.reset();
+    clearPlannerRecoveryEpisodeLocked();
   }
   if (mission_controller_) mission_controller_->deactivate();
   if (last_status_state_ != navigation_contracts::msg::NavigationModeStatus::PAUSED &&
@@ -693,7 +662,10 @@ void NavigationMode::checkArmingAndRunConditions(
       navigation_common::steadyClockNowNanoseconds(),
       last_health_receive_steady_ns_, state_stale_after_s_);
   const bool diagnostics_stale = !health_freshness.valid();
-  if (diagnostics_stale || !lio_health_valid_) {
+  const bool fresh_typed_health_bypass =
+      tracking_experiment_.suppress_estimator_health_response &&
+      typed_health_seen_ && health_freshness.valid();
+  if (diagnostics_stale || (!lio_health_valid_ && !fresh_typed_health_bypass)) {
     reporter.armingCheckFailureExt(
         px4_ros2::events::ID("uav_navigation_lio_unhealthy"),
         px4_ros2::events::Log::Error, "FAST-LIO health is stale or invalid");
@@ -738,6 +710,14 @@ void NavigationMode::onNavigationCommand(
     return;
   }
 
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    // Once control has entered a terminal/handover stream, later planner
+    // samples cannot restore command ownership. Ignore them before running
+    // identity/tracking gates so one terminal transition has one causal log.
+    if (failure_reported_ || mission_terminal_ || handover_requested_) return;
+  }
+
   bool accepted = false;
   bool anchor_invalid = false;
   bool odometry_stale = false;
@@ -760,7 +740,9 @@ void NavigationMode::onNavigationCommand(
     // before that handshake would let an untagged odometry stream become the
     // implicit epoch authority.
     const bool health_epoch_matches = navigation_contracts::estimatorHealthAllowsCommand(
-        typed_health_seen_, lio_health_valid_, message->localization_epoch,
+        typed_health_seen_,
+        lio_health_valid_ || tracking_experiment_.suppress_estimator_health_response,
+        message->localization_epoch,
         lio_localization_epoch_);
     const auto active_waypoint_index = mission_controller_
         ? static_cast<std::uint32_t>(mission_controller_->activeWaypointIndex()) : 0U;
@@ -912,6 +894,7 @@ void NavigationMode::onNavigationCommand(
           measured, command_position, command_velocity,
           navigation_contracts::kCommandAnchorErrorLimitM,
           main_phase_tracking ? navigation_contracts::kMainTrackingPhaseWindowS : 0.0);
+      const bool geometric_tracking_support_valid = tracking_envelope.support_valid;
       anchor_invalid = !tracking_envelope.valid;
       if (tracking_experiment_.enabled && main_phase_tracking) {
         const auto& twist = odometry_->twist.twist.linear;
@@ -942,6 +925,37 @@ void NavigationMode::onNavigationCommand(
         tracking_envelope.reverse_limit_m = adaptive.longitudinal_limit_m;
         tracking_envelope.lateral_error_m = adaptive.lateral_error_m;
         tracking_envelope.lateral_limit_m = adaptive.lateral_limit_m;
+      }
+      // Explicit relaxed SITL comparator: suppress only the finite geometric
+      // tracking response for every executable role so planner stability can
+      // be observed without a later BACKUP/EMERGENCY consumer rejection
+      // ending the run. Identity, freshness, lease, finite-input, map and
+      // collision checks remain active. This mode is never qualification
+      // eligible and is recorded in the runtime artifact.
+      if (anchor_invalid && tracking_experiment_.enabled &&
+          tracking_experiment_.suppress_braking &&
+          geometric_tracking_support_valid) {
+        ++experimental_tracking_suppressed_count_;
+        const char* bypass_role =
+            message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN
+                ? "MAIN"
+                : message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP
+                ? "BACKUP"
+                : message->role == navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY
+                ? "EMERGENCY" : "UNKNOWN";
+        RCLCPP_WARN_THROTTLE(
+            node().get_logger(), *node().get_clock(), 1000,
+            "TRACKING_EXPERIMENT_BYPASS total=%lu role=%s "
+            "longitudinal=%.3f/%.3fm reverse=%.3f/%.3fm lateral=%.3f/%.3fm",
+            static_cast<unsigned long>(experimental_tracking_suppressed_count_), bypass_role,
+            tracking_envelope.longitudinal_error_m,
+            tracking_envelope.longitudinal_limit_m,
+            tracking_envelope.reverse_error_m,
+            tracking_envelope.reverse_limit_m,
+            tracking_envelope.lateral_error_m,
+            tracking_envelope.lateral_limit_m);
+        anchor_invalid = false;
+        tracking_envelope.valid = true;
       }
       if (anchor_invalid) {
         reject_provenance = buildRejectProvenance(
@@ -976,7 +990,7 @@ void NavigationMode::onNavigationCommand(
                  odometry_freshness.source_age_ms, odometry_freshness.receive_age_ms,
                  static_cast<unsigned long>(message->bundle_generation),
                  message->trajectory_time_s);
-    failNavigation("navigation odometry stale at command acceptance", true);
+    failNavigation("navigation odometry stale at command acceptance");
     return;
   }
   if (anchor_invalid) {
@@ -1079,9 +1093,10 @@ void NavigationMode::onNavigationCommand(
         // Runtime is the sole owner of internal continuation. Keep the same
         // mission/request identity while it replans from the measured stop;
         // advancing the request here creates two competing recovery owners.
-        RCLCPP_INFO(node().get_logger(),
-                    "terminal endpoint outside acceptance; waiting for same-request "
-                    "runtime recovery without advancing mission request");
+        RCLCPP_INFO_THROTTLE(
+            node().get_logger(), *node().get_clock(), 1000,
+            "terminal endpoint outside acceptance; waiting for same-request "
+            "runtime recovery without advancing mission request");
       }
     }
   } else if (accepted && !completed_command) {
@@ -1194,7 +1209,8 @@ void NavigationMode::updateMission() {
         now_ns, last_health_source_stamp_ns_, navigation_common::steadyClockNowNanoseconds(),
         last_health_receive_steady_ns_, state_stale_after_s_);
     const bool health_matches = navigation_contracts::estimatorHealthAllowsCommand(
-        typed_health_seen_, lio_health_valid_,
+        typed_health_seen_,
+        lio_health_valid_ || tracking_experiment_.suppress_estimator_health_response,
         navigation_command_ ? navigation_command_->localization_epoch : 0U,
         lio_localization_epoch_);
     const bool command_fresh = navigation_command_ &&
@@ -1487,7 +1503,9 @@ void NavigationMode::onOdometry(
     return;
   }
   std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  if (!typed_health_seen_ || !lio_health_valid_ ||
+  if (!typed_health_seen_ ||
+      (!lio_health_valid_ &&
+       !tracking_experiment_.suppress_estimator_health_response) ||
       message->localization_epoch != lio_localization_epoch_ ||
       (last_propagated_state_sequence_ > 0U &&
        message->sequence <= last_propagated_state_sequence_)) {
@@ -1671,6 +1689,11 @@ void NavigationMode::onEstimatorHealth(
 void NavigationMode::requestVelocityOnlyHold(const char* reason) {
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    if (odometry_.has_value()) {
+      const auto& point = odometry_->pose.pose.position;
+      const Eigen::Vector3d measured{point.x, point.y, point.z};
+      if (measured.allFinite()) safety_hold_position_ = measured;
+    }
     velocity_only_last_reason_ = reason;
     velocity_only_previous_.reset();
     velocity_only_reset_counters_seen_ = false;
@@ -1701,8 +1724,15 @@ bool NavigationMode::publishVelocityOnlySetpoint(
   using tracking_adapter::TimingWitness;
   using tracking_adapter::LioState;
 
+  const bool certified_emergency =
+      command.role == navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY &&
+      command.status == navigation_contracts::msg::NavigationCommand::STATUS_BRAKING &&
+      command.emergency_authorization_reason ==
+          navigation_contracts::msg::NavigationCommand::EMERGENCY_AUTHORIZATION_ACTUAL_ANCHOR_CERTIFICATE_EXCEEDED &&
+      command.emergency_candidate_commit_result == 1U;
   if (command.role != navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
-      command.role != navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
+      command.role != navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+      !certified_emergency) {
     velocity_only_last_reason_ = "role_not_authorized_for_velocity_boundary";
     return false;
   }
@@ -1729,9 +1759,6 @@ bool NavigationMode::publishVelocityOnlySetpoint(
   Eigen::Vector3d lio_position{snapshot.odometry.pose.pose.position.x,
                                snapshot.odometry.pose.pose.position.y,
                                snapshot.odometry.pose.pose.position.z};
-  Eigen::Vector3d lio_velocity{snapshot.odometry.twist.twist.linear.x,
-                               snapshot.odometry.twist.twist.linear.y,
-                               snapshot.odometry.twist.twist.linear.z};
   const Eigen::Quaterniond orientation(
       snapshot.odometry.pose.pose.orientation.w, snapshot.odometry.pose.pose.orientation.x,
       snapshot.odometry.pose.pose.orientation.y, snapshot.odometry.pose.pose.orientation.z);
@@ -1740,6 +1767,12 @@ bool NavigationMode::publishVelocityOnlySetpoint(
     return false;
   }
   const auto normalized = orientation.normalized();
+  // nav_msgs/Odometry expresses twist in child_frame_id (base_link/FLU).
+  // The adapter contract is LIO world ENU, matching the planner reference.
+  const Eigen::Vector3d lio_velocity = normalized * Eigen::Vector3d{
+      snapshot.odometry.twist.twist.linear.x,
+      snapshot.odometry.twist.twist.linear.y,
+      snapshot.odometry.twist.twist.linear.z};
   const double lio_yaw = std::atan2(
       2.0 * (normalized.w() * normalized.z() + normalized.x() * normalized.y()),
       1.0 - 2.0 * (normalized.y() * normalized.y() + normalized.z() * normalized.z()));
@@ -1772,7 +1805,10 @@ bool NavigationMode::publishVelocityOnlySetpoint(
   reference.identity.bundle_generation = command.bundle_generation;
   reference.identity.sample_id = command.sample_id;
   reference.identity.role = command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN
-      ? CommandRole::kMain : CommandRole::kBackup;
+      ? CommandRole::kMain
+      : command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP
+      ? CommandRole::kBackup
+      : CommandRole::kEmergency;
   reference.identity.reference_sample_time_ns = reference_stamp_ns;
   reference.identity.lease_valid_until_ns = lease_until_ns;
   reference.position_enu = Eigen::Vector3d{command.position.x, command.position.y,
@@ -1852,7 +1888,9 @@ bool NavigationMode::publishVelocityOnlySetpoint(
   velocity_only::Identity continuity_identity{
       command.mission_id, command.waypoint_index, command.request_id,
       command.bundle_generation, reference.identity.role == CommandRole::kMain
-          ? velocity_only::Role::kMain : velocity_only::Role::kBackup};
+          ? velocity_only::Role::kMain
+          : reference.identity.role == CommandRole::kBackup
+          ? velocity_only::Role::kBackup : velocity_only::Role::kEmergency};
   velocity_only::Policy continuity_policy{
       tracking_experiment_.velocity_only_cap_mps,
       tracking_experiment_.velocity_only_max_acceleration_mps2,
@@ -1862,7 +1900,23 @@ bool NavigationMode::publishVelocityOnlySetpoint(
       adapted.output->witness.velocity_command_lio_enu, now_ns, continuity_identity,
       continuity_policy, previous ? &*previous : nullptr);
   if (!limited.success()) {
-    velocity_only_last_reason_ = "continuity_rejected";
+    velocity_only_last_reason_ =
+        std::string("continuity_rejected:") + velocity_only::failureName(limited.failure);
+    RCLCPP_WARN_THROTTLE(
+        node().get_logger(), *node().get_clock(), 1000,
+        "velocity-only continuity rejected: failure=%s requested=(%.3f,%.3f,%.3f) "
+        "previous_v=(%.3f,%.3f,%.3f) previous_a=(%.3f,%.3f,%.3f) dt=%.6f "
+        "residual_v=%.6f residual_viability_v=%.6f residual_a=%.6f residual_jerk=%.6f "
+        "projection_iterations=%u converged=%s",
+        velocity_only::failureName(limited.failure), limited.requested_velocity_enu.x(),
+        limited.requested_velocity_enu.y(), limited.requested_velocity_enu.z(),
+        limited.previous_velocity_enu.x(), limited.previous_velocity_enu.y(),
+        limited.previous_velocity_enu.z(), limited.previous_acceleration_enu.x(),
+        limited.previous_acceleration_enu.y(), limited.previous_acceleration_enu.z(),
+        limited.delta_s, limited.velocity_residual_mps,
+        limited.velocity_viability_residual_mps, limited.acceleration_residual_mps2,
+        limited.jerk_residual_mps3, limited.projection_iterations,
+        limited.projection_converged ? "true" : "false");
     return false;
   }
   const Eigen::Vector3d velocity_ned_value =
@@ -1969,7 +2023,6 @@ void NavigationMode::safetyStopNavigation(const char* reason) {
     }
     failure_reported_ = true;
     handover_requested_ = true;
-    automatic_recovery_gate_.cancel();
     navigation_command_ = transitionCertifiedCommand(
         navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
     safety_suffix_handoff_pending_ = false;
@@ -1987,7 +2040,7 @@ void NavigationMode::safetyStopNavigation(const char* reason) {
   }
 }
 
-void NavigationMode::failNavigation(const char* reason, const bool automatic_recovery) {
+void NavigationMode::failNavigation(const char* reason) {
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     if (failure_reported_) return;
@@ -1998,15 +2051,6 @@ void NavigationMode::failNavigation(const char* reason, const bool automatic_rec
     }
     failure_reported_ = true;
     handover_requested_ = true;
-    if (automatic_recovery) {
-      if (!automatic_recovery_gate_.arm()) {
-        RCLCPP_ERROR(node().get_logger(),
-                     "Automatic External Mode recovery budget is exhausted; "
-                     "remaining in PX4 Hold");
-      }
-    } else {
-      automatic_recovery_gate_.cancel();
-    }
     navigation_command_ = transitionCertifiedCommand(
         navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
     safety_suffix_handoff_pending_ = false;
@@ -2104,17 +2148,18 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   bool stationary_position_unrepresentable = false;
   const auto publishStationary = [&](const std::optional<Eigen::Vector3d>& position_enu) {
     px4_ros2::TrajectorySetpoint setpoint;
-    if (tracking_experiment_.velocity_only_enabled || !position_enu.has_value()) {
+    if (!position_enu.has_value()) {
       setpoint.withVelocity(Eigen::Vector3f::Zero());
     } else {
       if (const auto position_ned = lioPositionToPx4Ned(*position_enu)) {
         setpoint.withPosition(*position_ned);
         setpoint.withAcceleration(Eigen::Vector3f::Zero());
+        setpoint.withVelocity(Eigen::Vector3f::Zero());
       } else {
         stationary_position_unrepresentable = true;
       }
-      setpoint.withVelocity(Eigen::Vector3f::Zero());
     }
+    setpoint.withVelocity(Eigen::Vector3f::Zero());
     if (tracking_experiment_.velocity_only_enabled) {
       // Velocity-only commands use the adapter's accepted PX4-relative yaw.
       // A stationary handover must retain that frame; if PX4 has no accepted
@@ -2218,6 +2263,13 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     }
   }
   if (terminal_stationary_setpoint) {
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      // Keep runtime metrics aligned with the actual zero-velocity safety
+      // setpoint; do not report the last moving command while the mode is
+      // already in its terminal handover stream.
+      last_velocity_command_enu_.setZero();
+    }
     if (stationary_position_unrepresentable) {
       safetyStopNavigation("terminal hold position is not representable by PX4");
     }
@@ -2246,7 +2298,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
                    navigation_contracts::executionStateFreshnessReasonName(
                        odometry_freshness.reason),
                    odometry_freshness.source_age_ms, odometry_freshness.receive_age_ms);
-      failNavigation("navigation odometry stale before setpoint update", true);
+      failNavigation("navigation odometry stale before setpoint update");
       return;
     }
   }
@@ -2295,7 +2347,11 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     last_setpoint_time_ = now;
     return;
   }
-  if ((!diagnostics_missing && !lio_healthy) ||
+  const bool suppress_fresh_typed_unhealthy =
+      tracking_experiment_.suppress_estimator_health_response &&
+      !diagnostics_missing && !lio_healthy && health_freshness.valid();
+  if (((!diagnostics_missing && !lio_healthy) &&
+       !suppress_fresh_typed_unhealthy) ||
       (!diagnostics_missing && !health_freshness.valid()) ||
       (diagnostics_missing &&
        (typed_health_seen || since_activation_s > diagnostics_wait_s))) {
@@ -2333,8 +2389,16 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
                  health_correction_fresh ? "true" : "false",
                  health_propagation_valid ? "true" : "false",
                  static_cast<long>(health_source_stamp_ns));
-    failNavigation("FAST-LIO navigation health invalid or stale", true);
+    failNavigation("FAST-LIO navigation health invalid or stale");
     return;
+  }
+  if (suppress_fresh_typed_unhealthy) {
+    RCLCPP_WARN_THROTTLE(
+        node().get_logger(), *node().get_clock(), 1000,
+        "TRACKING_EXPERIMENT_BYPASS role=FRESH_TYPED_FAST_LIO_HEALTH "
+        "health_age_ms=%.3f; estimator and mapping remain active; "
+        "stale/missing health and epoch mismatch remain fail-closed",
+        health_freshness.source_age_ms);
   }
 
   // Planner command path. The upstream planner has already selected the
@@ -2543,40 +2607,37 @@ NavigationModeExecutor::NavigationModeExecutor(px4_ros2::ModeBase& owned_mode)
           [this](const px4_msgs::msg::VehicleStatus::UniquePtr& message) {
             onVehicleStatus(message);
           });
-  automatic_recovery_timer_ = node_.create_wall_timer(
-      std::chrono::milliseconds{50}, [this]() { checkAutomaticRecovery(); });
+  handover_timer_ = node_.create_wall_timer(
+      std::chrono::milliseconds{50}, [this]() { checkHoldHandover(); });
 }
 
 void NavigationModeExecutor::onVehicleStatus(
     const px4_msgs::msg::VehicleStatus::UniquePtr& message) {
   if (!message) return;
-  navigation_mode_.setPx4HoldConfirmed(
-      message->nav_state == px4_msgs::msg::VehicleStatus::NAVIGATION_STATE_AUTO_LOITER,
-      navigation_common::steadyClockNowNanoseconds());
+  px4_hold_confirmed_ =
+      message->nav_state == px4_msgs::msg::VehicleStatus::NAVIGATION_STATE_AUTO_LOITER;
+  if (px4_hold_confirmed_) {
+    hold_handover_pending_ = false;
+    hold_handover_in_flight_ = false;
+  }
 }
 
-void NavigationModeExecutor::checkAutomaticRecovery() {
-  if (!isArmed()) {
-    navigation_mode_.cancelAutomaticRecovery();
-    return;
-  }
+void NavigationModeExecutor::checkHoldHandover() {
   const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
-  if (!navigation_mode_.consumeAutomaticRecoveryReady(
-          true, node_.get_clock()->now().nanoseconds(), now_steady_ns)) {
-    return;
+  if (hold_handover_pending_ && !px4_hold_confirmed_) {
+    if (!hold_handover_in_flight_ && now_steady_ns >= hold_handover_next_retry_steady_ns_) {
+      schedulePx4Hold(hold_handover_complete_navigation_failure_);
+    }
   }
-  RCLCPP_WARN(node_.get_logger(),
-              "PX4 Hold recovery gate satisfied: state and health fresh, measured speed "
-              "<= %.2f m/s for %.1f s; requesting a new External Mode planning generation",
-              kAutomaticRecoveryStationarySpeedMps,
-              static_cast<double>(kAutomaticRecoveryStationaryDurationNs) / 1e9);
-  scheduleMode(ownedMode().id(), [this](px4_ros2::Result result) {
-    onOwnedModeCompleted(result);
-  });
 }
 
 void NavigationModeExecutor::onActivate() {
-  navigation_mode_.resetAutomaticRecoveryBudget();
+  px4_hold_confirmed_ = false;
+  hold_handover_pending_ = false;
+  hold_handover_in_flight_ = false;
+  hold_handover_complete_navigation_failure_ = false;
+  hold_handover_attempts_ = 0U;
+  hold_handover_next_retry_steady_ns_ = 0;
   RCLCPP_INFO(node_.get_logger(), "Avoidance Mission executor activated");
   scheduleMode(ownedMode().id(), [this](px4_ros2::Result result) {
     onOwnedModeCompleted(result);
@@ -2599,33 +2660,49 @@ void NavigationModeExecutor::onOwnedModeCompleted(px4_ros2::Result result) {
 }
 
 void NavigationModeExecutor::schedulePx4Hold(bool complete_navigation_failure) {
+  hold_handover_pending_ = true;
+  hold_handover_complete_navigation_failure_ =
+      hold_handover_complete_navigation_failure_ || complete_navigation_failure;
+  if (px4_hold_confirmed_ || hold_handover_in_flight_) return;
+  hold_handover_in_flight_ = true;
+  ++hold_handover_attempts_;
   scheduleMode(px4_ros2::ModeBase::kModeIDLoiter,
-               [this, complete_navigation_failure](px4_ros2::Result hold_result) {
-    onPx4HoldHandoverCompleted(hold_result, complete_navigation_failure);
+               [this](px4_ros2::Result hold_result) {
+    onPx4HoldHandoverCompleted(hold_result, hold_handover_complete_navigation_failure_);
   });
 }
 
 void NavigationModeExecutor::onPx4HoldHandoverCompleted(
     px4_ros2::Result result, bool complete_navigation_failure) {
   if (result == px4_ros2::Result::Success || result == px4_ros2::Result::Deactivated) {
+    hold_handover_in_flight_ = false;
+    hold_handover_pending_ = false;
     RCLCPP_INFO(node_.get_logger(), "PX4 Hold handover completed with result=%s",
                 px4_ros2::resultToString(result));
     return;
   }
 
-  RCLCPP_ERROR(node_.get_logger(),
-               "PX4 Hold handover failed with result=%s; navigation cannot continue",
-               px4_ros2::resultToString(result));
-  if (complete_navigation_failure) {
-    // scheduleMode() invokes this callback synchronously for Rejected/Timeout.
-    // Without a terminal completion the executor keeps the external mode alive
-    // while NavigationMode publishes a stationary setpoint indefinitely.
-    ownedMode().completed(px4_ros2::Result::ModeFailureOther);
-  }
+  hold_handover_in_flight_ = false;
+  hold_handover_pending_ = true;
+  hold_handover_complete_navigation_failure_ =
+      hold_handover_complete_navigation_failure_ || complete_navigation_failure;
+  constexpr std::int64_t kHoldRetryPeriodNs = 250'000'000LL;
+  hold_handover_next_retry_steady_ns_ =
+      navigation_common::steadyClockNowNanoseconds() + kHoldRetryPeriodNs;
+  RCLCPP_ERROR_THROTTLE(
+      node_.get_logger(), *node_.get_clock(), 5000,
+      "PX4 Hold handover attempt=%u failed with result=%s; keeping the explicit "
+      "stationary safety stream and retrying until AUTO_LOITER is confirmed",
+      hold_handover_attempts_, px4_ros2::resultToString(result));
 }
 
 void NavigationModeExecutor::onDeactivate(DeactivateReason reason) {
-  navigation_mode_.cancelAutomaticRecovery();
+  px4_hold_confirmed_ = false;
+  hold_handover_pending_ = false;
+  hold_handover_in_flight_ = false;
+  hold_handover_complete_navigation_failure_ = false;
+  hold_handover_attempts_ = 0U;
+  hold_handover_next_retry_steady_ns_ = 0;
   RCLCPP_INFO(node_.get_logger(), "Avoidance Mission executor deactivated (%s)",
               reason == DeactivateReason::FailsafeActivated ? "failsafe" : "mode_exit");
 }

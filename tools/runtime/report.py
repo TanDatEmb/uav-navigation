@@ -340,6 +340,7 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
                     "backup_px4_anchor_reject",
                     "emergency_px4_anchor_reject",
                     "fresh_typed_fast_lio_health_reject",
+                    "stopped_hold_near_execution_reject",
                 ] if suppress_braking else []
             ),
             "qualification_eligible": False if mode != "off" else None,

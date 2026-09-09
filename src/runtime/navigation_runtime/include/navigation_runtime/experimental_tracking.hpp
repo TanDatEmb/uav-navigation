@@ -14,6 +14,33 @@ struct ExperimentalTrackingResult {
   bool suppression_used{false};
 };
 
+struct ExperimentalStoppedHoldResult {
+  bool support_valid{false};
+  bool within_anchor_limit{false};
+  bool accepted{false};
+  bool suppression_used{false};
+};
+
+// The relaxed SITL profile may suppress only the geometric tracking response
+// at a planner-certified STOPPED_HOLD endpoint.  Known-free world support and
+// a fresh, finite execution state remain mandatory; missing/stale/non-finite
+// support must continue to fail closed.
+inline ExperimentalStoppedHoldResult assessExperimentalStoppedHold(
+    const navigation_contracts::TrackingExperimentPolicy& policy,
+    bool endpoint_known_free, bool execution_support_valid,
+    double anchor_error_m, double anchor_limit_m) {
+  ExperimentalStoppedHoldResult out;
+  out.support_valid = endpoint_known_free && execution_support_valid &&
+      std::isfinite(anchor_error_m) && anchor_error_m >= 0.0 &&
+      std::isfinite(anchor_limit_m) && anchor_limit_m >= 0.0;
+  if (!out.support_valid) return out;
+  out.within_anchor_limit = anchor_error_m <= anchor_limit_m;
+  out.accepted = out.within_anchor_limit ||
+      (policy.enabled && policy.valid() && policy.suppress_braking);
+  out.suppression_used = out.accepted && !out.within_anchor_limit;
+  return out;
+}
+
 // Must run outside owner locks. Experimental tolerance is expressed in metres,
 // not a fixed +/-100 ms phase window. It compares analytic samples at source
 // and forecast time; tangent-plane normal error on curved paths is an

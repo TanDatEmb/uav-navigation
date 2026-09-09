@@ -4151,8 +4151,14 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   const auto transition_sample = transition_bundle
       ? transition_bundle->sample(now_ns)
       : std::nullopt;
-  const double transition_anchor_error_m = transition_sample
-      ? (transition_sample->position_world - execution_state.position_world).norm()
+  const auto transition_source_sample = transition_bundle
+      ? transition_bundle->sampleAtDeclaredStamp(execution_stamp_ns)
+      : std::nullopt;
+  // Scheduler pressure must compare state and command at the same source
+  // time. The authoritative retained-command transaction below independently
+  // repeats this check and retains the current-command outer cap.
+  const double transition_anchor_error_m = transition_source_sample
+      ? (transition_source_sample->position_world - execution_state.position_world).norm()
       : std::numeric_limits<double>::infinity();
   const auto transition_role = transition_sample
       ? transition_sample->role
@@ -5282,6 +5288,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // for one bounded validation interval, but it cannot make a future
     // BACKUP suffix usable from a raw out-of-tube anchor.
     const double strict_execution_anchor_error_m = anchor_error_m;
+    const auto time_aligned_tracking = assessTimeAlignedRetainedTracking(
+        anchor_error_time_aligned_m, anchor_error_raw_m,
+        retained_tracking_limit_m, navigation_contracts::kCommandAnchorErrorLimitM);
     // If replanning fails after the main-to-backup switch, the usable safety
     // suffix starts at the current command anchor, not in the past.
     const double safety_transition_s = backup_available
@@ -5289,12 +5298,12 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                                            : clamped_elapsed_s;
     causal_snapshot.committed_safety_transition_time_s = safety_transition_s;
     const double relative_anchor_speed_mps =
-        command_anchor_valid && fresh_vehicle_state
-            ? (command_anchor_sample.velocity_world - current_vehicle_velocity).norm()
+        temporal_command_source_valid && fresh_vehicle_state
+            ? (command_sample_at_state_source.velocity_world - current_vehicle_velocity).norm()
             : std::numeric_limits<double>::quiet_NaN();
     const double projected_anchor_error_m =
         projectedRetainedAnchorErrorUpperBound(
-            anchor_error_m, relative_anchor_speed_mps,
+            time_aligned_tracking.tracking_error_m, relative_anchor_speed_mps,
             static_cast<double>(planning_period_us_) * 1.0e-6);
     bool use_safety_suffix = committedSafetySuffixIsUsable(
         backup_available, elapsed_s, total_duration_s,
@@ -5340,8 +5349,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // PlanFromRest, recovery, epoch mismatch, or outside the next lease keeps
     // the original fail-closed tracking decision.
     const bool tracking_certificate_exceeded =
-        !phase_execution_bridge_usable && std::isfinite(anchor_error_m) &&
-        anchor_error_m > retained_tracking_limit_m;
+        !phase_execution_bridge_usable && time_aligned_tracking.support_valid &&
+        !time_aligned_tracking.within_limits;
     const double projected_execution_error_m = phase_execution_bridge_usable
         ? path_relative_tracking.predicted_path_error_m
         : projected_anchor_error_m;
@@ -7129,11 +7138,19 @@ void NavigationRuntimeNode::publishCommand() {
                     point.position_world,
                     navigation_world_model::GridLayer::kInflated),
                 navigation_world_model::UnknownPolicy::kRequireKnownFree);
-        const bool endpoint_near_execution_state = execution_state &&
+        const bool endpoint_execution_support_valid = execution_state &&
             execution_freshness.valid() &&
-            (point.position_world - execution_state->state.position_world).norm() <=
-            navigation_contracts::kCommandAnchorErrorLimitM;
-        if (!endpoint_known_free || !endpoint_near_execution_state) {
+            execution_state->state.position_world.allFinite();
+        const double endpoint_anchor_error_m = endpoint_execution_support_valid
+            ? (point.position_world - execution_state->state.position_world).norm()
+            : std::numeric_limits<double>::infinity();
+        const auto stopped_hold_assessment = assessExperimentalStoppedHold(
+            tracking_experiment_, endpoint_known_free,
+            endpoint_execution_support_valid, endpoint_anchor_error_m,
+            navigation_contracts::kCommandAnchorErrorLimitM);
+        const bool endpoint_near_execution_state =
+            stopped_hold_assessment.within_anchor_limit;
+        if (!stopped_hold_assessment.accepted) {
           planned_hold_valid = false;
           if (command_goal) {
             const navigation_execution::ExecutionTimelineSnapshot expected_timeline{
@@ -7147,8 +7164,23 @@ void NavigationRuntimeNode::publishCommand() {
           RCLCPP_ERROR_THROTTLE(
               get_logger(), *get_clock(), 1000,
               "execution boundary rejected planned STOPPED_HOLD endpoint "
-              "known_free=%d near_execution=%d",
-              endpoint_known_free ? 1 : 0, endpoint_near_execution_state ? 1 : 0);
+              "known_free=%d execution_support_valid=%d near_execution=%d "
+              "anchor_error_m=%.3f anchor_limit_m=%.3f",
+              endpoint_known_free ? 1 : 0,
+              endpoint_execution_support_valid ? 1 : 0,
+              endpoint_near_execution_state ? 1 : 0,
+              endpoint_anchor_error_m,
+              navigation_contracts::kCommandAnchorErrorLimitM);
+        } else if (stopped_hold_assessment.suppression_used) {
+          RCLCPP_WARN_THROTTLE(
+              get_logger(), *get_clock(), 1000,
+              "TRACKING_EXPERIMENT_BYPASS role=STOPPED_HOLD "
+              "gate=stopped_hold_near_execution_reject "
+              "known_free=1 execution_support_valid=1 "
+              "anchor_error_m=%.3f anchor_limit_m=%.3f; "
+              "diagnostic-only, not qualification evidence",
+              endpoint_anchor_error_m,
+              navigation_contracts::kCommandAnchorErrorLimitM);
         }
         pvaj.col(0) = point.position_world;
         pvaj.col(1).setZero();

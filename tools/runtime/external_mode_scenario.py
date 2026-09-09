@@ -1008,12 +1008,6 @@ class ExternalModeScenario:
         if self.external_mode_id is not None and nav_state == self.external_mode_id:
             if not mode_was_active:
                 event = {"name": "external_mode_entered", "mode_id": self.external_mode_id}
-                if self.automatic_recovery_pending:
-                    self.automatic_recovery_pending = False
-                    self.automatic_recovery_started_wall_s = None
-                    self.automatic_recovery_count += 1
-                    event["automatic_recovery"] = True
-                    event["automatic_recovery_count"] = self.automatic_recovery_count
                 self.events.append(event)
                 self._record("event", event)
                 self.mode_entered_sim_ns = self.sim_now_ns
@@ -1043,7 +1037,6 @@ class ExternalModeScenario:
                 self.execution == "mission"
                 and self.takeoff_observed
                 and not self.mission_complete_observed
-                and not self.automatic_recovery_pending
                 and str(self.config.get("expected_outcome", "complete")) != "fail_closed"
             ):
                 self.mission_unexpected_exit_observed = True
@@ -1057,7 +1050,19 @@ class ExternalModeScenario:
             self.mode_active = False
         if self.mode_entered and nav_state == int(self.VehicleStatus.NAVIGATION_STATE_AUTO_RTL):
             self.unexpected_rtl = True
-        if nav_state == int(self.VehicleStatus.NAVIGATION_STATE_AUTO_LOITER):
+        # AUTO_LOITER is also the normal pre-takeoff state. Count it as the
+        # handover witness only after the airborne External Mode activation
+        # has reached a terminal path; otherwise the report can falsely claim
+        # that a failed handover was observed before the mission even started.
+        if (
+            nav_state == int(self.VehicleStatus.NAVIGATION_STATE_AUTO_LOITER)
+            and self.post_takeoff_mode_entered
+            and (
+                self.safety_stop_observed
+                or self.mission_complete_observed
+                or self.mode_exit_observed
+            )
+        ):
             self.px4_hold_observed = True
         # Keep PX4 failsafe evidence separate from an application handover.
         # A failsafe after a completed mission remains diagnostic evidence but
@@ -1288,23 +1293,6 @@ class ExternalModeScenario:
             "external_mode_reason": str(getattr(message, "external_mode_reason", "NOT_RECORDED")),
         }
         if (
-            record["state"] == int(self.NavigationModeStatus.FAILED)
-            and record["reason"] == int(self.NavigationModeStatus.ODOMETRY_STALE)
-            and self.execution == "mission"
-            and not self.mission_complete_observed
-        ):
-            if not self.automatic_recovery_pending:
-                self.automatic_recovery_pending = True
-                self.automatic_recovery_started_wall_s = time.monotonic()
-                self.mission_unexpected_exit_observed = False
-                if self.failure == "External Mode exited before mission completion":
-                    self.failure = None
-                self._record("event", {
-                    "name": "automatic_recovery_wait_started",
-                    "reason": record["reason_name"],
-                    "request_id": record["request_id"],
-                })
-        if (
             record["state"] == int(self.NavigationModeStatus.PAUSED)
             and record["reason"] == int(self.NavigationModeStatus.SAFETY_STOP)
         ):
@@ -1482,8 +1470,13 @@ class ExternalModeScenario:
         setpoint.velocity = [0.0, 0.0, 0.0]
         setpoint.acceleration = [math.nan, math.nan, math.nan]
         setpoint.jerk = [math.nan, math.nan, math.nan]
-        setpoint.yaw = 0.0
-        setpoint.yawspeed = 0.0
+        # Do not manufacture a NED heading during the temporary takeoff
+        # handoff. A finite zero here is an actual yaw command; when the
+        # vehicle's current heading is not zero it creates an unnecessary
+        # rotation before External Mode owns the route yaw. NaN delegates yaw
+        # to PX4's current heading while position remains the active field.
+        setpoint.yaw = math.nan
+        setpoint.yawspeed = math.nan
         self.local_takeoff_setpoint_pub.publish(setpoint)
         self.local_takeoff_setpoint_count += 1
         if self.local_takeoff_setpoint_count == 1:
@@ -2032,18 +2025,6 @@ class ExternalModeScenario:
                     self.finish("TAKEOFF_TIMEOUT")
                 else:
                     return
-            if self.automatic_recovery_pending and not self.mode_active:
-                recovery_timeout_s = float(
-                    self.config.get("automatic_recovery_timeout_s", 15.0))
-                recovery_elapsed_s = (
-                    0.0 if self.automatic_recovery_started_wall_s is None else
-                    time.monotonic() - self.automatic_recovery_started_wall_s)
-                if recovery_elapsed_s > recovery_timeout_s:
-                    self.failure = (
-                        "automatic External Mode recovery gate was not satisfied "
-                        "within the bounded timeout")
-                    self._finish_or_wait("RECOVERY_TIMEOUT")
-                return
             # Re-arm the stability window whenever the vehicle is still moving.
             # Reaching altitude alone is not sufficient for a safe handover:
             # the first planner cycle must have a usable stop envelope even
@@ -2142,8 +2123,6 @@ class ExternalModeScenario:
                     self._finish_or_wait("HOLD_HANDOVER_FAILED")
                 return
             if self.mode_status_state == int(self.NavigationModeStatus.FAILED):
-                if self.automatic_recovery_pending:
-                    return
                 # A terminal ModeCompleted failure is authoritative for the
                 # navigation component. PX4 can reject the requested Hold
                 # handover while its health gate is false; waiting forever

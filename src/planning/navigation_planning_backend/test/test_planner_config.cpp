@@ -640,6 +640,30 @@ TEST(PlannerPassThrough, GuideTimingCoversVelocityDirectionTransition) {
       (outgoing_velocity - incoming_velocity).norm());
 }
 
+TEST(PlannerPassThrough, GuideTimingStretchesOnlyTransitionPrefix) {
+  std::vector<double> elapsed_s{0.02, 0.12, 0.52, 2.80};
+  ASSERT_TRUE(
+      navigation_planning_backend::stretchGuidePrefixElapsedTimes(
+          elapsed_s, 1U, 1.20));
+
+  EXPECT_NEAR(elapsed_s[0], 0.20, 1.0e-12);
+  EXPECT_NEAR(elapsed_s[1], 1.20, 1.0e-12);
+  EXPECT_NEAR(elapsed_s[2], 1.60, 1.0e-12);
+  EXPECT_NEAR(elapsed_s[3], 3.88, 1.0e-12);
+  EXPECT_NEAR(elapsed_s[3] - elapsed_s[2], 2.28, 1.0e-12);
+}
+
+TEST(PlannerPassThrough, GuideTimingRejectsInvalidPrefixRemap) {
+  std::vector<double> elapsed_s{0.1, 0.2};
+  EXPECT_FALSE(
+      navigation_planning_backend::stretchGuidePrefixElapsedTimes(
+          elapsed_s, 2U, 1.0));
+  elapsed_s = {0.2, 0.1};
+  EXPECT_FALSE(
+      navigation_planning_backend::stretchGuidePrefixElapsedTimes(
+          elapsed_s, 1U, 1.0));
+}
+
 TEST(PlannerPassThrough, RouteWindowMovesEndpointAlongOutgoingCornerTangent) {
   const auto endpoint = navigation_planning_backend::passThroughRouteWindowEndpoint(
       Eigen::Vector3d{50.0, 5.0, 3.0}, Eigen::Vector3d{50.0, -5.0, 3.0},

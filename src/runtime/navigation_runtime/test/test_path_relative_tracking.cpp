@@ -291,6 +291,38 @@ TEST(TrackingExperiment, RelaxedNeverBypassesInputWorldLeaseOrRoleChecks) {
       {3, 0, 0}, 10'600'000'000LL, 10'600'000'000LL, .12, true, true, true).accepted);
 }
 
+TEST(TrackingExperiment, RelaxedStoppedHoldBypassesOnlyFiniteAnchorDistance) {
+  navigation_contracts::TrackingExperimentPolicy policy;
+  policy.enabled = true;
+  policy.suppress_braking = true;
+
+  const auto relaxed = navigation_runtime::assessExperimentalStoppedHold(
+      policy, true, true, 1.2, 0.75);
+  EXPECT_TRUE(relaxed.support_valid);
+  EXPECT_FALSE(relaxed.within_anchor_limit);
+  EXPECT_TRUE(relaxed.accepted);
+  EXPECT_TRUE(relaxed.suppression_used);
+
+  policy.suppress_braking = false;
+  EXPECT_FALSE(navigation_runtime::assessExperimentalStoppedHold(
+      policy, true, true, 1.2, 0.75).accepted);
+
+  policy.suppress_braking = true;
+  EXPECT_FALSE(navigation_runtime::assessExperimentalStoppedHold(
+      policy, false, true, 1.2, 0.75).accepted);
+  EXPECT_FALSE(navigation_runtime::assessExperimentalStoppedHold(
+      policy, true, false, 1.2, 0.75).accepted);
+  EXPECT_FALSE(navigation_runtime::assessExperimentalStoppedHold(
+      policy, true, true, std::numeric_limits<double>::infinity(), 0.75).accepted);
+  EXPECT_FALSE(navigation_runtime::assessExperimentalStoppedHold(
+      policy, true, true, 1.2, -0.75).accepted);
+
+  const auto normal = navigation_runtime::assessExperimentalStoppedHold(
+      policy, true, true, 0.5, 0.75);
+  EXPECT_TRUE(normal.accepted);
+  EXPECT_FALSE(normal.suppression_used);
+}
+
 TEST(TrackingExperiment, TerminalMainUsesAdaptiveAllowanceUntilExactEndpoint) {
   navigation_contracts::TrackingExperimentPolicy policy;
   policy.enabled = true;

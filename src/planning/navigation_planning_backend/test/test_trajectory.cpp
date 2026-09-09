@@ -500,7 +500,7 @@ TEST(CiriGeometry, RejectsInvalidConfigurationBeforeNumericalWork) {
                std::invalid_argument);
 }
 
-TEST(CiriGeometry, RejectsDegenerateSeedSegmentBeforeEllipsoidConstruction) {
+TEST(CiriGeometry, AcceptsFinitePointSeedForPointCorridorConstruction) {
   navigation_planning_backend::CIRI ciri;
   ciri.setupParams(0.35, 1);
 
@@ -518,7 +518,7 @@ TEST(CiriGeometry, RejectsDegenerateSeedSegmentBeforeEllipsoidConstruction) {
   EXPECT_EQ(ciri.convexDecomposition(
                 bounds, obstacles, Eigen::Vector3d::Zero(),
                 Eigen::Vector3d::Zero()),
-            navigation_math::INIT_ERROR);
+            navigation_math::SUCCESS);
 }
 
 TEST(CiriGeometry, RejectsObstacleAtClosedSeedClearanceBoundary) {

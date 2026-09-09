@@ -1,5 +1,50 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Execute the already-declared stronger feasibility retry
+
+- **Owner/status:** navigation planning backend; `IMPLEMENTED`.
+- **Scope:** bounded nominal-trajectory feasibility retry control flow only.
+- **Safety impact:** When the first bounded V/A/J retry makes no progress, the
+  optimizer now restores the best corridor-valid candidate and executes its
+  already-declared second attempt with the stronger configured dynamic
+  penalty. The retry count, iteration/deadline budgets, corridor certificate,
+  physical 5/5/8 gate, flatness gate and final world authorization are
+  unchanged.
+- **Evidence:** `external-mode-check-20260909T101758-185330` repeatedly logged
+  retry `penalty_scale=1`, immediately stopped on `made no progress`, and never
+  reached the code's documented second bounded penalty. The active bundle then
+  exhausted its horizon before a replacement could be committed.
+- **Removal/review condition:** Remove only if feasibility recovery is replaced
+  by a deterministic dynamically-feasible seed with equivalent hard
+  certificates and deadlines.
+- **Verification:** planning-backend CTest and canonical Release build, followed
+  by repeated 5 m/s `long_three_pillars_speed` diagnostic runs; logs must show
+  that a no-progress first attempt either reaches the bounded stronger attempt
+  or a separate hard gate terminates it.
+
+### 2026-09-09 - Restore the valid CIRI point-seed corridor contract
+
+- **Owner/status:** navigation planning backend; `IMPLEMENTED`.
+- **Scope:** `CIRI::convexDecomposition` and its focused geometry regression
+  test.
+- **Safety impact:** A finite point seed (`a == b`) is accepted again so
+  `GeneratePolytopeFromPoint` can construct the local overlap corridor it owns.
+  Non-finite inputs, seeds outside the bounded workspace, obstacle clearance,
+  deadlines and resulting polytope checks remain fail-closed. No distance,
+  dynamics, tracking or acceptance threshold is relaxed.
+- **Evidence:** The `long_three_pillars_speed` 5 m/s run
+  `external-mode-check-20260909T100835-176810` stopped in overlap repair with
+  `GeneratePolytopeFromPoint`, `seed pt=104.5,-1.5,3` and CIRI
+  `INIT_ERROR degenerate seed squared_norm=0`. The point API deliberately passes
+  identical endpoints, and CIRI already owns a point-seed branch that skips
+  line ellipsoid fitting.
+- **Removal/review condition:** Replace only when point and line seeds become
+  distinct typed APIs with equivalent focused coverage.
+- **Verification:** focused planning-backend build/CTest, canonical Release
+  build, `git diff --check`, then repeated
+  `MAP_PROFILE=long_three_pillars_speed SPEED_CAP_MPS=5 make
+  external-mode-check` diagnostic runs.
+
 ### 2026-09-09 - Make GPS-on, 5/5/8 and zero-disabled tracking gates the run defaults
 
 - **Owner/status:** navigation runtime, planner backend, PX4 External Mode and
@@ -40,6 +85,222 @@
   `5/5/8`; canonical Release build; `git diff --check`. A follow-up GUI smoke
   run must verify generated parameter snapshots, GPS parameters, artifact
   suppressed-gate metadata, Gazebo/RViz startup and diagnostic-only status.
+
+### 2026-09-09 - Make External Mode ownership explicit and remove automatic re-entry
+
+- **Owner/status:** `px4_navigation_external_mode` lifecycle; `IMPLEMENTED`,
+  pending repeated SITL evidence. Root/main owns review.
+- **Scope:** Remove the executor's five-second automatic transition from PX4
+  Hold back into the owned External Mode. The executor still retries a pending
+  transition to native PX4 Hold every 250 ms until `AUTO_LOITER` is observed,
+  but only an explicit executor activation can request the owned navigation
+  mode again. On mode deactivation, invalidate the certified command and
+  velocity-only continuity state, clear mode-owned goal timestamps, terminal
+  hold positions, and the LIO-to-PX4 alignment latch, and deactivate mission
+  goal publication. Preserve the process-level propagated-odometry, typed
+  health and PX4-local-position subscriptions and their latest estimator
+  observations; FAST-LIO and mapping remain active outside External Mode.
+- **Safety impact:** A navigation failure or operator handover cannot silently
+  reacquire command authority after PX4 Hold. The stationary stream remains
+  active only while the Hold transition is pending; after deactivation the
+  mode releases setpoint/mission ownership. Re-entry starts a fresh command
+  generation and alignment latch while normal freshness and epoch checks
+  decide whether retained process-level estimator observations are usable.
+  This does not disable LIO, mapping, health monitoring, PX4 Hold confirmation,
+  or the fail-closed handover retry.
+- **Evidence:** Diagnostic artifact
+  `.artifacts/runtime/external-mode-check-20260909T095238-165799` recorded a
+  code-owned `PX4 Hold recovery gate satisfied` event and automatic
+  reactivation after an odometry receive gap, despite the intended external
+  ownership boundary. Unit tests already prove lifecycle invalidation and that
+  MissionController deactivation stops goal publication; the runtime harness
+  now treats any pre-completion mode exit as terminal instead of waiting for
+  product-owned recovery.
+- **Removal/review condition:** Reintroduce an automatic transition only as a
+  separately authorized recovery policy with an explicit operator/product
+  requirement and end-to-end ownership evidence. Do not infer it from PX4 ROS2
+  executor callback behavior.
+- **Verification:** Release build; `px4_navigation_external_mode` and
+  `navigation_runtime` CTest; runtime contract suite; repeated complex-map
+  5 m/s SITL proving no automatic re-entry, continued LIO/mapping updates, and
+  deterministic native-Hold handover on any terminal exit; `git diff --check`.
+
+### 2026-09-09 - Correct velocity-only LIO frame and throttle Hold retry evidence
+
+- **Owner/status:** `px4_navigation_external_mode`; `IMPLEMENTED`, targeted
+  correctness and behavior-neutral observability cleanup. Root/main owns review.
+- **Scope/units:** Convert `PropagatedOdometry.twist` from its declared
+  `base_link` body-FLU frame into LIO world-ENU before populating the tracking
+  adapter's `LioState.velocity_enu`. Keep the existing 250 ms native PX4 Hold
+  retry cadence and stationary setpoint stream, but throttle identical failed
+  retry logs to one record per 5 s. Once failure, mission terminal, or handover
+  ownership is latched, ignore later valid planner samples before repeating
+  identity/tracking admission; they cannot restore command ownership.
+- **Safety impact:** No planner, collision, health, tracking, dynamics,
+  command-admission, waypoint or handover gate changes. The frame conversion
+  removes a false semantic witness in the opt-in velocity-only experiment;
+  log throttling does not suppress retries or alter the fail-closed stationary
+  output. Ignoring post-terminal samples removes repeated causal errors while
+  preserving the first rejection and its handover transition.
+- **Evidence:** Source tracing confirms the FAST-LIO serializer writes body-FLU
+  twist while the adapter field is world-ENU. GPS-off diagnostic artifact
+  `.artifacts/runtime/external-mode-check-20260909T084505-131688` exposed the
+  retry-log flood after a real FAST-LIO health rejection; the profile cannot
+  enter native Hold and remains non-qualification evidence. Relaxed comparator
+  `.artifacts/runtime/external-mode-check-20260909T085449-137192` recorded one
+  BACKUP anchor rejection followed by repeated post-handover rejection logs;
+  it remained collision-free but `BLOCKED` and does not authorize a gate
+  change.
+- **Removal/review condition:** Revert the conversion if the upstream
+  `PropagatedOdometry` frame contract changes; retain retry throttling while
+  the retry transition remains state-identical and separately counted.
+- **Verification:** Release build; full `px4_navigation_external_mode` CTest;
+  runtime contract suite; `git diff --check`; explicit velocity-only diagnostic
+  remains fail-closed and GPS-off health failure continues the stationary
+  stream while emitting bounded retry evidence.
+
+### 2026-09-09 - Decouple A-star voxel phase from continuation-guide timing
+
+- **Owner/status:** `navigation_planning_backend`; `IMPLEMENTED/COMPONENT
+  VERIFIED/SITL BLOCKED`, behavior-preserving safety correction. Root/main owns
+  review and the representative campaign.
+- **Scope/units:** For a non-terminal local route, estimate the outgoing join
+  direction over a two-grid-cell (`0.4 m` at the locked `0.2 m` resolution)
+  baseline rather than the arbitrarily short continuous-start-to-voxel-centre
+  edge. At a retained-prefix join, use the retained guide's terminal tangent
+  and scalar terminal speed; use measured boundary velocity only when no
+  retained tangent exists. If a bounded velocity-direction transition needs
+  more time, stretch timestamps only through that prefix and shift all later
+  timestamps by the added duration, preserving their inter-point durations.
+  The repeated terminal-recovery status is throttled to `1 Hz`; its state
+  transition and recovery ownership are unchanged.
+- **Safety impact:** No V/A/J, world, UNKNOWN/OUT_OF_MAP, corridor, tracking,
+  waypoint, terminal, solve-deadline or command-admission limit changes. The
+  final continuous trajectory and backup certificates remain authoritative.
+  Invalid/non-monotonic timing fails closed. This removes a discretization
+  phase dependency where a `0.02-0.03 m` first edge multiplied the complete
+  `14 m` guide duration into hundreds of seconds and caused MINCO
+  `inf`/corridor rejection.
+- **Evidence:** Pre-fix 5 m/s artifact
+  `.artifacts/runtime/external-mode-check-20260909T080758-112753` committed
+  three collision-free local bundles and tracked to about `24.7 m`. Planning
+  cycles 61-63 then recorded `guide_path_length_m=16.66-16.93 m`,
+  `guide_duration_s=205-662 s`, direction-transition scales `176.9-231.8`,
+  MINCO/corridor rejection and no successor. The release build completed 23
+  packages; planner CTest passed 9/9, PX4 External Mode CTest passed 7/7 and
+  runtime contracts passed 209/209. Post-fix artifacts
+  `.artifacts/runtime/external-mode-check-20260909T082226-118882`,
+  `.artifacts/runtime/external-mode-check-20260909T082447-120557` and
+  `.artifacts/runtime/external-mode-check-20260909T084202-129886` record
+  bounded guide durations (`3.31-5.50 s`) and repeated successor commits, not
+  the prior hundreds-of-seconds blow-up. They remain `BLOCKED`: `5/2/4`
+  becomes dynamically infeasible in the obstacle corridor, while two
+  `5/5/8` runs independently hit the unchanged adaptive lateral tracking gate
+  (`0.447/0.445 m` and `0.445/0.444 m`) with zero collisions. This closes the
+  timing defect but does not establish mission stability or acceptance.
+- **Removal/review condition:** Revert or revise if repeated artifact traces
+  still show guide duration tied to the first voxel edge, if the retained join
+  tangent disagrees with the executable predecessor, or if continuous
+  dynamics/world/backup certification regresses. Do not promote from a single
+  successful run or relax any gate to obtain completion.
+
+### 2026-09-09 - Evaluate retained MAIN tracking at the propagated-state source time
+
+- **Owner/status:** `navigation_runtime`; `IMPLEMENTED`, pending representative
+  product-gate SITL. Root/main owns review.
+- **Scope/units:** Apply the unchanged planner clearance-reserved tracking
+  budget to the immutable committed-command sample at the propagated
+  execution state's exact `source_stamp_ns`. Continue sampling the command at
+  evaluation time for the independent `0.75 m` absolute execution-anchor cap.
+  Project the source-aligned error with the source-aligned velocity residual
+  over the unchanged validation interval. Scheduler anchor pressure uses the
+  same source-time sample; map, lease, identity, role and freshness admission
+  remain separate.
+- **Safety impact:** This does not increase the `0.25 m` planner tracking
+  budget or the `0.75 m` outer cap. It removes a false reject caused by
+  comparing an older propagated state with a later command sample. Missing,
+  future, out-of-lease or non-finite temporal support remains fail-closed; the
+  current-command cap prevents time alignment from hiding absolute divergence.
+- **Evidence:** In
+  `.artifacts/runtime/external-mode-check-20260909T085819-141051`, exact
+  immutable samples at boundary `39988000000 ns` record raw/current-command
+  error `0.306635 m`, source-aligned error `0.249772 m`, `12 ms` state age and
+  `0.058799 m` command motion. Exact predicate replay changes that sample from
+  an exceeded raw branch to an in-certificate aligned branch without changing
+  either threshold. A separate failure in the same artifact has raw error
+  `0.428 m`; source alignment is not assumed to clear that real exceedance.
+- **Removal/review condition:** Revisit only if propagated odometry changes
+  from source-stamped state semantics or committed-bundle sampling no longer
+  provides an exact same-clock source sample.
+- **Verification:** `test_planner_fsm` including the captured boundary and
+  outer-cap regression; canonical Release build; runtime contract suite;
+  product-gate complex-map SITL; `git diff --check`.
+
+### 2026-09-09 - Expand relaxed SITL planner-isolation bypass at the PX4 boundary
+
+- **Owner/status:** `navigation_runtime` and
+  `px4_navigation_external_mode`; `TEMPORARY EXPERIMENT`, explicit user-requested
+  planner-stability isolation only. It is never flight/SITL acceptance
+  evidence and is active only with `tracking_experiment.suppress_braking=true`
+  under simulated time.
+- **Scope:** The existing `relaxed` profile already suppresses a finite MAIN
+  tracking-triggered emergency in runtime. Extend the PX4 consumer side to
+  suppress finite geometric anchor rejections for MAIN, BACKUP and EMERGENCY,
+  recording the role and residual on every bypass. The same explicit profile
+  suppresses the External Mode response to a fresh, typed, same-epoch FAST-LIO
+  health sample so a brief observability transition cannot terminate planner
+  characterization. FAST-LIO, propagation and mapping continue running and
+  publishing; this does not disable or restart those components. Missing or
+  stale health, localization-epoch mismatch, identity, odometry freshness,
+  command ordering, executable lease, finite input, world/unknown-space,
+  collision and terminal-handover contracts remain active. At a
+  planner-certified `STOPPED_HOLD`, the same profile may suppress only the
+  `near_execution` distance response when the endpoint is still `KnownFree`
+  and the execution state is fresh and finite. Missing/stale/non-finite state
+  or an endpoint outside `KnownFree` still fails closed. Product/default
+  behavior is unchanged.
+- **Safety impact:** This deliberately permits a simulated vehicle outside the
+  planner-certified tracking tube to continue consuming a trajectory, so
+  obstacle-collision risk is higher and any completion is diagnostic-only.
+  Invalid/non-finite tracking support is not bypassed. Suppressing the response
+  to fresh typed unhealthy state deliberately permits planning/control to use
+  propagated data that is not estimator-qualified; it is diagnostic only.
+  The artifact metadata lists all suppressed gates and forces
+  `qualification_eligible=false`.
+- **False-accept/false-reject consequences:** The run can reveal whether
+  planner geometry, renewal and dynamics remain stable when tracking responses
+  do not terminate the scenario. It cannot prove closed-loop safety or justify
+  threshold changes. Collision, stale/missing health, epoch, lease or planner
+  failures still fail the run and must be reported exactly.
+- **Additional captured evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260909T102740-195449` committed five
+  planner generations and then rejected a certified stopping endpoint with
+  `known_free=1 near_execution=0` after finite PX4 tracking lag. The relaxed
+  campaign now records this exact response as
+  `stopped_hold_near_execution_reject`; it does not bypass the endpoint's
+  world classification or execution-state freshness.
+- **Evidence:** Previous relaxed artifact
+  `.artifacts/runtime/external-mode-check-20260909T085449-137192` suppressed the
+  MAIN response but was still terminated by a BACKUP consumer anchor reject,
+  so it could not isolate planner continuity. After the geometric expansion,
+  `.artifacts/runtime/external-mode-check-20260909T091511-147704` reached about
+  `x=129 m` collision-free before two fresh typed health samples reported
+  `INSUFFICIENT_TRANSLATIONAL_OBSERVABILITY`; TRACKING resumed about `0.4 s`
+  later. That transient is the bounded health-response confounder targeted
+  here; it is not relabeled as healthy.
+- **Removal condition:** Remove the all-role PX4 bypass after the requested
+  bounded diagnostic campaign, or earlier if any path can enable it without
+  explicit `relaxed`/sim-time configuration. Never promote it to a default.
+- **Verification:** Release build and PX4/runtime/contract tests; run complex
+  map at `5 m/s`, explicit dynamics profile and `TRACKING_EXPERIMENT=relaxed`;
+  inspect suppressed-gate metadata, role-tagged bypass logs, continued LIO and
+  mapping evidence, planner commits, dynamics, collision clearance and final
+  scenario verdict separately.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && python3
+  tools/runtime/build.py --mode release build`; direct planner/config and
+  trajectory tests; full runtime contracts; `git diff --check`; then repeated
+  complex-map 5 m/s runs with exact guide-duration, commit, V/A/J, clearance,
+  collision, tracking, waypoint and terminal evidence.
 
 ### 2026-09-09 - Close velocity-boundary review findings and provenance combination
 
@@ -20773,3 +21034,74 @@ release profiles must not use the former allowance.
   px4_navigation_external_mode`; `source install/setup.bash && python3
   tools/runtime/build.py --mode release test --packages
   px4_navigation_external_mode`; `git diff --check`.
+
+### 2026-09-09 - Execute only planner-certified emergency braking in velocity-only SITL
+
+- **Owner/status:** PX4 External Mode implementation; `IMPLEMENTED` as an
+  explicit diagnostic-SITL fallback, not a flight-qualification claim.
+- **Scope:** Permit the velocity-only boundary to consume a
+  `ROLE_EMERGENCY`/`STATUS_BRAKING` command only when the planner reports
+  `EMERGENCY_AUTHORIZATION_ACTUAL_ANCHOR_CERTIFICATE_EXCEEDED` and a successful
+  emergency candidate commit. The continuity owner has a one-way MAIN/BACKUP
+  to EMERGENCY transition and never reclassifies the command as nominal.
+  Emergency commands caused by world, collision, unknown-support, health,
+  lease, or invalid-contract failures remain rejected and hand over fail-closed.
+  The velocity-only continuity projection also includes a conservative
+  one-sample jerk-braking viability ball, so a command is not allowed to
+  consume the cap while making the next jerk-limited sample infeasible.
+  Temporary GPS-off local-NED takeoff setpoints leave yaw unset instead of
+  commanding a synthetic zero-NED heading.
+- **Safety impact:** Avoids an unnecessary native PX4 Hold dependency for a
+  planner-certified measured-state brake in GPS-off EV SITL. The vehicle still
+  follows the certified emergency velocity trajectory with the existing
+  velocity/acceleration/jerk/timing/reset/health contracts; it does not resume
+  nominal flight or turn the emergency endpoint into waypoint completion. A
+  continuity rejection still requests PX4 Hold; if that handover is rejected,
+  the active External Mode stream retains the measured aligned position with
+  zero velocity when that position witness is available, rather than relying
+  on a velocity-only zero command that cannot hold position in GPS-off EV.
+  Its metrics report zero rather than retaining a stale moving-command value.
+- **Evidence:** The three-pillar GUI artifact
+  `.artifacts/runtime/external-mode-gui-20260909T064144-49504` showed
+  `emergency_authorization_reason=1`, `emergency_candidate_commit_result=1`,
+  `ROLE_EMERGENCY`, followed by `role_not_authorized_for_velocity_boundary` and
+  a rejected PX4 Hold. This change targets that exact authority tuple.
+- **Removal condition:** Remove or revise after repeated GPS-off and nominal
+  SITL runs prove that native Hold is available and the certified emergency
+  velocity path is no longer needed, or if any artifact shows an emergency
+  command accepted without the exact planner authority tuple.
+- **Verification:** Release build with a refreshed manifest; direct continuity
+  and adapter tests; runtime contract tests; focused three-pillar GUI SITL;
+  inspect the artifact for the exact authority tuple, no role relabeling, no
+  collision, and no mission-completion claim from the emergency endpoint.
+  The local takeoff yaw path must also show no finite synthetic zero-NED yaw
+  command before External Mode activation.
+
+### 2026-09-09 - Keep External Mode alive until PX4 Hold is actually confirmed
+
+- **Owner/status:** PX4 External Mode executor; `IMPLEMENTED`.
+- **Scope:** A safety-stop or terminal mission path publishes the explicit
+  stationary setpoint while the executor requests `AUTO_LOITER`. A synchronous
+  `Rejected` or `Timeout` from `scheduleMode()` no longer completes the owned
+  External Mode, because the PX4 command was not accepted and the vehicle may
+  still be under the External Mode executor. The executor records a pending
+  handover, retries at a bounded 250 ms period, and clears it only after
+  `AUTO_LOITER` is observed or the executor is deactivated.
+- **Safety impact:** Prevents a false `ModeCompleted`/dangling lifecycle where
+  the product reports failure while still sending an External-Mode setpoint.
+  During a PX4 health-gate rejection the vehicle remains on a finite,
+  stationary, measured-position safety stream; the runtime stays explicitly
+  `PAUSED/SAFETY_STOP` and cannot claim mission completion. This does not relax
+  PX4 Hold health checks or convert a rejected handover into acceptance.
+- **Evidence:** The reviewed artifact showed `PX4 Hold handover failed with
+  result=Rejected` followed by `external_mode_completed nav_state=26`, while
+  `px4_hold_handover_requested_sim_ns` was not recorded. That sequence proves
+  the previous completion callback was not an AUTO_LOITER confirmation.
+- **Removal condition:** Remove only if the PX4 ROS2 executor exposes an
+  authoritative accepted-and-active Hold transition that is used directly by
+  this component, with equivalent fail-closed behavior on rejection.
+- **Verification:** Release build/manifest refresh; External Mode unit and
+  runtime-contract tests; GPS-enabled SITL must show `AUTO_LOITER` after the
+  safety/terminal path, no `external_mode_completed` before that witness, and
+  no moving setpoint after the safety stop. GPS-off SITL remains diagnostic and
+  must report the unresolved Hold handover as `BLOCKED` rather than `PASS`.

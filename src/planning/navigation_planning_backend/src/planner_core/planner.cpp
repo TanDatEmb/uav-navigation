@@ -3273,36 +3273,52 @@ double knownFreeGuideSupport(
                 }
                 if (!terminal_stop_required && !allocation.points.empty() &&
                     std::isfinite(guide_path_end_vel) && guide_path_end_vel >= 0.0) {
-                    const Eigen::Vector3d outgoing_delta =
-                        allocation.points.front().cast<double>() -
+                    const Eigen::Vector3d join_position =
                         guide_path.back().cast<double>();
-                    Eigen::Vector3d incoming_velocity = Eigen::Vector3d::Zero();
-                    const Eigen::Vector3d measured_velocity =
-                        pos_init_state.col(1).cast<double>();
-                    if (measured_velocity.allFinite() &&
-                        measured_velocity.norm() > 1.0e-6) {
-                        // The optimizer boundary is fixed to this PVAJ state.
-                        // A scalar speed reconstructed from the previous guide
-                        // loses lateral velocity exactly when a receding route
-                        // turns, making the seed appear feasible while MINCO
-                        // must still rotate the measured boundary velocity.
-                        incoming_velocity = measured_velocity.normalized() *
-                            std::clamp(measured_velocity.norm(), 0.0,
-                                       cfg_.exp_traj_cfg.max_vel);
-                    } else {
-                        Eigen::Vector3d incoming_direction =
-                            Eigen::Vector3d::Zero();
-                        for (std::size_t index = guide_path.size(); index > 1U; --index) {
-                            const Eigen::Vector3d delta =
-                                (guide_path[index - 1U] - guide_path[index - 2U])
-                                    .cast<double>();
-                            if (delta.allFinite() && delta.norm() > 1.0e-6) {
-                                incoming_direction = delta.normalized();
-                                break;
-                            }
+                    const double direction_baseline_m =
+                        2.0 * cfg_.resolution;
+                    std::size_t outgoing_index = allocation.points.size() - 1U;
+                    for (std::size_t index = 0U;
+                         index < allocation.points.size(); ++index) {
+                        const double distance =
+                            (allocation.points[index].cast<double>() -
+                             join_position).norm();
+                        if (std::isfinite(distance) &&
+                            distance + 1.0e-9 >= direction_baseline_m) {
+                            outgoing_index = index;
+                            break;
                         }
-                        incoming_velocity = incoming_direction * std::clamp(
-                            guide_path_end_vel, 0.0, cfg_.exp_traj_cfg.max_vel);
+                    }
+                    const Eigen::Vector3d outgoing_delta =
+                        allocation.points[outgoing_index].cast<double>() -
+                        join_position;
+                    Eigen::Vector3d incoming_velocity = Eigen::Vector3d::Zero();
+                    // The velocity at a retained-guide join is represented by
+                    // that guide's final tangent, not by the measured velocity
+                    // at the beginning of the retained prefix.  Mixing those
+                    // two times double-counts a direction change already
+                    // present in the retained command.
+                    for (std::size_t index = guide_path.size(); index > 1U; --index) {
+                        const Eigen::Vector3d delta =
+                            (guide_path.back() - guide_path[index - 2U])
+                                .cast<double>();
+                        if (delta.allFinite() &&
+                            delta.norm() + 1.0e-9 >= direction_baseline_m) {
+                            incoming_velocity = delta.normalized() * std::clamp(
+                                guide_path_end_vel, 0.0,
+                                cfg_.exp_traj_cfg.max_vel);
+                            break;
+                        }
+                    }
+                    if (incoming_velocity.norm() <= 1.0e-6) {
+                        const Eigen::Vector3d measured_velocity =
+                            pos_init_state.col(1).cast<double>();
+                        if (measured_velocity.allFinite() &&
+                            measured_velocity.norm() > 1.0e-6) {
+                            incoming_velocity = measured_velocity.normalized() *
+                                std::clamp(measured_velocity.norm(), 0.0,
+                                           cfg_.exp_traj_cfg.max_vel);
+                        }
                     }
                     if (incoming_velocity.allFinite() &&
                         incoming_velocity.norm() > 1.0e-6 &&
@@ -3318,21 +3334,30 @@ double knownFreeGuideSupport(
                         const double transition_time_scale =
                             passThroughVelocityTransitionTimeScale(
                                 incoming_velocity, outgoing_velocity,
-                                allocation.elapsed_s.front(),
+                                allocation.elapsed_s[outgoing_index],
                                 cfg_.exp_traj_cfg.max_acc,
                                 cfg_.exp_traj_cfg.max_jerk);
                         if (transition_time_scale > 1.0 + 1.0e-6) {
-                            for (double& elapsed : allocation.elapsed_s) {
-                                elapsed *= transition_time_scale;
+                            const double base_duration_s =
+                                allocation.elapsed_s[outgoing_index];
+                            const double required_duration_s =
+                                base_duration_s * transition_time_scale;
+                            if (!stretchGuidePrefixElapsedTimes(
+                                    allocation.elapsed_s, outgoing_index,
+                                    required_duration_s)) {
+                                planner_context_->warn(
+                                    " -- [planner] invalid guide-prefix time remap");
+                                return FAILED;
                             }
                             planner_context_->info(
-                                " -- [planner] stretched guide timing for "
+                                " -- [planner] stretched guide-prefix timing for "
                                 "velocity-direction transition scale={:.3f} "
-                                "first_segment={:.3f} incoming_speed={:.3f} "
+                                "prefix_distance={:.3f} base_duration={:.3f} "
+                                "added_duration={:.3f} incoming_speed={:.3f} "
                                 "outgoing_speed={:.3f}",
                                 transition_time_scale,
-                                allocation.elapsed_s.front() /
-                                    transition_time_scale,
+                                outgoing_delta.norm(), base_duration_s,
+                                required_duration_s - base_duration_s,
                                 incoming_speed, outgoing_speed);
                         }
                     }
@@ -4450,9 +4475,9 @@ double knownFreeGuideSupport(
         // The executable candidate starts at the first sample of the newly
         // generated EXP trajectory.  PlanFromRest may have moved that sample
         // by one inflated voxel when the measured pose lies in an occupied
-        // raster cell.  Building the backup visibility ray from solve_state_
-        // in that case creates an artificial blocked first segment and makes
-        // CIRI fail on a degenerate seed.  Use the actual command boundary;
+        // raster cell. Building the backup visibility ray from solve_state_
+        // in that case creates an artificial blocked first segment. Use the
+        // actual command boundary;
         // authorizeAndStage() still validates the complete main+backup bundle
         // against the latest immutable world before publication.
         TimeConsuming t_back_frontend("t_back_frontend", false);

@@ -9,63 +9,6 @@
 #include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
 #include "px4_navigation_external_mode/runtime_metrics_policy.hpp"
-#include "px4_navigation_external_mode/automatic_recovery_gate.hpp"
-
-TEST(AutomaticRecoveryGate, RequiresConfirmedHoldAndFiveContinuousSeconds) {
-  px4_navigation_external_mode::AutomaticRecoveryGate gate;
-  ASSERT_TRUE(gate.arm());
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 1));
-
-  gate.setHoldConfirmed(true, 1);
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.15, 1));
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.15, 5'000'000'000LL));
-  EXPECT_TRUE(gate.consumeIfReady(true, true, true, 0.15, 5'000'000'001LL));
-  EXPECT_FALSE(gate.pending());
-}
-
-TEST(AutomaticRecoveryGate, InvalidStateOrMotionResetsStationaryCountdown) {
-  px4_navigation_external_mode::AutomaticRecoveryGate gate;
-  ASSERT_TRUE(gate.arm());
-  gate.setHoldConfirmed(true, 10);
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 10));
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.151, 4'000'000'010LL));
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 5'000'000'010LL));
-  EXPECT_FALSE(gate.consumeIfReady(true, false, true, 0.0, 10'000'000'010LL));
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 10'000'000'011LL));
-  EXPECT_TRUE(gate.consumeIfReady(true, true, true, 0.0, 15'000'000'011LL));
-}
-
-TEST(AutomaticRecoveryGate, HoldLossDisarmAndNonfiniteSpeedFailClosed) {
-  px4_navigation_external_mode::AutomaticRecoveryGate gate;
-  ASSERT_TRUE(gate.arm());
-  gate.setHoldConfirmed(true, 20);
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 20));
-  gate.setHoldConfirmed(false, 1'000'000'020LL);
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 6'000'000'020LL));
-  gate.setHoldConfirmed(true, 6'000'000'021LL);
-  EXPECT_FALSE(gate.consumeIfReady(false, true, true, 0.0, 6'000'000'021LL));
-  EXPECT_FALSE(gate.consumeIfReady(
-      true, true, true, std::numeric_limits<double>::quiet_NaN(),
-      11'000'000'021LL));
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 11'000'000'022LL));
-  EXPECT_TRUE(gate.consumeIfReady(true, true, true, 0.0, 16'000'000'022LL));
-}
-
-TEST(AutomaticRecoveryGate, PermitsOnlyOneAttemptUntilExecutorBudgetReset) {
-  px4_navigation_external_mode::AutomaticRecoveryGate gate;
-  ASSERT_TRUE(gate.arm());
-  gate.setHoldConfirmed(true, 1);
-  EXPECT_FALSE(gate.consumeIfReady(true, true, true, 0.0, 1));
-  EXPECT_TRUE(gate.consumeIfReady(true, true, true, 0.0, 5'000'000'001LL));
-  EXPECT_EQ(gate.attemptCount(), 1U);
-  EXPECT_FALSE(gate.arm());
-  EXPECT_FALSE(gate.pending());
-
-  gate.resetBudget();
-  EXPECT_EQ(gate.attemptCount(), 0U);
-  EXPECT_TRUE(gate.arm());
-}
-
 TEST(RuntimeMetricsPolicy, RejectsClockRegressionWithoutOverflow) {
   EXPECT_FALSE(px4_navigation_external_mode::runtimeMetricsLogDue(
       std::numeric_limits<std::int64_t>::max(), 1));

@@ -22,6 +22,7 @@ TEST(TrackingEnvelope, AppliesOneFiniteGeometricLimitToForwardError) {
       Eigen::Vector3d::Zero(), Eigen::Vector3d{1.5, 0.2, 0.0},
       Eigen::Vector3d{4.0, 0.0, 0.0}, 0.75);
   EXPECT_FALSE(result.valid);
+  EXPECT_TRUE(result.support_valid);
   EXPECT_DOUBLE_EQ(result.longitudinal_limit_m, 0.75);
   EXPECT_NEAR(result.longitudinal_error_m, 1.5, 1e-12);
   EXPECT_NEAR(result.lateral_error_m, 0.2, 1e-12);
@@ -126,6 +127,7 @@ TEST(TrackingEnvelope, RejectsFiniteVelocityWhoseNormOverflows) {
       Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
       Eigen::Vector3d{huge, huge, huge}, 0.75);
   EXPECT_FALSE(result.valid);
+  EXPECT_FALSE(result.support_valid);
 }
 
 TEST(TrackingEnvelope, RealLeadLagAtHighSpeedAndStrictDefault) {

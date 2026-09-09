@@ -1154,6 +1154,29 @@ TEST(PlannerFsm, RetainedCommandCannotConsumeUncertifiedTrackingClearance) {
       retainedCommandTrackingLimit(0.25, 0.75), true));
 }
 
+TEST(PlannerFsm, RetainedTrackingUsesStateSourceTimeAndKeepsOuterCap) {
+  // Captured from the complex-map 5 m/s artifact. Comparing the propagated
+  // state to the command at now creates a false 0.306 m tube violation; the
+  // exact immutable sample at the state's source stamp is still within the
+  // unchanged 0.25 m planner certificate.
+  const auto aligned = assessTimeAlignedRetainedTracking(
+      0.24977159205098085, 0.30663542728883114, 0.25, 0.75);
+  ASSERT_TRUE(aligned.support_valid);
+  EXPECT_TRUE(aligned.within_limits);
+  EXPECT_DOUBLE_EQ(aligned.tracking_error_m, 0.24977159205098085);
+  EXPECT_DOUBLE_EQ(aligned.absolute_anchor_error_m, 0.30663542728883114);
+
+  // Time alignment is not permission to hide actual current-command
+  // divergence beyond the independent PX4 execution cap.
+  const auto outer_exceeded = assessTimeAlignedRetainedTracking(
+      0.20, 0.751, 0.25, 0.75);
+  ASSERT_TRUE(outer_exceeded.support_valid);
+  EXPECT_FALSE(outer_exceeded.within_limits);
+
+  EXPECT_FALSE(assessTimeAlignedRetainedTracking(
+      std::numeric_limits<double>::quiet_NaN(), 0.20, 0.25, 0.75).support_valid);
+}
+
 TEST(PlannerFsm, RetainedCommandReservesClearanceUntilNextValidationBoundary) {
   EXPECT_DOUBLE_EQ(
       projectedRetainedAnchorErrorUpperBound(0.096, 0.8, 0.2), 0.256);

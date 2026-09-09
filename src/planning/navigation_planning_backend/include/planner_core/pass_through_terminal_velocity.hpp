@@ -1,8 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <optional>
+#include <vector>
 
 #include <Eigen/Core>
 
@@ -81,6 +83,41 @@ inline double passThroughVelocityTransitionTimeScale(
   }
   const double scale = required_duration / base_duration_s;
   return std::isfinite(scale) ? std::max(1.0, scale) : 1.0;
+}
+
+// Stretch only the guide prefix that has to realize a velocity-direction
+// transition.  Scaling every later timestamp by the same factor couples the
+// complete local-route duration to the phase of the first A* voxel: when the
+// continuous join happens to lie close to that voxel centre, a centimetre
+// first edge can turn a seconds-long guide into a hundreds-of-seconds seed.
+// The piecewise affine remap below makes the selected prefix no shorter than
+// required while preserving every later inter-point duration.
+inline bool stretchGuidePrefixElapsedTimes(
+    std::vector<double>& elapsed_s,
+    const std::size_t transition_end_index,
+    const double required_duration_s) noexcept {
+  if (elapsed_s.empty() || transition_end_index >= elapsed_s.size() ||
+      !std::isfinite(required_duration_s) || required_duration_s < 0.0) {
+    return false;
+  }
+  double previous = 0.0;
+  for (const double elapsed : elapsed_s) {
+    if (!std::isfinite(elapsed) || elapsed <= previous) return false;
+    previous = elapsed;
+  }
+
+  const double base_duration_s = elapsed_s[transition_end_index];
+  if (required_duration_s <= base_duration_s + 1.0e-12) return true;
+  const double scale = required_duration_s / base_duration_s;
+  const double added_duration_s = required_duration_s - base_duration_s;
+  for (std::size_t index = 0U; index < elapsed_s.size(); ++index) {
+    if (index <= transition_end_index) {
+      elapsed_s[index] *= scale;
+    } else {
+      elapsed_s[index] += added_duration_s;
+    }
+  }
+  return true;
 }
 
 // Upper bound for a terminal speed that can be reached over a guide path

@@ -25,15 +25,8 @@ namespace navigation_planning_backend {
         if (deadlineExpired()) return TIME_OUT;
         if (boundary_planes.rows() <= 0 || pc.cols() <= 0 || !boundary_planes.allFinite() || !pc.allFinite() ||
             !a.allFinite() || !b.allFinite()) {
-            return INIT_ERROR;
-        }
-        const Eigen::Vector3d seed_delta = b - a;
-        const double seed_scale = std::max({1.0, a.squaredNorm(), b.squaredNorm()});
-        const double seed_degeneracy_limit =
-            64.0 * std::numeric_limits<double>::epsilon() * seed_scale;
-        if (!std::isfinite(seed_degeneracy_limit) ||
-            !std::isfinite(seed_delta.squaredNorm()) ||
-            seed_delta.squaredNorm() <= seed_degeneracy_limit) {
+            cout << YELLOW << " -- [CIRI] INIT_ERROR invalid finite input rows="
+                 << boundary_planes.rows() << " points=" << pc.cols() << RESET << endl;
             return INIT_ERROR;
         }
         const Eigen::Vector4d ah(a(0), a(1), a(2), 1.0);
@@ -42,9 +35,9 @@ namespace navigation_planning_backend {
         /// force return if the seed is not inside the boundary
         if ((boundary_planes * ah).maxCoeff() > epsilon_ ||
             (boundary_planes * bh).maxCoeff() > epsilon_) {
-//            cout << YELLOW << " -- [WARN] ah, bh not in BD, forced return." << endl;
-//            cout << "boundary_planes * ah: " << (boundary_planes * ah).transpose().maxCoeff() << endl;
-//            cout << "boundary_planes * bh: " << (boundary_planes * bh).transpose().maxCoeff() << endl;
+            cout << YELLOW << " -- [CIRI] INIT_ERROR seed outside boundary a_residual="
+                 << (boundary_planes * ah).maxCoeff() << " b_residual="
+                 << (boundary_planes * bh).maxCoeff() << RESET << endl;
             return INIT_ERROR;
         }
 
@@ -74,13 +67,21 @@ namespace navigation_planning_backend {
             const Eigen::VectorXd boundary_norms = bd_e.leftCols<3>().rowwise().norm();
             if (!boundary_norms.allFinite() ||
                 (boundary_norms.array() <= std::numeric_limits<double>::epsilon()).any()) {
+                cout << YELLOW << " -- [CIRI] INIT_ERROR singular ellipsoid boundary transform radii="
+                     << E.r().transpose() << " determinant=" << E.C().determinant()
+                     << RESET << endl;
                 return INIT_ERROR;
             }
             const Eigen::VectorXd distDs = bd_e.rightCols<1>().cwiseAbs().cwiseQuotient(
                     boundary_norms);
             const Eigen::Matrix3Xd pc_e = E.toEllipsoidFrame(pc);
             Eigen::VectorXd distRs = pc_e.colwise().norm();
-            if (!distDs.allFinite() || !distRs.allFinite()) return INIT_ERROR;
+            if (!distDs.allFinite() || !distRs.allFinite()) {
+                cout << YELLOW << " -- [CIRI] INIT_ERROR non-finite ellipsoid distances radii="
+                     << E.r().transpose() << " determinant=" << E.C().determinant()
+                     << RESET << endl;
+                return INIT_ERROR;
+            }
 
             Eigen::Matrix<uint8_t, -1, 1> bdFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(M, 1);
             Eigen::Matrix<uint8_t, -1, 1> pcFlags = Eigen::Matrix<uint8_t, -1, 1>::Constant(N, 1);

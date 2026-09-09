@@ -2823,11 +2823,23 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
         const bool candidate_made_progress = std::isfinite(retry_violation) &&
                                              retry_violation < best_normalized_violation;
         if (!candidate_is_feasible && !candidate_made_progress) {
+            restore_best_candidate();
+            if (retry + 1 < kMaximumFeasibilityRetries) {
+                // Retry zero intentionally uses the nominal dynamic weight;
+                // retry one is the bounded stronger-penalty attempt. Stopping
+                // here made that second branch unreachable precisely when the
+                // nominal-weight solve failed to improve feasibility.
+                planner_context_->warn(
+                        " -- [ExpOpt] feasibility retry made no progress: "
+                        "previous={} current={}; escalating bounded penalty",
+                        best_normalized_violation, retry_violation);
+                continue;
+            }
             planner_context_->warn(
-                    " -- [ExpOpt] feasibility retry made no progress: previous={} current={}",
+                    " -- [ExpOpt] feasibility retries made no progress: "
+                    "best={} current={}",
                     best_normalized_violation, retry_violation);
             diagnostics_.retry_stop_reason = 5;
-            restore_best_candidate();
             break;
         }
         best_normalized_violation = retry_violation;

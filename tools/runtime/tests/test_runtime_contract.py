@@ -116,6 +116,7 @@ class RuntimeContractTest(unittest.TestCase):
             "backup_px4_anchor_reject",
             "emergency_px4_anchor_reject",
             "fresh_typed_fast_lio_health_reject",
+            "stopped_hold_near_execution_reject",
         ])
 
         experiment = runner._tracking_experiment_payload(
@@ -132,6 +133,7 @@ class RuntimeContractTest(unittest.TestCase):
             "backup_px4_anchor_reject",
             "emergency_px4_anchor_reject",
             "fresh_typed_fast_lio_health_reject",
+            "stopped_hold_near_execution_reject",
         ])
 
     def test_tracking_experiment_rejects_invalid_values(self) -> None:
@@ -3344,7 +3346,7 @@ class RuntimeContractTest(unittest.TestCase):
         )())
         self.assertTrue(scenario.mode_exit_observed)
 
-    def test_external_mode_scenario_waits_for_typed_odometry_recovery(self) -> None:
+    def test_external_mode_scenario_keeps_odometry_failure_terminal(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario_recovery",
             ROOT / "tools/runtime/external_mode_scenario.py",
@@ -3392,15 +3394,15 @@ class RuntimeContractTest(unittest.TestCase):
                 "acceptance_speed_mps": 0.0,
             })())
 
-        self.assertTrue(scenario.automatic_recovery_pending)
-        self.assertIsNotNone(scenario.automatic_recovery_started_wall_s)
-        self.assertFalse(scenario.mission_unexpected_exit_observed)
-        self.assertIsNone(scenario.failure)
-        self.assertTrue(any(
+        self.assertFalse(scenario.automatic_recovery_pending)
+        self.assertIsNone(scenario.automatic_recovery_started_wall_s)
+        self.assertTrue(scenario.mission_unexpected_exit_observed)
+        self.assertEqual(scenario.failure, "External Mode exited before mission completion")
+        self.assertFalse(any(
             payload.get("name") == "automatic_recovery_wait_started"
             for kind, payload in records if kind == "event"))
 
-    def test_external_mode_scenario_records_product_owned_reentry(self) -> None:
+    def test_external_mode_scenario_does_not_label_reentry_as_automatic(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "external_mode_scenario_reentry",
             ROOT / "tools/runtime/external_mode_scenario.py",
@@ -3455,9 +3457,9 @@ class RuntimeContractTest(unittest.TestCase):
             })())
 
         self.assertTrue(scenario.mode_active)
-        self.assertFalse(scenario.automatic_recovery_pending)
-        self.assertEqual(scenario.automatic_recovery_count, 1)
-        self.assertTrue(any(
+        self.assertTrue(scenario.automatic_recovery_pending)
+        self.assertEqual(scenario.automatic_recovery_count, 0)
+        self.assertFalse(any(
             payload.get("automatic_recovery") is True
             for kind, payload in records if kind == "event"))
 

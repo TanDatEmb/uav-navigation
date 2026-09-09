@@ -59,6 +59,21 @@ TEST(VelocityOnlyContinuity, MainToBackupPreservesContinuityOwner) {
   EXPECT_TRUE(result.success());
 }
 
+TEST(VelocityOnlyContinuity, CertifiedEmergencyBrakeOwnsOneWayContinuityTransition) {
+  Previous previous;
+  previous.identity = identity(Role::kMain);
+  previous.velocity_enu = Eigen::Vector3d{1.0, 0.0, 0.0};
+  previous.acceleration_enu = Eigen::Vector3d{0.2, 0.0, 0.0};
+  previous.stamp_ns = 1'000'000'000LL;
+
+  const auto result = limit(Eigen::Vector3d{0.8, 0.0, 0.0}, 1'100'000'000LL,
+                            identity(Role::kEmergency), policy(), &previous);
+  ASSERT_TRUE(result.success());
+  EXPECT_EQ(result.previous_velocity_enu.x(), 1.0);
+  EXPECT_GT(result.projection_iterations, 0U);
+  EXPECT_TRUE(result.projection_converged);
+}
+
 TEST(VelocityOnlyContinuity, AuthorizedWaypointHandoffPreservesContinuity) {
   Previous previous;
   previous.identity = identity();
@@ -74,7 +89,7 @@ TEST(VelocityOnlyContinuity, AuthorizedWaypointHandoffPreservesContinuity) {
   EXPECT_TRUE(result.success());
 }
 
-TEST(VelocityOnlyContinuity, RejectsPostFilterVelocityCapViolation) {
+TEST(VelocityOnlyContinuity, RejectsVelocityStepWhenJerkCannotBrakeInTime) {
   Previous previous;
   previous.identity = identity();
   previous.velocity_enu = Eigen::Vector3d{1.99, 0.0, 0.0};
@@ -84,7 +99,11 @@ TEST(VelocityOnlyContinuity, RejectsPostFilterVelocityCapViolation) {
   bounded.maximum_velocity_mps = 2.0;
   const auto result = limit(Eigen::Vector3d{2.0, 0.0, 0.0}, 1'020'000'000LL,
                             identity(), bounded, &previous);
-  EXPECT_EQ(result.failure, Failure::kVelocityLimit);
+  // The requested step is infeasible: staying inside the velocity cap would
+  // require more deceleration than the configured jerk radius permits. The
+  // fail-closed classification must expose that remaining jerk violation.
+  EXPECT_EQ(result.failure, Failure::kJerkLimit);
+  EXPECT_GT(result.jerk_residual_mps3, 0.0);
 }
 
 TEST(VelocityOnlyContinuity, ProjectsNearCapTurnIntoJointReachableVelocityAccelerationJerkSet) {
@@ -121,6 +140,78 @@ TEST(VelocityOnlyContinuity, ProjectsNearCapTurnIntoJointReachableVelocityAccele
   }
 }
 
+TEST(VelocityOnlyContinuity, PreservesOneStepJerkBrakingViabilityNearVelocityCap) {
+  Previous previous;
+  previous.identity = identity();
+  previous.velocity_enu = Eigen::Vector3d{4.9, 0.0, 0.0};
+  previous.acceleration_enu = Eigen::Vector3d{1.0, 0.0, 0.0};
+  previous.stamp_ns = 1'000'000'000LL;
+  const auto bounded = Policy{5.0, 5.0, 8.0};
+  constexpr double dt_s = 0.016;
+  const auto result = limit(Eigen::Vector3d{5.0, 0.0, 0.0},
+                            previous.stamp_ns + 16'000'000LL,
+                            previous.identity, bounded, &previous);
+  ASSERT_TRUE(result.success()) << failureName(result.failure);
+  EXPECT_LE(result.velocity_enu.norm(), bounded.maximum_velocity_mps + 1.0e-10);
+  EXPECT_LE(result.velocity_viability_residual_mps, 1.0e-10);
+  const Eigen::Vector3d direction = result.velocity_enu.normalized();
+  const Eigen::Vector3d next_acceleration =
+      result.acceleration_enu - direction * bounded.maximum_jerk_mps3 * dt_s;
+  const Eigen::Vector3d next_velocity = result.velocity_enu + next_acceleration * dt_s;
+  EXPECT_LE(next_velocity.norm(), bounded.maximum_velocity_mps + 1.0e-10);
+}
+
+TEST(VelocityOnlyContinuity, BrakesBeforeVelocityCapMakesJerkInfeasible) {
+  Previous previous;
+  previous.identity = identity();
+  previous.stamp_ns = 1'000'000'000LL;
+  const auto bounded = Policy{5.0, 5.0, 8.0};
+  constexpr std::int64_t dt_ns = 16'000'000LL;
+
+  for (int step = 0; step < 500; ++step) {
+    const auto result = limit(Eigen::Vector3d{5.0, 0.0, 0.0},
+                              previous.stamp_ns + dt_ns, previous.identity,
+                              bounded, &previous);
+    ASSERT_TRUE(result.success()) << "step=" << step
+                                  << " failure=" << failureName(result.failure)
+                                  << " v=" << result.velocity_enu.norm()
+                                  << " a=" << result.acceleration_enu.norm()
+                                  << " jerk="
+                                  << (result.acceleration_enu - previous.acceleration_enu).norm() /
+                                         (dt_ns * 1.0e-9);
+    EXPECT_LE(result.velocity_enu.norm(), bounded.maximum_velocity_mps + 1.0e-10);
+    EXPECT_LE(result.acceleration_enu.norm(), bounded.maximum_acceleration_mps2 + 1.0e-10);
+    EXPECT_LE((result.acceleration_enu - previous.acceleration_enu).norm() /
+                  (dt_ns * 1.0e-9),
+              bounded.maximum_jerk_mps3 + 1.0e-10);
+    previous.velocity_enu = result.velocity_enu;
+    previous.acceleration_enu = result.acceleration_enu;
+    previous.stamp_ns += dt_ns;
+  }
+  EXPECT_LE(previous.velocity_enu.norm(), bounded.maximum_velocity_mps + 1.0e-10);
+  EXPECT_LE(previous.acceleration_enu.norm(), 1.0e-6);
+}
+
+TEST(VelocityOnlyContinuity, UsesReachableBrakingRecoveryBeforeCap) {
+  Previous previous;
+  previous.identity = identity();
+  previous.velocity_enu = Eigen::Vector3d{4.95, 0.0, 0.0};
+  previous.acceleration_enu = Eigen::Vector3d{2.5, 0.0, 0.0};
+  previous.stamp_ns = 1'000'000'000LL;
+  const auto bounded = Policy{5.0, 5.0, 8.0};
+
+  const auto result = limit(Eigen::Vector3d{4.95, 0.2, 0.0},
+                            previous.stamp_ns + 16'000'000LL,
+                            previous.identity, bounded, &previous);
+  ASSERT_TRUE(result.success()) << failureName(result.failure);
+  EXPECT_TRUE(result.braking_recovery);
+  EXPECT_LE(result.velocity_enu.norm(), bounded.maximum_velocity_mps + 1.0e-10);
+  EXPECT_LE(result.acceleration_enu.norm(), bounded.maximum_acceleration_mps2 + 1.0e-10);
+  EXPECT_LE((result.acceleration_enu - previous.acceleration_enu).norm() / 0.016,
+            bounded.maximum_jerk_mps3 + 1.0e-10);
+  EXPECT_LT(result.acceleration_enu.x(), previous.acceleration_enu.x());
+}
+
 TEST(VelocityOnlyContinuity, RejectsUnboundedPreviousAcceleration) {
   Previous previous;
   previous.identity = identity();
@@ -155,7 +246,12 @@ TEST(VelocityOnlyContinuity, ObsoleteOrEmergencyOwnerFailsClosed) {
             Failure::kIdentityBoundary);
 
   changed = identity(Role::kMain);
-  changed.role = static_cast<Role>(2U);
+  changed.role = static_cast<Role>(3U);
+  EXPECT_EQ(limit(Eigen::Vector3d::Zero(), 1'100'000'000LL, changed, policy(), &previous).failure,
+            Failure::kIdentityBoundary);
+
+  previous.identity = identity(Role::kEmergency);
+  changed = identity(Role::kMain);
   EXPECT_EQ(limit(Eigen::Vector3d::Zero(), 1'100'000'000LL, changed, policy(), &previous).failure,
             Failure::kIdentityBoundary);
 }

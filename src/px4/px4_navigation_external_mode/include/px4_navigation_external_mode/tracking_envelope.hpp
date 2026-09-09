@@ -12,6 +12,7 @@ inline double stableVectorNorm(const Eigen::Vector3d& vector) {
 }
 
 struct TrackingEnvelopeResult {
+  bool support_valid{false};
   bool valid{false};
   double longitudinal_error_m{0.0};
   double reverse_error_m{0.0};
@@ -55,6 +56,7 @@ inline TrackingEnvelopeResult evaluateTrackingEnvelope(
       return result;
     }
     result.lateral_error_m = 0.0;
+    result.support_valid = true;
     result.valid = result.longitudinal_error_m <= geometric_limit_m;
     return result;
   }
@@ -76,6 +78,7 @@ inline TrackingEnvelopeResult evaluateTrackingEnvelope(
       !std::isfinite(result.reverse_error_m)) {
     return result;
   }
+  result.support_valid = true;
   result.valid = result.longitudinal_error_m <= result.longitudinal_limit_m &&
                  result.reverse_error_m <= result.reverse_limit_m &&
                  result.lateral_error_m <= geometric_limit_m;

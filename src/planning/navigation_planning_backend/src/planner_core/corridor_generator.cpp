@@ -599,6 +599,11 @@ geometry_utils::Polytope acceptanceBallInnerCell(
             polytope.SetSeedLine(line);
             return true;
         } else {
+            planner_context_->warn(
+                " -- [CIRI] line-seed decomposition rejected result={} points={} "
+                "seed_length={} deadline_expired={}",
+                RET_CODE_STR[success], pc.size(), (line.second - line.first).norm(),
+                deadline != nullptr && deadline->steadyExpired());
             polytope.Reset();
             cout << YELLOW << "\t box_min = " << box_min.transpose() << RESET << endl;
             cout << YELLOW << "\t box_max =" << box_max.transpose() << RESET << endl;

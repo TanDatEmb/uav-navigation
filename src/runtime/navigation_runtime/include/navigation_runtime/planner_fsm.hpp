@@ -759,6 +759,39 @@ inline double retainedCommandTrackingLimit(
   return std::min(planner_tracking_budget_m, execution_anchor_limit_m);
 }
 
+struct TimeAlignedRetainedTracking final {
+  bool support_valid{false};
+  bool within_limits{false};
+  double tracking_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double absolute_anchor_error_m{std::numeric_limits<double>::quiet_NaN()};
+};
+
+// A propagated execution state describes the vehicle at source_stamp, not at
+// the callback's evaluation time. Apply the planner's clearance-reserved tube
+// to the immutable command sample at that same source stamp. Keep the command
+// sampled at now as an independent outer divergence cap; temporal alignment
+// must never hide a runaway or an expired command stream.
+inline TimeAlignedRetainedTracking assessTimeAlignedRetainedTracking(
+    const double command_error_at_state_source_m,
+    const double command_error_at_now_m,
+    const double tracking_budget_m,
+    const double absolute_anchor_cap_m) noexcept {
+  TimeAlignedRetainedTracking result;
+  if (!std::isfinite(command_error_at_state_source_m) ||
+      command_error_at_state_source_m < 0.0 ||
+      !std::isfinite(command_error_at_now_m) || command_error_at_now_m < 0.0 ||
+      !std::isfinite(tracking_budget_m) || tracking_budget_m <= 0.0 ||
+      !std::isfinite(absolute_anchor_cap_m) || absolute_anchor_cap_m <= 0.0) {
+    return result;
+  }
+  result.support_valid = true;
+  result.tracking_error_m = command_error_at_state_source_m;
+  result.absolute_anchor_error_m = command_error_at_now_m;
+  result.within_limits = command_error_at_state_source_m <= tracking_budget_m &&
+      command_error_at_now_m <= absolute_anchor_cap_m;
+  return result;
+}
+
 enum class PhaseExecutionCertificateStatus : std::uint8_t {
   kInvalid,
   kAccepted,
