@@ -1489,7 +1489,7 @@ class ExternalModeScenario:
         if self.local_takeoff_setpoint_count == 1:
             self._record("event", {
                 "name": "local_takeoff_setpoint_started",
-                "target_ned_m": list(setpoint.position),
+                "target_ned_m": _json_vector(setpoint.position),
                 "state_source_stamp_ns": int(state["source_stamp_ns"]),
                 "state_age_s": float(state["age_s"]),
             })
