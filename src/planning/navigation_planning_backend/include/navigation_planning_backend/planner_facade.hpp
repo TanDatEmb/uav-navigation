@@ -58,6 +58,8 @@ class PlannerFacade final {
   void setGoalAcceptanceRadius(double radius_m) noexcept;
   [[nodiscard]] bool setRouteSnapshot(
       const navigation_mission::ImmutableRouteSnapshot& route) noexcept;
+  void setMissionStartPosition(
+      const std::optional<Eigen::Vector3d>& mission_start) noexcept;
   void setPassThroughNextTarget(
       const std::optional<Eigen::Vector3d>& next_target) noexcept;
   bool setState(const navigation_planning::KinematicState& state);
@@ -112,6 +114,8 @@ class PlannerFacade final {
   [[nodiscard]] double solveDeadlineSeconds() const noexcept;
   [[nodiscard]] double replanForwardSeconds() const noexcept;
   [[nodiscard]] double trackingErrorBudgetMeters() const noexcept;
+  [[nodiscard]] double yawRateLimitRadS() const noexcept;
+  [[nodiscard]] double yawAccelerationLimitRadS2() const noexcept;
 
   [[nodiscard]] navigation_planning::PlannerDiagnostics diagnostics() const;
 

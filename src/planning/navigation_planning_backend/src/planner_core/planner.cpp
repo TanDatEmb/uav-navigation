@@ -1292,7 +1292,7 @@ double knownFreeGuideSupport(
         }
         route_yaw_reference_ = computeRouteYawReference(
             *route_snapshot_, solve_state_.p, solve_state_.v, solve_state_.yaw,
-            cfg_.route_yaw_config);
+            cfg_.route_yaw_config, mission_start_position_enu_);
         if (!route_yaw_reference_.valid) return false;
         if (route_yaw_reference_.source == RouteYawSource::kRouteLookahead ||
             route_yaw_reference_.source == RouteYawSource::kRouteTurnInPlace) {

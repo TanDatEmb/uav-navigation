@@ -52,6 +52,14 @@ bool goalIdentityNewer(const navigation_contracts::msg::NavigationGoal& candidat
   return candidate.route.route_revision > current.route.route_revision;
 }
 
+navigation_runtime::HeadingTargetIdentity headingTargetIdentity(
+    const navigation_contracts::msg::NavigationGoal& goal,
+    const std::uint64_t localization_epoch) {
+  return navigation_runtime::HeadingTargetIdentity{
+      goal.mission_id, goal.route.route_revision, goal.waypoint_index,
+      goal.request_id, localization_epoch};
+}
+
 bool finiteNonzeroQuaternion(const Eigen::Quaterniond& quaternion) {
   const double scale = quaternion.coeffs().cwiseAbs().maxCoeff();
   return quaternion.coeffs().allFinite() && std::isfinite(scale) && scale > 1.0e-9;
@@ -1684,6 +1692,11 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
       active_goal_.reset();
       executing_goal_.reset();
     }
+    heading_mission_start_world_.reset();
+    heading_mission_id_.clear();
+    heading_route_revision_ = 0U;
+    heading_localization_epoch_ = 0U;
+    heading_tracker_.reset();
     new_goal_ = active_goal_.has_value();
     hot_goal_transition_ = false;
     execution_episode_.clearRestartFromRest();
@@ -1933,6 +1946,11 @@ void NavigationRuntimeNode::transitionForeignMissionLocked(
   hot_goal_transition_ = false;
   execution_episode_.clearRestartFromRest();
   failClosedLocked();
+  heading_mission_start_world_.reset();
+  heading_mission_id_.clear();
+  heading_route_revision_ = 0U;
+  heading_localization_epoch_ = 0U;
+  heading_tracker_.reset();
   plan_from_rest_first_failure_steady_ns_ = 0;
   skip_replan_once_.store(false, std::memory_order_release);
   trajectory_reaches_goal_.store(false, std::memory_order_release);
@@ -2060,6 +2078,34 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
     }
   }
   active_goal_ = *message;
+  const auto heading_epoch = active_localization_epoch_.load(std::memory_order_acquire);
+  const bool heading_scope_changed = heading_mission_id_ != message->mission_id ||
+      heading_localization_epoch_ != heading_epoch ||
+      heading_route_revision_ != message->route.route_revision ||
+      heading_mission_id_.empty();
+  if (heading_scope_changed) {
+    // The first-leg origin is a measured mission-activation pose, never the
+    // first waypoint. If no fresh state is available here, publishCommand()
+    // may fill it from the same validated execution-state lease later.
+    heading_mission_id_ = message->mission_id;
+    heading_route_revision_ = message->route.route_revision;
+    heading_localization_epoch_ = heading_epoch;
+    heading_mission_start_world_.reset();
+    heading_tracker_.reset();
+    const auto activation_state = execution_state_store_.load();
+    if (activation_state && activation_state->state.finite() &&
+        activation_state->state.localization_epoch == heading_epoch &&
+        activation_state->state.world_frame_id == planning_frame_ &&
+        activation_state->state.position_world.allFinite()) {
+      const auto freshness = navigation_contracts::evaluateExecutionStateFreshness(
+          now().nanoseconds(), activation_state->state.source_stamp_ns,
+          navigation_common::steadyClockNowNanoseconds(),
+          activation_state->state.receive_stamp_ns, data_freshness_window_s_);
+      if (freshness.valid()) {
+        heading_mission_start_world_ = activation_state->state.position_world;
+      }
+    }
+  }
   if (!same_logical_goal) {
     // Global order is input_mutex_ -> execution transition. Command sampling
     // snapshots input and releases it before taking the transition lock.
@@ -2967,6 +3013,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       completed_executing_goal_at_cycle;
   bool completed_trajectory = false;
   navigation_execution::ExecutionTimelineSnapshot expected_timeline_at_cycle;
+  std::optional<Eigen::Vector3d> heading_mission_start_at_cycle;
   const auto input_lock_started = std::chrono::steady_clock::now();
   {
     // Capture the planner callback's ownership identity once.  The helper used
@@ -2993,6 +3040,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     localization_epoch_at_cycle = active_localization_epoch_.load(
         std::memory_order_acquire);
     expected_timeline_at_cycle = command_bundle_store_.snapshot();
+    heading_mission_start_at_cycle = heading_mission_start_world_;
     if (trajectory_completion_witness_) {
       const auto& witness = *trajectory_completion_witness_;
       if (completionWitnessMatchesCurrentExecution(
@@ -3225,6 +3273,21 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   if (!execution_state.finite() || !planner_->setState(execution_state)) {
     ++invalid_execution_state_count_;
     return;
+  }
+  if (!heading_mission_start_at_cycle.has_value() && goal) {
+    // If activation raced the first valid propagated state, bind the first-leg
+    // origin to this same fresh state before the planner request is formed.
+    // This is still mission activation state, never waypoint geometry.
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    if (active_goal_ && sameGoalIdentity(goal, active_goal_) &&
+        heading_mission_id_ == goal->mission_id &&
+        heading_localization_epoch_ == localization_epoch_at_cycle &&
+        heading_route_revision_ == goal->route.route_revision &&
+        execution_state.world_frame_id == planning_frame_) {
+      heading_mission_start_world_ = execution_state.position_world;
+      heading_mission_start_at_cycle = heading_mission_start_world_;
+    }
   }
 
   // planner backend may produce a successful local trajectory ending at the current
@@ -4250,6 +4313,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
   planner_->setWorldModelView(pinned_world.view);
   planner_->setGoalAcceptanceRadius(active_route_waypoint.acceptance_radius_m);
+  planner_->setMissionStartPosition(heading_mission_start_at_cycle);
   if (!planner_->setRouteSnapshot(*route_snapshot)) {
     planner_->cancelActiveSolve();
     if (cycle_goal) {
@@ -7476,6 +7540,60 @@ void NavigationRuntimeNode::publishCommand() {
           final_execution_freshness.valid() &&
           execution_episode_.snapshot().command_available &&
           command_execution_lease_failure_latch_.allowsCommandExposure()) {
+        // Heading is a semantic active-leg reference owned by the command
+        // clock. Do not seed it from the sampled bundle: a planner solve for
+        // an older waypoint may still be the sampled pointer while the active
+        // goal has already advanced. The same route reference and yaw limits
+        // are consumed by the planner and this execution-side bounded step.
+        if (sampled_command_valid &&
+            sampled_role == navigation_planning::CandidateRole::kMain &&
+            !sampled_planned_stop_hold && !safety_suffix_active &&
+            !traj_finish && command_goal && goal_identity_current &&
+            final_execution_state && final_execution_state->state.finite() &&
+            final_execution_state->state.localization_epoch ==
+                localization_epoch_at_command &&
+            final_execution_freshness.valid()) {
+          if (heading_mission_id_ != command_goal->mission_id ||
+              heading_localization_epoch_ != localization_epoch_at_command ||
+              heading_route_revision_ != command_goal->route.route_revision) {
+            heading_mission_id_ = command_goal->mission_id;
+            heading_route_revision_ = command_goal->route.route_revision;
+            heading_localization_epoch_ = localization_epoch_at_command;
+            heading_mission_start_world_.reset();
+          }
+          if (!heading_mission_start_world_.has_value() &&
+              final_execution_state->state.world_frame_id == planning_frame_) {
+            heading_mission_start_world_ =
+                final_execution_state->state.position_world;
+          }
+          const auto route = decodeRouteSnapshot(*command_goal);
+          if (route && planner_) {
+            const auto reference = navigation_planning_backend::computeRouteYawReference(
+                *route, final_execution_state->state.position_world,
+                final_execution_state->state.velocity_world,
+                final_execution_state->state.yaw_rad, {},
+                heading_mission_start_world_);
+            const double maximum_yaw_rate = planner_->yawRateLimitRadS();
+            const double maximum_yaw_acceleration =
+                planner_->yawAccelerationLimitRadS2();
+            if (reference.valid && std::isfinite(maximum_yaw_rate) &&
+                maximum_yaw_rate > 0.0 &&
+                std::isfinite(maximum_yaw_acceleration) &&
+                maximum_yaw_acceleration > 0.0) {
+              const auto heading = heading_tracker_.step(
+                  headingTargetIdentity(*command_goal,
+                                        localization_epoch_at_command),
+                  reference.target_yaw_rad,
+                  final_execution_state->state.yaw_rad,
+                  final_publish_now_ns, maximum_yaw_rate,
+                  maximum_yaw_acceleration);
+              if (heading.valid) {
+                command.yaw = heading.yaw_rad;
+                command.yaw_rate = heading.yaw_rate_rad_s;
+              }
+            }
+          }
+        }
         exposed = command_bundle_store_.publishIfCurrent(
             sampled_bundle, command_goal_epoch_at_command, publish_ros_command);
       }

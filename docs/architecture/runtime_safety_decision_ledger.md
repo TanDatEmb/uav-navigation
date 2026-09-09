@@ -1,5 +1,41 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Bind active-leg heading to mission start and command-clock continuity
+
+- **Owner/status:** navigation planning/runtime yaw integration; `IMPLEMENTED`,
+  focused evidence complete and representative SITL/recorded-data verification
+  still required. The change is not flight-acceptance evidence.
+- **Scope/units:** The first active leg uses the measured mission-activation
+  position as its origin and the active waypoint as its target. Later legs use
+  the previous active waypoint and current active waypoint. Runtime latches the
+  mission-start position only for the same mission, route revision, frame, and
+  localization epoch; changing only waypoint/request identity does not
+  recapture it. The command callback owns the published yaw/rate state and
+  applies the shared bounded yaw-rate/yaw-acceleration step on the command
+  clock. A stale planner bundle cannot reset that state or restore an older
+  leg target. Clock rollback/duplicate stamps hold the last state and re-anchor
+  the next valid tick; an excessive clock gap holds without an unbounded turn.
+- **Safety impact:** This changes heading reference timing and preserves the
+  configured planner yaw-rate and yaw-acceleration limits. It does not widen
+  position, world, collision, flatness, candidate, handoff, freshness, lease,
+  BACKUP, EMERGENCY, or mission-completion gates. MAIN command yaw is updated
+  only after the final identity/lease check; BACKUP/EMERGENCY and terminal hold
+  samples retain their certified bundle heading. Missing/invalid first-leg
+  anchor holds measured heading instead of inventing a waypoint-origin turn.
+- **Evidence:** Route-yaw regressions cover latched first-leg origin, active-leg
+  transition, wraparound, zero-horizontal geometry, and bounded rate/acceleration.
+  Runtime tracker regressions cover initial measured seeding, waypoint identity
+  replacement without rate reset, clock rollback, and large-gap holding. The
+  planner and runtime now consume the same optional mission-start anchor and
+  yaw limits. These are focused source/component results, not SITL acceptance.
+- **Removal/review condition:** Revisit after repeated WP2->WP3->WP4 and
+  reversal missions with command target/actual yaw/active identity timelines,
+  plus representative recorded sensor data. Do not claim heading stability or
+  PX4 tracking from the focused tests alone.
+- **Verification:** `test_route_yaw_reference`, `test_heading_tracker`,
+  `navigation_runtime_core` Release build, `git diff --check`, then repeated
+  identity/handoff runtime tests and map/profile-separated SITL artifacts.
+
 ### 2026-09-09 - Apply the requested 12 m/s MAIN ceiling to the shared development config
 
 - **Owner/status:** Root review task and implementation task

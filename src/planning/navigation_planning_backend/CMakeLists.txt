@@ -202,4 +202,6 @@ if(BUILD_TESTING)
   configure_backend_test(replay_nominal_problem_snapshot)
 endif()
 
+install(DIRECTORY include/ DESTINATION include)
+
 ament_package()

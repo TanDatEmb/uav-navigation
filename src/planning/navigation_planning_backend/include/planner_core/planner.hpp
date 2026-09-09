@@ -171,6 +171,7 @@ namespace navigation_planning_backend {
         std::size_t acceptance_endpoint_lease_waypoint_index_{0U};
         std::optional<Vec3f> pass_through_next_target_;
         std::optional<navigation_mission::ImmutableRouteSnapshot> route_snapshot_;
+        std::optional<Eigen::Vector3d> mission_start_position_enu_;
         RouteYawReference route_yaw_reference_{};
         std::optional<double> last_route_yaw_target_rad_;
         double latest_candidate_maximum_yaw_rate_rad_s_{
@@ -541,6 +542,15 @@ namespace navigation_planning_backend {
                 pass_through_next_target_.reset();
             }
             return true;
+        }
+
+        void setMissionStartPosition(
+                const std::optional<Eigen::Vector3d>& mission_start) noexcept {
+            if (mission_start.has_value() && mission_start->allFinite()) {
+                mission_start_position_enu_ = *mission_start;
+            } else {
+                mission_start_position_enu_.reset();
+            }
         }
 
         bool updateRouteYawReference() noexcept;

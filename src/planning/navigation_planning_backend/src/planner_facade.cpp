@@ -280,6 +280,13 @@ bool PlannerFacade::setRouteSnapshot(
   return impl_ && impl_->planner && impl_->planner->setRouteSnapshot(route);
 }
 
+void PlannerFacade::setMissionStartPosition(
+    const std::optional<Eigen::Vector3d>& mission_start) noexcept {
+  if (impl_ && impl_->planner) {
+    impl_->planner->setMissionStartPosition(mission_start);
+  }
+}
+
 void PlannerFacade::setPassThroughNextTarget(
     const std::optional<Eigen::Vector3d>& next_target) noexcept {
   if (impl_ && impl_->planner) impl_->planner->setPassThroughNextTarget(next_target);
@@ -464,6 +471,14 @@ double PlannerFacade::replanForwardSeconds() const noexcept {
 
 double PlannerFacade::trackingErrorBudgetMeters() const noexcept {
   return impl_->planner->trackingErrorBudgetMeters();
+}
+
+double PlannerFacade::yawRateLimitRadS() const noexcept {
+  return impl_->planner->yawRateLimitRadS();
+}
+
+double PlannerFacade::yawAccelerationLimitRadS2() const noexcept {
+  return impl_->planner->yawAccelerationLimitRadS2();
 }
 
 navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
