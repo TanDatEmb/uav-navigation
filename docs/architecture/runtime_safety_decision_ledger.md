@@ -20442,3 +20442,38 @@ release profiles must not use the former allowance.
   fingerprint run recording requested/effective/command/measured speed,
   tracking raw/aligned residuals, yaw response, certificates, authority
   margin, command gaps, recovery, and collisions; `git diff --check`.
+
+### 2026-09-09 - Define the PX4 1.17 Level A tracking-adapter seam
+
+- **Owner/status:** PX4 External Mode implementation; `IMPLEMENTED` as a pure
+  contract/helper and fault-test seam only. The runtime adapter is not wired,
+  the policy remains off unless an explicit caller later opts in, and there is
+  no SITL, flight, or hardware qualification claim.
+- **Scope:** Add the ROS/PX4-message-free `tracking_adapter::adapt` contract
+  for a paired LIO ENU reference, typed LIO health/epoch, raw PX4 local NED
+  state, reset counters, and timing witness. Level A produces relative
+  position feedback while preserving planner velocity/acceleration feedforward;
+  velocity lambda is required to remain zero. The result carries an immutable
+  identity/frame/error/reset/timing witness. Invalid frame, health, heading,
+  dead-reckoning, reset, timing, or numeric inputs return a typed failure and
+  no default-looking setpoint.
+- **Safety impact:** This commit changes no setpoint behavior, estimator
+  fusion, timeout, parameter, role, lease, or safety gate. It prevents a future
+  integration from silently using cached/invalid state and makes the required
+  timestamp/reset/frame evidence explicit before shadow or Level A wiring.
+- **Evidence:** `test_px4_tracking_adapter` covers relative ENU/NED algebra,
+  basis identity, yaw-rate sign, policy-off and non-zero-lambda rejection,
+  tilt/extrinsic/heading rejection, reset mismatch, dead-reckoning, timing
+  bound, invalid packet, and non-finite input. Release package build and all
+  five `px4_navigation_external_mode` CTest targets pass; no runtime adapter
+  path is exercised.
+- **Removal/review condition:** Keep until NavigationMode owns bounded paired
+  snapshots and a clock/reset contract, then review this seam against PX4 1.17
+  source/binary identity before adding shadow instrumentation. Do not enable
+  Level A until timing distributions, reset-in-flight ordering, and all
+  MAIN/BACKUP/EMERGENCY/hold continuity evidence are available.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && python3
+  tools/runtime/build.py --mode release build --packages
+  px4_navigation_external_mode`; `source install/setup.bash && python3
+  tools/runtime/build.py --mode release test --packages
+  px4_navigation_external_mode`; `git diff --check`.
