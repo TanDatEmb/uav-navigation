@@ -1090,6 +1090,7 @@ class RuntimeContractTest(unittest.TestCase):
     def test_gps_off_ev_12mps_profile_changes_only_nominal_velocity_cap(self) -> None:
         profile = runner._sitl_profile_contract("gps_off_ev_12mps")
         self.assertEqual(profile["control_envelope_max_velocity_mps"], 12.0)
+        self.assertEqual(profile["takeoff_reference"], "local_ned")
         self.assertFalse(profile["qualification_eligible"])
         self.assertEqual(profile["px4_parameters"], {
             "EKF2_GPS_CTRL": 0,
@@ -1111,6 +1112,21 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(planner["planner"]["control_envelope"]["maximum_velocity_mps"], 12.0)
             self.assertEqual(planner["planner"]["control_envelope"]["maximum_acceleration_mps2"], 2.0)
             self.assertEqual(planner["planner"]["control_envelope"]["maximum_jerk_mps3"], 4.0)
+
+    def test_gps_off_profile_uses_bounded_local_takeoff_before_external_mode(self) -> None:
+        source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(
+            encoding="utf-8")
+        self.assertIn('"takeoff_reference", "amsl"', source)
+        self.assertIn('self.takeoff_reference == "local_ned"', source)
+        self.assertIn("local_takeoff_state_max_age_s", source)
+        self.assertIn("enter_local_takeoff_offboard", source)
+        self.assertIn("self.VehicleCommand.VEHICLE_CMD_DO_SET_MODE", source)
+        self.assertIn("setpoint.position = [", source)
+        self.assertIn("self.takeoff_reference == \"local_ned\"", source)
+        self.assertIn("self.mode_active", source)
+        self.assertIn("self._publish_local_takeoff_setpoint", source)
+        self.assertIn('"takeoff_reference": sitl_profile_contract["takeoff_reference"]',
+                      (ROOT / "tools/runtime/runner.py").read_text(encoding="utf-8"))
 
     def test_allow_unknown_policy_is_forwarded_to_exploration_planner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

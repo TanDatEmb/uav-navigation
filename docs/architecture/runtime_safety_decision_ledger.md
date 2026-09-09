@@ -1,5 +1,40 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Use bounded local-NED takeoff for GPS-off EV diagnostic profile
+
+- **Owner/status:** SITL External Mode harness and PX4 estimator A/B profile;
+  `IMPLEMENTED`, diagnostic-only and not qualification evidence. The default
+  multisensor/AMSL takeoff path is unchanged.
+- **Scope/units:** Only `gps_off_ev_12mps` selects `takeoff_reference=local_ned`.
+  The harness requires finite, valid, non-dead-reckoning PX4 local position and
+  velocity, with a source timestamp no older than `0.20 s`, pre-streams a
+  bounded position setpoint at local `z=-takeoff_altitude_m`, and requests
+  Offboard after `1.0 s` of setpoint preparation. The existing `3.0 m` takeoff
+  height, airborne velocity gate, stability window and External Mode handoff
+  remain authoritative.
+- **Behavior:** The temporary Offboard publisher is the sole takeoff setpoint
+  owner until the local airborne/stability gates pass. It then requests the
+  product-owned External Mode and stops publishing local takeoff setpoints.
+  The profile never fabricates AMSL altitude and never re-enables GNSS fusion.
+- **Safety impact:** This removes only the incompatible AMSL prerequisite from
+  the explicitly opt-in GPS-off diagnostic profile. Invalid/stale local state,
+  dead reckoning or failed handoff fails closed with a bounded timeout; no
+  tracking, lease, planner, corridor, world or Hold gate is relaxed. The
+  profile remains `qualification_eligible=false` and PX4 Hold limitations stay
+  diagnostic-only.
+- **Evidence:** The prior GPS-off run applied `GPS_CTRL=0`, `EV_CTRL=15`, and
+  `HGT_REF=3` but stopped at `GLOBAL_ALTITUDE_TIMEOUT` before any planner PVA
+  command. Focused source-contract coverage is added for local-state validity,
+  local-NED setpoint ownership and the External Mode handoff.
+- **Removal/review condition:** Remove or redesign the profile path if PX4
+  provides a supported local takeoff contract without temporary Offboard, if
+  local state freshness/validity is not observable, or if repeated diagnostic
+  runs show unsafe ownership overlap or handoff failure. Do not promote it to
+  default or qualification configuration without a separate measured decision.
+- **Verification:** Run the focused runtime/profile tests, canonical Release
+  build, `git diff --check`, then GPS-off EV runs at requested 3 m/s and 5 m/s
+  with exact profile/config provenance. Keep all planner WIP unstaged.
+
 ### 2026-09-08 - Opt-in speed-adaptive and relaxed MAIN tracking SITL experiment
 
 - **Owner/status:** Runtime/PX4 tracking experiment, implemented by the review

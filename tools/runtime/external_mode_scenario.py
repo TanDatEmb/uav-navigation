@@ -7,7 +7,8 @@ the PX4 TrajectorySetpoint boundary. A deterministic stationary fixture is
 still available for isolated adapter tests. The scenario selects
 the registered external mode from VehicleStatus, arms, enters the mode, then
 hands control back to PX4 Hold (AUTO_LOITER). It never lands or disarms the vehicle, and it
-does not publish OffboardControlMode or use the Offboard mode path.
+does not use the Offboard mode path unless an opt-in local-NED takeoff
+profile owns Offboard temporarily before handing control to External Mode.
 """
 
 from __future__ import annotations
@@ -307,6 +308,7 @@ class ExternalModeScenario:
         )
         from px4_msgs.msg import (
             ModeCompleted,
+            OffboardControlMode,
             TrajectorySetpoint,
             VehicleCommand,
             VehicleCommandAck,
@@ -327,6 +329,8 @@ class ExternalModeScenario:
         self.Point = Point
         self.NavigationModeStatus = NavigationModeStatus
         self.VehicleCommand = VehicleCommand
+        self.OffboardControlMode = OffboardControlMode
+        self.TrajectorySetpoint = TrajectorySetpoint
         self.ModeCompleted = ModeCompleted
         self.VehicleStatus = VehicleStatus
         self.Bool = Bool
@@ -337,6 +341,9 @@ class ExternalModeScenario:
         self.config = config.get("scenario", config)
         self.interactive_handover = bool(self.config.get("interactive_handover", False))
         self.manual_takeoff = bool(self.config.get("manual_takeoff", False))
+        self.takeoff_reference = str(self.config.get("takeoff_reference", "amsl"))
+        if self.takeoff_reference not in {"amsl", "local_ned"}:
+            raise ValueError("takeoff_reference must be one of: amsl, local_ned")
         self.execution = str(self.config.get("execution", "single_goal"))
         if self.execution not in {"single_goal", "mission"}:
             raise ValueError(f"unsupported scenario execution: {self.execution}")
@@ -388,6 +395,9 @@ class ExternalModeScenario:
         self.takeoff_native_hold_ready = False
         self.takeoff_observed = False
         self.takeoff_stable_since_ns: int | None = None
+        self.local_takeoff_started_sim_ns: int | None = None
+        self.local_takeoff_offboard_requested = False
+        self.local_takeoff_setpoint_count = 0
         self.arm_ack_success_sim_ns: int | None = None
         self.post_takeoff_mode_entered = False
         self.pre_activation_ready_since_ns: int | None = None
@@ -468,6 +478,10 @@ class ExternalModeScenario:
         reliable_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.goal_pub = self.node.create_publisher(NavigationGoal, "/navigation/goal", reliable_qos)
         self.command_pub = self.node.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", px4_qos)
+        self.offboard_mode_pub = self.node.create_publisher(
+            OffboardControlMode, "/fmu/in/offboard_control_mode", px4_qos)
+        self.local_takeoff_setpoint_pub = self.node.create_publisher(
+            TrajectorySetpoint, "/fmu/in/trajectory_setpoint", px4_qos)
         self.node.create_subscription(Clock, "/clock", self._clock, px4_qos)
         self.node.create_subscription(
             PropagatedOdometry,
@@ -1404,11 +1418,82 @@ class ExternalModeScenario:
         if math.isfinite(speed):
             self.measured_speed_samples.append(speed)
         self.latest_local_position = {
+            "x_ned_m": float(message.x),
+            "y_ned_m": float(message.y),
             "z_ned_m": float(message.z),
             "vx_ned_m_s": float(message.vx),
             "vy_ned_m_s": float(message.vy),
             "vz_ned_m_s": float(message.vz),
+            "xy_valid": bool(message.xy_valid),
+            "z_valid": bool(message.z_valid),
+            "v_xy_valid": bool(message.v_xy_valid),
+            "v_z_valid": bool(message.v_z_valid),
+            "dead_reckoning": bool(message.dead_reckoning),
+            "source_timestamp_us": int(message.timestamp_sample),
+            "receive_sim_ns": int(self.sim_now_ns),
         }
+
+    def _local_takeoff_state(self) -> dict[str, Any] | None:
+        state = self.latest_local_position
+        required = (
+            "x_ned_m", "y_ned_m", "z_ned_m", "vx_ned_m_s", "vy_ned_m_s",
+            "vz_ned_m_s", "source_timestamp_us", "receive_sim_ns",
+        )
+        if not all(key in state for key in required):
+            return None
+        if not all(bool(state.get(key, False)) for key in (
+                "xy_valid", "z_valid", "v_xy_valid", "v_z_valid")):
+            return None
+        if bool(state.get("dead_reckoning", False)):
+            return None
+        if not all(math.isfinite(float(state[key])) for key in required[:-2]):
+            return None
+        source_stamp_ns = int(state["source_timestamp_us"]) * 1000
+        if source_stamp_ns <= 0:
+            return None
+        age_s = (int(self.sim_now_ns) - source_stamp_ns) / 1e9
+        max_age_s = float(self.config.get("local_takeoff_state_max_age_s", 0.20))
+        if not math.isfinite(max_age_s) or max_age_s <= 0.0:
+            return None
+        if not math.isfinite(age_s) or age_s < -0.05 or age_s > max_age_s:
+            return None
+        return dict(state, source_stamp_ns=source_stamp_ns, age_s=age_s)
+
+    def _publish_local_takeoff_setpoint(self, altitude_m: float) -> bool:
+        state = self._local_takeoff_state()
+        if state is None:
+            return False
+        offboard = self.OffboardControlMode()
+        offboard.timestamp = self.sim_now_ns // 1000
+        offboard.position = True
+        offboard.velocity = False
+        offboard.acceleration = False
+        offboard.attitude = False
+        offboard.body_rate = False
+        self.offboard_mode_pub.publish(offboard)
+
+        setpoint = self.TrajectorySetpoint()
+        setpoint.timestamp = self.sim_now_ns // 1000
+        setpoint.position = [
+            float(state["x_ned_m"]), float(state["y_ned_m"]), -float(altitude_m)]
+        # Keep the local preflight setpoint valid for the same PX4 trajectory
+        # boundary observer used by the mission report.  Position remains the
+        # active control field; zero velocity is only a finite feed-forward.
+        setpoint.velocity = [0.0, 0.0, 0.0]
+        setpoint.acceleration = [math.nan, math.nan, math.nan]
+        setpoint.jerk = [math.nan, math.nan, math.nan]
+        setpoint.yaw = 0.0
+        setpoint.yawspeed = 0.0
+        self.local_takeoff_setpoint_pub.publish(setpoint)
+        self.local_takeoff_setpoint_count += 1
+        if self.local_takeoff_setpoint_count == 1:
+            self._record("event", {
+                "name": "local_takeoff_setpoint_started",
+                "target_ned_m": list(setpoint.position),
+                "state_source_stamp_ns": int(state["source_stamp_ns"]),
+                "state_age_s": float(state["age_s"]),
+            })
+        return True
 
     def _global_position(self, message: Any) -> None:
         altitude = float(message.alt)
@@ -1494,11 +1579,20 @@ class ExternalModeScenario:
             return 0.0
         return max(0.0, (self.sim_now_ns - self.sim_start_ns) / 1e9)
 
-    def _command(self, name: str, command: int, p1: float = 0.0, p7: float = 0.0) -> None:
+    def _command(
+        self,
+        name: str,
+        command: int,
+        p1: float = 0.0,
+        p7: float = 0.0,
+        *,
+        p2: float = 0.0,
+    ) -> None:
         message = self.VehicleCommand()
         message.timestamp = self.sim_now_ns // 1000
         message.command = command
         message.param1 = p1
+        message.param2 = p2
         message.param7 = p7
         message.target_system = 1
         message.target_component = 1
@@ -1506,7 +1600,13 @@ class ExternalModeScenario:
         message.source_component = 1
         message.from_external = True
         self.command_pub.publish(message)
-        event = {"name": name, "command": command, "param1": p1, "param7": p7}
+        event = {
+            "name": name,
+            "command": command,
+            "param1": p1,
+            "param2": p2,
+            "param7": p7,
+        }
         self.events.append(event)
         self._record("command", event)
 
@@ -1857,15 +1957,54 @@ class ExternalModeScenario:
                     settle_ns = int(float(self.config.get("takeoff_mode_settle_s", 1.0)) * 1e9)
                     if self.sim_now_ns - self.arm_ack_success_sim_ns < settle_ns:
                         return
-                    if self.latest_global_altitude_amsl_m is None:
-                        if elapsed > activation_timeout_s:
-                            self.failure = "PX4 global altitude unavailable for AMSL takeoff command"
-                            self.finish("GLOBAL_ALTITUDE_TIMEOUT")
-                        return
-                    self._takeoff(
-                        self.latest_global_altitude_amsl_m + takeoff_altitude_m)
+                    if self.takeoff_reference == "local_ned":
+                        if self.local_takeoff_started_sim_ns is None:
+                            self.local_takeoff_started_sim_ns = self.sim_now_ns
+                        if not self._publish_local_takeoff_setpoint(takeoff_altitude_m):
+                            if elapsed > activation_timeout_s:
+                                self.failure = (
+                                    "valid fresh PX4 local position unavailable for "
+                                    "local-NED takeoff")
+                                self.finish("LOCAL_TAKEOFF_STATE_TIMEOUT")
+                            return
+                        prestream_s = float(
+                            self.config.get("local_takeoff_prestream_s", 1.0))
+                        prestream_elapsed_s = max(
+                            0.0,
+                            (self.sim_now_ns - self.local_takeoff_started_sim_ns) / 1e9,
+                        )
+                        if prestream_elapsed_s < prestream_s:
+                            return
+                        if not self.local_takeoff_offboard_requested:
+                            self._command(
+                                "enter_local_takeoff_offboard",
+                                self.VehicleCommand.VEHICLE_CMD_DO_SET_MODE,
+                                1.0,
+                                p2=6.0,
+                            )
+                            self.local_takeoff_offboard_requested = True
+                        self._record("event", {
+                            "name": "local_takeoff_requested",
+                            "target_ned_z_m": -float(takeoff_altitude_m),
+                        })
+                    else:
+                        if self.latest_global_altitude_amsl_m is None:
+                            if elapsed > activation_timeout_s:
+                                self.failure = "PX4 global altitude unavailable for AMSL takeoff command"
+                                self.finish("GLOBAL_ALTITUDE_TIMEOUT")
+                            return
+                        self._takeoff(
+                            self.latest_global_altitude_amsl_m + takeoff_altitude_m)
                 self.takeoff_requested = True
                 self.takeoff_requested_sim_ns = self.sim_now_ns
+                return
+            if (
+                self.takeoff_reference == "local_ned"
+                and not self.mode_active
+                and not self._publish_local_takeoff_setpoint(takeoff_altitude_m)
+            ):
+                self.failure = "PX4 local takeoff state became stale or invalid"
+                self.finish("LOCAL_TAKEOFF_STATE_INVALID")
                 return
             if self.takeoff_requested and not self.takeoff_observed:
                 z_ned = self.latest_local_position.get("z_ned_m")
@@ -2247,6 +2386,8 @@ class ExternalModeScenario:
             "armed": self.armed_seen,
             "takeoff_requested": self.takeoff_requested,
             "manual_takeoff": self.manual_takeoff,
+            "takeoff_reference": self.takeoff_reference,
+            "local_takeoff_setpoint_count": self.local_takeoff_setpoint_count,
             "takeoff_observed": self.takeoff_observed,
             "land_requested": False,
             "land_requested_sim_ns": None,

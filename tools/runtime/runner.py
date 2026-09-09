@@ -646,6 +646,7 @@ def _sitl_profile_contract(profile: str) -> dict[str, Any]:
         return {
             "name": "default",
             "control_envelope_max_velocity_mps": None,
+            "takeoff_reference": "amsl",
             "px4_parameters": {
                 "EKF2_GPS_CTRL": 7,
                 "EKF2_EV_CTRL": 15,
@@ -658,6 +659,7 @@ def _sitl_profile_contract(profile: str) -> dict[str, Any]:
     return {
         "name": "gps_off_ev_12mps",
         "control_envelope_max_velocity_mps": 12.0,
+        "takeoff_reference": "local_ned",
         "px4_parameters": {
             "EKF2_GPS_CTRL": 0,
             "EKF2_EV_CTRL": 15,
@@ -2215,6 +2217,7 @@ def _run_sim_unlocked(
         "interactive_handover": bool(not headless and auto_scenario),
         "tracking_experiment": tracking_experiment,
         "sitl_profile": sitl_profile_contract,
+        "takeoff_reference": sitl_profile_contract["takeoff_reference"],
     })
     if manual_takeoff:
         if headless or control_interface != "external_mode" or not auto_scenario:
