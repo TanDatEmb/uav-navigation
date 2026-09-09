@@ -30,9 +30,7 @@ namespace traj_opt {
         double stopping_displacement_rad{0.0};
         double stopping_max_rate_rad_s{0.0};
         double stopping_max_acceleration_rad_s2{0.0};
-        double selected_turn_duration_s{0.0};
         bool used_stopping_displacement{false};
-        bool holds_target_after_turn{false};
     };
 
     using namespace geometry_utils;
