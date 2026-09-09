@@ -12,9 +12,11 @@
   Offboard after `1.0 s` of setpoint preparation. The existing `3.0 m` takeoff
   height, airborne velocity gate, stability window and External Mode handoff
   remain authoritative.
-- **Behavior:** The temporary Offboard publisher is the sole takeoff setpoint
-  owner until the local airborne/stability gates pass. It then requests the
-  product-owned External Mode and stops publishing local takeoff setpoints.
+- **Behavior:** The registered External Mode supplies the diagnostic arming
+  contract while the temporary Offboard publisher pre-streams local-NED
+  setpoints. The profile then performs one direct External Mode-to-Offboard
+  handoff while still armed; after airborne/stability gates pass, it requests
+  the product-owned External Mode and stops publishing local takeoff setpoints.
   The profile never fabricates AMSL altitude and never re-enables GNSS fusion.
 - **Safety impact:** This removes only the incompatible AMSL prerequisite from
   the explicitly opt-in GPS-off diagnostic profile. Invalid/stale local state,
@@ -26,9 +28,8 @@
   `HGT_REF=3` but stopped at `GLOBAL_ALTITUDE_TIMEOUT` before any planner PVA
   command. Focused source-contract coverage is added for local-state validity,
   local-NED setpoint ownership and the External Mode handoff.
-  If the bounded handoff triggers PX4 automatic preflight disarm, the profile
-  re-arms after the handoff and waits for the authoritative armed state before
-  starting the local Offboard prestream; the default AMSL path is unchanged.
+  The profile does not rely on a Hold interval or a second arm attempt; the
+  default AMSL path is unchanged.
 - **Removal/review condition:** Remove or redesign the profile path if PX4
   provides a supported local takeoff contract without temporary Offboard, if
   local state freshness/validity is not observable, or if repeated diagnostic

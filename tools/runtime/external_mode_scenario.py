@@ -1929,52 +1929,13 @@ class ExternalModeScenario:
                 return
             if not self.takeoff_requested:
                 if not self.manual_takeoff:
-                    # PX4_CMD_NAV_TAKEOFF is an autopilot mode command: PX4
-                    # deliberately leaves a registered External Mode and
-                    # enters AUTO_TAKEOFF.  Request native Hold first so the
-                    # mode exit is intentional and does not get mistaken for
-                    # an External-Mode health/failsafe event.  External Mode
-                    # is re-entered only after the vehicle is stably airborne.
-                    if not self.takeoff_native_hold_ready:
-                        hold_nav_state = int(
-                            self.VehicleStatus.NAVIGATION_STATE_AUTO_LOITER)
-                        if (
-                            int(self.latest_status.get("nav_state", -1)) != hold_nav_state
-                            or int(self.latest_status.get("executor_in_charge", 0)) != 0
-                        ):
-                            self._retry(
-                                "prepare_takeoff_hold",
-                                self.VehicleCommand.VEHICLE_CMD_SET_NAV_STATE,
-                                float(hold_nav_state),
-                            )
-                            return
-                        self.takeoff_native_hold_ready = True
-                    # The ACK confirms that PX4 accepted the arm request, but
-                    # the vehicle_status transition can lag by a few scheduler
-                    # ticks. Give commander one settle window before sending
-                    # TAKEOFF; sending both in the same tick is intermittently
-                    # ignored by SITL and causes auto-preflight disarm.
-                    settle_ns = int(float(self.config.get("takeoff_mode_settle_s", 1.0)) * 1e9)
-                    if self.sim_now_ns - self.arm_ack_success_sim_ns < settle_ns:
-                        return
                     if self.takeoff_reference == "local_ned":
-                        # The bounded External Mode -> Hold handoff can take
-                        # long enough for PX4's automatic preflight disarm to
-                        # clear the original arm ACK.  Re-arm only after the
-                        # handoff, then wait for the authoritative armed state
-                        # before starting the local Offboard prestream.
-                        armed_state = int(self.VehicleStatus.ARMING_STATE_ARMED)
-                        if int(self.latest_status.get("arming_state", -1)) != armed_state:
-                            arm_retry_ns = int(float(
-                                self.config.get("arm_retry_period_s", 5.0)) * 1e9)
-                            if self.sim_now_ns - self.last_command_ns.get(
-                                    "local_takeoff_arm", -10**18) >= arm_retry_ns:
-                                self._command(
-                                    "local_takeoff_arm",
-                                    self.VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
-                                    1.0)
-                                self.last_command_ns["local_takeoff_arm"] = self.sim_now_ns
-                            return
+                        # The registered External Mode provides the diagnostic
+                        # arming contract. Pre-stream local-NED setpoints while
+                        # it is still active, then hand authority directly to
+                        # PX4 Offboard while the vehicle remains armed. This
+                        # avoids a Hold interval that can trigger auto-disarm and
+                        # keeps the takeoff handoff bounded to one mode change.
                         if self.local_takeoff_started_sim_ns is None:
                             self.local_takeoff_started_sim_ns = self.sim_now_ns
                         if not self._publish_local_takeoff_setpoint(takeoff_altitude_m):
@@ -2004,14 +1965,44 @@ class ExternalModeScenario:
                             "name": "local_takeoff_requested",
                             "target_ned_z_m": -float(takeoff_altitude_m),
                         })
-                    else:
-                        if self.latest_global_altitude_amsl_m is None:
-                            if elapsed > activation_timeout_s:
-                                self.failure = "PX4 global altitude unavailable for AMSL takeoff command"
-                                self.finish("GLOBAL_ALTITUDE_TIMEOUT")
+                        self.takeoff_requested = True
+                        self.takeoff_requested_sim_ns = self.sim_now_ns
+                        return
+                    # PX4_CMD_NAV_TAKEOFF is an autopilot mode command: PX4
+                    # deliberately leaves a registered External Mode and
+                    # enters AUTO_TAKEOFF.  Request native Hold first so the
+                    # mode exit is intentional and does not get mistaken for
+                    # an External-Mode health/failsafe event.  External Mode
+                    # is re-entered only after the vehicle is stably airborne.
+                    if not self.takeoff_native_hold_ready:
+                        hold_nav_state = int(
+                            self.VehicleStatus.NAVIGATION_STATE_AUTO_LOITER)
+                        if (
+                            int(self.latest_status.get("nav_state", -1)) != hold_nav_state
+                            or int(self.latest_status.get("executor_in_charge", 0)) != 0
+                        ):
+                            self._retry(
+                                "prepare_takeoff_hold",
+                                self.VehicleCommand.VEHICLE_CMD_SET_NAV_STATE,
+                                float(hold_nav_state),
+                            )
                             return
-                        self._takeoff(
-                            self.latest_global_altitude_amsl_m + takeoff_altitude_m)
+                        self.takeoff_native_hold_ready = True
+                    # The ACK confirms that PX4 accepted the arm request, but
+                    # the vehicle_status transition can lag by a few scheduler
+                    # ticks. Give commander one settle window before sending
+                    # TAKEOFF; sending both in the same tick is intermittently
+                    # ignored by SITL and causes auto-preflight disarm.
+                    settle_ns = int(float(self.config.get("takeoff_mode_settle_s", 1.0)) * 1e9)
+                    if self.sim_now_ns - self.arm_ack_success_sim_ns < settle_ns:
+                        return
+                    if self.latest_global_altitude_amsl_m is None:
+                        if elapsed > activation_timeout_s:
+                            self.failure = "PX4 global altitude unavailable for AMSL takeoff command"
+                            self.finish("GLOBAL_ALTITUDE_TIMEOUT")
+                        return
+                    self._takeoff(
+                        self.latest_global_altitude_amsl_m + takeoff_altitude_m)
                 self.takeoff_requested = True
                 self.takeoff_requested_sim_ns = self.sim_now_ns
                 return
