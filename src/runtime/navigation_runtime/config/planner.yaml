@@ -17,14 +17,11 @@ planner:
   # than three vehicle radii around the guide while removing unused volume.
   corridor_bound_distance_m: 1.5
   corridor_segment_max_length_m: 3.0
-  # This parameter bounds the visibility horizon before choosing the backup
-  # switch point. Config validation requires it to cover braking distance,
-  # one replan interval and the full safety envelope.
-  # At the 12 m/s product ceiling, jerk-limited stopping needs 8.4 m; two
-  # 0.2 s replan cycles add 4.8 m and the complete safety envelope adds 0.8 m.
-  # The product envelope reaches 12 m/s. With the speed benchmark's lower
-  # 5 m/s^2 acceleration and 12 m/s^3 jerk limits, a fail-closed stop plus two
-  # replan-forward intervals and the 0.8 m body/error tube requires 22.5 m.
+  # Bound the visibility horizon used to choose the certified BACKUP switch.
+  # At 12 m/s, BACKUP A/J=12/30 gives an 8.4 m jerk-limited stop;
+  # two 0.4 s forward intervals add 9.6 m and the safety envelope adds 0.8 m.
+  # The required 18.8 m fits this existing 23 m cap. MAIN A/J=2/4 controls
+  # nominal smoothness; it does not define BACKUP braking capability.
   visibility_horizon_cap_m: 23.0
   # Keep the low-speed optimization problem at the repeatedly measured 14 m
   # floor. Config raises the effective horizon from the mission's jerk-limited
@@ -84,13 +81,12 @@ planner:
   # yaw anchor. This is a continuity recovery envelope, not a safety/waypoint
   # acceptance threshold; calibrate it from repeated tracking distributions.
   yaw_tracking_error_budget_rad: 0.35
-  # Q1_DEVELOPMENT_STRESS_PROFILE: a development-only operating point for
-  # closed-loop attribution at 3 m/s. It is not product closed-loop or
-  # vehicle-capability evidence and is not a flight limit. It informs nominal
-  # MAIN only, not a physical or actuator limit; keep the hard physical
-  # boundary below unchanged for BACKUP/EMERGENCY.
+  # User-requested development speed ceiling. Mission requests select the
+  # nominal speed up to 12 m/s; this ceiling is not measured flight capability.
+  # High-speed obstacle flight increases risk and remains SITL characterization.
+  # MAIN acceleration/jerk and the physical BACKUP/EMERGENCY limits stay separate.
   control_envelope:
-    maximum_velocity_mps: 3.0
+    maximum_velocity_mps: 12.0
     maximum_acceleration_mps2: 2.0
     maximum_jerk_mps3: 4.0
 

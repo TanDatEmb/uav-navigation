@@ -472,11 +472,11 @@ TEST(PlannerProductConfig, SatisfiesVisibilityInflationAndReplanBudgets) {
   EXPECT_DOUBLE_EQ(planner.finalization_reserve_s, 0.04);
   EXPECT_DOUBLE_EQ(planner.local_window_m, 20.0);
   EXPECT_LT(planner.finalization_reserve_s, planner.solve_deadline_s);
-  EXPECT_DOUBLE_EQ(planner.control_envelope.maximum_velocity_mps, 3.0);
+  EXPECT_DOUBLE_EQ(planner.control_envelope.maximum_velocity_mps, 12.0);
   EXPECT_DOUBLE_EQ(planner.control_envelope.maximum_acceleration_mps2, 2.0);
   EXPECT_DOUBLE_EQ(planner.control_envelope.maximum_jerk_mps3, 4.0);
-  EXPECT_DOUBLE_EQ(planner.effective_cruise_speed_mps, 3.0);
-  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_vel, 3.0);
+  EXPECT_DOUBLE_EQ(planner.effective_cruise_speed_mps, 12.0);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_vel, 12.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_acc, 2.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_jerk, 4.0);
   EXPECT_DOUBLE_EQ(planner.back_traj_cfg.max_vel, 12.0);
@@ -900,10 +900,8 @@ TEST(PlannerProductConfig, MissionLimitsLowerButNeverRaiseProductEnvelope) {
   world_geometry.effective_virtual_ceiling_m = 10.0;
   planner.bindWorldGeometry(world_geometry);
   EXPECT_DOUBLE_EQ(planner.requested_cruise_speed_mps, 7.0);
-  EXPECT_DOUBLE_EQ(planner.effective_cruise_speed_mps,
-                   planner.control_envelope.maximum_velocity_mps);
-  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_vel,
-                   planner.control_envelope.maximum_velocity_mps);
+  EXPECT_DOUBLE_EQ(planner.effective_cruise_speed_mps, 7.0);
+  EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_vel, 7.0);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_acc,
                    planner.control_envelope.maximum_acceleration_mps2);
   EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_jerk,
@@ -933,15 +931,28 @@ TEST(PlannerProductConfig, RejectsUnknownMissionSpacePolicy) {
       std::invalid_argument);
 }
 
-TEST(PlannerProductConfig, RequestedCruiseMayExceedNominalControlEnvelope) {
-  navigation_planning::DynamicLimits mission;
-  mission.intent.requested_cruise_speed_mps = 7.0;
-  navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
-  EXPECT_GT(planner.requested_cruise_speed_mps,
-            planner.control_envelope.maximum_velocity_mps);
-  EXPECT_DOUBLE_EQ(planner.effective_cruise_speed_mps,
-                   planner.control_envelope.maximum_velocity_mps);
-  EXPECT_TRUE(planner.control_envelope.valid(planner.physical_model()));
+TEST(PlannerProductConfig, RequestedCruiseIsPreservedThroughTwelveMetresPerSecond) {
+  for (const double speed_mps : {1.0, 3.0, 5.0, 7.0, 12.0}) {
+    SCOPED_TRACE(speed_mps);
+    navigation_planning::DynamicLimits mission;
+    mission.intent.requested_cruise_speed_mps = speed_mps;
+    navigation_planning_backend::Config planner(PLANNER_PRODUCT_CONFIG_PATH, mission);
+    EXPECT_DOUBLE_EQ(planner.control_envelope.maximum_velocity_mps, 12.0);
+    EXPECT_DOUBLE_EQ(planner.requested_cruise_speed_mps, speed_mps);
+    EXPECT_DOUBLE_EQ(planner.effective_cruise_speed_mps, speed_mps);
+    EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_vel, speed_mps);
+    EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_acc, 2.0);
+    EXPECT_DOUBLE_EQ(planner.exp_traj_cfg.max_jerk, 4.0);
+    EXPECT_TRUE(planner.control_envelope.valid(planner.physical_model()));
+    const double required_backup_horizon =
+        navigation_planning_backend::jerkLimitedStopDistance(
+            speed_mps, planner.back_traj_cfg.max_acc, planner.back_traj_cfg.max_jerk) +
+        2.0 * speed_mps * planner.replan_forward_dt_s + planner.robot_r;
+    EXPECT_DOUBLE_EQ(planner.visibility_horizon_m,
+                     std::max(planner.visibility_horizon_floor_m,
+                              required_backup_horizon));
+    EXPECT_LE(planner.visibility_horizon_m, planner.visibility_horizon_cap_m);
+  }
 }
 
 TEST(PlannerProductConfig, RejectsMapBelowThePlannerSafetyEnvelope) {

@@ -252,10 +252,14 @@ namespace navigation_planning_backend {
                       localization_error_budget_m + mapping_error_budget_m +
                       planning_margin_m;
 
+            // This horizon reserves the certified BACKUP stop, whose dynamics
+            // are owned separately from the smoother MAIN control envelope.
+            // Using MAIN A/J here can reject an otherwise supported speed
+            // before the independently certified backup is even constructed.
             const double required_safety_horizon =
                 jerkLimitedStopDistance(effective_cruise_speed_mps,
-                        exp_traj_cfg.max_acc,
-                        exp_traj_cfg.max_jerk) +
+                        back_traj_cfg.max_acc,
+                        back_traj_cfg.max_jerk) +
                 2.0 * effective_cruise_speed_mps * replan_forward_dt_s + robot_r;
             visibility_horizon_m =
                 std::max(visibility_horizon_floor_m, required_safety_horizon);

@@ -1,5 +1,87 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Apply the requested 12 m/s MAIN ceiling to the shared development config
+
+- **Owner/status:** Root review task and implementation task
+  `01a083d6-eaf2-7770-9988-04965ae8c29f`; `IMPLEMENTED`, pending integrated
+  Release build and SITL evidence. Explicit user request, development use.
+- **Scope/units:** Set `planner.control_envelope.maximum_velocity_mps` from
+  3 to 12 m/s in the shared planner config. Effective nominal speed remains
+  the minimum of mission request and control ceiling; a 5 m/s request now
+  resolves to 5 m/s, and a 12 m/s request to 12 m/s. Without a mission speed,
+  the existing fallback now resolves to 12 m/s. Explicit lower profile caps
+  still apply. MAIN acceleration/jerk remain 2 m/s^2 and 4 m/s^3; physical
+  BACKUP/EMERGENCY limits remain 12/12/30 in their respective SI units.
+- **Braking ownership correction:** Config validation previously computed the
+  BACKUP visibility reserve with MAIN A/J (2/4), rejecting a 12 m/s request
+  because it required 49.4 m against the 23 m cap. Use BACKUP A/J (12/30),
+  matching `generateBackupTrajectory` and its independent dynamic certificate:
+  8.4 m stopping distance + 9.6 m for two forward intervals + 0.8 m envelope
+  = 18.8 m. Neither the 23 m cap nor map dimensions are increased. This
+  reserve calculation is not a substitute for certifying the actual backup
+  from its inherited PVAJ in the current immutable world.
+- **Safety impact:** Permits higher nominal speed and therefore increases
+  stopping distance and obstacle-flight risk, accepted by the user for SITL
+  characterization. This is not evidence that missions can sustain 12 m/s.
+  Collision, freshness, complete-bundle, terminal acceptance and absolute
+  solve-deadline checks are unchanged. No new estimator or tracking bypass.
+- **Evidence:** Source previously capped the default profile at 3 m/s while
+  `gps_off_ev_12mps` already selected a 12 m/s cap. This closes that config
+  discrepancy; it is not a parameter-loader algorithm fix. Regression covers
+  requested speeds 1/3/5/7/12 and an explicit lower profile cap.
+  Root verification passed all 67 `test_planner_config` cases (test source
+  compiled separately against current headers and the existing backend
+  library) and all 201 runtime-contract Python tests. This is component
+  evidence; the integrated Release manifest and new SITL runs remain pending.
+- **Removal/review condition:** Review this development ceiling against
+  repeated map/speed-specific SITL and representative sensor-data evidence
+  before claiming flight capability; archive exact requested/configured/
+  effective/measured speeds for each run.
+- **Verification:** `python3 -m unittest discover -s tools/runtime/tests
+  -p test_runtime_contract.py`; `test_planner_config` (including
+  `PlannerProductConfig.RequestedCruiseIsPreservedThroughTwelveMetresPerSecond`);
+  canonical Release build, `git diff --check`, then profile-separated SITL.
+
+### 2026-09-09 - Bound nominal snapshot diagnostics and preserve exact replay provenance
+
+- **Owner/status:** planning nominal optimizer, planner snapshot writer, and
+  offline replay tooling; `IMPLEMENTED`, diagnostic-only. Product candidate
+  admission, MAIN/BACKUP authority, physical limits, and solve deadlines are
+  unchanged.
+- **Scope/units:** Optional `UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR` capture uses
+  a writer-owned queue bounded to four immutable jobs. Full world materialization
+  and JSON I/O run on that writer after solve return. `FAILURE_ONLY=1` retains
+  only setup/failure/recovery evidence; unset or `0` records every captured
+  request. Queue overflow is dropped and counted; shutdown drains queued jobs
+  and joins the writer. POST corridor/provenance fields are copied only after
+  the current request binds its own optimizer input. Replay restores every
+  serialized optimizer field, including booleans; legacy snapshots with missing
+  fields use an explicit fallback and cannot receive an exact verdict. Route
+  boundary verdicts use the production deterministic certificate, not a sampled
+  trajectory probe. The derivative-scale sweep remains an offline diagnostic
+  experiment and is not a production setting.
+- **Safety impact:** Diagnostic capture is behavior-neutral and bounded in
+  retained resources, but dropped captures reduce observability. The writer
+  does not extend a solve deadline, grant a candidate, relax a certificate, or
+  authorize a world/route commit. Replay world PASS is not executable-bundle
+  acceptance because it has no planner-owned role schedule or lease.
+- **Evidence:** The review reproduced stale POST geometry after sequential setup
+  rejection, boolean config drift (`block_energy_cost`), and sampled versus
+  production route-boundary disagreement. The damping fixture records all six
+  tested scales as dynamics rejects under the configured A/J limits. These are
+  source/component diagnostics, not SITL qualification or a timing distribution.
+- **Removal/review condition:** Remove or revise the diagnostic writer after
+  nominal snapshot evidence is no longer needed, or if repeated representative
+  runs show queue pressure, shutdown latency, or provenance loss. Do not infer
+  deadline causality from the presence or absence of a capture file. Revisit
+  the damping experiment only with measured production evidence and an explicit
+  safety decision; never promote its non-default scale silently.
+- **Verification:** Focused snapshot/provenance regressions, bounded-writer
+  lifecycle/queue checks, replay config and certificate-parity checks, damping
+  assertions, runtime `finish()` regression, BUILD_TESTING on/off configure,
+  canonical Release build/manifest refresh, `git diff --check`, and exact
+  artifact provenance review.
+
 ### 2026-09-09 - Make campaign tracking witness adaptive by default
 
 - **Owner/status:** SITL campaign launcher/profile; `IMPLEMENTED`, diagnostic-only.

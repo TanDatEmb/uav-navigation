@@ -98,7 +98,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(campaign_default["lateral_alpha_s"], 0.05)
         self.assertEqual(campaign_default["longitudinal_beta_s"], 0.15)
         self.assertFalse(campaign_default["qualification_eligible"])
-        for profile, expected_cap in (("default", 3.0), ("gps_off_ev_12mps", 12.0)):
+        for profile, expected_cap in (("default", 12.0), ("gps_off_ev_12mps", 12.0)):
             profile_contract = runner._sitl_profile_contract(profile)
             for requested in (3.0, 5.0, 12.0):
                 speed_contract = runner._planner_speed_contract(
@@ -1104,8 +1104,8 @@ class RuntimeContractTest(unittest.TestCase):
         )
         self.assertEqual(contract["requested_cruise_speed_mps"], 5.0)
         self.assertEqual(contract["physical_max_velocity_mps"], 12.0)
-        self.assertEqual(contract["control_envelope_max_velocity_mps"], 3.0)
-        self.assertEqual(contract["effective_cruise_speed_mps"], 3.0)
+        self.assertEqual(contract["control_envelope_max_velocity_mps"], 12.0)
+        self.assertEqual(contract["effective_cruise_speed_mps"], 5.0)
         self.assertEqual(
             contract["effective_speed_source"],
             "min(mission.planning.requested_cruise_speed_mps, "
@@ -1117,7 +1117,15 @@ class RuntimeContractTest(unittest.TestCase):
             None,
         )
         self.assertIsNone(no_request["requested_cruise_speed_mps"])
-        self.assertEqual(no_request["effective_cruise_speed_mps"], 3.0)
+        self.assertEqual(no_request["effective_cruise_speed_mps"], 12.0)
+        for speed in (1.0, 3.0, 5.0, 7.0, 12.0):
+            with self.subTest(speed=speed):
+                resolved = runner._planner_speed_contract(
+                    ROOT / "src/runtime/navigation_runtime/config/planner.yaml", speed)
+                self.assertEqual(resolved["effective_cruise_speed_mps"], speed)
+        lower_cap = runner._planner_speed_contract(
+            ROOT / "src/runtime/navigation_runtime/config/planner.yaml", 5.0, 3.0)
+        self.assertEqual(lower_cap["effective_cruise_speed_mps"], 3.0)
 
     def test_gps_off_ev_12mps_profile_changes_only_nominal_velocity_cap(self) -> None:
         profile = runner._sitl_profile_contract("gps_off_ev_12mps")
