@@ -37,7 +37,6 @@
 #include "navigation_runtime/trajectory_completion.hpp"
 #include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/execution_trace_snapshot.hpp"
-#include "navigation_runtime/heading_tracker.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
 #include <navigation_execution/committed_bundle_store.hpp>
@@ -316,14 +315,13 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   navigation_execution::ExecutionStateStore execution_state_store_;
   ExecutionEpisode execution_episode_;
   std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;
-  // Mission-start anchor for the semantic first-leg heading. It is distinct
-  // from command-loop heading continuity: waypoint/request changes may replace
-  // the target while preserving the published yaw/rate state.
-  std::optional<Eigen::Vector3d> heading_mission_start_world_;
-  std::string heading_mission_id_;
-  std::uint64_t heading_route_revision_{0U};
-  std::uint64_t heading_localization_epoch_{0U};
-  HeadingTracker heading_tracker_;
+  // Mission-start anchor for the planner's first-leg route heading. It is
+  // latched per mission/route/localization scope and is never recaptured on a
+  // normal waypoint/request handoff.
+  std::optional<Eigen::Vector3d> mission_start_position_world_;
+  std::string mission_start_mission_id_;
+  std::uint64_t mission_start_route_revision_{0U};
+  std::uint64_t mission_start_localization_epoch_{0U};
   // Desired mission identity may advance before a pass-through successor is
   // activated.  Keep the physical command identity separate until the
   // execution timeline performs that atomic cutover.
