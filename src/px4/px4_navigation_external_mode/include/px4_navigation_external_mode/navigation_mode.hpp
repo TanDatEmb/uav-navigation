@@ -30,6 +30,8 @@
 #include "px4_navigation_external_mode/mission.hpp"
 #include "px4_navigation_external_mode/mission_controller.hpp"
 #include "px4_navigation_external_mode/automatic_recovery_gate.hpp"
+#include "px4_navigation_external_mode/px4_tracking_adapter.hpp"
+#include "px4_navigation_external_mode/velocity_only_continuity.hpp"
 
 namespace px4_navigation_external_mode {
 
@@ -48,9 +50,22 @@ class NavigationMode final : public px4_ros2::ModeBase {
   void onActivate() override;
   void onDeactivate() override;
   void checkArmingAndRunConditions(px4_ros2::HealthAndArmingCheckReporter& reporter) override;
-  void updateSetpoint(float dt_s) override;
+ void updateSetpoint(float dt_s) override;
 
  private:
+  struct VelocityOnlySnapshot final {
+    nav_msgs::msg::Odometry odometry;
+    tracking_adapter::RawPx4State px4;
+    std::uint64_t lio_localization_epoch{0U};
+    std::uint64_t lio_sequence{0U};
+    std::int64_t lio_receive_steady_ns{0};
+    bool health_navigation_valid{false};
+    bool health_covariance_valid{false};
+    bool health_observability_valid{false};
+    bool health_correction_fresh{false};
+    bool health_propagation_valid{false};
+  };
+
   rclcpp::Node& node_;
   void onNavigationCommand(
       const navigation_contracts::msg::NavigationCommand::ConstSharedPtr& message);
@@ -78,6 +93,10 @@ class NavigationMode final : public px4_ros2::ModeBase {
       const std::optional<Eigen::Vector3f>& acceleration_ned,
       float yaw_ned, float yaw_rate_ned);
   void publishAlignmentLatchWitnessLocked();
+  bool publishVelocityOnlySetpoint(
+      const navigation_contracts::msg::NavigationCommand& command,
+      const VelocityOnlySnapshot& snapshot, const rclcpp::Time& now);
+  void requestVelocityOnlyHold(const char* reason);
   void publishStatus(std::uint8_t state, std::uint8_t reason,
                      const MissionControllerEvent* event = nullptr);
 
@@ -131,6 +150,10 @@ class NavigationMode final : public px4_ros2::ModeBase {
   bool last_px4_vxy_valid_{false};
   bool last_px4_vz_valid_{false};
   bool last_px4_dead_reckoning_{false};
+  bool last_px4_heading_good_for_control_{false};
+  bool last_px4_heading_valid_{false};
+  double last_px4_heading_ned_{0.0};
+  double last_px4_heading_variance_rad2_{0.0};
   float last_px4_delta_xy_north_m_{0.0F};
   float last_px4_delta_xy_east_m_{0.0F};
   float last_px4_delta_z_m_{0.0F};
@@ -202,6 +225,12 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t last_forward_guard_count_{0U};
   std::uint64_t px4_input_trace_sequence_{0U};
   std::uint64_t alignment_latch_generation_{0U};
+  std::optional<velocity_only::Previous> velocity_only_previous_;
+  tracking_adapter::ResetCounters velocity_only_last_reset_counters_;
+  bool velocity_only_reset_counters_seen_{false};
+  std::string velocity_only_last_reason_;
+  std::uint64_t velocity_only_limited_count_{0U};
+
 };
 
 class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {

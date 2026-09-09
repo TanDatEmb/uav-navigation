@@ -268,6 +268,15 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
         "base_m": 0.2,
         "lateral_alpha_s": 0.05,
         "longitudinal_beta_s": 0.15,
+        "velocity_only_enabled": False,
+        "velocity_only_gain_s_inv": 0.0,
+        "velocity_only_cap_mps": 0.0,
+        "velocity_only_max_acceleration_mps2": 0.0,
+        "velocity_only_max_jerk_mps3": 0.0,
+        "velocity_only_max_timing_bound_s": 0.0,
+        "velocity_only_max_reference_age_s": 0.0,
+        "velocity_only_output_transport_bound_s": 0.0,
+        "velocity_only_px4_consume_bound_s": 0.0,
         "suppressed_gates": [],
         "qualification_eligible": False,
         "risk_warning": None,
@@ -289,6 +298,20 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
             "base_m": value.get("base_m", 0.2),
             "lateral_alpha_s": value.get("lateral_alpha_s", 0.05),
             "longitudinal_beta_s": value.get("longitudinal_beta_s", 0.15),
+            "velocity_only_enabled": bool(value.get("velocity_only_enabled", mode == "velocity-only")),
+            "velocity_only_gain_s_inv": value.get("velocity_only_gain_s_inv", 0.0),
+            "velocity_only_cap_mps": value.get("velocity_only_cap_mps", 0.0),
+            "velocity_only_max_acceleration_mps2": value.get(
+                "velocity_only_max_acceleration_mps2", 0.0),
+            "velocity_only_max_jerk_mps3": value.get("velocity_only_max_jerk_mps3", 0.0),
+            "velocity_only_max_timing_bound_s": value.get(
+                "velocity_only_max_timing_bound_s", 0.0),
+            "velocity_only_max_reference_age_s": value.get(
+                "velocity_only_max_reference_age_s", 0.0),
+            "velocity_only_output_transport_bound_s": value.get(
+                "velocity_only_output_transport_bound_s", 0.0),
+            "velocity_only_px4_consume_bound_s": value.get(
+                "velocity_only_px4_consume_bound_s", 0.0),
             "suppressed_gates": list(value.get("suppressed_gates", [])) or (
                 [
                     "tracking_triggered_main_emergency",
@@ -320,6 +343,15 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
             value.get("base_m"),
             value.get("lateral_alpha_s"),
             value.get("longitudinal_beta_s"),
+            bool(value.get("velocity_only_enabled", False)),
+            value.get("velocity_only_gain_s_inv"),
+            value.get("velocity_only_cap_mps"),
+            value.get("velocity_only_max_acceleration_mps2"),
+            value.get("velocity_only_max_jerk_mps3"),
+            value.get("velocity_only_max_timing_bound_s"),
+            value.get("velocity_only_max_reference_age_s"),
+            value.get("velocity_only_output_transport_bound_s"),
+            value.get("velocity_only_px4_consume_bound_s"),
         )
 
     metadata = _load_json(session / "metadata.json", {})

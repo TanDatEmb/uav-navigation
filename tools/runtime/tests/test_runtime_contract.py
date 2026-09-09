@@ -144,6 +144,31 @@ class RuntimeContractTest(unittest.TestCase):
             runner._tracking_experiment_payload("adaptive", 0.2, -0.01)
         with self.assertRaises(ValueError):
             runner._tracking_experiment_payload("adaptive", math.nan)
+        with self.assertRaises(ValueError):
+            runner._tracking_experiment_payload("velocity-only")
+
+    def test_velocity_only_experiment_requires_and_propagates_explicit_bounds(self) -> None:
+        experiment = runner._tracking_experiment_payload(
+            "velocity-only", 0.2, 0.05, 0.15,
+            0.8, 5.0, 2.0, 4.0, 0.20, 0.10, 0.04, 0.04,
+        )
+        self.assertTrue(experiment["enabled"])
+        self.assertTrue(experiment["velocity_only_enabled"])
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = SimpleNamespace(directory=Path(temporary))
+            external_path = runner._external_mode_params(
+                session,
+                ROOT / "config/runtime/external_mode.yaml",
+                tracking_experiment=experiment,
+            )
+            params = yaml.safe_load(external_path.read_text(encoding="utf-8"))
+            actual = params["px4_navigation_external_mode"]["ros__parameters"][
+                "tracking_experiment"]
+            self.assertEqual(actual["velocity_only_gain_s_inv"], 0.8)
+            self.assertEqual(actual["velocity_only_cap_mps"], 5.0)
+            self.assertEqual(actual["velocity_only_max_acceleration_mps2"], 2.0)
+            self.assertEqual(actual["velocity_only_max_jerk_mps3"], 4.0)
+            self.assertTrue(actual["velocity_only_enabled"])
 
     def test_tracking_experiment_propagates_to_both_generated_node_configs(self) -> None:
         experiment = runner._tracking_experiment_payload("relaxed", 0.25, 0.06, 0.17)
@@ -1180,6 +1205,40 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(planner["planner"]["control_envelope"]["maximum_velocity_mps"], 12.0)
             self.assertEqual(planner["planner"]["control_envelope"]["maximum_acceleration_mps2"], 2.0)
             self.assertEqual(planner["planner"]["control_envelope"]["maximum_jerk_mps3"], 4.0)
+
+    def test_sitl_dynamics_profiles_are_explicit_and_preserve_physical_boundary(self) -> None:
+        baseline = runner._sitl_dynamics_profile_contract("baseline_5mps_a2_j4")
+        nominal = runner._sitl_dynamics_profile_contract("nominal_5mps_a5_j8")
+        self.assertEqual(
+            (baseline["control_envelope_max_velocity_mps"],
+             baseline["control_envelope_max_acceleration_mps2"],
+             baseline["control_envelope_max_jerk_mps3"]),
+            (5.0, 2.0, 4.0),
+        )
+        self.assertEqual(
+            (nominal["control_envelope_max_velocity_mps"],
+             nominal["control_envelope_max_acceleration_mps2"],
+             nominal["control_envelope_max_jerk_mps3"]),
+            (5.0, 5.0, 8.0),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            session = runner.Session(Path(temporary) / "session")
+            target = runner._mapping_params(
+                session,
+                ROOT / "config/runtime/mapping.yaml",
+                mission_file=ROOT / "config/runtime/missions/long_three_pillars_speed.yaml",
+                control_envelope_max_velocity_mps=5.0,
+                control_envelope_max_acceleration_mps2=5.0,
+                control_envelope_max_jerk_mps3=8.0,
+            )
+            parameters = yaml.safe_load(target.read_text(encoding="utf-8"))["navigation_runtime_node"]["ros__parameters"]["navigation_runtime"]
+            planner = yaml.safe_load(Path(parameters["config_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(planner["planner"]["control_envelope"]["maximum_velocity_mps"], 5.0)
+            self.assertEqual(planner["planner"]["control_envelope"]["maximum_acceleration_mps2"], 5.0)
+            self.assertEqual(planner["planner"]["control_envelope"]["maximum_jerk_mps3"], 8.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_vel"], 12.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_acc"], 12.0)
+            self.assertEqual(planner["traj_opt"]["boundary"]["max_jerk"], 30.0)
 
     def test_gps_off_profile_uses_bounded_local_takeoff_before_external_mode(self) -> None:
         source = (ROOT / "tools/runtime/external_mode_scenario.py").read_text(

@@ -15,12 +15,36 @@ struct TrackingExperimentPolicy {
   double base_m{0.20};
   double lateral_alpha_s{0.05};
   double longitudinal_beta_s{0.15};
+  bool velocity_only_enabled{false};
+  double velocity_only_gain_s_inv{0.0};
+  double velocity_only_cap_mps{0.0};
+  double velocity_only_max_acceleration_mps2{0.0};
+  double velocity_only_max_jerk_mps3{0.0};
+  double velocity_only_max_timing_bound_s{0.0};
+  double velocity_only_max_reference_age_s{0.0};
+  double velocity_only_output_transport_bound_s{0.0};
+  double velocity_only_px4_consume_bound_s{0.0};
 
   bool valid() const noexcept {
     return std::isfinite(base_m) && base_m > 0.0 &&
         std::isfinite(lateral_alpha_s) && lateral_alpha_s >= 0.0 &&
         std::isfinite(longitudinal_beta_s) && longitudinal_beta_s >= 0.0 &&
-        (!suppress_braking || enabled);
+        (!suppress_braking || enabled) &&
+        (!velocity_only_enabled ||
+         (std::isfinite(velocity_only_gain_s_inv) && velocity_only_gain_s_inv > 0.0 &&
+          std::isfinite(velocity_only_cap_mps) && velocity_only_cap_mps > 0.0 &&
+          std::isfinite(velocity_only_max_acceleration_mps2) &&
+              velocity_only_max_acceleration_mps2 > 0.0 &&
+          std::isfinite(velocity_only_max_jerk_mps3) &&
+              velocity_only_max_jerk_mps3 > 0.0 &&
+          std::isfinite(velocity_only_max_timing_bound_s) &&
+              velocity_only_max_timing_bound_s > 0.0 &&
+          std::isfinite(velocity_only_max_reference_age_s) &&
+              velocity_only_max_reference_age_s > 0.0 &&
+          std::isfinite(velocity_only_output_transport_bound_s) &&
+              velocity_only_output_transport_bound_s >= 0.0 &&
+          std::isfinite(velocity_only_px4_consume_bound_s) &&
+              velocity_only_px4_consume_bound_s >= 0.0));
   }
 };
 
@@ -35,7 +59,26 @@ TrackingExperimentPolicy loadTrackingExperimentPolicy(Node& node) {
       "tracking_experiment.lateral_alpha_s", 0.05);
   p.longitudinal_beta_s = node.template declare_parameter<double>(
       "tracking_experiment.longitudinal_beta_s", 0.15);
-  if (!p.valid() || (p.enabled && !node.get_parameter("use_sim_time").as_bool())) {
+  p.velocity_only_enabled = node.template declare_parameter<bool>(
+      "tracking_experiment.velocity_only_enabled", false);
+  p.velocity_only_gain_s_inv = node.template declare_parameter<double>(
+      "tracking_experiment.velocity_only_gain_s_inv", 0.0);
+  p.velocity_only_cap_mps = node.template declare_parameter<double>(
+      "tracking_experiment.velocity_only_cap_mps", 0.0);
+  p.velocity_only_max_acceleration_mps2 = node.template declare_parameter<double>(
+      "tracking_experiment.velocity_only_max_acceleration_mps2", 0.0);
+  p.velocity_only_max_jerk_mps3 = node.template declare_parameter<double>(
+      "tracking_experiment.velocity_only_max_jerk_mps3", 0.0);
+  p.velocity_only_max_timing_bound_s = node.template declare_parameter<double>(
+      "tracking_experiment.velocity_only_max_timing_bound_s", 0.0);
+  p.velocity_only_max_reference_age_s = node.template declare_parameter<double>(
+      "tracking_experiment.velocity_only_max_reference_age_s", 0.0);
+  p.velocity_only_output_transport_bound_s = node.template declare_parameter<double>(
+      "tracking_experiment.velocity_only_output_transport_bound_s", 0.0);
+  p.velocity_only_px4_consume_bound_s = node.template declare_parameter<double>(
+      "tracking_experiment.velocity_only_px4_consume_bound_s", 0.0);
+  if (!p.valid() || ((p.enabled || p.velocity_only_enabled) &&
+                    !node.get_parameter("use_sim_time").as_bool())) {
     throw std::invalid_argument("tracking experiment requires valid coefficients and use_sim_time=true");
   }
   return p;

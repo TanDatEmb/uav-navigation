@@ -201,6 +201,28 @@ TEST(Px4TrackingAdapter, VelocityOnlyBoundsLioOwnedCommandWithoutPx4PositionFeed
   EXPECT_TRUE(result.output->witness.velocity_limited);
 }
 
+TEST(Px4TrackingAdapter, VelocityOnlyKeepsRelativeHeadingAfterVelocityCap) {
+  auto reference = makeReference();
+  auto lio = makeLio();
+  auto raw = makeRawPx4();
+  auto policy = makePolicy();
+  policy.boundary = SetpointBoundary::kVelocityOnly;
+  policy.lio_position_feedback_gain_s_inv = 0.5;
+  policy.maximum_velocity_mps = 1.0;
+  reference.position_enu = lio.position_enu + Eigen::Vector3d{0.0, 4.0, 0.0};
+  reference.velocity_enu = Eigen::Vector3d::Zero();
+  lio.yaw_enu = 0.0;
+  raw.yaw_ned = 0.0;
+
+  const auto result = adapt(reference, lio, raw, makeTiming(), policy);
+  ASSERT_TRUE(result.success());
+  ASSERT_TRUE(result.output.has_value());
+  EXPECT_TRUE(result.output->witness.velocity_limited);
+  EXPECT_TRUE(result.output->velocity_ned.isApprox(Eigen::Vector3d{0.0, -1.0, 0.0}));
+  EXPECT_TRUE(result.output->position_ned.array().isNaN().all());
+  EXPECT_TRUE(result.output->acceleration_ned.array().isNaN().all());
+}
+
 TEST(Px4TrackingAdapter, RejectsDisabledPolicyWithoutReturningSetpoint) {
   auto policy = makePolicy();
   policy.mode = Mode::kOff;

@@ -105,9 +105,10 @@ TEST_CASES = (
     "open_speed_calibration",
 )
 MOTION_PRESETS = ("nominal", "slow", "fast")
-TRACKING_EXPERIMENT_MODES = ("off", "adaptive", "relaxed")
+TRACKING_EXPERIMENT_MODES = ("off", "adaptive", "relaxed", "velocity-only")
 DEFAULT_SITL_TRACKING_EXPERIMENT_MODE = "adaptive"
 SITL_PROFILES = ("default", "gps_off_ev_12mps")
+SITL_DYNAMICS_PROFILES = ("off", "baseline_5mps_a2_j4", "nominal_5mps_a5_j8")
 
 # Keep the complete SITL stack off the default DDS domain and off the PX4
 # default XRCE port.  A physical vehicle (or another developer's SITL) on the
@@ -592,6 +593,14 @@ def _tracking_experiment_payload(
     base_m: float = 0.2,
     lateral_alpha_s: float = 0.05,
     longitudinal_beta_s: float = 0.15,
+    velocity_only_gain_s_inv: float = 0.0,
+    velocity_only_cap_mps: float = 0.0,
+    velocity_only_max_acceleration_mps2: float = 0.0,
+    velocity_only_max_jerk_mps3: float = 0.0,
+    velocity_only_max_timing_bound_s: float = 0.0,
+    velocity_only_max_reference_age_s: float = 0.0,
+    velocity_only_output_transport_bound_s: float = 0.0,
+    velocity_only_px4_consume_bound_s: float = 0.0,
 ) -> dict[str, Any]:
     """Validate and normalize the explicitly opt-in tracking experiment."""
     if mode not in TRACKING_EXPERIMENT_MODES:
@@ -615,8 +624,11 @@ def _tracking_experiment_payload(
         raise ValueError("tracking_experiment base_m must be positive")
     if float(lateral_alpha_s) < 0.0 or float(longitudinal_beta_s) < 0.0:
         raise ValueError("tracking_experiment coefficients must be non-negative")
-    return {
+    values = {
         "mode": mode,
+        # The velocity boundary is orthogonal to the existing adaptive
+        # tracking gate. Keep the same gate active for A/B; only `off` disables
+        # that control allowance explicitly.
         "enabled": mode != "off",
         "suppress_braking": mode == "relaxed",
         "base_m": float(base_m),
@@ -635,6 +647,30 @@ def _tracking_experiment_payload(
             ] if mode == "relaxed" else []
         ),
     }
+    if mode == "velocity-only":
+        velocity_values = {
+            "velocity_only_gain_s_inv": velocity_only_gain_s_inv,
+            "velocity_only_cap_mps": velocity_only_cap_mps,
+            "velocity_only_max_acceleration_mps2": velocity_only_max_acceleration_mps2,
+            "velocity_only_max_jerk_mps3": velocity_only_max_jerk_mps3,
+            "velocity_only_max_timing_bound_s": velocity_only_max_timing_bound_s,
+            "velocity_only_max_reference_age_s": velocity_only_max_reference_age_s,
+            "velocity_only_output_transport_bound_s": velocity_only_output_transport_bound_s,
+            "velocity_only_px4_consume_bound_s": velocity_only_px4_consume_bound_s,
+        }
+        for name, value in velocity_values.items():
+            if (isinstance(value, bool) or not isinstance(value, (int, float)) or
+                    not math.isfinite(float(value))):
+                raise ValueError(f"tracking_experiment {name} must be finite")
+            if float(value) <= 0.0 and name not in {
+                    "velocity_only_output_transport_bound_s",
+                    "velocity_only_px4_consume_bound_s"}:
+                raise ValueError(f"tracking_experiment {name} must be positive")
+        if float(velocity_only_output_transport_bound_s) < 0.0 or \
+                float(velocity_only_px4_consume_bound_s) < 0.0:
+            raise ValueError("tracking_experiment transport bounds must be non-negative")
+        values.update({"velocity_only_enabled": True, **velocity_values})
+    return values
 
 
 def _sitl_profile_contract(profile: str) -> dict[str, Any]:
@@ -676,6 +712,51 @@ def _sitl_profile_contract(profile: str) -> dict[str, Any]:
     }
 
 
+def _sitl_dynamics_profile_contract(profile: str) -> dict[str, Any]:
+    """Return an explicit planner/velocity-boundary dynamics experiment.
+
+    The profile changes only the product-owned nominal control envelope and,
+    when velocity-only is selected, its matching continuity policy.  The
+    physical trajectory boundary and PX4 axis/tilt/thrust parameters remain
+    separate authorities and are captured from the running SITL logs.
+    """
+    if profile not in SITL_DYNAMICS_PROFILES:
+        raise ValueError(
+            "sitl_dynamics_profile must be one of: " +
+            ", ".join(SITL_DYNAMICS_PROFILES)
+        )
+    if profile == "off":
+        return {
+            "name": "off",
+            "control_envelope_max_velocity_mps": None,
+            "control_envelope_max_acceleration_mps2": None,
+            "control_envelope_max_jerk_mps3": None,
+            "velocity_only_cap_mps": None,
+            "velocity_only_max_acceleration_mps2": None,
+            "velocity_only_max_jerk_mps3": None,
+            "qualification_eligible": None,
+            "risk_contract": "no dynamics override; repository defaults remain active",
+        }
+    if profile == "baseline_5mps_a2_j4":
+        acceleration, jerk = 2.0, 4.0
+    else:
+        acceleration, jerk = 5.0, 8.0
+    return {
+        "name": profile,
+        "control_envelope_max_velocity_mps": 5.0,
+        "control_envelope_max_acceleration_mps2": acceleration,
+        "control_envelope_max_jerk_mps3": jerk,
+        "velocity_only_cap_mps": 5.0,
+        "velocity_only_max_acceleration_mps2": acceleration,
+        "velocity_only_max_jerk_mps3": jerk,
+        "qualification_eligible": False,
+        "risk_contract": (
+            "SITL-only A/B dynamics experiment; scalar planner A/J are not PX4 "
+            "vertical/tilt/thrust limits"
+        ),
+    }
+
+
 def _apply_tracking_experiment_parameters(
     ros_parameters: dict[str, Any],
     experiment: dict[str, Any],
@@ -688,6 +769,16 @@ def _apply_tracking_experiment_parameters(
         "lateral_alpha_s": float(experiment["lateral_alpha_s"]),
         "longitudinal_beta_s": float(experiment["longitudinal_beta_s"]),
     }
+    if experiment.get("velocity_only_enabled", False):
+        ros_parameters["tracking_experiment"].update({
+            key: float(experiment[key]) for key in (
+                "velocity_only_gain_s_inv", "velocity_only_cap_mps",
+                "velocity_only_max_acceleration_mps2", "velocity_only_max_jerk_mps3",
+                "velocity_only_max_timing_bound_s", "velocity_only_max_reference_age_s",
+                "velocity_only_output_transport_bound_s",
+                "velocity_only_px4_consume_bound_s")
+        })
+        ros_parameters["tracking_experiment"]["velocity_only_enabled"] = True
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -751,6 +842,7 @@ def _write_runtime_evidence_metadata(
     ros_domain_id: int,
     xrce_port: int,
     sitl_profile: dict[str, Any] | None = None,
+    sitl_dynamics_profile: dict[str, Any] | None = None,
     scenario_identity: dict[str, Any] | None = None,
     tracking_experiment: dict[str, Any] | None = None,
 ) -> None:
@@ -779,7 +871,9 @@ def _write_runtime_evidence_metadata(
     speed_contract = _planner_speed_contract(
         ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
         resolved_requested_speed,
-        (sitl_profile or {}).get("control_envelope_max_velocity_mps"),
+        (sitl_dynamics_profile or {}).get("control_envelope_max_velocity_mps")
+        if (sitl_dynamics_profile or {}).get("control_envelope_max_velocity_mps") is not None
+        else (sitl_profile or {}).get("control_envelope_max_velocity_mps"),
     )
     identity = dict(scenario_identity or {})
     identity_files = {
@@ -816,6 +910,7 @@ def _write_runtime_evidence_metadata(
         "requested_cruise_speed_mps": requested_cruise_speed_mps,
         "speed_contract": speed_contract,
         "sitl_profile": sitl_profile or _sitl_profile_contract("default"),
+        "sitl_dynamics_profile": sitl_dynamics_profile or _sitl_dynamics_profile_contract("off"),
         "tracking_experiment": tracking_experiment or _tracking_experiment_payload(),
         "environment": {
             "map_profile": map_profile,
@@ -1486,6 +1581,8 @@ def _mapping_params(
     mission_file: Path | None = None,
     speed_cap_mps: float | None = None,
     control_envelope_max_velocity_mps: float | None = None,
+    control_envelope_max_acceleration_mps2: float | None = None,
+    control_envelope_max_jerk_mps3: float | None = None,
     inject_failed_replan_cycle_id: int | None = None,
     inject_failed_replan_once: bool = False,
     inject_failed_replan_when_safe: bool = False,
@@ -1577,15 +1674,30 @@ def _mapping_params(
             raise ValueError(
                 f"planner backend target speed exceeds X500 limit {product_max_velocity:g} m/s"
             )
-    # Acceleration and jerk are owned by the immutable vehicle model. Mission
-    # files contain intent only and cannot create per-mission dynamics.
+    # Acceleration and jerk are immutable unless an explicit SITL dynamics
+    # profile owns this experiment. The profile remains below the physical
+    # trajectory boundary; PX4 axis/tilt/thrust limits are not rewritten here.
     traj_opt = planner.setdefault("traj_opt", {})
     exp_traj = traj_opt.setdefault("exp_traj", {})
     backup_traj = traj_opt.setdefault("backup_traj", {})
-        # Main-trajectory jerk remains an analytic hard gate because its larger
-        # optimization problem became unstable with a high-order penalty. The
-        # two-piece backup starts from a certified minimum-snap seed and must
-        # retain a positive jerk objective while L-BFGS adjusts it.
+    if control_envelope_max_acceleration_mps2 is not None:
+        profile_acceleration = float(control_envelope_max_acceleration_mps2)
+        if (not math.isfinite(profile_acceleration) or profile_acceleration <= 0.0 or
+                profile_acceleration > float(traj_opt["boundary"]["max_acc"])):
+            raise ValueError(
+                "control envelope acceleration must be finite, positive, and no greater "
+                f"than physical max {float(traj_opt['boundary']['max_acc']):g} m/s^2"
+            )
+        control_envelope["maximum_acceleration_mps2"] = profile_acceleration
+    if control_envelope_max_jerk_mps3 is not None:
+        profile_jerk = float(control_envelope_max_jerk_mps3)
+        if (not math.isfinite(profile_jerk) or profile_jerk <= 0.0 or
+                profile_jerk > float(traj_opt["boundary"]["max_jerk"])):
+            raise ValueError(
+                "control envelope jerk must be finite, positive, and no greater "
+                f"than physical max {float(traj_opt['boundary']['max_jerk']):g} m/s^3"
+            )
+        control_envelope["maximum_jerk_mps3"] = profile_jerk
     planner_target = session.directory / "planner.yaml"
     planner_target.write_text(yaml.safe_dump(planner, sort_keys=False), encoding="utf-8")
     planner_parameters["config_path"] = str(planner_target)
@@ -2161,6 +2273,7 @@ def _run_sim_unlocked(
     manual_takeoff: bool = False,
     speed_cap_mps: float | None = None,
     sitl_profile: str = "default",
+    sitl_dynamics_profile: str = "off",
     gazebo_native_diagnostic: bool = False,
     experiment_id: str | None = None,
     inject_failed_replan_cycle_id: int | None = None,
@@ -2176,14 +2289,51 @@ def _run_sim_unlocked(
     tracking_experiment_base_m: float = 0.2,
     tracking_experiment_lateral_alpha_s: float = 0.05,
     tracking_experiment_longitudinal_beta_s: float = 0.15,
+    velocity_only_gain_s_inv: float = 0.0,
+    velocity_only_cap_mps: float = 0.0,
+    velocity_only_max_acceleration_mps2: float = 0.0,
+    velocity_only_max_jerk_mps3: float = 0.0,
+    velocity_only_max_timing_bound_s: float = 0.0,
+    velocity_only_max_reference_age_s: float = 0.0,
+    velocity_only_output_transport_bound_s: float = 0.0,
+    velocity_only_px4_consume_bound_s: float = 0.0,
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
+    sitl_dynamics_profile_contract = _sitl_dynamics_profile_contract(sitl_dynamics_profile)
+    if tracking_experiment_mode == "velocity-only" and sitl_dynamics_profile != "off":
+        expected = sitl_dynamics_profile_contract
+        if velocity_only_cap_mps == 0.0:
+            velocity_only_cap_mps = float(expected["velocity_only_cap_mps"])
+        if velocity_only_max_acceleration_mps2 == 0.0:
+            velocity_only_max_acceleration_mps2 = float(
+                expected["velocity_only_max_acceleration_mps2"])
+        if velocity_only_max_jerk_mps3 == 0.0:
+            velocity_only_max_jerk_mps3 = float(expected["velocity_only_max_jerk_mps3"])
+        for name, actual, expected_key in (
+            ("velocity-only cap", velocity_only_cap_mps, "velocity_only_cap_mps"),
+            ("velocity-only acceleration", velocity_only_max_acceleration_mps2,
+             "velocity_only_max_acceleration_mps2"),
+            ("velocity-only jerk", velocity_only_max_jerk_mps3,
+             "velocity_only_max_jerk_mps3"),
+        ):
+            if abs(float(actual) - float(expected[expected_key])) > 1.0e-12:
+                raise ValueError(
+                    f"{name} must match sitl_dynamics_profile={sitl_dynamics_profile}"
+                )
     tracking_experiment = _tracking_experiment_payload(
         tracking_experiment_mode,
         tracking_experiment_base_m,
         tracking_experiment_lateral_alpha_s,
         tracking_experiment_longitudinal_beta_s,
+        velocity_only_gain_s_inv,
+        velocity_only_cap_mps,
+        velocity_only_max_acceleration_mps2,
+        velocity_only_max_jerk_mps3,
+        velocity_only_max_timing_bound_s,
+        velocity_only_max_reference_age_s,
+        velocity_only_output_transport_bound_s,
+        velocity_only_px4_consume_bound_s,
     )
     sitl_profile_contract = _sitl_profile_contract(sitl_profile)
     if characterization_profile is not None:
@@ -2218,6 +2368,7 @@ def _run_sim_unlocked(
         "interactive_handover": bool(not headless and auto_scenario),
         "tracking_experiment": tracking_experiment,
         "sitl_profile": sitl_profile_contract,
+        "sitl_dynamics_profile": sitl_dynamics_profile_contract,
         "takeoff_reference": sitl_profile_contract["takeoff_reference"],
     })
     if manual_takeoff:
@@ -2492,7 +2643,9 @@ def _run_sim_unlocked(
     speed_contract = _planner_speed_contract(
         ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
         requested_cruise_speed_mps,
-        sitl_profile_contract["control_envelope_max_velocity_mps"],
+        sitl_dynamics_profile_contract["control_envelope_max_velocity_mps"]
+        if sitl_dynamics_profile_contract["control_envelope_max_velocity_mps"] is not None
+        else sitl_profile_contract["control_envelope_max_velocity_mps"],
     )
     scenario_config["scenario"]["requested_cruise_speed_mps"] = requested_cruise_speed_mps
     scenario_config["scenario"]["speed_contract"] = speed_contract
@@ -2517,6 +2670,7 @@ def _run_sim_unlocked(
         ros_domain_id=isolated_domain,
         xrce_port=isolated_xrce_port,
         sitl_profile=sitl_profile_contract,
+        sitl_dynamics_profile=sitl_dynamics_profile_contract,
         scenario_identity=scenario_identity,
         tracking_experiment=tracking_experiment,
     )
@@ -2581,8 +2735,16 @@ def _run_sim_unlocked(
             # The mission file above already owns the resolved speed contract.
             # Do not create a second planner-only source of truth here.
             speed_cap_mps=None if mission_file is not None else speed_cap_mps,
-            control_envelope_max_velocity_mps=sitl_profile_contract[
-                "control_envelope_max_velocity_mps"
+            control_envelope_max_velocity_mps=(
+                sitl_dynamics_profile_contract["control_envelope_max_velocity_mps"]
+                if sitl_dynamics_profile_contract["control_envelope_max_velocity_mps"] is not None
+                else sitl_profile_contract["control_envelope_max_velocity_mps"]
+            ),
+            control_envelope_max_acceleration_mps2=sitl_dynamics_profile_contract[
+                "control_envelope_max_acceleration_mps2"
+            ],
+            control_envelope_max_jerk_mps3=sitl_dynamics_profile_contract[
+                "control_envelope_max_jerk_mps3"
             ],
             inject_failed_replan_cycle_id=inject_failed_replan_cycle_id,
             inject_failed_replan_once=inject_failed_replan_once,
@@ -2666,6 +2828,7 @@ def _run_sim_unlocked(
                 "GZ_COMMAND": gz_command or "",
                 "PX4_GZ_WORLD": world_name,
                 "PX4_NAVIGATION_SITL_PROFILE": sitl_profile_contract["name"],
+                "PX4_NAVIGATION_SITL_DYNAMICS_PROFILE": sitl_dynamics_profile_contract["name"],
                 # Automated scenarios use the same PX4 input policy in GUI
                 # and headless runs; `make sim` remains the manual mode.
                 "PX4_PARAM_COM_RC_IN_MODE": _px4_manual_control_mode(
@@ -3223,6 +3386,38 @@ def _add_tracking_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         default=0.15,
         help="longitudinal allowance coefficient in seconds",
     )
+    parser.add_argument(
+        "--velocity-only-gain-s-inv", type=float, default=0.0,
+        help="LIO position-error feedback gain; required for velocity-only mode",
+    )
+    parser.add_argument(
+        "--velocity-only-cap-mps", type=float, default=0.0,
+        help="velocity-only vector norm cap",
+    )
+    parser.add_argument(
+        "--velocity-only-max-acceleration-mps2", type=float, default=0.0,
+        help="velocity-only continuity acceleration bound",
+    )
+    parser.add_argument(
+        "--velocity-only-max-jerk-mps3", type=float, default=0.0,
+        help="velocity-only continuity jerk bound",
+    )
+    parser.add_argument(
+        "--velocity-only-max-timing-bound-s", type=float, default=0.0,
+        help="conservative velocity-only timing bound",
+    )
+    parser.add_argument(
+        "--velocity-only-max-reference-age-s", type=float, default=0.0,
+        help="maximum allowed LIO reference age",
+    )
+    parser.add_argument(
+        "--velocity-only-output-transport-bound-s", type=float, default=0.0,
+        help="configured output transport bound used by the timing witness",
+    )
+    parser.add_argument(
+        "--velocity-only-px4-consume-bound-s", type=float, default=0.0,
+        help="configured PX4 consume bound used by the timing witness",
+    )
 
 
 def main() -> int:
@@ -3305,6 +3500,10 @@ def main() -> int:
     external_mode.add_argument(
         "--sitl-profile", choices=SITL_PROFILES, default="default",
         help="explicit SITL estimator/speed profile; default preserves normal aiding",
+    )
+    external_mode.add_argument(
+        "--sitl-dynamics-profile", choices=SITL_DYNAMICS_PROFILES, default="off",
+        help="explicit SITL planner dynamics A/B; off preserves repository defaults",
     )
     external_mode.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
@@ -3392,6 +3591,10 @@ def main() -> int:
         help="explicit SITL estimator/speed profile; default preserves normal aiding",
     )
     external_mode_gui.add_argument(
+        "--sitl-dynamics-profile", choices=SITL_DYNAMICS_PROFILES, default="off",
+        help="explicit SITL planner dynamics A/B; off preserves repository defaults",
+    )
+    external_mode_gui.add_argument(
         "--gazebo-native-diagnostic", action="store_true",
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
@@ -3472,6 +3675,7 @@ def main() -> int:
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
             sitl_profile=args.sitl_profile,
+            sitl_dynamics_profile=args.sitl_dynamics_profile,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             experiment_id=args.experiment_id,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
@@ -3486,6 +3690,14 @@ def main() -> int:
             tracking_experiment_base_m=args.tracking_base_m,
             tracking_experiment_lateral_alpha_s=args.tracking_alpha_s,
             tracking_experiment_longitudinal_beta_s=args.tracking_beta_s,
+            velocity_only_gain_s_inv=args.velocity_only_gain_s_inv,
+            velocity_only_cap_mps=args.velocity_only_cap_mps,
+            velocity_only_max_acceleration_mps2=args.velocity_only_max_acceleration_mps2,
+            velocity_only_max_jerk_mps3=args.velocity_only_max_jerk_mps3,
+            velocity_only_max_timing_bound_s=args.velocity_only_max_timing_bound_s,
+            velocity_only_max_reference_age_s=args.velocity_only_max_reference_age_s,
+            velocity_only_output_transport_bound_s=args.velocity_only_output_transport_bound_s,
+            velocity_only_px4_consume_bound_s=args.velocity_only_px4_consume_bound_s,
         )
     if args.command == "sim":
         return run_sim(False)
@@ -3502,6 +3714,7 @@ def main() -> int:
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
             sitl_profile=args.sitl_profile,
+            sitl_dynamics_profile=args.sitl_dynamics_profile,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             auto_scenario=True,
             manual_takeoff=args.manual_takeoff,
@@ -3518,6 +3731,14 @@ def main() -> int:
             tracking_experiment_base_m=args.tracking_base_m,
             tracking_experiment_lateral_alpha_s=args.tracking_alpha_s,
             tracking_experiment_longitudinal_beta_s=args.tracking_beta_s,
+            velocity_only_gain_s_inv=args.velocity_only_gain_s_inv,
+            velocity_only_cap_mps=args.velocity_only_cap_mps,
+            velocity_only_max_acceleration_mps2=args.velocity_only_max_acceleration_mps2,
+            velocity_only_max_jerk_mps3=args.velocity_only_max_jerk_mps3,
+            velocity_only_max_timing_bound_s=args.velocity_only_max_timing_bound_s,
+            velocity_only_max_reference_age_s=args.velocity_only_max_reference_age_s,
+            velocity_only_output_transport_bound_s=args.velocity_only_output_transport_bound_s,
+            velocity_only_px4_consume_bound_s=args.velocity_only_px4_consume_bound_s,
         )
     if args.command == "status":
         return status()

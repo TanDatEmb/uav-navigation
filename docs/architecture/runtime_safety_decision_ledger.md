@@ -1,5 +1,70 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Opt-in LIO-owned velocity-only PX4 boundary candidate
+
+- **Owner/status:** `px4_navigation_external_mode` control experiment;
+  `DESIGN/IMPLEMENTED PURE + OPT-IN RUNTIME`, not flight acceptance and off by
+  default. Implementation owner: task `01a083d6-eaf2-7770-9988-04965ae8c29f`;
+  root/main owns the two-step control review.
+- **Scope/units:** With explicit
+  `tracking_experiment.velocity_only_enabled=true`, MAIN/eligible BACKUP
+  commands compute `v_ref + gain_s_inv * (p_ref_LIO - p_measured_LIO)` in the
+  LIO ENU frame, apply an explicit norm cap and acceleration/jerk continuity
+  bound, then publish PX4 velocity plus separately validated yaw. Position and
+  acceleration setpoints are NaN/unset. PX4 position is not required for this
+  boundary; PX4 velocity/heading validity, all reset counters, LIO health,
+  source/receive timing and command identity remain required. EMERGENCY,
+  terminal, STOP/recovery and invalid/reset paths request an explicit native PX4
+  Hold handover; no obsolete position setpoint is reused and no automatic
+  reverse command is generated.
+- The separate `sitl_dynamics_profile` is explicit and opt-in: baseline
+  `baseline_5mps_a2_j4` is `V=5 m/s, A=2 m/s^2, J=4 m/s^3`; the requested
+  nominal experiment `nominal_5mps_a5_j8` is `V=5 m/s, A=5 m/s^2, J=8 m/s^3`.
+  These are scalar planner/velocity-continuity limits, not PX4 maximums. The
+  physical trajectory boundary remains `12/12/30`; PX4 SITL parameters are
+  captured, not rewritten (`MPC_Z_VEL_MAX_UP/DN=3/1.5`,
+  `MPC_ACC_HOR_MAX=5`, `MPC_TILTMAX_AIR=45`, `MPC_THR_HOVER/MAX=0.6/1.0` in
+  the nominal GUI run).
+- **Safety impact:** No default behavior changes. The opt-in is rejected unless
+  gain, velocity cap, acceleration/jerk limits, reference-age/timing bounds
+  and configured transport/consume bounds are explicit and finite. A reset,
+  identity boundary, timing failure, stale/invalid LIO/PX4 state or
+  non-representable output fails closed to PX4 Hold. Planner geometry,
+  waypoint acceptance, corridor/world certificates and command admission stay
+  authoritative; the candidate does not certify the original PVA trajectory
+  after replacing its setpoint boundary.
+- **Evidence:** Pure adapter algebra and NaN-boundary tests pass 20/20; the
+  continuity helper covers MAIN->BACKUP, authorized next-waypoint handoff,
+  new bundle generation, joint velocity/acceleration/jerk limits, reset/time
+  and obsolete-owner failures. Release
+  build completes 23 packages. Offline replay of the retained problem snapshot
+  with `5/2/4` produced a production candidate at `4.767549 s`, `702`
+  evaluations, V/A/J-valid but route-boundary invalid; the `5/5/8` replay
+  produced a route-boundary/certificate-valid candidate at `4.155671 s`,
+  `532` evaluations. Neither replay had a world snapshot, so neither is
+  mission evidence. Matched three-pillar headless A/B runs were both
+  `BLOCKED`: baseline artifact
+  `.artifacts/runtime/external-mode-check-20260909T061559-29131` reached only
+  waypoint 0 and stopped at `0.972 m/s` p95; nominal artifact
+  `.artifacts/runtime/external-mode-check-20260909T061706-30614` reached only
+  waypoint 0 and stopped at `1.180 m/s` p95, both with zero collision. The
+  nominal GUI artifact is
+  `.artifacts/runtime/external-mode-gui-20260909T061811-32089` and remains
+  interactive for review; no completion/acceptance is claimed.
+- **Removal/review condition:** Remove or revise after root/main review finds
+  the timing/reset/identity/role contract insufficient, or after the fixed
+  EKF/planner/gate open-route/turn/stop/re-activation campaign shows that the
+  candidate does not improve tracking without violating continuity, clearance,
+  dynamics or terminal ownership. Never promote it to default from one SITL
+  run; no B/EKF-trust change is authorized by this entry.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && python3
+  tools/runtime/build.py --mode release build`; direct
+  `test_px4_tracking_adapter` and `test_velocity_only_continuity`; runtime
+  contract tests; `git diff --check`; matched A/B SITL artifact inspection;
+  and two-step review before promotion beyond diagnostic SITL, including
+  report inspection proving position/acceleration are unset at the FC
+  boundary.
+
 ### 2026-09-09 - Separate legacy whole-run residuals from reset-aware source-frame diagnostics
 
 - **Owner/status:** runtime report/evidence tooling; `IMPLEMENTED`,

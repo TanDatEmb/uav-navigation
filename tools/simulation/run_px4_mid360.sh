@@ -191,6 +191,18 @@ case "${PX4_NAVIGATION_SITL_PROFILE}" in
     exit 2
     ;;
 esac
+PX4_NAVIGATION_SITL_DYNAMICS_PROFILE="${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE:-off}"
+case "${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE}" in
+  off|baseline_5mps_a2_j4|nominal_5mps_a5_j8)
+    # Planner scalar V/A/J is materialized in the session-owned planner.yaml.
+    # Keep PX4's axis/tilt/thrust limits untouched; the startup script prints
+    # their effective values for post-run attribution.
+    ;;
+  *)
+    echo "ERROR: unsupported PX4_NAVIGATION_SITL_DYNAMICS_PROFILE=${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE}" >&2
+    exit 2
+    ;;
+esac
 export PX4_PARAM_SIM_GZ_EN_BARO=1
 export PX4_PARAM_SIM_GPS_USED=10
 export PX4_PARAM_EKF2_BARO_CTRL=1
@@ -206,6 +218,7 @@ echo "PX4 is attaching to the existing Gazebo model."
 echo "PX4 UXRCE_DDS_SYNCT: ${PX4_PARAM_UXRCE_DDS_SYNCT} (simulation clock authority)"
 echo "PX4 COM_RC_IN_MODE: ${PX4_PARAM_COM_RC_IN_MODE}"
 echo "PX4 estimator profile: ${PX4_NAVIGATION_SITL_PROFILE}; GPS_CTRL=${PX4_PARAM_EKF2_GPS_CTRL}; EV_CTRL=${PX4_PARAM_EKF2_EV_CTRL}; HGT_REF=${PX4_PARAM_EKF2_HGT_REF}"
+echo "PX4 planner dynamics experiment: ${PX4_NAVIGATION_SITL_DYNAMICS_PROFILE} (planner-owned V/A/J; PX4 axis limits unchanged)"
 echo "PX4 estimator: ROS LIO EV + configured baro/range/mag aiding (Gazebo truth odom disabled)"
 echo "Runtime stack is started by tools/runtime/runner.py."
 echo

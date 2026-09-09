@@ -126,6 +126,16 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
         tracking_experiment_.base_m, tracking_experiment_.lateral_alpha_s,
         tracking_experiment_.longitudinal_beta_s, tracking_experiment_.suppress_braking);
   }
+  if (tracking_experiment_.velocity_only_enabled) {
+    RCLCPP_WARN(node.get_logger(),
+        "SITL VELOCITY-ONLY EXPERIMENT: LIO-owned path error, PX4 velocity/yaw boundary; "
+        "gain=%.3f cap=%.3f accel=%.3f jerk=%.3f timing=%.3fs; not flight qualification",
+        tracking_experiment_.velocity_only_gain_s_inv,
+        tracking_experiment_.velocity_only_cap_mps,
+        tracking_experiment_.velocity_only_max_acceleration_mps2,
+        tracking_experiment_.velocity_only_max_jerk_mps3,
+        tracking_experiment_.velocity_only_max_timing_bound_s);
+  }
   const auto stale_after_ns = navigation_common::secondsToNanoseconds(stale_after_s_);
   const auto state_stale_after_ns = navigation_common::secondsToNanoseconds(state_stale_after_s_);
   const auto planner_recovery_wait_timeout_ns =
@@ -414,6 +424,19 @@ void NavigationMode::publishPx4InputTrace(
     add("sample_id", "NOT_RECORDED");
     add("role", "NOT_RECORDED");
   }
+  add("setpoint_boundary", tracking_experiment_.velocity_only_enabled
+          ? "velocity_only" : "position_velocity_acceleration");
+  add("velocity_only_gain_s_inv",
+      std::to_string(tracking_experiment_.velocity_only_gain_s_inv));
+  add("velocity_only_cap_mps",
+      std::to_string(tracking_experiment_.velocity_only_cap_mps));
+  add("velocity_only_max_acceleration_mps2",
+      std::to_string(tracking_experiment_.velocity_only_max_acceleration_mps2));
+  add("velocity_only_max_jerk_mps3",
+      std::to_string(tracking_experiment_.velocity_only_max_jerk_mps3));
+  add("velocity_only_limited_count", std::to_string(velocity_only_limited_count_));
+  add("velocity_only_reason", velocity_only_last_reason_.empty()
+          ? "NOT_RECORDED" : velocity_only_last_reason_);
   add_vector("position_ned", position_ned);
   add_vector("velocity_ned", velocity_ned);
   add_vector("acceleration_ned", acceleration_ned);
@@ -605,6 +628,9 @@ void NavigationMode::onActivate() {
     last_completed_request_id_ = 0U;
     completion_position_.reset();
     safety_hold_position_.reset();
+    velocity_only_previous_.reset();
+    velocity_only_reset_counters_seen_ = false;
+    velocity_only_last_reason_.clear();
   }
   if (mission_controller_) {
     if (mission_complete_publisher_) {
@@ -633,6 +659,8 @@ void NavigationMode::onDeactivate() {
     safety_suffix_handoff_pending_ = false;
     safety_suffix_waypoint_index_ = 0U;
     safety_suffix_request_id_ = 0U;
+    velocity_only_previous_.reset();
+    velocity_only_reset_counters_seen_ = false;
   }
   if (mission_controller_) mission_controller_->deactivate();
   if (last_status_state_ != navigation_contracts::msg::NavigationModeStatus::PAUSED &&
@@ -1493,7 +1521,9 @@ void NavigationMode::tryAlignPx4LocalFrameLocked() {
   if (px4_local_frame_aligned_ || !mode_active_ ||
       (mission_controller_ && mission_controller_->waitingForAirborne()) ||
       !odometry_.has_value() ||
-      !px4_local_position_ned_.has_value() || !px4_local_velocity_ned_.has_value()) {
+      !px4_local_position_ned_.has_value() || !px4_local_velocity_ned_.has_value() ||
+      !last_px4_xy_valid_ || !last_px4_z_valid_ || !last_px4_vxy_valid_ ||
+      !last_px4_vz_valid_) {
     return;
   }
   const auto& velocity = odometry_->twist.twist.linear;
@@ -1516,10 +1546,10 @@ void NavigationMode::tryAlignPx4LocalFrameLocked() {
 
 void NavigationMode::onPx4LocalPosition(
     const px4_msgs::msg::VehicleLocalPosition::ConstSharedPtr& message) {
-  if (!message || !message->xy_valid || !message->z_valid ||
-      !std::isfinite(message->x) || !std::isfinite(message->y) ||
-      !std::isfinite(message->z) || !std::isfinite(message->vx) ||
-      !std::isfinite(message->vy) || !std::isfinite(message->vz)) {
+  if (!message || !std::isfinite(message->vx) || !std::isfinite(message->vy) ||
+      !std::isfinite(message->vz) || !std::isfinite(message->heading) ||
+      !std::isfinite(message->heading_var) || message->timestamp == 0U ||
+      message->timestamp_sample == 0U) {
     return;
   }
   std::lock_guard<std::mutex> lock(trajectory_mutex_);
@@ -1531,8 +1561,19 @@ void NavigationMode::onPx4LocalPosition(
     RCLCPP_WARN(node_.get_logger(),
                 "PX4 local frame reset detected; waiting for stationary re-alignment");
   }
-  px4_local_position_ned_ = Eigen::Vector3d{message->x, message->y, message->z};
   px4_local_velocity_ned_ = Eigen::Vector3d{message->vx, message->vy, message->vz};
+  if (message->xy_valid && message->z_valid &&
+      std::isfinite(message->x) && std::isfinite(message->y) &&
+      std::isfinite(message->z)) {
+    px4_local_position_ned_ = Eigen::Vector3d{message->x, message->y, message->z};
+  } else {
+    // Preserve the last alignment snapshot for the legacy position boundary,
+    // but velocity-only control consumes the independent velocity/heading
+    // witness below and does not use this position.
+    if (!px4_local_frame_aligned_) {
+      px4_local_position_ned_.reset();
+    }
+  }
   px4_xy_reset_counter_ = message->xy_reset_counter;
   px4_z_reset_counter_ = message->z_reset_counter;
   px4_vxy_reset_counter_ = message->vxy_reset_counter;
@@ -1546,6 +1587,10 @@ void NavigationMode::onPx4LocalPosition(
   last_px4_vxy_valid_ = message->v_xy_valid;
   last_px4_vz_valid_ = message->v_z_valid;
   last_px4_dead_reckoning_ = message->dead_reckoning;
+  last_px4_heading_good_for_control_ = message->heading_good_for_control;
+  last_px4_heading_valid_ = std::isfinite(message->heading);
+  last_px4_heading_ned_ = message->heading;
+  last_px4_heading_variance_rad2_ = message->heading_var;
   last_px4_delta_xy_north_m_ = message->delta_xy[0];
   last_px4_delta_xy_east_m_ = message->delta_xy[1];
   last_px4_delta_z_m_ = message->delta_z;
@@ -1608,10 +1653,250 @@ void NavigationMode::onEstimatorHealth(
     last_propagated_state_sequence_ = 0U;
     px4_local_frame_aligned_ = false;
     lio_to_px4_local_translation_ned_.reset();
+    velocity_only_previous_.reset();
+    velocity_only_reset_counters_seen_ = false;
   }
   lio_localization_epoch_ = message->localization_epoch;
   lio_health_valid_ = healthy;
   last_lio_diagnostics_ns_ = source_stamp_ns;
+}
+
+void NavigationMode::requestVelocityOnlyHold(const char* reason) {
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    velocity_only_last_reason_ = reason;
+    velocity_only_previous_.reset();
+    velocity_only_reset_counters_seen_ = false;
+    handover_requested_ = true;
+    navigation_command_ = transitionCertifiedCommand(
+        navigation_command_, std::nullopt, CertifiedCommandTransition::kInvalidate);
+  }
+  if (mission_controller_) mission_controller_->deactivate();
+  publishStatus(navigation_contracts::msg::NavigationModeStatus::PAUSED,
+                navigation_contracts::msg::NavigationModeStatus::SAFETY_STOP);
+  RCLCPP_WARN(node().get_logger(),
+              "velocity-only experiment requires explicit PX4 Hold handover: %s", reason);
+  if (px4_hold_handover_) {
+    px4_hold_handover_();
+  } else {
+    completed(px4_ros2::Result::ModeFailureOther);
+  }
+}
+
+bool NavigationMode::publishVelocityOnlySetpoint(
+    const navigation_contracts::msg::NavigationCommand& command,
+    const VelocityOnlySnapshot& snapshot, const rclcpp::Time& now) {
+  using tracking_adapter::CommandRole;
+  using tracking_adapter::Mode;
+  using tracking_adapter::Policy;
+  using tracking_adapter::Reference;
+  using tracking_adapter::ReferenceFrame;
+  using tracking_adapter::TimingWitness;
+  using tracking_adapter::LioState;
+
+  if (command.role != navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+      command.role != navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
+    velocity_only_last_reason_ = "role_not_authorized_for_velocity_boundary";
+    return false;
+  }
+  if (command.status != navigation_contracts::msg::NavigationCommand::STATUS_READY) {
+    velocity_only_last_reason_ = "status_requires_native_px4_hold";
+    return false;
+  }
+
+  const auto source_stamp_ns = navigation_common::rosTimeToNanoseconds(
+      snapshot.odometry.header.stamp).value_or(0);
+  // NavigationCommand.state_source_stamp identifies the measured LIO state;
+  // the PVA reference itself was evaluated at the command header stamp.
+  const auto reference_stamp_ns = navigation_contracts::commandStampNanoseconds(
+      command.header.stamp);
+  const auto lease_until_ns = navigation_contracts::commandStampNanoseconds(command.valid_until);
+  const auto now_ns = now.nanoseconds();
+  const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  if (source_stamp_ns <= 0 || reference_stamp_ns <= 0 || lease_until_ns <= 0 || now_ns <= 0 ||
+      now_ns < source_stamp_ns || now_ns < reference_stamp_ns || now_steady_ns <= 0) {
+    velocity_only_last_reason_ = "timestamp_contract_invalid";
+    return false;
+  }
+
+  Eigen::Vector3d lio_position{snapshot.odometry.pose.pose.position.x,
+                               snapshot.odometry.pose.pose.position.y,
+                               snapshot.odometry.pose.pose.position.z};
+  Eigen::Vector3d lio_velocity{snapshot.odometry.twist.twist.linear.x,
+                               snapshot.odometry.twist.twist.linear.y,
+                               snapshot.odometry.twist.twist.linear.z};
+  const Eigen::Quaterniond orientation(
+      snapshot.odometry.pose.pose.orientation.w, snapshot.odometry.pose.pose.orientation.x,
+      snapshot.odometry.pose.pose.orientation.y, snapshot.odometry.pose.pose.orientation.z);
+  if (!isNormalizableOdometryQuaternion(orientation)) {
+    velocity_only_last_reason_ = "lio_orientation_invalid";
+    return false;
+  }
+  const auto normalized = orientation.normalized();
+  const double lio_yaw = std::atan2(
+      2.0 * (normalized.w() * normalized.z() + normalized.x() * normalized.y()),
+      1.0 - 2.0 * (normalized.y() * normalized.y() + normalized.z() * normalized.z()));
+
+  const auto& raw_px4 = snapshot.px4;
+  const auto current_lio_epoch = snapshot.lio_localization_epoch;
+  const auto current_lio_sequence = snapshot.lio_sequence;
+  const auto current_lio_receive_steady_ns = snapshot.lio_receive_steady_ns;
+  const auto px4_sample_ns = raw_px4.timestamp_sample_us <=
+          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() / 1000)
+      ? static_cast<std::int64_t>(raw_px4.timestamp_sample_us * 1000U)
+      : 0;
+  if (px4_sample_ns <= 0 || now_ns < px4_sample_ns) {
+    velocity_only_last_reason_ = "px4_timestamp_contract_invalid";
+    return false;
+  }
+  if (raw_px4.reset_counters != velocity_only_last_reset_counters_ &&
+      velocity_only_reset_counters_seen_) {
+    velocity_only_last_reason_ = "px4_reset_requires_new_velocity_epoch";
+    return false;
+  }
+
+  Reference reference;
+  reference.frame = ReferenceFrame::kLioEnu;
+  reference.identity.localization_epoch = command.localization_epoch;
+  reference.identity.mission_id = command.mission_id;
+  reference.identity.waypoint_index = command.waypoint_index;
+  reference.identity.goal_epoch = command.goal_epoch;
+  reference.identity.request_id = command.request_id;
+  reference.identity.bundle_generation = command.bundle_generation;
+  reference.identity.sample_id = command.sample_id;
+  reference.identity.role = command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN
+      ? CommandRole::kMain : CommandRole::kBackup;
+  reference.identity.reference_sample_time_ns = reference_stamp_ns;
+  reference.identity.lease_valid_until_ns = lease_until_ns;
+  reference.position_enu = Eigen::Vector3d{command.position.x, command.position.y,
+                                           command.position.z};
+  reference.velocity_enu = Eigen::Vector3d{command.velocity.x, command.velocity.y,
+                                           command.velocity.z};
+  reference.acceleration_enu = Eigen::Vector3d{command.acceleration.x, command.acceleration.y,
+                                               command.acceleration.z};
+  reference.yaw_enu = command.yaw;
+  reference.yaw_rate_enu_rad_s = command.yaw_rate;
+
+  LioState lio;
+  lio.position_enu = lio_position;
+  lio.velocity_enu = lio_velocity;
+  lio.yaw_enu = lio_yaw;
+  lio.position_valid = lio_position.allFinite();
+  lio.velocity_valid = lio_velocity.allFinite();
+  lio.orientation_valid = orientation.coeffs().allFinite();
+  lio.localization_epoch = current_lio_epoch;
+  lio.sequence = current_lio_sequence;
+  lio.source_stamp_ns = source_stamp_ns;
+  lio.receive_steady_ns = current_lio_receive_steady_ns;
+  lio.navigation_valid = snapshot.health_navigation_valid;
+  lio.covariance_valid = snapshot.health_covariance_valid;
+  lio.observability_valid = snapshot.health_observability_valid;
+  lio.correction_fresh = snapshot.health_correction_fresh;
+  lio.propagation_valid = snapshot.health_propagation_valid;
+  lio.relative_heading_valid = raw_px4.heading_valid && raw_px4.heading_good_for_control;
+  lio.tilt_valid = orientation.coeffs().allFinite();
+  lio.extrinsic_valid = true;
+
+  TimingWitness timing;
+  timing.reference_sample_id = command.sample_id;
+  timing.lio_localization_epoch = lio.localization_epoch;
+  timing.lio_sequence = lio.sequence;
+  timing.px4_timestamp_us = raw_px4.timestamp_us;
+  timing.px4_timestamp_sample_us = raw_px4.timestamp_sample_us;
+  timing.clock_mapping_generation = 1U;
+  timing.conservative_bound_model = TimingWitness::kConservativeBoundModelV1;
+  timing.common_time_contract_valid = source_stamp_ns <= now_ns &&
+      reference_stamp_ns <= now_ns && px4_sample_ns <= now_ns;
+  timing.expected_reference_use_time_ns = now_ns;
+  timing.reference_age_s = static_cast<double>(now_ns - reference_stamp_ns) * 1.0e-9;
+  timing.pair_skew_s = std::abs(static_cast<double>(source_stamp_ns - px4_sample_ns)) * 1.0e-9;
+  timing.lio_source_age_s = static_cast<double>(now_ns - source_stamp_ns) * 1.0e-9;
+  timing.lio_receive_age_s = current_lio_receive_steady_ns > 0 &&
+      now_steady_ns >= current_lio_receive_steady_ns
+      ? static_cast<double>(now_steady_ns - current_lio_receive_steady_ns) * 1.0e-9 : -1.0;
+  timing.px4_source_age_s = static_cast<double>(now_ns - px4_sample_ns) * 1.0e-9;
+  timing.px4_receive_age_s = raw_px4.receive_steady_ns > 0 &&
+      now_steady_ns >= raw_px4.receive_steady_ns
+      ? static_cast<double>(now_steady_ns - raw_px4.receive_steady_ns) * 1.0e-9 : -1.0;
+  timing.predicted_anchor_age_s = std::max(timing.lio_source_age_s, timing.px4_source_age_s);
+  timing.output_transport_age_s = tracking_experiment_.velocity_only_output_transport_bound_s;
+  timing.px4_consume_age_s = tracking_experiment_.velocity_only_px4_consume_bound_s;
+  const double overlap = std::max({timing.reference_age_s, timing.pair_skew_s,
+      timing.lio_source_age_s, timing.lio_receive_age_s, timing.px4_source_age_s,
+      timing.px4_receive_age_s, timing.predicted_anchor_age_s});
+  timing.total_bound_s = overlap + timing.output_transport_age_s + timing.px4_consume_age_s;
+
+  Policy adapter_policy;
+  adapter_policy.mode = Mode::kLevelA;
+  adapter_policy.boundary = tracking_adapter::SetpointBoundary::kVelocityOnly;
+  adapter_policy.experiment_id = "velocity-only-lio-owned-v1";
+  adapter_policy.lio_position_feedback_gain_s_inv = tracking_experiment_.velocity_only_gain_s_inv;
+  adapter_policy.maximum_velocity_mps = tracking_experiment_.velocity_only_cap_mps;
+  adapter_policy.maximum_timing_bound_s = tracking_experiment_.velocity_only_max_timing_bound_s;
+  adapter_policy.maximum_reference_age_s = tracking_experiment_.velocity_only_max_reference_age_s;
+  adapter_policy.expected_px4_reset_counters = raw_px4.reset_counters;
+  adapter_policy.expected_lio_localization_epoch = lio.localization_epoch;
+
+  const auto adapted = tracking_adapter::adapt(reference, lio, raw_px4, timing, adapter_policy);
+  if (!adapted.success()) {
+    velocity_only_last_reason_ = "adapter_rejected";
+    return false;
+  }
+  velocity_only::Identity continuity_identity{
+      command.mission_id, command.waypoint_index, command.request_id,
+      command.bundle_generation, reference.identity.role == CommandRole::kMain
+          ? velocity_only::Role::kMain : velocity_only::Role::kBackup};
+  velocity_only::Policy continuity_policy{
+      tracking_experiment_.velocity_only_cap_mps,
+      tracking_experiment_.velocity_only_max_acceleration_mps2,
+      tracking_experiment_.velocity_only_max_jerk_mps3};
+  std::optional<velocity_only::Previous> previous;
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    previous = velocity_only_previous_;
+  }
+  const auto limited = velocity_only::limit(
+      adapted.output->witness.velocity_command_lio_enu, now_ns, continuity_identity,
+      continuity_policy, previous ? &*previous : nullptr);
+  if (!limited.success()) {
+    velocity_only_last_reason_ = "continuity_rejected";
+    return false;
+  }
+  const Eigen::Vector3d velocity_ned_value =
+      adapted.output->witness.rotation_lio_enu_to_px4_ned * limited.velocity_enu;
+  std::optional<Eigen::Vector3f> velocity_ned;
+  if (velocity_ned_value.allFinite() &&
+      (velocity_ned_value.cwiseAbs().array() <=
+       static_cast<double>(std::numeric_limits<float>::max())).all()) {
+    velocity_ned = velocity_ned_value.cast<float>();
+  }
+  if (!velocity_ned || !floatRepresentable(adapted.output->yaw_ned) ||
+      !floatRepresentable(adapted.output->yaw_rate_ned_rad_s)) {
+    velocity_only_last_reason_ = "velocity_or_yaw_not_representable";
+    return false;
+  }
+
+  px4_ros2::TrajectorySetpoint setpoint;
+  setpoint.withVelocity(*velocity_ned)
+      .withYaw(static_cast<float>(adapted.output->yaw_ned))
+      .withYawRate(static_cast<float>(adapted.output->yaw_rate_ned_rad_s));
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    velocity_only_previous_ = velocity_only::Previous{
+        continuity_identity, limited.velocity_enu, limited.acceleration_enu, now_ns};
+    velocity_only_last_reset_counters_ = raw_px4.reset_counters;
+    velocity_only_reset_counters_seen_ = true;
+    velocity_only_last_reason_ = limited.limited ? "continuity_limited" : "accepted";
+    if (limited.limited) ++velocity_only_limited_count_;
+    last_velocity_command_enu_ = limited.velocity_enu;
+    last_setpoint_time_ = now;
+  }
+  publishPx4InputTrace(std::optional<navigation_contracts::msg::NavigationCommand>{command},
+                       std::nullopt, velocity_ned, std::nullopt,
+                       setpoint.yaw_ned_rad.value_or(NAN),
+                       setpoint.yaw_rate_ned_rad_s.value_or(NAN));
+  trajectory_setpoint_->update(setpoint);
+  return true;
 }
 
 void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
@@ -1741,6 +2026,7 @@ void NavigationMode::failNavigation(const char* reason, const bool automatic_rec
 void NavigationMode::updateSetpoint(float /*dt_s*/) {
   std::optional<navigation_contracts::msg::NavigationCommand> navigation_command;
   std::optional<nav_msgs::msg::Odometry> odometry;
+  std::optional<VelocityOnlySnapshot> velocity_only_snapshot;
   std::int64_t odometry_receive_steady_ns = 0;
   std::optional<Eigen::Vector3d> lio_to_px4_local_translation_ned;
   const auto now = node().get_clock()->now();
@@ -1749,6 +2035,36 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     navigation_command = navigation_command_;
     odometry = odometry_;
     odometry_receive_steady_ns = last_odometry_receive_steady_ns_;
+    if (tracking_experiment_.velocity_only_enabled && odometry_.has_value()) {
+      VelocityOnlySnapshot snapshot;
+      snapshot.odometry = *odometry_;
+      snapshot.px4.position_ned = px4_local_position_ned_.value_or(
+          Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN()));
+      snapshot.px4.velocity_ned = px4_local_velocity_ned_.value_or(
+          Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN()));
+      snapshot.px4.yaw_ned = last_px4_heading_ned_;
+      snapshot.px4.position_valid = {last_px4_xy_valid_, last_px4_xy_valid_, last_px4_z_valid_};
+      snapshot.px4.velocity_valid = {last_px4_vxy_valid_, last_px4_vxy_valid_, last_px4_vz_valid_};
+      snapshot.px4.heading_valid = last_px4_heading_valid_;
+      snapshot.px4.heading_good_for_control = last_px4_heading_good_for_control_;
+      snapshot.px4.dead_reckoning = last_px4_dead_reckoning_;
+      snapshot.px4.heading_variance_rad2 = last_px4_heading_variance_rad2_;
+      snapshot.px4.timestamp_us = last_px4_local_position_timestamp_us_;
+      snapshot.px4.timestamp_sample_us = last_px4_local_position_timestamp_sample_us_;
+      snapshot.px4.receive_steady_ns = last_px4_local_position_receive_steady_ns_;
+      snapshot.px4.reset_counters = tracking_adapter::ResetCounters{
+          px4_xy_reset_counter_, px4_z_reset_counter_, px4_vxy_reset_counter_,
+          px4_vz_reset_counter_, px4_heading_reset_counter_};
+      snapshot.lio_localization_epoch = lio_localization_epoch_;
+      snapshot.lio_sequence = last_propagated_state_sequence_;
+      snapshot.lio_receive_steady_ns = last_odometry_receive_steady_ns_;
+      snapshot.health_navigation_valid = last_health_navigation_valid_;
+      snapshot.health_covariance_valid = last_health_covariance_valid_;
+      snapshot.health_observability_valid = last_health_observability_valid_;
+      snapshot.health_correction_fresh = last_health_correction_fresh_;
+      snapshot.health_propagation_valid = last_health_propagation_valid_;
+      velocity_only_snapshot = std::move(snapshot);
+    }
     const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
     if (px4_local_frame_aligned_ && lio_to_px4_local_translation_ned_.has_value() &&
         last_px4_local_position_receive_steady_ns_ > 0 &&
@@ -1774,7 +2090,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   bool stationary_position_unrepresentable = false;
   const auto publishStationary = [&](const std::optional<Eigen::Vector3d>& position_enu) {
     px4_ros2::TrajectorySetpoint setpoint;
-    if (!position_enu.has_value()) {
+    if (tracking_experiment_.velocity_only_enabled || !position_enu.has_value()) {
       setpoint.withVelocity(Eigen::Vector3f::Zero());
     } else {
       if (const auto position_ned = lioPositionToPx4Ned(*position_enu)) {
@@ -1800,8 +2116,12 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         }
       }
     }
+    const std::optional<Eigen::Vector3f> trace_acceleration =
+        tracking_experiment_.velocity_only_enabled
+        ? std::nullopt
+        : std::optional<Eigen::Vector3f>{Eigen::Vector3f::Zero()};
     publishPx4InputTrace(navigation_command, std::nullopt, Eigen::Vector3f::Zero(),
-                         Eigen::Vector3f::Zero(), setpoint.yaw_ned_rad.value_or(NAN),
+                         trace_acceleration, setpoint.yaw_ned_rad.value_or(NAN),
                          setpoint.yaw_rate_ned_rad_s.value_or(NAN));
     trajectory_setpoint_->update(setpoint);
   };
@@ -1910,6 +2230,10 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     }
   }
   if (mission_controller_ && mission_controller_->holding()) {
+    if (tracking_experiment_.velocity_only_enabled) {
+      requestVelocityOnlyHold("mission stop/holding requires native PX4 Hold");
+      return;
+    }
     const auto waypoint = mission_controller_->activeWaypoint();
     if (!waypoint.has_value()) {
       safetyStopNavigation("mission hold has no active waypoint");
@@ -2079,6 +2403,10 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     }
     if (command.status ==
         navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED) {
+      if (tracking_experiment_.velocity_only_enabled) {
+        requestVelocityOnlyHold("terminal command requires native PX4 Hold");
+        return;
+      }
       if (!publishPositionHold(position_enu)) {
         safetyStopNavigation("completed command position is not representable by PX4");
         return;
@@ -2117,6 +2445,15 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       }
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       last_setpoint_time_ = now;
+      return;
+    }
+    if (tracking_experiment_.velocity_only_enabled) {
+      if (!velocity_only_snapshot.has_value() ||
+          !publishVelocityOnlySetpoint(command, *velocity_only_snapshot, now)) {
+        const auto reason = velocity_only_last_reason_.empty()
+            ? "velocity-only setpoint unavailable" : velocity_only_last_reason_;
+        requestVelocityOnlyHold(reason.c_str());
+      }
       return;
     }
     const auto position_ned = lioPositionToPx4Ned(position_enu);
