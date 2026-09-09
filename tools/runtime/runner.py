@@ -106,6 +106,7 @@ TEST_CASES = (
 )
 MOTION_PRESETS = ("nominal", "slow", "fast")
 TRACKING_EXPERIMENT_MODES = ("off", "adaptive", "relaxed")
+DEFAULT_SITL_TRACKING_EXPERIMENT_MODE = "adaptive"
 SITL_PROFILES = ("default", "gps_off_ev_12mps")
 
 # Keep the complete SITL stack off the default DDS domain and off the PX4
@@ -2171,7 +2172,7 @@ def _run_sim_unlocked(
     inject_failed_same_identity_renewal_ordinal: int | None = None,
     characterization_profile: str | None = None,
     characterization_mode: str = "MODE_PX4_LOCAL",
-    tracking_experiment_mode: str = "off",
+    tracking_experiment_mode: str = DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
     tracking_experiment_base_m: float = 0.2,
     tracking_experiment_lateral_alpha_s: float = 0.05,
     tracking_experiment_longitudinal_beta_s: float = 0.15,
@@ -3198,8 +3199,11 @@ def _add_tracking_experiment_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--tracking-experiment",
         choices=TRACKING_EXPERIMENT_MODES,
-        default="off",
-        help="explicit SITL-only tracking experiment mode; default: off",
+        default=DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
+        help=(
+            "SITL-only tracking experiment mode; campaign default: adaptive; "
+            "use relaxed or off explicitly for diagnostic comparators"
+        ),
     )
     parser.add_argument(
         "--tracking-base-m",

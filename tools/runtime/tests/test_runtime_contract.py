@@ -81,7 +81,39 @@ class RuntimeContractTest(unittest.TestCase):
         parser = argparse.ArgumentParser()
         runner._add_tracking_experiment_arguments(parser)
         parsed_defaults = parser.parse_args([])
-        self.assertEqual(parsed_defaults.tracking_experiment, "off")
+        self.assertEqual(
+            parsed_defaults.tracking_experiment,
+            runner.DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
+        )
+        campaign_default = runner._tracking_experiment_payload(
+            parsed_defaults.tracking_experiment,
+            parsed_defaults.tracking_base_m,
+            parsed_defaults.tracking_alpha_s,
+            parsed_defaults.tracking_beta_s,
+        )
+        self.assertEqual(campaign_default["mode"], "adaptive")
+        self.assertTrue(campaign_default["enabled"])
+        self.assertFalse(campaign_default["suppress_braking"])
+        self.assertEqual(campaign_default["base_m"], 0.2)
+        self.assertEqual(campaign_default["lateral_alpha_s"], 0.05)
+        self.assertEqual(campaign_default["longitudinal_beta_s"], 0.15)
+        self.assertFalse(campaign_default["qualification_eligible"])
+        for profile, expected_cap in (("default", 3.0), ("gps_off_ev_12mps", 12.0)):
+            profile_contract = runner._sitl_profile_contract(profile)
+            for requested in (3.0, 5.0, 12.0):
+                speed_contract = runner._planner_speed_contract(
+                    ROOT / "src/runtime/navigation_runtime/config/planner.yaml",
+                    requested,
+                    profile_contract["control_envelope_max_velocity_mps"],
+                )
+                self.assertEqual(
+                    speed_contract["control_envelope_max_velocity_mps"],
+                    expected_cap,
+                )
+                self.assertEqual(
+                    campaign_default["mode"],
+                    runner.DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
+                )
         parsed = parser.parse_args([
             "--tracking-experiment", "relaxed",
             "--tracking-base-m", "0.25",

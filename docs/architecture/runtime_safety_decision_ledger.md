@@ -1,5 +1,34 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Make campaign tracking witness adaptive by default
+
+- **Owner/status:** SITL campaign launcher/profile; `IMPLEMENTED`, diagnostic-only.
+  The production runtime node default remains disabled; this changes only the
+  External Mode campaign entrypoints and their generated runtime/PX4 settings.
+- **Scope/units:** Campaign default mode is `adaptive` with base `0.20 m`,
+  lateral coefficient `0.05 s`, and longitudinal coefficient `0.15 s`. The
+  adaptive allowance is `base + coefficient * speed`; `relaxed` remains an
+  explicit experiment that suppresses selected MAIN tracking/braking gates,
+  while `off` is an explicit comparator. The setting is propagated to both
+  generated navigation and PX4 External Mode parameter files.
+- **Safety impact:** This does not change the fixed production `0.25 m`
+  tracking budget, BACKUP/EMERGENCY/terminal/world/freshness/lease or mission
+  acceptance contracts, and it does not change PX4 controller parameters. It
+  makes campaign evidence exercise the requested adaptive witness instead of
+  silently running the old `off` comparator. Adaptive and relaxed runs remain
+  non-qualification evidence.
+- **Evidence:** The recent GPS-off cap3/cap5 runs were explicitly `off`, so they
+  did not exercise the adaptive witness. The launcher regression preserves the
+  adaptive mode and coefficients across the default and GPS-off profiles at
+  requested speeds 3, 5 and 12 m/s; Makefile dry-run checks keep the mode
+  explicit at the campaign boundary.
+- **Removal/review condition:** Revisit after the causal tracking campaign is
+  complete. Do not promote the experiment into the production node default or
+  qualification policy without a separate measured decision.
+- **Verification:** Runtime contract tests, Makefile dry-run for the adaptive
+  default and explicit `off` comparator, `git diff --check`, and the existing
+  Release/build gates.
+
 ### 2026-09-09 - Use the current nominal seed to allocate mandatory feasibility time
 
 - **Owner/status:** planning nominal optimizer; `IMPLEMENTED`, correctness fix.
