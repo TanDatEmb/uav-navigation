@@ -1007,7 +1007,9 @@ double knownFreeGuideSupport(
                 : navigation_planning::CandidateBundleKind::kTerminalStop;
         candidate.source = emergency_candidate
             ? navigation_planning::CandidateSource::kEmergency
-            : navigation_planning::CandidateSource::kRefined;
+            : command.retained_position_heading_rebind
+                ? navigation_planning::CandidateSource::kRetained
+                : navigation_planning::CandidateSource::kRefined;
         candidate.certificates.dynamics = true;
         candidate.certificates.flatness = true;
         candidate.certificates.world = true;
@@ -1438,6 +1440,187 @@ double knownFreeGuideSupport(
             return false;
         }
         return authorizeAndStage(std::move(candidate));
+    }
+
+    std::optional<navigation_planning::CandidateBundle>
+    Planner::buildImmediateHeadingRebindCandidate(
+            const navigation_world_model::WorldModelViewPtr& world,
+            const navigation_mission::ImmutableRouteSnapshot& route,
+            const Eigen::Vector3d& measured_position,
+            const Eigen::Vector3d& measured_velocity,
+            const double measured_yaw_rad,
+            const std::optional<Eigen::Vector3d>& mission_start_position,
+            const double activation_wall_time_s,
+            const std::uint64_t localization_epoch,
+            const std::uint64_t goal_epoch,
+            const std::uint64_t request_id,
+            const std::int64_t valid_from_ns,
+            const std::int64_t valid_until_ns) const {
+        // This is deliberately a read-only path. CmdTraj::snapshot() takes
+        // its own mutex, while all other inputs are immutable request copies
+        // or planner configuration. In particular, do not call
+        // authorizeAndStage() here: that would race the serial solve's staged
+        // candidate and warm-start ownership.
+        if (!world || !route.valid() || !measured_position.allFinite() ||
+            !measured_velocity.allFinite() || !std::isfinite(measured_yaw_rad) ||
+            !std::isfinite(activation_wall_time_s) || activation_wall_time_s <= 0.0 ||
+            valid_from_ns <= 0 || valid_until_ns < valid_from_ns ||
+            localization_epoch == 0U || goal_epoch == 0U || request_id == 0U) {
+            return std::nullopt;
+        }
+        const auto committed = planner_warm_start_.snapshot();
+        if (committed.empty || committed.position.empty() || committed.yaw.empty() ||
+            committed.roles.empty() || committed.generation == 0U ||
+            committed.identity.localization_epoch != localization_epoch ||
+            !std::isfinite(committed.position.start_WT) ||
+            !std::isfinite(committed.position.getTotalDuration()) ||
+            activation_wall_time_s <= committed.position.start_WT) {
+            return std::nullopt;
+        }
+        if (committed.generation == std::numeric_limits<std::uint64_t>::max()) {
+            return std::nullopt;
+        }
+        const double committed_duration = committed.position.getTotalDuration();
+        const double start_tt = activation_wall_time_s - committed.position.start_WT;
+        if (!std::isfinite(start_tt) || start_tt <= 1.0e-6 ||
+            start_tt >= committed_duration - 1.0e-4) {
+            return std::nullopt;
+        }
+        const double suffix_duration = committed_duration - start_tt;
+        Trajectory position_suffix;
+        if (!committed.position.getPartialTrajectoryByTime(
+                start_tt, committed_duration, position_suffix)) {
+            return std::nullopt;
+        }
+        position_suffix.start_WT = activation_wall_time_s;
+        const auto initial_yaw_state = committed.yaw.getState(start_tt);
+        if (initial_yaw_state.rows() < 1 || initial_yaw_state.cols() < 3 ||
+            !initial_yaw_state.allFinite()) {
+            return std::nullopt;
+        }
+        Vec4f initial_yaw = Vec4f::Zero();
+        initial_yaw(0) = static_cast<float>(initial_yaw_state(0, 0));
+        initial_yaw(1) = static_cast<float>(initial_yaw_state(0, 1));
+        initial_yaw(2) = static_cast<float>(initial_yaw_state(0, 2));
+        const auto route_yaw = computeRouteYawReference(
+            route, measured_position, measured_velocity, measured_yaw_rad,
+            cfg_.route_yaw_config, mission_start_position);
+        if (!route_yaw.valid || !std::isfinite(route_yaw.target_yaw_rad)) {
+            return std::nullopt;
+        }
+        const double target_yaw = route_yaw.target_yaw_rad;
+        const double yaw_rate_limit = cfg_.yaw_rate_max_rad_s;
+        const double yaw_acceleration_limit = cfg_.yaw_acceleration_max_rad_s2;
+        if (!std::isfinite(yaw_rate_limit) || yaw_rate_limit <= 0.0 ||
+            !std::isfinite(yaw_acceleration_limit) || yaw_acceleration_limit <= 0.0 ||
+            std::abs(static_cast<double>(initial_yaw(1))) >
+                yaw_rate_limit + 1.0e-6 ||
+            std::abs(static_cast<double>(initial_yaw(2))) >
+                yaw_acceleration_limit + 1.0e-6) {
+            return std::nullopt;
+        }
+        const double delta = std::abs(std::remainder(
+            target_yaw - static_cast<double>(initial_yaw(0)), 2.0 * M_PI));
+        const double requested_turn_duration = std::max({
+            0.20,
+            2.0 * delta / yaw_rate_limit,
+            std::sqrt(8.0 * delta / yaw_acceleration_limit),
+            2.0 * std::abs(static_cast<double>(initial_yaw(1))) /
+                yaw_acceleration_limit});
+        // A partial heading turn would make the next waypoint's semantic
+        // heading ambiguous. Keep the whole suffix certified or reject it.
+        if (!std::isfinite(requested_turn_duration) ||
+            requested_turn_duration > suffix_duration + 1.0e-6) {
+            return std::nullopt;
+        }
+        const double turn_duration = requested_turn_duration;
+        Trajectory turn_window;
+        turn_window.start_WT = activation_wall_time_s;
+        turn_window.emplace_back(turn_duration, Eigen::MatrixXd::Zero(3, 6));
+        Trajectory yaw_turn;
+        traj_opt::YawTrajOpt local_yaw_optimizer(
+            yaw_rate_limit, yaw_acceleration_limit);
+        if (!local_yaw_optimizer.optimizeToTarget(
+                initial_yaw, target_yaw, turn_window, yaw_turn) ||
+            yaw_turn.empty()) {
+            return std::nullopt;
+        }
+        yaw_turn.start_WT = activation_wall_time_s;
+        Trajectory yaw_suffix = yaw_turn;
+        const double hold_duration = suffix_duration - turn_duration;
+        if (hold_duration > 1.0e-5) {
+            const auto final_yaw_state = yaw_turn.getState(yaw_turn.getTotalDuration());
+            if (final_yaw_state.rows() < 1 || final_yaw_state.cols() < 3 ||
+                !final_yaw_state.allFinite()) {
+                return std::nullopt;
+            }
+            Eigen::MatrixXd hold_coeff = Eigen::MatrixXd::Zero(3, 6);
+            hold_coeff(0, 5) = final_yaw_state(0, 0);
+            Trajectory hold;
+            hold.start_WT = activation_wall_time_s + turn_duration;
+            hold.emplace_back(hold_duration, hold_coeff);
+            yaw_suffix = yaw_turn + hold;
+        }
+        yaw_suffix.start_WT = activation_wall_time_s;
+        if (!std::isfinite(yaw_suffix.getMaxVelRate()) ||
+            yaw_suffix.getMaxVelRate() > yaw_rate_limit + 1.0e-6 ||
+            !std::isfinite(yaw_suffix.getMaxAccRate()) ||
+            yaw_suffix.getMaxAccRate() > yaw_acceleration_limit + 1.0e-6) {
+            return std::nullopt;
+        }
+
+        CandidateCommandBundle candidate;
+        candidate.position = std::move(position_suffix);
+        candidate.yaw = std::move(yaw_suffix);
+        candidate.start_wall_time = activation_wall_time_s;
+        candidate.localization_epoch = localization_epoch;
+        candidate.goal_epoch = goal_epoch;
+        candidate.request_id = request_id;
+        candidate.retained_position_heading_rebind = true;
+        candidate.backup_disposition = BackupDisposition::SUCCESS;
+        double first_backup_start = std::numeric_limits<double>::infinity();
+        for (const auto& role : committed.roles) {
+            const double begin = std::max(0.0, role.begin_tt - start_tt);
+            const double end = std::min(suffix_duration, role.end_tt - start_tt);
+            if (end <= begin + 1.0e-6) continue;
+            candidate.roles.push_back({
+                begin, end,
+                role.role == CandidateTrajectoryRole::BACKUP
+                    ? CandidateTrajectoryRole::BACKUP
+                    : CandidateTrajectoryRole::MAIN});
+            if (role.role == CandidateTrajectoryRole::BACKUP) {
+                first_backup_start = std::min(first_backup_start, begin);
+            }
+        }
+        if (candidate.roles.empty() ||
+            candidate.roles.back().end_tt < suffix_duration - 1.0e-5 ||
+            !std::isfinite(first_backup_start)) {
+            return std::nullopt;
+        }
+        candidate.backup_suffix_available = true;
+        candidate.backup_start_tt = first_backup_start;
+        traj_opt::TrajectoryDynamicReport dynamic_report;
+        if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
+                candidate.position, cfg_.exp_traj_cfg, &dynamic_report,
+                0.01, &candidate.yaw)) {
+            return std::nullopt;
+        }
+        const auto certificate_policy = candidateCertificatePolicy(
+            candidate, cfg_.unknown_space_policy);
+        const auto validation = validateExecutableCandidate(
+            *world, candidate, activation_wall_time_s, certificate_policy);
+        if (!validation.valid || !validation.protected_region.valid()) {
+            return std::nullopt;
+        }
+        CommandCertificate certificate{
+            world->identity(), world->identity(), validation.begin_tt,
+            validation.protected_region};
+        const auto exported = exportStagedCommandCandidate(
+            candidate, certificate, committed.generation + 1U,
+            localization_epoch, goal_epoch, request_id,
+            valid_from_ns, valid_until_ns);
+        if (!exported.candidate.has_value()) return std::nullopt;
+        return std::move(exported.candidate);
     }
 
     std::optional<bool> Planner::tryStageMeasuredTerminalStopHold(

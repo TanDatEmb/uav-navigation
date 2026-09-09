@@ -882,6 +882,18 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   ASSERT_TRUE(facade.setState(state));
   facade.setCommandIdentity(1U, 2U, 2U);
 
+  const auto out_of_band = facade.buildImmediateHeadingRebindCandidate(
+      world, second_route, state.position_world, state.velocity_world,
+      state.yaw_rad, start.position_enu, 10.5, 1U, 2U, 2U,
+      10500000000LL, 30000000000LL);
+  ASSERT_TRUE(out_of_band);
+  ASSERT_TRUE(out_of_band->valid());
+  EXPECT_EQ(out_of_band->source, navigation_planning::CandidateSource::kRetained);
+  EXPECT_TRUE(out_of_band->certificates.world);
+  EXPECT_TRUE(out_of_band->certificates.flatness);
+  EXPECT_TRUE(out_of_band->protected_region.valid());
+  EXPECT_EQ(out_of_band->world_identity.generation, world->identity().generation);
+
   // This models a position solve that has not returned yet: the heading
   // successor is staged directly from the retained command suffix.
   ASSERT_TRUE(facade.stageImmediateHeadingRebind(10.5));

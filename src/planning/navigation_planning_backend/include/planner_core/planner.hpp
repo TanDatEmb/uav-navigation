@@ -560,6 +560,27 @@ namespace navigation_planning_backend {
         // must admit the staged candidate through its normal boundary.
         bool stageImmediateHeadingRebind(double activation_wall_time_s);
 
+        // Read-only, out-of-band construction for a waypoint heading update.
+        // This method snapshots CmdTraj under its own lock and does not touch
+        // solve state, warm-start history, or staged-candidate state. It may
+        // therefore run beside the serial position optimizer; the runtime
+        // still admits the returned immutable candidate through its ordinary
+        // execution boundary.
+        [[nodiscard]] std::optional<navigation_planning::CandidateBundle>
+        buildImmediateHeadingRebindCandidate(
+            const navigation_world_model::WorldModelViewPtr& world,
+            const navigation_mission::ImmutableRouteSnapshot& route,
+            const Eigen::Vector3d& measured_position,
+            const Eigen::Vector3d& measured_velocity,
+            double measured_yaw_rad,
+            const std::optional<Eigen::Vector3d>& mission_start_position,
+            double activation_wall_time_s,
+            std::uint64_t localization_epoch,
+            std::uint64_t goal_epoch,
+            std::uint64_t request_id,
+            std::int64_t valid_from_ns,
+            std::int64_t valid_until_ns) const;
+
         void cancelActiveSolve() {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
             solve_cancelled_.store(true);

@@ -93,6 +93,11 @@ struct WorldCommitCertificate {
   navigation_world_model::WorldSnapshotIdentity pinned_world{};
   navigation_world_model::WorldSnapshotIdentity validated_world{};
   double validation_begin_time_s{0.0};
+  // The immutable swept region is part of the certificate provenance.  It is
+  // required when a retained-position successor is built outside the serial
+  // optimizer worker: the successor may reuse this exact region only because
+  // its position trajectory is byte-for-byte the committed suffix.
+  navigation_world_model::AxisAlignedBox protected_region{};
 };
 
 struct TrajectorySnapshot {
@@ -126,6 +131,7 @@ struct CommittedTrajectorySnapshot {
   bool backup_available{false};
   double backup_start_time_s{0.0};
   bool terminal_stop{false};
+  std::vector<CandidateRoleInterval> role_schedule{};
 
   [[nodiscard]] bool empty() const noexcept {
     return position.empty();

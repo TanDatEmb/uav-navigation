@@ -12,6 +12,7 @@
 
 #include "navigation_runtime/planning_supervisor.hpp"
 #include "navigation_runtime/planning_worker.hpp"
+#include "navigation_runtime/heading_rebind_worker.hpp"
 
 namespace navigation_runtime {
 namespace {
@@ -211,6 +212,47 @@ TEST(PlanningWorker, MapRevisionQueuesWithoutCancellingActiveSolve) {
   EXPECT_EQ(planner_view->cancel_calls.load(), 0U);
   gate.release();
   worker.shutdown();
+}
+
+TEST(HeadingRebindWorker, RunsBeforeBlockedPositionSolveAndStaleSolveCannotRollback) {
+  auto planner = std::make_unique<FakePlanner>();
+  PlanningWorker<FakePlanner> position_worker(std::move(planner));
+  position_worker.start();
+  JobGate position_gate;
+  std::atomic_uint64_t execution_generation{1U};
+  ASSERT_EQ(position_worker.submit(
+                makeKey(1U), PlanningPriority::kGoalTransition,
+                [&](FakePlanner&, std::stop_token stop) {
+                  position_gate.started();
+                  position_gate.waitUntilReleased(stop);
+                  // This models a stale nominal completion. It may not
+                  // overwrite the out-of-band execution owner installed by
+                  // the command boundary while this solve was blocked.
+                  std::uint64_t expected = 1U;
+                  execution_generation.compare_exchange_strong(expected, 3U);
+                }),
+            PlanningSubmitDisposition::kAccepted);
+  ASSERT_TRUE(position_gate.waitUntilStarted());
+
+  HeadingRebindWorker heading_worker;
+  heading_worker.start();
+  std::atomic_bool heading_finished{false};
+  ASSERT_TRUE(heading_worker.submit([&](std::stop_token stop) {
+    if (stop.stop_requested()) return;
+    execution_generation.store(2U);
+    heading_finished.store(true);
+  }));
+  for (int attempt = 0; attempt < 200 && !heading_finished.load(); ++attempt) {
+    std::this_thread::sleep_for(5ms);
+  }
+  ASSERT_TRUE(heading_finished.load());
+  EXPECT_EQ(execution_generation.load(), 2U);
+
+  position_gate.release();
+  position_worker.shutdown();
+  heading_worker.shutdown();
+  EXPECT_EQ(execution_generation.load(), 2U);
+  EXPECT_GE(heading_worker.snapshot().completed, 1U);
 }
 
 TEST(PlanningWorker, GoalIdentityChangeCancelsInflightAndKeepsReplacement) {

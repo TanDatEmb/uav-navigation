@@ -141,6 +141,14 @@ if(BUILD_TESTING)
     NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml"
     NAVIGATION_HANDOVER_MISSION_FILE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/missions/open.yaml")
   target_link_libraries(test_navigation_runtime_shutdown navigation_runtime_core)
+  # ament's generated CTest wrapper is often invoked after sourcing only the
+  # underlay. Keep the runtime contract test self-contained by exposing the
+  # workspace-built rosidl C library that navigation_runtime_core loads.
+  get_filename_component(NAVIGATION_CONTRACTS_PREFIX
+    "${navigation_contracts_DIR}/../../.." ABSOLUTE)
+  set_tests_properties(test_navigation_runtime_shutdown PROPERTIES
+    ENVIRONMENT
+      "LD_LIBRARY_PATH=${NAVIGATION_CONTRACTS_PREFIX}/lib:$ENV{LD_LIBRARY_PATH}")
   ament_add_gtest(test_mapping_fail_stop test/test_mapping_fail_stop.cpp)
   target_link_libraries(test_mapping_fail_stop navigation_runtime_core)
   ament_add_gtest(test_kinematic_derivative_estimator

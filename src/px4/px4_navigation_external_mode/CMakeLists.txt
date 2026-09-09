@@ -78,6 +78,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_px4_tracking_adapter test/test_px4_tracking_adapter.cpp)
   target_include_directories(test_px4_tracking_adapter PRIVATE include)
   target_link_libraries(test_px4_tracking_adapter Eigen3::Eigen)
+  ament_add_gtest(test_paired_node_lifetime test/test_paired_node_lifetime.cpp)
+  target_include_directories(test_paired_node_lifetime PRIVATE include)
 endif()
 
 ament_package()

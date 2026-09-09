@@ -293,6 +293,27 @@ bool PlannerFacade::stageImmediateHeadingRebind(
       impl_->planner->stageImmediateHeadingRebind(activation_wall_time_s);
 }
 
+std::optional<navigation_planning::CandidateBundle>
+PlannerFacade::buildImmediateHeadingRebindCandidate(
+    const navigation_world_model::WorldModelViewPtr& world,
+    const navigation_mission::ImmutableRouteSnapshot& route,
+    const Eigen::Vector3d& measured_position,
+    const Eigen::Vector3d& measured_velocity,
+    const double measured_yaw_rad,
+    const std::optional<Eigen::Vector3d>& mission_start_position,
+    const double activation_wall_time_s,
+    const std::uint64_t localization_epoch,
+    const std::uint64_t goal_epoch,
+    const std::uint64_t request_id,
+    const std::int64_t valid_from_ns,
+    const std::int64_t valid_until_ns) const {
+  if (!impl_ || !impl_->planner) return std::nullopt;
+  return impl_->planner->buildImmediateHeadingRebindCandidate(
+      world, route, measured_position, measured_velocity, measured_yaw_rad,
+      mission_start_position, activation_wall_time_s, localization_epoch,
+      goal_epoch, request_id, valid_from_ns, valid_until_ns);
+}
+
 void PlannerFacade::setPassThroughNextTarget(
     const std::optional<Eigen::Vector3d>& next_target) noexcept {
   if (impl_ && impl_->planner) impl_->planner->setPassThroughNextTarget(next_target);
@@ -370,10 +391,21 @@ navigation_planning::CommittedTrajectorySnapshot PlannerFacade::committedSnapsho
   output.certificate.pinned_world = snapshot.certificate.pinned_world;
   output.certificate.validated_world = snapshot.certificate.validated_world;
   output.certificate.validation_begin_time_s = snapshot.certificate.validation_begin_tt;
+  output.certificate.protected_region = snapshot.certificate.protected_region;
   output.diagnostics = toProductDiagnostics(snapshot.diagnostics);
   output.backup_available = snapshot.backup_available;
   output.backup_start_time_s = snapshot.backup_start_tt;
   output.terminal_stop = snapshot.terminal_stop;
+  output.role_schedule.reserve(snapshot.roles.size());
+  for (const auto& role : snapshot.roles) {
+    output.role_schedule.push_back({
+        role.begin_tt, role.end_tt,
+        role.role == CandidateTrajectoryRole::BACKUP
+            ? navigation_planning::CandidateRole::kBackup
+            : role.role == CandidateTrajectoryRole::MAIN
+                ? navigation_planning::CandidateRole::kMain
+                : navigation_planning::CandidateRole::kEmergency});
+  }
   if (snapshot.empty) output.position = {};
   return output;
 }

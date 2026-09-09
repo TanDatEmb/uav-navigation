@@ -1445,10 +1445,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           RCLCPP_ERROR(get_logger(), "planning worker failed with unknown exception");
         }
       });
+  heading_rebind_worker_ = std::make_unique<HeadingRebindWorker>();
   mapping_worker_->setStrictlyIncreasingOrderKey(
       [](const PendingRegisteredScan& pending) { return pending.stamp_ns; });
   mapping_worker_->start();
   planning_worker_->start();
+  heading_rebind_worker_->start();
 
   const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
   propagated_state_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
@@ -1513,6 +1515,7 @@ NavigationRuntimeNode::~NavigationRuntimeNode() {
   if (planning_timer_) planning_timer_->cancel();
   if (command_timer_) command_timer_->cancel();
   if (planning_worker_) planning_worker_->shutdown();
+  if (heading_rebind_worker_) heading_rebind_worker_->shutdown();
   planner_ = nullptr;
   registered_scan_subscription_.reset();
   estimator_health_subscription_.reset();
@@ -2904,6 +2907,10 @@ void NavigationRuntimeNode::schedulePlanningCycle() {
     const auto episode = execution_episode_.snapshot();
     safety_renewal = episode.restart_from_rest || episode.safety_suffix_active;
   }
+  if (goal_transition && !safety_renewal &&
+      key->start_mode == PlanningStartMode::kCommittedFutureState) {
+    scheduleHeadingRebind(*key);
+  }
   const auto priority = PlanningSupervisor::classifyPriority(
       false, false, goal_transition, safety_renewal);
   (void)planning_worker_->submit(
@@ -2919,6 +2926,90 @@ void NavigationRuntimeNode::schedulePlanningCycle() {
         }
         runCycle(scheduled_key);
       });
+}
+
+void NavigationRuntimeNode::scheduleHeadingRebind(const PlanningKey& key) {
+  if (!heading_rebind_worker_ || !planner_ || !key.valid()) return;
+  const auto execution = execution_state_store_.load();
+  const auto world = world_snapshot_store_.load();
+  const auto timeline = command_bundle_store_.snapshot();
+  if (!execution || !world.view || !timeline.active ||
+      timeline.active->bundle_generation != key.committed_bundle_generation) {
+    return;
+  }
+  std::optional<navigation_contracts::msg::NavigationGoal> goal;
+  std::optional<Eigen::Vector3d> mission_start;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    goal = active_goal_;
+    mission_start = mission_start_position_world_;
+  }
+  if (!goal || goal->request_id != key.request_id ||
+      goal->waypoint_index != goal->route.active_waypoint_index) {
+    return;
+  }
+  const auto route = decodeRouteSnapshot(*goal);
+  if (!route || route->route_revision != key.route_revision ||
+      route->active_waypoint_index != goal->waypoint_index) {
+    return;
+  }
+  const auto committed = planner_->committedSnapshot();
+  if (committed.empty() || committed.generation != key.committed_bundle_generation ||
+      committed.certificate.validated_world.localization_epoch !=
+          key.localization_epoch) {
+    return;
+  }
+  const auto now_ns = now().nanoseconds();
+  const auto guard_ns = static_cast<std::int64_t>(
+      navigation_planning::PlanningTimingContract::kCommitGuardS * 1.0e9);
+  if (now_ns <= 0 || guard_ns <= 0 ||
+      now_ns > std::numeric_limits<std::int64_t>::max() - guard_ns) {
+    return;
+  }
+  const auto activation_ns = now_ns + guard_ns;
+  const double activation_wall_time_s =
+      static_cast<double>(activation_ns) * 1.0e-9;
+  const auto planner = planner_;
+  (void)heading_rebind_worker_->submit(
+      [this, planner, key, committed, route = *route, mission_start,
+       world_view = world.view, execution_state = execution->state,
+       activation_wall_time_s, activation_ns, now_ns](std::stop_token stop) {
+        if (stop.stop_requested()) return;
+        const auto candidate = planner->buildImmediateHeadingRebindCandidate(
+            world_view, route, execution_state.position_world,
+            execution_state.velocity_world, execution_state.yaw_rad,
+            mission_start, activation_wall_time_s, key.localization_epoch,
+            key.goal_epoch, key.request_id, activation_ns,
+            now_ns + data_freshness_window_ns_);
+        if (stop.stop_requested() || !candidate || !candidate->valid()) return;
+        std::lock_guard<std::mutex> lock(heading_rebind_mutex_);
+        pending_heading_rebind_ = PendingHeadingRebind{key, *candidate};
+      });
+}
+
+void NavigationRuntimeNode::consumeHeadingRebind(const std::int64_t now_ns) {
+  if (!planner_ || now_ns <= 0) return;
+  std::optional<PendingHeadingRebind> pending;
+  {
+    std::lock_guard<std::mutex> lock(heading_rebind_mutex_);
+    pending.swap(pending_heading_rebind_);
+  }
+  if (!pending) return;
+  std::optional<navigation_contracts::msg::NavigationGoal> goal;
+  {
+    std::lock_guard<std::mutex> lock(input_mutex_);
+    goal = active_goal_;
+  }
+  if (!goal || goal->request_id != pending->key.request_id) return;
+  if (commitPlannerCandidate(
+          *goal, pending->key.goal_epoch, pending->key.localization_epoch,
+          now_ns, pending->key, pending->candidate)) {
+    RCLCPP_INFO(
+        get_logger(),
+        "accepted out-of-band waypoint heading rebind generation=%lu activation_ns=%lld",
+        static_cast<unsigned long>(pending->candidate.bundle_generation),
+        static_cast<long long>(pending->candidate.activation_stamp_ns));
+  }
 }
 
 bool NavigationRuntimeNode::queueExecutionTimelineActivation(
@@ -4315,38 +4406,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
   planner_->setCommandIdentity(
       localization_epoch_at_solve, goal_epoch, goal->request_id);
-  // A hot waypoint handoff must not wait for the long position solve before
-  // the active-leg heading changes. Stage a retained-position yaw-only
-  // successor through the same planner/world/flatness and execution-boundary
-  // contracts; the subsequent nominal solve may replace this pending command,
-  // but a failed or stale solve cannot roll it back.
-  if (replan_for_new_goal && !plan_from_rest_with_transition) {
-    const auto heading_rebind_now_ns = now().nanoseconds();
-    const auto heading_guard_ns = static_cast<std::int64_t>(
-        navigation_planning::PlanningTimingContract::kCommitGuardS * 1.0e9);
-    if (heading_rebind_now_ns > 0 && heading_guard_ns > 0 &&
-        heading_rebind_now_ns <=
-            std::numeric_limits<std::int64_t>::max() - heading_guard_ns) {
-      const double activation_wall_time_s = static_cast<double>(
-          heading_rebind_now_ns + heading_guard_ns) * 1.0e-9;
-      if (planner_->stageImmediateHeadingRebind(activation_wall_time_s)) {
-        if (!commitPlannerCandidate(
-                *goal, goal_epoch, localization_epoch_at_solve,
-                heading_rebind_now_ns, effective_scheduled_key)) {
-          planner_->discardCommandCandidate();
-          RCLCPP_WARN(
-              get_logger(),
-              "immediate waypoint heading rebind failed execution admission; "
-              "retaining current command while nominal solve continues");
-        } else {
-          RCLCPP_INFO(
-              get_logger(),
-              "staged immediate waypoint heading rebind activation=%.6f target_wp=%u",
-              activation_wall_time_s, goal->waypoint_index);
-        }
-      }
-    }
-  }
   planner_->setNominalProblemDiagnosticIdentity(
       solve_generation, cycle_count_);
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
@@ -6719,6 +6778,13 @@ void NavigationRuntimeNode::publishCommand() {
     suspendCommandForWorldFreshness();
     return;
   }
+
+  // A waypoint handoff may be produced by the independent heading worker
+  // while the serial position optimizer is still blocked.  The command clock
+  // is the only owner allowed to submit that immutable candidate to the
+  // execution timeline; stale nominal completions still face the same key,
+  // anchor, world and transaction gates below.
+  consumeHeadingRebind(command_ros_time.nanoseconds());
 
   // The execution timeline owns the future splice. A successor is staged by
   // the planning worker, then atomically becomes the active command at its

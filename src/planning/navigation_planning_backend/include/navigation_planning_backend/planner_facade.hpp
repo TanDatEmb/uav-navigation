@@ -62,6 +62,20 @@ class PlannerFacade final {
       const std::optional<Eigen::Vector3d>& mission_start) noexcept;
   [[nodiscard]] bool stageImmediateHeadingRebind(
       double activation_wall_time_s);
+  [[nodiscard]] std::optional<navigation_planning::CandidateBundle>
+  buildImmediateHeadingRebindCandidate(
+      const navigation_world_model::WorldModelViewPtr& world,
+      const navigation_mission::ImmutableRouteSnapshot& route,
+      const Eigen::Vector3d& measured_position,
+      const Eigen::Vector3d& measured_velocity,
+      double measured_yaw_rad,
+      const std::optional<Eigen::Vector3d>& mission_start_position,
+      double activation_wall_time_s,
+      std::uint64_t localization_epoch,
+      std::uint64_t goal_epoch,
+      std::uint64_t request_id,
+      std::int64_t valid_from_ns,
+      std::int64_t valid_until_ns) const;
   void setPassThroughNextTarget(
       const std::optional<Eigen::Vector3d>& next_target) noexcept;
   bool setState(const navigation_planning::KinematicState& state);

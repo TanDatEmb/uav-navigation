@@ -30,12 +30,14 @@
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/observation_accounting.hpp>
 #include <navigation_planning/planning_outcome.hpp>
+#include <navigation_planning/candidate_bundle.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
 #include "navigation_runtime/execution_episode.hpp"
 #include "navigation_runtime/trajectory_completion.hpp"
 #include "navigation_runtime/planning_worker.hpp"
+#include "navigation_runtime/heading_rebind_worker.hpp"
 #include "navigation_runtime/execution_trace_snapshot.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
@@ -191,6 +193,11 @@ struct PendingRegisteredScan final {
   std::uint64_t scan_sequence{0};
 };
 
+struct PendingHeadingRebind final {
+  PlanningKey key{};
+  navigation_planning::CandidateBundle candidate{};
+};
+
 // Product ROS boundary for the planner backend core. Mapping consumes one atomic
 // RegisteredScan containing the registered cloud and its corrected pose.
 class NavigationRuntimeNode final : public rclcpp::Node {
@@ -221,6 +228,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   void onModeStatus(
       const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message);
   void schedulePlanningCycle();
+  void scheduleHeadingRebind(const PlanningKey& key);
+  void consumeHeadingRebind(std::int64_t now_ns);
 
   [[nodiscard]] bool queueExecutionTimelineActivation(
       std::uint64_t generation) noexcept;
@@ -444,6 +453,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::unique_ptr<navigation_mapping::MappingWorker<PendingRegisteredScan>> mapping_worker_;
   navigation_planning_backend::PlannerFacade* planner_{nullptr};
   std::unique_ptr<PlanningWorker<navigation_planning_backend::PlannerFacade>> planning_worker_;
+  std::unique_ptr<HeadingRebindWorker> heading_rebind_worker_;
+  mutable std::mutex heading_rebind_mutex_;
+  std::optional<PendingHeadingRebind> pending_heading_rebind_;
 };
 
 }  // namespace navigation_runtime

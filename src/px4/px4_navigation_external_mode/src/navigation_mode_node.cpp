@@ -35,6 +35,7 @@
 #include "px4_navigation_external_mode/planner_recovery.hpp"
 #include "px4_navigation_external_mode/runtime_metrics_policy.hpp"
 #include "px4_navigation_external_mode/local_frame_alignment.hpp"
+#include "px4_navigation_external_mode/paired_node_lifetime.hpp"
 
 namespace px4_navigation_external_mode {
 namespace {
@@ -2299,15 +2300,18 @@ int main(int argc, char* argv[]) {
     }
   };
 
+  px4_navigation_external_mode::PairedNodeLifetime<Node, rclcpp::Node> node_lifetime;
   try {
-    const auto mode_node = std::make_shared<Node>("px4_navigation_external_mode", true);
-    const auto state_input_node =
+    node_lifetime.mode =
+        std::make_shared<Node>("px4_navigation_external_mode", true);
+    node_lifetime.state_input =
         std::make_shared<rclcpp::Node>("px4_navigation_external_mode_state_input");
-    mode_node->getMode().attachStateInputNode(*state_input_node);
+    node_lifetime.mode->getMode().attachStateInputNode(*node_lifetime.state_input);
     state_input_thread = std::thread([
-        state_input_node, &state_input_exception, &state_input_exception_mutex]() {
+        input_node = node_lifetime.state_input,
+        &state_input_exception, &state_input_exception_mutex]() {
       try {
-        rclcpp::spin(state_input_node);
+        rclcpp::spin(input_node);
       } catch (...) {
         {
           std::lock_guard<std::mutex> lock(state_input_exception_mutex);
@@ -2320,7 +2324,7 @@ int main(int argc, char* argv[]) {
       }
     });
     try {
-      rclcpp::spin(mode_node);
+      rclcpp::spin(node_lifetime.mode);
     } catch (...) {
       const auto exception = std::current_exception();
       logException("mode executor", exception);
@@ -2338,7 +2342,7 @@ int main(int argc, char* argv[]) {
   }
 
   if (rclcpp::ok()) rclcpp::shutdown();
-  if (state_input_thread.joinable()) state_input_thread.join();
+  node_lifetime.joinReceiver(state_input_thread);
   std::exception_ptr captured_state_input_exception;
   {
     std::lock_guard<std::mutex> lock(state_input_exception_mutex);
