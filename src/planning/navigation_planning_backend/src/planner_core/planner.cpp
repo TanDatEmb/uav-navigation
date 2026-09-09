@@ -24,7 +24,13 @@
 #include <navigation_planning/planning_timing.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <cmath>
+#include <condition_variable>
+#include <cstdlib>
+#include <deque>
+#include <cstdio>
 #include <memory>
+#include <mutex>
+#include <thread>
 #include <sstream>
 #include <stdexcept>
 #include <navigation_math/scope_timer.hpp>
@@ -34,6 +40,106 @@ using namespace navigation_math;
 using std::isnan;
 
 namespace navigation_planning_backend {
+
+class NominalProblemSnapshotWriter final {
+ public:
+  explicit NominalProblemSnapshotWriter(const std::size_t capacity)
+      : capacity_(std::max<std::size_t>(1U, capacity)),
+        worker_([this] { run(); }) {}
+
+  NominalProblemSnapshotWriter(const NominalProblemSnapshotWriter&) = delete;
+  NominalProblemSnapshotWriter& operator=(const NominalProblemSnapshotWriter&) = delete;
+
+  ~NominalProblemSnapshotWriter() noexcept {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stopping_ = true;
+    }
+    condition_.notify_one();
+    if (worker_.joinable()) worker_.join();
+    const auto dropped = dropped_count_.load(std::memory_order_relaxed);
+    if (dropped != 0U) {
+      std::fprintf(stderr,
+                   "[planner] nominal snapshot writer dropped %llu bounded captures\n",
+                   static_cast<unsigned long long>(dropped));
+    }
+  }
+
+  bool enqueue(std::optional<traj_opt::NominalProblemSnapshot> snapshot,
+               const navigation_world_model::WorldModelViewPtr& world,
+               const bool include_world_snapshot,
+               const char* const directory) noexcept {
+    if (!snapshot.has_value() || directory == nullptr || directory[0] == '\0') {
+      return false;
+    }
+    try {
+      Job job;
+      job.snapshot = std::move(snapshot);
+      job.world = world;
+      job.include_world_snapshot = include_world_snapshot;
+      job.directory = directory;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_ || queue_.size() >= capacity_) {
+          dropped_count_.fetch_add(1U, std::memory_order_relaxed);
+          return false;
+        }
+        queue_.emplace_back(std::move(job));
+      }
+      condition_.notify_one();
+      return true;
+    } catch (...) {
+      dropped_count_.fetch_add(1U, std::memory_order_relaxed);
+      return false;
+    }
+  }
+
+  [[nodiscard]] std::uint64_t droppedCount() const noexcept {
+    return dropped_count_.load(std::memory_order_relaxed);
+  }
+
+ private:
+  struct Job {
+    std::optional<traj_opt::NominalProblemSnapshot> snapshot;
+    navigation_world_model::WorldModelViewPtr world;
+    bool include_world_snapshot{false};
+    std::string directory;
+  };
+
+  void run() noexcept {
+    for (;;) {
+      Job job;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        condition_.wait(lock, [this] {
+          return stopping_ || !queue_.empty();
+        });
+        if (queue_.empty() && stopping_) return;
+        job = std::move(queue_.front());
+        queue_.pop_front();
+      }
+      try {
+        if (job.snapshot.has_value() && job.include_world_snapshot && job.world) {
+          job.snapshot->diagnostic_world_snapshot = job.world->diagnosticSnapshot();
+        }
+        if (job.snapshot.has_value()) {
+          (void)traj_opt::writeNominalProblemSnapshotJson(
+              *job.snapshot, job.directory);
+        }
+      } catch (...) {
+        // Diagnostic capture is best effort and cannot affect planning.
+      }
+    }
+  }
+
+  const std::size_t capacity_;
+  mutable std::mutex mutex_;
+  std::condition_variable condition_;
+  std::deque<Job> queue_;
+  bool stopping_{false};
+  std::atomic<std::uint64_t> dropped_count_{0U};
+  std::thread worker_;
+};
 
 namespace {
 
@@ -66,6 +172,18 @@ std::string trajectoryDurationSummary(const Trajectory& trajectory) {
     }
     output << ']';
     return output.str();
+}
+
+bool nominalWorldSnapshotCaptureEnabled() noexcept {
+    const char* const value = std::getenv(
+        "UAV_NAVIGATION_NOMINAL_SNAPSHOT_INCLUDE_WORLD");
+    return value != nullptr && value[0] == '1' && value[1] == '\0';
+}
+
+bool nominalProblemSnapshotFailureOnly() noexcept {
+    const char* const value = std::getenv(
+        "UAV_NAVIGATION_NOMINAL_SNAPSHOT_FAILURE_ONLY");
+    return value != nullptr && value[0] == '1' && value[1] == '\0';
 }
 
 double knownFreeGuideSupport(
@@ -452,6 +570,10 @@ double knownFreeGuideSupport(
         nominal_backup_max_velocity_mps_ = cfg_.back_traj_cfg.max_vel;
         yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(
             cfg_.yaw_rate_max_rad_s, cfg_.yaw_acceleration_max_rad_s2);
+        if (std::getenv("UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR") != nullptr) {
+            nominal_problem_snapshot_writer_ =
+                std::make_unique<NominalProblemSnapshotWriter>(4U);
+        }
         const double occupied_inflation_radius = world_geometry.occupied_inflation_radius_m;
         if (occupied_inflation_radius + 1.0e-9 < cfg_.robot_r) {
             throw std::invalid_argument(
@@ -483,6 +605,8 @@ double knownFreeGuideSupport(
             static_cast<long double>(cfg_.resolution)));
         astar_ptr_->setFineInfNeighbors(neighbor_step);
     }
+
+    Planner::~Planner() = default;
 
     void Planner::setCurrentBodySupport(
         navigation_world_model::CurrentBodySupportPtr support,
@@ -3752,6 +3876,59 @@ double knownFreeGuideSupport(
         const bool hard_deadline_observed_before_nominal =
             solve_deadline.expired(planner_context_->getSimTime()) ||
             solve_deadline.steadyExpired();
+        traj_opt::NominalProblemProvenance nominal_provenance;
+        nominal_provenance.source_identity =
+            "uav-navigation::Planner::generateExpTraj";
+        if (map_ptr_) {
+            nominal_provenance.world_identity = map_ptr_->identity();
+        }
+        nominal_provenance.execution_world_identity =
+            committed_before_refinement.certificate.validated_world;
+        nominal_provenance.execution_bundle_generation =
+            committed_before_refinement.generation;
+        nominal_provenance.execution_localization_epoch =
+            committed_before_refinement.identity.localization_epoch;
+        nominal_provenance.execution_goal_epoch =
+            committed_before_refinement.identity.goal_epoch;
+        nominal_provenance.execution_request_id =
+            committed_before_refinement.identity.request_id;
+        const auto request_identity = commandIdentitySnapshot();
+        nominal_provenance.request_localization_epoch =
+            request_identity.localization_epoch;
+        nominal_provenance.request_goal_epoch = request_identity.goal_epoch;
+        nominal_provenance.request_id = request_identity.request_id;
+        nominal_provenance.solve_generation = diagnostic_solve_generation_;
+        nominal_provenance.planner_cycle = diagnostic_planner_cycle_;
+        if (route_snapshot_.has_value()) {
+            nominal_provenance.route_revision = route_snapshot_->route_revision;
+            nominal_provenance.waypoint_index = static_cast<std::uint32_t>(
+                route_snapshot_->active_waypoint_index);
+            nominal_provenance.mission_id = route_snapshot_->mission_id;
+        }
+        nominal_provenance.start_mode =
+                requested_activation_stamp_ns_ > 0
+                ? "committed_future_state"
+                : last_exp_traj_info.empty()
+                    ? "stopped_measured_state"
+                    : "successor_execution_anchor";
+        nominal_provenance.planner_mode = nominal_provenance.start_mode;
+        nominal_provenance.recovery_state =
+                nominal_provenance.start_mode == "stopped_measured_state"
+                    ? "PlanFromRest"
+                    : "not-recovery";
+        nominal_provenance.request_stamp_ns =
+            solve_state_.rcv
+                ? static_cast<std::int64_t>(std::llround(
+                    solve_state_.rcv_time * 1.0e9))
+                : 0;
+        nominal_provenance.anchor_stamp_ns =
+            requested_activation_stamp_ns_ > 0
+                ? requested_activation_stamp_ns_
+                : nominal_provenance.request_stamp_ns;
+        nominal_provenance.activation_stamp_ns = requested_activation_stamp_ns_;
+        nominal_provenance.solve_start_wall_time_s = replan_process_start_WT;
+        exp_traj_opt_->setNominalProblemProvenance(
+            std::move(nominal_provenance));
         exp_traj_opt_->setSolveBudget(
                 &solve_cancelled_, refinement_deadline_ns,
                 solve_deadline.steadyDeadlineNanoseconds());
@@ -3765,6 +3942,21 @@ double knownFreeGuideSupport(
         last_nominal_deadline_observed_ = nominal_result.deadline_observed;
         temp_ret = nominal_result.candidateAvailable();
         time_consuming_[EXP_TRAJ_OPT] = t_exp_opt.stop();
+        const bool capture_failure_only = nominalProblemSnapshotFailureOnly();
+        auto snapshot = exp_traj_opt_->takeNominalProblemSnapshot();
+        const bool snapshot_is_failure = snapshot.has_value() &&
+            (!snapshot->setup_completed || snapshot->target_failure_signature ||
+             snapshot->recovery_request);
+        if (nominal_problem_snapshot_writer_ && snapshot.has_value() &&
+            (!capture_failure_only || snapshot_is_failure)) {
+            // World materialization and JSON I/O are outside the planner
+            // transaction. The immutable WorldModelView is retained by the
+            // bounded writer until its owned job is serialized.
+            (void)nominal_problem_snapshot_writer_->enqueue(
+                std::move(snapshot), map_ptr_,
+                nominalWorldSnapshotCaptureEnabled(),
+                std::getenv("UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR"));
+        }
         {
             VecDf init_ts;
             vec_Vec3f init_ps;

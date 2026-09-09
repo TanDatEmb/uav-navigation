@@ -323,3 +323,64 @@ TEST(CorridorBezierSeed, RejectsImmutableBoundaryDerivativeOutsideCorridor) {
   EXPECT_EQ(result.failing_plane_index, 1);
   EXPECT_GT(result.maximum_plane_violation_m, 0.0);
 }
+
+TEST(CorridorBezierSeed,
+     InternalDerivativeDampingSweepRemainsDiagnosticAndRejected) {
+  navigation_math::PolyhedraH corridors{
+      box({-2.0, -2.0, 2.0}, {4.0, 4.0, 4.0})};
+  navigation_math::Mat3Df junctions(3, 2);
+  junctions.col(0) = Eigen::Vector3d{1.0, 0.0, 3.0};
+  junctions.col(1) = Eigen::Vector3d{1.0, 1.0, 3.0};
+  navigation_math::VecDf durations(3);
+  durations << 0.8, 0.8, 0.8;
+  navigation_math::VecDi mapping(3);
+  mapping << 0, 0, 0;
+  const auto head = state({0.0, 0.0, 3.0}, {2.0, 0.0, 0.0});
+  const auto tail = state({2.0, 1.0, 3.0}, {2.0, 0.0, 0.0});
+
+  const auto nominal =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          head, tail, junctions, durations, corridors, mapping, 3.0, 1.0e-8);
+  ASSERT_TRUE(nominal.valid);
+
+  traj_opt::Config config(PLANNER_CORRIDOR_BEZIER_CONFIG_PATH, "exp_traj");
+  config.max_vel = 3.0;
+  config.max_acc = 2.0;
+  config.max_jerk = 4.0;
+  const std::vector<unsigned char> route_gates{0U};
+  const std::vector<navigation_math::Vec3f> route_points{
+      navigation_math::Vec3f::Zero()};
+  const std::vector<double> route_radii{0.0};
+  const auto nominal_certificate =
+      navigation_planning_backend::certifyDeterministicNominalSeed(
+          nominal.trajectory, corridors, mapping, route_gates, route_points,
+          route_radii, head, tail, config);
+  ASSERT_FALSE(nominal_certificate.valid);
+  ASSERT_EQ(nominal_certificate.failure_stage,
+            navigation_planning_backend::DeterministicNominalSeedFailureStage::kDynamics);
+
+  int rejected_count = 0;
+  for (const double derivative_scale : {0.0, 0.125, 0.25, 0.5, 0.75, 1.0}) {
+    const auto candidate =
+        navigation_planning_backend::buildCorridorContainedBezierSeed(
+            head, tail, junctions, durations, corridors, mapping, 3.0, 1.0e-8,
+            derivative_scale);
+    ASSERT_TRUE(candidate.valid);
+    const auto certificate =
+        navigation_planning_backend::certifyDeterministicNominalSeed(
+            candidate.trajectory, corridors, mapping, route_gates, route_points,
+            route_radii, head, tail, config);
+    EXPECT_FALSE(certificate.valid);
+    EXPECT_EQ(certificate.failure_stage,
+              navigation_planning_backend::DeterministicNominalSeedFailureStage::kDynamics);
+    EXPECT_TRUE(certificate.maximum_acceleration_mps2 > config.max_acc ||
+                certificate.maximum_jerk_mps3 > config.max_jerk);
+    ++rejected_count;
+    std::cerr << "diagnostic_scale=" << derivative_scale << " valid=" << certificate.valid
+              << " stage=" << static_cast<int>(certificate.failure_stage)
+              << " v/a/j=" << certificate.maximum_velocity_mps << "/"
+              << certificate.maximum_acceleration_mps2 << "/"
+              << certificate.maximum_jerk_mps3 << "\n";
+  }
+  EXPECT_EQ(rejected_count, 6);
+}

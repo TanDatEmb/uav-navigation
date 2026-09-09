@@ -231,6 +231,15 @@ void PlannerFacade::setCommandIdentity(
       CommandIdentity{localization_epoch, goal_epoch, request_id});
 }
 
+void PlannerFacade::setNominalProblemDiagnosticIdentity(
+    const std::uint64_t solve_generation,
+    const std::uint64_t planner_cycle) noexcept {
+  if (impl_ && impl_->planner) {
+    impl_->planner->setNominalProblemDiagnosticIdentity(
+        solve_generation, planner_cycle);
+  }
+}
+
 void PlannerFacade::discardCommandCandidate() noexcept {
   if (impl_ && impl_->planner) impl_->planner->discardCommandCandidate();
 }

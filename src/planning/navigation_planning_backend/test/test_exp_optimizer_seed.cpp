@@ -4,7 +4,9 @@
 #include <atomic>
 #include <cmath>
 #include <chrono>
+#include <cstdlib>
 #include <memory>
+#include <string>
 #include <utility>
 
 #include <planner_core/corridor_plane_validation.hpp>
@@ -46,6 +48,30 @@ geometry_utils::Polytope makeConvexBox() {
   return makeBox(-10.0, 10.0, -10.0, 10.0, 0.0, 10.0);
 }
 
+class ScopedEnvironmentVariable {
+ public:
+  ScopedEnvironmentVariable(const char* name, const char* value)
+      : name_(name), previous_(std::getenv(name)) {
+    if (previous_ != nullptr) {
+      previous_value_ = previous_;
+    }
+    EXPECT_EQ(setenv(name_.c_str(), value, 1), 0);
+  }
+
+  ~ScopedEnvironmentVariable() {
+    if (previous_ != nullptr) {
+      setenv(name_.c_str(), previous_value_.c_str(), 1);
+    } else {
+      unsetenv(name_.c_str());
+    }
+  }
+
+ private:
+  std::string name_;
+  const char* previous_;
+  std::string previous_value_;
+};
+
 TEST(ExpOptimizer, GuideTimeIsTheInitialDurationSeed) {
   const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   const auto planner_context =
@@ -69,6 +95,50 @@ TEST(ExpOptimizer, GuideTimeIsTheInitialDurationSeed) {
   EXPECT_DOUBLE_EQ(diagnostics.initial_duration_s, guide_times.back());
   EXPECT_TRUE(std::isfinite(diagnostics.final_duration_s));
   EXPECT_FALSE(trajectory.empty());
+}
+
+TEST(ExpOptimizer,
+     SnapshotDoesNotReusePostSetupGeometryAfterSimplifyReject) {
+  ScopedEnvironmentVariable capture(
+      "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR", "/tmp/uav-navigation-snapshot-test");
+  const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+
+  const auto head = makePositionState(0.0);
+  const auto tail = makePositionState(8.0);
+  navigation_math::vec_E<navigation_math::Vec3f> guide_path;
+  guide_path.emplace_back(head.col(0));
+  guide_path.emplace_back(tail.col(0));
+  const std::vector<double> guide_times{0.0, 2.0};
+  geometry_utils::Trajectory trajectory;
+
+  geometry_utils::PolytopeVec valid_corridors{makeConvexBox()};
+  ASSERT_TRUE(optimizer.optimize(
+      head, tail, guide_path, guide_times, valid_corridors, trajectory));
+  const auto valid_snapshot = optimizer.takeNominalProblemSnapshot();
+  ASSERT_TRUE(valid_snapshot.has_value());
+  EXPECT_TRUE(valid_snapshot->setup_completed);
+  EXPECT_TRUE(valid_snapshot->post_setup_input_bound);
+  ASSERT_EQ(valid_snapshot->h_polytopes.size(), 1U);
+
+  geometry_utils::PolytopeVec rejected_corridors{
+      makeBox(1.0, 2.0, -10.0, 10.0, 0.0, 10.0),
+      makeBox(3.0, 4.0, -10.0, 10.0, 0.0, 10.0),
+      makeBox(6.0, 7.0, -10.0, 10.0, 0.0, 10.0)};
+  trajectory = geometry_utils::Trajectory{};
+  ASSERT_FALSE(optimizer.optimize(
+      head, tail, guide_path, guide_times, rejected_corridors, trajectory));
+  const auto rejected_snapshot = optimizer.takeNominalProblemSnapshot();
+  ASSERT_TRUE(rejected_snapshot.has_value());
+  EXPECT_FALSE(rejected_snapshot->setup_completed);
+  EXPECT_FALSE(rejected_snapshot->post_setup_input_bound);
+  EXPECT_EQ(rejected_snapshot->setup_failure_stage, 2);
+  ASSERT_EQ(rejected_snapshot->pre_simplify_h_polytopes.size(), 3U);
+  EXPECT_EQ(rejected_snapshot->h_polytopes.size(), 3U);
+  EXPECT_TRUE(rejected_snapshot->h_overlap_polytopes.empty());
 }
 
 TEST(ExpOptimizer, RejectsMissingPlannerContext) {

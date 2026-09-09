@@ -182,6 +182,24 @@ if(BUILD_TESTING)
     PLANNER_EXP_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
   target_link_libraries(test_exp_optimizer_seed ${PROJECT_NAME})
   configure_backend_test(test_exp_optimizer_seed)
+
+  # Diagnostic-only offline replay for an immutable NominalProblemSnapshot.
+  # This is intentionally not registered as a pass/fail CTest: it prints the
+  # candidate-class matrix for a frozen problem and never changes production
+  # admission or safety contracts.
+  add_executable(replay_nominal_problem_snapshot
+    test/replay_nominal_problem_snapshot.cpp)
+  target_compile_definitions(replay_nominal_problem_snapshot PRIVATE
+    USE_ROS2
+    ORIGIN_AT_CORNER
+    UAV_NAVIGATION_DIAGNOSTIC_REPLAY=1
+    PLANNER_EXP_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
+  target_include_directories(replay_nominal_problem_snapshot PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../mapping/navigation_mapping/include)
+  target_link_libraries(replay_nominal_problem_snapshot ${PROJECT_NAME})
+  target_link_libraries(replay_nominal_problem_snapshot
+    navigation_mapping::navigation_mapping)
+  configure_backend_test(replay_nominal_problem_snapshot)
 endif()
 
 ament_package()

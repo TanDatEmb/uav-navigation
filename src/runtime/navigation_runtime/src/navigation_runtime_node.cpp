@@ -4262,9 +4262,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
   planner_->setCommandIdentity(
       localization_epoch_at_solve, goal_epoch, goal->request_id);
-  // Nominal-problem snapshot identity remains disabled until its complete
-  // facade/storage/capture chain is curated into one independently buildable
-  // diagnostic change. Do not leave a committed caller ahead of that chain.
+  planner_->setNominalProblemDiagnosticIdentity(
+      solve_generation, cycle_count_);
   // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
   // cannot inherit retry metrics from the previous planning generation.
   planner_->resetOptimizationDiagnostics();

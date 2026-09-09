@@ -391,8 +391,12 @@
 - **Scope:** Capture one immutable `NominalProblemSnapshot` at the boundary
   before nominal optimization, then serialize it outside the timed solve. The
   snapshot records execution/world identity, head/tail PVAJ, guide, durations,
-  spatial variables, corridor planes, route gates, timing and every duration
-  retry. An offline fixture compares the deterministic corridor-Bezier seed,
+  spatial variables, the pre-`SimplifySFC` and post-`SimplifySFC` corridor
+  planes, route gates, timing and every duration retry. When
+  `UAV_NAVIGATION_NOMINAL_SNAPSHOT_INCLUDE_WORLD=1` is explicitly
+  set, the pinned immutable mapping view is also materialized into evidence
+  and inflated cell arrays, geometry and nearest-offset metadata. An offline
+  fixture can then compare the deterministic corridor-Bezier seed,
   duration-varied family, immutable MINCO seed and general MINCO/L-BFGS under
   unchanged physical contracts.
 - **Safety impact:** None to runtime behavior. The capture does not alter
@@ -407,7 +411,9 @@
   The uniform deterministic Bezier family has disjoint corridor- and
   dynamics-feasible scale ranges, while production MINCO/L-BFGS passes the
   replayable local certificates within 80 ms. Raw occupancy/world state is
-  absent, so the result does not prove full executable-bundle feasibility.
+  absent from that historical fixture, so it does not prove full
+  executable-bundle feasibility. The new opt-in materializer is covered by
+  `MappingWorldModelTest.DiagnosticSnapshotMaterializesLogicalImmutableView`.
 - **Removal/review condition:** Remove the diagnostic capture only after the
   generation-independent target signature has a stable replay fixture with
   sufficient world data and the Q1 first-failure owner is classified. Do not

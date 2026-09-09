@@ -32,6 +32,12 @@ struct CorridorBezierSeedResult {
   int failing_plane_index{-1};
   double maximum_plane_violation_m{
       std::numeric_limits<double>::quiet_NaN()};
+  // Diagnostic-only provenance for a rejected boundary control. These values
+  // do not participate in seed construction or certificate decisions.
+  Eigen::Vector3d failing_control_point{
+      Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN())};
+  Eigen::Vector4d failing_plane{
+      Eigen::Vector4d::Constant(std::numeric_limits<double>::quiet_NaN())};
   geometry_utils::Trajectory trajectory;
 };
 
@@ -194,7 +200,8 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
     const navigation_math::PolyhedraH& corridor_planes,
     const navigation_math::VecDi& piece_to_corridor,
     const double desired_internal_speed_mps,
-    const double corridor_tolerance_m) {
+    const double corridor_tolerance_m,
+    const double internal_derivative_scale = 1.0) {
   CorridorBezierSeedResult output;
   const int piece_count = static_cast<int>(durations_s.size());
   if (piece_count <= 0 || junction_positions.rows() != 3 ||
@@ -205,7 +212,9 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
       durations_s.minCoeff() <= 0.0 ||
       !std::isfinite(desired_internal_speed_mps) ||
       desired_internal_speed_mps < 0.0 ||
-      !std::isfinite(corridor_tolerance_m) || corridor_tolerance_m < 0.0) {
+      !std::isfinite(corridor_tolerance_m) || corridor_tolerance_m < 0.0 ||
+      !std::isfinite(internal_derivative_scale) ||
+      internal_derivative_scale < 0.0 || internal_derivative_scale > 1.0) {
     return output;
   }
   navigation_math::PolyhedraH normalized_corridors = corridor_planes;
@@ -283,7 +292,8 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
       1.0, 0.75, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.0};
   for (int junction = 1; junction < piece_count; ++junction) {
     const auto desired_derivatives =
-        states[static_cast<std::size_t>(junction)].rightCols(3).eval();
+        (internal_derivative_scale *
+         states[static_cast<std::size_t>(junction)].rightCols(3)).eval();
     bool found = false;
     for (const double scale : derivative_scales) {
       states[static_cast<std::size_t>(junction)].rightCols(3) =
@@ -312,7 +322,8 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
           });
       if (previous_derivatives_inside && next_derivatives_inside) {
         output.minimum_internal_derivative_scale = std::min(
-            output.minimum_internal_derivative_scale, scale);
+            output.minimum_internal_derivative_scale,
+            internal_derivative_scale * scale);
         found = true;
         break;
       }
@@ -345,6 +356,15 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
       output.failing_control_index = violation.control_index;
       output.failing_plane_index = violation.plane_index;
       output.maximum_plane_violation_m = violation.value_m;
+      if (violation.control_index >= 0 &&
+          violation.control_index <= corridor_bezier_detail::kDegree &&
+          violation.plane_index >= 0 &&
+          violation.plane_index < normalized_corridors[static_cast<std::size_t>(corridor)].rows()) {
+        output.failing_control_point = controls[static_cast<std::size_t>(
+            violation.control_index)];
+        output.failing_plane = normalized_corridors[
+            static_cast<std::size_t>(corridor)].row(violation.plane_index).transpose();
+      }
       return output;
     }
     const Eigen::MatrixXd coefficients =

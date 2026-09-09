@@ -40,6 +40,12 @@ class PlannerFacade final {
   void setCommandIdentity(std::uint64_t localization_epoch,
                           std::uint64_t goal_epoch,
                           std::uint64_t request_id);
+  // Diagnostic-only correlation identity for an optional nominal-problem
+  // snapshot. It never participates in request admission or candidate
+  // validity.
+  void setNominalProblemDiagnosticIdentity(
+      std::uint64_t solve_generation,
+      std::uint64_t planner_cycle) noexcept;
   void discardCommandCandidate() noexcept;
   void onExecutionTimelineActivated(std::uint64_t generation) noexcept;
   [[nodiscard]] bool hasStagedCommandCandidate() const;

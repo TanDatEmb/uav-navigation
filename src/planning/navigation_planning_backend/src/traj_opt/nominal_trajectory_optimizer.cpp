@@ -7,6 +7,12 @@
 #include <traj_opt/nominal_trajectory_optimizer.hpp>
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <system_error>
 #include <utility>
 #include <navigation_planning/planning_limits.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
@@ -37,7 +43,673 @@ using Mat83f = Eigen::Matrix<double, 8, 3>;
 
 namespace {
 
+bool nominalProblemSnapshotCaptureEnabled() noexcept {
+    const char* const directory = std::getenv(
+        "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR");
+    return directory != nullptr && directory[0] != '\0';
+}
+
+const char* environmentValue(const char* const name) noexcept {
+    const char* const value = std::getenv(name);
+    return value != nullptr && value[0] != '\0' ? value : nullptr;
+}
+
+template <typename Derived>
+void writeJsonMatrix(std::ostream& output,
+                     const Eigen::MatrixBase<Derived>& matrix) {
+    output << '[';
+    for (Eigen::Index row = 0; row < matrix.rows(); ++row) {
+        if (row != 0) output << ',';
+        output << '[';
+        for (Eigen::Index column = 0; column < matrix.cols(); ++column) {
+            if (column != 0) output << ',';
+            const double value = static_cast<double>(matrix(row, column));
+            if (std::isfinite(value)) output << value;
+            else output << "null";
+        }
+        output << ']';
+    }
+    output << ']';
+}
+
+void writeJsonDouble(std::ostream& output, const double value) {
+    if (std::isfinite(value)) output << value;
+    else output << "null";
+}
+
+void writeJsonString(std::ostream& output, const std::string& value) {
+    output << '"';
+    for (const char character : value) {
+        switch (character) {
+            case '"': output << "\\\""; break;
+            case '\\': output << "\\\\"; break;
+            case '\n': output << "\\n"; break;
+            case '\r': output << "\\r"; break;
+            case '\t': output << "\\t"; break;
+            default: output << character; break;
+        }
+    }
+    output << '"';
+}
+
+void writeJsonBool(std::ostream& output, const bool value) {
+    output << (value ? "true" : "false");
+}
+
+void writeJsonDoubleVector(std::ostream& output, const std::vector<double>& values) {
+    output << '[';
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0U) output << ',';
+        writeJsonDouble(output, values[index]);
+    }
+    output << ']';
+}
+
+void writeJsonByteVector(std::ostream& output,
+                         const std::vector<std::uint8_t>& values) {
+    output << '[';
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0U) output << ',';
+        output << static_cast<unsigned int>(values[index]);
+    }
+    output << ']';
+}
+
+void writeJsonGridBounds(std::ostream& output,
+                         const navigation_world_model::GridBounds& bounds) {
+    output << "{\"global_min_index\":["
+           << bounds.global_min_index.x() << ','
+           << bounds.global_min_index.y() << ','
+           << bounds.global_min_index.z() << "],\"dimensions\":["
+           << bounds.dimensions.x() << ','
+           << bounds.dimensions.y() << ','
+           << bounds.dimensions.z() << "]}";
+}
+
+void writeJsonWorldGeometry(
+        std::ostream& output,
+        const navigation_world_model::WorldGeometry& geometry) {
+    output << "{\"evidence_resolution_m\":";
+    writeJsonDouble(output, geometry.evidence_resolution_m);
+    output << ",\"inflated_resolution_m\":";
+    writeJsonDouble(output, geometry.inflated_resolution_m);
+    output << ",\"occupied_inflation_radius_m\":";
+    writeJsonDouble(output, geometry.occupied_inflation_radius_m);
+    output << ",\"effective_virtual_ground_m\":";
+    writeJsonDouble(output, geometry.effective_virtual_ground_m);
+    output << ",\"effective_virtual_ceiling_m\":";
+    writeJsonDouble(output, geometry.effective_virtual_ceiling_m);
+    output << ",\"local_center_m\":";
+    writeJsonMatrix(output, geometry.local_center_m);
+    output << ",\"local_size_m\":";
+    writeJsonMatrix(output, geometry.local_size_m);
+    output << ",\"virtual_ground_ceiling_enabled\":";
+    writeJsonBool(output, geometry.virtual_ground_ceiling_enabled);
+    output << ",\"evidence_bounds\":";
+    writeJsonGridBounds(output, geometry.evidence_bounds);
+    output << ",\"inflated_bounds\":";
+    writeJsonGridBounds(output, geometry.inflated_bounds);
+    output << '}';
+}
+
+void writeJsonWorldIdentity(
+        std::ostream& output,
+        const navigation_world_model::WorldSnapshotIdentity& identity);
+
+void writeJsonDiagnosticWorldSnapshot(
+        std::ostream& output,
+        const navigation_world_model::WorldModelDiagnosticSnapshot& world) {
+    output << "{\"complete\":";
+    writeJsonBool(output, world.complete);
+    output << ",\"identity\":";
+    writeJsonWorldIdentity(output, world.identity);
+    output << ",\"geometry\":";
+    writeJsonWorldGeometry(output, world.geometry);
+    output << ",\"unknown_inflation_enabled\":";
+    writeJsonBool(output, world.unknown_inflation_enabled);
+    output << ",\"virtual_ground_ceiling_enabled\":";
+    writeJsonBool(output, world.virtual_ground_ceiling_enabled);
+    output << ",\"virtual_ground_m\":";
+    writeJsonDouble(output, world.virtual_ground_m);
+    output << ",\"virtual_ceiling_m\":";
+    writeJsonDouble(output, world.virtual_ceiling_m);
+    output << ",\"inflated_virtual_ground_m\":";
+    writeJsonDouble(output, world.inflated_virtual_ground_m);
+    output << ",\"inflated_virtual_ceiling_m\":";
+    writeJsonDouble(output, world.inflated_virtual_ceiling_m);
+    output << ",\"evidence_states\":";
+    writeJsonByteVector(output, world.evidence_states);
+    output << ",\"inflated_states\":";
+    writeJsonByteVector(output, world.inflated_states);
+    output << ",\"nearest_offsets\":";
+    output << '[';
+    for (std::size_t index = 0; index < world.nearest_offsets.size(); ++index) {
+        if (index != 0U) output << ',';
+        const auto& offset = world.nearest_offsets[index];
+        output << '[' << offset.x() << ',' << offset.y() << ',' << offset.z() << ']';
+    }
+    output << "]}";
+}
+
+template <typename Derived>
+void writeJsonEigenVector(std::ostream& output,
+                          const Eigen::MatrixBase<Derived>& values) {
+    output << '[';
+    for (Eigen::Index index = 0; index < values.size(); ++index) {
+        if (index != 0) output << ',';
+        const double value = static_cast<double>(values(index));
+        if (std::isfinite(value)) output << value;
+        else output << "null";
+    }
+    output << ']';
+}
+
+void writeJsonVec3Sequence(std::ostream& output,
+                           const vec_E<Vec3f>& values) {
+    output << '[';
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0U) output << ',';
+        writeJsonMatrix(output, values[index]);
+    }
+    output << ']';
+}
+
+void writeJsonVec3Sequence(std::ostream& output,
+                           const std::vector<Vec3f>& values) {
+    output << '[';
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0U) output << ',';
+        writeJsonMatrix(output, values[index]);
+    }
+    output << ']';
+}
+
+void writeJsonPolyhedra(std::ostream& output, const PolyhedraH& values) {
+    output << '[';
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index != 0U) output << ',';
+        writeJsonMatrix(output, values[index]);
+    }
+    output << ']';
+}
+
+void writeJsonWorldIdentity(
+        std::ostream& output,
+        const navigation_world_model::WorldSnapshotIdentity& identity) {
+    output << "{\"localization_epoch\":" << identity.localization_epoch
+           << ",\"generation\":" << identity.generation
+           << ",\"revision\":" << identity.revision
+           << ",\"observation_stamp_ns\":" << identity.observation_stamp_ns
+           << '}';
+}
+
+NominalOptimizerConfigSnapshot makeConfigSnapshot(const traj_opt::Config& config) {
+    NominalOptimizerConfigSnapshot snapshot;
+    snapshot.uniform_time_en = config.uniform_time_en;
+    snapshot.print_optimizer_log = config.print_optimizer_log;
+    snapshot.save_log_en = config.save_log_en;
+    snapshot.block_energy_cost = config.block_energy_cost;
+    snapshot.pos_constraint_type = config.pos_constraint_type;
+    snapshot.piece_num = config.piece_num;
+    snapshot.integral_reso = config.integral_reso;
+    snapshot.feasibility_retry_max_iterations = config.feasibility_retry_max_iterations;
+    snapshot.lbfgs_memory_size = config.lbfgs_memory_size;
+    snapshot.mass = config.mass;
+    snapshot.dh = config.dh;
+    snapshot.dv = config.dv;
+    snapshot.grav = config.grav;
+    snapshot.cp = config.cp;
+    snapshot.v_eps = config.v_eps;
+    snapshot.max_vel = config.max_vel;
+    snapshot.max_acc = config.max_acc;
+    snapshot.max_jerk = config.max_jerk;
+    snapshot.max_omg = config.max_omg;
+    snapshot.max_acc_thr = config.max_acc_thr;
+    snapshot.min_acc_thr = config.min_acc_thr;
+    snapshot.velocity_penalty_weight = config.velocity_penalty_weight;
+    snapshot.acceleration_penalty_weight = config.acceleration_penalty_weight;
+    snapshot.jerk_penalty_weight = config.jerk_penalty_weight;
+    snapshot.angular_rate_penalty_weight = config.angular_rate_penalty_weight;
+    snapshot.thrust_penalty_weight = config.thrust_penalty_weight;
+    snapshot.time_weight = config.time_weight;
+    snapshot.position_penalty_weight = config.position_penalty_weight;
+    snapshot.waypoint_attraction_weight = config.waypoint_attraction_weight;
+    snapshot.terminal_time_weight = config.terminal_time_weight;
+    snapshot.smooth_eps = config.smooth_eps;
+    snapshot.corridor_plane_tolerance_m = config.corridor_plane_tolerance_m;
+    snapshot.route_reference_lateral_weight = config.route_reference_lateral_weight;
+    snapshot.route_reference_vertical_weight = config.route_reference_vertical_weight;
+    snapshot.route_reference_lateral_deadband_m = config.route_reference_lateral_deadband_m;
+    snapshot.route_reference_vertical_deadband_m = config.route_reference_vertical_deadband_m;
+    snapshot.optimization_dynamic_reserve_ratio = config.optimization_dynamic_reserve_ratio;
+    snapshot.opt_accuracy = config.opt_accuracy;
+    return snapshot;
+}
+
+void writeJsonConfig(std::ostream& output,
+                     const NominalOptimizerConfigSnapshot& config) {
+    output << "{\"uniform_time_en\":"; writeJsonBool(output, config.uniform_time_en);
+    output << ",\"print_optimizer_log\":"; writeJsonBool(output, config.print_optimizer_log);
+    output << ",\"save_log_en\":"; writeJsonBool(output, config.save_log_en);
+    output << ",\"block_energy_cost\":"; writeJsonBool(output, config.block_energy_cost);
+    output << ",\"pos_constraint_type\":" << config.pos_constraint_type
+           << ",\"piece_num\":" << config.piece_num
+           << ",\"integral_reso\":" << config.integral_reso
+           << ",\"feasibility_retry_max_iterations\":"
+           << config.feasibility_retry_max_iterations
+           << ",\"lbfgs_memory_size\":" << config.lbfgs_memory_size;
+    const auto field = [&output](const char* name, const double value) {
+        output << ",\"" << name << "\":";
+        writeJsonDouble(output, value);
+    };
+    field("mass", config.mass); field("dh", config.dh); field("dv", config.dv);
+    field("grav", config.grav); field("cp", config.cp); field("v_eps", config.v_eps);
+    field("max_vel", config.max_vel); field("max_acc", config.max_acc);
+    field("max_jerk", config.max_jerk); field("max_omg", config.max_omg);
+    field("max_acc_thr", config.max_acc_thr); field("min_acc_thr", config.min_acc_thr);
+    field("velocity_penalty_weight", config.velocity_penalty_weight);
+    field("acceleration_penalty_weight", config.acceleration_penalty_weight);
+    field("jerk_penalty_weight", config.jerk_penalty_weight);
+    field("angular_rate_penalty_weight", config.angular_rate_penalty_weight);
+    field("thrust_penalty_weight", config.thrust_penalty_weight);
+    field("time_weight", config.time_weight);
+    field("position_penalty_weight", config.position_penalty_weight);
+    field("waypoint_attraction_weight", config.waypoint_attraction_weight);
+    field("terminal_time_weight", config.terminal_time_weight);
+    field("smooth_eps", config.smooth_eps);
+    field("corridor_plane_tolerance_m", config.corridor_plane_tolerance_m);
+    field("route_reference_lateral_weight", config.route_reference_lateral_weight);
+    field("route_reference_vertical_weight", config.route_reference_vertical_weight);
+    field("route_reference_lateral_deadband_m", config.route_reference_lateral_deadband_m);
+    field("route_reference_vertical_deadband_m", config.route_reference_vertical_deadband_m);
+    field("optimization_dynamic_reserve_ratio",
+          config.optimization_dynamic_reserve_ratio);
+    field("opt_accuracy", config.opt_accuracy);
+    output << '}';
+}
+
 }  // namespace
+
+void ExpTrajOpt::beginNominalProblemSnapshot(
+        const StatePVAJ& headPVAJ,
+        const StatePVAJ& tailPVAJ,
+        const vec_E<Vec3f>& guide_path,
+        const vector<double>& guide_t,
+        const PolytopeVec& sfcs,
+        const bool baseline_only,
+        const bool suppress_optional_refinement) {
+    if (!nominalProblemSnapshotCaptureEnabled()) return;
+
+    nominal_problem_snapshot_.emplace();
+    auto& snapshot = *nominal_problem_snapshot_;
+    snapshot.provenance = std::move(diagnostic_provenance_);
+    snapshot.diagnostic_world_snapshot =
+            std::move(snapshot.provenance.diagnostic_world_snapshot);
+    if (const char* value = environmentValue("UAV_NAVIGATION_SOURCE_COMMIT")) {
+        snapshot.provenance.source_revision = value;
+    }
+    if (const char* value = environmentValue("UAV_NAVIGATION_SOURCE_DIFF_SHA256")) {
+        snapshot.provenance.source_diff_sha256 = value;
+    }
+    if (const char* value = environmentValue("UAV_NAVIGATION_WORKSPACE")) {
+        snapshot.provenance.workspace = value;
+    }
+    if (const char* value = environmentValue("UAV_NAVIGATION_BUILD_MANIFEST")) {
+        snapshot.provenance.build_manifest_path = value;
+    }
+
+    snapshot.snapshot_kind = snapshot.provenance.start_mode ==
+            "stopped_measured_state" ? "recovery" : "nominal";
+    snapshot.recovery_request = snapshot.snapshot_kind == "recovery";
+    snapshot.config = makeConfigSnapshot(cfg_);
+    snapshot.head_pvaj = headPVAJ;
+    snapshot.tail_pvaj = tailPVAJ;
+    snapshot.guide_path = guide_path;
+    snapshot.guide_stamp = guide_t;
+    snapshot.baseline_only = baseline_only;
+    snapshot.suppress_optional_refinement = suppress_optional_refinement;
+    snapshot.refinement_deadline_ns = opt_vars.refinement_deadline_ns;
+    snapshot.hard_deadline_ns = opt_vars.hard_deadline_ns;
+    snapshot.effective_magnitude_bounds = opt_vars.magnitudeBounds;
+    snapshot.initial_penalty_weights = opt_vars.penaltyWeights;
+
+    // Capture the normalized input corridors before SimplifySFC or corridor
+    // preprocessing can reject the request.  This is the immutable problem
+    // boundary needed to replay a recovery setup failure.
+    snapshot.pre_simplify_h_polytopes.reserve(sfcs.size());
+    snapshot.pre_simplify_route_boundary_gates.reserve(sfcs.size());
+    snapshot.pre_simplify_route_boundary_points.reserve(sfcs.size());
+    snapshot.pre_simplify_route_boundary_radii.reserve(sfcs.size());
+    snapshot.route_boundary_gates.reserve(sfcs.size());
+    snapshot.route_boundary_points.reserve(sfcs.size());
+    snapshot.route_boundary_radii.reserve(sfcs.size());
+    for (const auto& sfc : sfcs) {
+        snapshot.pre_simplify_h_polytopes.emplace_back(sfc.GetPlanes());
+        const bool route_boundary_gate = sfc.IsRouteBoundaryGate();
+        snapshot.pre_simplify_route_boundary_gates.emplace_back(
+                route_boundary_gate ? 1U : 0U);
+        snapshot.pre_simplify_route_boundary_points.emplace_back(
+                route_boundary_gate
+                    ? sfc.GetRouteBoundaryPoint()
+                    : Vec3f::Constant(
+                        std::numeric_limits<float>::quiet_NaN()));
+        snapshot.pre_simplify_route_boundary_radii.emplace_back(
+                route_boundary_gate
+                    ? sfc.GetRouteBoundaryRadius()
+                    : std::numeric_limits<double>::quiet_NaN());
+        snapshot.route_boundary_gates.emplace_back(
+                route_boundary_gate ? 1U : 0U);
+        snapshot.route_boundary_points.emplace_back(
+                route_boundary_gate
+                    ? sfc.GetRouteBoundaryPoint()
+                    : Vec3f::Constant(
+                        std::numeric_limits<float>::quiet_NaN()));
+        snapshot.route_boundary_radii.emplace_back(
+                route_boundary_gate
+                    ? sfc.GetRouteBoundaryRadius()
+                    : std::numeric_limits<double>::quiet_NaN());
+    }
+    // Keep the legacy field populated for older replay tooling. It is
+    // replaced with the post-SimplifySFC representation when setup records
+    // successfully or fails after opt_vars.hPolytopes is populated.
+    snapshot.h_polytopes = snapshot.pre_simplify_h_polytopes;
+}
+
+void ExpTrajOpt::recordNominalProblemSetupResult(
+        const bool setup_completed) {
+    if (!nominal_problem_snapshot_) return;
+    auto& snapshot = *nominal_problem_snapshot_;
+    snapshot.setup_completed = setup_completed;
+    snapshot.setup_failure_stage = diagnostics_.setup_failure_stage;
+    snapshot.setup_failure_index = diagnostics_.setup_failure_index;
+    snapshot.setup_failure_vertex_count =
+            diagnostics_.setup_failure_vertex_count;
+    snapshot.setup_failure_metric = diagnostics_.setup_failure_metric;
+    snapshot.hard_deadline_observed = diagnostics_.hard_deadline_observed;
+    snapshot.refinement_deadline_ns = opt_vars.refinement_deadline_ns;
+    snapshot.hard_deadline_ns = opt_vars.hard_deadline_ns;
+    if (snapshot.post_setup_input_bound && opt_vars.hPolytopes.size() > 0U) {
+        snapshot.h_polytopes = opt_vars.hPolytopes;
+    }
+    if (snapshot.post_setup_input_bound &&
+        opt_vars.route_boundary_gates.size() > 0U) {
+        snapshot.route_boundary_gates = opt_vars.route_boundary_gates;
+        snapshot.route_boundary_points = opt_vars.route_boundary_points;
+        snapshot.route_boundary_radii = opt_vars.route_boundary_radii;
+    }
+    if (snapshot.post_setup_input_bound) {
+        snapshot.h_overlap_polytopes = opt_vars.hOverlapPolytopes;
+    }
+
+    // These variables are only considered a complete initial optimization
+    // state after corridor setup succeeds.  On a setup rejection, leaving
+    // them absent is preferable to serializing Eigen storage that was never
+    // initialized by the production setup path.
+    if (!setup_completed) return;
+    snapshot.junction_positions = opt_vars.init_path;
+    snapshot.initial_spatial_variables = opt_vars.points;
+    snapshot.initial_route_reference_points = opt_vars.route_reference_points;
+    snapshot.initial_waypoint_attractor = opt_vars.waypoint_attractor;
+    snapshot.initial_path = opt_vars.init_path;
+    snapshot.initial_durations_s = opt_vars.times;
+    snapshot.initial_duration_lower_bound = opt_vars.duration_lower_bound;
+    snapshot.initial_waypoint_attractor_dead_d =
+            opt_vars.waypoint_attractor_dead_d;
+    snapshot.initial_points = opt_vars.init_ps;
+    snapshot.initial_times = opt_vars.init_ts;
+    snapshot.piece_idx = opt_vars.pieceIdx;
+    snapshot.v_poly_idx = opt_vars.vPolyIdx;
+    snapshot.h_poly_idx = opt_vars.hPolyIdx;
+    snapshot.v_polytopes = opt_vars.vPolytopes;
+    snapshot.effective_magnitude_bounds = opt_vars.magnitudeBounds;
+    snapshot.initial_penalty_weights = opt_vars.penaltyWeights;
+}
+
+std::string traj_opt::writeNominalProblemSnapshotJson(
+        const NominalProblemSnapshot& snapshot,
+        const std::string& directory) {
+    if (directory.empty()) return {};
+    std::error_code directory_error;
+    std::filesystem::create_directories(directory, directory_error);
+    if (directory_error) return {};
+
+    static std::atomic<std::uint64_t> sequence{0U};
+    const auto sequence_id = sequence.fetch_add(1U, std::memory_order_relaxed);
+    const std::filesystem::path output_path =
+        std::filesystem::path(directory) /
+        ("nominal_problem_snapshot_" +
+         std::to_string(snapshot.provenance.world_identity.generation) + "_" +
+         std::to_string(snapshot.provenance.request_id) + "_" +
+         std::to_string(sequence_id) + ".json");
+    std::ofstream output(output_path, std::ios::out | std::ios::trunc);
+    if (!output) return {};
+    output << std::setprecision(std::numeric_limits<double>::max_digits10);
+
+    output << "{\"schema_version\":" << snapshot.schema_version
+           << ",\"snapshot_kind\":";
+    writeJsonString(output, snapshot.snapshot_kind);
+    output << ",\"recovery_request\":";
+    writeJsonBool(output, snapshot.recovery_request);
+    output << ",\"target_failure_signature\":";
+    writeJsonBool(output, snapshot.target_failure_signature);
+    output << ",\"provenance\":{";
+    output << "\"source_identity\":";
+    writeJsonString(output, snapshot.provenance.source_identity);
+    output << ",\"source_revision\":";
+    writeJsonString(output, snapshot.provenance.source_revision);
+    output << ",\"source_diff_sha256\":";
+    writeJsonString(output, snapshot.provenance.source_diff_sha256);
+    output << ",\"workspace\":";
+    writeJsonString(output, snapshot.provenance.workspace);
+    output << ",\"build_manifest_path\":";
+    writeJsonString(output, snapshot.provenance.build_manifest_path);
+    output << ",\"world_identity\":";
+    writeJsonWorldIdentity(output, snapshot.provenance.world_identity);
+    output << ",\"execution_world_identity\":";
+    writeJsonWorldIdentity(output, snapshot.provenance.execution_world_identity);
+    output << ",\"execution_bundle_generation\":"
+           << snapshot.provenance.execution_bundle_generation
+           << ",\"execution_localization_epoch\":"
+           << snapshot.provenance.execution_localization_epoch
+           << ",\"execution_goal_epoch\":"
+           << snapshot.provenance.execution_goal_epoch
+           << ",\"execution_request_id\":"
+           << snapshot.provenance.execution_request_id
+           << ",\"request_localization_epoch\":"
+           << snapshot.provenance.request_localization_epoch
+           << ",\"request_goal_epoch\":"
+           << snapshot.provenance.request_goal_epoch
+           << ",\"request_id\":" << snapshot.provenance.request_id
+           << ",\"solve_generation\":"
+           << snapshot.provenance.solve_generation
+           << ",\"planner_cycle\":"
+           << snapshot.provenance.planner_cycle
+           << ",\"route_revision\":" << snapshot.provenance.route_revision
+           << ",\"waypoint_index\":" << snapshot.provenance.waypoint_index
+           << ",\"mission_id\":";
+    writeJsonString(output, snapshot.provenance.mission_id);
+    output << ",\"start_mode\":";
+    writeJsonString(output, snapshot.provenance.start_mode);
+    output << ",\"planner_mode\":";
+    writeJsonString(output, snapshot.provenance.planner_mode);
+    output << ",\"recovery_state\":";
+    writeJsonString(output, snapshot.provenance.recovery_state);
+    output << ",\"request_stamp_ns\":" << snapshot.provenance.request_stamp_ns
+           << ",\"anchor_stamp_ns\":" << snapshot.provenance.anchor_stamp_ns
+           << ",\"activation_stamp_ns\":" << snapshot.provenance.activation_stamp_ns
+           << ",\"solve_start_wall_time_s\":";
+    writeJsonDouble(output, snapshot.provenance.solve_start_wall_time_s);
+    output << "},\"timing\":{";
+    output << "\"refinement_deadline_ns\":" << snapshot.refinement_deadline_ns
+           << ",\"hard_deadline_ns\":" << snapshot.hard_deadline_ns
+           << ",\"hard_deadline_observed\":";
+    writeJsonBool(output, snapshot.hard_deadline_observed);
+    output << ",\"hard_deadline_exceeded_at_signature\":";
+    writeJsonBool(output, snapshot.hard_deadline_exceeded_at_signature);
+    output << ",\"baseline_only\":";
+    writeJsonBool(output, snapshot.baseline_only);
+    output << ",\"suppress_optional_refinement\":";
+    writeJsonBool(output, snapshot.suppress_optional_refinement);
+    output << ",\"setup_completed\":";
+    writeJsonBool(output, snapshot.setup_completed);
+    output << ",\"post_setup_input_bound\":";
+    writeJsonBool(output, snapshot.post_setup_input_bound);
+    output << ",\"setup_failure_stage\":"
+           << snapshot.setup_failure_stage
+           << ",\"setup_failure_index\":"
+           << snapshot.setup_failure_index
+           << ",\"setup_failure_vertex_count\":"
+           << snapshot.setup_failure_vertex_count
+           << ",\"setup_failure_metric\":";
+    writeJsonDouble(output, snapshot.setup_failure_metric);
+    output << "},\"config\":";
+    writeJsonConfig(output, snapshot.config);
+
+    output << ",\"problem\":{";
+    output << "\"head_pvaj\":";
+    writeJsonMatrix(output, snapshot.head_pvaj);
+    output << ",\"tail_pvaj\":";
+    writeJsonMatrix(output, snapshot.tail_pvaj);
+    output << ",\"guide_path\":";
+    writeJsonVec3Sequence(output, snapshot.guide_path);
+    output << ",\"guide_stamp\":";
+    writeJsonDoubleVector(output, snapshot.guide_stamp);
+    output << ",\"junction_positions\":";
+    writeJsonMatrix(output, snapshot.junction_positions);
+    output << ",\"initial_spatial_variables\":";
+    writeJsonMatrix(output, snapshot.initial_spatial_variables);
+    output << ",\"initial_route_reference_points\":";
+    writeJsonMatrix(output, snapshot.initial_route_reference_points);
+    output << ",\"initial_waypoint_attractor\":";
+    writeJsonMatrix(output, snapshot.initial_waypoint_attractor);
+    output << ",\"initial_path\":";
+    writeJsonMatrix(output, snapshot.initial_path);
+    output << ",\"initial_durations_s\":";
+    writeJsonEigenVector(output, snapshot.initial_durations_s);
+    output << ",\"initial_duration_lower_bound\":";
+    writeJsonEigenVector(output, snapshot.initial_duration_lower_bound);
+    output << ",\"initial_waypoint_attractor_dead_d\":";
+    writeJsonEigenVector(output, snapshot.initial_waypoint_attractor_dead_d);
+    output << ",\"initial_points\":";
+    writeJsonVec3Sequence(output, snapshot.initial_points);
+    output << ",\"initial_times\":";
+    writeJsonEigenVector(output, snapshot.initial_times);
+    output << ",\"piece_idx\":";
+    writeJsonEigenVector(output, snapshot.piece_idx);
+    output << ",\"v_poly_idx\":";
+    writeJsonEigenVector(output, snapshot.v_poly_idx);
+    output << ",\"h_poly_idx\":";
+    writeJsonEigenVector(output, snapshot.h_poly_idx);
+    output << ",\"v_polytopes\":";
+    output << '[';
+    for (std::size_t index = 0; index < snapshot.v_polytopes.size(); ++index) {
+        if (index != 0U) output << ',';
+        writeJsonMatrix(output, snapshot.v_polytopes[index]);
+    }
+    output << ']';
+    output << ",\"pre_simplify_h_polytopes\":";
+    writeJsonPolyhedra(output, snapshot.pre_simplify_h_polytopes);
+    output << ",\"pre_simplify_route_boundary_gates\": [";
+    for (std::size_t index = 0;
+         index < snapshot.pre_simplify_route_boundary_gates.size(); ++index) {
+        if (index != 0U) output << ',';
+        output << static_cast<int>(
+                snapshot.pre_simplify_route_boundary_gates[index]);
+    }
+    output << "] ,\"pre_simplify_route_boundary_points\":";
+    writeJsonVec3Sequence(
+        output, snapshot.pre_simplify_route_boundary_points);
+    output << ",\"pre_simplify_route_boundary_radii\":";
+    writeJsonDoubleVector(
+        output, snapshot.pre_simplify_route_boundary_radii);
+    output << ",\"h_polytopes\":";
+    writeJsonPolyhedra(output, snapshot.h_polytopes);
+    output << ",\"h_overlap_polytopes\":";
+    writeJsonPolyhedra(output, snapshot.h_overlap_polytopes);
+    output << ",\"route_boundary_gates\": [";
+    for (std::size_t index = 0; index < snapshot.route_boundary_gates.size(); ++index) {
+        if (index != 0U) output << ',';
+        output << static_cast<int>(snapshot.route_boundary_gates[index]);
+    }
+    output << "] ,\"route_boundary_points\":";
+    writeJsonVec3Sequence(output, snapshot.route_boundary_points);
+    output << ",\"route_boundary_radii\":";
+    writeJsonDoubleVector(output, snapshot.route_boundary_radii);
+    output << ",\"diagnostic_world_snapshot\":";
+    if (snapshot.diagnostic_world_snapshot.has_value()) {
+        writeJsonDiagnosticWorldSnapshot(
+            output, *snapshot.diagnostic_world_snapshot);
+    } else {
+        output << "null";
+    }
+    output << ",\"effective_magnitude_bounds\":";
+    writeJsonEigenVector(output, snapshot.effective_magnitude_bounds);
+    output << ",\"initial_penalty_weights\":";
+    writeJsonEigenVector(output, snapshot.initial_penalty_weights);
+    output << "},\"initial_seed\":{";
+    output << "\"corridor_build_valid\":";
+    writeJsonBool(output, snapshot.initial_corridor_seed_build_valid);
+    output << ",\"corridor_failure_stage\":"
+           << snapshot.initial_corridor_seed_failure_stage
+           << ",\"corridor_failing_piece\":"
+           << snapshot.initial_corridor_seed_failing_piece_index
+           << ",\"corridor_failing_control\":"
+           << snapshot.initial_corridor_seed_failing_control_index
+           << ",\"corridor_failing_plane\":"
+           << snapshot.initial_corridor_seed_failing_plane_index
+           << ",\"corridor_maximum_plane_violation_m\":";
+    writeJsonDouble(output, snapshot.initial_corridor_seed_maximum_plane_violation_m);
+    output << ",\"corridor_minimum_internal_derivative_scale\":";
+    writeJsonDouble(
+        output, snapshot.initial_corridor_seed_minimum_internal_derivative_scale);
+    output << ",\"corridor_failing_control_point\":";
+    writeJsonMatrix(output, snapshot.initial_corridor_seed_failing_control_point);
+    output << ",\"corridor_failing_plane\":";
+    writeJsonMatrix(output, snapshot.initial_corridor_seed_failing_plane);
+    output << ",\"deterministic_certificate_evaluated\":";
+    writeJsonBool(output, snapshot.initial_deterministic_certificate_evaluated);
+    output << ",\"deterministic_certificate_valid\":";
+    writeJsonBool(output, snapshot.initial_deterministic_certificate_valid);
+    output << ",\"deterministic_failure_stage\":"
+           << snapshot.initial_deterministic_failure_stage
+           << ",\"maximum_velocity_mps\":";
+    writeJsonDouble(output, snapshot.initial_deterministic_maximum_velocity_mps);
+    output << ",\"maximum_acceleration_mps2\":";
+    writeJsonDouble(output, snapshot.initial_deterministic_maximum_acceleration_mps2);
+    output << ",\"maximum_jerk_mps3\":";
+    writeJsonDouble(output, snapshot.initial_deterministic_maximum_jerk_mps3);
+    output << "},\"duration_retries\":[";
+    for (std::size_t index = 0; index < snapshot.duration_retries.size(); ++index) {
+        if (index != 0U) output << ',';
+        const auto& retry = snapshot.duration_retries[index];
+        output << "{\"retry_type\":" << retry.retry_type
+               << ",\"duration_s\":";
+        writeJsonEigenVector(output, retry.duration_s);
+        output << ",\"duration_scale\":";
+        writeJsonEigenVector(output, retry.duration_scale);
+        output << ",\"build_valid\":";
+        writeJsonBool(output, retry.build_valid);
+        output << ",\"failure_stage\":" << retry.failure_stage
+               << ",\"certificate_failure_stage\":"
+               << retry.certificate_failure_stage
+               << ",\"failing_piece_index\":" << retry.failing_piece_index
+               << ",\"failing_control_index\":" << retry.failing_control_index
+               << ",\"failing_plane_index\":" << retry.failing_plane_index
+               << ",\"maximum_plane_violation_m\":";
+        writeJsonDouble(output, retry.maximum_plane_violation_m);
+        output << ",\"minimum_internal_derivative_scale\":";
+        writeJsonDouble(output, retry.minimum_internal_derivative_scale);
+        output << ",\"failing_control_point\":";
+        writeJsonMatrix(output, retry.failing_control_point);
+        output << ",\"failing_plane\":";
+        writeJsonMatrix(output, retry.failing_plane);
+        output << '}';
+    }
+    output << "]}";
+    output.flush();
+    if (!output) return {};
+    return output_path.string();
+}
 
 int ExpTrajOpt::monitorProgress(void *instance,
                                const VecDf &, const VecDf &, double,
@@ -585,10 +1257,26 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
         opt_vars.hOverlapPolytopes[i] = curIH;
         Eigen::Vector3d interior;
         double overlap_depth_m{std::numeric_limits<double>::quiet_NaN()};
-        if (!geometry_utils::transitionRepresentable(
-                curIH, interior, curIV, overlap_depth_m)) {
-            cout << YELLOW << " -- [planner] in [ GcopterExpS4::processCorridor]: Failed findInteriorDist Vs." <<
-                 RESET << endl;
+        const bool transition_representable =
+                geometry_utils::transitionRepresentable(
+                        curIH, interior, curIV, overlap_depth_m);
+        if (!transition_representable) {
+            if (!std::isfinite(overlap_depth_m) || overlap_depth_m < 0.0) {
+                diagnostics_.setup_failure_stage = 3;
+                diagnostics_.setup_failure_index = i;
+                diagnostics_.setup_failure_metric = overlap_depth_m;
+                diagnostics_.setup_failure_vertex_count = -1;
+            } else if (curIV.cols() == 0) {
+                diagnostics_.setup_failure_stage = 4;
+                diagnostics_.setup_failure_index = i;
+                diagnostics_.setup_failure_metric = 2.0 * overlap_depth_m;
+                diagnostics_.setup_failure_vertex_count = 0;
+            } else {
+                diagnostics_.setup_failure_stage = 5;
+                diagnostics_.setup_failure_index = i;
+                diagnostics_.setup_failure_metric = 2.0 * overlap_depth_m;
+                diagnostics_.setup_failure_vertex_count = curIV.cols();
+            }
             return false;
         }
         const double dis = overlap_depth_m;
@@ -774,7 +1462,7 @@ bool ExpTrajOpt::processCorridorWithGuideTraj() {
             planner_context_->warn(
                     " -- [ExpOpt] guide duration allocation produced invalid segment {}: {}",
                     i - 1, opt_vars.times(i - 1));
-            return false;
+                return false;
         }
     }
 
@@ -799,6 +1487,7 @@ bool ExpTrajOpt::setupProblemAndCheck() {
     if (opt_vars.hPolytopes.empty() ||
         opt_vars.hPolytopes.size() >
             static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        diagnostics_.setup_failure_stage = 1;
         return false;
     }
     // init internal variables size;
@@ -812,6 +1501,9 @@ bool ExpTrajOpt::setupProblemAndCheck() {
         throw std::runtime_error("Not support default init in this version.");
     } else {
         if (!processCorridorWithGuideTraj()) {
+            if (diagnostics_.setup_failure_stage == 0) {
+                diagnostics_.setup_failure_stage = 2;
+            }
             return false;
         }
     }
@@ -825,6 +1517,7 @@ bool ExpTrajOpt::setupProblemAndCheck() {
     // allocation. Preserve that seed; it is an initialization, not a
     // dynamic certificate, and hard feasibility gates remain authoritative.
     if (!opt_vars.times.allFinite() || opt_vars.times.minCoeff() <= 0.0) {
+        diagnostics_.setup_failure_stage = 6;
         cout << YELLOW << " -- [ExpOpt] Init times and point failed: non-positive or non-finite duration." << RESET << endl;
         return false;
     }
@@ -832,6 +1525,7 @@ bool ExpTrajOpt::setupProblemAndCheck() {
     const Mat3Df deltas = opt_vars.init_path.rightCols(opt_vars.piece_num)
                           - opt_vars.init_path.leftCols(opt_vars.piece_num);
     if (!deltas.allFinite()) {
+        diagnostics_.setup_failure_stage = 7;
         cout << YELLOW << " -- [ExpOpt] Initial path contains non-finite edge." << RESET << endl;
         return false;
     }
@@ -917,7 +1611,7 @@ bool ExpTrajOpt::setInitPsAndTs(const vec_Vec3f &init_ps, const vector<double> &
 
 double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                             const bool suppress_optional_refinement) {
-    resetDiagnostics();
+    resetTransientDiagnostics();
     diagnostics_.valid = true;
     if (opt_vars.refinement_deadline_ns > 0) {
         const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1068,22 +1762,64 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                 cfg_.corridor_plane_tolerance_m);
     diagnostics_.corridor_seed_build_failure_stage =
         static_cast<int>(corridor_seed_result.failure_stage);
-    if (!corridor_seed_result.valid &&
-        corridor_seed_result.failing_piece_index >= 0) {
-        planner_context_->warn(
-                " -- [ExpOpt] corridor-contained seed failed: stage={} piece={} "
-                "control={} plane={} violation_m={}",
-                static_cast<int>(corridor_seed_result.failure_stage),
-                corridor_seed_result.failing_piece_index,
-                corridor_seed_result.failing_control_index,
-                corridor_seed_result.failing_plane_index,
-                corridor_seed_result.maximum_plane_violation_m);
-    }
     Trajectory deterministic_nominal_seed = immutable_nominal_seed;
     navigation_planning_backend::DeterministicNominalSeedCertificate
             deterministic_seed_certificate;
     bool deterministic_seed_uses_corridor_bezier = false;
     double deterministic_seed_duration_scale = 1.0;
+    const bool capture_nominal_problem = nominalProblemSnapshotCaptureEnabled();
+    auto append_duration_retry = [this](
+            const int retry_type,
+            const VecDf& retry_times,
+            const navigation_planning_backend::CorridorBezierSeedResult& retry_seed,
+            const int certificate_failure_stage) {
+        if (!nominal_problem_snapshot_) return;
+        NominalDurationRetrySnapshot retry;
+        retry.retry_type = retry_type;
+        retry.duration_s = retry_times;
+        if (retry_times.size() == opt_vars.times.size() &&
+            retry_times.allFinite() && opt_vars.times.allFinite() &&
+            (opt_vars.times.array() > 0.0).all()) {
+            retry.duration_scale = retry_times.cwiseQuotient(opt_vars.times);
+        }
+        retry.build_valid = retry_seed.valid;
+        retry.failure_stage = static_cast<int>(retry_seed.failure_stage);
+        retry.certificate_failure_stage = certificate_failure_stage;
+        retry.failing_piece_index = retry_seed.failing_piece_index;
+        retry.failing_control_index = retry_seed.failing_control_index;
+        retry.failing_plane_index = retry_seed.failing_plane_index;
+        retry.maximum_plane_violation_m = retry_seed.maximum_plane_violation_m;
+        retry.minimum_internal_derivative_scale =
+            retry_seed.minimum_internal_derivative_scale;
+        retry.failing_control_point = retry_seed.failing_control_point;
+        retry.failing_plane = retry_seed.failing_plane;
+        nominal_problem_snapshot_->duration_retries.emplace_back(std::move(retry));
+    };
+    if (capture_nominal_problem && nominal_problem_snapshot_) {
+        // Record the current request's setup state before any seed branch.
+        // Seed construction can fail before a deterministic certificate is
+        // even evaluated, but its failure provenance is still part of the
+        // immutable request evidence.
+        recordNominalProblemSetupResult(true);
+        auto& snapshot = *nominal_problem_snapshot_;
+        snapshot.initial_corridor_seed_build_valid = corridor_seed_result.valid;
+        snapshot.initial_corridor_seed_failure_stage =
+            static_cast<int>(corridor_seed_result.failure_stage);
+        snapshot.initial_corridor_seed_failing_piece_index =
+            corridor_seed_result.failing_piece_index;
+        snapshot.initial_corridor_seed_failing_control_index =
+            corridor_seed_result.failing_control_index;
+        snapshot.initial_corridor_seed_failing_plane_index =
+            corridor_seed_result.failing_plane_index;
+        snapshot.initial_corridor_seed_maximum_plane_violation_m =
+            corridor_seed_result.maximum_plane_violation_m;
+        snapshot.initial_corridor_seed_minimum_internal_derivative_scale =
+            corridor_seed_result.minimum_internal_derivative_scale;
+        snapshot.initial_corridor_seed_failing_control_point =
+            corridor_seed_result.failing_control_point;
+        snapshot.initial_corridor_seed_failing_plane =
+            corridor_seed_result.failing_plane;
+    }
     if (corridor_seed_result.valid) {
         deterministic_seed_certificate =
                 navigation_planning_backend::certifyDeterministicNominalSeed(
@@ -1096,6 +1832,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                     opt_vars.headPVAJ,
                     opt_vars.tailPVAJ,
                     cfg_);
+        if (capture_nominal_problem && nominal_problem_snapshot_) {
+            auto& snapshot = *nominal_problem_snapshot_;
+            snapshot.initial_deterministic_certificate_evaluated = true;
+            snapshot.initial_deterministic_certificate_valid =
+                deterministic_seed_certificate.valid;
+            snapshot.initial_deterministic_failure_stage =
+                static_cast<int>(deterministic_seed_certificate.failure_stage);
+            snapshot.initial_deterministic_maximum_velocity_mps =
+                deterministic_seed_certificate.maximum_velocity_mps;
+            snapshot.initial_deterministic_maximum_acceleration_mps2 =
+                deterministic_seed_certificate.maximum_acceleration_mps2;
+            snapshot.initial_deterministic_maximum_jerk_mps3 =
+                deterministic_seed_certificate.maximum_jerk_mps3;
+        }
         if (deterministic_seed_certificate.valid) {
             deterministic_nominal_seed = corridor_seed_result.trajectory;
             deterministic_seed_uses_corridor_bezier = true;
@@ -1139,7 +1889,10 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                             cfg_.max_vel *
                                 cfg_.optimization_dynamic_reserve_ratio,
                             cfg_.corridor_plane_tolerance_m);
-                if (!retry_seed.valid) continue;
+                if (!retry_seed.valid) {
+                    append_duration_retry(retry_mode, retry_times, retry_seed, 0);
+                    continue;
+                }
                 ++diagnostics_.corridor_seed_retry_build_valid_count;
                 const auto retry_certificate = navigation_planning_backend::
                         certifyDeterministicNominalSeed(
@@ -1152,6 +1905,10 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                             opt_vars.headPVAJ,
                             opt_vars.tailPVAJ,
                             cfg_);
+                append_duration_retry(
+                    retry_mode, retry_times, retry_seed,
+                    retry_certificate.valid
+                        ? 0 : static_cast<int>(retry_certificate.failure_stage));
                 diagnostics_.corridor_seed_retry_last_certificate_stage =
                     static_cast<int>(retry_certificate.failure_stage);
                 if (!retry_certificate.valid) continue;
@@ -1166,6 +1923,21 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                     deterministic_seed_duration_scale;
                 break;
             }
+        }
+        if (nominal_problem_snapshot_) {
+            const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            nominal_problem_snapshot_->hard_deadline_exceeded_at_signature =
+                opt_vars.hard_deadline_ns > 0 && now_ns >= opt_vars.hard_deadline_ns;
+            nominal_problem_snapshot_->target_failure_signature =
+                nominal_problem_snapshot_->initial_corridor_seed_build_valid &&
+                !nominal_problem_snapshot_->initial_deterministic_certificate_valid &&
+                nominal_problem_snapshot_->initial_deterministic_failure_stage ==
+                    static_cast<int>(navigation_planning_backend::
+                        DeterministicNominalSeedFailureStage::kDynamics) &&
+                diagnostics_.corridor_seed_retry_attempt_count > 0 &&
+                diagnostics_.corridor_seed_retry_build_valid_count == 0 &&
+                !nominal_problem_snapshot_->hard_deadline_exceeded_at_signature;
         }
     }
     // Preserve the historical exact MINCO interpolation only as a secondary
@@ -1763,6 +2535,11 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                                     opt_vars.route_boundary_points,
                                     opt_vars.route_boundary_radii,
                                     opt_vars.headPVAJ, opt_vars.tailPVAJ, cfg_);
+                        append_duration_retry(
+                            4, reserved_duration_s, stretched_seed,
+                            stretched_certificate.valid
+                                ? 0 : static_cast<int>(
+                                    stretched_certificate.failure_stage));
                         if (stretched_certificate.valid) {
                             deterministic_nominal_seed = stretched_seed.trajectory;
                             deterministic_seed_certificate = stretched_certificate;
@@ -1789,6 +2566,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                             ret = lbfgs::LBFGS_STOP;
                             return true;
                         }
+                    } else {
+                        append_duration_retry(4, reserved_duration_s, stretched_seed, 0);
                     }
                 }
             }
@@ -2294,6 +3073,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                           Trajectory &out_traj,
                           const bool baseline_only,
                           const bool suppress_optional_refinement) {
+    resetDiagnostics();
     baseline_only_ = baseline_only;
     /// Check if hot init is valid
     if (guide_path.empty() || guide_path.size() != guide_t.size()) {
@@ -2339,8 +3119,14 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         }
     }
 
+    beginNominalProblemSnapshot(
+            headPVAJ, tailPVAJ, guide_path, guide_t, sfcs,
+            baseline_only, suppress_optional_refinement);
+
     if (!SimplifySFC(headPVAJ.col(0), tailPVAJ.col(0), sfcs)) {
         cout << YELLOW << " -- [TrajOpt] Cannot simplify sfcs." << RESET << endl;
+        diagnostics_.setup_failure_stage = 2;
+        recordNominalProblemSetupResult(false);
         return false;
     }
 
@@ -2359,6 +3145,9 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     opt_vars.route_boundary_radii.assign(
         sfcs.size(), std::numeric_limits<double>::quiet_NaN());
     opt_vars.hPolytopes.resize(sfcs.size());
+    if (nominal_problem_snapshot_) {
+        nominal_problem_snapshot_->post_setup_input_bound = true;
+    }
 
     for (std::size_t i = 0; i < sfcs.size(); ++i) {
         opt_vars.route_boundary_gates[i] =
@@ -2391,6 +3180,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         cout << YELLOW << " -- [planner] Minco corridor preprocess error." << RESET << endl;
         success = false;
     }
+    recordNominalProblemSetupResult(success);
 
     out_traj.clear();
 
@@ -2457,6 +3247,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
                           const vec_Vec3f &init_ps,
                           const VecDf &init_ts,
                           Trajectory &out_traj) {
+    resetDiagnostics();
     vec_Vec3f guide_path;
     guide_path.emplace_back(headPVAJ.col(0));
     for (const auto &i: init_ps) {
@@ -2506,8 +3297,14 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         }
     }
 
+    beginNominalProblemSnapshot(
+            headPVAJ, tailPVAJ, guide_path, guide_t, sfcs,
+            false, false);
+
     if (!SimplifySFC(headPVAJ.col(0), tailPVAJ.col(0), sfcs)) {
         cout << YELLOW << " -- [TrajOpt] Cannot simplify sfcs." << RESET << endl;
+        diagnostics_.setup_failure_stage = 2;
+        recordNominalProblemSetupResult(false);
         return false;
     }
 
@@ -2528,6 +3325,9 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
     opt_vars.route_boundary_radii.assign(
         sfcs.size(), std::numeric_limits<double>::quiet_NaN());
     opt_vars.hPolytopes.resize(sfcs.size());
+    if (nominal_problem_snapshot_) {
+        nominal_problem_snapshot_->post_setup_input_bound = true;
+    }
 
     for (std::size_t i = 0; i < sfcs.size(); ++i) {
         opt_vars.route_boundary_gates[i] =
@@ -2560,6 +3360,7 @@ bool ExpTrajOpt::optimize(const StatePVAJ &headPVAJ, const StatePVAJ &tailPVAJ,
         cout << YELLOW << " -- [planner] Minco corridor preprocess error." << RESET << endl;
         success = false;
     }
+    recordNominalProblemSetupResult(success);
 
     out_traj.clear();
 

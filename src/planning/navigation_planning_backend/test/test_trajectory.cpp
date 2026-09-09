@@ -57,6 +57,111 @@ struct CiriGeometryTestAccess {
 
 namespace {
 
+geometry_utils::Polytope makeTransitionTestBox(
+    const double min_x, const double max_x,
+    const double min_y = 0.0, const double max_y = 1.0,
+    const double min_z = 0.0, const double max_z = 1.0) {
+  navigation_math::MatD4f planes(6, 4);
+  planes <<
+      1.0, 0.0, 0.0, -max_x,
+     -1.0, 0.0, 0.0,  min_x,
+      0.0, 1.0, 0.0, -max_y,
+      0.0,-1.0, 0.0,  min_y,
+      0.0, 0.0, 1.0, -max_z,
+      0.0, 0.0,-1.0,  min_z;
+  return geometry_utils::Polytope(std::move(planes));
+}
+
+geometry_utils::Polytope makeReconstructedHistoricalCorridor(
+    const double min_x, const double max_x,
+    const double min_z, const double max_z) {
+  navigation_math::MatD4f planes(8, 4);
+  planes <<
+      1.0, 0.0, 0.0, -max_x,
+      0.0, 1.0, 0.0, -6.0,
+      0.0, 0.0, 1.0, -4.5,
+     -1.0, 0.0, 0.0,  min_x,
+      0.0,-1.0, 0.0,  3.0,
+      0.0, 0.0,-1.0,  min_z,
+      0.0, 0.0, 1.0, -max_z,
+      0.0, 0.0,-1.0,  2.5;
+  return geometry_utils::Polytope(std::move(planes));
+}
+
+bool transitionRepresentableForCurrentConsumer(
+    const geometry_utils::Polytope& first,
+    const geometry_utils::Polytope& second) {
+  const auto overlap = first.CrossWith(second);
+  Eigen::Vector3d interior;
+  Eigen::Matrix3Xd vertices;
+  double depth{std::numeric_limits<double>::quiet_NaN()};
+  return geometry_utils::transitionRepresentable(
+      overlap.GetPlanes(), interior, vertices, depth);
+}
+
+void expectAllTransitionsRepresentable(
+    const geometry_utils::PolytopeVec& corridors) {
+  for (std::size_t index = 0; index + 1U < corridors.size(); ++index) {
+    EXPECT_TRUE(transitionRepresentableForCurrentConsumer(
+        corridors[index], corridors[index + 1U]))
+        << "transition index=" << index;
+  }
+}
+
+TEST(PlannerTrajectory,
+     SimplifySfcDoesNotCreateNonRepresentableFaceOnlyTransition) {
+  // Reconstructed historical component fixture: A-B and B-C have robust
+  // positive-volume overlap, while A-C is the lower-dimensional seam that
+  // exposed the SimplifySFC/consumer contract mismatch.  This is a component
+  // regression fixture, not a claim that it is the bitwise historical runtime
+  // PRE chain.
+  geometry_utils::PolytopeVec corridors{
+      makeReconstructedHistoricalCorridor(
+          18.200000762939453, 24.0, 1.2000000476837158, 3.2000000000000002),
+      makeReconstructedHistoricalCorridor(21.0, 27.0, 1.5, 3.2000000000000002),
+      makeReconstructedHistoricalCorridor(24.0, 30.0, 1.5, 3.2000000000000002)};
+  ASSERT_TRUE(transitionRepresentableForCurrentConsumer(
+      corridors[0], corridors[1]));
+  ASSERT_TRUE(transitionRepresentableForCurrentConsumer(
+      corridors[1], corridors[2]));
+
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      navigation_math::Vec3f{20.0, 4.5, 3.0},
+      navigation_math::Vec3f{29.0, 4.5, 3.0}, corridors));
+  ASSERT_EQ(corridors.size(), 3U);
+  expectAllTransitionsRepresentable(corridors);
+}
+
+TEST(PlannerTrajectory, SimplifySfcMayRemoveRepresentableIntermediateCorridor) {
+  geometry_utils::PolytopeVec corridors{
+      makeTransitionTestBox(0.0, 4.0),
+      makeTransitionTestBox(1.0, 3.0),
+      makeTransitionTestBox(2.0, 6.0)};
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      navigation_math::Vec3f{0.5, 0.5, 0.5},
+      navigation_math::Vec3f{5.5, 0.5, 0.5}, corridors));
+  ASSERT_EQ(corridors.size(), 2U);
+  expectAllTransitionsRepresentable(corridors);
+}
+
+TEST(PlannerTrajectory, DisconnectedTransitionIsNotRepresentable) {
+  geometry_utils::PolytopeVec corridors{
+      makeTransitionTestBox(0.0, 2.0),
+      makeTransitionTestBox(1.0, 4.0),
+      makeTransitionTestBox(3.0, 7.0)};
+  ASSERT_TRUE(transitionRepresentableForCurrentConsumer(
+      corridors[0], corridors[1]));
+  ASSERT_TRUE(transitionRepresentableForCurrentConsumer(
+      corridors[1], corridors[2]));
+  EXPECT_FALSE(transitionRepresentableForCurrentConsumer(
+      corridors[0], corridors[2]));
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      navigation_math::Vec3f{0.5, 0.5, 0.5},
+      navigation_math::Vec3f{6.5, 0.5, 0.5}, corridors));
+  ASSERT_EQ(corridors.size(), 3U);
+  expectAllTransitionsRepresentable(corridors);
+}
+
 TEST(PlannerTrajectory, FeasibilityRetryActivatesDisabledViolatedDynamicPenalty) {
   navigation_math::VecDf weights(7);
   weights << 5.0e8, 5.0e5, 5.0e5, 0.0, 0.0, 1.0e5, 1.0e5;
@@ -3376,6 +3481,13 @@ TEST(PlannerTrajectory, SolveStagesHaveStableDecisionTraceNames) {
   EXPECT_EQ(navigation_planning_backend::solveStageName(4), "main_minco");
   EXPECT_EQ(navigation_planning_backend::solveStageName(5), "backup");
   EXPECT_EQ(navigation_planning_backend::solveStageName(33), "corridor_iris");
+  EXPECT_EQ(navigation_planning_backend::solveStageName(43), "corridor_overlap");
+  EXPECT_EQ(navigation_planning_backend::solveStageName(44),
+            "corridor_vertex_parameterization");
+  EXPECT_EQ(navigation_planning_backend::nominalSetupSolveStage(3), 43);
+  EXPECT_EQ(navigation_planning_backend::nominalSetupSolveStage(4), 44);
+  EXPECT_EQ(navigation_planning_backend::nominalSetupSolveStage(5), 45);
+  EXPECT_EQ(navigation_planning_backend::nominalSetupSolveStage(0), 4);
   EXPECT_EQ(navigation_planning_backend::solveStageName(999), "unknown");
 }
 

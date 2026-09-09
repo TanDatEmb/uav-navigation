@@ -40,6 +40,7 @@
 
 #include "traj_opt/yaw_traj_opt.h"
 #include "planner_core/planner_result.hpp"
+#include "planner_core/planning_stage.hpp"
 #include "utils/header/fmt_eigen.hpp"
 
 #include <planner_core/log_utils.hpp>
@@ -57,6 +58,8 @@ namespace navigation_planning_backend {
     using navigation_math::RET_CODE;
     using namespace color_text;
     using namespace geometry_utils;
+
+    class NominalProblemSnapshotWriter;
 
     class Planner {
         LogOneReplan latest_replan;
@@ -78,6 +81,8 @@ namespace navigation_planning_backend {
         traj_opt::ExpTrajOpt::Ptr exp_traj_opt_;
         traj_opt::BackupTrajOpt::Ptr back_traj_opt_;
         traj_opt::YawTrajOpt::Ptr yaw_traj_opt_;
+        std::unique_ptr<NominalProblemSnapshotWriter>
+                nominal_problem_snapshot_writer_;
 
         CIRI::Ptr ciri_;
 
@@ -177,6 +182,10 @@ namespace navigation_planning_backend {
         double on_backup_start_WT{-1}, on_backup_end_WT{-1};
 
         double planner_process_start_WT_;
+        // Runtime-owned diagnostic correlation only. These values are copied
+        // into NominalProblemSnapshot and never affect planning behavior.
+        std::uint64_t diagnostic_solve_generation_{0U};
+        std::uint64_t diagnostic_planner_cycle_{0U};
         // Set for one typed successor solve.  The execution timeline chooses
         // this wall timestamp; the planner must not invent a different splice
         // time after solving.
@@ -276,7 +285,7 @@ namespace navigation_planning_backend {
                               const std::optional<navigation_planning::DynamicLimits> &mission_limits,
                               navigation_world_model::WorldCommitAuthorizer& commit_authorizer);
 
-        ~Planner() = default;
+        ~Planner();
 
         bool goalValid() const {
             return gi_.goal_valid;
@@ -360,7 +369,15 @@ namespace navigation_planning_backend {
         }
         int solveStage() const noexcept {
             const int stage = solve_stage_.load();
-            return stage == 3 && cg_ptr_ ? 30 + cg_ptr_->solveStage() : stage;
+            if (stage == 3 && cg_ptr_) return 30 + cg_ptr_->solveStage();
+            if (stage == 4 && exp_traj_opt_) {
+                const int setup_stage =
+                    exp_traj_opt_->diagnostics().setup_failure_stage;
+                if (setup_stage != 0) {
+                    return nominalSetupSolveStage(setup_stage);
+                }
+            }
+            return stage;
         }
         int latestReplanReturnCode() const noexcept {
             return latest_replan.getRetCode();
@@ -435,6 +452,13 @@ namespace navigation_planning_backend {
             }
             std::lock_guard<std::mutex> guard(command_identity_mutex_);
             command_identity_ = identity;
+        }
+
+        void setNominalProblemDiagnosticIdentity(
+                const std::uint64_t solve_generation,
+                const std::uint64_t planner_cycle) noexcept {
+            diagnostic_solve_generation_ = solve_generation;
+            diagnostic_planner_cycle_ = planner_cycle;
         }
 
         // Planning-thread-only. Runtime pins one immutable revision before a
