@@ -1,4 +1,5 @@
 #include "planner_core/route_yaw_reference.hpp"
+#include "traj_opt/yaw_traj_opt.h"
 
 #include <cmath>
 #include <limits>
@@ -219,4 +220,42 @@ TEST(RouteYawReference, CrossingGeometryCannotJumpBeyondActiveWaypoint) {
   ASSERT_TRUE(reference.valid);
   EXPECT_LE(reference.progress_arc_m,
             route.waypoint_arc_lengths_m[route.active_waypoint_index]);
+}
+
+TEST(RouteYawReference, YawReachesTargetBeforeLongPositionHorizon) {
+  const std::vector<double> durations{5.0};
+  const geometry_utils::Trajectory position(
+      durations, {Eigen::MatrixXd::Zero(3, 6)});
+  traj_opt::YawTrajOpt optimizer(1.5, 1.0);
+  geometry_utils::Trajectory yaw;
+  const navigation_math::Vec4f initial = navigation_math::Vec4f::Zero();
+
+  ASSERT_TRUE(optimizer.optimizeToTarget(initial, M_PI_2, position, yaw));
+  const auto& diagnostics = optimizer.lastDiagnostics();
+  ASSERT_GT(diagnostics.selected_turn_duration_s, 0.0);
+  EXPECT_LT(diagnostics.selected_turn_duration_s,
+            position.getTotalDuration() - 1.0e-3);
+  EXPECT_TRUE(diagnostics.holds_target_after_turn);
+  EXPECT_NEAR(yaw.getPos(diagnostics.selected_turn_duration_s).x(),
+              M_PI_2, 1.0e-6);
+  EXPECT_NEAR(yaw.getPos(position.getTotalDuration()).x(), M_PI_2, 1.0e-6);
+  EXPECT_LE(yaw.getMaxVelRate(), 1.5 + 1.0e-6);
+  EXPECT_LE(yaw.getMaxAccRate(), 1.0 + 1.0e-6);
+}
+
+TEST(RouteYawReference, YawWraparoundUsesShortestCertifiedTurn) {
+  const std::vector<double> durations{4.0};
+  const geometry_utils::Trajectory position(
+      durations, {Eigen::MatrixXd::Zero(3, 6)});
+  traj_opt::YawTrajOpt optimizer(1.5, 1.0);
+  geometry_utils::Trajectory yaw;
+  const navigation_math::Vec4f initial{3.0, 0.0, 0.0, 0.0};
+
+  ASSERT_TRUE(optimizer.optimizeToTarget(initial, -3.0, position, yaw));
+  const double expected = 3.0 + std::remainder(-3.0 - 3.0, 2.0 * M_PI);
+  EXPECT_NEAR(yaw.getPos(position.getTotalDuration()).x(), expected, 1.0e-6);
+  EXPECT_LT(std::abs(yaw.getPos(position.getTotalDuration()).x() - initial(0)),
+            M_PI);
+  EXPECT_LE(yaw.getMaxVelRate(), 1.5 + 1.0e-6);
+  EXPECT_LE(yaw.getMaxAccRate(), 1.0 + 1.0e-6);
 }
