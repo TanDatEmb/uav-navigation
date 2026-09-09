@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -120,9 +121,22 @@ struct RawPx4State final {
 };
 
 struct TimingWitness final {
+  static constexpr std::uint8_t kConservativeBoundModelV1{1U};
+
+  // These IDs are copied from the exact snapshots used to build this timing
+  // witness.  They are not diagnostic labels: adapt() rejects a mismatched
+  // tuple so a fresh raw state cannot be paired with an older LIO/reference.
+  std::uint64_t reference_sample_id{0U};
+  std::uint64_t lio_localization_epoch{0U};
+  std::uint64_t lio_sequence{0U};
+  std::uint64_t px4_timestamp_us{0U};
+  std::uint64_t px4_timestamp_sample_us{0U};
   std::uint64_t clock_mapping_generation{0U};
+  std::uint8_t conservative_bound_model{0U};
+  bool common_time_contract_valid{false};
   double clock_mapping_uncertainty_s{0.0};
   std::int64_t expected_reference_use_time_ns{0};
+  double reference_age_s{0.0};
   double pair_skew_s{0.0};
   double lio_source_age_s{0.0};
   double lio_receive_age_s{0.0};
@@ -142,6 +156,7 @@ struct Policy final {
   // enabled by accidentally changing a default.
   double velocity_lambda{0.0};
   std::optional<double> maximum_timing_bound_s;
+  std::optional<double> maximum_reference_age_s;
   std::optional<ResetCounters> expected_px4_reset_counters;
   std::optional<std::uint64_t> expected_lio_localization_epoch;
   bool reject_dead_reckoning{true};
@@ -204,9 +219,15 @@ namespace detail {
 }
 
 [[nodiscard]] inline bool validTiming(const TimingWitness& timing) noexcept {
-  return timing.clock_mapping_generation > 0U &&
+  return timing.reference_sample_id > 0U && timing.lio_localization_epoch > 0U &&
+         timing.lio_sequence > 0U && timing.px4_timestamp_us > 0U &&
+         timing.px4_timestamp_sample_us > 0U &&
+         timing.clock_mapping_generation > 0U &&
+         timing.conservative_bound_model == TimingWitness::kConservativeBoundModelV1 &&
+         timing.common_time_contract_valid &&
          timing.expected_reference_use_time_ns > 0 &&
          validNonNegative(timing.clock_mapping_uncertainty_s) &&
+         validNonNegative(timing.reference_age_s) &&
          validNonNegative(timing.pair_skew_s) &&
          validNonNegative(timing.lio_source_age_s) &&
          validNonNegative(timing.lio_receive_age_s) &&
@@ -216,6 +237,43 @@ namespace detail {
          validNonNegative(timing.output_transport_age_s) &&
          validNonNegative(timing.px4_consume_age_s) &&
          validNonNegative(timing.total_bound_s);
+}
+
+[[nodiscard]] inline bool validTimingSnapshotTuple(const TimingWitness& timing,
+                                                   const Reference& reference,
+                                                   const LioState& lio,
+                                                   const RawPx4State& raw_px4) noexcept {
+  return timing.reference_sample_id == reference.identity.sample_id &&
+         timing.lio_localization_epoch == lio.localization_epoch &&
+         timing.lio_sequence == lio.sequence &&
+         timing.px4_timestamp_us == raw_px4.timestamp_us &&
+         timing.px4_timestamp_sample_us == raw_px4.timestamp_sample_us;
+}
+
+[[nodiscard]] inline bool referenceAgeMatchesSampleAndEvaluation(
+    const TimingWitness& timing, const Reference& reference) noexcept {
+  if (timing.expected_reference_use_time_ns <
+      reference.identity.reference_sample_time_ns) {
+    return false;
+  }
+  const auto delta_ns = timing.expected_reference_use_time_ns -
+                        reference.identity.reference_sample_time_ns;
+  const double computed_age_s = static_cast<double>(delta_ns) * 1.0e-9;
+  return finite(computed_age_s) &&
+         std::abs(computed_age_s - timing.reference_age_s) <= 1.0e-9;
+}
+
+[[nodiscard]] inline double conservativeTimingBoundV1(
+    const TimingWitness& timing) noexcept {
+  // Source/pair/anchor ages describe overlapping portions of the same
+  // timeline.  Only transport and FC-consume stages are sequential additions;
+  // taking the maximum for the overlapping portion avoids double counting.
+  const double overlapping_age = std::max({
+      timing.reference_age_s, timing.pair_skew_s, timing.lio_source_age_s,
+      timing.lio_receive_age_s, timing.px4_source_age_s,
+      timing.px4_receive_age_s, timing.predicted_anchor_age_s});
+  return timing.clock_mapping_uncertainty_s + overlapping_age +
+         timing.output_transport_age_s + timing.px4_consume_age_s;
 }
 
 [[nodiscard]] inline Eigen::Matrix3d basisEnuToNed() noexcept {
@@ -242,6 +300,16 @@ namespace detail {
   }
   if (policy.maximum_timing_bound_s.has_value() &&
       !validNonNegative(*policy.maximum_timing_bound_s)) {
+    return false;
+  }
+  if (policy.maximum_reference_age_s.has_value() &&
+      !validNonNegative(*policy.maximum_reference_age_s)) {
+    return false;
+  }
+  if (policy.mode == Mode::kLevelA &&
+      (!policy.maximum_timing_bound_s.has_value() ||
+       !policy.maximum_reference_age_s.has_value() ||
+       !policy.expected_px4_reset_counters.has_value())) {
     return false;
   }
   return true;
@@ -308,6 +376,17 @@ namespace detail {
     return result;
   }
   if (!detail::validTiming(timing)) {
+    result.failure = FailureReason::kInvalidTiming;
+    return result;
+  }
+  if (!detail::validTimingSnapshotTuple(timing, reference, lio, raw_px4) ||
+      !detail::referenceAgeMatchesSampleAndEvaluation(timing, reference) ||
+      timing.total_bound_s + 1.0e-12 < detail::conservativeTimingBoundV1(timing)) {
+    result.failure = FailureReason::kInvalidTiming;
+    return result;
+  }
+  if (policy.maximum_reference_age_s.has_value() &&
+      timing.reference_age_s > *policy.maximum_reference_age_s) {
     result.failure = FailureReason::kInvalidTiming;
     return result;
   }

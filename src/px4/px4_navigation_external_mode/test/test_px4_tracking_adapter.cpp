@@ -18,7 +18,7 @@ Reference makeReference() {
   reference.identity.request_id = 11U;
   reference.identity.bundle_generation = 13U;
   reference.identity.sample_id = 17U;
-  reference.identity.reference_sample_time_ns = 1'000'000'000LL;
+  reference.identity.reference_sample_time_ns = 2'000'000'000LL;
   reference.identity.lease_valid_until_ns = 2'100'000'000LL;
   reference.position_enu = Eigen::Vector3d{11.0, 22.0, 33.0};
   reference.velocity_enu = Eigen::Vector3d{1.0, 2.0, 3.0};
@@ -70,9 +70,17 @@ RawPx4State makeRawPx4() {
 
 TimingWitness makeTiming() {
   TimingWitness timing;
+  timing.reference_sample_id = 17U;
+  timing.lio_localization_epoch = 4U;
+  timing.lio_sequence = 19U;
+  timing.px4_timestamp_us = 3'000'000U;
+  timing.px4_timestamp_sample_us = 2'999'000U;
   timing.clock_mapping_generation = 2U;
+  timing.conservative_bound_model = TimingWitness::kConservativeBoundModelV1;
+  timing.common_time_contract_valid = true;
   timing.clock_mapping_uncertainty_s = 0.001;
   timing.expected_reference_use_time_ns = 2'010'000'000LL;
+  timing.reference_age_s = 0.010;
   timing.pair_skew_s = 0.002;
   timing.lio_source_age_s = 0.010;
   timing.lio_receive_age_s = 0.008;
@@ -81,7 +89,7 @@ TimingWitness makeTiming() {
   timing.predicted_anchor_age_s = 0.014;
   timing.output_transport_age_s = 0.004;
   timing.px4_consume_age_s = 0.005;
-  timing.total_bound_s = 0.020;
+  timing.total_bound_s = 0.024;
   return timing;
 }
 
@@ -90,6 +98,7 @@ Policy makePolicy() {
   policy.mode = Mode::kShadow;
   policy.experiment_id = "px4-level-a-shadow-v1";
   policy.maximum_timing_bound_s = 0.025;
+  policy.maximum_reference_age_s = 0.025;
   policy.expected_px4_reset_counters = ResetCounters{1U, 2U, 3U, 4U, 5U};
   policy.expected_lio_localization_epoch = 4U;
   return policy;
@@ -192,10 +201,70 @@ TEST(Px4TrackingAdapter, RejectsStaleTimingBeforeProducingOutput) {
   EXPECT_EQ(result.failure, FailureReason::kInvalidTiming);
 }
 
+TEST(Px4TrackingAdapter, RejectsTimingBoundThatDoesNotCoverSnapshotAges) {
+  auto timing = makeTiming();
+  timing.predicted_anchor_age_s = 1.0;
+  timing.total_bound_s = 0.0;
+  const auto result = adapt(makeReference(), makeLio(), makeRawPx4(), timing, makePolicy());
+  EXPECT_FALSE(result.success());
+  EXPECT_EQ(result.failure, FailureReason::kInvalidTiming);
+}
+
+TEST(Px4TrackingAdapter, RejectsTimingWitnessForAnotherSnapshot) {
+  auto timing = makeTiming();
+  timing.lio_sequence++;
+  const auto result = adapt(makeReference(), makeLio(), makeRawPx4(), timing, makePolicy());
+  EXPECT_FALSE(result.success());
+  EXPECT_EQ(result.failure, FailureReason::kInvalidTiming);
+}
+
+TEST(Px4TrackingAdapter, RejectsStaleReferenceInsideAValidLease) {
+  auto timing = makeTiming();
+  timing.expected_reference_use_time_ns = 2'050'000'000LL;
+  timing.reference_age_s = 0.050;
+  const auto result = adapt(makeReference(), makeLio(), makeRawPx4(), timing, makePolicy());
+  EXPECT_FALSE(result.success());
+  EXPECT_EQ(result.failure, FailureReason::kInvalidTiming);
+}
+
+TEST(Px4TrackingAdapter, RejectsReferenceSampleFromTheFutureOfEvaluationTime) {
+  auto timing = makeTiming();
+  timing.expected_reference_use_time_ns = 1'990'000'000LL;
+  timing.reference_age_s = 0.0;
+  const auto result = adapt(makeReference(), makeLio(), makeRawPx4(), timing, makePolicy());
+  EXPECT_FALSE(result.success());
+  EXPECT_EQ(result.failure, FailureReason::kInvalidTiming);
+}
+
+TEST(Px4TrackingAdapter, LevelARequiresExplicitTimingReferenceAgeAndResetPolicy) {
+  auto policy = makePolicy();
+  policy.mode = Mode::kLevelA;
+  policy.maximum_timing_bound_s.reset();
+  EXPECT_EQ(adapt(makeReference(), makeLio(), makeRawPx4(), makeTiming(), policy).failure,
+            FailureReason::kInvalidPolicy);
+
+  policy = makePolicy();
+  policy.mode = Mode::kLevelA;
+  policy.maximum_reference_age_s.reset();
+  EXPECT_EQ(adapt(makeReference(), makeLio(), makeRawPx4(), makeTiming(), policy).failure,
+            FailureReason::kInvalidPolicy);
+
+  policy = makePolicy();
+  policy.mode = Mode::kLevelA;
+  policy.expected_px4_reset_counters.reset();
+  EXPECT_EQ(adapt(makeReference(), makeLio(), makeRawPx4(), makeTiming(), policy).failure,
+            FailureReason::kInvalidPolicy);
+}
+
 TEST(Px4TrackingAdapter, RejectsUseAfterReferenceLease) {
   auto timing = makeTiming();
   timing.expected_reference_use_time_ns = 2'100'000'001LL;
-  const auto result = adapt(makeReference(), makeLio(), makeRawPx4(), timing, makePolicy());
+  timing.reference_age_s = 0.100000001;
+  timing.total_bound_s = 0.110000001;
+  auto policy = makePolicy();
+  policy.maximum_reference_age_s.reset();
+  policy.maximum_timing_bound_s.reset();
+  const auto result = adapt(makeReference(), makeLio(), makeRawPx4(), timing, policy);
   EXPECT_FALSE(result.success());
   EXPECT_EQ(result.failure, FailureReason::kInvalidReference);
 }

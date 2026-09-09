@@ -20458,9 +20458,10 @@ release profiles must not use the former allowance.
   dead-reckoning, reset, timing, or numeric inputs return a typed failure and
   no default-looking setpoint.
 - **Safety impact:** This commit changes no setpoint behavior, estimator
-  fusion, timeout, parameter, role, lease, or safety gate. It prevents a future
-  integration from silently using cached/invalid state and makes the required
-  timestamp/reset/frame evidence explicit before shadow or Level A wiring.
+  fusion, timeout, parameter, role, lease, or safety gate. It defines the
+  evidence seam for a future integration; runtime pairing and admission are
+  not yet implemented, so this helper alone is not evidence that cached state
+  cannot be used in production.
 - **Evidence:** `test_px4_tracking_adapter` covers relative ENU/NED algebra,
   basis identity, yaw-rate sign, policy-off and non-zero-lambda rejection,
   tilt/extrinsic/heading rejection, reset mismatch, dead-reckoning, timing
@@ -20472,6 +20473,35 @@ release profiles must not use the former allowance.
   source/binary identity before adding shadow instrumentation. Do not enable
   Level A until timing distributions, reset-in-flight ordering, and all
   MAIN/BACKUP/EMERGENCY/hold continuity evidence are available.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && python3
+  tools/runtime/build.py --mode release build --packages
+  px4_navigation_external_mode`; `source install/setup.bash && python3
+  tools/runtime/build.py --mode release test --packages
+  px4_navigation_external_mode`; `git diff --check`.
+
+### 2026-09-09 - Bind adapter timing to exact snapshots and an explicit bound model
+
+- **Owner/status:** PX4 External Mode implementation; `IMPLEMENTED` in the
+  pure helper contract, still not wired to NavigationMode and not a flight
+  qualification claim.
+- **Scope:** Require a common-time sample/evaluation contract, reject future or
+  reference-age-over-bound samples, bind the timing witness to exact reference,
+  LIO epoch/sequence, PX4 publication/sample timestamps and clock-mapping
+  generation, and require conservative-bound model V1. Overlapping source/pair/
+  anchor ages use a maximum; output transport and PX4 consume stages are the
+  only sequential additions. Level A additionally requires explicit timing,
+  reference-age and reset admission policy rather than optional defaults.
+- **Safety impact:** Prevents the pure helper from presenting an apparently
+  valid adapted setpoint for a stale/future reference, mismatched snapshot
+  tuple, under-reported timing bound, or under-specified Level A policy. It
+  still does not provide runtime snapshot atomicity, reset-in-flight ordering,
+  or production behavior.
+- **Evidence:** Adapter regressions cover stale reference inside lease, future
+  reference, mismatched LIO sequence, under-reported anchor age, missing Level
+  A policy, and the prior algebra/fault cases. Runtime remains unwired.
+- **Removal/review condition:** Replace model V1 only with a source-owned clock
+  mapping/timing contract and distribution evidence; do not tune the bound from
+  one run or infer runtime atomicity from pure tests.
 - **Verification:** `source /opt/ros/jazzy/setup.bash && python3
   tools/runtime/build.py --mode release build --packages
   px4_navigation_external_mode`; `source install/setup.bash && python3
