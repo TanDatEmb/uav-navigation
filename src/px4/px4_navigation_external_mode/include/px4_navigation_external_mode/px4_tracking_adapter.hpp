@@ -22,6 +22,14 @@ namespace tracking_adapter {
 
 enum class Mode : std::uint8_t { kOff = 0U, kShadow = 1U, kLevelA = 2U };
 
+// This is a pure setpoint-boundary candidate.  It is intentionally not wired
+// into NavigationMode until the control review closes the timing, reset and
+// role-handoff evidence.
+enum class SetpointBoundary : std::uint8_t {
+  kPositionVelocityAcceleration = 0U,
+  kVelocityOnly = 1U,
+};
+
 enum class FailureReason : std::uint8_t {
   kNone = 0U,
   kPolicyDisabled,
@@ -150,11 +158,14 @@ struct TimingWitness final {
 
 struct Policy final {
   Mode mode{Mode::kOff};
+  SetpointBoundary boundary{SetpointBoundary::kPositionVelocityAcceleration};
   std::string experiment_id;
   // Level A intentionally does not mix a raw PX4 velocity feedback term into
   // the planner reference.  Keep this explicit so a future Level B cannot be
   // enabled by accidentally changing a default.
   double velocity_lambda{0.0};
+  double lio_position_feedback_gain_s_inv{0.0};
+  std::optional<double> maximum_velocity_mps;
   std::optional<double> maximum_timing_bound_s;
   std::optional<double> maximum_reference_age_s;
   std::optional<ResetCounters> expected_px4_reset_counters;
@@ -168,9 +179,12 @@ struct Witness final {
   Eigen::Matrix3d rotation_lio_enu_to_px4_ned{Eigen::Matrix3d::Zero()};
   Eigen::Vector3d error_lio_enu{Eigen::Vector3d::Zero()};
   Eigen::Vector3d error_adapter_ned{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d velocity_command_lio_enu{Eigen::Vector3d::Zero()};
+  bool velocity_limited{false};
   ResetCounters px4_reset_counters;
   TimingWitness timing;
   Mode mode{Mode::kOff};
+  SetpointBoundary boundary{SetpointBoundary::kPositionVelocityAcceleration};
 };
 
 struct AdaptedReference final {
@@ -208,6 +222,10 @@ namespace detail {
 
 [[nodiscard]] inline bool validNonNegative(const double value) noexcept {
   return finite(value) && value >= 0.0;
+}
+
+[[nodiscard]] inline bool validPositive(const double value) noexcept {
+  return finite(value) && value > 0.0;
 }
 
 [[nodiscard]] inline bool validIdentity(const Identity& identity) noexcept {
@@ -298,6 +316,19 @@ namespace detail {
       std::abs(policy.velocity_lambda) > 1.0e-12) {
     return false;
   }
+  if (policy.boundary == SetpointBoundary::kVelocityOnly) {
+    if (!validPositive(policy.lio_position_feedback_gain_s_inv) ||
+        !policy.maximum_velocity_mps.has_value() ||
+        !validPositive(*policy.maximum_velocity_mps)) {
+      return false;
+    }
+  } else if (policy.boundary != SetpointBoundary::kPositionVelocityAcceleration ||
+             !finite(policy.lio_position_feedback_gain_s_inv) ||
+             policy.lio_position_feedback_gain_s_inv != 0.0 ||
+             (policy.maximum_velocity_mps.has_value() &&
+              !validPositive(*policy.maximum_velocity_mps))) {
+    return false;
+  }
   if (policy.maximum_timing_bound_s.has_value() &&
       !validNonNegative(*policy.maximum_timing_bound_s)) {
     return false;
@@ -355,10 +386,13 @@ namespace detail {
     result.failure = FailureReason::kInvalidLioState;
     return result;
   }
-  if (!detail::finite(raw_px4.position_ned) || !detail::finite(raw_px4.velocity_ned) ||
-      !detail::finite(raw_px4.yaw_ned) ||
-      !raw_px4.position_valid[0] || !raw_px4.position_valid[1] ||
-      !raw_px4.position_valid[2] || !raw_px4.velocity_valid[0] ||
+  const bool position_boundary =
+      policy.boundary == SetpointBoundary::kPositionVelocityAcceleration;
+  if ((position_boundary &&
+       (!detail::finite(raw_px4.position_ned) || !raw_px4.position_valid[0] ||
+        !raw_px4.position_valid[1] || !raw_px4.position_valid[2])) ||
+      !detail::finite(raw_px4.velocity_ned) || !detail::finite(raw_px4.yaw_ned) ||
+      !raw_px4.velocity_valid[0] ||
       !raw_px4.velocity_valid[1] || !raw_px4.velocity_valid[2] ||
       !raw_px4.heading_valid || !raw_px4.heading_good_for_control ||
       !detail::finite(raw_px4.heading_variance_rad2) ||
@@ -414,16 +448,37 @@ namespace detail {
   const double delta = detail::wrapPi(px4_yaw_enu - lio.yaw_enu);
   const Eigen::Matrix3d rotation = detail::basisEnuToNed() * detail::yawRotation(delta);
   const Eigen::Vector3d error_lio = reference.position_enu - lio.position_enu;
+  Eigen::Vector3d velocity_command_lio = reference.velocity_enu;
+  bool velocity_limited = false;
+  if (policy.boundary == SetpointBoundary::kVelocityOnly) {
+    velocity_command_lio += policy.lio_position_feedback_gain_s_inv * error_lio;
+    const double speed = velocity_command_lio.norm();
+    if (!detail::finite(speed)) {
+      result.failure = FailureReason::kNonFiniteOutput;
+      return result;
+    }
+    if (speed > *policy.maximum_velocity_mps) {
+      velocity_command_lio *= *policy.maximum_velocity_mps / speed;
+      velocity_limited = true;
+    }
+  }
 
   AdaptedReference adapted;
-  adapted.position_ned = raw_px4.position_ned + rotation * error_lio;
-  adapted.velocity_ned = rotation * reference.velocity_enu;
-  adapted.acceleration_ned = rotation * reference.acceleration_enu;
+  if (policy.boundary == SetpointBoundary::kVelocityOnly) {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    adapted.position_ned = Eigen::Vector3d::Constant(nan);
+    adapted.acceleration_ned = Eigen::Vector3d::Constant(nan);
+  } else {
+    adapted.position_ned = raw_px4.position_ned + rotation * error_lio;
+    adapted.acceleration_ned = rotation * reference.acceleration_enu;
+  }
+  adapted.velocity_ned = rotation * velocity_command_lio;
   adapted.yaw_ned = detail::wrapPi(
       raw_px4.yaw_ned - detail::wrapPi(reference.yaw_enu - lio.yaw_enu));
   adapted.yaw_rate_ned_rad_s = -reference.yaw_rate_enu_rad_s;
-  if (!detail::finite(adapted.position_ned) || !detail::finite(adapted.velocity_ned) ||
-      !detail::finite(adapted.acceleration_ned) || !detail::finite(adapted.yaw_ned) ||
+  if ((policy.boundary != SetpointBoundary::kVelocityOnly &&
+       (!detail::finite(adapted.position_ned) || !detail::finite(adapted.acceleration_ned))) ||
+      !detail::finite(adapted.velocity_ned) || !detail::finite(adapted.yaw_ned) ||
       !detail::finite(adapted.yaw_rate_ned_rad_s)) {
     result.failure = FailureReason::kNonFiniteOutput;
     return result;
@@ -433,10 +488,18 @@ namespace detail {
   adapted.witness.experiment_id = policy.experiment_id;
   adapted.witness.rotation_lio_enu_to_px4_ned = rotation;
   adapted.witness.error_lio_enu = error_lio;
-  adapted.witness.error_adapter_ned = adapted.position_ned - raw_px4.position_ned;
+  if (policy.boundary == SetpointBoundary::kVelocityOnly) {
+    adapted.witness.error_adapter_ned =
+        Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+  } else {
+    adapted.witness.error_adapter_ned = adapted.position_ned - raw_px4.position_ned;
+  }
+  adapted.witness.velocity_command_lio_enu = velocity_command_lio;
+  adapted.witness.velocity_limited = velocity_limited;
   adapted.witness.px4_reset_counters = raw_px4.reset_counters;
   adapted.witness.timing = timing;
   adapted.witness.mode = policy.mode;
+  adapted.witness.boundary = policy.boundary;
   result.output = std::move(adapted);
   return result;
 }

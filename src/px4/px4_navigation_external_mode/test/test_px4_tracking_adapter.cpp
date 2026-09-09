@@ -153,6 +153,54 @@ TEST(Px4TrackingAdapter, AppliesNinetyDegreeRelativeHeadingWithoutChangingBasisC
   EXPECT_TRUE(result.output->velocity_ned.isApprox(Eigen::Vector3d{1.0, 0.0, 0.0}));
 }
 
+TEST(Px4TrackingAdapter, VelocityOnlyUsesLioPathErrorAndLeavesPositionAccelerationUnset) {
+  auto reference = makeReference();
+  auto lio = makeLio();
+  auto raw = makeRawPx4();
+  auto policy = makePolicy();
+  policy.boundary = SetpointBoundary::kVelocityOnly;
+  policy.lio_position_feedback_gain_s_inv = 0.5;
+  policy.maximum_velocity_mps = 3.0;
+  reference.velocity_enu = Eigen::Vector3d::Zero();
+  lio.yaw_enu = std::numbers::pi_v<double> / 2.0 - raw.yaw_ned;
+
+  const auto result = adapt(reference, lio, raw, makeTiming(), policy);
+  ASSERT_TRUE(result.success());
+  ASSERT_TRUE(result.output.has_value());
+  const auto& output = *result.output;
+  const Eigen::Vector3d expected_lio_velocity{0.5, 1.0, 1.5};
+  EXPECT_TRUE(output.witness.velocity_command_lio_enu.isApprox(expected_lio_velocity));
+  EXPECT_TRUE(output.velocity_ned.isApprox(Eigen::Vector3d{1.0, 0.5, -1.5}));
+  EXPECT_TRUE(output.position_ned.array().isNaN().all());
+  EXPECT_TRUE(output.acceleration_ned.array().isNaN().all());
+  EXPECT_TRUE(output.witness.error_adapter_ned.array().isNaN().all());
+  EXPECT_FALSE(output.witness.velocity_limited);
+  EXPECT_EQ(output.witness.boundary, SetpointBoundary::kVelocityOnly);
+}
+
+TEST(Px4TrackingAdapter, VelocityOnlyBoundsLioOwnedCommandWithoutPx4PositionFeedback) {
+  auto reference = makeReference();
+  auto lio = makeLio();
+  auto raw = makeRawPx4();
+  raw.position_ned = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+  raw.position_valid = {false, false, false};
+  auto policy = makePolicy();
+  policy.boundary = SetpointBoundary::kVelocityOnly;
+  policy.lio_position_feedback_gain_s_inv = 1.0;
+  policy.maximum_velocity_mps = 2.0;
+  reference.velocity_enu = Eigen::Vector3d{4.0, 0.0, 0.0};
+  reference.position_enu = lio.position_enu + Eigen::Vector3d{3.0, 0.0, 0.0};
+
+  const auto result = adapt(reference, lio, raw, makeTiming(), policy);
+  ASSERT_TRUE(result.success());
+  ASSERT_TRUE(result.output.has_value());
+  EXPECT_NEAR(result.output->witness.velocity_command_lio_enu.norm(), 2.0, 1.0e-12);
+  EXPECT_TRUE(result.output->velocity_ned.allFinite());
+  EXPECT_TRUE(result.output->position_ned.array().isNaN().all());
+  EXPECT_TRUE(result.output->acceleration_ned.array().isNaN().all());
+  EXPECT_TRUE(result.output->witness.velocity_limited);
+}
+
 TEST(Px4TrackingAdapter, RejectsDisabledPolicyWithoutReturningSetpoint) {
   auto policy = makePolicy();
   policy.mode = Mode::kOff;
@@ -168,6 +216,23 @@ TEST(Px4TrackingAdapter, RejectsNonZeroVelocityLambda) {
   const auto result = adapt(makeReference(), makeLio(), makeRawPx4(), makeTiming(), policy);
   EXPECT_FALSE(result.success());
   EXPECT_EQ(result.failure, FailureReason::kInvalidPolicy);
+}
+
+TEST(Px4TrackingAdapter, RejectsVelocityOnlyPolicyWithoutExplicitBoundedGain) {
+  auto policy = makePolicy();
+  policy.boundary = SetpointBoundary::kVelocityOnly;
+  policy.maximum_velocity_mps = 2.0;
+  EXPECT_EQ(adapt(makeReference(), makeLio(), makeRawPx4(), makeTiming(), policy).failure,
+            FailureReason::kInvalidPolicy);
+
+  policy.lio_position_feedback_gain_s_inv = 0.5;
+  policy.maximum_velocity_mps.reset();
+  EXPECT_EQ(adapt(makeReference(), makeLio(), makeRawPx4(), makeTiming(), policy).failure,
+            FailureReason::kInvalidPolicy);
+
+  policy.maximum_velocity_mps = 0.0;
+  EXPECT_EQ(adapt(makeReference(), makeLio(), makeRawPx4(), makeTiming(), policy).failure,
+            FailureReason::kInvalidPolicy);
 }
 
 TEST(Px4TrackingAdapter, RejectsHeadingWhenTiltOrExtrinsicIsInvalid) {
