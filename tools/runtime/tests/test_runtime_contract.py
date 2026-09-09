@@ -265,6 +265,34 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertAlmostEqual(
                 arc_end[2], harness.initial_px4[2] + hold["offset_z"], places=10)
 
+    def test_closed_loop_finish_records_missing_clock_mapping(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            harness = object.__new__(closed_loop_characterization.Characterization)
+            harness.output = Path(temporary) / "report.json"
+            harness.profile = "longitudinal"
+            harness.mode = "MODE_PX4_LOCAL"
+            harness.wall_start = time.monotonic()
+            harness.sim_now_ns = 1_000_000_000
+            harness.sim_start_ns = 1_000_000_000
+            harness.initial_px4 = [0.0, 0.0, -2.0]
+            harness.initial_gt = None
+            harness.initial_lio = None
+            harness.latest_gt = None
+            harness.latest_lio = None
+            harness.segments = []
+            harness.latest_status = {}
+            harness.land_commanded = False
+            harness.failure = ""
+            harness.finished = False
+            harness.trace = io.StringIO()
+            harness.events = io.StringIO()
+            harness.finish("COMPLETE")
+            summary = json.loads(harness.output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                summary["source_clock_witness"]["px4_to_ros_mapping"],
+                closed_loop_characterization.MISSING,
+            )
+
     def test_px4_controller_observability_decoders_preserve_setpoints_and_saturation(self) -> None:
         local_setpoint = monitor._px4_local_position_setpoint_payload(SimpleNamespace(
             timestamp=123,

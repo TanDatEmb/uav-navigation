@@ -19,6 +19,9 @@ import re
 from typing import Any
 
 
+MISSING = "NOT_RECORDED"
+
+
 def _stamp_ns(value: Any) -> int:
     return int(getattr(value, "sec", 0)) * 1_000_000_000 + int(getattr(value, "nanosec", 0))
 
