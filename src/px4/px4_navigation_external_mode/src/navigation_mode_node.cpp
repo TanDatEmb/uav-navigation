@@ -1558,14 +1558,18 @@ void NavigationMode::onPx4LocalPosition(
        message->z_reset_counter != px4_z_reset_counter_)) {
     px4_local_frame_aligned_ = false;
     lio_to_px4_local_translation_ned_.reset();
+    last_px4_position_receive_steady_ns_ = 0;
     RCLCPP_WARN(node_.get_logger(),
                 "PX4 local frame reset detected; waiting for stationary re-alignment");
   }
   px4_local_velocity_ned_ = Eigen::Vector3d{message->vx, message->vy, message->vz};
-  if (message->xy_valid && message->z_valid &&
+  const auto receive_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  const bool position_valid = message->xy_valid && message->z_valid &&
       std::isfinite(message->x) && std::isfinite(message->y) &&
-      std::isfinite(message->z)) {
+      std::isfinite(message->z);
+  if (position_valid) {
     px4_local_position_ned_ = Eigen::Vector3d{message->x, message->y, message->z};
+    last_px4_position_receive_steady_ns_ = receive_steady_ns;
   } else {
     // Preserve the last alignment snapshot for the legacy position boundary,
     // but velocity-only control consumes the independent velocity/heading
@@ -1595,7 +1599,10 @@ void NavigationMode::onPx4LocalPosition(
   last_px4_delta_xy_east_m_ = message->delta_xy[1];
   last_px4_delta_z_m_ = message->delta_z;
   last_px4_delta_heading_rad_ = message->delta_heading;
-  last_px4_local_position_receive_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
+  // This lease covers the complete VehicleLocalPosition witness (including
+  // velocity/heading). Position alignment has its own validity-qualified lease
+  // above, so an XY/Z-invalid packet cannot keep a legacy PVA position alive.
+  last_px4_local_position_receive_steady_ns_ = receive_steady_ns;
   tryAlignPx4LocalFrameLocked();
 }
 
@@ -1749,8 +1756,8 @@ bool NavigationMode::publishVelocityOnlySetpoint(
     velocity_only_last_reason_ = "px4_timestamp_contract_invalid";
     return false;
   }
-  if (raw_px4.reset_counters != velocity_only_last_reset_counters_ &&
-      velocity_only_reset_counters_seen_) {
+  if (raw_px4.reset_counters != snapshot.last_reset_counters &&
+      snapshot.reset_counters_seen) {
     velocity_only_last_reason_ = "px4_reset_requires_new_velocity_epoch";
     return false;
   }
@@ -1850,11 +1857,7 @@ bool NavigationMode::publishVelocityOnlySetpoint(
       tracking_experiment_.velocity_only_cap_mps,
       tracking_experiment_.velocity_only_max_acceleration_mps2,
       tracking_experiment_.velocity_only_max_jerk_mps3};
-  std::optional<velocity_only::Previous> previous;
-  {
-    std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    previous = velocity_only_previous_;
-  }
+  const std::optional<velocity_only::Previous>& previous = snapshot.previous;
   const auto limited = velocity_only::limit(
       adapted.output->witness.velocity_command_lio_enu, now_ns, continuity_identity,
       continuity_policy, previous ? &*previous : nullptr);
@@ -2055,6 +2058,9 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       snapshot.px4.reset_counters = tracking_adapter::ResetCounters{
           px4_xy_reset_counter_, px4_z_reset_counter_, px4_vxy_reset_counter_,
           px4_vz_reset_counter_, px4_heading_reset_counter_};
+      snapshot.previous = velocity_only_previous_;
+      snapshot.last_reset_counters = velocity_only_last_reset_counters_;
+      snapshot.reset_counters_seen = velocity_only_reset_counters_seen_;
       snapshot.lio_localization_epoch = lio_localization_epoch_;
       snapshot.lio_sequence = last_propagated_state_sequence_;
       snapshot.lio_receive_steady_ns = last_odometry_receive_steady_ns_;
@@ -2067,11 +2073,19 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     }
     const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
     if (px4_local_frame_aligned_ && lio_to_px4_local_translation_ned_.has_value() &&
-        last_px4_local_position_receive_steady_ns_ > 0 &&
-        now_steady_ns >= last_px4_local_position_receive_steady_ns_ &&
-        now_steady_ns - last_px4_local_position_receive_steady_ns_ <=
+        last_px4_position_receive_steady_ns_ > 0 &&
+        now_steady_ns >= last_px4_position_receive_steady_ns_ &&
+        now_steady_ns - last_px4_position_receive_steady_ns_ <=
             state_stale_after_ns_) {
       lio_to_px4_local_translation_ned = lio_to_px4_local_translation_ned_;
+    }
+  }
+  std::optional<float> current_px4_yaw_ned;
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    if (tracking_experiment_.velocity_only_enabled && last_px4_heading_valid_ &&
+        last_px4_heading_good_for_control_ && floatRepresentable(last_px4_heading_ned_)) {
+      current_px4_yaw_ned = static_cast<float>(last_px4_heading_ned_);
     }
   }
   const auto lioPositionToPx4Ned = [&](const Eigen::Vector3d& position_enu) {
@@ -2101,7 +2115,14 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
       }
       setpoint.withVelocity(Eigen::Vector3f::Zero());
     }
-    if (odometry.has_value()) {
+    if (tracking_experiment_.velocity_only_enabled) {
+      // Velocity-only commands use the adapter's accepted PX4-relative yaw.
+      // A stationary handover must retain that frame; if PX4 has no accepted
+      // heading, omit yaw instead of injecting an ENU->NED pi/2 jump.
+      if (current_px4_yaw_ned.has_value()) {
+        setpoint.withYaw(*current_px4_yaw_ned).withYawRate(0.0F);
+      }
+    } else if (odometry.has_value()) {
       const auto& q = odometry->pose.pose.orientation;
       const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
       if (orientation.coeffs().allFinite() && std::isfinite(orientation.squaredNorm()) &&

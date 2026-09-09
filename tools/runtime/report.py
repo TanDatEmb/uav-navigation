@@ -286,11 +286,20 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
     }
 
     def from_mapping(value: dict[str, Any], source: str) -> dict[str, Any]:
-        mode = str(value.get("mode", ""))
-        enabled = bool(value.get("enabled", mode != "off"))
-        suppress_braking = bool(value.get("suppress_braking", mode == "relaxed"))
+        explicit_mode = value.get("mode")
+        mode = str(explicit_mode) if explicit_mode not in (None, "") else ""
+        velocity_only_enabled = bool(value.get("velocity_only_enabled", False))
+        suppress_braking = bool(value.get("suppress_braking", False))
         if not mode:
-            mode = "relaxed" if suppress_braking else ("adaptive" if enabled else "off")
+            if velocity_only_enabled:
+                mode = "velocity-only"
+            elif suppress_braking:
+                mode = "relaxed"
+            else:
+                mode = "adaptive" if bool(value.get("enabled", False)) else "off"
+        enabled = bool(value.get("enabled", mode != "off"))
+        if "suppress_braking" not in value:
+            suppress_braking = mode == "relaxed"
         return {
             "mode": mode,
             "enabled": enabled,
@@ -298,7 +307,9 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
             "base_m": value.get("base_m", 0.2),
             "lateral_alpha_s": value.get("lateral_alpha_s", 0.05),
             "longitudinal_beta_s": value.get("longitudinal_beta_s", 0.15),
-            "velocity_only_enabled": bool(value.get("velocity_only_enabled", mode == "velocity-only")),
+            "velocity_only_enabled": bool(
+                value.get("velocity_only_enabled", mode == "velocity-only")
+            ),
             "velocity_only_gain_s_inv": value.get("velocity_only_gain_s_inv", 0.0),
             "velocity_only_cap_mps": value.get("velocity_only_cap_mps", 0.0),
             "velocity_only_max_acceleration_mps2": value.get(

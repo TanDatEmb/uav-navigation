@@ -137,25 +137,86 @@ struct Result final {
     result.failure = Failure::kInvalidInput;
     return result;
   }
+  // The next acceleration must lie in the intersection of three closed balls:
+  // the acceleration limit, the jerk step around the previous acceleration,
+  // and the velocity-cap ball after integrating over dt. Clamping A then J
+  // independently can leave the integrated velocity just outside its cap even
+  // when a joint feasible acceleration exists. Dykstra's projection preserves
+  // the fail-closed limits while finding that joint step deterministically.
+  const auto projectToBall = [](const Eigen::Vector3d& value,
+                                const Eigen::Vector3d& center,
+                                const double radius) -> Eigen::Vector3d {
+    const Eigen::Vector3d offset = value - center;
+    const double norm = offset.norm();
+    if (!std::isfinite(norm) || norm <= radius) return value;
+    return center + offset * (radius / norm);
+  };
+  const Eigen::Vector3d acceleration_center = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d jerk_center = previous->acceleration_enu;
+  const double jerk_radius = policy.maximum_jerk_mps3 * dt_s;
+  const Eigen::Vector3d velocity_center = -previous->velocity_enu / dt_s;
+  const double velocity_radius = policy.maximum_velocity_mps / dt_s;
+  // This is used only to classify double-precision residuals after projection;
+  // all projection radii remain the configured hard limits.
+  constexpr double kProjectionNumericalTolerance = 1.0e-10;
   Eigen::Vector3d acceleration = requested_acceleration;
-  if (acceleration.norm() > policy.maximum_acceleration_mps2) {
-    acceleration *= policy.maximum_acceleration_mps2 / acceleration.norm();
-    result.limited = true;
+  Eigen::Vector3d acceleration_correction = Eigen::Vector3d::Zero();
+  Eigen::Vector3d jerk_correction = Eigen::Vector3d::Zero();
+  Eigen::Vector3d velocity_correction = Eigen::Vector3d::Zero();
+  for (int iteration = 0; iteration < 4096; ++iteration) {
+    Eigen::Vector3d shifted = acceleration + acceleration_correction;
+    Eigen::Vector3d projected = projectToBall(
+        shifted, acceleration_center, policy.maximum_acceleration_mps2);
+    acceleration_correction = shifted - projected;
+    acceleration = projected;
+
+    shifted = acceleration + jerk_correction;
+    projected = projectToBall(shifted, jerk_center, jerk_radius);
+    jerk_correction = shifted - projected;
+    acceleration = projected;
+
+    shifted = acceleration + velocity_correction;
+    projected = projectToBall(shifted, velocity_center, velocity_radius);
+    velocity_correction = shifted - projected;
+    acceleration = projected;
+
+    const double acceleration_error =
+        std::max(0.0, acceleration.norm() - policy.maximum_acceleration_mps2);
+    const double jerk_error = std::max(
+        0.0, (acceleration - previous->acceleration_enu).norm() - jerk_radius);
+    const double velocity_error = std::max(
+        0.0, (previous->velocity_enu + acceleration * dt_s).norm() -
+            policy.maximum_velocity_mps);
+    if (std::max({acceleration_error, jerk_error, velocity_error}) <=
+        kProjectionNumericalTolerance) {
+      break;
+    }
   }
-  const Eigen::Vector3d jerk = (acceleration - previous->acceleration_enu) / dt_s;
-  if (!jerk.allFinite()) {
-    result.failure = Failure::kInvalidInput;
-    return result;
+  // Finish on the jerk boundary itself when convergence stopped at a
+  // floating-point representation of that boundary. This only tightens the
+  // candidate; the subsequent velocity check remains authoritative.
+  const Eigen::Vector3d jerk_delta = acceleration - previous->acceleration_enu;
+  const double jerk_norm = jerk_delta.norm();
+  if (jerk_norm > jerk_radius) {
+    acceleration = previous->acceleration_enu + jerk_delta * (jerk_radius / jerk_norm);
   }
-  if (jerk.norm() > policy.maximum_jerk_mps3) {
-    acceleration = previous->acceleration_enu +
-        jerk * (policy.maximum_jerk_mps3 / jerk.norm()) * dt_s;
+  if ((acceleration - requested_acceleration).norm() > 1.0e-12) {
     result.limited = true;
   }
   result.acceleration_enu = acceleration;
   result.velocity_enu = previous->velocity_enu + acceleration * dt_s;
   if (result.velocity_enu.norm() > policy.maximum_velocity_mps + 1.0e-12) {
     result.failure = Failure::kVelocityLimit;
+    return result;
+  }
+  if (result.acceleration_enu.norm() >
+      policy.maximum_acceleration_mps2 + kProjectionNumericalTolerance) {
+    result.failure = Failure::kAccelerationLimit;
+    return result;
+  }
+  if ((result.acceleration_enu - previous->acceleration_enu).norm() / dt_s >
+      policy.maximum_jerk_mps3 + kProjectionNumericalTolerance) {
+    result.failure = Failure::kJerkLimit;
     return result;
   }
   if (!result.velocity_enu.allFinite() || !result.acceleration_enu.allFinite()) {

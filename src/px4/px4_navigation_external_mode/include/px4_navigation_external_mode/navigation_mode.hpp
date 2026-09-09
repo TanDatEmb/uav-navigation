@@ -56,6 +56,9 @@ class NavigationMode final : public px4_ros2::ModeBase {
   struct VelocityOnlySnapshot final {
     nav_msgs::msg::Odometry odometry;
     tracking_adapter::RawPx4State px4;
+    std::optional<velocity_only::Previous> previous;
+    tracking_adapter::ResetCounters last_reset_counters;
+    bool reset_counters_seen{false};
     std::uint64_t lio_localization_epoch{0U};
     std::uint64_t lio_sequence{0U};
     std::int64_t lio_receive_steady_ns{0};
@@ -145,6 +148,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t last_px4_local_position_timestamp_us_{0U};
   std::uint64_t last_px4_local_position_timestamp_sample_us_{0U};
   std::int64_t last_px4_local_position_receive_ns_{0};
+  std::int64_t last_px4_position_receive_steady_ns_{0};
   bool last_px4_xy_valid_{false};
   bool last_px4_z_valid_{false};
   bool last_px4_vxy_valid_{false};

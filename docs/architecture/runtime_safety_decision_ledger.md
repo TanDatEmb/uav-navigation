@@ -1,5 +1,59 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Close velocity-boundary review findings and provenance combination
+
+- **Owner/status:** `px4_navigation_external_mode` control experiment and
+  runtime evidence tooling; `IMPLEMENTED`, diagnostic-only, not flight
+  acceptance. Implementation owner: task `01a083d6-eaf2-7770-9988-04965ae8c29f`;
+  root/main owns final review.
+- **Scope/units:** Legacy PVA position freshness now uses a separate
+  XY/Z-validity-qualified PX4 lease; velocity/heading packets cannot refresh
+  the position alignment lease. Velocity-only reset counters and continuity
+  previous state are captured in one mutex-protected snapshot. Stationary
+  velocity-only handover retains an accepted PX4 NED yaw or omits yaw when it
+  is invalid; it never injects the fixed ENU-to-NED handover rotation. The
+  continuity limiter projects the next acceleration into the joint
+  velocity/acceleration/jerk feasible intersection, rather than rejecting a
+  reachable near-cap turn after sequential clamps. Report normalization uses
+  `velocity_only_enabled` when a legacy artifact omits `mode`.
+- **Diagnostic combination:** `--tracking-experiment velocity-only` may be
+  combined with the independent `--tracking-experiment-relaxed` flag. The
+  latter suppresses only `tracking_triggered_main_emergency` and
+  `main_px4_anchor_reject`; geometry, world/collision, LIO/PX4 health,
+  continuity, command identity, waypoint and terminal gates remain active.
+  It is off by default, explicitly recorded through `suppress_braking` and
+  `suppressed_gates`, and is never qualification evidence.
+- **Safety impact:** The changes close stale-position, cross-thread reset,
+  yaw-frame and false-rejection paths without relaxing hard motion limits.
+  Projection failure remains fail-closed. The relaxed combination can hide
+  only the named tracking-admission responses and may increase collision risk;
+  no result from it may promote the velocity-only boundary.
+- **Evidence:** Release rebuild, direct adapter/continuity tests including a
+  50 Hz near-cap turning sequence, full runtime contract tests including the
+  reviewed GUI artifact-shaped provenance regression, `git diff --check`, and
+  separate default-PVA and velocity-only SITL artifacts are required. The
+  current nominal `5/5/8` campaign kept the new PVA profile (no rollback to
+  `5/2/4`): default-PVA artifact
+  `.artifacts/runtime/external-mode-check-20260909T063655-43987` reached only
+  waypoint 0 and was `BLOCKED` after bounded recovery/hold rejection, with
+  zero collision and active-command speed p95 evidence of `4.378 m/s`. The
+  matched velocity-only plus relaxed-tracking artifact
+  `.artifacts/runtime/external-mode-check-20260909T063847-45624` recorded
+  `mode=velocity-only`, `suppress_braking=true`, `config_mismatch=false`,
+  cap/A/J `5/5/8`, zero collision, and was `BLOCKED` after a
+  `continuity_rejected` fail-closed handover; the GPS-off PX4 Hold rejection
+  remains an environment limitation. These are diagnostic artifacts, not
+  acceptance.
+- **Removal/review condition:** Remove or revise after root/main review finds
+  the snapshot, yaw or feasible-set contract insufficient, or after repeated
+  representative three-pillar and recorded-sensor evidence. Do not tune any
+  hard gate or claim SITL acceptance from this diagnostic combination.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && source install/setup.bash
+  && python3 tools/runtime/build.py --mode release build`; direct
+  `test_px4_tracking_adapter` and `test_velocity_only_continuity`; runtime
+  contract tests; `git diff --check`; then matched default-PVA and explicit
+  velocity-only + relaxed three-pillar 5 m/s artifact inspection.
+
 ### 2026-09-09 - Opt-in LIO-owned velocity-only PX4 boundary candidate
 
 - **Owner/status:** `px4_navigation_external_mode` control experiment;

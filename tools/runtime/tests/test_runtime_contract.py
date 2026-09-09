@@ -135,6 +135,23 @@ class RuntimeContractTest(unittest.TestCase):
             "main_px4_anchor_reject",
         ])
 
+        parsed = parser.parse_args([
+            "--tracking-experiment", "velocity-only",
+            "--tracking-experiment-relaxed",
+        ])
+        experiment = runner._tracking_experiment_payload(
+            "velocity-only", 0.2, 0.05, 0.15,
+            1.0, 5.0, 5.0, 8.0, 0.20, 0.10, 0.0, 0.0,
+            parsed.tracking_experiment_relaxed,
+        )
+        self.assertEqual(experiment["mode"], "velocity-only")
+        self.assertTrue(experiment["velocity_only_enabled"])
+        self.assertTrue(experiment["suppress_braking"])
+        self.assertEqual(experiment["suppressed_gates"], [
+            "tracking_triggered_main_emergency",
+            "main_px4_anchor_reject",
+        ])
+
     def test_tracking_experiment_rejects_invalid_values(self) -> None:
         with self.assertRaises(ValueError):
             runner._tracking_experiment_payload("unknown")
@@ -243,6 +260,46 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertEqual(marker["source"], "navigation_runtime_params.yaml+external_mode_params.yaml")
             self.assertEqual(marker["status"], "OK")
             self.assertFalse(marker["qualification_eligible"])
+
+    def test_tracking_experiment_report_preserves_velocity_only_from_real_artifact_shape(self) -> None:
+        source = ROOT / ".artifacts/runtime/external-mode-gui-20260909T061811-32089"
+        if not source.is_dir():
+            self.skipTest("the reviewed GUI artifact is not present")
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary)
+            metadata = json.loads((source / "metadata.json").read_text(encoding="utf-8"))
+            metadata["tracking_experiment"].pop("mode", None)
+            (session / "metadata.json").write_text(
+                json.dumps(metadata), encoding="utf-8"
+            )
+
+            scenario = yaml.safe_load((source / "scenario_config.yaml").read_text(encoding="utf-8"))
+            scenario["scenario"]["tracking_experiment"].pop("mode", None)
+            (session / "scenario_config.yaml").write_text(
+                yaml.safe_dump(scenario, sort_keys=False), encoding="utf-8"
+            )
+
+            snapshot = session / "config_snapshot"
+            snapshot.mkdir()
+            for filename, node_name in (
+                ("navigation_runtime_params.yaml", "navigation_runtime_node"),
+                ("external_mode_params.yaml", "px4_navigation_external_mode"),
+            ):
+                document = yaml.safe_load((source / "config_snapshot" / filename).read_text(
+                    encoding="utf-8"
+                ))
+                document[node_name]["ros__parameters"]["tracking_experiment"].pop(
+                    "mode", None
+                )
+                (snapshot / filename).write_text(
+                    yaml.safe_dump(document, sort_keys=False), encoding="utf-8"
+                )
+
+            marker = report._tracking_experiment(session)
+            self.assertEqual(marker["mode"], "velocity-only")
+            self.assertTrue(marker["enabled"])
+            self.assertTrue(marker["velocity_only_enabled"])
+            self.assertFalse(marker["config_mismatch"])
 
     def test_tracking_experiment_report_rejects_node_mismatch(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:

@@ -601,6 +601,7 @@ def _tracking_experiment_payload(
     velocity_only_max_reference_age_s: float = 0.0,
     velocity_only_output_transport_bound_s: float = 0.0,
     velocity_only_px4_consume_bound_s: float = 0.0,
+    tracking_gate_relaxed: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalize the explicitly opt-in tracking experiment."""
     if mode not in TRACKING_EXPERIMENT_MODES:
@@ -608,6 +609,10 @@ def _tracking_experiment_payload(
             "tracking_experiment mode must be one of: "
             + ", ".join(TRACKING_EXPERIMENT_MODES)
         )
+    if not isinstance(tracking_gate_relaxed, bool):
+        raise ValueError("tracking_gate_relaxed must be boolean")
+    if tracking_gate_relaxed and mode == "off":
+        raise ValueError("tracking_gate_relaxed requires an enabled tracking experiment")
     values = {
         "base_m": base_m,
         "lateral_alpha_s": lateral_alpha_s,
@@ -630,7 +635,7 @@ def _tracking_experiment_payload(
         # tracking gate. Keep the same gate active for A/B; only `off` disables
         # that control allowance explicitly.
         "enabled": mode != "off",
-        "suppress_braking": mode == "relaxed",
+        "suppress_braking": bool(tracking_gate_relaxed or mode == "relaxed"),
         "base_m": float(base_m),
         "lateral_alpha_s": float(lateral_alpha_s),
         "longitudinal_beta_s": float(longitudinal_beta_s),
@@ -644,7 +649,7 @@ def _tracking_experiment_payload(
             [
                 "tracking_triggered_main_emergency",
                 "main_px4_anchor_reject",
-            ] if mode == "relaxed" else []
+            ] if tracking_gate_relaxed or mode == "relaxed" else []
         ),
     }
     if mode == "velocity-only":
@@ -2289,6 +2294,7 @@ def _run_sim_unlocked(
     tracking_experiment_base_m: float = 0.2,
     tracking_experiment_lateral_alpha_s: float = 0.05,
     tracking_experiment_longitudinal_beta_s: float = 0.15,
+    tracking_experiment_relaxed: bool = False,
     velocity_only_gain_s_inv: float = 0.0,
     velocity_only_cap_mps: float = 0.0,
     velocity_only_max_acceleration_mps2: float = 0.0,
@@ -2334,6 +2340,7 @@ def _run_sim_unlocked(
         velocity_only_max_reference_age_s,
         velocity_only_output_transport_bound_s,
         velocity_only_px4_consume_bound_s,
+        tracking_experiment_relaxed,
     )
     sitl_profile_contract = _sitl_profile_contract(sitl_profile)
     if characterization_profile is not None:
@@ -3387,6 +3394,14 @@ def _add_tracking_experiment_arguments(parser: argparse.ArgumentParser) -> None:
         help="longitudinal allowance coefficient in seconds",
     )
     parser.add_argument(
+        "--tracking-experiment-relaxed",
+        action="store_true",
+        help=(
+            "independently suppress the two diagnostic tracking admission gates; "
+            "can be combined with velocity-only and does not relax geometry, health or collision gates"
+        ),
+    )
+    parser.add_argument(
         "--velocity-only-gain-s-inv", type=float, default=0.0,
         help="LIO position-error feedback gain; required for velocity-only mode",
     )
@@ -3690,6 +3705,7 @@ def main() -> int:
             tracking_experiment_base_m=args.tracking_base_m,
             tracking_experiment_lateral_alpha_s=args.tracking_alpha_s,
             tracking_experiment_longitudinal_beta_s=args.tracking_beta_s,
+            tracking_experiment_relaxed=args.tracking_experiment_relaxed,
             velocity_only_gain_s_inv=args.velocity_only_gain_s_inv,
             velocity_only_cap_mps=args.velocity_only_cap_mps,
             velocity_only_max_acceleration_mps2=args.velocity_only_max_acceleration_mps2,
@@ -3731,6 +3747,7 @@ def main() -> int:
             tracking_experiment_base_m=args.tracking_base_m,
             tracking_experiment_lateral_alpha_s=args.tracking_alpha_s,
             tracking_experiment_longitudinal_beta_s=args.tracking_beta_s,
+            tracking_experiment_relaxed=args.tracking_experiment_relaxed,
             velocity_only_gain_s_inv=args.velocity_only_gain_s_inv,
             velocity_only_cap_mps=args.velocity_only_cap_mps,
             velocity_only_max_acceleration_mps2=args.velocity_only_max_acceleration_mps2,

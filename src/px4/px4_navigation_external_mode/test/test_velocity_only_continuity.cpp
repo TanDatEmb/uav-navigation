@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <limits>
 
 #include "px4_navigation_external_mode/velocity_only_continuity.hpp"
@@ -84,6 +85,40 @@ TEST(VelocityOnlyContinuity, RejectsPostFilterVelocityCapViolation) {
   const auto result = limit(Eigen::Vector3d{2.0, 0.0, 0.0}, 1'020'000'000LL,
                             identity(), bounded, &previous);
   EXPECT_EQ(result.failure, Failure::kVelocityLimit);
+}
+
+TEST(VelocityOnlyContinuity, ProjectsNearCapTurnIntoJointReachableVelocityAccelerationJerkSet) {
+  Previous previous;
+  previous.identity = identity();
+  previous.velocity_enu = Eigen::Vector3d{2.0, 0.0, 0.0};
+  previous.acceleration_enu = Eigen::Vector3d::Zero();
+  previous.stamp_ns = 1'000'000'000LL;
+  auto bounded = Policy{2.0, 2.0, 4.0};
+
+  constexpr double dt_s = 0.02;
+  constexpr std::int64_t dt_ns = 20'000'000LL;
+  for (int step = 1; step <= 100; ++step) {
+    const double angle = 0.2 * static_cast<double>(step) * dt_s;
+    const Eigen::Vector3d desired{
+        2.0 * std::cos(angle), 2.0 * std::sin(angle), 0.0};
+    const auto result = limit(
+        desired, previous.stamp_ns + dt_ns, previous.identity, bounded, &previous);
+    ASSERT_TRUE(result.success()) << "step=" << step
+                                  << " failure=" << static_cast<int>(result.failure)
+                                  << " v=" << result.velocity_enu.norm()
+                                  << " a=" << result.acceleration_enu.norm()
+                                  << " jerk="
+                                  << (result.acceleration_enu - previous.acceleration_enu).norm() /
+                                         dt_s;
+    EXPECT_LE(result.velocity_enu.norm(), bounded.maximum_velocity_mps + 1.0e-10);
+    EXPECT_LE(result.acceleration_enu.norm(), bounded.maximum_acceleration_mps2 + 1.0e-10);
+    EXPECT_LE(
+        (result.acceleration_enu - previous.acceleration_enu).norm() / dt_s,
+        bounded.maximum_jerk_mps3 + 1.0e-10);
+    previous.velocity_enu = result.velocity_enu;
+    previous.acceleration_enu = result.acceleration_enu;
+    previous.stamp_ns += dt_ns;
+  }
 }
 
 TEST(VelocityOnlyContinuity, RejectsUnboundedPreviousAcceleration) {
