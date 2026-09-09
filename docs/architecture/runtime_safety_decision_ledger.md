@@ -1,5 +1,31 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-09 - Separate legacy whole-run residuals from reset-aware source-frame diagnostics
+
+- **Owner/status:** runtime report/evidence tooling; `IMPLEMENTED`,
+  behavior-neutral diagnostic fix.
+- **Scope/units:** Preserve the existing whole-run first-matched-pose residual
+  as a historical metric, while adding a separate reset-aware diagnostic that
+  re-anchors only on an explicitly recorded PX4 estimator `reset_counter` and
+  only when `pose_frame=POSE_FRAME_NED` and
+  `velocity_frame=VELOCITY_FRAME_NED` are present. Missing reset or frame
+  metadata emits `NOT_RECORDED`; the report never infers a reset, source frame,
+  or instantaneous control error and never changes runtime commands or gates.
+- **Safety impact:** None to navigation, PX4, estimator, planner, tracking,
+  waypoint acceptance or mission completion. This prevents a global first-pose
+  alignment from being mistaken for a same-time raw control-error witness,
+  while retaining the original drift evidence for comparison.
+- **Evidence:** Reset/source-frame unit fixtures prove a PX4 reset creates a
+  new diagnostic segment without erasing the legacy whole-run drift and that
+  absent metadata is `NOT_RECORDED`. The runtime contract suite passes 204/204.
+- **Removal/review condition:** Revisit after a synchronized raw VLP/LIO/PX4
+  activation-offset fixture records source-frame, reset and same-time samples;
+  keep raw evidence and do not infer a VA/position control cause from either
+  residual metric alone.
+- **Verification:** `python3 -m unittest discover -s tools/runtime/tests
+  -p 'test_runtime_contract.py'`, `git diff --check`, and exact artifact
+  report inspection with the original legacy and new diagnostic fields.
+
 ### 2026-09-09 - Warm-start mandatory nominal feasibility from the best bounded duration retry
 
 - **Owner/status:** planning nominal optimizer; `IMPLEMENTED`, correctness fix;

@@ -1460,13 +1460,39 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
     alignment: tuple[float, float, float, float] | None = None
     first_lio_position: tuple[float, float, float] | None = None
     first_px4_position: tuple[float, float, float] | None = None
+    reset_segment_position: list[float] = []
+    reset_segment_velocity: list[float] = []
+    reset_segment_attitude: list[float] = []
+    reset_segment_count = 0
+    reset_metadata_available = True
+    source_frame_metadata_available = True
+    segment_alignment: tuple[float, float, float, float] | None = None
+    segment_lio_position: tuple[float, float, float] | None = None
+    segment_px4_position: tuple[float, float, float] | None = None
+    segment_reset: Any = object()
     for left, right, _ in matches:
-        lp = _vector(left.get("payload", {}).get("position"))
-        rp = _vector(right.get("payload", {}).get("position"))
-        lq = _quaternion(left.get("payload", {}).get("q_wxyz"))
-        rq = _quaternion(right.get("payload", {}).get("q_wxyz"))
+        left_payload = left.get("payload", {})
+        right_payload = right.get("payload", {})
+        lp = _vector(left_payload.get("position"))
+        rp = _vector(right_payload.get("position"))
+        lq = _quaternion(left_payload.get("q_wxyz"))
+        rq = _quaternion(right_payload.get("q_wxyz"))
         if lp is None or rp is None or lq is None or rq is None:
             continue
+        if "reset_counter" not in right_payload:
+            reset_metadata_available = False
+        if "pose_frame" not in right_payload or "velocity_frame" not in right_payload:
+            source_frame_metadata_available = False
+        reset_counter = right_payload.get("reset_counter", "NOT_RECORDED")
+        try:
+            pose_frame = int(right_payload.get("pose_frame"))
+            velocity_frame = int(right_payload.get("velocity_frame"))
+        except (TypeError, ValueError):
+            pose_frame = -1
+            velocity_frame = -1
+            source_frame_metadata_available = False
+        if pose_frame != 1 or velocity_frame != 1:
+            source_frame_metadata_available = False
         if alignment is None:
             # Estimate the constant FRD-to-PX4-world heading/attitude offset
             # from the first matched pose.  PX4's local origin is also removed
@@ -1491,10 +1517,39 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
         )
         position.append(math.sqrt(sum(value * value for value in position_error)))
 
-        lio_velocity = _vector(left.get("payload", {}).get("velocity"))
-        px4_velocity = _vector(right.get("payload", {}).get("velocity"))
+        # Keep the historical whole-run first-pose metric above unchanged.
+        # This separate diagnostic re-anchors only at an explicitly recorded
+        # PX4 reset counter and requires the PX4 NED frame contract. Missing
+        # metadata is reported as NOT_RECORDED by the result below.
+        if (pose_frame == 1 and velocity_frame == 1 and
+                (segment_alignment is None or reset_counter != segment_reset)):
+            if segment_alignment is not None:
+                reset_segment_count += 1
+            segment_alignment = _quaternion_normalize(
+                _quaternion_multiply(rq, _quaternion_inverse(lq))
+            )
+            segment_lio_position = lp
+            segment_px4_position = rp
+            segment_reset = reset_counter
+        if (pose_frame == 1 and velocity_frame == 1 and
+                segment_alignment is not None and
+                segment_lio_position is not None and
+                segment_px4_position is not None):
+            segment_position = _quaternion_rotate(
+                segment_alignment,
+                tuple(lp[index] - segment_lio_position[index] for index in range(3)),
+            )
+            segment_px4_delta = tuple(
+                rp[index] - segment_px4_position[index] for index in range(3)
+            )
+            reset_segment_position.append(math.sqrt(sum(
+                (segment_position[index] - segment_px4_delta[index]) ** 2
+                for index in range(3)
+            )))
+
+        lio_velocity = _vector(left_payload.get("velocity"))
+        px4_velocity = _vector(right_payload.get("velocity"))
         if lio_velocity is not None and px4_velocity is not None:
-            velocity_frame = int(right.get("payload", {}).get("velocity_frame", 0))
             predicted_velocity = (
                 _quaternion_rotate(alignment, lio_velocity)
                 if velocity_frame == 1
@@ -1506,6 +1561,15 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
                 predicted_velocity[index] - px4_velocity[index] for index in range(3)
             )
             velocity.append(math.sqrt(sum(value * value for value in velocity_error)))
+            if (pose_frame == 1 and velocity_frame == 1 and
+                    segment_alignment is not None):
+                segment_velocity_error = tuple(
+                    predicted_velocity[index] - px4_velocity[index]
+                    for index in range(3)
+                )
+                reset_segment_velocity.append(math.sqrt(sum(
+                    value * value for value in segment_velocity_error
+                )))
 
         aligned_lio_orientation = _quaternion_multiply(alignment, lq)
         orientation_error = _quaternion_normalize(
@@ -1513,10 +1577,30 @@ def _residuals(samples: list[dict[str, Any]], tolerance_ms: float) -> dict[str, 
         )
         attitude.append(_quaternion_angle(rq, aligned_lio_orientation))
         yaw.append(abs(_quaternion_heading(orientation_error)))
+        if (pose_frame == 1 and velocity_frame == 1 and
+                segment_alignment is not None):
+            reset_segment_attitude.append(
+                _quaternion_angle(rq, _quaternion_multiply(segment_alignment, lq))
+            )
+    reset_aware_status = (
+        "RECORDED"
+        if reset_metadata_available and source_frame_metadata_available
+        else "NOT_RECORDED"
+    )
     return {
         "source": "lio/external_odometry_input vs px4/estimator_odometry",
         "frame_alignment": "first matched pose; LIO FRD aligned to PX4 pose frame",
         "origin_alignment": "first matched position removed from both streams",
+        "legacy_global_alignment_scope": "whole run; no PX4 reset segmentation",
+        "reset_aware_diagnostic": {
+            "status": reset_aware_status,
+            "source_frame_contract": "pose_frame=POSE_FRAME_NED and velocity_frame=VELOCITY_FRAME_NED",
+            "reset_counter_source": "px4/estimator_odometry.reset_counter",
+            "reset_segment_count": reset_segment_count,
+            "position": _metric_summary(reset_segment_position) if reset_aware_status == "RECORDED" else "NOT_RECORDED",
+            "velocity": _metric_summary(reset_segment_velocity) if reset_aware_status == "RECORDED" else "NOT_RECORDED",
+            "attitude": _metric_summary(reset_segment_attitude) if reset_aware_status == "RECORDED" else "NOT_RECORDED",
+        },
         "timestamp_alignment": "absolute timestamp_sample; no per-stream epoch normalization",
         "first_external_sample_time_ns": _sample_time(lio[0]) if lio else None,
         "first_px4_sample_time_ns": _sample_time(px4[0]) if px4 else None,

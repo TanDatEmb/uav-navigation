@@ -3791,6 +3791,42 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(result["matched_sample_count"], 0)
         self.assertEqual(result["initial_stream_epoch_offset_ms"], -1.0)
 
+    def test_residual_report_scopes_reset_aware_metric_to_source_frame(self) -> None:
+        def sample(stream: str, stamp_us: int, payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "kind": "sample",
+                "stream": stream,
+                "payload": {"timestamp_sample_us": stamp_us, **payload},
+                "timestamp_ns": stamp_us * 1000,
+            }
+
+        samples = [
+            sample("external_odometry", 1_000, {"position": [0.0, 0.0, 0.0], "q_wxyz": [1.0, 0.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0]}),
+            sample("external_odometry", 1_020, {"position": [1.0, 0.0, 0.0], "q_wxyz": [1.0, 0.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0]}),
+            sample("external_odometry", 1_040, {"position": [2.0, 0.0, 0.0], "q_wxyz": [1.0, 0.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0]}),
+            sample("px4_odometry", 1_000, {"position": [10.0, 0.0, 0.0], "q_wxyz": [1.0, 0.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0], "pose_frame": 1, "velocity_frame": 1, "reset_counter": 0}),
+            sample("px4_odometry", 1_020, {"position": [11.0, 0.0, 0.0], "q_wxyz": [1.0, 0.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0], "pose_frame": 1, "velocity_frame": 1, "reset_counter": 0}),
+            sample("px4_odometry", 1_040, {"position": [100.0, 0.0, 0.0], "q_wxyz": [1.0, 0.0, 0.0, 0.0], "velocity": [1.0, 0.0, 0.0], "pose_frame": 1, "velocity_frame": 1, "reset_counter": 1}),
+        ]
+        result = report._residuals(samples, 1.0)
+        reset_aware = result["reset_aware_diagnostic"]
+        self.assertEqual(reset_aware["status"], "RECORDED")
+        self.assertEqual(reset_aware["reset_segment_count"], 1)
+        self.assertAlmostEqual(reset_aware["position"]["maximum"], 0.0, places=9)
+        self.assertGreater(result["position"]["maximum"], 80.0)
+
+    def test_residual_report_does_not_infer_reset_or_source_frame_metadata(self) -> None:
+        def sample(stream: str, stamp_us: int, payload: dict[str, object]) -> dict[str, object]:
+            return {"kind": "sample", "stream": stream, "payload": {"timestamp_sample_us": stamp_us, **payload}, "timestamp_ns": stamp_us * 1000}
+
+        samples = [
+            sample("external_odometry", 1_000, {"position": [0.0, 0.0, 0.0], "q_wxyz": [1.0, 0.0, 0.0, 0.0]}),
+            sample("px4_odometry", 1_000, {"position": [0.0, 0.0, 0.0], "q_wxyz": [1.0, 0.0, 0.0, 0.0]}),
+        ]
+        result = report._residuals(samples, 1.0)
+        self.assertEqual(result["reset_aware_diagnostic"]["status"], "NOT_RECORDED")
+        self.assertEqual(result["reset_aware_diagnostic"]["position"], "NOT_RECORDED")
+
     def test_frame_contract_reports_ned_world_mapping_and_attitude(self) -> None:
         samples = [
             {
