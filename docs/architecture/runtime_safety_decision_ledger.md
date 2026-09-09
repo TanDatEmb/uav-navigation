@@ -1548,6 +1548,32 @@
   `python3 -m unittest tools.runtime.tests.test_html_report`, plus
   `git diff --check`.
 
+### 2026-09-09 - Scope runtime freshness evidence to active navigation
+
+- **Owner/status:** runtime runner/report tooling; `IMPLEMENTED`,
+  behavior-neutral evidence correction.
+- **Scope:** Record `navigation_start_wall_ns` after External Mode registration
+  is ready and immediately before the mission scenario starts. Startup sensor
+  or PX4 registration stalls remain visible in the raw stream evidence but no
+  longer become an in-flight freshness verdict before the scenario owns the
+  vehicle.
+- **Safety impact:** No runtime gate, sensor timeout, map policy or controller
+  behavior changes. Freshness checks remain fail-closed from the active
+  navigation boundary through the observation boundary; this only removes a
+  false attribution of pre-handover startup loss to flight execution.
+- **Evidence:** Artifact
+  `.artifacts/runtime/external-mode-check-20260909T103938-206688` completed
+  both waypoints collision-free, but was reported `FAIL` solely for a 755.956
+  ms LiDAR gap at source 9.8--10.4 s. The active mission External Mode entry
+  occurred at source 27.084 s; the gap was therefore pre-mission startup.
+- **Removal/review condition:** Revisit if a stream event before scenario
+  ownership can still enter the active freshness window, or if a mission-active
+  event is not captured before scenario launch.
+- **Verification:** runtime Python contracts, `git diff --check`, then repeat
+  the complex-map 5 m/s External Mode campaign and inspect raw startup gap,
+  active-window stream counts, collision, planner commits and mission outcome
+  separately.
+
 ### 2026-09-09 - Add opt-in GPS-off EV 12 m/s SITL profile
 
 - **Owner/status:** simulation and PX4 estimator integration; `IMPLEMENTED`,

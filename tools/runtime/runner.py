@@ -2974,12 +2974,6 @@ def _run_sim_unlocked(
                 )
             scenario_name = "offboard_scenario.py" if control_interface == "offboard" else "external_mode_scenario.py"
             scenario_role = "offboard" if control_interface == "offboard" else "external_mode_scenario"
-            # The sensor stack may enter LIO TRACKING well before the vehicle
-            # is handed to the mission scenario. Record the exact wall-time
-            # boundary so the report can distinguish warm-up from active
-            # navigation without relaxing any in-flight freshness gate.
-            if headless or auto_scenario:
-                _write_runtime(session, navigation_start_wall_ns=time.time_ns())
             if characterization_profile:
                 scenario_role = "closed_loop_characterization"
                 scenario_command = [
@@ -3016,6 +3010,15 @@ def _run_sim_unlocked(
                     float(config["runtime"]["timeouts"].get("external_mode_registration_s", 15.0)),
                     "successful External Mode registration and startup",
                 )
+
+            # The sensor stack and External Mode registration can run through
+            # several PX4 handover attempts before the scenario owns the
+            # vehicle. Record the active-navigation boundary only after those
+            # readiness steps and immediately before the scenario starts;
+            # startup transport gaps must not be reported as in-flight
+            # freshness violations.
+            if headless or auto_scenario:
+                _write_runtime(session, navigation_start_wall_ns=time.time_ns())
 
             scenario = session.start(scenario_role, _ros_shell(scenario_command), cwd=ROOT)
             scenario_wait_timeout = (
