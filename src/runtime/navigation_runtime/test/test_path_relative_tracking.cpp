@@ -46,6 +46,25 @@ CandidateBundle makeLinearMainBundle(double speed = 5.0) {
   return bundle;
 }
 
+CandidateBundle makeTerminalMainBundle() {
+  auto bundle = makeLinearMainBundle(5.0);
+  bundle.kind = CandidateBundleKind::kTerminalStop;
+  bundle.backup_available = false;
+  bundle.terminal_stop = true;
+  bundle.certificates.terminal_stop = true;
+  bundle.backup_start_time_s = bundle.duration_s;
+  bundle.role_schedule = {{0.0, 2.0, CandidateRole::kMain}};
+  bundle.evaluator = [](std::int64_t stamp, TrajectoryPoint& point) {
+    const double t = (stamp - 10'000'000'000LL) * 1.0e-9;
+    point.trajectory_time_s = t;
+    point.position_world = {5.0 * t - 1.25 * t * t, 0.0, 0.0};
+    point.velocity_world = {5.0 - 2.5 * t, 0.0, 0.0};
+    point.role = CandidateRole::kMain;
+    return true;
+  };
+  return bundle;
+}
+
 PathRelativeTrackingResult assess(
     const CandidateBundle& bundle, const Eigen::Vector3d& position,
     const Eigen::Vector3d& velocity, std::int64_t now_ns = 10'600'000'000LL,
@@ -252,7 +271,8 @@ TEST(TrackingExperiment, RelaxedNeverBypassesInputWorldLeaseOrRoleChecks) {
   b = makeLinearMainBundle(3.0);
   b.terminal_stop = true;
   b.certificates.terminal_stop = true;
-  EXPECT_FALSE(run(true, true, true).accepted);
+  EXPECT_TRUE(run(true, true, true).accepted);
+  EXPECT_TRUE(run(true, true, true).support_valid);
   b = makeLinearMainBundle(3.0);
   b.role = navigation_planning::CandidateRole::kBackup;
   EXPECT_FALSE(run(true, true, true).accepted);
@@ -260,6 +280,38 @@ TEST(TrackingExperiment, RelaxedNeverBypassesInputWorldLeaseOrRoleChecks) {
   EXPECT_FALSE(navigation_runtime::assessExperimentalTracking(policy, b,
       Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN()),
       {3, 0, 0}, 10'600'000'000LL, 10'600'000'000LL, .12, true, true, true).accepted);
+}
+
+TEST(TrackingExperiment, TerminalMainUsesAdaptiveAllowanceUntilExactEndpoint) {
+  navigation_contracts::TrackingExperimentPolicy policy;
+  policy.enabled = true;
+  const auto bundle = makeTerminalMainBundle();
+  ASSERT_TRUE(bundle.valid());
+  const auto reference = bundle.sample(11'880'000'000LL);
+  ASSERT_TRUE(reference);
+  const auto result = navigation_runtime::assessExperimentalTracking(
+      policy, bundle, reference->position_world + Eigen::Vector3d{0.1, 0.0, 0.0},
+      reference->velocity_world, 11'880'000'000LL, 11'880'000'000LL,
+      0.12, true, true, true);
+  EXPECT_TRUE(result.support_valid);
+  EXPECT_TRUE(result.accepted);
+  EXPECT_TRUE(result.predicted.valid);
+
+  const auto endpoint = bundle.sampleAtDeclaredEnd();
+  ASSERT_TRUE(endpoint);
+  EXPECT_TRUE(endpoint->finished);
+  EXPECT_NEAR(endpoint->position_world.x(), 5.0, 1.0e-9);
+  EXPECT_NEAR(endpoint->velocity_world.norm(), 0.0, 1.0e-9);
+
+  EXPECT_FALSE(navigation_runtime::assessExperimentalTracking(
+      policy, bundle, reference->position_world, reference->velocity_world,
+      11'900'000'000LL, 11'900'000'000LL, 0.2, true, true, true).accepted);
+
+  auto backup = bundle;
+  backup.role = CandidateRole::kBackup;
+  EXPECT_FALSE(navigation_runtime::assessExperimentalTracking(
+      policy, backup, reference->position_world, reference->velocity_world,
+      11'880'000'000LL, 11'880'000'000LL, 0.12, true, true, true).accepted);
 }
 
 TEST(TrackingExperiment, RejectsInvalidCoefficientsAndDisabledBypass) {

@@ -82,6 +82,39 @@
   canonical Release build/manifest refresh, `git diff --check`, and exact
   artifact provenance review.
 
+### 2026-09-09 - Keep an adaptive terminal MAIN command through endpoint settling
+
+- **Owner/status:** navigation runtime tracking contract; `IMPLEMENTED`, opt-in
+  adaptive-tracking behavior only. The runtime node's production default remains
+  disabled unless the explicit tracking experiment policy is enabled.
+- **Scope/units:** A valid terminal STOP whose bundle owner is MAIN may use the
+  existing adaptive allowance `base_m + coefficient_s *
+  max(measured_speed, reference_speed)` while its moving MAIN sample is still
+  before the declared endpoint, including a validation interval ending exactly
+  at that endpoint. The witness remains bounded by fresh state, known-free body,
+  clear sampled path, valid immutable bundle, and MAIN role/schedule checks.
+  BACKUP and EMERGENCY roles never use this allowance. The fixed path-relative
+  witness remains conservative for terminal commands.
+- **Safety impact:** This prevents an opt-in adaptive bridge from dropping a
+  valid terminal MAIN command solely at the MAIN-to-endpoint boundary. It can
+  retain a command under the adaptive tracking envelope where the fixed path
+  witness would be unavailable, so it is not qualification evidence. It does
+  not grant a candidate, authorize a safety suffix, or mark mission completion:
+  exact endpoint position, measured position, speed settling, and dwell/hold
+  acceptance remain owned by the terminal completion contract.
+- **Evidence:** Regression covers a decelerating terminal MAIN trajectory whose
+  prediction lands exactly at the declared endpoint, verifies endpoint finished
+  and zero-speed metadata, rejects a future interval beyond the endpoint, and
+  rejects a BACKUP-role mutation. The full focused tracking suite passes.
+- **Removal/review condition:** Revisit after repeated terminal-stop tracking
+  distributions and representative SITL/recorded-data evidence. Remove the
+  opt-in bridge if endpoint/hold completion, role handoff, or emergency
+  authorization evidence shows a regression; do not enable it by default as a
+  substitute for terminal acceptance.
+- **Verification:** `test_path_relative_tracking`, `git diff --check`, canonical
+  Release build, then repeated terminal-stop SITL with exact bundle role,
+  endpoint, speed, dwell, and completion artifacts.
+
 ### 2026-09-09 - Make campaign tracking witness adaptive by default
 
 - **Owner/status:** SITL campaign launcher/profile; `IMPLEMENTED`, diagnostic-only.

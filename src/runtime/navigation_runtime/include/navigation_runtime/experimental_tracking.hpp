@@ -26,8 +26,18 @@ inline ExperimentalTrackingResult assessExperimentalTracking(
     bool fresh, bool body_known_free, bool path_clear) {
   using navigation_planning::CandidateRole;
   ExperimentalTrackingResult out;
+  // A terminal STOP is still a MAIN command until the exact endpoint
+  // acceptance/settle gate completes.  Allow the adaptive witness to retain
+  // that moving MAIN command, but never allow a safety-role command through
+  // this path.  Completion remains owned by the endpoint/hold contract in the
+  // runtime node below.
+  const bool terminal_main = bundle.terminal_stop &&
+      bundle.role == CandidateRole::kMain &&
+      bundle.kind != navigation_planning::CandidateBundleKind::kBackupOnly &&
+      bundle.kind != navigation_planning::CandidateBundleKind::kEmergencyBrake;
   if (!policy.enabled || !policy.valid() || !fresh || !body_known_free || !path_clear ||
-      !bundle.valid() || bundle.terminal_stop || bundle.role != CandidateRole::kMain ||
+      !bundle.valid() || (!terminal_main && bundle.terminal_stop) ||
+      bundle.role != CandidateRole::kMain ||
       source_ns <= 0 || source_ns > now_ns || !std::isfinite(interval_s) || interval_s <= 0.0)
     return out;
   const long double future_ns = static_cast<long double>(now_ns) + interval_s * 1.0e9L;
@@ -44,8 +54,13 @@ inline ExperimentalTrackingResult assessExperimentalTracking(
       (future_ns - bundle.declared_start_ns) * 1.0e-9L);
   bool same_main_interval = false;
   for (const auto& interval : bundle.role_schedule) {
+    const bool terminal_endpoint = terminal_main &&
+        std::abs(future_local_s - interval.end_time_s) <= 1.0e-9 &&
+        std::abs(interval.end_time_s - bundle.duration_s) <= 1.0e-9;
     if (interval.role == CandidateRole::kMain && source_local_s >= interval.begin_time_s &&
-        future_local_s < interval.end_time_s) same_main_interval = true;
+        (future_local_s < interval.end_time_s || terminal_endpoint)) {
+      same_main_interval = true;
+    }
   }
   if (!same_main_interval) return out;
   out.current = navigation_contracts::assessAdaptiveTracking(
