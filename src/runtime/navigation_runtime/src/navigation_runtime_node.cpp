@@ -799,6 +799,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           result.base_planning_state_change_count;
       next.inflated_planning_state_change_count =
           result.inflated_planning_state_change_count;
+      next.inflated_planning_state_change_count_valid = false;
       next.full_snapshot_bytes = result.full_snapshot_bytes;
       next.copied_snapshot_bytes = result.copied_snapshot_bytes;
       next.reused_snapshot_bytes = result.reused_snapshot_bytes;
@@ -1469,6 +1470,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                   mapping.base_planning_state_change_count);
         add_value("mapping_inflated_planning_state_change_count",
                   mapping.inflated_planning_state_change_count);
+        add_value("mapping_inflated_planning_state_change_count_valid",
+                  mapping.inflated_planning_state_change_count_valid ? 1U : 0U);
         add_value("world_snapshot_full_bytes", mapping.full_snapshot_bytes);
         add_value("world_snapshot_copied_bytes", mapping.copied_snapshot_bytes);
         add_value("world_snapshot_reused_bytes", mapping.reused_snapshot_bytes);

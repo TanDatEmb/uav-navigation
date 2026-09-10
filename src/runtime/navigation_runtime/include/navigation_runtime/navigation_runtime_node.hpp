@@ -79,6 +79,10 @@ struct MappingTelemetrySnapshot {
   std::uint64_t dirty_chunk_count{0};
   std::uint64_t base_planning_state_change_count{0};
   std::uint64_t inflated_planning_state_change_count{0};
+  // The exact inflated-state counter was removed from the ROG hot path in
+  // 00517182. Keep an explicit validity bit so reports never interpret the
+  // retained legacy field (currently zero) as an exact measurement.
+  bool inflated_planning_state_change_count_valid{false};
   std::uint64_t full_snapshot_bytes{0};
   std::uint64_t copied_snapshot_bytes{0};
   std::uint64_t reused_snapshot_bytes{0};

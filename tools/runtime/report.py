@@ -2721,6 +2721,7 @@ def _navigation_mapping_summary(
         "mapping_dirty_chunk_count",
         "mapping_base_planning_state_change_count",
         "mapping_inflated_planning_state_change_count",
+        "mapping_inflated_planning_state_change_count_valid",
         "old_generation_drop_count",
         "invalid_stamp_count",
         "invalid_frame_count",

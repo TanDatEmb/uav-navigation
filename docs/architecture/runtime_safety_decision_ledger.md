@@ -21356,3 +21356,18 @@ release profiles must not use the former allowance.
 - **Verification:** Release rebuild, focused mapping tests, repeated
   diagnostic SITL, and comparison of `mapping_probability_update_us`, callback
   tails and cloud-replacement counts. Qualification gates remain unchanged.
+
+### 2026-09-10 - Mark inflated-state telemetry as unavailable
+
+- **Owner/status:** Runtime evidence and ROG-Map observability; `IMPLEMENTED`.
+- **Scope:** Publish `mapping_inflated_planning_state_change_count_valid=0`
+  alongside the retained legacy counter. The counter remains available only
+  for schema compatibility and must not be treated as an exact distribution.
+- **Safety impact:** None to map, certificate, lifecycle or command policy.
+  This prevents a diagnostic zero from being misread as evidence that no
+  inflated planning state changed.
+- **Evidence/removal condition:** Set the flag to one only after an exact
+  bounded-cost implementation is benchmarked without material ROG p99
+  regression and passes snapshot/certificate parity.
+- **Verification:** Release build, runtime contract tests, and report parsing
+  of the explicit validity field. Qualification gates remain unchanged.
