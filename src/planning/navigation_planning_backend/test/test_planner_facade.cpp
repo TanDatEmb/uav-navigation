@@ -3,6 +3,7 @@
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/mapping_observation.hpp>
 #include <planner_core/route_yaw_reference.hpp>
+#include <planner_core/planner_result.hpp>
 #include <navigation_planning/planning_timing.hpp>
 #include <navigation_world_model/continuous_clearance.hpp>
 
@@ -643,6 +644,12 @@ TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
       plannerBodySupportRequest(blocked_world, blocked_support));
   EXPECT_FALSE(blocked.candidate.has_value());
   EXPECT_FALSE(navigation_planning::completePlanningSucceeded(blocked.outcome));
+  EXPECT_EQ(blocked_facade.diagnostics().replan_return_code,
+            navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT);
+  EXPECT_EQ(blocked.failure_stage,
+            navigation_planning::PlanningFailureStage::kNominalSeed);
+  EXPECT_EQ(blocked.failure_reason,
+            navigation_planning::PlanningFailureReason::kMainKnownFreeInsufficient);
 }
 
 TEST(PlannerFacade, RejectsInvalidCommittedFutureRequestBeforeSolve) {
@@ -671,6 +678,29 @@ TEST(PlannerFacade, RejectsInvalidCommittedFutureRequestBeforeSolve) {
             navigation_planning::PlanningFailureReason::kInvalidInput);
   EXPECT_EQ(facade.solveStage(), 0);
   EXPECT_FALSE(facade.hasStagedCommandCandidate());
+}
+
+TEST(PlannerFacade, ExpiredPlanReportsLatestTimeoutAtProductBoundary) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      [] { return 10.0; });
+  auto request = plannerBodySupportRequest(world, nullptr);
+  request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+      std::chrono::seconds(1);
+  request.budget.steady_deadline_ns =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          navigation_planning::PlanningBudget::Clock::now().time_since_epoch() +
+          std::chrono::nanoseconds(1)).count();
+
+  const auto outcome = facade.plan(request);
+  EXPECT_EQ(facade.diagnostics().replan_return_code,
+            navigation_planning_backend::PLANNER_SOLVE_TIMEOUT);
+  EXPECT_EQ(outcome.failure_stage,
+            navigation_planning::PlanningFailureStage::kDeadline);
+  EXPECT_EQ(outcome.failure_reason,
+            navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline);
 }
 
 TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {

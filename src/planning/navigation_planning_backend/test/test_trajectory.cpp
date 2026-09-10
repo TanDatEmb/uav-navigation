@@ -3417,6 +3417,7 @@ TEST(PlannerTrajectory, SolveFailureCodesRemainDistinct) {
 }
 
 TEST(PlannerTrajectory, MainKnownFreeFailureUsesTypedNominalSeedReason) {
+  using Stage = navigation_planning::PlanningFailureStage;
   using Reason = navigation_planning::PlanningFailureReason;
   EXPECT_EQ(static_cast<int>(Reason::kWorldChanged), 11);
   EXPECT_EQ(static_cast<int>(Reason::kNoCompleteBundleAtDeadline), 12);
@@ -3439,6 +3440,32 @@ TEST(PlannerTrajectory, MainKnownFreeFailureUsesTypedNominalSeedReason) {
             navigation_planning::PlanningFailureStage::kNominalRefinement);
   EXPECT_EQ(generic_reason,
             navigation_planning::PlanningFailureReason::kNominalDynamics);
+
+  const auto [timeout_stage, timeout_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_SOLVE_TIMEOUT, false);
+  EXPECT_EQ(timeout_stage, Stage::kDeadline);
+  EXPECT_EQ(timeout_reason, Reason::kNoCompleteBundleAtDeadline);
+
+  const auto [exp_stage, exp_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_EXP_FAILED, true);
+  EXPECT_EQ(exp_stage, Stage::kNominalSeed);
+  EXPECT_EQ(exp_reason, Reason::kNominalDynamics);
+
+  const auto [backup_stage, backup_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_BACKUP_OPTIMIZATION_FAILED,
+          false);
+  EXPECT_EQ(backup_stage, Stage::kBackupRefinement);
+  EXPECT_EQ(backup_reason, Reason::kBackupDynamics);
+
+  const auto [main_stage, main_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT,
+          false);
+  EXPECT_EQ(main_stage, Stage::kNominalSeed);
+  EXPECT_EQ(main_reason, Reason::kMainKnownFreeInsufficient);
 }
 
 TEST(PlannerTrajectory, BackupFailureKeepsActionableCause) {

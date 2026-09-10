@@ -2456,7 +2456,7 @@ double mainGuideSupport(
         }
         if (result != SUCCESS && result != FINISH) {
             const auto [failure_stage, failure_reason] = classifyPlannerFailure(
-                static_cast<PlannerResultCode>(result),
+                latestReplanReturnCode(),
                 last_nominal_solve_status_ == traj_opt::NominalSolveStatus::kFailed);
             outcome.outcome = navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
             outcome.failure_stage = failure_stage;

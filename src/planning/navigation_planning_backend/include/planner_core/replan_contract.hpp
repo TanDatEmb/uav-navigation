@@ -56,7 +56,7 @@ inline PlannerResultCode classifyBackupResult(
 // has its own result code and therefore cannot be inferred from solve_stage.
 inline std::pair<navigation_planning::PlanningFailureStage,
                  navigation_planning::PlanningFailureReason>
-classifyPlannerFailure(const PlannerResultCode planner_result,
+classifyPlannerFailure(const int planner_result,
                        const bool nominal_solve_failed) noexcept {
   using Stage = navigation_planning::PlanningFailureStage;
   using Reason = navigation_planning::PlanningFailureReason;
