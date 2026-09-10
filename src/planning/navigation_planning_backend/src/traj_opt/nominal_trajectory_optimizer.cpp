@@ -1898,22 +1898,82 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
             // helper default conservative for callers and tests.
             constexpr double kMaximumBaselineDurationScale = 16.0;
             std::vector<std::pair<int, VecDf>> retry_duration_candidates;
+            const auto selectCompatibleDurations =
+                    [&](const VecDf& requested) -> std::optional<VecDf> {
+                if (!corridor_seed_result.valid ||
+                    requested.size() != opt_vars.times.size()) {
+                    return std::nullopt;
+                }
+                VecDf compatible = requested;
+                for (int piece = 0; piece < compatible.size(); ++piece) {
+                    const auto intervals =
+                            navigation_planning_backend::corridor_bezier_detail::
+                                durationCompatibilityIntervals(
+                                    navigation_planning_backend::pieceState(
+                                        corridor_seed_result.trajectory[piece], 0.0),
+                                    navigation_planning_backend::pieceState(
+                                        corridor_seed_result.trajectory[piece],
+                                        corridor_seed_result.trajectory[piece].getDuration()),
+                                    opt_vars.hPolytopes[opt_vars.hPolyIdx(piece)],
+                                    cfg_.corridor_plane_tolerance_m);
+                    if (intervals.empty()) return std::nullopt;
+                    bool selected = false;
+                    double next_lower = std::numeric_limits<double>::infinity();
+                    double next_upper = std::numeric_limits<double>::infinity();
+                    for (const auto& interval : intervals) {
+                        if (compatible(piece) >= interval.lower_s &&
+                            compatible(piece) <= interval.upper_s) {
+                            selected = true;
+                            break;
+                        }
+                        if (compatible(piece) < interval.lower_s &&
+                            interval.lower_s < next_lower) {
+                            next_lower = interval.lower_s;
+                            next_upper = interval.upper_s;
+                        }
+                    }
+                    if (selected) continue;
+                    // Never project a dynamics lower bound down to an upper
+                    // corridor boundary. That trades a stage-5 dynamics
+                    // failure for a stage-3 geometry failure.
+                    if (!std::isfinite(next_lower) || next_lower <= 0.0) {
+                        return std::nullopt;
+                    }
+                    compatible(piece) = next_lower * (1.0 + 1.0e-6);
+                    if (!std::isfinite(compatible(piece)) ||
+                        (std::isfinite(next_upper) && compatible(piece) > next_upper)) {
+                        return std::nullopt;
+                    }
+                }
+                return compatible;
+            };
+            const auto appendCompatibleRetry =
+                    [&](const int retry_mode, const VecDf& requested) {
+                const auto compatible = selectCompatibleDurations(requested);
+                if (!compatible.has_value()) return;
+                for (const auto& existing : retry_duration_candidates) {
+                    if (existing.first == retry_mode &&
+                        existing.second.size() == compatible->size() &&
+                        (existing.second - *compatible).norm() <= 1.0e-9) {
+                        return;
+                    }
+                }
+                retry_duration_candidates.emplace_back(retry_mode, *compatible);
+            };
             const VecDf piece_scales = navigation_planning_backend::
                     boundedPieceDurationRetryScales(
                         corridor_seed_result.trajectory, cfg_,
                         kMaximumBaselineDurationScale);
             if (piece_scales.size() == opt_vars.times.size() &&
                 piece_scales.allFinite() && piece_scales.maxCoeff() > 1.0) {
-                retry_duration_candidates.emplace_back(
-                    2, opt_vars.times.cwiseProduct(piece_scales));
+                appendCompatibleRetry(2, opt_vars.times.cwiseProduct(piece_scales));
             }
             const auto retry_scales = navigation_planning_backend::
                     boundedDynamicDurationRetryScales(
                         deterministic_seed_certificate, cfg_,
                         kMaximumBaselineDurationScale);
             for (const double duration_scale : retry_scales) {
-                retry_duration_candidates.emplace_back(
-                    3, opt_vars.times * duration_scale);
+                appendCompatibleRetry(3, opt_vars.times * duration_scale);
             }
             for (const auto& [retry_mode, retry_times] : retry_duration_candidates) {
                 ++diagnostics_.corridor_seed_retry_attempt_count;
@@ -2555,10 +2615,72 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                 initial_duration_reserve_scale,
                 std::min(4.0, initial_duration_reserve_scale * 1.5),
                 4.0};
+        const auto selectCompatibleDurations =
+                [&](const VecDf& requested) -> std::optional<VecDf> {
+            if (!corridor_seed_result.valid ||
+                requested.size() != nominal_duration_s.size()) {
+                return std::nullopt;
+            }
+            VecDf compatible = requested;
+            for (int piece = 0; piece < compatible.size(); ++piece) {
+                const int corridor_index = opt_vars.hPolyIdx(piece);
+                if (corridor_index < 0 ||
+                    corridor_index >= static_cast<int>(opt_vars.hPolytopes.size())) {
+                    return std::nullopt;
+                }
+                const auto intervals =
+                        navigation_planning_backend::corridor_bezier_detail::
+                            durationCompatibilityIntervals(
+                                navigation_planning_backend::pieceState(
+                                    corridor_seed_result.trajectory[piece], 0.0),
+                                navigation_planning_backend::pieceState(
+                                    corridor_seed_result.trajectory[piece],
+                                    corridor_seed_result.trajectory[piece].getDuration()),
+                                opt_vars.hPolytopes[static_cast<std::size_t>(corridor_index)],
+                                cfg_.corridor_plane_tolerance_m);
+                if (intervals.empty()) return std::nullopt;
+                bool inside = false;
+                double next_lower = std::numeric_limits<double>::infinity();
+                double next_upper = std::numeric_limits<double>::infinity();
+                for (const auto& interval : intervals) {
+                    if (compatible(piece) >= interval.lower_s &&
+                        compatible(piece) <= interval.upper_s) {
+                        inside = true;
+                        break;
+                    }
+                    if (compatible(piece) < interval.lower_s &&
+                        interval.lower_s < next_lower) {
+                        next_lower = interval.lower_s;
+                        next_upper = interval.upper_s;
+                    }
+                }
+                if (inside) continue;
+                // A requested duration above the last compatible interval is
+                // not a feasible dynamics/corridor intersection. Do not
+                // shorten it to a geometry boundary and retry the same seed.
+                if (!std::isfinite(next_lower) || next_lower <= 0.0) {
+                    return std::nullopt;
+                }
+                compatible(piece) = next_lower * (1.0 + 1.0e-6);
+                if (!std::isfinite(compatible(piece)) ||
+                    (std::isfinite(next_upper) && compatible(piece) > next_upper)) {
+                    return std::nullopt;
+                }
+            }
+            return compatible;
+        };
         for (const double duration_reserve_scale : duration_reserve_scales) {
-            const VecDf reserved_duration_s = nominal_duration_s * duration_reserve_scale;
-            const VecDf free_duration_seed_s = nominal_duration_s *
-                    (duration_reserve_scale - 1.0);
+            const auto compatible_duration_s = selectCompatibleDurations(
+                    nominal_duration_s * duration_reserve_scale);
+            if (!compatible_duration_s.has_value()) {
+                planner_context_->warn(
+                        " -- [ExpOpt] bounded time stretch candidate={} has no "
+                        "corridor-compatible duration interval",
+                        duration_reserve_scale);
+                continue;
+            }
+            const VecDf reserved_duration_s = *compatible_duration_s;
+            const VecDf free_duration_seed_s = reserved_duration_s - nominal_duration_s;
             if (!reserved_duration_s.allFinite() || reserved_duration_s.size() == 0 ||
                 reserved_duration_s.minCoeff() <= 0.0 || !free_duration_seed_s.allFinite() ||
                 free_duration_seed_s.size() == 0 || free_duration_seed_s.minCoeff() <= 0.0) {

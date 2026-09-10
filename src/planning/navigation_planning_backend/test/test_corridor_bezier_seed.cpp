@@ -324,6 +324,50 @@ TEST(CorridorBezierSeed, RejectsImmutableBoundaryDerivativeOutsideCorridor) {
   EXPECT_GT(result.maximum_plane_violation_m, 0.0);
 }
 
+TEST(CorridorBezierSeed, DurationCompatibilityTracksExactEndpointPvajControls) {
+  const auto corridor = box({-10.0, -10.0, -10.0}, {2.0, 10.0, 10.0});
+  const auto start = state({0.0, 0.0, 0.0}, {5.0, 0.0, 0.0});
+  const auto end = state({1.0, 0.0, 0.0});
+  const auto intervals =
+      navigation_planning_backend::corridor_bezier_detail::
+          durationCompatibilityIntervals(start, end, corridor, 1.0e-10);
+  ASSERT_FALSE(intervals.empty());
+  const auto contains = [&intervals](const double duration_s) {
+    return std::any_of(intervals.begin(), intervals.end(),
+                       [duration_s](const auto& interval) {
+                         return duration_s >= interval.lower_s &&
+                                duration_s <= interval.upper_s;
+                       });
+  };
+  EXPECT_TRUE(contains(0.5));
+  EXPECT_FALSE(contains(1.0));
+
+  navigation_math::Mat3Df junctions(3, 0);
+  navigation_math::VecDf duration(1);
+  duration << 1.0;
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+  const auto rejected =
+      navigation_planning_backend::buildCorridorContainedBezierSeed(
+          start, end, junctions, duration,
+          navigation_math::PolyhedraH{corridor}, mapping, 8.0, 1.0e-10);
+  EXPECT_FALSE(rejected.valid);
+  EXPECT_EQ(rejected.failure_stage,
+            navigation_planning_backend::CorridorBezierSeedFailureStage::
+                kBoundaryControl);
+  EXPECT_EQ(rejected.failing_control_index, 3);
+}
+
+TEST(CorridorBezierSeed, DurationCompatibilityRejectsEmptyEndpointDomain) {
+  const auto corridor = box({-1.0, -1.0, -1.0}, {1.0, 1.0, 1.0});
+  const auto intervals =
+      navigation_planning_backend::corridor_bezier_detail::
+          durationCompatibilityIntervals(
+              state({2.0, 0.0, 0.0}), state({2.0, 0.0, 0.0}), corridor,
+              1.0e-10);
+  EXPECT_TRUE(intervals.empty());
+}
+
 TEST(CorridorBezierSeed,
      InternalDerivativeDampingSweepRemainsDiagnosticAndRejected) {
   navigation_math::PolyhedraH corridors{

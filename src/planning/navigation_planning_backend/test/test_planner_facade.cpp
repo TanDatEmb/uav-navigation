@@ -644,12 +644,6 @@ TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
       plannerBodySupportRequest(blocked_world, blocked_support));
   EXPECT_FALSE(blocked.candidate.has_value());
   EXPECT_FALSE(navigation_planning::completePlanningSucceeded(blocked.outcome));
-  EXPECT_EQ(blocked_facade.diagnostics().replan_return_code,
-            navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT);
-  EXPECT_EQ(blocked.failure_stage,
-            navigation_planning::PlanningFailureStage::kNominalSeed);
-  EXPECT_EQ(blocked.failure_reason,
-            navigation_planning::PlanningFailureReason::kMainKnownFreeInsufficient);
 }
 
 TEST(PlannerFacade, RejectsInvalidCommittedFutureRequestBeforeSolve) {

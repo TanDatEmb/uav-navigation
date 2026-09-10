@@ -93,6 +93,163 @@ inline std::array<Eigen::Vector3d, kDegree + 1> controlPoints(
   return controls;
 }
 
+struct DurationCompatibilityInterval {
+  double lower_s{0.0};
+  double upper_s{std::numeric_limits<double>::infinity()};
+};
+
+inline void appendPositivePolynomialRoots(
+    const std::array<double, 4>& coefficients,
+    std::vector<double>& roots) {
+  const double scale = std::max({1.0, std::abs(coefficients[0]),
+                                 std::abs(coefficients[1]),
+                                 std::abs(coefficients[2]),
+                                 std::abs(coefficients[3])});
+  const double epsilon = 1.0e-12 * scale;
+  const double a = coefficients[0];
+  const double b = coefficients[1];
+  const double c = coefficients[2];
+  const double d = coefficients[3];
+  auto append = [&roots](const double value) {
+    if (std::isfinite(value) && value > 0.0) roots.push_back(value);
+  };
+  if (std::abs(a) <= epsilon) {
+    if (std::abs(b) <= epsilon) {
+      if (std::abs(c) > epsilon) append(-d / c);
+      return;
+    }
+    const double discriminant = c * c - 4.0 * b * d;
+    if (discriminant < -epsilon) return;
+    if (discriminant <= epsilon) {
+      append(-c / (2.0 * b));
+      return;
+    }
+    const double root = std::sqrt(discriminant);
+    append((-c - root) / (2.0 * b));
+    append((-c + root) / (2.0 * b));
+    return;
+  }
+
+  const double p = (3.0 * a * c - b * b) / (3.0 * a * a);
+  const double q = (27.0 * a * a * d - 9.0 * a * b * c +
+                    2.0 * b * b * b) / (27.0 * a * a * a);
+  const double discriminant = q * q / 4.0 + p * p * p / 27.0;
+  const double depressed_shift = -b / (3.0 * a);
+  if (discriminant > epsilon) {
+    const double root = std::cbrt(-q / 2.0 + std::sqrt(discriminant)) +
+                        std::cbrt(-q / 2.0 - std::sqrt(discriminant));
+    append(root + depressed_shift);
+  } else if (std::abs(discriminant) <= epsilon) {
+    const double u = std::cbrt(-q / 2.0);
+    append(2.0 * u + depressed_shift);
+    append(-u + depressed_shift);
+  } else {
+    const double radius = 2.0 * std::sqrt(-p / 3.0);
+    const double angle = std::acos(std::clamp(
+        (3.0 * q / (2.0 * p)) * std::sqrt(-3.0 / p), -1.0, 1.0));
+    constexpr double two_pi = 6.283185307179586476925286766559;
+    for (int root_index = 0; root_index < 3; ++root_index) {
+      append(radius * std::cos((angle + two_pi * root_index) / 3.0) +
+             depressed_shift);
+    }
+  }
+}
+
+inline double evaluatePolynomial(
+    const std::array<double, 4>& coefficients, const double duration_s) {
+  return ((coefficients[0] * duration_s + coefficients[1]) * duration_s +
+          coefficients[2]) * duration_s + coefficients[3];
+}
+
+inline std::vector<DurationCompatibilityInterval> intersectDurationIntervals(
+    const std::vector<DurationCompatibilityInterval>& lhs,
+    const std::vector<DurationCompatibilityInterval>& rhs) {
+  std::vector<DurationCompatibilityInterval> result;
+  for (const auto& left : lhs) {
+    for (const auto& right : rhs) {
+      const double lower = std::max(left.lower_s, right.lower_s);
+      const double upper = std::min(left.upper_s, right.upper_s);
+      if (lower <= upper) result.push_back({lower, upper});
+    }
+  }
+  return result;
+}
+
+inline std::vector<DurationCompatibilityInterval> durationCompatibilityIntervals(
+    const navigation_math::StatePVAJ& start,
+    const navigation_math::StatePVAJ& end,
+    const navigation_math::PolyhedronH& source_planes,
+    const double tolerance_m) {
+  if (!start.allFinite() || !end.allFinite() || source_planes.rows() == 0 ||
+      source_planes.cols() != 4 || !std::isfinite(tolerance_m) ||
+      tolerance_m < 0.0) return {};
+  auto planes = source_planes;
+  if (!normalizeCorridorPlanes(planes)) return {};
+
+  const double n = static_cast<double>(kDegree);
+  const double a_denominator = n * (n - 1.0);
+  const double j_denominator = a_denominator * (n - 2.0);
+  const std::array<std::array<Eigen::Vector3d, 4>, kDegree + 1> polynomials{
+      std::array<Eigen::Vector3d, 4>{start.col(0), Eigen::Vector3d::Zero(),
+                                     Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()},
+      std::array<Eigen::Vector3d, 4>{start.col(0), start.col(1) / n,
+                                     Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()},
+      std::array<Eigen::Vector3d, 4>{start.col(0), 2.0 * start.col(1) / n,
+                                     start.col(2) / a_denominator,
+                                     Eigen::Vector3d::Zero()},
+      std::array<Eigen::Vector3d, 4>{start.col(0), 3.0 * start.col(1) / n,
+                                     3.0 * start.col(2) / a_denominator,
+                                     start.col(3) / j_denominator},
+      std::array<Eigen::Vector3d, 4>{end.col(0), -3.0 * end.col(1) / n,
+                                     3.0 * end.col(2) / a_denominator,
+                                     -end.col(3) / j_denominator},
+      std::array<Eigen::Vector3d, 4>{end.col(0), -2.0 * end.col(1) / n,
+                                     end.col(2) / a_denominator,
+                                     Eigen::Vector3d::Zero()},
+      std::array<Eigen::Vector3d, 4>{end.col(0), -end.col(1) / n,
+                                     Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()},
+      std::array<Eigen::Vector3d, 4>{end.col(0), Eigen::Vector3d::Zero(),
+                                     Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero()}};
+
+  std::vector<DurationCompatibilityInterval> compatible{{0.0,
+                                                         std::numeric_limits<double>::infinity()}};
+  for (const auto& control : polynomials) {
+    for (Eigen::Index plane_index = 0; plane_index < planes.rows(); ++plane_index) {
+      const auto plane = planes.row(plane_index);
+      const std::array<double, 4> coefficients{
+          plane.head(3).dot(control[3]), plane.head(3).dot(control[2]),
+          plane.head(3).dot(control[1]),
+          plane.head(3).dot(control[0]) + plane(3) - tolerance_m};
+      std::vector<double> roots{0.0};
+      appendPositivePolynomialRoots(coefficients, roots);
+      std::sort(roots.begin(), roots.end());
+      roots.erase(std::unique(roots.begin(), roots.end(),
+                              [](const double lhs, const double rhs) {
+                                return std::abs(lhs - rhs) <=
+                                       1.0e-10 * std::max({1.0, std::abs(lhs),
+                                                           std::abs(rhs)});
+                              }),
+                  roots.end());
+      std::vector<DurationCompatibilityInterval> plane_intervals;
+      for (std::size_t index = 0; index < roots.size(); ++index) {
+        const double lower = roots[index];
+        const double upper = index + 1U < roots.size()
+            ? roots[index + 1U]
+            : std::numeric_limits<double>::infinity();
+        const double sample = std::isfinite(upper)
+            ? lower + 0.5 * (upper - lower)
+            : lower + std::max(1.0, lower);
+        if (evaluatePolynomial(coefficients, sample) <= 0.0) {
+          plane_intervals.push_back({lower, upper});
+        }
+      }
+      compatible = intersectDurationIntervals(compatible, plane_intervals);
+      if (compatible.empty()) return {};
+    }
+  }
+  return compatible;
+}
+
 inline bool controlsInside(
     const std::array<Eigen::Vector3d, kDegree + 1>& controls,
     const navigation_math::PolyhedronH& planes,

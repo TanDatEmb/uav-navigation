@@ -1,5 +1,30 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-10 - Enumerate duration/corridor-compatible nominal retries
+
+- **Owner/status:** navigation planning backend; `IMPLEMENTED`, behavior change
+  limited to the bounded deterministic-seed retry path.
+- **Scope:** For a fixed immutable endpoint PVAJ and corridor, derive the
+  duration intervals in which the endpoint-induced Bernstein controls satisfy
+  every corridor half-space. Duration candidates are selected inside those
+  intervals and are deduplicated before seed construction; blind projection
+  from a dynamics duration back to a corridor upper boundary is removed.
+- **Safety impact:** No V/A/J, UNKNOWN, collision, tracking, freshness,
+  world-certificate, backup, deadline, endpoint-PVAJ, route-boundary, flatness,
+  or final-candidate authorization gate is relaxed. The interval calculation
+  is on the bounded retry/failure path, not the certified-success hot path.
+  Candidates still require the complete immutable-world certificate.
+- **Evidence:** Exact strict 5 m/s snapshots and replay show the original
+  nominal seed failing dynamics (stage 5), while the duration retries that
+  approach the required dynamics duration fail corridor control 3/plane 0
+  (stage 3). Replay outputs are stored under the artifact-owned
+  `replay_after_strict_compat_20260910` directory.
+- **Removal/review condition:** Replace this bounded interval filter only when
+  a local connector/split corridor is implemented and certified from the same
+  immutable world, with equivalent endpoint-PVAJ and hard-gate coverage.
+- **Verification:** `test_corridor_bezier_seed`, `test_exp_optimizer_seed`,
+  exact nominal snapshot replay, canonical Release build, and `git diff --check`.
+
 ### 2026-09-10 - Capture exact nominal duration-retry evidence
 
 - **Owner/status:** navigation planning backend; `IMPLEMENTED`, diagnostic-only.
