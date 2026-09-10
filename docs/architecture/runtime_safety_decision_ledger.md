@@ -21336,3 +21336,23 @@ release profiles must not use the former allowance.
 - **Verification:** `python3 -m pytest -q
   tools/runtime/tests/test_runtime_contract.py` (218 passed), report
   regeneration on a captured external-mode artifact, and `git diff --check`.
+
+### 2026-09-10 - Remove inflated-state telemetry from the ROG hot path
+
+- **Owner/status:** ROG-Map observability; `IMPLEMENTED`, behavior-neutral
+  performance correction.
+- **Scope:** Remove the per-transition inflated-neighbor before/after scan that
+  allocated and de-duplicated a vector inside `InfMap::triggerJumpingEdge`.
+  The map update, inflation counters and traversability semantics are
+  unchanged. `planning_state_change_count_` remains present but is not claimed
+  as an exact measurement until a bounded low-overhead implementation exists.
+- **Safety impact:** None to map or certificate policy. This only removes an
+  expensive diagnostic side effect that was delaying probability updates and
+  causing latest-only observation replacement.
+- **Evidence/removal condition:** Replace with an exact metric only after a
+  benchmark proves no material p99 regression in ROG update time. Do not
+  reintroduce per-cell allocation or O(N^2) de-duplication in the mapping
+  callback.
+- **Verification:** Release rebuild, focused mapping tests, repeated
+  diagnostic SITL, and comparison of `mapping_probability_update_us`, callback
+  tails and cloud-replacement counts. Qualification gates remain unchanged.

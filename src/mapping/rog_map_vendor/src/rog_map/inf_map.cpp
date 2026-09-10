@@ -24,8 +24,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
-#include <utility>
-#include <vector>
 
 #include <rog_map/inf_map.h>
 using namespace color_text;
@@ -411,23 +409,14 @@ namespace rog_map {
     void InfMap::triggerJumpingEdge(const rog_map::Vec3i& id_g,
                                     const rog_map::GridType& from_type,
                                     const rog_map::GridType& to_type) {
-        std::vector<std::pair<int, GridType>> before;
-        const auto remember = [this, &before](const Vec3i& index) {
-            if (!insideLocalMap(index)) return;
-            const int address = getHashIndexFromGlobalIndex(index);
-            for (const auto& entry : before) {
-                if (entry.first == address) return;
-            }
-            before.emplace_back(address, getGridType(index));
-        };
-        for (const auto& neighbor : cfg_.inf_spherical_neighbor) {
-            remember(id_g + neighbor);
-        }
-        if (cfg_.unk_inflation_en) {
-            for (const auto& neighbor : cfg_.unk_inf_spherical_neighbor) {
-                remember(id_g + neighbor);
-            }
-        }
+        // Keep the classification transition counter out of this hot path.
+        // Taking a before/after snapshot of every inflated neighbor here adds
+        // an allocation, an O(N^2) de-duplication loop and global/local index
+        // conversions for every occupied-cell transition.  With the product
+        // inflation_step this made probabilisticMapFromCache dominate mapping
+        // latency and caused latest-only cloud replacement.  Exact inflated
+        // transition telemetry remains unavailable until it can be collected
+        // without changing the map update cost.
         if (from_type == GridType::OCCUPIED) {
             updateInflation(id_g, false);
         }
@@ -440,13 +429,6 @@ namespace rog_map {
             }
             if (to_type == GridType::UNKNOWN) {
                 updateUnkInflation(id_g, true);
-            }
-        }
-        for (const auto& entry : before) {
-            Vec3i index;
-            hashIdToGlobalIndex(entry.first, index);
-            if (entry.second != getGridType(index)) {
-                ++planning_state_change_count_;
             }
         }
     }
