@@ -115,6 +115,14 @@ class ExecutionTimelineStore final {
         committed_.get() == expected_bundle.get() && world_identity_ &&
         navigation_world_model::sameWorldSnapshotIdentity(
             *world_identity_, expected_bundle->world_identity);
+    const auto revokeInvalidActive = [this]() {
+      committed_.reset();
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      enforceInvariantLocked();
+      ++timeline_version_;
+      return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+    };
     if (active_matches) {
       auto recertified = std::make_shared<navigation_planning::CandidateBundle>(*committed_);
       recertified->world_identity = identity;
@@ -124,14 +132,14 @@ class ExecutionTimelineStore final {
           const auto endpoint_ns = navigation_common::secondsSumToNanoseconds(
               recertified->start_wall_time_s, recertified->duration_s);
           if (!endpoint_ns || *endpoint_ns <= 0) {
-            return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+            return revokeInvalidActive();
           }
           renewed_until_ns = std::min(renewed_until_ns, *endpoint_ns);
         }
         recertified->valid_until_ns = renewed_until_ns;
       }
       if (!recertified->valid()) {
-        return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+        return revokeInvalidActive();
       }
       committed_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
           std::move(recertified));

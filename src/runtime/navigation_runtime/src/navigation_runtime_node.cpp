@@ -2987,6 +2987,15 @@ void NavigationRuntimeNode::schedulePlanningCycle() {
             std::chrono::microseconds(planning_period_us_)).count();
   }
   if (!accepting_observations_.load(std::memory_order_acquire) || !planning_worker_) return;
+  if (!command_bundle_store_.invariantHolds()) {
+    // The store already enforces this invariant transactionally. Keep this
+    // boundary fail-closed if a future mutation path ever violates it rather
+    // than allowing an orphan pending successor to reach the worker.
+    execution_timeline_invariant_violation_count_.fetch_add(
+        1, std::memory_order_relaxed);
+    command_bundle_store_.invalidate();
+    return;
+  }
   const auto key = currentPlanningKey();
   if (!key) {
     planning_key_unavailable_count_.fetch_add(1, std::memory_order_relaxed);
@@ -3315,6 +3324,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_value("planning_submit_count", planning_submit_count_.load());
   add_value("planning_key_success_count", planning_key_success_count_.load());
   add_value("planning_key_unavailable_count", planning_key_unavailable_count_.load());
+  add_value("execution_timeline_invariant_violation_count",
+            execution_timeline_invariant_violation_count_.load());
   add_signed_value("planning_timer_expected_steady_ns",
                    last_planning_timer_expected_steady_ns_);
   add_signed_value("planning_callback_start_steady_ns",

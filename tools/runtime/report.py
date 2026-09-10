@@ -2779,6 +2779,7 @@ def _navigation_mapping_summary(
         "planning_submit_count",
         "planning_key_success_count",
         "planning_key_unavailable_count",
+        "execution_timeline_invariant_violation_count",
         "planning_timer_expected_steady_ns",
         "planning_callback_start_steady_ns",
         "planning_worker_enqueue_time_steady_ns",

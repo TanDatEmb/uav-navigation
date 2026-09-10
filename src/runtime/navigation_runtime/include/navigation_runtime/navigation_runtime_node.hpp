@@ -490,6 +490,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t planning_key_success_count_{0};
   std::atomic_uint64_t planning_key_unavailable_count_{0};
   std::atomic_uint64_t planning_submit_count_{0};
+  std::atomic_uint64_t execution_timeline_invariant_violation_count_{0};
   navigation_mapping::ObservationAccounting observation_accounting_;
   std::chrono::steady_clock::time_point metrics_log_time_{std::chrono::steady_clock::now()};
   std::vector<double> end_to_end_samples_ms_;

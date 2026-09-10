@@ -21265,3 +21265,21 @@ release profiles must not use the former allowance.
   (40/40), `test_planning_worker` (12/12), report parser contract tests and
   diagnostic SITL artifacts with source/build identity recorded. Qualification
   remains unchanged.
+
+### 2026-09-10 - Enforce execution timeline lifecycle invariant at runtime
+
+- **Owner/status:** Navigation execution store and runtime scheduler;
+  `IMPLEMENTED`.
+- **Scope:** Preserve `pending != nullptr => active != nullptr` at every store
+  mutation and add a fail-closed scheduler boundary that invalidates the store
+  if a future mutation path violates the invariant. Active invalidation and
+  pending revocation remain one transaction; a valid active bundle is retained
+  when only pending validation fails.
+- **Safety impact:** Tightens fail-closed behavior. It cannot create or expose a
+  command, does not activate pending early, and does not alter map, UNKNOWN,
+  certificate or deadline policy.
+- **Evidence/removal condition:** Keep while lifecycle tests and runtime traces
+  demonstrate no orphan pending state. Remove only if the store contract is
+  replaced by an equally atomic lifecycle proof and corresponding tests.
+- **Verification:** `test_committed_bundle_store` (40/40),
+  `test_planning_worker` (12/12), release build and `git diff --check`.
