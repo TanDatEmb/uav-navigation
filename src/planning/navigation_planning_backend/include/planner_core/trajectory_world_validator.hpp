@@ -467,16 +467,19 @@ inline std::optional<TrajectoryPieceLocation> locatePieceForSweep(
     return std::nullopt;
 }
 
-// The mission-owned UNKNOWN policy is applied to every swept segment. OCCUPIED
-// and OUT_OF_MAP always fail closed; the caller must choose explicitly whether
-// UNKNOWN is admissible for this candidate.
+// The mission-owned UNKNOWN policy is applied to MAIN intervals and the
+// explicit BACKUP policy is applied to BACKUP intervals. OCCUPIED, OUT_OF_MAP
+// and UNDEFINED always fail closed; the caller must choose explicitly whether
+// UNKNOWN is admissible for each role.
 inline SweptValidationResult validateExecutableCandidate(
         const navigation_world_model::WorldModelView& world,
         const CandidateCommandBundle& candidate,
         double authorization_wall_time,
         navigation_world_model::UnknownPolicy unknown_policy,
         const navigation_world_model::CurrentBodySupportPtr& body_support = {},
-        const bool initial_body_admission = false) {
+        const bool initial_body_admission = false,
+        const navigation_world_model::UnknownPolicy backup_unknown_policy =
+            navigation_world_model::UnknownPolicy::kRequireKnownFree) {
     SweptValidationResult result;
     const double duration = candidate.position.getTotalDuration();
     if (!std::isfinite(duration) || duration < 0.0 ||
@@ -536,9 +539,10 @@ inline SweptValidationResult validateExecutableCandidate(
         }
         return std::nullopt;
     };
-    const auto policy_for_role = [unknown_policy](const CandidateTrajectoryRole role) {
+    const auto policy_for_role = [unknown_policy, backup_unknown_policy](
+                                     const CandidateTrajectoryRole role) {
         return role == CandidateTrajectoryRole::BACKUP
-            ? navigation_world_model::UnknownPolicy::kRequireKnownFree
+            ? backup_unknown_policy
             : unknown_policy;
     };
     const auto next_role_boundary = [&candidate, duration](const double time_s) {
@@ -775,16 +779,15 @@ inline bool candidateHasBackupSuffix(const CandidateCommandBundle& candidate) {
            final_interval.end_tt == duration;
 }
 
-// A main-only candidate is safe under an allow-unknown mission only when the
-// complete executable trajectory is independently known-free.  A candidate
-// with a backup suffix may use the mission policy for MAIN, while BACKUP is
-// always tightened by validateExecutableCandidate().
+// The mission policy owns MAIN admissibility. A candidate with a BACKUP suffix
+// still uses the separate product/diagnostic BACKUP policy for BACKUP
+// intervals; the validator always rejects OCCUPIED, OUT_OF_MAP and UNDEFINED
+// regardless of either policy.
 inline navigation_world_model::UnknownPolicy candidateCertificatePolicy(
         const CandidateCommandBundle& candidate,
         const navigation_world_model::UnknownPolicy mission_policy) {
-    return candidateHasBackupSuffix(candidate)
-        ? mission_policy
-        : navigation_world_model::UnknownPolicy::kRequireKnownFree;
+    (void)candidate;
+    return mission_policy;
 }
 
 }  // namespace navigation_planning_backend

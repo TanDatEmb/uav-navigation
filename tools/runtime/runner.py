@@ -857,6 +857,11 @@ def _write_runtime_evidence_metadata(
     requested_cruise_speed_mps: float | None,
     ros_domain_id: int,
     xrce_port: int,
+    visibility_max_endpoints: int = 4096,
+    visibility_comparator: str = "baseline",
+    visibility_range_max_m: float = 40.0,
+    backup_evidence_experiment: dict[str, Any] | None = None,
+    visibility_sensor_overlay: Path | None = None,
     sitl_profile: dict[str, Any] | None = None,
     sitl_dynamics_profile: dict[str, Any] | None = None,
     scenario_identity: dict[str, Any] | None = None,
@@ -891,6 +896,19 @@ def _write_runtime_evidence_metadata(
         if (sitl_dynamics_profile or {}).get("control_envelope_max_velocity_mps") is not None
         else (sitl_profile or {}).get("control_envelope_max_velocity_mps"),
     )
+    planner_document = yaml.safe_load(
+        (ROOT / "src/runtime/navigation_runtime/config/planner.yaml").read_text(encoding="utf-8")
+    )
+    planner_values = planner_document.get("planner", {}) if isinstance(planner_document, dict) else {}
+    rog_values = planner_document.get("rog_map", {}) if isinstance(planner_document, dict) else {}
+    map_size = [float(value) for value in rog_values.get("map_size", [])]
+    ray_range = [float(value) for value in rog_values.get("raycasting", {}).get("ray_range", [])]
+    local_half_extent = [value / 2.0 for value in map_size] if len(map_size) == 3 else []
+    overlay_hash = None
+    if visibility_sensor_overlay is not None:
+        overlay_file = visibility_sensor_overlay / "lidar_mid360" / "model.sdf"
+        if overlay_file.is_file():
+            overlay_hash = hashlib.sha256(overlay_file.read_bytes()).hexdigest()
     identity = dict(scenario_identity or {})
     identity_files = {
         "scenario_config_sha256": scenario_config_path,
@@ -923,6 +941,42 @@ def _write_runtime_evidence_metadata(
         "replan_forward_s": 0.4,
         "stitch_duration_s": 0.4,
         "solve_deadline_s": 0.08,
+        "visibility_evidence": {
+            "maximum_endpoints": visibility_max_endpoints,
+            "requested_range_max_m": float(visibility_range_max_m),
+            "configured_sensor_range_max_m": float(visibility_range_max_m),
+            "configured_bridge_range_max_m": float(visibility_range_max_m),
+            "configured_fast_lio_maximum_range_m": float(visibility_range_max_m),
+            "runtime_range_verification": "not_available_from_startup_manifest",
+            "sensor_model_overlay": str(visibility_sensor_overlay.resolve()) if visibility_sensor_overlay else None,
+            "sensor_model_overlay_sha256": overlay_hash,
+            "rog_map_local_map_size_m": map_size,
+            "rog_map_local_half_extent_m": local_half_extent,
+            "rog_map_ray_range_m": ray_range,
+            "planner_visibility_horizon_cap_m": planner_values.get("visibility_horizon_cap_m"),
+            "planner_visibility_horizon_floor_m": planner_values.get("visibility_horizon_floor_m"),
+            "planner_sensing_horizon_m": planner_values.get("sensing_horizon_m"),
+            "expected_local_window_clipping": bool(
+                local_half_extent and float(visibility_range_max_m) > max(local_half_extent)
+            ),
+            "expected_local_window_clipping_axes": [
+                axis for axis, extent in zip(("x", "y", "z"), local_half_extent)
+                if float(visibility_range_max_m) > extent
+            ],
+            "expected_horizontal_window_clipping": bool(
+                len(local_half_extent) >= 2
+                and float(visibility_range_max_m) > max(local_half_extent[:2])
+            ),
+            "comparator": visibility_comparator,
+            "comparator_map_profile": map_profile,
+            "comparator_topology_source": "resolved_map_profile",
+            # This is an evidence-comparison run.  It is never qualification
+            # evidence, and any non-baseline range is explicitly diagnostic.
+            "qualification_eligible": False,
+        },
+        "backup_evidence_experiment": backup_evidence_experiment or _backup_evidence_experiment(
+            "raycasting_on_backup_strict"
+        ),
         "requested_cruise_speed_mps": requested_cruise_speed_mps,
         "speed_contract": speed_contract,
         "sitl_profile": sitl_profile or _sitl_profile_contract("default"),
@@ -985,11 +1039,20 @@ def _resolve_isolation_value(value: int | None, env_name: str, default: int, *, 
     return resolved
 
 
-def _ros_params(session: Session, source: Path) -> Path:
+def _ros_params(session: Session, source: Path, *, visibility_range_max_m: float = 40.0) -> Path:
     """Write only explicit ROS node parameter blocks, excluding runner metadata."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "fast_lio" not in value:
         raise ValueError(f"runtime ROS config is missing fast_lio: {source}")
+    if not math.isfinite(float(visibility_range_max_m)) or float(visibility_range_max_m) not in {40.0, 60.0}:
+        raise ValueError("visibility_range_max_m must be exactly 40.0 or 60.0")
+    fast_lio_parameters = value["fast_lio"].get("ros__parameters")
+    if not isinstance(fast_lio_parameters, dict):
+        raise ValueError(f"runtime ROS config is missing fast_lio.ros__parameters: {source}")
+    preprocessing = fast_lio_parameters.get("preprocessing")
+    if not isinstance(preprocessing, dict):
+        raise ValueError(f"runtime ROS config is missing fast_lio preprocessing: {source}")
+    preprocessing["maximum_range_m"] = float(visibility_range_max_m)
     node_parameters = {
         name: value[name]
         for name in ROS_PARAMETER_NODES
@@ -998,6 +1061,90 @@ def _ros_params(session: Session, source: Path) -> Path:
     target = session.directory / "fast_lio_params.yaml"
     target.write_text(yaml.safe_dump(node_parameters, sort_keys=False), encoding="utf-8")
     return target
+
+
+def _rewrite_visibility_model(source: Path, overlay_root: Path, range_max_m: float) -> Path | None:
+    """Create a session-local lidar model overlay for diagnostic range A/B runs.
+
+    Gazebo resolves ``model://lidar_mid360`` from the first resource path entry.
+    The overlay deliberately contains only the model descriptor and SDF, so a
+    run can change the sensor range without mutating the repository model or
+    the user's PX4 checkout.  ``None`` means the product baseline is selected.
+    """
+    if not math.isfinite(float(range_max_m)) or float(range_max_m) not in {40.0, 60.0}:
+        raise ValueError("visibility_range_max_m must be exactly 40.0 or 60.0")
+    if float(range_max_m) == 40.0:
+        return None
+    if not source.is_file():
+        raise FileNotFoundError(f"visibility model is missing: {source}")
+    model_config = source.with_name("model.config")
+    if not model_config.is_file():
+        raise FileNotFoundError(f"visibility model config is missing: {model_config}")
+    target_model_dir = overlay_root / source.parent.name
+    target_model_dir.mkdir(parents=True, exist_ok=True)
+    copy2(model_config, target_model_dir / "model.config")
+    tree = ET.parse(source)
+    root = tree.getroot()
+    max_nodes = []
+    for sensor in root.iter("sensor"):
+        if sensor.attrib.get("name") != "lidar":
+            continue
+        for lidar in sensor.findall("lidar"):
+            for scan_range in lidar.findall("range"):
+                max_nodes.extend(scan_range.findall("max"))
+    if len(max_nodes) != 1:
+        raise ValueError(
+            f"expected exactly one lidar/range/max in {source}, found {len(max_nodes)}"
+        )
+    max_nodes[0].text = format(float(range_max_m), ".17g")
+    tree.write(
+        target_model_dir / source.name,
+        encoding="utf-8",
+        xml_declaration=True,
+    )
+    return overlay_root
+
+
+def _prepare_visibility_sensor_overlay(session: Session, range_max_m: float) -> Path | None:
+    return _rewrite_visibility_model(
+        ROOT / "src/uav_simulation/models/lidar_mid360/model.sdf",
+        session.directory / "gazebo_resource_overlay",
+        range_max_m,
+    )
+
+
+def _validate_visibility_comparator(comparator: str, map_profile: str) -> None:
+    if comparator not in {"baseline", "walled"}:
+        raise ValueError("visibility_comparator must be baseline or walled")
+    if comparator == "walled" and map_profile not in {
+        "tunnel_irregular", "tunnel_smooth",
+    }:
+        raise ValueError(
+            "visibility_comparator=walled requires map_profile=tunnel_irregular or tunnel_smooth"
+        )
+
+
+def _backup_evidence_experiment(name: str) -> dict[str, Any]:
+    """Resolve the diagnostic 2x2 raycasting/BACKUP experiment matrix."""
+    experiments = {
+        "raycasting_on_backup_strict": (True, False),
+        "raycasting_on_backup_unknown": (True, True),
+        "raycasting_off_backup_strict": (False, False),
+        "raycasting_off_backup_unknown": (False, True),
+    }
+    if name not in experiments:
+        raise ValueError("unknown backup evidence experiment: " + name)
+    raycasting_enabled, backup_allow_unknown = experiments[name]
+    return {
+        "name": name,
+        "raycasting_enabled": raycasting_enabled,
+        "backup_allow_unknown": backup_allow_unknown,
+        "qualification_eligible": False,
+        "contract": (
+            "UNKNOWN is diagnostic-only; OCCUPIED, INFLATED and OUT_OF_MAP "
+            "remain blocked by the world-model traversability predicate"
+        ),
+    }
 
 
 def _mission_planning(source: Path | None) -> dict[str, Any]:
@@ -1607,6 +1754,8 @@ def _mapping_params(
     inject_failed_plan_from_rest_repeated: bool = False,
     inject_failed_same_identity_renewal_ordinal: int | None = None,
     tracking_experiment: dict[str, Any] | None = None,
+    raycasting_enabled: bool = True,
+    backup_allow_unknown: bool = False,
 ) -> Path:
     """Create the only ROS parameter file used by native planner backend navigation."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -1623,6 +1772,10 @@ def _mapping_params(
     )
     if not isinstance(planner, dict):
         raise ValueError("planner backend planner config must be a mapping")
+    planner.setdefault("planner", {})["backup_allow_unknown"] = bool(backup_allow_unknown)
+    planner.setdefault("rog_map", {}).setdefault("raycasting", {})["enable"] = bool(
+        raycasting_enabled
+    )
     # PVA is the direct control contract. Mission files provide requested
     # intent only; the planner YAML owns the physical boundary and the
     # product-owned control envelope. Applying mission values to the physical
@@ -2283,6 +2436,10 @@ def _run_sim_unlocked(
     test_case: str = "positive",
     motion_preset: str = "nominal",
     map_seed: int = 0,
+    visibility_max_endpoints: int = 4096,
+    visibility_comparator: str = "baseline",
+    visibility_range_max_m: float = 40.0,
+    backup_evidence_experiment: str = "raycasting_on_backup_strict",
     ros_domain_id: int | None = None,
     xrce_port: int | None = None,
     auto_scenario: bool = False,
@@ -2317,6 +2474,15 @@ def _run_sim_unlocked(
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
+    if visibility_max_endpoints not in {4096, 8192, 16384, 20160}:
+        raise ValueError(
+            "visibility_max_endpoints must be one of 4096, 8192, 16384 or 20160"
+        )
+    if visibility_comparator not in {"baseline", "walled"}:
+        raise ValueError("visibility_comparator must be baseline or walled")
+    if not math.isfinite(float(visibility_range_max_m)) or float(visibility_range_max_m) not in {40.0, 60.0}:
+        raise ValueError("visibility_range_max_m must be exactly 40.0 or 60.0")
+    backup_evidence = _backup_evidence_experiment(backup_evidence_experiment)
     sitl_dynamics_profile_contract = _sitl_dynamics_profile_contract(sitl_dynamics_profile)
     if tracking_experiment_mode == "velocity-only" and sitl_dynamics_profile != "off":
         expected = sitl_dynamics_profile_contract
@@ -2366,6 +2532,7 @@ def _run_sim_unlocked(
     map_profile, scene_descriptor = _resolve_scene_profile(
         map_scene, test_case, motion_preset, map_profile
     )
+    _validate_visibility_comparator(visibility_comparator, map_profile)
     world_name = _world_name_for_profile(map_profile)
     world_path = ROOT / "src/uav_simulation/worlds" / f"{world_name}.sdf"
     if not world_path.is_file():
@@ -2388,6 +2555,8 @@ def _run_sim_unlocked(
         "sitl_profile": sitl_profile_contract,
         "sitl_dynamics_profile": sitl_dynamics_profile_contract,
         "takeoff_reference": sitl_profile_contract["takeoff_reference"],
+        "visibility_comparator": visibility_comparator,
+        "backup_evidence_experiment": backup_evidence,
     })
     if manual_takeoff:
         if headless or control_interface != "external_mode" or not auto_scenario:
@@ -2559,6 +2728,13 @@ def _run_sim_unlocked(
     )
     session = Session.create(ARTIFACT_ROOT, session_name)
     print(f"Session: {session.directory}", flush=True)
+    visibility_sensor_overlay = _prepare_visibility_sensor_overlay(
+        session, visibility_range_max_m
+    )
+    scenario_config["scenario"]["visibility_range_max_m"] = float(visibility_range_max_m)
+    scenario_config["scenario"]["visibility_sensor_overlay"] = (
+        str(visibility_sensor_overlay.resolve()) if visibility_sensor_overlay else None
+    )
     if mission_file is not None:
         mission_file = _resolved_mission_file(session, mission_file, speed_cap_mps)
         scenario_config["scenario"]["mission_file"] = str(mission_file)
@@ -2687,6 +2863,11 @@ def _run_sim_unlocked(
         requested_cruise_speed_mps=requested_cruise_speed_mps,
         ros_domain_id=isolated_domain,
         xrce_port=isolated_xrce_port,
+        visibility_max_endpoints=visibility_max_endpoints,
+        visibility_comparator=visibility_comparator,
+        visibility_range_max_m=visibility_range_max_m,
+        visibility_sensor_overlay=visibility_sensor_overlay,
+        backup_evidence_experiment=backup_evidence,
         sitl_profile=sitl_profile_contract,
         sitl_dynamics_profile=sitl_dynamics_profile_contract,
         scenario_identity=scenario_identity,
@@ -2745,7 +2926,11 @@ def _run_sim_unlocked(
         print(session.directory)
         return 1
     try:
-        ros_config = _ros_params(session, RUNTIME_CONFIG / "sim.yaml")
+        ros_config = _ros_params(
+            session,
+            RUNTIME_CONFIG / "sim.yaml",
+            visibility_range_max_m=visibility_range_max_m,
+        )
         mapping_config = None if characterization_profile else _mapping_params(
             session,
             RUNTIME_CONFIG / "mapping.yaml",
@@ -2772,6 +2957,8 @@ def _run_sim_unlocked(
             inject_failed_plan_from_rest_repeated=inject_failed_plan_from_rest_repeated,
             inject_failed_same_identity_renewal_ordinal=inject_failed_same_identity_renewal_ordinal,
             tracking_experiment=tracking_experiment,
+            raycasting_enabled=bool(backup_evidence["raycasting_enabled"]),
+            backup_allow_unknown=bool(backup_evidence["backup_allow_unknown"]),
         )
         external_mode_config: Path | None = None
         if control_interface == "external_mode":
@@ -2847,6 +3034,7 @@ def _run_sim_unlocked(
                 "PX4_GZ_WORLD": world_name,
                 "PX4_NAVIGATION_SITL_PROFILE": sitl_profile_contract["name"],
                 "PX4_NAVIGATION_SITL_DYNAMICS_PROFILE": sitl_dynamics_profile_contract["name"],
+                "PX4_GZ_EXTRA_RESOURCE_PATH": str(visibility_sensor_overlay) if visibility_sensor_overlay else "",
                 # Automated scenarios use the same PX4 input policy in GUI
                 # and headless runs; `make sim` remains the manual mode.
                 "PX4_PARAM_COM_RC_IN_MODE": _px4_manual_control_mode(
@@ -2906,14 +3094,14 @@ def _run_sim_unlocked(
             "-p", "input_topic:=/lidar/points",
             "-p", "ros_topic:=/lidar/free_space_endpoints",
             "-p", "expected_frame:=livox_frame",
-            "-p", "maximum_endpoints:=4096",
+            "-p", f"maximum_endpoints:={visibility_max_endpoints}",
             "-p", "horizontal_count:=720",
             "-p", "vertical_count:=28",
             "-p", "horizontal_angle_min_rad:=-3.141592653589793",
             "-p", "horizontal_angle_max_rad:=3.141592653589793",
             "-p", "vertical_angle_min_rad:=-0.122173047639603",
             "-p", "vertical_angle_max_rad:=0.907571211037051",
-            "-p", "range_max_m:=40.0",
+            "-p", f"range_max_m:={visibility_range_max_m}",
             ], enable_rviz=not headless), cwd=ROOT)
         if not characterization_profile:
             session.start("px4_ingress", _ros_shell([
@@ -3445,6 +3633,28 @@ def main() -> int:
         help="deterministic seed for stochastic map profiles (for example forest_clutter)",
     )
     external_mode.add_argument(
+        "--visibility-max-endpoints", type=int, default=4096,
+        choices=(4096, 8192, 16384, 20160),
+        help="diagnostic no-return endpoint cap; 4096 is the product baseline",
+    )
+    external_mode.add_argument(
+        "--visibility-comparator", choices=("baseline", "walled"), default="baseline",
+        help="diagnostic evidence comparator label; does not alter map geometry",
+    )
+    external_mode.add_argument(
+        "--visibility-range-max-m", type=float, choices=(40.0, 60.0), default=40.0,
+        help="diagnostic sensor/FAST-LIO/visibility range; 40 m is the product baseline",
+    )
+    external_mode.add_argument(
+        "--backup-evidence-experiment",
+        choices=(
+            "raycasting_on_backup_strict", "raycasting_on_backup_unknown",
+            "raycasting_off_backup_strict", "raycasting_off_backup_unknown",
+        ),
+        default="raycasting_on_backup_strict",
+        help="diagnostic 2x2 raycasting/BACKUP matrix; never qualification evidence",
+    )
+    external_mode.add_argument(
         "--ros-domain-id", type=int, default=None,
         help=f"isolated ROS 2 DDS domain (default: $UAV_NAV_ROS_DOMAIN_ID or {DEFAULT_ROS_DOMAIN_ID})",
     )
@@ -3523,6 +3733,28 @@ def main() -> int:
     external_mode_gui.add_argument(
         "--map-seed", type=int, default=0,
         help="deterministic seed for stochastic map profiles (for example forest_clutter)",
+    )
+    external_mode_gui.add_argument(
+        "--visibility-max-endpoints", type=int, default=4096,
+        choices=(4096, 8192, 16384, 20160),
+        help="diagnostic no-return endpoint cap; 4096 is the product baseline",
+    )
+    external_mode_gui.add_argument(
+        "--visibility-comparator", choices=("baseline", "walled"), default="baseline",
+        help="diagnostic evidence comparator label; does not alter map geometry",
+    )
+    external_mode_gui.add_argument(
+        "--visibility-range-max-m", type=float, choices=(40.0, 60.0), default=40.0,
+        help="diagnostic sensor/FAST-LIO/visibility range; 40 m is the product baseline",
+    )
+    external_mode_gui.add_argument(
+        "--backup-evidence-experiment",
+        choices=(
+            "raycasting_on_backup_strict", "raycasting_on_backup_unknown",
+            "raycasting_off_backup_strict", "raycasting_off_backup_unknown",
+        ),
+        default="raycasting_on_backup_strict",
+        help="diagnostic 2x2 raycasting/BACKUP matrix; never qualification evidence",
     )
     external_mode_gui.add_argument(
         "--ros-domain-id", type=int, default=None,
@@ -3612,6 +3844,10 @@ def main() -> int:
             test_case=args.test_case,
             motion_preset=args.motion_preset,
             map_seed=args.map_seed,
+            visibility_max_endpoints=args.visibility_max_endpoints,
+            visibility_comparator=args.visibility_comparator,
+            visibility_range_max_m=args.visibility_range_max_m,
+            backup_evidence_experiment=args.backup_evidence_experiment,
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
@@ -3637,6 +3873,10 @@ def main() -> int:
             test_case=args.test_case,
             motion_preset=args.motion_preset,
             map_seed=args.map_seed,
+            visibility_max_endpoints=args.visibility_max_endpoints,
+            visibility_comparator=args.visibility_comparator,
+            visibility_range_max_m=args.visibility_range_max_m,
+            backup_evidence_experiment=args.backup_evidence_experiment,
             ros_domain_id=args.ros_domain_id,
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,

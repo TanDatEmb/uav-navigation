@@ -459,14 +459,15 @@ navigation_planning::TrajectoryValidationResult PlannerFacade::validateCommitted
   candidate.start_wall_time = snapshot.position.start_WT;
   candidate.roles = snapshot.roles;
   // Revalidation is another certificate boundary, not a lighter-weight query.
-  // Apply the same role-aware policy used by initial authorization: a
-  // main-only candidate is known-free even when the mission permits UNKNOWN;
-  // only a candidate with a complete BACKUP suffix may use the mission policy
-  // for its MAIN interval. BACKUP remains tightened inside the validator.
+  // Apply the same role-aware policy used by initial authorization: MAIN uses
+  // the mission policy, while BACKUP remains governed by its explicit
+  // product/diagnostic policy inside the validator.
+  const auto backup_policy = impl_->planner->backupPolicy();
   const auto certificate_policy = candidateCertificatePolicy(
       candidate, impl_->planner->unknownPolicy());
   const auto validation = validateExecutableCandidate(
-      *world, candidate, authorization_wall_time_s, certificate_policy);
+      *world, candidate, authorization_wall_time_s, certificate_policy,
+      {}, false, backup_policy);
   output.valid = validation.valid;
   output.begin_time_s = validation.begin_tt;
   output.first_blocked_time_s = validation.first_blocked_tt;

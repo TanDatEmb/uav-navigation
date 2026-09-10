@@ -10,6 +10,10 @@ planner:
   # refinement is diagnostic/experimental and must not consume the completion
   # budget or become a prerequisite for a complete MAIN+BACKUP bundle.
   backup_refinement_enabled: false
+  # Diagnostic-only 2x2 experiment switch. Product baseline is strict
+  # KNOWN_FREE; when true, BACKUP may traverse UNKNOWN but never OCCUPIED,
+  # INFLATED or OUT_OF_MAP. The runner marks such runs non-qualifying.
+  backup_allow_unknown: false
   # Keep the convex search box local to the collision-checked A* guide. A
   # 3 m half-width is clipped asymmetrically by the vertical map envelope at
   # nominal altitude, moving the initialization toward z~=2.1 m and feeding

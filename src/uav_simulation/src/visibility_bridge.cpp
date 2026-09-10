@@ -114,6 +114,25 @@ class VisibilityBridge final : public rclcpp::Node {
     source_count.datatype = sensor_msgs::msg::PointField::UINT8;
     source_count.count = converted->source_ray_count;
     cloud.fields.push_back(source_count);
+    sensor_msgs::msg::PointField detected_count = source_count;
+    detected_count.name = "visibility_detected_no_return_count";
+    detected_count.count = converted->detected_no_return_count;
+    cloud.fields.push_back(detected_count);
+    sensor_msgs::msg::PointField selected_count = source_count;
+    selected_count.name = "visibility_selected_no_return_count";
+    selected_count.count = converted->selected_no_return_count;
+    cloud.fields.push_back(selected_count);
+    sensor_msgs::msg::PointField sampling_cap = source_count;
+    sampling_cap.name = "visibility_sampling_cap";
+    sampling_cap.count = converted->sampling_cap;
+    cloud.fields.push_back(sampling_cap);
+    sensor_msgs::msg::PointField sampling_policy = source_count;
+    sampling_policy.name = "visibility_sampling_policy";
+    sampling_policy.datatype = sensor_msgs::msg::PointField::UINT8;
+    // PointField::count must remain positive; encode enum value + 1.
+    sampling_policy.count =
+        static_cast<std::uint32_t>(converted->sampling_policy) + 1U;
+    cloud.fields.push_back(sampling_policy);
     sensor_msgs::PointCloud2Iterator<float> x(cloud, "x");
     sensor_msgs::PointCloud2Iterator<float> y(cloud, "y");
     sensor_msgs::PointCloud2Iterator<float> z(cloud, "z");

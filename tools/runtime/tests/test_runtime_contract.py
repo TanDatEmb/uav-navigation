@@ -70,6 +70,69 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_visibility_range_overlay_is_session_local_and_exact(self) -> None:
+        source = ROOT / "src/uav_simulation/models/lidar_mid360/model.sdf"
+        with tempfile.TemporaryDirectory() as temporary:
+            overlay_root = Path(temporary) / "overlay"
+            self.assertIsNone(runner._rewrite_visibility_model(source, overlay_root, 40.0))
+            result = runner._rewrite_visibility_model(source, overlay_root, 60.0)
+            self.assertEqual(result, overlay_root)
+            overlay = ET.parse(overlay_root / "lidar_mid360" / "model.sdf")
+            self.assertEqual(overlay.findtext(".//sensor[@name='lidar']/lidar/range/max"), "60")
+            self.assertEqual(ET.parse(source).findtext(".//sensor[@name='lidar']/lidar/range/max"), "40.0")
+            self.assertTrue((overlay_root / "lidar_mid360" / "model.config").is_file())
+
+    def test_visibility_range_overlay_rejects_unsupported_range(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(ValueError):
+                runner._rewrite_visibility_model(
+                    ROOT / "src/uav_simulation/models/lidar_mid360/model.sdf",
+                    Path(temporary),
+                    50.0,
+                )
+
+    def test_visibility_range_is_propagated_to_fast_lio_parameters(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            params = runner._ros_params(
+                SimpleNamespace(directory=Path(temporary)),
+                ROOT / "config/runtime/sim.yaml",
+                visibility_range_max_m=60.0,
+            )
+            document = yaml.safe_load(params.read_text(encoding="utf-8"))
+            self.assertEqual(
+                document["fast_lio"]["ros__parameters"]["preprocessing"]["maximum_range_m"],
+                60.0,
+            )
+
+    def test_visibility_runner_wires_overlay_precedence_and_range(self) -> None:
+        launcher = (ROOT / "tools/simulation/run_px4_mid360.sh").read_text()
+        self.assertIn("PX4_GZ_EXTRA_RESOURCE_PATH", launcher)
+        self.assertIn('EXTRA_MODELS="${PX4_GZ_EXTRA_RESOURCE_PATH:-}"', launcher)
+        source = (RUNTIME / "runner.py").read_text()
+        self.assertIn('"PX4_GZ_EXTRA_RESOURCE_PATH": str(visibility_sensor_overlay)', source)
+        self.assertIn('"-p", f"range_max_m:={visibility_range_max_m}"', source)
+
+    def test_visibility_comparator_requires_resolved_walled_profile(self) -> None:
+        runner._validate_visibility_comparator("baseline", "long_three_pillars")
+        runner._validate_visibility_comparator("walled", "tunnel_irregular")
+        with self.assertRaises(ValueError):
+            runner._validate_visibility_comparator("walled", "long_three_pillars")
+
+    def test_backup_evidence_experiment_is_explicit_two_by_two_matrix(self) -> None:
+        expected = {
+            "raycasting_on_backup_strict": (True, False),
+            "raycasting_on_backup_unknown": (True, True),
+            "raycasting_off_backup_strict": (False, False),
+            "raycasting_off_backup_unknown": (False, True),
+        }
+        for name, (raycasting, backup_unknown) in expected.items():
+            contract = runner._backup_evidence_experiment(name)
+            self.assertEqual(contract["raycasting_enabled"], raycasting)
+            self.assertEqual(contract["backup_allow_unknown"], backup_unknown)
+            self.assertFalse(contract["qualification_eligible"])
+        with self.assertRaises(ValueError):
+            runner._backup_evidence_experiment("raycasting_off")
+
     def test_tracking_gate_defaults_to_zero_and_is_not_a_run_option(self) -> None:
         defaults = runner._tracking_experiment_payload()
         self.assertEqual(defaults["mode"], "relaxed")
@@ -425,6 +488,11 @@ class RuntimeContractTest(unittest.TestCase):
             visibility_observation_present=True,
             visibility_source_ray_count=5,
             visibility_no_return_count=2,
+            visibility_selected_no_return_count=2,
+            visibility_detected_no_return_count=3,
+            visibility_sampling_cap=4096,
+            visibility_sampling_policy="stratified_2d",
+            visibility_provenance_error="",
             visibility_stamp_skew_ns=0,
         )
         payload = monitor._registered_scan_payload(message)
@@ -436,6 +504,11 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(payload["free_space_point_count"], 2)
         self.assertEqual(payload["sensor_origin_position"], [1.0, 2.0, 3.0])
         self.assertEqual(payload["visibility_no_return_count"], 2)
+        self.assertEqual(payload["visibility_selected_no_return_count"], 2)
+        self.assertEqual(payload["visibility_detected_no_return_count"], 3)
+        self.assertEqual(payload["visibility_sampling_cap"], 4096)
+        self.assertEqual(payload["visibility_sampling_policy"], "stratified_2d")
+        self.assertEqual(payload["visibility_provenance_error"], "")
 
     def test_fail_closed_does_not_require_rejected_trajectory_sample(self) -> None:
         import external_mode_scenario

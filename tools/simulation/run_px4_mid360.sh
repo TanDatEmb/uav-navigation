@@ -96,7 +96,12 @@ export GZ_SIM_SYSTEM_PLUGIN_PATH="${GZ_SIM_SYSTEM_PLUGIN_PATH:-}"
 export GZ_SIM_SERVER_CONFIG_PATH="${GZ_SIM_SERVER_CONFIG_PATH:-}"
 # shellcheck disable=SC1090
 source "${PX4_GZ_ENV}"
-export GZ_SIM_RESOURCE_PATH="${UAV_MODELS}:${UAV_WORLDS}:${GZ_SIM_RESOURCE_PATH:-}"
+EXTRA_MODELS="${PX4_GZ_EXTRA_RESOURCE_PATH:-}"
+if [[ -n "${EXTRA_MODELS}" ]]; then
+  export GZ_SIM_RESOURCE_PATH="${EXTRA_MODELS}:${UAV_MODELS}:${UAV_WORLDS}:${GZ_SIM_RESOURCE_PATH:-}"
+else
+  export GZ_SIM_RESOURCE_PATH="${UAV_MODELS}:${UAV_WORLDS}:${GZ_SIM_RESOURCE_PATH:-}"
+fi
 export GZ_IP="${GZ_IP:-127.0.0.1}"
 # ROS setup may point GZ_CONFIG_PATH to tools-only vendor entries.
 # Clear it so Gazebo Sim and PX4's gzsim rcS checks use the real simulator libs.

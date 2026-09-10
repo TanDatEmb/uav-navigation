@@ -47,6 +47,9 @@ namespace navigation_planning_backend {
         bool backup_refinement_enabled{false};
         navigation_world_model::UnknownPolicy unknown_space_policy{
             navigation_world_model::UnknownPolicy::kRequireKnownFree};
+        // Diagnostic-only BACKUP policy override. Product default remains
+        // strict KNOWN_FREE; allowing UNKNOWN is never qualification evidence.
+        bool backup_allow_unknown{false};
 
         // Bound to the immutable world model after YAML loading. Map
         // resolution has one owner: the world-model snapshot.
@@ -141,6 +144,8 @@ namespace navigation_planning_backend {
                              preserve_backup_altitude, true);
             loader.LoadParam("planner/backup_refinement_enabled",
                              backup_refinement_enabled, false);
+            loader.LoadParam("planner/backup_allow_unknown",
+                             backup_allow_unknown, false);
             loader.LoadParam("planner/use_fov_cut", use_fov_cut, false);
             if (mission_limits.has_value()) {
                 unknown_space_policy =

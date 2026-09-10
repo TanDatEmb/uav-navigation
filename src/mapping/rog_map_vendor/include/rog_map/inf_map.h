@@ -49,6 +49,14 @@ namespace rog_map {
 
         void getInflationNumAndTime(double &inf_n, double &inf_t);
 
+        void resetPlanningStateChangeCount() noexcept {
+            planning_state_change_count_ = 0;
+        }
+
+        [[nodiscard]] std::uint64_t planningStateChangeCount() const noexcept {
+            return planning_state_change_count_;
+        }
+
         void writeMapInfoToLog(std::ofstream &log_file);
 
         void boxSearch(const Vec3f &box_min, const Vec3f &box_max,
@@ -88,6 +96,7 @@ namespace rog_map {
         rog_map::Config cfg_;
         int inf_num_{0};
         double inf_t_{0.0};
+        std::uint64_t planning_state_change_count_{0};
 
         void triggerJumpingEdge(const rog_map::Vec3i &id_g,
                                 const rog_map::GridType &from_type,

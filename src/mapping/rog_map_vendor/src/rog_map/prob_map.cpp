@@ -360,6 +360,7 @@ MapUpdateOutcome ProbMap::updateProbMap(
     const PointCloud& cloud, const PointCloud& free_space_endpoints,
     const Pose& pose, const Vec3f& ray_origin) {
     last_diagnostics_ = RaycastDiagnostics{};
+    inf_map_->resetPlanningStateChangeCount();
     last_diagnostics_.endpoint_count = cloud.size();
     last_diagnostics_.free_space_endpoint_count = free_space_endpoints.size();
     last_diagnostics_.allocated_voxel_count = static_cast<std::uint64_t>(sc_.map_vox_num);
@@ -426,6 +427,8 @@ MapUpdateOutcome ProbMap::updateProbMap(
     }
     inf_map_->getInflationNumAndTime(time_consuming_[6], time_consuming_[3]);
     last_diagnostics_.inflation_update_count = static_cast<std::uint64_t>(time_consuming_[6]);
+    last_diagnostics_.inflated_planning_state_change_count =
+        inf_map_->planningStateChangeCount();
     last_diagnostics_.rog_inflation_us = static_cast<std::int64_t>(time_consuming_[3] * 1e6);
     time_consuming_[0] = tc.stop();
     last_diagnostics_.rog_total_update_us = static_cast<std::int64_t>(time_consuming_[0] * 1e6);
@@ -734,6 +737,7 @@ void ProbMap::hitPointUpdate(const Vec3f& pos, const int& hash_id, const int& hi
     }
 
     if (from_type != to_type) {
+        ++last_diagnostics_.base_planning_state_change_count;
         Vec3f center_pos;
         Vec3i id_g;
         posToGlobalIndex(pos, id_g);

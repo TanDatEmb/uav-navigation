@@ -21131,3 +21131,115 @@ release profiles must not use the former allowance.
   safety/terminal path, no `external_mode_completed` before that witness, and
   no moving setpoint after the safety stop. GPS-off SITL remains diagnostic and
   must report the unresolved Hold handover as `BLOCKED` rather than `PASS`.
+
+### 2026-09-09 - Add diagnostic visibility-evidence provenance and stratified sampling
+
+- **Owner/status:** Gazebo visibility bridge, FAST-LIO RegisteredScan boundary and
+  runtime evidence monitor; `DIAGNOSTIC_IMPLEMENTATION`, product default unchanged.
+- **Scope:** Distinguish source-ray count, detected no-return count, selected
+  no-return count, endpoint cap and sampling policy. Replace flatten-list
+  endpoint selection with deterministic 2-D elevation/azimuth stratified
+  sampling. Expose diagnostic endpoint caps 4096/8192/16384/20160 through the
+  runner; retain 4096 and 40 m as the product baseline. Source ray indices are
+  retained inside the sampler and tests, but are not claimed as downstream
+  RegisteredScan per-endpoint metadata.
+- **Safety impact:** Missing or incomplete visibility provenance is fail-closed
+  and cannot become explicit free-space evidence. `UNKNOWN`, `OUT_OF_MAP`,
+  KNOWN_FREE, V/A/J, freshness, collision and mission-acceptance gates are
+  unchanged. No map window, ray range, or product default was widened.
+- **Evidence:** Existing artifacts report 20160 source rays but only 4096
+  transmitted no-return endpoints; the current ROG ray range of 100 m cannot
+  create evidence beyond the 40 m sensor/bridge producer range. The experiment
+  is intended to measure whether evidence retention, rather than MINCO, is
+  responsible for repeated KNOWN_FREE/backup rejection.
+- **Removal/review condition:** Revert or revise if A/B evidence does not reduce
+  KNOWN_FREE/backup rejection, or if mapping/raycast/snapshot p95/p99 causes
+  freshness or planner-budget regressions. Do not promote a larger endpoint
+  cap or extended range without repeated 5-run-per-scenario distributions and
+  refreshed runtime provenance.
+- **Compatibility note:** The previous fallback that inferred source-ray count
+  from the transmitted cloud width is removed. A present visibility payload
+  missing or contradicting provenance is surfaced as `MALFORMED_METADATA` and
+  contributes no explicit free-space evidence; a genuinely absent visibility
+  association remains distinguishable from a valid present-empty scan.
+- **Verification:** `source /opt/ros/jazzy/setup.bash && python3
+  tools/runtime/build.py --mode release build`; focused visibility,
+  navigation-contract and runtime-monitor tests; diagnostic A/B runs with
+  endpoint caps 4096/8192/16384/20160. Qualification remains false for all
+  diagnostic caps.
+
+### 2026-09-10 - Add session-local visibility range A/B overlay
+
+- **Owner/status:** SITL runner, Gazebo MID-360 model and FAST-LIO parameter
+  generation; `DIAGNOSTIC_IMPLEMENTATION`, product default unchanged.
+- **Scope:** `--visibility-range-max-m 40|60` creates an isolated session-local
+  `lidar_mid360` model overlay when 60 m is requested, prepends that overlay to
+  Gazebo's resource path, and applies the same resolved range to the visibility
+  bridge and FAST-LIO preprocessing. The 40 m path uses the repository model.
+  The manifest records requested/effective sensor, bridge and FAST-LIO ranges
+  plus the overlay path. This is an evidence experiment; it does not widen the
+  planner map window or ROG-Map `ray_range` and it cannot claim an open-map fix
+  from a tunnel/walled comparator.
+- **Safety impact:** No safety gate, KNOWN_FREE semantics, freshness budget,
+  map window or acceptance threshold changes. Any non-baseline range is marked
+  non-qualifying. If the overlay, XML contract or resolved FAST-LIO range is
+  malformed, the run setup fails rather than silently mixing sensor ranges.
+- **Evidence/removal condition:** Keep only while repeated 5-run A/B artifacts
+  show whether additional sensor evidence improves backup/KNOWN_FREE outcomes
+  without freshness or raycast latency regressions; remove if no causal benefit
+  is observed or if the overlay diverges from the actual Gazebo model.
+- **Verification:** Runner unit tests for exact XML replacement and resource
+  precedence; release build/manifest refresh; then paired 40 m/60 m runs with
+  identical map, seed, speed and endpoint cap. Qualification remains false.
+
+### 2026-09-10 - Add diagnostic 2x2 raycasting/BACKUP evidence matrix
+
+- **Owner/status:** Navigation planner configuration and SITL runner;
+  `DIAGNOSTIC_IMPLEMENTATION`, product baseline unchanged.
+- **Scope:** The runner exposes four explicit combinations: raycasting ON or
+  OFF, crossed with strict BACKUP `KNOWN_FREE` or diagnostic BACKUP
+  `ALLOW_UNKNOWN`. UNKNOWN is permitted only by the diagnostic BACKUP policy;
+  the shared world-model predicate continues to reject OCCUPIED, INFLATED,
+  OUT_OF_MAP and UNDEFINED cells. The product default remains ON + strict.
+- **Safety impact:** Configurations other than ON + strict are non-qualifying
+  SITL diagnostics and must not be used for flight. No collision, inflated,
+  out-of-map, freshness, tracking or External Mode gate is relaxed. Disabling
+  raycasting removes free-space evidence production but does not turn occupied
+  cells into traversable cells.
+- **Evidence/removal condition:** Retain only long enough to separate the
+  causal effect of the KNOWN_FREE certificate from the effect of ROG-Map
+  raycasting. Revert or redesign if artifacts cannot prove the active matrix
+  cell or if the unknown-policy path can accept a forbidden cell state.
+- **Verification:** Unit tests for the four-cell contract and world-model
+  traversability; release build; each matrix cell run five times per selected
+  map/profile with raycast, endpoint, backup reject, collision and mission
+  outcomes recorded. Qualification remains false for all cells except the
+  unchanged baseline, which still requires normal acceptance evidence.
+
+### 2026-09-10 - Honor MAIN allow-UNKNOWN policy in candidate certification
+
+- **Owner/status:** navigation planning backend; `IMPLEMENTED`, diagnostic
+  behavior pending representative SITL evidence.
+- **Scope:** When the mission owns `unknown_policy: allow_unknown`, MAIN
+  intervals (including a main-only candidate) use that policy during initial
+  authorization and revalidation. Nominal speed/braking support is evaluated
+  with the same MAIN policy instead of unconditionally requiring KNOWN_FREE.
+  BACKUP intervals continue to use `backup_allow_unknown`; the world-model
+  predicate still rejects OCCUPIED, OUT_OF_MAP and UNDEFINED.
+- **Safety impact:** This intentionally permits MAIN to enter UNKNOWN and can
+  reduce conservative braking evidence; it is diagnostic-only unless separately
+  qualified. No occupied/inflated/out-of-map, dynamic, freshness, tracking,
+  command-lease or External Mode gate is relaxed.
+- **Evidence:** Source review found `candidateCertificatePolicy` converting a
+  main-only allow-UNKNOWN candidate back to `kRequireKnownFree`, and
+  `knownFreeGuideSupport` feeding the MAIN speed governor regardless of the
+  mission policy. Both paths rejected the requested policy before execution,
+  even though A* and the goal shortcut used allow-UNKNOWN.
+- **Removal/review condition:** Revert or redesign if repeated runs show that
+  MAIN policy support admits a forbidden cell state, or if diagnostic runs
+  cannot distinguish UNKNOWN traversal from occupied/out-of-map rejection.
+  Qualification requires repeated representative runs with strict and
+  allow-UNKNOWN BACKUP cells separated.
+- **Verification:** Planning backend trajectory tests, canonical Release build,
+  runtime contract suite, `git diff --check`, then repeated SITL comparing
+  mission `blocked` versus `allow_unknown` with both BACKUP policies.

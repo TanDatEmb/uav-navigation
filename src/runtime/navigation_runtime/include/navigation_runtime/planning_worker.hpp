@@ -1,6 +1,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -33,6 +34,10 @@ struct PlanningWorkerSnapshot {
   std::uint64_t exact_duplicates{0};
   std::uint64_t replaced_pending{0};
   std::uint64_t rejected_lower_priority{0};
+  // Monotonic timing witnesses for the latest worker transaction. These are
+  // diagnostic only and do not participate in queue admission or cancellation.
+  std::int64_t last_enqueue_wait_us{0};
+  std::int64_t last_worker_runtime_us{0};
   bool in_flight{false};
   bool pending{false};
   bool fatal{false};
@@ -110,7 +115,8 @@ class PlanningWorker {
         ++snapshot_.replaced_pending;
         disposition = PlanningSubmitDisposition::kReplacedPending;
       }
-      pending_ = WorkItem{std::move(key), priority, std::move(job)};
+      pending_ = WorkItem{std::move(key), priority, std::move(job),
+                          std::chrono::steady_clock::now()};
       ++snapshot_.submitted;
       snapshot_.pending = true;
     }
@@ -203,6 +209,7 @@ class PlanningWorker {
     PlanningKey key;
     PlanningPriority priority{PlanningPriority::kNormalRenewal};
     Job job;
+    std::chrono::steady_clock::time_point enqueued_at;
   };
   struct ActiveItem {
     PlanningKey key;
@@ -214,12 +221,16 @@ class PlanningWorker {
     for (;;) {
       std::optional<WorkItem> work;
       std::stop_token job_stop;
+      std::chrono::steady_clock::time_point worker_started_at;
       {
         std::unique_lock lock(mutex_);
         cv_.wait(lock, worker_stop, [this] { return pending_.has_value(); });
         if (worker_stop.stop_requested()) return;
         work = std::move(pending_);
         pending_.reset();
+        worker_started_at = std::chrono::steady_clock::now();
+        snapshot_.last_enqueue_wait_us = std::chrono::duration_cast<
+            std::chrono::microseconds>(worker_started_at - work->enqueued_at).count();
         active_.emplace();
         active_->key = work->key;
         active_->priority = work->priority;
@@ -252,6 +263,9 @@ class PlanningWorker {
       {
         std::lock_guard lock(mutex_);
         active_.reset();
+        snapshot_.last_worker_runtime_us = std::chrono::duration_cast<
+            std::chrono::microseconds>(std::chrono::steady_clock::now() -
+                                       worker_started_at).count();
         snapshot_.in_flight = false;
         ++snapshot_.completed;
       }

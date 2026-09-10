@@ -74,16 +74,25 @@ bool boundedVisibilityCloud(const sensor_msgs::msg::PointCloud2& cloud) {
   return x_found && y_found && z_found;
 }
 
-std::uint32_t visibilitySourceRayCount(
+std::optional<std::uint32_t> visibilitySourceRayCount(
     const sensor_msgs::msg::PointCloud2& cloud) noexcept {
   const auto metadata = std::find_if(
       cloud.fields.begin(), cloud.fields.end(), [](const auto& field) {
         return field.name == "visibility_source_ray_count";
       });
-  if (metadata != cloud.fields.end() && metadata->count >= cloud.width * cloud.height) {
-    return metadata->count;
-  }
-  return cloud.width * cloud.height;
+  if (metadata != cloud.fields.end()) return metadata->count;
+  return std::nullopt;
+}
+
+std::optional<std::uint32_t> visibilityMetadataCount(
+    const sensor_msgs::msg::PointCloud2& cloud,
+    const std::string_view name) noexcept {
+  const auto metadata = std::find_if(
+      cloud.fields.begin(), cloud.fields.end(), [&](const auto& field) {
+        return field.name == name;
+      });
+  if (metadata == cloud.fields.end()) return std::nullopt;
+  return metadata->count;
 }
 
 diagnostic_msgs::msg::KeyValue keyValue(std::string key, std::string value) {
@@ -560,11 +569,46 @@ void RosOutputPublisher::publish(const ProcessResult& result,
       observation.free_space_endpoints = makeFreeSpaceCloud(
           *matching_visibility_cloud, *corrected_odometry, stamp);
       observation.visibility_observation_present = true;
-      observation.visibility_source_ray_count =
+      const auto source_ray_count =
           visibilitySourceRayCount(*matching_visibility_cloud);
-      observation.visibility_no_return_count =
+      const auto detected_no_return_count = visibilityMetadataCount(
+          *matching_visibility_cloud, "visibility_detected_no_return_count");
+      const auto selected_no_return_count = visibilityMetadataCount(
+          *matching_visibility_cloud, "visibility_selected_no_return_count");
+      const auto sampling_cap = visibilityMetadataCount(
+          *matching_visibility_cloud, "visibility_sampling_cap");
+      const auto sampling_policy = visibilityMetadataCount(
+          *matching_visibility_cloud, "visibility_sampling_policy");
+      // Provenance is all-or-nothing.  A present visibility cloud without the
+      // metadata contract must not be silently upgraded to explicit evidence.
+      if (!source_ray_count || !selected_no_return_count ||
+          !detected_no_return_count || !sampling_cap ||
+          !sampling_policy || *sampling_policy == 0U ||
+          *sampling_policy > 2U || *detected_no_return_count <
           observation.free_space_endpoints.width *
-          observation.free_space_endpoints.height;
+              observation.free_space_endpoints.height ||
+          *source_ray_count < *detected_no_return_count ||
+          *selected_no_return_count != observation.free_space_endpoints.width *
+              observation.free_space_endpoints.height ||
+          *sampling_cap < observation.free_space_endpoints.width *
+              observation.free_space_endpoints.height) {
+        observation.visibility_observation_present = false;
+        observation.free_space_endpoints = sensor_msgs::msg::PointCloud2{};
+        observation.visibility_provenance_error = "MALFORMED_METADATA";
+      } else {
+        observation.visibility_source_ray_count = *source_ray_count;
+        observation.visibility_detected_no_return_count =
+            *detected_no_return_count;
+        observation.visibility_sampling_cap = *sampling_cap;
+        observation.visibility_sampling_policy = *sampling_policy == 2U
+            ? "stratified_2d" : "full";
+        observation.visibility_observation_present = true;
+        observation.visibility_no_return_count =
+            observation.free_space_endpoints.width *
+            observation.free_space_endpoints.height;
+        observation.visibility_selected_no_return_count =
+            *selected_no_return_count;
+      }
       observation.visibility_stamp_skew_ns = 0;
     }
     registered_scan_->publish(std::move(observation));

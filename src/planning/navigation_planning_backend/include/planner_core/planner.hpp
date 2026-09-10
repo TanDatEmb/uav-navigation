@@ -417,6 +417,11 @@ namespace navigation_planning_backend {
         navigation_world_model::UnknownPolicy unknownPolicy() const noexcept {
             return cfg_.unknown_space_policy;
         }
+        navigation_world_model::UnknownPolicy backupPolicy() const noexcept {
+            return cfg_.backup_allow_unknown
+                ? navigation_world_model::UnknownPolicy::kAllowUnknown
+                : navigation_world_model::UnknownPolicy::kRequireKnownFree;
+        }
         void resetSolveCancellation() noexcept {
             solve_cancelled_.store(false);
         }

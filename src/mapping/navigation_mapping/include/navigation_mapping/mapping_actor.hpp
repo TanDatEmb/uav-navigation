@@ -37,12 +37,21 @@ struct MappingUpdateResult {
   std::uint64_t world_revision{0};
   std::int64_t observation_stamp_ns{0};
   std::int64_t map_update_us{0};
+  std::int64_t observation_decode_us{0};
+  std::int64_t dirty_region_build_us{0};
   std::int64_t snapshot_export_us{0};
+  std::int64_t snapshot_object_build_us{0};
   SnapshotExportMode snapshot_export_mode{SnapshotExportMode::kDeferred};
   SnapshotFullExportReason snapshot_full_export_reason{SnapshotFullExportReason::kNone};
   std::uint64_t snapshot_export_base_cells{0};
   std::uint64_t snapshot_export_inflated_cells{0};
   std::uint64_t snapshot_patch_depth{0};
+  std::uint64_t dirty_aabb_voxel_count{0};
+  std::uint64_t base_planning_state_change_count{0};
+  std::uint64_t inflated_planning_state_change_count{0};
+  std::uint64_t full_snapshot_bytes{0};
+  std::uint64_t copied_snapshot_bytes{0};
+  std::uint64_t reused_snapshot_bytes{0};
 };
 
 // Product-owned configuration facts consumed by runtime composition. The

@@ -35,4 +35,9 @@ sensor_msgs/PointCloud2 free_space_endpoints
 bool visibility_observation_present
 uint32 visibility_source_ray_count
 uint32 visibility_no_return_count
+uint32 visibility_selected_no_return_count
+uint32 visibility_detected_no_return_count
+uint32 visibility_sampling_cap
+string visibility_sampling_policy
+string visibility_provenance_error
 int64 visibility_stamp_skew_ns

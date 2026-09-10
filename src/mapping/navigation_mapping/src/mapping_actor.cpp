@@ -76,6 +76,9 @@ namespace {
   result.map_slide_voxel_shift_z = source.map_slide_voxel_shift_z;
   result.map_slide_cells_cleared = source.map_slide_cells_cleared;
   result.inflation_update_count = source.inflation_update_count;
+  result.base_planning_state_change_count = source.base_planning_state_change_count;
+  result.inflated_planning_state_change_count =
+      source.inflated_planning_state_change_count;
   result.map_update_us = source.rog_total_update_us;
   result.raycast_us = source.rog_raycast_us;
   result.probability_update_us = source.rog_probability_update_us;
@@ -242,6 +245,7 @@ class MappingActor::Impl final {
 
     try {
       MappingUpdateResult result;
+      result.observation_decode_us = observation.pointcloud_decode_us;
       if (observation.localization_epoch > localization_epoch_) {
         if (world_generation_ == std::numeric_limits<std::uint64_t>::max()) {
           throw std::runtime_error("mapping world generation exhausted");
@@ -284,6 +288,10 @@ class MappingActor::Impl final {
           sensor_origin);
       result.outcome = toProductOutcome(backend_outcome);
       result.diagnostics = toProductDiagnostics(map_->lastDiagnostics());
+      result.base_planning_state_change_count =
+          result.diagnostics.base_planning_state_change_count;
+      result.inflated_planning_state_change_count =
+          result.diagnostics.inflated_planning_state_change_count;
       if (!worldUpdateAdvanced(result.outcome)) {
         result.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - map_started).count();
@@ -334,6 +342,7 @@ class MappingActor::Impl final {
         }
         if (!change.affected_region.valid()) change.affects_whole_world = true;
       }
+      const auto dirty_region_started = std::chrono::steady_clock::now();
       std::vector<navigation_world_model::WorldChangeRecord> records;
       // The new record is part of the retention bound. Keep at most N-1 old
       // records before prepending it, so the immutable window never grows to
@@ -366,6 +375,17 @@ class MappingActor::Impl final {
         }
       } else {
         pending_change_covers_world_ = true;
+      }
+      result.dirty_region_build_us = std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now() - dirty_region_started).count();
+      if (!pending_change_covers_world_ && pending_changed_region_.valid()) {
+        const auto dirty_estimate = map_->estimatePlanningGridRegionSize(
+            pending_changed_region_.minimum, pending_changed_region_.maximum);
+        result.dirty_aabb_voxel_count = dirty_estimate.valid
+            ? static_cast<std::uint64_t>(dirty_estimate.base_cell_count)
+            : result.diagnostics.unique_update_cache_voxel_count;
+      } else if (pending_change_covers_world_) {
+        result.dirty_aabb_voxel_count = result.diagnostics.allocated_voxel_count;
       }
 
       const auto snapshot_age = current_snapshot_
@@ -416,8 +436,11 @@ class MappingActor::Impl final {
         result.snapshot_export_base_cells = patch_export.base_state.size();
         result.snapshot_export_inflated_cells = patch_export.inflated.occupied.size();
         if (!patch_export.base_state.empty() && !patch_export.inflated.occupied.empty()) {
+          const auto object_started = std::chrono::steady_clock::now();
           snapshot = std::make_shared<MappingWorldSnapshot>(
               current_snapshot_, toProductPatch(patch_export), identity, change_history_);
+          result.snapshot_object_build_us = std::chrono::duration_cast<
+              std::chrono::microseconds>(std::chrono::steady_clock::now() - object_started).count();
           result.snapshot_export_mode = SnapshotExportMode::kPatch;
         } else {
           result.snapshot_full_export_reason = SnapshotFullExportReason::kEmptyPatch;
@@ -440,8 +463,11 @@ class MappingActor::Impl final {
         if (!nearest_offsets_) {
           nearest_offsets_ = toProductNearestOffsets(exported.nearest_offsets);
         }
+        const auto object_started = std::chrono::steady_clock::now();
         snapshot = std::make_shared<MappingWorldSnapshot>(
             toProductGrid(std::move(exported), nearest_offsets_), identity, change_history_);
+        result.snapshot_object_build_us = std::chrono::duration_cast<
+            std::chrono::microseconds>(std::chrono::steady_clock::now() - object_started).count();
         result.snapshot_export_mode = SnapshotExportMode::kFull;
       }
       result.snapshot = snapshot;
@@ -449,6 +475,11 @@ class MappingActor::Impl final {
       result.snapshot_patch_depth = snapshot->patchDepth();
       result.snapshot_export_us = std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - export_started).count();
+      result.full_snapshot_bytes = full_snapshot_owned_bytes_;
+      result.copied_snapshot_bytes = snapshot->metrics().owned_bytes;
+      result.reused_snapshot_bytes = full_snapshot_owned_bytes_ >
+              result.copied_snapshot_bytes
+          ? full_snapshot_owned_bytes_ - result.copied_snapshot_bytes : 0U;
       result.map_update_us = std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now() - map_started).count();
       result.localization_epoch = localization_epoch_;

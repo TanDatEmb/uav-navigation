@@ -498,6 +498,31 @@ TEST(MappingActorContract, UsesBoundedPatchForSteadyStateMapUpdate) {
   EXPECT_LE(maximum_depth, 8U);
 }
 
+TEST(MappingActorContract, ReportsPhaseTimingAndStateChangeEvidence) {
+  navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
+  ASSERT_TRUE(actor.initialSnapshot());
+
+  auto observation = observationAt(1'000'000'000LL, 1'000'000'000LL);
+  observation.pointcloud_decode_us = 17;
+  const auto result = actor.process(observation);
+
+  ASSERT_TRUE(result.snapshot);
+  EXPECT_EQ(result.observation_decode_us, 17);
+  EXPECT_GE(result.dirty_region_build_us, 0);
+  EXPECT_GE(result.snapshot_export_us, result.snapshot_object_build_us);
+  EXPECT_GE(result.snapshot_object_build_us, 0);
+  EXPECT_GT(result.full_snapshot_bytes, 0U);
+  EXPECT_GT(result.copied_snapshot_bytes, 0U);
+  EXPECT_LE(result.copied_snapshot_bytes, result.full_snapshot_bytes);
+  EXPECT_EQ(result.reused_snapshot_bytes,
+            result.full_snapshot_bytes - result.copied_snapshot_bytes);
+  EXPECT_GT(result.dirty_aabb_voxel_count, 0U);
+  EXPECT_EQ(result.diagnostics.base_planning_state_change_count,
+            result.base_planning_state_change_count);
+  EXPECT_EQ(result.diagnostics.inflated_planning_state_change_count,
+            result.inflated_planning_state_change_count);
+}
+
 TEST(MappingActorContract, CoalescesSnapshotExportAcrossRecentMapUpdates) {
   navigation_mapping::MappingActor actor(NAVIGATION_MAPPING_PLANNER_CONFIG_PATH);
   ASSERT_TRUE(actor.initialSnapshot());

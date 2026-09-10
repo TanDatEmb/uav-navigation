@@ -82,6 +82,7 @@ class ExecutionTimelineStore final {
     if (!retain_committed_bundle) committed_.reset();
     pending_.reset();
     pending_activation_ns_ = 0;
+    enforceInvariantLocked();
     ++timeline_version_;
     return true;
   }
@@ -138,7 +139,10 @@ class ExecutionTimelineStore final {
       committed_.reset();
     }
 
-    const bool pending_matches = retain_validated_pending && expected_pending && pending_ &&
+    // A pending successor is meaningful only as a handover from the active
+    // command retained above. If active recertification failed, revoke both
+    // pointers in this same store transaction.
+    const bool pending_matches = active_matches && retain_validated_pending && expected_pending && pending_ &&
         pending_.get() == expected_pending.get() && pending_->valid() && world_identity_ &&
         navigation_world_model::sameWorldSnapshotIdentity(
             pending_->world_identity, *world_identity_);
@@ -156,6 +160,7 @@ class ExecutionTimelineStore final {
       pending_.reset();
       pending_activation_ns_ = 0;
     }
+    enforceInvariantLocked();
     world_identity_ = identity;
     ++timeline_version_;
     return navigation_world_model::WorldCommitDecision::kCommitted;
@@ -171,6 +176,11 @@ class ExecutionTimelineStore final {
     std::lock_guard lock(mutex_);
     return {timeline_version_, world_identity_, committed_, pending_,
             pending_activation_ns_};
+  }
+
+  [[nodiscard]] bool invariantHolds() const noexcept {
+    std::lock_guard lock(mutex_);
+    return !pending_ || static_cast<bool>(committed_);
   }
 
   // Sample the execution-owned active command at a future splice point. The
@@ -451,6 +461,7 @@ class ExecutionTimelineStore final {
     committed_.reset();
     pending_.reset();
     pending_activation_ns_ = 0;
+    enforceInvariantLocked();
     ++timeline_version_;
   }
 
@@ -461,6 +472,12 @@ class ExecutionTimelineStore final {
       const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending,
       std::uint64_t expected_version, std::int64_t expected_activation_ns,
       bool require_exact_token, FinalizeFn&& finalize) const noexcept {
+    if (pending_ && !committed_) {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      ++timeline_version_;
+      return false;
+    }
     if (!pending_ || pending_activation_ns_ <= 0 || now_ns < pending_activation_ns_) {
       return false;
     }
@@ -507,6 +524,7 @@ class ExecutionTimelineStore final {
       // leave an unfinalizable candidate parked ahead of future solves.
       pending_.reset();
       pending_activation_ns_ = 0;
+      enforceInvariantLocked();
       ++timeline_version_;
       return false;
     }
@@ -554,6 +572,13 @@ class ExecutionTimelineStore final {
     const auto scheduled = predecessor.scheduledRole(
         static_cast<double>(elapsed_ns) * 1.0e-9);
     return scheduled.has_value() && *scheduled == anchor.active_role;
+  }
+
+  void enforceInvariantLocked() const noexcept {
+    if (!committed_) {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+    }
   }
 
   [[nodiscard]] static bool advances(

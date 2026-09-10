@@ -60,7 +60,13 @@ struct MappingTelemetrySnapshot {
   std::int64_t observation_stamp_ns{0};
   std::int64_t last_update_attempt_stamp_ns{0};
   std::int64_t map_update_us{0};
+  std::int64_t observation_decode_us{0};
+  std::int64_t dirty_region_build_us{0};
   std::int64_t snapshot_export_us{0};
+  std::int64_t snapshot_object_build_us{0};
+  std::int64_t pending_revalidation_us{0};
+  std::int64_t active_revalidation_us{0};
+  std::int64_t world_publication_finalize_us{0};
   std::int64_t mapping_callback_total_us{0};
   std::int64_t pointcloud_decode_us{0};
   bool world_snapshot_published{false};
@@ -69,6 +75,13 @@ struct MappingTelemetrySnapshot {
   std::uint64_t snapshot_export_base_cells{0};
   std::uint64_t snapshot_export_inflated_cells{0};
   std::uint64_t snapshot_patch_depth{0};
+  std::uint64_t dirty_aabb_voxel_count{0};
+  std::uint64_t dirty_chunk_count{0};
+  std::uint64_t base_planning_state_change_count{0};
+  std::uint64_t inflated_planning_state_change_count{0};
+  std::uint64_t full_snapshot_bytes{0};
+  std::uint64_t copied_snapshot_bytes{0};
+  std::uint64_t reused_snapshot_bytes{0};
   std::uint64_t snapshot_bytes{0};
   std::uint64_t snapshot_owned_bytes{0};
   std::uint64_t snapshot_shared_metadata_bytes{0};

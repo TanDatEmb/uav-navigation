@@ -791,6 +791,17 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       next.snapshot_export_inflated_cells = result.snapshot_export_inflated_cells;
       next.snapshot_patch_depth = result.snapshot_patch_depth;
       next.pointcloud_decode_us = observation.pointcloud_decode_us;
+      next.observation_decode_us = result.observation_decode_us;
+      next.dirty_region_build_us = result.dirty_region_build_us;
+      next.snapshot_object_build_us = result.snapshot_object_build_us;
+      next.dirty_aabb_voxel_count = result.dirty_aabb_voxel_count;
+      next.base_planning_state_change_count =
+          result.base_planning_state_change_count;
+      next.inflated_planning_state_change_count =
+          result.inflated_planning_state_change_count;
+      next.full_snapshot_bytes = result.full_snapshot_bytes;
+      next.copied_snapshot_bytes = result.copied_snapshot_bytes;
+      next.reused_snapshot_bytes = result.reused_snapshot_bytes;
       next.world_snapshot_published = static_cast<bool>(result.snapshot);
       if (result.snapshot) {
         // Recertification consumes only the immutable CandidateBundle snapshot
@@ -828,6 +839,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         }
         bool retain_validated_bundle = false;
         bool retain_validated_pending = false;
+        const auto pending_revalidation_started = std::chrono::steady_clock::now();
         if (expected_pending && expected_pending->valid() &&
             expected_pending->protected_region.valid() &&
             expected_pending->world_identity.localization_epoch ==
@@ -881,6 +893,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                 static_cast<unsigned long>(result.snapshot->identity().revision));
           }
         }
+        next.pending_revalidation_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - pending_revalidation_started).count();
+        const auto active_revalidation_started = std::chrono::steady_clock::now();
         const auto terminal_generation = terminal_bundle_generation_.load(
             std::memory_order_acquire);
         const bool terminal_bundle_observed = expected_bundle &&
@@ -1052,10 +1068,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                 static_cast<unsigned long>(validation.sample_count));
           }
         }
+        next.active_revalidation_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - active_revalidation_started).count();
         // The immutable world publication and the dependent execution
         // certificate transition share one gate.  A retained bundle is copied
         // with the new identity only when the exact pointer was validated on
         // this snapshot; otherwise it is cleared fail-closed.
+        const auto publication_finalize_started = std::chrono::steady_clock::now();
         const auto publication_decision = store->publishAndFinalizeDecision(
             result.snapshot,
             [command_store, expected_bundle, expected_pending,
@@ -1072,9 +1092,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               return command_store->publishWorldIdentityIfCurrent(
                   identity, execution_timeline_version,
                   expected_bundle, retain_validated_bundle,
-                  refreshed_valid_until_ns,
+              refreshed_valid_until_ns,
                   expected_pending, retain_validated_pending);
             });
+        next.world_publication_finalize_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - publication_finalize_started).count();
         if (publication_decision == navigation_world_model::WorldCommitDecision::kSuperseded) {
           next.map_update_us = result.map_update_us;
           next.mapping_callback_total_us =
@@ -1407,12 +1430,27 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("world_snapshot_live_owned_bytes", mapping.snapshot_live_owned_bytes);
         add_value("world_snapshot_peak_live_owned_bytes", mapping.snapshot_peak_live_owned_bytes);
         add_duration("ros_pointcloud_decode_us", mapping.pointcloud_decode_us);
+        add_duration("mapping_observation_decode_us", mapping.observation_decode_us);
         add_duration("mapping_raycast_us", map.raycast_us);
         add_duration("mapping_probability_update_us", map.probability_update_us);
         add_duration("mapping_inflation_us", map.inflation_us);
         add_duration("mapping_slide_us", map.slide_us);
+        add_duration("mapping_dirty_region_build_us", mapping.dirty_region_build_us);
         add_duration("mapping_total_update_us", map.map_update_us);
         add_duration("world_snapshot_export_us", mapping.snapshot_export_us);
+        add_duration("world_snapshot_object_build_us", mapping.snapshot_object_build_us);
+        add_duration("pending_revalidation_us", mapping.pending_revalidation_us);
+        add_duration("active_revalidation_us", mapping.active_revalidation_us);
+        add_duration("world_publication_finalize_us",
+                     mapping.world_publication_finalize_us);
+        add_value("mapping_dirty_aabb_voxel_count", mapping.dirty_aabb_voxel_count);
+        add_value("mapping_base_planning_state_change_count",
+                  mapping.base_planning_state_change_count);
+        add_value("mapping_inflated_planning_state_change_count",
+                  mapping.inflated_planning_state_change_count);
+        add_value("world_snapshot_full_bytes", mapping.full_snapshot_bytes);
+        add_value("world_snapshot_copied_bytes", mapping.copied_snapshot_bytes);
+        add_value("world_snapshot_reused_bytes", mapping.reused_snapshot_bytes);
         add_duration("mapping_callback_total_us", mapping.mapping_callback_total_us);
         diagnostics.status.push_back(std::move(status));
         publisher->publish(diagnostics);
@@ -1738,11 +1776,31 @@ void NavigationRuntimeNode::onRegisteredScan(
   const bool visibility_contract_valid = message->visibility_observation_present
       ? message->visibility_no_return_count ==
             free_space.width * free_space.height &&
-            message->visibility_no_return_count <=
-                message->visibility_source_ray_count &&
+          message->visibility_selected_no_return_count ==
+            free_space.width * free_space.height &&
+          message->visibility_no_return_count <=
+            message->visibility_detected_no_return_count &&
+          message->visibility_detected_no_return_count <=
+            message->visibility_source_ray_count &&
+          message->visibility_no_return_count <=
+            message->visibility_sampling_cap &&
+          (message->visibility_sampling_policy == "full" ||
+           message->visibility_sampling_policy == "stratified_2d") &&
+          message->visibility_provenance_error.empty() &&
+          (message->visibility_sampling_policy == "full"
+               ? message->visibility_no_return_count ==
+                     message->visibility_detected_no_return_count
+               : message->visibility_no_return_count <=
+                     message->visibility_detected_no_return_count) &&
             message->visibility_stamp_skew_ns == 0
       : !has_free_space_payload && message->visibility_source_ray_count == 0U &&
             message->visibility_no_return_count == 0U &&
+            message->visibility_selected_no_return_count == 0U &&
+            message->visibility_detected_no_return_count == 0U &&
+            message->visibility_sampling_cap == 0U &&
+            message->visibility_sampling_policy.empty() &&
+            (message->visibility_provenance_error.empty() ||
+             message->visibility_provenance_error == "MALFORMED_METADATA") &&
             message->visibility_stamp_skew_ns == 0;
   if (!accepting_observations_.load(std::memory_order_acquire) ||
       message->localization_epoch == 0U ||

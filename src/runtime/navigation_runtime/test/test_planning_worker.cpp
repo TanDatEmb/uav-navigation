@@ -129,6 +129,8 @@ TEST(PlanningWorker, RunsOnlyOneJobAndKeepsLatestEqualPriorityPending) {
   EXPECT_EQ(completed_marker.load(), 3);
   EXPECT_EQ(maximum_running.load(), 1);
   EXPECT_EQ(worker.snapshot().replaced_pending, 1U);
+  EXPECT_GE(worker.snapshot().last_enqueue_wait_us, 0);
+  EXPECT_GE(worker.snapshot().last_worker_runtime_us, 0);
 }
 
 TEST(PlanningWorker, DropsExactDuplicateWithoutCancellingActiveSolve) {

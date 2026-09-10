@@ -433,6 +433,21 @@ def _registered_scan_payload(message: Any) -> dict[str, Any]:
         "visibility_no_return_count": int(
             getattr(message, "visibility_no_return_count", 0)
         ),
+        "visibility_selected_no_return_count": int(
+            getattr(message, "visibility_selected_no_return_count", 0)
+        ),
+        "visibility_detected_no_return_count": int(
+            getattr(message, "visibility_detected_no_return_count", 0)
+        ),
+        "visibility_sampling_cap": int(
+            getattr(message, "visibility_sampling_cap", 0)
+        ),
+        "visibility_sampling_policy": str(
+            getattr(message, "visibility_sampling_policy", "")
+        ),
+        "visibility_provenance_error": str(
+            getattr(message, "visibility_provenance_error", "")
+        ),
         "visibility_stamp_skew_ns": int(
             getattr(message, "visibility_stamp_skew_ns", 0)
         ),

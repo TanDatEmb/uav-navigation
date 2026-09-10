@@ -2205,7 +2205,7 @@ TEST(PlannerTrajectory, BackupRoleRequiresKnownFreeEvidence) {
   EXPECT_FALSE(navigation_planning_backend::candidateHasBackupSuffix(candidate));
 }
 
-TEST(PlannerTrajectory, MainOnlyAllowUnknownRequiresKnownFreeCertificate) {
+TEST(PlannerTrajectory, MainOnlyAllowUnknownUsesMissionCertificatePolicy) {
   navigation_planning_backend::CandidateCommandBundle candidate;
   candidate.position = linearTrajectory(1.0, 10.0);
   candidate.yaw = linearTrajectory(1.0, 10.0);
@@ -2217,7 +2217,7 @@ TEST(PlannerTrajectory, MainOnlyAllowUnknownRequiresKnownFreeCertificate) {
   EXPECT_EQ(
       navigation_planning_backend::candidateCertificatePolicy(
           candidate, navigation_world_model::UnknownPolicy::kAllowUnknown),
-      navigation_world_model::UnknownPolicy::kRequireKnownFree);
+      navigation_world_model::UnknownPolicy::kAllowUnknown);
 
   candidate.roles = {
       {0.0, 0.5, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
@@ -2229,7 +2229,7 @@ TEST(PlannerTrajectory, MainOnlyAllowUnknownRequiresKnownFreeCertificate) {
       navigation_world_model::UnknownPolicy::kAllowUnknown);
 }
 
-TEST(PlannerTrajectory, MainOnlyRevalidationCannotReuseAllowUnknownPolicy) {
+TEST(PlannerTrajectory, MainOnlyRevalidationUsesAllowUnknownPolicy) {
   navigation_planning_backend::CandidateCommandBundle candidate;
   candidate.position = linearTrajectory(1.0, 10.0);
   candidate.yaw = linearTrajectory(1.0, 10.0);
@@ -2243,8 +2243,8 @@ TEST(PlannerTrajectory, MainOnlyRevalidationCannotReuseAllowUnknownPolicy) {
   const auto certificate_policy =
       navigation_planning_backend::candidateCertificatePolicy(candidate, mission_policy);
   EXPECT_EQ(certificate_policy,
-            navigation_world_model::UnknownPolicy::kRequireKnownFree);
-  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+            navigation_world_model::UnknownPolicy::kAllowUnknown);
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
                    newer_world, candidate, 10.0, certificate_policy)
                    .valid);
 }

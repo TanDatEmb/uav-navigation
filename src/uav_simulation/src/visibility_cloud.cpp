@@ -7,12 +7,119 @@
 
 namespace uav::simulation {
 
+namespace {
+
+bool selectStratified2D(
+    VisibilityCloud& result, const std::size_t maximum_endpoints,
+    const std::uint32_t vertical_count) {
+  result.detected_no_return_count =
+      static_cast<std::uint32_t>(result.endpoints.size());
+  result.sampling_cap = static_cast<std::uint32_t>(maximum_endpoints);
+  if (result.endpoints.size() <= maximum_endpoints) {
+    result.selected_no_return_count =
+        static_cast<std::uint32_t>(result.endpoints.size());
+    result.sampling_policy = kVisibilitySamplingFull;
+    return true;
+  }
+
+  result.sampling_policy = kVisibilitySamplingStratified2D;
+  // Bucket once by elevation row.  The previous rectangular-bin scan was
+  // O(rows * columns * N) and could inspect the entire cloud for every bin.
+  // Row quotas are proportional to the observed no-return population, with
+  // at least one endpoint for every active row when the cap permits it.
+  std::vector<std::vector<std::size_t>> row_indices(vertical_count);
+  for (std::size_t index = 0U; index < result.endpoints.size(); ++index) {
+    const auto row = result.endpoints[index].elevation_index;
+    if (row < row_indices.size()) row_indices[row].push_back(index);
+  }
+  std::vector<std::size_t> active_rows;
+  for (std::size_t row = 0U; row < row_indices.size(); ++row) {
+    if (!row_indices[row].empty()) active_rows.push_back(row);
+  }
+  if (active_rows.empty()) {
+    result.endpoints.clear();
+    result.selected_no_return_count = 0U;
+    return false;
+  }
+  const std::size_t row_count = std::min(maximum_endpoints, active_rows.size());
+  std::vector<std::size_t> quotas(vertical_count, 0U);
+  std::vector<std::size_t> selected_rows;
+  selected_rows.reserve(row_count);
+  for (std::size_t ordinal = 0U; ordinal < row_count; ++ordinal) {
+    const auto row = active_rows[ordinal * active_rows.size() / row_count];
+    selected_rows.push_back(row);
+    quotas[row] = 1U;
+  }
+  std::size_t remaining = maximum_endpoints - row_count;
+  std::size_t capacity_total = 0U;
+  for (const auto row : selected_rows) {
+    capacity_total += row_indices[row].size() - quotas[row];
+  }
+  struct Remainder {
+    std::size_t row;
+    long double fractional;
+  };
+  std::vector<Remainder> remainders;
+  remainders.reserve(selected_rows.size());
+  std::size_t assigned = 0U;
+  for (const auto row : selected_rows) {
+    const std::size_t capacity = row_indices[row].size() - quotas[row];
+    const long double exact = capacity_total == 0U
+        ? 0.0L
+        : static_cast<long double>(remaining) *
+            static_cast<long double>(capacity) /
+            static_cast<long double>(capacity_total);
+    const auto extra = std::min(capacity, static_cast<std::size_t>(exact));
+    quotas[row] += extra;
+    assigned += extra;
+    remainders.push_back({row, exact - static_cast<long double>(extra)});
+  }
+  std::stable_sort(remainders.begin(), remainders.end(),
+                   [](const auto& lhs, const auto& rhs) {
+                     if (lhs.fractional != rhs.fractional) {
+                       return lhs.fractional > rhs.fractional;
+                     }
+                     return lhs.row < rhs.row;
+                   });
+  remaining -= assigned;
+  for (const auto& remainder : remainders) {
+    if (remaining == 0U) break;
+    if (quotas[remainder.row] < row_indices[remainder.row].size()) {
+      ++quotas[remainder.row];
+      --remaining;
+    }
+  }
+  if (remaining != 0U) return false;
+  std::vector<VisibilityEndpoint> output;
+  output.reserve(maximum_endpoints);
+  for (const auto row : active_rows) {
+    const auto& indices = row_indices[row];
+    const auto quota = quotas[row];
+    for (std::size_t ordinal = 0U; ordinal < quota; ++ordinal) {
+      const auto position = std::min(
+          indices.size() - 1U,
+          ((2U * ordinal + 1U) * indices.size()) / (2U * quota));
+      const auto index = indices[position];
+      output.push_back(result.endpoints[index]);
+    }
+  }
+  if (output.size() != maximum_endpoints) return false;
+  result.endpoints = std::move(output);
+  result.selected_no_return_count =
+      static_cast<std::uint32_t>(result.endpoints.size());
+  return result.endpoints.size() <= maximum_endpoints;
+}
+
+}  // namespace
+
 std::optional<VisibilityCloud> makeVisibilityCloud(
     const gz::msgs::LaserScan& scan, const std::string_view expected_frame,
     const std::size_t maximum_endpoints) {
   constexpr std::size_t kMaximumRayCount = 262144U;
   if (expected_frame.empty() || scan.frame() != expected_frame ||
       maximum_endpoints == 0U ||
+      maximum_endpoints > std::numeric_limits<std::uint32_t>::max() ||
+      maximum_endpoints > kMaximumRayCount ||
       !scan.has_header() || !scan.header().has_stamp() ||
       scan.count() == 0U || scan.vertical_count() == 0U ||
       !std::isfinite(scan.angle_min()) ||
@@ -72,22 +179,19 @@ std::optional<VisibilityCloud> makeVisibilityCloud(
       const VisibilityEndpoint endpoint{
           static_cast<float>(horizontal_range * std::cos(azimuth)),
           static_cast<float>(horizontal_range * std::sin(azimuth)),
-          static_cast<float>(range_max * vertical_sin)};
+          static_cast<float>(range_max * vertical_sin),
+          static_cast<std::uint32_t>(vertical * horizontal_count + horizontal),
+          static_cast<std::uint32_t>(horizontal),
+          static_cast<std::uint32_t>(vertical)};
       if (std::isfinite(endpoint.x) && std::isfinite(endpoint.y) &&
           std::isfinite(endpoint.z)) {
         result.endpoints.push_back(endpoint);
       }
     }
   }
-  if (result.endpoints.size() > maximum_endpoints) {
-    std::vector<VisibilityEndpoint> downsampled;
-    downsampled.reserve(maximum_endpoints);
-    for (std::size_t index = 0U; index < maximum_endpoints; ++index) {
-      const std::size_t source_index =
-          index * result.endpoints.size() / maximum_endpoints;
-      downsampled.push_back(result.endpoints[source_index]);
-    }
-    result.endpoints = std::move(downsampled);
+  if (!selectStratified2D(result, maximum_endpoints,
+                          static_cast<std::uint32_t>(vertical_count))) {
+    return std::nullopt;
   }
   return result;
 }
@@ -100,6 +204,8 @@ std::optional<VisibilityCloud> makeVisibilityCloud(
   constexpr std::size_t kMaximumRayCount = 262144U;
   if (expected_frame.empty() || cloud.header.frame_id != expected_frame ||
       maximum_endpoints == 0U || cloud.is_bigendian ||
+      maximum_endpoints > std::numeric_limits<std::uint32_t>::max() ||
+      maximum_endpoints > kMaximumRayCount ||
       cloud.header.stamp.sec < 0 || cloud.header.stamp.nanosec >= 1'000'000'000U ||
       config.horizontal_count == 0U || config.vertical_count == 0U ||
       cloud.width != config.horizontal_count ||
@@ -171,20 +277,18 @@ std::optional<VisibilityCloud> makeVisibilityCloud(
       const VisibilityEndpoint endpoint{
           static_cast<float>(horizontal_range * std::cos(azimuth)),
           static_cast<float>(horizontal_range * std::sin(azimuth)),
-          static_cast<float>(config.range_max_m * std::sin(elevation))};
+          static_cast<float>(config.range_max_m * std::sin(elevation)),
+          row * config.horizontal_count + column, column, row};
       if (std::isfinite(endpoint.x) && std::isfinite(endpoint.y) &&
           std::isfinite(endpoint.z)) {
         all_endpoints.push_back(endpoint);
       }
     }
   }
-  if (all_endpoints.size() <= maximum_endpoints) {
-    result.endpoints = std::move(all_endpoints);
-  } else {
-    for (std::size_t index = 0U; index < maximum_endpoints; ++index) {
-      result.endpoints.push_back(
-          all_endpoints[index * all_endpoints.size() / maximum_endpoints]);
-    }
+  result.endpoints = std::move(all_endpoints);
+  if (!selectStratified2D(result, maximum_endpoints,
+                          config.vertical_count)) {
+    return std::nullopt;
   }
   return result;
 }

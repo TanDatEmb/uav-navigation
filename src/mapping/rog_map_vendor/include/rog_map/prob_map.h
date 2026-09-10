@@ -107,6 +107,11 @@ namespace rog_map {
             std::uint64_t map_slide_cells_cleared{0};
             std::uint64_t body_neighborhood_cells_cleared{0};
             std::uint64_t inflation_update_count{0};
+            // Counts are classification transitions, not touched cells. They
+            // are used to distinguish a broad ray/AABB from actual planning
+            // state changes without affecting the map policy.
+            std::uint64_t base_planning_state_change_count{0};
+            std::uint64_t inflated_planning_state_change_count{0};
             std::int64_t rog_total_update_us{0};
             std::int64_t rog_raycast_us{0};
             std::int64_t rog_probability_update_us{0};

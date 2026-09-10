@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
+#include <set>
 
 #include <gz/msgs/laserscan.pb.h>
 
@@ -34,6 +36,10 @@ TEST(VisibilityCloud, ConvertsOnlyExplicitNoReturnRaysInThreeDimensions) {
   const auto result = makeVisibilityCloud(makeScan(), "livox_frame");
   ASSERT_TRUE(result.has_value());
   ASSERT_EQ(result->endpoints.size(), 2U);
+  EXPECT_EQ(result->source_ray_count, 4U);
+  EXPECT_EQ(result->detected_no_return_count, 2U);
+  EXPECT_EQ(result->selected_no_return_count, 2U);
+  EXPECT_EQ(result->sampling_policy, kVisibilitySamplingFull);
   EXPECT_EQ(result->stamp_sec, 3);
   EXPECT_EQ(result->stamp_nanosec, 42U);
   EXPECT_NEAR(result->endpoints[0].x, 0.0F, 1.0e-5F);
@@ -44,6 +50,83 @@ TEST(VisibilityCloud, ConvertsOnlyExplicitNoReturnRaysInThreeDimensions) {
   EXPECT_NEAR(result->endpoints[1].z, 10.0F, 1.0e-5F);
 }
 
+TEST(VisibilityCloud, StratifiedSamplingIsDeterministicAndCoversTwoAxes) {
+  auto scan = makeScan();
+  scan.set_count(8U);
+  scan.set_angle_step(0.1);
+  scan.set_vertical_count(4U);
+  scan.set_vertical_angle_step(0.1);
+  scan.mutable_ranges()->Clear();
+  for (int index = 0; index < 32; ++index) {
+    scan.add_ranges(std::numeric_limits<double>::infinity());
+  }
+  const auto first = makeVisibilityCloud(scan, "livox_frame", 8U);
+  const auto second = makeVisibilityCloud(scan, "livox_frame", 8U);
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(second.has_value());
+  ASSERT_EQ(first->endpoints.size(), 8U);
+  EXPECT_EQ(first->detected_no_return_count, 32U);
+  EXPECT_EQ(first->selected_no_return_count, 8U);
+  EXPECT_EQ(first->sampling_cap, 8U);
+  EXPECT_EQ(first->sampling_policy, kVisibilitySamplingStratified2D);
+  ASSERT_EQ(first->endpoints.size(), second->endpoints.size());
+  for (std::size_t index = 0U; index < first->endpoints.size(); ++index) {
+    EXPECT_EQ(first->endpoints[index].source_ray_index,
+              second->endpoints[index].source_ray_index);
+  }
+  EXPECT_EQ(first->endpoints.front().elevation_index, 0U);
+  EXPECT_EQ(first->endpoints.back().elevation_index, 3U);
+  const auto min_azimuth = std::min_element(
+      first->endpoints.begin(), first->endpoints.end(),
+      [](const auto& lhs, const auto& rhs) {
+        return lhs.azimuth_index < rhs.azimuth_index;
+      });
+  const auto max_azimuth = std::max_element(
+      first->endpoints.begin(), first->endpoints.end(),
+      [](const auto& lhs, const auto& rhs) {
+        return lhs.azimuth_index < rhs.azimuth_index;
+      });
+  ASSERT_NE(min_azimuth, first->endpoints.end());
+  ASSERT_NE(max_azimuth, first->endpoints.end());
+  EXPECT_LT(min_azimuth->azimuth_index, max_azimuth->azimuth_index);
+  EXPECT_GE(max_azimuth->azimuth_index - min_azimuth->azimuth_index, 4U);
+}
+
+TEST(VisibilityCloud, UnequalRowsKeepCoverageAndExactCap) {
+  auto scan = makeScan();
+  scan.set_count(8U);
+  scan.set_angle_step(0.1);
+  scan.set_vertical_count(4U);
+  scan.set_vertical_angle_step(0.1);
+  scan.mutable_ranges()->Clear();
+  for (std::size_t row = 0U; row < 4U; ++row) {
+    const std::size_t no_return_count = 8U - row;
+    for (std::size_t column = 0U; column < 8U; ++column) {
+      scan.add_ranges(column < no_return_count
+          ? std::numeric_limits<double>::infinity() : 2.0);
+    }
+  }
+  const auto result = makeVisibilityCloud(scan, "livox_frame", 8U);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->detected_no_return_count, 26U);
+  EXPECT_EQ(result->selected_no_return_count, 8U);
+  std::set<std::uint32_t> rows;
+  for (const auto& endpoint : result->endpoints) {
+    EXPECT_LT(endpoint.source_ray_index, 32U);
+    rows.insert(endpoint.elevation_index);
+  }
+  EXPECT_EQ(rows.size(), 4U);
+
+  const auto small = makeVisibilityCloud(scan, "livox_frame", 2U);
+  ASSERT_TRUE(small.has_value());
+  EXPECT_EQ(small->selected_no_return_count, 2U);
+  EXPECT_LE(small->endpoints.size(), 2U);
+  std::set<std::uint32_t> small_rows;
+  for (const auto& endpoint : small->endpoints) small_rows.insert(endpoint.elevation_index);
+  ASSERT_EQ(small_rows.size(), 2U);
+  EXPECT_GE(*small_rows.rbegin() - *small_rows.begin(), 2U);
+}
+
 TEST(VisibilityCloud, RejectsIncompleteFlattenedScan) {
   auto scan = makeScan();
   scan.mutable_ranges()->RemoveLast();
@@ -52,6 +135,10 @@ TEST(VisibilityCloud, RejectsIncompleteFlattenedScan) {
 
 TEST(VisibilityCloud, RejectsUnexpectedFrame) {
   EXPECT_FALSE(makeVisibilityCloud(makeScan(), "other_frame").has_value());
+}
+
+TEST(VisibilityCloud, RejectsEndpointCapBeyondRayBound) {
+  EXPECT_FALSE(makeVisibilityCloud(makeScan(), "livox_frame", 262145U).has_value());
 }
 
 TEST(VisibilityCloud, DoesNotTurnAllOccupiedScanIntoEvidence) {

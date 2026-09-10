@@ -15,7 +15,16 @@ struct VisibilityEndpoint {
   float x{0.0F};
   float y{0.0F};
   float z{0.0F};
+  // Provenance retained through the deterministic sampler.  The ROS
+  // RegisteredScan contract currently exports aggregate counts, not these
+  // per-endpoint indices.
+  std::uint32_t source_ray_index{0U};
+  std::uint32_t azimuth_index{0U};
+  std::uint32_t elevation_index{0U};
 };
+
+inline constexpr std::uint8_t kVisibilitySamplingFull = 0U;
+inline constexpr std::uint8_t kVisibilitySamplingStratified2D = 1U;
 
 struct VisibilityCloud {
   std::string frame_id;
@@ -23,6 +32,10 @@ struct VisibilityCloud {
   std::uint32_t stamp_nanosec{0U};
   std::vector<VisibilityEndpoint> endpoints;
   std::uint32_t source_ray_count{0U};
+  std::uint32_t detected_no_return_count{0U};
+  std::uint32_t selected_no_return_count{0U};
+  std::uint32_t sampling_cap{0U};
+  std::uint8_t sampling_policy{kVisibilitySamplingFull};
 };
 
 struct OrganizedVisibilityConfig {

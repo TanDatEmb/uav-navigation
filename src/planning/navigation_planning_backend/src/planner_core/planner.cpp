@@ -239,6 +239,30 @@ double knownFreeGuideSupport(
     return support_m;
 }
 
+// MAIN may be configured to explore UNKNOWN. Keep the strict support witness
+// above for terminal/BACKUP contracts, but use the active MAIN policy for the
+// nominal speed/braking envelope. The world-model segment oracle still rejects
+// OCCUPIED, OUT_OF_MAP and UNDEFINED for kAllowUnknown.
+double mainGuideSupport(
+        const navigation_world_model::WorldModelView& world,
+        const vec_Vec3f& guide,
+        const navigation_world_model::UnknownPolicy policy) {
+    if (guide.size() < 2U) return 0.0;
+    double support_m = 0.0;
+    for (std::size_t index = 1; index < guide.size(); ++index) {
+        const Eigen::Vector3d begin = guide[index - 1U].cast<double>();
+        const Eigen::Vector3d end = guide[index].cast<double>();
+        const double segment_m = (end - begin).norm();
+        if (!std::isfinite(segment_m) || segment_m <= 1.0e-9 ||
+            !world.isSegmentTraversable(
+                begin, end, navigation_world_model::GridLayer::kInflated, policy)) {
+            break;
+        }
+        support_m += segment_m;
+    }
+    return support_m;
+}
+
 }  // namespace
 
     PlannerResultCode Planner::classifySolveFailure(
@@ -797,7 +821,9 @@ double knownFreeGuideSupport(
             planner_context_->warn(" -- [planner] command rejected: no published WorldModel");
             return false;
         }
-        const auto certificate_policy = candidateCertificatePolicy(candidate, unknownPolicy());
+        const auto backup_policy = backupPolicy();
+        const auto certificate_policy = candidateCertificatePolicy(
+            candidate, unknownPolicy());
         // Validate against the newest immutable view before entering the
         // publication gate. The certificate also carries the conservative
         // swept region; the authorizer may retain it across unrelated map
@@ -806,7 +832,8 @@ double knownFreeGuideSupport(
             *lease.view, candidate, authorization_wall_time, certificate_policy,
             current_body_support_matches_start_ ? current_body_support_
                                                 : navigation_world_model::CurrentBodySupportPtr{},
-            current_body_support_matches_start_ && current_body_support_admission_pending_);
+            current_body_support_matches_start_ && current_body_support_admission_pending_,
+            backup_policy);
         if (!validation.valid || !validation.protected_region.valid()) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -1628,10 +1655,12 @@ double knownFreeGuideSupport(
                 0.01, &candidate.yaw)) {
             return std::nullopt;
         }
+        const auto backup_policy = backupPolicy();
         const auto certificate_policy = candidateCertificatePolicy(
             candidate, cfg_.unknown_space_policy);
         const auto validation = validateExecutableCandidate(
-            *world, candidate, activation_wall_time_s, certificate_policy);
+            *world, candidate, activation_wall_time_s, certificate_policy,
+            {}, false, backup_policy);
         if (!validation.valid || !validation.protected_region.valid()) {
             return std::nullopt;
         }
@@ -2592,10 +2621,12 @@ double knownFreeGuideSupport(
         // complete MAIN+BACKUP certificate, including the portion before its
         // future activation boundary. This is a re-certification only; the
         // execution store still owns activation and all handover gates.
+        const auto backup_policy = backupPolicy();
         const auto certificate_policy = candidateCertificatePolicy(
             candidate, unknownPolicy());
         const auto validation = validateExecutableCandidate(
-            *world, candidate, authorization_wall_time_s, certificate_policy);
+            *world, candidate, authorization_wall_time_s, certificate_policy,
+            {}, false, backup_policy);
         output.valid = validation.valid;
         output.begin_time_s = validation.begin_tt;
         output.first_blocked_time_s = validation.first_blocked_tt;
@@ -3957,6 +3988,10 @@ double knownFreeGuideSupport(
             *map_ptr_, guide_path,
             current_body_support_matches_start_ ? current_body_support_
                                                 : navigation_world_model::CurrentBodySupportPtr{});
+        const double main_policy_support_m =
+            cfg_.unknown_space_policy == navigation_world_model::UnknownPolicy::kAllowUnknown
+                ? mainGuideSupport(*map_ptr_, guide_path, cfg_.unknown_space_policy)
+                : known_free_support_m;
         navigation_math::StatePVAJ viability_state =
             navigation_math::StatePVAJ::Zero();
         viability_state.col(0) = solve_state_.p;
@@ -3977,13 +4012,16 @@ double knownFreeGuideSupport(
             viability_state, viability_dynamics,
             {navigation_planning::PlanningTimingContract::kLocalWindowM,
              directional_support.value_or(0.0), route_support_m,
-             known_free_support_m});
+             main_policy_support_m});
         if (!governed_speed.sufficient || governed_speed.speed_mps <= 0.0) {
             planner_context_->warn(
                 " -- [planner] MAIN rejected: insufficient braking evidence "
-                "local=20.000 directional={:.3f} route={:.3f} known_free={:.3f}",
+                "local=20.000 directional={:.3f} route={:.3f} "
+                "policy_support={:.3f} known_free={:.3f} policy={}",
                 directional_support.value_or(0.0), route_support_m,
-                known_free_support_m);
+                main_policy_support_m, known_free_support_m,
+                cfg_.unknown_space_policy == navigation_world_model::UnknownPolicy::kAllowUnknown
+                    ? "allow_unknown" : "require_known_free");
             if (failure_detail != nullptr) {
                 *failure_detail = PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT;
             }
@@ -4502,21 +4540,20 @@ double knownFreeGuideSupport(
         // candidates retain their positive elapsed-time offset.
         double command_start_t = std::clamp(start_t, 0.0, total_dur);
         Vec3f command_start = ref_exp_traj.getPos(command_start_t);
-        bool command_start_known_free = command_start.allFinite() &&
+        bool command_start_backup_admitted = command_start.allFinite() &&
             map_ptr_->contains(command_start) &&
             map_ptr_->isSegmentTraversable(
                 command_start, command_start,
                 navigation_world_model::GridLayer::kInflated,
-                navigation_world_model::UnknownPolicy::kRequireKnownFree);
-        if (!command_start_known_free && current_body_support_matches_start_ &&
+                backupPolicy());
+        if (!command_start_backup_admitted && current_body_support_matches_start_ &&
             current_body_support_ && current_body_support_->contains(
                 solve_state_.p.cast<double>(), map_ptr_->identity(),
                 current_body_support_->source_stamp_ns)) {
             // The MAIN trajectory may begin in the measured body's UNKNOWN
-            // voxel, but BACKUP still starts only at sensor-known-free
-            // evidence. Find that first certified command boundary along the
-            // already body-admitted MAIN prefix; do not renew the body witness
-            // from a later moving pose.
+            // voxel. Find the first command boundary admitted by the active
+            // BACKUP policy along the already body-admitted MAIN prefix; do
+            // not renew the body witness from a later moving pose.
             const double sample_step = std::max(cfg_.sample_traj_dt_s, 1.0e-3);
             for (double candidate_t = command_start_t + sample_step;
                  candidate_t < total_dur + 0.5 * sample_step;
@@ -4527,21 +4564,22 @@ double knownFreeGuideSupport(
                     map_ptr_->isSegmentTraversable(
                         candidate, candidate,
                         navigation_world_model::GridLayer::kInflated,
-                        navigation_world_model::UnknownPolicy::kRequireKnownFree)) {
+                        backupPolicy())) {
                     command_start_t = bounded_t;
                     command_start = candidate;
-                    command_start_known_free = true;
+                    command_start_backup_admitted = true;
                     break;
                 }
                 if (bounded_t >= total_dur) break;
             }
         }
         const double visibility_start_t = command_start_t;
-        if (!command_start_known_free) {
+        if (!command_start_backup_admitted) {
             backup_certificate_diagnostics_.last_reject_stage = static_cast<int>(
                 navigation_planning::BackupCertificateRejectStage::kCommandBoundary);
             planner_context_->warn(
-                    " -- [planner] backup command boundary is not KNOWN_FREE; "
+                " -- [planner] backup command boundary is not admitted by "
+                "the active BACKUP policy; "
                     "rejecting backup origin command=({}, {}, {}) measured=({}, {}, {})",
                     command_start.x(), command_start.y(), command_start.z(),
                     solve_state_.p.x(), solve_state_.p.y(), solve_state_.p.z());
@@ -4639,7 +4677,7 @@ double knownFreeGuideSupport(
             return map_ptr_->isSegmentTraversable(
                 visibility_origin, endpoint,
                     navigation_world_model::GridLayer::kInflated,
-                    navigation_world_model::UnknownPolicy::kRequireKnownFree);
+                    backupPolicy());
         };
         if (shared_visibility_ray &&
             inflated_line_visible(candidate_ps.back().second)) {
@@ -4738,12 +4776,12 @@ double knownFreeGuideSupport(
             (seed_point - backup_origin).norm() <= cfg_.resolution) {
             planner_context_->warn(
                     " -- [planner] backup visibility seed is too short "
-                    "after KNOWN_FREE visibility selection length={}",
+                    "after BACKUP-policy visibility selection length={}",
                     (seed_point - backup_origin).norm());
             return FAILED;
         }
         // The candidate samples were already certified by the same inflated
-        // grid KNOWN_FREE ray oracle above. Do not construct a second long
+        // grid BACKUP-policy ray oracle above. Do not construct a second long
         // CIRI visibility polytope here: CIRI can fail numerically near an
         // obstacle even when the ray certificate is valid. The optimizer SFC
         // is tied to the executable braking hull below.
@@ -4851,7 +4889,7 @@ double knownFreeGuideSupport(
                     {0.0, duration, CandidateTrajectoryRole::BACKUP});
             const auto validation = validateExecutableCandidate(
                     *map_ptr_, backup_candidate, planner_context_->getSimTime(),
-                    navigation_world_model::UnknownPolicy::kRequireKnownFree);
+                    backupPolicy(), {}, false, backupPolicy());
             return validation;
         };
         const double initial_switch_guess = heu_ts;
@@ -5289,14 +5327,14 @@ double knownFreeGuideSupport(
                     {0.0, duration, CandidateTrajectoryRole::BACKUP});
             return validateExecutableCandidate(
                     *map_ptr_, backup_candidate, planner_context_->getSimTime(),
-                    navigation_world_model::UnknownPolicy::kRequireKnownFree);
+                    backupPolicy(), {}, false, backupPolicy());
         };
         // The backup optimizer is constrained by the geometric SFC, while
-        // the execution certificate is stricter: every swept cell in the
-        // backup tube must be KNOWN_FREE. A successful numerical refinement
-        // can still bend through an UNKNOWN cell inside an allow-unknown
-        // mission corridor. Reject that refinement locally and retain the
-        // already checked minimum-snap braking seed; never let
+        // the execution certificate applies the configured BACKUP policy to
+        // every swept cell. In strict mode this is KNOWN_FREE; in the
+        // diagnostic allow-UNKNOWN mode only OCCUPIED/OUT_OF_MAP/UNDEFINED
+        // remain blockers. Validate the refinement locally and retain the
+        // already checked minimum-snap braking seed when it fails; never let
         // authorizeAndStage discover this only after the full mission solve.
         auto backup_validation = backupCandidateValidation(
             temp_pos_traj, ref_exp_traj.getStartWallTime() + opt_ts);

@@ -381,7 +381,7 @@ TEST(ExecutionTimelineStore, RecertifiedPredecessorKeepsSuccessorActivationValid
   EXPECT_EQ(store.load()->bundle_generation, successor->bundle_generation);
 }
 
-TEST(ExecutionTimelineStore, RejectsActivationWhenActiveWasInvalidatedButPendingRetained) {
+TEST(ExecutionTimelineStore, ActiveInvalidPendingValidImmediatelyFailsClosed) {
   navigation_execution::ExecutionTimelineStore store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
@@ -403,11 +403,51 @@ TEST(ExecutionTimelineStore, RejectsActivationWhenActiveWasInvalidatedButPending
                 old_timeline.pending, true),
             navigation_world_model::WorldCommitDecision::kCommitted);
   EXPECT_FALSE(store.load());
-  EXPECT_TRUE(static_cast<bool>(store.snapshot().pending));
+  EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
+  EXPECT_TRUE(store.invariantHolds());
   const auto activation = store.snapshot();
   EXPECT_FALSE(store.activatePendingIfDueAndFinalize(
       50, activation, [](std::uint64_t) { return true; }));
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
+}
+
+TEST(ExecutionTimelineStore, PendingImpliesActiveAfterEveryStoreMutation) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
+  const auto assert_invariant = [&store] {
+    const auto timeline = store.snapshot();
+    EXPECT_TRUE(store.invariantHolds());
+    EXPECT_TRUE(!timeline.pending || static_cast<bool>(timeline.active));
+  };
+
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  assert_invariant();
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  assert_invariant();
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  assert_invariant();
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  auto pending = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, pending),
+            navigation_execution::StageDecision::kStaged);
+  assert_invariant();
+  const auto observed = store.snapshot();
+  ASSERT_EQ(store.publishWorldIdentityIfCurrent(
+                next_world, observed.version, observed.active, true, 300,
+                observed.pending, true),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+  assert_invariant();
+  const auto refreshed = store.snapshot();
+  ASSERT_TRUE(store.activatePendingIfDueAndFinalize(
+      50, refreshed, [](std::uint64_t) { return true; }));
+  assert_invariant();
+  store.invalidate();
+  assert_invariant();
 }
 
 TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
@@ -620,7 +660,7 @@ TEST(ExecutionTimelineStore, WorldAdvanceInvalidatesPendingSuccessor) {
   EXPECT_FALSE(store.load());
 }
 
-TEST(ExecutionTimelineStore, KeepsPendingSuccessorOnlyAfterExplicitWorldRecertification) {
+TEST(ExecutionTimelineStore, RejectsPendingRecertificationWithoutRetainedActive) {
   navigation_execution::ExecutionTimelineStore store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
@@ -647,8 +687,9 @@ TEST(ExecutionTimelineStore, KeepsPendingSuccessorOnlyAfterExplicitWorldRecertif
                 old_timeline.pending, true),
             navigation_world_model::WorldCommitDecision::kCommitted);
   const auto recertified_snapshot = store.snapshot();
-  ASSERT_TRUE(recertified_snapshot.pending);
-  EXPECT_EQ(recertified_snapshot.pending->world_identity.revision, next_world.revision);
+  EXPECT_FALSE(recertified_snapshot.active);
+  EXPECT_FALSE(recertified_snapshot.pending);
+  EXPECT_TRUE(store.invariantHolds());
 }
 
 TEST(ExecutionTimelineStore, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
@@ -947,7 +988,7 @@ TEST(ExecutionTimelineStore, SupersededWorldRefreshPreservesNewCommit) {
   EXPECT_EQ(store.snapshot().world_identity->revision, world.revision);
 }
 
-TEST(ExecutionTimelineStore, RefreshKeepsActiveWhenPendingIsInvalid) {
+TEST(ExecutionTimelineStore, ActiveValidPendingInvalidKeepsActive) {
   navigation_execution::ExecutionTimelineStore store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
@@ -1021,7 +1062,7 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesNewPendingSuccessor) {
   EXPECT_EQ(store.snapshot().pending, pending);
 }
 
-TEST(ExecutionTimelineStore, ActivationWinsBeforeRevokeAndKeepsSuccessor) {
+TEST(ExecutionTimelineStore, ActivationWinsAgainstStaleWorldRefresh) {
   navigation_execution::ExecutionTimelineStore store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
