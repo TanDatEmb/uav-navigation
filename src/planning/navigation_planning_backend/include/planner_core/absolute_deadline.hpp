@@ -15,6 +15,19 @@ public:
         : deadline_(makeSimulationDeadline(start_time, budget_seconds)),
           steady_deadline_(makeSteadyDeadline(budget_seconds)) {}
 
+    // Request-owned deadline path. The simulation deadline is retained for
+    // timestamp semantics, while the steady deadline is the authoritative
+    // cancellation boundary shared with the runtime transaction.
+    AbsoluteDeadline(const double simulation_deadline,
+                     const std::int64_t steady_deadline_ns)
+        : deadline_(simulation_deadline),
+          steady_deadline_(std::chrono::steady_clock::time_point(
+              std::chrono::nanoseconds(steady_deadline_ns))) {
+        if (!std::isfinite(simulation_deadline) || steady_deadline_ns <= 0) {
+            throw std::invalid_argument("absolute deadline requires finite request deadline");
+        }
+    }
+
     [[nodiscard]] double remaining(const double now) const {
         if (!std::isfinite(now)) return 0.0;
         return std::max(0.0, deadline_ - now);

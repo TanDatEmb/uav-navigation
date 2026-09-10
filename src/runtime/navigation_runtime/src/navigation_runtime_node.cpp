@@ -4748,6 +4748,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planning_request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
       std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
           std::chrono::duration<double>(planner_->solveDeadlineSeconds()));
+  planning_request.budget.steady_deadline_ns = std::chrono::duration_cast<
+      std::chrono::nanoseconds>(planning_request.budget.deadline.time_since_epoch()).count();
   navigation_planning::PlanningOutcome planning_outcome;
   {
     // Arm only after the immutable request, activation timing, and execution

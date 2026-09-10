@@ -102,6 +102,10 @@ namespace navigation_planning_backend {
         mutable std::mutex solve_commit_mutex_;
         mutable std::mutex command_identity_mutex_;
         CommandIdentity command_identity_{};
+        // Non-zero only while servicing a typed PlanningRequest. All planner
+        // stages use this transaction-owned absolute deadline; compatibility
+        // entry points retain the configured local budget.
+        std::int64_t request_deadline_ns_{0};
 
         struct StagedCommandCandidate {
             CandidateCommandBundle command;
@@ -674,6 +678,7 @@ namespace navigation_planning_backend {
                    const bool &new_goal);
 
     private:
+        [[nodiscard]] AbsoluteDeadline solveDeadlineForCurrentRequest() const;
         // Internal request admission only. Current-body geometry is never a
         // public mutable planner setting.
         void setCurrentBodySupport(

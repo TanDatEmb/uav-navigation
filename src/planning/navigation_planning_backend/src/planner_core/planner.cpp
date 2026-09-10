@@ -42,6 +42,19 @@ using std::isnan;
 
 namespace navigation_planning_backend {
 
+AbsoluteDeadline Planner::solveDeadlineForCurrentRequest() const {
+    if (request_deadline_ns_ > 0) {
+        const auto now_steady = std::chrono::steady_clock::now();
+        const auto deadline = std::chrono::steady_clock::time_point(
+            std::chrono::nanoseconds(request_deadline_ns_));
+        const double remaining = std::max(
+            0.0, std::chrono::duration<double>(deadline - now_steady).count());
+        return AbsoluteDeadline(
+            planner_context_->getSimTime() + remaining, request_deadline_ns_);
+    }
+    return AbsoluteDeadline(planner_context_->getSimTime(), cfg_.solve_deadline_s);
+}
+
 class NominalProblemSnapshotWriter final {
  public:
   explicit NominalProblemSnapshotWriter(const std::size_t capacity)
@@ -1846,8 +1859,7 @@ double mainGuideSupport(
             solve_acceleration_estimated_ = robot_acceleration_estimated_;
             solve_jerk_estimated_ = robot_jerk_estimated_;
         }
-        const AbsoluteDeadline solve_deadline(
-                planner_context_->getSimTime(), cfg_.solve_deadline_s);
+        const AbsoluteDeadline solve_deadline = solveDeadlineForCurrentRequest();
         candidate_terminal_stop_active_ = false;
         solve_stage_.store(1);
         latest_commit_decision_.store(static_cast<int>(
@@ -2070,8 +2082,7 @@ double mainGuideSupport(
             solve_acceleration_estimated_ = robot_acceleration_estimated_;
             solve_jerk_estimated_ = robot_jerk_estimated_;
         }
-        const AbsoluteDeadline solve_deadline(
-                planner_context_->getSimTime(), cfg_.solve_deadline_s);
+        const AbsoluteDeadline solve_deadline = solveDeadlineForCurrentRequest();
         candidate_terminal_stop_active_ = false;
         solve_stage_.store(1);
         latest_commit_decision_.store(static_cast<int>(
@@ -2334,7 +2345,7 @@ double mainGuideSupport(
         navigation_planning::PlanningOutcome outcome;
     outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
     outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
-    const auto finish = [&]() {
+        const auto finish = [&]() {
             // The measured body witness is request-local. Clear it on every
             // return path, including rejected/expired solves, so a later
             // request cannot inherit physical support from an old pose.
@@ -2344,6 +2355,7 @@ double mainGuideSupport(
             outcome.trace.elapsed_steady_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now() - started).count();
+            request_deadline_ns_ = 0;
             return outcome;
         };
         // Keep the request-local witness and all planner-side handover state
@@ -2357,6 +2369,7 @@ double mainGuideSupport(
         };
         const ScopeExit cleanup_guard(cleanup);
         if (!request.valid()) return finish();
+        request_deadline_ns_ = request.budget.steady_deadline_ns;
 
         last_nominal_solve_status_ = traj_opt::NominalSolveStatus::kFailed;
         last_nominal_deadline_observed_ = false;

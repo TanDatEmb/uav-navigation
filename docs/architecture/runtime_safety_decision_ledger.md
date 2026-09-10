@@ -21283,3 +21283,22 @@ release profiles must not use the former allowance.
   replaced by an equally atomic lifecycle proof and corresponding tests.
 - **Verification:** `test_committed_bundle_store` (40/40),
   `test_planning_worker` (12/12), release build and `git diff --check`.
+
+### 2026-09-10 - Carry one absolute planning deadline into planner core
+
+- **Owner/status:** Navigation runtime and planning backend; `IMPLEMENTED`.
+- **Scope:** `PlanningRequest` carries the absolute steady-clock deadline
+  created by the runtime. Planner core uses that same deadline for the
+  frontend/corridor/MINCO/backup path instead of creating a fresh configured
+  budget after request preprocessing. Compatibility entry points retain their
+  existing local budget.
+- **Safety impact:** No deadline value or solve reserve is increased. Expiry
+  remains fail-closed; partial trajectories are not authorized and existing
+  active commands are not cleared by this change.
+- **Evidence/removal condition:** Keep while trace evidence confirms request,
+  backend and certificate stages share one monotonic deadline. Revert or revise
+  if deadline timestamps diverge, simulation-time jumps bypass the steady
+  boundary, or any candidate is returned without complete certification.
+- **Verification:** Release build/manifest, planner facade tests (14/14),
+  focused lifecycle/worker tests and repeated runtime traces including the
+  request deadline witness. Qualification remains unchanged.
