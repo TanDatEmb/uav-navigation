@@ -21243,3 +21243,25 @@ release profiles must not use the former allowance.
 - **Verification:** Planning backend trajectory tests, canonical Release build,
   runtime contract suite, `git diff --check`, then repeated SITL comparing
   mission `blocked` versus `allow_unknown` with both BACKUP policies.
+
+### 2026-09-10 - Add planner and mapping latency-tail observability
+
+- **Owner/status:** Navigation runtime and report tooling; `IMPLEMENTED`,
+  behavior-neutral.
+- **Scope:** Publish separated mapping stage timings, snapshot export reasons,
+  dirty-region/state-change counters, and bounded planning-worker enqueue,
+  start, backend and completion witnesses. Existing scheduler, admission,
+  certificate and safety values are unchanged.
+- **Safety impact:** None by design. New counters and timestamps are
+  diagnostics only; they do not authorize a candidate, alter cancellation,
+  change a deadline, or relax map/certificate predicates. Dirty-chunk count is
+  not inferred from the current AABB and remains zero until exact COW tracking
+  exists.
+- **Evidence/removal condition:** Retain while the deterministic replay and
+  repeated SITL traces are used to separate callback, queue and backend tails.
+  Remove or revise fields that cannot be correlated to a source-owned stage;
+  never use `planning_scheduling_gap_us` alone as executor-starvation proof.
+- **Verification:** Canonical Release build, `test_committed_bundle_store`
+  (40/40), `test_planning_worker` (12/12), report parser contract tests and
+  diagnostic SITL artifacts with source/build identity recorded. Qualification
+  remains unchanged.

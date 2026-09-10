@@ -107,6 +107,12 @@ struct MappingTelemetrySnapshot {
   std::uint64_t world_snapshot_deferred_count{0};
   std::uint64_t world_snapshot_full_export_count{0};
   std::uint64_t world_snapshot_patch_export_count{0};
+  std::uint64_t snapshot_full_reason_no_current_count{0};
+  std::uint64_t snapshot_full_reason_whole_world_count{0};
+  std::uint64_t snapshot_full_reason_invalid_region_count{0};
+  std::uint64_t snapshot_full_reason_patch_depth_count{0};
+  std::uint64_t snapshot_full_reason_empty_patch_count{0};
+  std::uint64_t snapshot_full_reason_patch_too_large_count{0};
 };
 
 class MappingTelemetry {
@@ -133,6 +139,12 @@ class MappingTelemetry {
     next.world_snapshot_deferred_count = state_.world_snapshot_deferred_count;
     next.world_snapshot_full_export_count = state_.world_snapshot_full_export_count;
     next.world_snapshot_patch_export_count = state_.world_snapshot_patch_export_count;
+    next.snapshot_full_reason_no_current_count = state_.snapshot_full_reason_no_current_count;
+    next.snapshot_full_reason_whole_world_count = state_.snapshot_full_reason_whole_world_count;
+    next.snapshot_full_reason_invalid_region_count = state_.snapshot_full_reason_invalid_region_count;
+    next.snapshot_full_reason_patch_depth_count = state_.snapshot_full_reason_patch_depth_count;
+    next.snapshot_full_reason_empty_patch_count = state_.snapshot_full_reason_empty_patch_count;
+    next.snapshot_full_reason_patch_too_large_count = state_.snapshot_full_reason_patch_too_large_count;
     if (next.world_snapshot_published) {
       ++next.world_snapshot_published_count;
       if (next.snapshot_export_mode ==
@@ -141,6 +153,25 @@ class MappingTelemetry {
       } else if (next.snapshot_export_mode ==
                  static_cast<std::uint64_t>(navigation_mapping::SnapshotExportMode::kPatch)) {
         ++next.world_snapshot_patch_export_count;
+      }
+      if (next.snapshot_export_mode ==
+          static_cast<std::uint64_t>(navigation_mapping::SnapshotExportMode::kFull)) {
+        switch (static_cast<navigation_mapping::SnapshotFullExportReason>(
+            next.snapshot_full_export_reason)) {
+          case navigation_mapping::SnapshotFullExportReason::kNoCurrentSnapshot:
+            ++next.snapshot_full_reason_no_current_count; break;
+          case navigation_mapping::SnapshotFullExportReason::kWholeWorldChanged:
+            ++next.snapshot_full_reason_whole_world_count; break;
+          case navigation_mapping::SnapshotFullExportReason::kInvalidChangedRegion:
+            ++next.snapshot_full_reason_invalid_region_count; break;
+          case navigation_mapping::SnapshotFullExportReason::kPatchDepthLimit:
+            ++next.snapshot_full_reason_patch_depth_count; break;
+          case navigation_mapping::SnapshotFullExportReason::kEmptyPatch:
+            ++next.snapshot_full_reason_empty_patch_count; break;
+          case navigation_mapping::SnapshotFullExportReason::kPatchTooLarge:
+            ++next.snapshot_full_reason_patch_too_large_count; break;
+          case navigation_mapping::SnapshotFullExportReason::kNone: break;
+        }
       }
     } else if (navigation_mapping::worldUpdateAdvanced(next.map.update_outcome)) {
       ++next.world_snapshot_deferred_count;
@@ -454,6 +485,11 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::int64_t last_cycle_started_steady_ns_{0};
   std::int64_t planning_period_us_{0};
   std::int64_t last_planning_scheduling_gap_us_{0};
+  std::int64_t last_planning_timer_expected_steady_ns_{0};
+  std::int64_t last_planning_callback_start_steady_ns_{0};
+  std::atomic_uint64_t planning_key_success_count_{0};
+  std::atomic_uint64_t planning_key_unavailable_count_{0};
+  std::atomic_uint64_t planning_submit_count_{0};
   navigation_mapping::ObservationAccounting observation_accounting_;
   std::chrono::steady_clock::time_point metrics_log_time_{std::chrono::steady_clock::now()};
   std::vector<double> end_to_end_samples_ms_;

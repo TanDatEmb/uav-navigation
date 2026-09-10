@@ -34,10 +34,18 @@ struct PlanningWorkerSnapshot {
   std::uint64_t exact_duplicates{0};
   std::uint64_t replaced_pending{0};
   std::uint64_t rejected_lower_priority{0};
+  std::uint64_t accepted{0};
+  std::uint64_t rejected_invalid{0};
+  std::uint64_t rejected_stopped{0};
   // Monotonic timing witnesses for the latest worker transaction. These are
   // diagnostic only and do not participate in queue admission or cancellation.
   std::int64_t last_enqueue_wait_us{0};
   std::int64_t last_worker_runtime_us{0};
+  std::int64_t last_enqueue_time_steady_ns{0};
+  std::int64_t last_worker_start_steady_ns{0};
+  std::int64_t last_backend_entry_steady_ns{0};
+  std::int64_t last_backend_exit_steady_ns{0};
+  std::uint64_t last_submit_disposition{0};
   bool in_flight{false};
   bool pending{false};
   bool fatal{false};
@@ -74,6 +82,10 @@ class PlanningWorker {
   [[nodiscard]] PlanningSubmitDisposition submit(
       PlanningKey key, PlanningPriority priority, Job job) {
     if (!key.valid() || !planningPriorityKnown(priority) || !job) {
+      std::lock_guard lock(mutex_);
+      ++snapshot_.rejected_invalid;
+      snapshot_.last_submit_disposition = static_cast<std::uint64_t>(
+          PlanningSubmitDisposition::kRejectedInvalid);
       return PlanningSubmitDisposition::kRejectedInvalid;
     }
 
@@ -81,10 +93,15 @@ class PlanningWorker {
     {
       std::lock_guard lock(mutex_);
       if (!accepting_ || fatal_ || shutdown_started_) {
+        ++snapshot_.rejected_stopped;
+        snapshot_.last_submit_disposition = static_cast<std::uint64_t>(
+            PlanningSubmitDisposition::kRejectedStopped);
         return PlanningSubmitDisposition::kRejectedStopped;
       }
       if ((active_ && active_->key == key) || (pending_ && pending_->key == key)) {
         ++snapshot_.exact_duplicates;
+        snapshot_.last_submit_disposition = static_cast<std::uint64_t>(
+            PlanningSubmitDisposition::kExactDuplicate);
         return PlanningSubmitDisposition::kExactDuplicate;
       }
 
@@ -108,6 +125,8 @@ class PlanningWorker {
       if (!supersedes_active && (pending_ || active_) &&
           higherPriority(incumbent_priority, priority)) {
         ++snapshot_.rejected_lower_priority;
+        snapshot_.last_submit_disposition = static_cast<std::uint64_t>(
+            PlanningSubmitDisposition::kRejectedLowerPriority);
         return PlanningSubmitDisposition::kRejectedLowerPriority;
       }
 
@@ -118,6 +137,10 @@ class PlanningWorker {
       pending_ = WorkItem{std::move(key), priority, std::move(job),
                           std::chrono::steady_clock::now()};
       ++snapshot_.submitted;
+      ++snapshot_.accepted;
+      snapshot_.last_submit_disposition = static_cast<std::uint64_t>(disposition);
+      snapshot_.last_enqueue_time_steady_ns = std::chrono::duration_cast<
+          std::chrono::nanoseconds>(pending_->enqueued_at.time_since_epoch()).count();
       snapshot_.pending = true;
     }
     cv_.notify_one();
@@ -229,6 +252,8 @@ class PlanningWorker {
         work = std::move(pending_);
         pending_.reset();
         worker_started_at = std::chrono::steady_clock::now();
+        snapshot_.last_worker_start_steady_ns = std::chrono::duration_cast<
+            std::chrono::nanoseconds>(worker_started_at.time_since_epoch()).count();
         snapshot_.last_enqueue_wait_us = std::chrono::duration_cast<
             std::chrono::microseconds>(worker_started_at - work->enqueued_at).count();
         active_.emplace();
@@ -241,8 +266,18 @@ class PlanningWorker {
       }
 
       try {
+        {
+          std::lock_guard lock(mutex_);
+          snapshot_.last_backend_entry_steady_ns = std::chrono::duration_cast<
+              std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
         std::lock_guard<std::recursive_mutex> backend_lock(backend_access_mutex_);
         work->job(*planner_, job_stop);
+        {
+          std::lock_guard lock(mutex_);
+          snapshot_.last_backend_exit_steady_ns = std::chrono::duration_cast<
+              std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
       } catch (...) {
         const auto failure = std::current_exception();
         {

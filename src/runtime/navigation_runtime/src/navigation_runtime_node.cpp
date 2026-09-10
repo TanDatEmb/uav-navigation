@@ -1360,6 +1360,18 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("world_snapshot_deferred_count", mapping.world_snapshot_deferred_count);
         add_value("world_snapshot_full_export_count", mapping.world_snapshot_full_export_count);
         add_value("world_snapshot_patch_export_count", mapping.world_snapshot_patch_export_count);
+        add_value("world_snapshot_full_reason_no_current_count",
+                  mapping.snapshot_full_reason_no_current_count);
+        add_value("world_snapshot_full_reason_whole_world_count",
+                  mapping.snapshot_full_reason_whole_world_count);
+        add_value("world_snapshot_full_reason_invalid_region_count",
+                  mapping.snapshot_full_reason_invalid_region_count);
+        add_value("world_snapshot_full_reason_patch_depth_count",
+                  mapping.snapshot_full_reason_patch_depth_count);
+        add_value("world_snapshot_full_reason_empty_patch_count",
+                  mapping.snapshot_full_reason_empty_patch_count);
+        add_value("world_snapshot_full_reason_patch_too_large_count",
+                  mapping.snapshot_full_reason_patch_too_large_count);
         add_value("world_snapshot_export_mode", mapping.snapshot_export_mode);
         add_value("world_snapshot_full_export_reason", mapping.snapshot_full_export_reason);
         add_value("world_snapshot_export_base_cells", mapping.snapshot_export_base_cells);
@@ -1431,19 +1443,28 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         add_value("world_snapshot_peak_live_owned_bytes", mapping.snapshot_peak_live_owned_bytes);
         add_duration("ros_pointcloud_decode_us", mapping.pointcloud_decode_us);
         add_duration("mapping_observation_decode_us", mapping.observation_decode_us);
+        add_duration("observation_decode_us", mapping.observation_decode_us);
         add_duration("mapping_raycast_us", map.raycast_us);
+        add_duration("rog_raycast_us", map.raycast_us);
         add_duration("mapping_probability_update_us", map.probability_update_us);
+        add_duration("rog_probability_update_us", map.probability_update_us);
         add_duration("mapping_inflation_us", map.inflation_us);
+        add_duration("rog_inflation_us", map.inflation_us);
         add_duration("mapping_slide_us", map.slide_us);
+        add_duration("rog_slide_us", map.slide_us);
         add_duration("mapping_dirty_region_build_us", mapping.dirty_region_build_us);
+        add_duration("dirty_region_build_us", mapping.dirty_region_build_us);
         add_duration("mapping_total_update_us", map.map_update_us);
         add_duration("world_snapshot_export_us", mapping.snapshot_export_us);
+        add_duration("snapshot_export_us", mapping.snapshot_export_us);
         add_duration("world_snapshot_object_build_us", mapping.snapshot_object_build_us);
+        add_duration("snapshot_object_build_us", mapping.snapshot_object_build_us);
         add_duration("pending_revalidation_us", mapping.pending_revalidation_us);
         add_duration("active_revalidation_us", mapping.active_revalidation_us);
         add_duration("world_publication_finalize_us",
                      mapping.world_publication_finalize_us);
         add_value("mapping_dirty_aabb_voxel_count", mapping.dirty_aabb_voxel_count);
+        add_value("mapping_dirty_chunk_count", mapping.dirty_chunk_count);
         add_value("mapping_base_planning_state_change_count",
                   mapping.base_planning_state_change_count);
         add_value("mapping_inflated_planning_state_change_count",
@@ -2954,9 +2975,24 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
 }
 
 void NavigationRuntimeNode::schedulePlanningCycle() {
+  const auto callback_start = std::chrono::steady_clock::now();
+  const auto callback_start_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      callback_start.time_since_epoch()).count();
+  last_planning_callback_start_steady_ns_ = callback_start_ns;
+  if (last_planning_timer_expected_steady_ns_ == 0) {
+    last_planning_timer_expected_steady_ns_ = callback_start_ns;
+  } else {
+    last_planning_timer_expected_steady_ns_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::microseconds(planning_period_us_)).count();
+  }
   if (!accepting_observations_.load(std::memory_order_acquire) || !planning_worker_) return;
   const auto key = currentPlanningKey();
-  if (!key) return;
+  if (!key) {
+    planning_key_unavailable_count_.fetch_add(1, std::memory_order_relaxed);
+    return;
+  }
+  planning_key_success_count_.fetch_add(1, std::memory_order_relaxed);
   bool goal_transition = false;
   bool safety_renewal = false;
   {
@@ -2971,7 +3007,7 @@ void NavigationRuntimeNode::schedulePlanningCycle() {
   }
   const auto priority = PlanningSupervisor::classifyPriority(
       false, false, goal_transition, safety_renewal);
-  (void)planning_worker_->submit(
+  const auto disposition = planning_worker_->submit(
       *key, priority,
       [this, scheduled_key = *key](
           navigation_planning_backend::PlannerFacade& planner, std::stop_token stop) {
@@ -2984,6 +3020,8 @@ void NavigationRuntimeNode::schedulePlanningCycle() {
         }
         runCycle(scheduled_key);
       });
+  (void)disposition;
+  planning_submit_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void NavigationRuntimeNode::scheduleHeadingRebind(const PlanningKey& key) {
@@ -3254,11 +3292,43 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   };
   const auto& map_diagnostics = mapping.map;
   const auto accounting = observation_accounting_.snapshot();
+  const auto worker_snapshot = planning_worker_ ? planning_worker_->snapshot()
+                                                 : PlanningWorkerSnapshot{};
   addObservationAccountingValues(status, accounting);
   add_value("cycle_count", cycle_count_);
   add_value("trajectory_publish_count", cycle_success_count_);
   add_value("optimizer_deferred_count", optimizer_deferred_count_);
   add_value("optimizer_renewal_due_count", optimizer_renewal_due_count_);
+  add_value("planning_worker_submitted", worker_snapshot.submitted);
+  add_value("planning_worker_started", worker_snapshot.started);
+  add_value("planning_worker_completed", worker_snapshot.completed);
+  add_value("planning_worker_cancelled", worker_snapshot.cancelled);
+  add_value("planning_worker_exact_duplicates", worker_snapshot.exact_duplicates);
+  add_value("planning_worker_replaced_pending", worker_snapshot.replaced_pending);
+  add_value("planning_worker_rejected_lower_priority",
+            worker_snapshot.rejected_lower_priority);
+  add_value("planning_worker_accepted", worker_snapshot.accepted);
+  add_value("planning_worker_rejected_invalid", worker_snapshot.rejected_invalid);
+  add_value("planning_worker_rejected_stopped", worker_snapshot.rejected_stopped);
+  add_value("planning_worker_last_submit_disposition",
+            worker_snapshot.last_submit_disposition);
+  add_value("planning_submit_count", planning_submit_count_.load());
+  add_value("planning_key_success_count", planning_key_success_count_.load());
+  add_value("planning_key_unavailable_count", planning_key_unavailable_count_.load());
+  add_signed_value("planning_timer_expected_steady_ns",
+                   last_planning_timer_expected_steady_ns_);
+  add_signed_value("planning_callback_start_steady_ns",
+                   last_planning_callback_start_steady_ns_);
+  add_signed_value("planning_worker_enqueue_time_steady_ns",
+                   worker_snapshot.last_enqueue_time_steady_ns);
+  add_signed_value("planning_worker_start_steady_ns",
+                   worker_snapshot.last_worker_start_steady_ns);
+  add_signed_value("planning_backend_entry_steady_ns",
+                   worker_snapshot.last_backend_entry_steady_ns);
+  add_signed_value("planning_backend_exit_steady_ns",
+                   worker_snapshot.last_backend_exit_steady_ns);
+  add_duration("planning_worker_enqueue_wait_us", worker_snapshot.last_enqueue_wait_us);
+  add_duration("planning_worker_runtime_us", worker_snapshot.last_worker_runtime_us);
   add_value("same_identity_renewal_target_ordinal",
             same_identity_renewal_injection_.targetOrdinal());
   add_value("same_identity_renewal_eligible_ordinal",
@@ -3344,6 +3414,18 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_value("world_snapshot_deferred_count", mapping.world_snapshot_deferred_count);
   add_value("world_snapshot_full_export_count", mapping.world_snapshot_full_export_count);
   add_value("world_snapshot_patch_export_count", mapping.world_snapshot_patch_export_count);
+  add_value("world_snapshot_full_reason_no_current_count",
+            mapping.snapshot_full_reason_no_current_count);
+  add_value("world_snapshot_full_reason_whole_world_count",
+            mapping.snapshot_full_reason_whole_world_count);
+  add_value("world_snapshot_full_reason_invalid_region_count",
+            mapping.snapshot_full_reason_invalid_region_count);
+  add_value("world_snapshot_full_reason_patch_depth_count",
+            mapping.snapshot_full_reason_patch_depth_count);
+  add_value("world_snapshot_full_reason_empty_patch_count",
+            mapping.snapshot_full_reason_empty_patch_count);
+  add_value("world_snapshot_full_reason_patch_too_large_count",
+            mapping.snapshot_full_reason_patch_too_large_count);
   add_value("world_snapshot_export_mode", mapping.snapshot_export_mode);
   add_value("world_snapshot_full_export_reason", mapping.snapshot_full_export_reason);
   add_value("world_snapshot_export_base_cells", mapping.snapshot_export_base_cells);
@@ -3364,6 +3446,24 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   add_duration("command_transport_publish_us",
                last_publish_us_.load(std::memory_order_acquire));
   add_duration("planning_scheduling_gap_us", last_planning_scheduling_gap_us_);
+  add_duration("mapping_observation_decode_us", mapping.observation_decode_us);
+  add_duration("observation_decode_us", mapping.observation_decode_us);
+  add_duration("mapping_raycast_us", map_diagnostics.raycast_us);
+  add_duration("rog_raycast_us", map_diagnostics.raycast_us);
+  add_duration("mapping_probability_update_us", map_diagnostics.probability_update_us);
+  add_duration("rog_probability_update_us", map_diagnostics.probability_update_us);
+  add_duration("mapping_inflation_us", map_diagnostics.inflation_us);
+  add_duration("rog_inflation_us", map_diagnostics.inflation_us);
+  add_duration("mapping_slide_us", map_diagnostics.slide_us);
+  add_duration("rog_slide_us", map_diagnostics.slide_us);
+  add_duration("dirty_region_build_us", mapping.dirty_region_build_us);
+  add_duration("snapshot_export_us", mapping.snapshot_export_us);
+  add_duration("snapshot_object_build_us", mapping.snapshot_object_build_us);
+  add_duration("pending_revalidation_us", mapping.pending_revalidation_us);
+  add_duration("active_revalidation_us", mapping.active_revalidation_us);
+  add_duration("world_publication_finalize_us", mapping.world_publication_finalize_us);
+  add_duration("planning_worker_enqueue_wait_us", worker_snapshot.last_enqueue_wait_us);
+  add_duration("planning_worker_runtime_us", worker_snapshot.last_worker_runtime_us);
   if (goal.has_value()) {
     const auto diagnostic_route = decodeRouteSnapshot(*goal);
     const bool diagnostic_route_valid = diagnostic_route.has_value() &&
