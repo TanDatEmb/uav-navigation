@@ -21302,3 +21302,20 @@ release profiles must not use the former allowance.
 - **Verification:** Release build/manifest, planner facade tests (14/14),
   focused lifecycle/worker tests and repeated runtime traces including the
   request deadline witness. Qualification remains unchanged.
+
+### 2026-09-10 - COW snapshot design gate (benchmark only)
+
+- **Owner/status:** Navigation mapping/world-model; `BLOCKED`, design note only.
+- **Scope:** Compare full export, current exact-region patch chain, fixed-size
+  immutable COW chunks and a builder worker. Fixed chunks are the selected
+  direction, but no mutable-map access or representation replacement is
+  enabled until parity evidence exists.
+- **Safety impact:** None; current immutable WorldSnapshot and full fallback
+  remain active. No patch ratio or safety gate is changed.
+- **Evidence/removal condition:** Unblock only after deterministic replay proves
+  cell-by-cell and candidate/certificate parity, bounded memory/query tails,
+  monotonic revision publication and no queue backlog. If parity or p99 is
+  worse, retain the current implementation and report BLOCKED.
+- **Verification:** `docs/architecture/world_snapshot_cow_design_note.md`,
+  mapping actor parity tests, deterministic replay, release build, and
+  repeated diagnostic SITL. No SITL acceptance is implied.
