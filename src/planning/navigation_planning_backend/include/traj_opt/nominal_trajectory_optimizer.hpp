@@ -221,6 +221,15 @@ namespace traj_opt {
         int failing_plane_index{-1};
         double maximum_plane_violation_m{
             std::numeric_limits<double>::quiet_NaN()};
+        double maximum_velocity_mps{
+            std::numeric_limits<double>::quiet_NaN()};
+        double maximum_acceleration_mps2{
+            std::numeric_limits<double>::quiet_NaN()};
+        double maximum_jerk_mps3{
+            std::numeric_limits<double>::quiet_NaN()};
+        double normalized_dynamic_violation{
+            std::numeric_limits<double>::quiet_NaN()};
+        std::int64_t hard_deadline_remaining_us{-1};
         double minimum_internal_derivative_scale{
             std::numeric_limits<double>::quiet_NaN()};
         Eigen::Vector3d failing_control_point{

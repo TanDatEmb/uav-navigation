@@ -697,6 +697,16 @@ std::string traj_opt::writeNominalProblemSnapshotJson(
                << ",\"failing_plane_index\":" << retry.failing_plane_index
                << ",\"maximum_plane_violation_m\":";
         writeJsonDouble(output, retry.maximum_plane_violation_m);
+        output << ",\"maximum_velocity_mps\":";
+        writeJsonDouble(output, retry.maximum_velocity_mps);
+        output << ",\"maximum_acceleration_mps2\":";
+        writeJsonDouble(output, retry.maximum_acceleration_mps2);
+        output << ",\"maximum_jerk_mps3\":";
+        writeJsonDouble(output, retry.maximum_jerk_mps3);
+        output << ",\"normalized_dynamic_violation\":";
+        writeJsonDouble(output, retry.normalized_dynamic_violation);
+        output << ",\"hard_deadline_remaining_us\":"
+               << retry.hard_deadline_remaining_us;
         output << ",\"minimum_internal_derivative_scale\":";
         writeJsonDouble(output, retry.minimum_internal_derivative_scale);
         output << ",\"failing_control_point\":";
@@ -1792,6 +1802,29 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
         retry.failing_control_index = retry_seed.failing_control_index;
         retry.failing_plane_index = retry_seed.failing_plane_index;
         retry.maximum_plane_violation_m = retry_seed.maximum_plane_violation_m;
+        if (!retry_seed.trajectory.empty()) {
+            retry.maximum_velocity_mps = retry_seed.trajectory.getMaxVelRate();
+            retry.maximum_acceleration_mps2 =
+                retry_seed.trajectory.getMaxAccRate();
+            retry.maximum_jerk_mps3 = retry_seed.trajectory.getMaxJerRate();
+            if (std::isfinite(retry.maximum_velocity_mps) &&
+                std::isfinite(retry.maximum_acceleration_mps2) &&
+                std::isfinite(retry.maximum_jerk_mps3) &&
+                cfg_.max_vel > 0.0 && cfg_.max_acc > 0.0 &&
+                cfg_.max_jerk > 0.0) {
+                retry.normalized_dynamic_violation = std::max({
+                    retry.maximum_velocity_mps / cfg_.max_vel,
+                    std::sqrt(retry.maximum_acceleration_mps2 / cfg_.max_acc),
+                    std::cbrt(retry.maximum_jerk_mps3 / cfg_.max_jerk)});
+            }
+        }
+        if (opt_vars.hard_deadline_ns > 0) {
+            const auto now_ns = std::chrono::duration_cast<
+                std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            retry.hard_deadline_remaining_us = std::max<std::int64_t>(
+                0, (opt_vars.hard_deadline_ns - now_ns) / 1000);
+        }
         retry.minimum_internal_derivative_scale =
             retry_seed.minimum_internal_derivative_scale;
         retry.failing_control_point = retry_seed.failing_control_point;

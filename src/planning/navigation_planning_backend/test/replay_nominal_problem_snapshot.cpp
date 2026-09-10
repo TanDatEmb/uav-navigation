@@ -1069,6 +1069,18 @@ int run(const std::string& path) {
                 << " failure_control=" << seed.failing_control_index
                 << " failure_plane=" << seed.failing_plane_index
                 << " violation=" << seed.maximum_plane_violation_m << '\n';
+      std::cout << "B_retry_" << index
+                << " captured_V=" << scalarOrNaN(
+                    retries[index]["maximum_velocity_mps"])
+                << " captured_A=" << scalarOrNaN(
+                    retries[index]["maximum_acceleration_mps2"])
+                << " captured_J=" << scalarOrNaN(
+                    retries[index]["maximum_jerk_mps3"])
+                << " captured_normalized_dynamic_violation=" << scalarOrNaN(
+                    retries[index]["normalized_dynamic_violation"])
+                << " captured_hard_deadline_remaining_us="
+                << retries[index]["hard_deadline_remaining_us"].as<std::int64_t>(-1)
+                << '\n';
     }
   }
 

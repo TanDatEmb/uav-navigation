@@ -1,5 +1,24 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-10 - Capture exact nominal duration-retry evidence
+
+- **Owner/status:** navigation planning backend; `IMPLEMENTED`, diagnostic-only.
+- **Scope:** Opt-in nominal-problem snapshots record each bounded duration
+  retry's corridor failure coordinates, V/A/J extrema, normalized dynamic
+  violation, and remaining absolute hard-deadline budget; the offline replay
+  prints the same evidence. No planner decision, retry bound, allocation, or
+  production gate changes.
+- **Safety impact:** None in the default runtime path. Snapshot capture is
+  best-effort and failure-only when explicitly enabled by environment variables;
+  missing or partial evidence remains inconclusive.
+- **Evidence:** strict 5 m/s `long_three_pillars_speed` capture and exact
+  `replay_nominal_problem_snapshot` output under the artifact-owned snapshot
+  directory.
+- **Removal/review condition:** Remove after the duration/corridor root cause
+  is resolved and the required replay evidence is archived with the campaign.
+- **Verification:** direct `test_exp_optimizer_seed`, replay each captured
+  snapshot, and inspect JSON schema fields plus artifact manifest identity.
+
 ### 2026-09-09 - Execute the already-declared stronger feasibility retry
 
 - **Owner/status:** navigation planning backend; `IMPLEMENTED`.
