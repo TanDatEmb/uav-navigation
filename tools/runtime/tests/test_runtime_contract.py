@@ -4472,6 +4472,47 @@ class RuntimeContractTest(unittest.TestCase):
         }
         self.assertEqual(report._mapping_integrity_reasons(mapping), [])
 
+    def test_navigation_mapping_timing_does_not_merge_stale_planner_copy(self) -> None:
+        world = {
+            "name": "navigation_mapping/world_model",
+            "values": {
+                "mapping_probability_update_us": "10",
+                "mapping_callback_total_us": "20",
+            },
+        }
+        planner = {
+            "name": "navigation_runtime/planner",
+            "values": {
+                # Planner diagnostics carry a copy of these fields, but this
+                # value is from an older mapping cycle and must not inflate the
+                # world-model distribution.
+                "mapping_probability_update_us": "999999",
+                "mapping_callback_total_us": "999999",
+                "planning_worker_runtime_us": "7",
+            },
+        }
+        snapshot = {
+            "streams": {"mapping_diagnostics": {"received": 2}},
+            "latest": {"mapping_diagnostics": {"statuses": [planner]}},
+        }
+        samples = [
+            {"stream": "mapping_diagnostics", "payload": {"statuses": [world]}},
+            {"stream": "diagnostics", "payload": {"statuses": [planner]}},
+        ]
+        mapping = report._navigation_mapping_summary(snapshot, samples)
+        self.assertEqual(
+            mapping["timing_distributions"]["mapping_probability_update_us"]["max"],
+            10.0,
+        )
+        self.assertEqual(
+            mapping["timing_distributions"]["mapping_callback_total_us"]["max"],
+            20.0,
+        )
+        self.assertEqual(
+            mapping["timing_distributions"]["planning_worker_runtime_us"]["max"],
+            7.0,
+        )
+
     def test_mapping_snapshot_export_timing_ignores_deferred_zero_samples(self) -> None:
         samples = [
             {

@@ -21319,3 +21319,20 @@ release profiles must not use the former allowance.
 - **Verification:** `docs/architecture/world_snapshot_cow_design_note.md`,
   mapping actor parity tests, deterministic replay, release build, and
   repeated diagnostic SITL. No SITL acceptance is implied.
+
+### 2026-09-10 - Separate mapping and planner timing owners in reports
+
+- **Owner/status:** Runtime evidence tooling; `IMPLEMENTED`, observability-only.
+- **Scope:** Mapping timing distributions are sourced from
+  `navigation_mapping/world_model`; planner-worker timings are sourced from
+  `navigation_runtime/planner`. A per-field planner fallback is retained only
+  for legacy artifacts that contain no world-model timing sample at all.
+- **Safety impact:** None. This changes report attribution only; it does not
+  alter mapping, planning, certificate, lifecycle, deadline or command code.
+- **Evidence/removal condition:** Retain while old artifacts without a
+  world-model timing owner remain in the evidence set. Remove the fallback once
+  all supported artifacts emit owner-specific timing statuses. Reject any
+  report that combines stale planner copies with world-model samples.
+- **Verification:** `python3 -m pytest -q
+  tools/runtime/tests/test_runtime_contract.py` (218 passed), report
+  regeneration on a captured external-mode artifact, and `git diff --check`.

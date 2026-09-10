@@ -2819,39 +2819,65 @@ def _navigation_mapping_summary(
             result[field] = int(values[field] or 0)
     if "mapping_update_outcome" in values:
         result["mapping_update_outcome"] = str(values["mapping_update_outcome"])
-    result["timing_distributions"] = _diagnostic_timing_summary(
+    mapping_timing_fields = (
+        "ros_pointcloud_decode_us",
+        "observation_pair_wait_us",
+        "mapping_filter_us",
+        "transform_to_odom_us",
+        "mapping_raycast_us",
+        "rog_raycast_us",
+        "mapping_probability_update_us",
+        "rog_probability_update_us",
+        "mapping_inflation_us",
+        "rog_inflation_us",
+        "mapping_slide_us",
+        "rog_slide_us",
+        "mapping_observation_decode_us",
+        "observation_decode_us",
+        "mapping_total_update_us",
+        "dirty_region_build_us",
+        "world_snapshot_export_us",
+        "snapshot_export_us",
+        "world_snapshot_object_build_us",
+        "snapshot_object_build_us",
+        "pending_revalidation_us",
+        "active_revalidation_us",
+        "world_publication_finalize_us",
+        "mapping_callback_total_us",
+    )
+    # Mapping timings belong to the world-model owner.  The planner status
+    # republishes a copy of several mapping fields for its own diagnostics;
+    # those values may be stale for many cycles and must not be combined with
+    # world-model samples (otherwise the report manufactures large mapping
+    # tails).  Keep a per-field legacy fallback for artifacts that predate the
+    # world-model timing status and contain no world-model sample at all.
+    world_timing = _diagnostic_timing_summary(
         samples or [],
-        ("navigation_mapping/world_model", "navigation_runtime/planner"),
-        (
-            "ros_pointcloud_decode_us",
-            "observation_pair_wait_us",
-            "mapping_filter_us",
-            "transform_to_odom_us",
-            "mapping_raycast_us",
-            "rog_raycast_us",
-            "mapping_probability_update_us",
-            "rog_probability_update_us",
-            "mapping_inflation_us",
-            "rog_inflation_us",
-            "mapping_slide_us",
-            "rog_slide_us",
-            "mapping_observation_decode_us",
-            "observation_decode_us",
-            "mapping_total_update_us",
-            "dirty_region_build_us",
-            "world_snapshot_export_us",
-            "snapshot_export_us",
-            "world_snapshot_object_build_us",
-            "snapshot_object_build_us",
-            "pending_revalidation_us",
-            "active_revalidation_us",
-            "world_publication_finalize_us",
-            "planning_worker_enqueue_wait_us",
-            "planning_worker_runtime_us",
-            "mapping_callback_total_us",
-        ),
+        "navigation_mapping/world_model",
+        mapping_timing_fields,
         stream_names=("mapping_diagnostics", "diagnostics"),
     )
+    legacy_planner_timing = _diagnostic_timing_summary(
+        samples or [],
+        "navigation_runtime/planner",
+        mapping_timing_fields,
+        stream_names=("mapping_diagnostics", "diagnostics"),
+    )
+    mapping_timing = {
+        field: (
+            world_timing[field]
+            if world_timing[field]["sample_count"] > 0
+            else legacy_planner_timing[field]
+        )
+        for field in mapping_timing_fields
+    }
+    planner_timing = _diagnostic_timing_summary(
+        samples or [],
+        "navigation_runtime/planner",
+        ("planning_worker_enqueue_wait_us", "planning_worker_runtime_us"),
+        stream_names=("planning_diagnostics", "mapping_diagnostics", "diagnostics"),
+    )
+    result["timing_distributions"] = {**mapping_timing, **planner_timing}
     result["output_topics"] = ["/navigation/navigation_command", "/navigation/diagnostics"]
     return result
 
