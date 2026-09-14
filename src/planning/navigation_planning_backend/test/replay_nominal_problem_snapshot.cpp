@@ -404,14 +404,36 @@ bool worldTrajectoryPass(
       next_time = std::min({duration, time + dt, location->end_time});
       next = trajectory.getPos(next_time);
     }
-    const double segment_dt = next_time - time;
-    const double local_end = std::clamp(
+    double segment_dt = next_time - time;
+    double local_end = std::clamp(
         location->local_time + segment_dt, 0.0, piece.getDuration());
-    const double acceleration_bound =
+    double acceleration_bound =
         navigation_planning_backend::polynomialAccelerationBoundOverInterval(
             piece, location->local_time, local_end);
-    const double curve_deviation =
+    double curve_deviation =
         acceleration_bound * segment_dt * segment_dt / 8.0;
+    // Keep the replay sweep aligned with trajectory_world_validator.hpp:
+    // reduce the temporal chord until the polynomial deviation certificate
+    // is within tolerance before asking the world oracle about the segment.
+    while (std::isfinite(curve_deviation) &&
+           curve_deviation > curve_deviation_tolerance &&
+           dt > 0.002 + 1.0e-12) {
+      dt = std::max(0.002, 0.5 * dt);
+      next_time = std::min({duration, time + dt, location->end_time});
+      if (!(next_time > time)) {
+        failure = "nonadvancing_world_sweep";
+        return false;
+      }
+      next = trajectory.getPos(next_time);
+      segment_dt = next_time - time;
+      local_end = std::clamp(
+          location->local_time + segment_dt, 0.0, piece.getDuration());
+      acceleration_bound =
+          navigation_planning_backend::polynomialAccelerationBoundOverInterval(
+              piece, location->local_time, local_end);
+      curve_deviation =
+          acceleration_bound * segment_dt * segment_dt / 8.0;
+    }
     if (!std::isfinite(curve_deviation) ||
         curve_deviation > curve_deviation_tolerance) {
       failure = "curve_deviation_bound_exceeded";
@@ -791,6 +813,12 @@ int run(const std::string& path) {
                     ? root["provenance"]["planner_cycle"].as<std::uint64_t>()
                     : 0U)
             << " world_available=" << (world_snapshot != nullptr) << '\n'
+            // The temporal curve-deviation/tube sweep follows the production
+            // subdivision rule.  This offline binary still lacks the planner
+            // role schedule, body-support admission, and commit authorization,
+            // so its world result is not an executable-candidate verdict.
+            << "world_verdict_authority=NON_AUTHORITATIVE"
+            << " world_verdict_scope=offline_curve_and_tube_sweep_only\n"
             << "config_exact=" << config_replay.exact
             << " config_missing=";
   for (std::size_t index = 0; index < config_replay.missing.size(); ++index) {

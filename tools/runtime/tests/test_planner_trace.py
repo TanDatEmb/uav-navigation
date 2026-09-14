@@ -9,6 +9,7 @@ from planner_trace import (
     collect_planner_trace_records,
     normalize_planner_trace_record,
     planner_trace_summary,
+    reduce_first_causal_failure,
 )
 
 
@@ -129,6 +130,57 @@ class PlannerTraceTest(unittest.TestCase):
                                     "planning_outcome": "5",
                                     "planning_failure_stage": "6",
                                     "planning_failure_reason": "16",
+                                    "planner_backend_outcome": "5",
+                                    "planner_backend_failure_stage": "9",
+                                    "planner_backend_failure_reason": "10",
+                                    "planning_failure_stage_name": "nominal_seed",
+                                    "planning_failure_reason_name": "main_known_free_insufficient",
+                                    "planner_backend_failure_stage_name": "backup_seed",
+                                    "planner_backend_failure_reason_name": "backup_known_free_insufficient",
+                                    "worker_transaction_identity_scope": "EXACT_SCHEDULED_KEY",
+                                    "runtime_request_enqueued_steady_ns": "100000100",
+                                    "worker_dequeued_steady_ns": "100000900",
+                                    "backend_received_steady_ns": "100001000",
+                                    "backend_finished_steady_ns": "108250000",
+                                    "backend_outcome_scope": "BACKEND",
+                                    "runtime_admission_disposition": "NOT_ATTEMPTED",
+                                    "execution_disposition": "NOT_STAGED",
+                                    "first_causal_failure_scope": "BACKEND",
+                                    "first_causal_failure_stage": "backup_seed",
+                                    "first_causal_failure_reason": "backup_known_free_insufficient",
+                                    "runtime_request_created_steady_ns": "100000000",
+                                    "runtime_result_received_steady_ns": "108250000",
+                                    "runtime_currentness_checked_steady_ns": "108251000",
+                                    "runtime_admission_started_steady_ns": "0",
+                                    "runtime_admission_finished_steady_ns": "0",
+                                    "runtime_admission_attempted": "0",
+                                    "runtime_admission_succeeded": "0",
+                                    "runtime_successor_staged": "0",
+                                    "latest_execution_activation_generation": "19",
+                                    "latest_execution_activation_started_steady_ns": "990000000",
+                                    "latest_execution_activation_finished_steady_ns": "990010000",
+                                    "latest_execution_activation_result": "1",
+                                    "latest_command_sampled_generation": "19",
+                                    "latest_command_sampled_steady_ns": "990020000",
+                                    "latest_command_sampled_result": "1",
+                                    "planner_trace_schema_version": "3",
+                                    "planner_request_received_steady_ns": "1000000000",
+                                    "planner_solve_started_steady_ns": "1000001000",
+                                    "planner_solve_finished_steady_ns": "1008251000",
+                                    "planner_hard_deadline_steady_ns": "1010000000",
+                                    "planner_remaining_hard_budget_us_at_finish": "1749",
+                                    "planner_stage_1_name": "setup",
+                                    "planner_stage_1_observed": "1",
+                                    "planner_stage_1_begin_steady_ns": "1000001000",
+                                    "planner_stage_1_end_steady_ns": "1000100000",
+                                    "planner_stage_1_remaining_hard_budget_us": "9900",
+                                    "planner_stage_1_result_code": "0",
+                                    "planner_stage_5_name": "backup",
+                                    "planner_stage_5_observed": "1",
+                                    "planner_stage_5_begin_steady_ns": "1000500000",
+                                    "planner_stage_5_end_steady_ns": "1008251000",
+                                    "planner_stage_5_remaining_hard_budget_us": "1749",
+                                    "planner_stage_5_result_code": "5",
                                     "commit_decision": "4",
                                     "solve_stage": "5",
                                     "solve_stage_name": "backup",
@@ -241,6 +293,39 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["planning_outcome"], 5)
         self.assertEqual(records[0]["planning_failure_stage"], 6)
         self.assertEqual(records[0]["planning_failure_reason"], 16)
+        self.assertEqual(records[0]["planner_backend_outcome"], 5)
+        self.assertEqual(records[0]["planner_backend_failure_stage"], 9)
+        self.assertEqual(records[0]["planner_backend_failure_reason"], 10)
+        self.assertEqual(records[0]["planning_failure_stage_name"], "nominal_seed")
+        self.assertEqual(
+            records[0]["planning_failure_reason_name"],
+            "main_known_free_insufficient",
+        )
+        self.assertEqual(records[0]["planner_backend_failure_stage_name"], "backup_seed")
+        self.assertEqual(
+            records[0]["planner_backend_failure_reason_name"],
+            "backup_known_free_insufficient",
+        )
+        self.assertEqual(records[0]["planner_solve_finished_steady_ns"], 1008251000)
+        self.assertEqual(records[0]["planner_remaining_hard_budget_us_at_finish"], 1749)
+        self.assertEqual(records[0]["backend_outcome_scope"], "BACKEND")
+        self.assertEqual(
+            records[0]["worker_transaction_identity_scope"], "EXACT_SCHEDULED_KEY"
+        )
+        self.assertEqual(records[0]["worker_dequeued_steady_ns"], 100000900)
+        self.assertEqual(records[0]["runtime_admission_disposition"], "NOT_ATTEMPTED")
+        self.assertEqual(records[0]["execution_disposition"], "NOT_STAGED")
+        self.assertEqual(records[0]["first_causal_failure_scope"], "BACKEND")
+        self.assertEqual(records[0]["first_causal_failure_stage"], "backup_seed")
+        self.assertEqual(
+            records[0]["runtime_request_created_steady_ns"], 100000000
+        )
+        self.assertEqual(records[0]["runtime_admission_started_steady_ns"], 0)
+        self.assertEqual(records[0]["latest_execution_activation_result"], 1)
+        self.assertEqual(records[0]["latest_command_sampled_generation"], 19)
+        self.assertTrue(records[0]["transaction_complete"])
+        self.assertTrue(records[0]["planner_stage_5_observed"])
+        self.assertEqual(records[0]["planner_stage_5_result_code"], 5)
         self.assertEqual(records[0]["commit_decision"], 4)
         self.assertFalse(records[0]["solve_deadline_exceeded"])
         self.assertTrue(records[0]["command_available"])
@@ -269,6 +354,7 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["backup_known_free_pass_count"], 1)
         self.assertFalse(records[0]["backup_certificate_selected"])
         self.assertEqual(records[0]["backup_last_reject_stage"], 6)
+        self.assertEqual(records[0]["backup_last_reject_stage_name"], "known_free")
         self.assertEqual(records[0]["backup_last_known_free_failure_code"], 10)
         self.assertEqual(records[0]["backup_last_known_free_blocked_position"], [1.0, 2.0, 3.0])
         self.assertEqual(records[0]["backup_last_seed_duration_s"], 1.25)
@@ -390,6 +476,163 @@ class PlannerTraceTest(unittest.TestCase):
             summary["exp_corridor_seed_selected_mode_counts"],
             {"0": 3, "2": 1},
         )
+
+    def test_transaction_authorities_and_first_causal_failure_are_independent(self) -> None:
+        backend_failure = normalize_planner_trace_record(
+            {
+                "planning_cycle_id": 1,
+                "bundle_id": 2,
+                "planner_backend_outcome": 5,
+                "planner_backend_failure_stage_name": "backup_seed",
+                "planner_backend_failure_reason_name": "backup_known_free_insufficient",
+                "backend_outcome_scope": "BACKEND",
+                "runtime_admission_disposition": "NOT_ATTEMPTED",
+                "execution_disposition": "NOT_ATTEMPTED",
+                "first_causal_failure_scope": "BACKEND",
+                "first_causal_failure_stage": "backup_seed",
+                "first_causal_failure_reason": "backup_known_free_insufficient",
+            },
+            source="fixture.backend_failure",
+        )
+        admission_rejection = normalize_planner_trace_record(
+            {
+                "planning_cycle_id": 3,
+                "bundle_id": 4,
+                "planner_backend_outcome": 0,
+                "backend_outcome_scope": "BACKEND",
+                "runtime_admission_disposition": "REJECTED",
+                "execution_disposition": "NOT_STAGED",
+                "first_causal_failure_scope": "RUNTIME_ADMISSION",
+                "first_causal_failure_stage": "execution_boundary",
+                "first_causal_failure_reason": "rejection_code_5",
+            },
+            source="fixture.admission_rejection",
+        )
+        self.assertEqual(backend_failure["runtime_admission_disposition"], "NOT_ATTEMPTED")
+        self.assertEqual(backend_failure["first_causal_failure_scope"], "BACKEND")
+        self.assertEqual(admission_rejection["runtime_admission_disposition"], "REJECTED")
+        self.assertEqual(admission_rejection["first_causal_failure_scope"], "RUNTIME_ADMISSION")
+        summary = planner_trace_summary([backend_failure, admission_rejection])
+        self.assertEqual(
+            summary["runtime_admission_disposition_counts"],
+            {"NOT_ATTEMPTED": 1, "REJECTED": 1},
+        )
+        self.assertEqual(
+            summary["first_causal_failure_scope_counts"],
+            {"BACKEND": 1, "RUNTIME_ADMISSION": 1},
+        )
+
+    def test_backup_reject_stage_unknown_and_missing_are_distinct(self) -> None:
+        unknown = normalize_planner_trace_record(
+            {"planning_cycle_id": 1, "bundle_id": 1, "backup_last_reject_stage": "99"},
+            source="fixture.unknown_enum",
+        )
+        missing = normalize_planner_trace_record(
+            {"planning_cycle_id": 2, "bundle_id": 2},
+            source="fixture.missing_enum",
+        )
+        self.assertEqual(unknown["backup_last_reject_stage"], 99)
+        self.assertEqual(unknown["backup_last_reject_stage_name"], "unknown_enum_value")
+        self.assertIsNone(missing["backup_last_reject_stage"])
+        self.assertIsNone(missing["backup_last_reject_stage_name"])
+
+    def test_first_causal_reducer_uses_event_time_and_deterministic_tie_break(self) -> None:
+        backend_late = reduce_first_causal_failure(
+            [
+                {
+                    "class": "CAUSAL",
+                    "scope": "BACKEND",
+                    "stage": "backup_seed",
+                    "reason": "known_free",
+                    "steady_ns": 95,
+                    "sequence": 0,
+                    "source": "backend",
+                },
+                {
+                    "class": "CAUSAL",
+                    "scope": "WATCHDOG",
+                    "stage": "watchdog",
+                    "reason": "timeout",
+                    "steady_ns": 80,
+                    "sequence": 2,
+                    "source": "watchdog",
+                },
+            ]
+        )
+        self.assertEqual(backend_late["scope"], "WATCHDOG")
+        self.assertEqual(backend_late["steady_ns"], 80)
+
+        tie = reduce_first_causal_failure(
+            [
+                {
+                    "class": "CAUSAL",
+                    "scope": "RUNTIME_ADMISSION",
+                    "stage": "boundary",
+                    "reason": "stale",
+                    "steady_ns": 100,
+                    "sequence": 1,
+                },
+                {
+                    "class": "CAUSAL",
+                    "scope": "BACKEND",
+                    "stage": "a_star",
+                    "reason": "no_path",
+                    "steady_ns": 100,
+                    "sequence": 0,
+                },
+            ]
+        )
+        self.assertEqual(tie["scope"], "BACKEND")
+        self.assertEqual(tie["sequence"], 0)
+
+    def test_noncausal_late_result_cannot_rewrite_causal_failure(self) -> None:
+        reduced = reduce_first_causal_failure(
+            [
+                {
+                    "class": "CAUSAL",
+                    "scope": "WATCHDOG",
+                    "stage": "watchdog",
+                    "reason": "timeout",
+                    "steady_ns": 80,
+                    "sequence": 2,
+                },
+                {
+                    "class": "INFORMATIONAL",
+                    "scope": "BACKEND",
+                    "stage": "late_result",
+                    "reason": "superseded",
+                    "steady_ns": 95,
+                    "sequence": 0,
+                },
+            ]
+        )
+        self.assertEqual(reduced["scope"], "WATCHDOG")
+        self.assertEqual(reduced["reason"], "timeout")
+
+    def test_normalized_trace_prefers_earlier_watchdog_event_over_late_backend_result(self) -> None:
+        record = normalize_planner_trace_record(
+            {
+                "planning_cycle_id": 10,
+                "bundle_id": 20,
+                "planner_trace_schema_version": 3,
+                "backend_outcome_scope": "BACKEND",
+                "runtime_admission_disposition": "NOT_ATTEMPTED",
+                "execution_disposition": "NOT_ATTEMPTED",
+                "planner_backend_failure_stage": 9,
+                "planner_backend_failure_reason": 8,
+                "planner_backend_failure_stage_name": "backup_seed",
+                "planner_backend_failure_reason_name": "backup_dynamics",
+                "planner_backend_failure_event_steady_ns": 95,
+                "planner_solve_finished_steady_ns": 95,
+                "watchdog_event_steady_ns": 80,
+                "watchdog_event_class": "CAUSAL",
+            },
+            source="fixture.watchdog_before_backend_receipt",
+        )
+        self.assertTrue(record["transaction_complete"])
+        self.assertEqual(record["first_causal_failure_scope"], "WATCHDOG")
+        self.assertEqual(record["first_causal_failure_event_steady_ns"], 80)
+        self.assertEqual(record["watchdog_event_class"], "CAUSAL")
 
 
 if __name__ == "__main__":

@@ -196,6 +196,52 @@ struct BackupCertificateDiagnostics {
       std::numeric_limits<double>::quiet_NaN())};
 };
 
+// Stable planner-owned stage slots for runtime timing evidence.  Slot zero is
+// intentionally unused so the values match the existing solve_stage contract:
+// 1 setup, 2 A*, 3 corridor/CIRI, 4 main MINCO, 5 BACKUP.  These timestamps
+// are steady-clock observations only; they do not authorize a candidate or
+// alter any deadline/certificate decision.
+enum class PlannerDiagnosticStage : std::uint8_t {
+  kSetup = 1,
+  kAStar = 2,
+  kCorridor = 3,
+  kMainMinco = 4,
+  kBackup = 5,
+};
+
+constexpr std::size_t kPlannerDiagnosticStageSlotCount = 6U;
+
+inline const char* plannerDiagnosticStageName(
+    const PlannerDiagnosticStage stage) noexcept {
+  switch (stage) {
+    case PlannerDiagnosticStage::kSetup: return "setup";
+    case PlannerDiagnosticStage::kAStar: return "astar";
+    case PlannerDiagnosticStage::kCorridor: return "corridor";
+    case PlannerDiagnosticStage::kMainMinco: return "main_minco";
+    case PlannerDiagnosticStage::kBackup: return "backup";
+  }
+  return "unknown";
+}
+
+struct PlannerStageTiming {
+  bool observed{false};
+  std::int64_t begin_steady_ns{0};
+  std::int64_t end_steady_ns{0};
+  std::int64_t remaining_hard_budget_us{-1};
+  int result_code{0};
+};
+
+struct PlannerTimelineDiagnostics {
+  // The backend observes request receipt at plan() entry.  External request
+  // construction and post-solve execution admission are separate layers.
+  std::int64_t request_received_steady_ns{0};
+  std::int64_t solve_started_steady_ns{0};
+  std::int64_t solve_finished_steady_ns{0};
+  std::int64_t hard_deadline_steady_ns{0};
+  std::int64_t remaining_hard_budget_us_at_finish{-1};
+  std::array<PlannerStageTiming, kPlannerDiagnosticStageSlotCount> stages{};
+};
+
 enum class BackupCertificateRejectStage : std::uint8_t {
   kNone = 0,
   kCommandBoundary = 1,
@@ -252,6 +298,7 @@ struct PlannerDiagnostics {
       std::numeric_limits<double>::quiet_NaN()};
   double candidate_maximum_jerk_mps3{std::numeric_limits<double>::quiet_NaN()};
   std::array<double, 4> module_time_us{};
+  PlannerTimelineDiagnostics timeline{};
   Eigen::Vector3d latest_guide_start{Eigen::Vector3d::Constant(
       std::numeric_limits<double>::quiet_NaN())};
   Eigen::Vector3d latest_guide_end{Eigen::Vector3d::Constant(

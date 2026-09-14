@@ -4308,6 +4308,14 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       route_snapshot->waypoints[route_snapshot->active_waypoint_index];
   const Eigen::Vector3d target = active_route_waypoint.position_enu;
   const auto planner_started = std::chrono::steady_clock::now();
+  std::int64_t runtime_request_created_steady_ns = 0;
+  std::int64_t runtime_result_received_steady_ns = 0;
+  std::int64_t runtime_currentness_checked_steady_ns = 0;
+  std::int64_t runtime_admission_started_steady_ns = 0;
+  std::int64_t runtime_admission_finished_steady_ns = 0;
+  bool runtime_admission_attempted = false;
+  bool runtime_admission_succeeded = false;
+  bool runtime_successor_staged = false;
   // This is the runtime boundary for a PlanFromRest attempt. Each mission
   // waypoint enters that measured-state path when required; later timer ticks
   // retain the latest world-validated MAIN until its backup transition is
@@ -4609,6 +4617,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   const auto solve_started_ros_ns = now().nanoseconds();
   const double execution_age_at_solve_ms =
       executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
+  runtime_request_created_steady_ns =
+      navigation_common::steadyClockNowNanoseconds();
   navigation_planning::PlanningRequest planning_request;
   // PlanningRequest::start_mode selects the explicit
   // planSuccessorFromExecutionAnchor lifecycle for every moving renewal;
@@ -4764,6 +4774,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         solve_generation, navigation_common::steadyClockNowNanoseconds());
     try {
       planning_outcome = planner_->plan(planning_request);
+      runtime_result_received_steady_ns =
+          navigation_common::steadyClockNowNanoseconds();
       if (planning_outcome.outcome ==
               navigation_planning::CompletePlanningOutcome::kRetainedCommittedBundle) {
         result = navigation_planning::PlannerStatus::kNoNeed;
@@ -4774,6 +4786,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         result = navigation_planning::PlannerStatus::kFailed;
       }
     } catch (const std::exception& error) {
+      runtime_result_received_steady_ns =
+          navigation_common::steadyClockNowNanoseconds();
       RCLCPP_ERROR(get_logger(), "planner backend planner exception: %s", error.what());
       result = navigation_planning::PlannerStatus::kEmergency;
       planning_outcome.outcome =
@@ -4784,6 +4798,11 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           navigation_planning::PlanningFailureReason::kInvalidInput;
     }
   }
+  // Preserve the backend's causal result before runtime admission can turn a
+  // timed-out or stale transaction into a different final disposition.  The
+  // structured trace emits both identities; neither field authorizes a
+  // command or changes the fail-closed admission path.
+  const auto planner_backend_outcome = planning_outcome;
   const auto planner_result_before_injection = result;
   const auto same_identity_renewal_still_current = [&]() {
     std::optional<navigation_contracts::msg::NavigationGoal> current_goal;
@@ -4933,12 +4952,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                 "diagnostic injection converted planning cycle=%lu to a failed planning result",
                 static_cast<unsigned long>(cycle_count_));
   }
-  last_planning_outcome_.store(static_cast<int>(planning_outcome.outcome),
-                               std::memory_order_release);
-  last_planning_failure_stage_.store(
-      static_cast<int>(planning_outcome.failure_stage), std::memory_order_release);
-  last_planning_failure_reason_.store(
-      static_cast<int>(planning_outcome.failure_reason), std::memory_order_release);
   last_planner_us_ = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - planner_started).count();
   const bool timed_out =
@@ -4972,6 +4985,17 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         "retaining bounded hold within the stopped-recovery deadline",
         static_cast<unsigned long>(solve_generation));
   }
+  // Publish the post-watchdog outcome.  This keeps the existing compact
+  // status fields aligned with the outcome used by the admission code while
+  // planner_backend_* remains the pre-admission causal witness.
+  last_planning_outcome_.store(static_cast<int>(planning_outcome.outcome),
+                               std::memory_order_release);
+  last_planning_failure_stage_.store(
+      static_cast<int>(planning_outcome.failure_stage), std::memory_order_release);
+  last_planning_failure_reason_.store(
+      static_cast<int>(planning_outcome.failure_reason), std::memory_order_release);
+  runtime_currentness_checked_steady_ns =
+      navigation_common::steadyClockNowNanoseconds();
   if (!localization_epoch_ready_.load(std::memory_order_acquire) ||
       active_localization_epoch_.load(std::memory_order_acquire) !=
           localization_epoch_at_solve) {
@@ -6025,9 +6049,16 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       // A successful commit below swaps the store pointer first. A rejected
       // candidate leaves all previous command state untouched.
     }
-    if (!commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
-                                now().nanoseconds(), effective_scheduled_key,
-                                planning_outcome.candidate)) {
+    runtime_admission_attempted = true;
+    runtime_admission_started_steady_ns =
+        navigation_common::steadyClockNowNanoseconds();
+    const bool runtime_candidate_admitted = commitPlannerCandidate(
+        *goal, goal_epoch, localization_epoch_at_solve, now().nanoseconds(),
+        effective_scheduled_key, planning_outcome.candidate);
+    runtime_admission_finished_steady_ns =
+        navigation_common::steadyClockNowNanoseconds();
+    runtime_admission_succeeded = runtime_candidate_admitted;
+    if (!runtime_candidate_admitted) {
       RCLCPP_WARN(get_logger(),
                   "execution boundary rejected planner candidate after solve; "
                   "retaining the previously exposed command when still current");
@@ -6051,6 +6082,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       }
       const auto timeline = command_bundle_store_.snapshot();
       successor_staged = static_cast<bool>(timeline.pending);
+      runtime_successor_staged = successor_staged;
       if (!successor_staged) {
         const auto committed_bundle = timeline.active;
         if (!committed_bundle || !desiredGoalIdentityMatchesLocked(
@@ -6348,6 +6380,47 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       item.value = stream.str();
       trace_status.values.push_back(std::move(item));
     };
+    const auto trace_worker_snapshot = planning_worker_
+        ? planning_worker_->snapshot()
+        : PlanningWorkerSnapshot{};
+    const bool worker_transaction_matches =
+        trace_worker_snapshot.last_transaction_localization_epoch ==
+            effective_scheduled_key.localization_epoch &&
+        trace_worker_snapshot.last_transaction_goal_epoch ==
+            effective_scheduled_key.goal_epoch &&
+        trace_worker_snapshot.last_transaction_request_id ==
+            effective_scheduled_key.request_id &&
+        trace_worker_snapshot.last_transaction_route_revision ==
+            effective_scheduled_key.route_revision &&
+        trace_worker_snapshot.last_transaction_committed_bundle_generation ==
+            effective_scheduled_key.committed_bundle_generation &&
+        trace_worker_snapshot.last_transaction_pinned_world_generation ==
+            effective_scheduled_key.pinned_world_generation &&
+        trace_worker_snapshot.last_transaction_pinned_world_revision ==
+            effective_scheduled_key.pinned_world_revision &&
+        trace_worker_snapshot.last_transaction_anchor_stamp_ns ==
+            static_cast<std::uint64_t>(effective_scheduled_key.anchor_stamp_ns) &&
+        trace_worker_snapshot.last_transaction_dynamics_hash ==
+            effective_scheduled_key.dynamics_hash;
+    add_trace_string(
+        "worker_transaction_identity_scope",
+        worker_transaction_matches ? "EXACT_SCHEDULED_KEY" : "LATEST_UNMATCHED");
+    add_trace_value(
+        "runtime_request_enqueued_steady_ns",
+        worker_transaction_matches ? trace_worker_snapshot.last_enqueue_time_steady_ns
+                                    : 0);
+    add_trace_value(
+        "worker_dequeued_steady_ns",
+        worker_transaction_matches ? trace_worker_snapshot.last_worker_start_steady_ns
+                                    : 0);
+    add_trace_value(
+        "backend_received_steady_ns",
+        worker_transaction_matches ? trace_worker_snapshot.last_backend_entry_steady_ns
+                                    : 0);
+    add_trace_value(
+        "backend_finished_steady_ns",
+        worker_transaction_matches ? trace_worker_snapshot.last_backend_exit_steady_ns
+                                    : 0);
     const auto add_goal_identity = [&add_trace_value, &add_trace_string](
         const std::string_view prefix,
         const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
@@ -6420,6 +6493,30 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                     last_planning_failure_stage_.load(std::memory_order_acquire));
     add_trace_value("planning_failure_reason",
                     last_planning_failure_reason_.load(std::memory_order_acquire));
+    add_trace_value("planner_backend_outcome",
+                    static_cast<int>(planner_backend_outcome.outcome));
+    add_trace_value("planner_backend_failure_stage",
+                    static_cast<int>(planner_backend_outcome.failure_stage));
+    add_trace_value("planner_backend_failure_reason",
+                    static_cast<int>(planner_backend_outcome.failure_reason));
+    add_trace_string(
+        "planning_failure_stage_name",
+        navigation_planning::planningFailureStageName(
+            static_cast<navigation_planning::PlanningFailureStage>(
+                last_planning_failure_stage_.load(std::memory_order_acquire))));
+    add_trace_string(
+        "planning_failure_reason_name",
+        navigation_planning::planningFailureReasonName(
+            static_cast<navigation_planning::PlanningFailureReason>(
+                last_planning_failure_reason_.load(std::memory_order_acquire))));
+    add_trace_string(
+        "planner_backend_failure_stage_name",
+        navigation_planning::planningFailureStageName(
+            planner_backend_outcome.failure_stage));
+    add_trace_string(
+        "planner_backend_failure_reason_name",
+        navigation_planning::planningFailureReasonName(
+            planner_backend_outcome.failure_reason));
     add_trace_value("planning_cycle_id", cycle_count_);
     add_trace_value("bundle_id", committed_generation);
     add_trace_value("solve_generation", solve_generation);
@@ -6668,6 +6765,190 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                     planner_diagnostics.module_time_us[2]);
     add_trace_value("backup_opt_us",
                     planner_diagnostics.module_time_us[3]);
+    const auto& planner_timeline = planner_diagnostics.timeline;
+    add_trace_value("planner_request_received_steady_ns",
+                    planner_timeline.request_received_steady_ns);
+    add_trace_value("planner_solve_started_steady_ns",
+                    planner_timeline.solve_started_steady_ns);
+    add_trace_value("planner_solve_finished_steady_ns",
+                    planner_timeline.solve_finished_steady_ns);
+    add_trace_value("planner_hard_deadline_steady_ns",
+                    planner_timeline.hard_deadline_steady_ns);
+    add_trace_value("planner_remaining_hard_budget_us_at_finish",
+                    planner_timeline.remaining_hard_budget_us_at_finish);
+    add_trace_value("runtime_request_created_steady_ns",
+                    runtime_request_created_steady_ns);
+    add_trace_value("runtime_result_received_steady_ns",
+                    runtime_result_received_steady_ns);
+    add_trace_value("runtime_currentness_checked_steady_ns",
+                    runtime_currentness_checked_steady_ns);
+    add_trace_value("runtime_admission_started_steady_ns",
+                    runtime_admission_started_steady_ns);
+    add_trace_value("runtime_admission_finished_steady_ns",
+                    runtime_admission_finished_steady_ns);
+    add_trace_value("runtime_admission_attempted",
+                    runtime_admission_attempted ? 1 : 0);
+    add_trace_value("runtime_admission_succeeded",
+                    runtime_admission_succeeded ? 1 : 0);
+    add_trace_value("runtime_successor_staged",
+                    runtime_successor_staged ? 1 : 0);
+    add_trace_value("planner_trace_schema_version", 3);
+    add_trace_value(
+        "candidate_generation",
+        planning_outcome.candidate ? planning_outcome.candidate->bundle_generation : 0U);
+    add_trace_value(
+        "candidate_activation_stamp_ns",
+        planning_outcome.candidate ? planning_outcome.candidate->activation_stamp_ns : 0);
+    add_trace_value("latest_execution_activation_generation",
+                    last_execution_activation_generation_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_execution_activation_started_steady_ns",
+                    last_execution_activation_started_steady_ns_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_execution_activation_finished_steady_ns",
+                    last_execution_activation_finished_steady_ns_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_execution_activation_result",
+                    last_execution_activation_result_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_command_sampled_generation",
+                    last_command_sampled_generation_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_command_sampled_steady_ns",
+                    last_command_sampled_steady_ns_.load(
+                        std::memory_order_acquire));
+    add_trace_value("latest_command_sampled_result",
+                    last_command_sampled_result_.load(
+                        std::memory_order_acquire));
+    const bool backend_retained = navigation_planning::planningRetainedCommittedBundle(
+        planner_backend_outcome.outcome);
+    const bool backend_complete = navigation_planning::completePlanningSucceeded(
+        planner_backend_outcome.outcome) || backend_retained;
+    const bool backend_failure_event_present =
+        !backend_complete && planner_backend_outcome.failure_stage !=
+            navigation_planning::PlanningFailureStage::kNone;
+    const std::int64_t backend_failure_event_steady_ns =
+        backend_failure_event_present ? planner_timeline.solve_finished_steady_ns : 0;
+    const auto latest_watchdog_generation =
+        last_watchdog_generation_.load(std::memory_order_acquire);
+    const std::int64_t watchdog_event_steady_ns =
+        latest_watchdog_generation == solve_generation
+            ? last_watchdog_event_steady_ns_.load(std::memory_order_acquire)
+            : 0;
+    const bool admission_failure_event_present =
+        runtime_admission_attempted && !runtime_admission_succeeded;
+    const std::int64_t admission_failure_event_steady_ns =
+        admission_failure_event_present ? runtime_admission_finished_steady_ns : 0;
+    add_trace_value("planner_backend_failure_event_steady_ns",
+                    backend_failure_event_steady_ns);
+    add_trace_value("watchdog_event_steady_ns", watchdog_event_steady_ns);
+    add_trace_value("runtime_admission_failure_event_steady_ns",
+                    admission_failure_event_steady_ns);
+    add_trace_string("backend_outcome_scope", "BACKEND");
+    add_trace_string(
+        "runtime_admission_disposition",
+        !runtime_admission_attempted
+            ? "NOT_ATTEMPTED"
+            : runtime_admission_succeeded
+                ? (runtime_successor_staged ? "STAGED_PENDING_ACTIVATION"
+                                             : "IMMEDIATELY_COMMITTED")
+                : "REJECTED");
+    add_trace_string(
+        "execution_disposition",
+        !runtime_admission_attempted
+            ? "NOT_ATTEMPTED"
+            : !runtime_admission_succeeded
+                ? "NOT_STAGED"
+                : runtime_successor_staged ? "PENDING_ACTIVATION"
+                                            : "ACTIVE_COMMITTED");
+    bool causal_event_present = false;
+    std::int64_t first_causal_event_steady_ns = 0;
+    int first_causal_event_order = 0;
+    std::string first_causal_scope = "NONE";
+    std::string first_causal_stage = "none";
+    std::string first_causal_reason = "none";
+    const auto consider_causal_event = [&](const std::int64_t event_steady_ns,
+                                           const int order,
+                                           const char* const scope,
+                                           const char* const stage,
+                                           const std::string& reason) {
+      if (event_steady_ns <= 0) return;
+      if (!causal_event_present || event_steady_ns < first_causal_event_steady_ns ||
+          (event_steady_ns == first_causal_event_steady_ns &&
+           order < first_causal_event_order)) {
+        causal_event_present = true;
+        first_causal_event_steady_ns = event_steady_ns;
+        first_causal_event_order = order;
+        first_causal_scope = scope;
+        first_causal_stage = stage;
+        first_causal_reason = reason;
+      }
+    };
+    if (backend_failure_event_present) {
+      consider_causal_event(
+          backend_failure_event_steady_ns, 0, "BACKEND",
+          navigation_planning::planningFailureStageName(
+              planner_backend_outcome.failure_stage),
+          navigation_planning::planningFailureReasonName(
+              planner_backend_outcome.failure_reason));
+    }
+    if (admission_failure_event_present) {
+      consider_causal_event(
+          admission_failure_event_steady_ns, 1, "RUNTIME_ADMISSION",
+          "execution_boundary",
+          "rejection_code_" + std::to_string(
+                                  last_execution_boundary_rejection_.load(
+                                      std::memory_order_acquire)));
+    }
+    if (watchdog_event_steady_ns > 0) {
+      consider_causal_event(watchdog_event_steady_ns, 2, "WATCHDOG", "watchdog",
+                            "timeout");
+    }
+    add_trace_value("first_causal_failure_event_steady_ns",
+                    first_causal_event_steady_ns);
+    add_trace_value("first_causal_failure_event_order",
+                    causal_event_present ? first_causal_event_order : -1);
+    add_trace_string("first_causal_failure_class",
+                     causal_event_present ? "CAUSAL" : "NONE");
+    add_trace_string("backend_failure_event_class",
+                     backend_failure_event_present ? "CAUSAL" : "NONE");
+    add_trace_string(
+        "runtime_admission_failure_event_class",
+        admission_failure_event_present
+            ? (causal_event_present && first_causal_scope == "RUNTIME_ADMISSION"
+                   ? "CAUSAL" : "DOWNSTREAM_CONSEQUENCE")
+            : "NONE");
+    add_trace_string(
+        "watchdog_event_class",
+        watchdog_event_steady_ns > 0
+            ? (causal_event_present && first_causal_scope == "WATCHDOG"
+                   ? "CAUSAL" : "CONTAINMENT")
+            : "NONE");
+    if (causal_event_present) {
+      add_trace_string("first_causal_failure_scope", first_causal_scope);
+      add_trace_string("first_causal_failure_stage", first_causal_stage);
+      add_trace_string("first_causal_failure_reason", first_causal_reason);
+    } else {
+      add_trace_string("first_causal_failure_scope", "NONE");
+      add_trace_string("first_causal_failure_stage", "none");
+      add_trace_string("first_causal_failure_reason", "none");
+    }
+    for (std::size_t stage_index = 1U;
+         stage_index < navigation_planning::kPlannerDiagnosticStageSlotCount;
+         ++stage_index) {
+      const auto stage = static_cast<navigation_planning::PlannerDiagnosticStage>(
+          stage_index);
+      const auto& timing = planner_timeline.stages[stage_index];
+      const std::string prefix = "planner_stage_" + std::to_string(stage_index);
+      add_trace_string(prefix + "_name",
+                       navigation_planning::plannerDiagnosticStageName(stage));
+      add_trace_value(prefix + "_observed", timing.observed ? 1 : 0);
+      add_trace_value(prefix + "_begin_steady_ns", timing.begin_steady_ns);
+      add_trace_value(prefix + "_end_steady_ns", timing.end_steady_ns);
+      add_trace_value(prefix + "_remaining_hard_budget_us",
+                      timing.remaining_hard_budget_us);
+      add_trace_value(prefix + "_result_code", timing.result_code);
+    }
     add_trace_value("backup_certificate_attempted",
                     backup_diagnostics.attempted ? 1 : 0);
     add_trace_value("backup_switch_candidate_count",
@@ -6994,6 +7275,12 @@ void NavigationRuntimeNode::publishCommand() {
   const auto pending_bundle = pending_timeline.pending;
   if (pending_bundle && pending_timeline.pending_activation_ns <=
                            command_ros_time.nanoseconds()) {
+    const auto activation_started_steady_ns =
+        navigation_common::steadyClockNowNanoseconds();
+    last_execution_activation_generation_.store(
+        pending_bundle->bundle_generation, std::memory_order_release);
+    last_execution_activation_started_steady_ns_.store(
+        activation_started_steady_ns, std::memory_order_release);
     bool activated = false;
     {
       // The store operation is nested under the canonical runtime transition
@@ -7053,6 +7340,11 @@ void NavigationRuntimeNode::publishCommand() {
         trajectory_completion_witness_.reset();
       }
     }
+    last_execution_activation_finished_steady_ns_.store(
+        navigation_common::steadyClockNowNanoseconds(),
+        std::memory_order_release);
+    last_execution_activation_result_.store(activated ? 1 : 2,
+                                            std::memory_order_release);
     if (activated) {
       RCLCPP_INFO(get_logger(),
                   "execution timeline activated successor generation=%lu at ns=%lld",
@@ -7073,6 +7365,10 @@ void NavigationRuntimeNode::publishCommand() {
       const std::uint64_t previous_timeout =
           timed_out_planner_solve_generation_.exchange(active_solve);
       if (previous_timeout != active_solve) {
+        last_watchdog_generation_.store(active_solve, std::memory_order_release);
+        last_watchdog_event_steady_ns_.store(
+            navigation_common::steadyClockNowNanoseconds(),
+            std::memory_order_release);
         if (planning_worker_) planning_worker_->cancelActive();
         // Do not wait for the backend ownership mutex here. The watchdog is
         // the out-of-band deadline authority and must be able to cancel a job
@@ -7302,6 +7598,12 @@ void NavigationRuntimeNode::publishCommand() {
       }
     } else {
       const auto point = *sample.point;
+      last_command_sampled_generation_.store(
+          sample.bundle->bundle_generation, std::memory_order_release);
+      last_command_sampled_steady_ns_.store(
+          navigation_common::steadyClockNowNanoseconds(),
+          std::memory_order_release);
+      last_command_sampled_result_.store(1, std::memory_order_release);
       bool planned_hold_valid = true;
       sampled_planned_stop_hold = sample.planned_stop_hold;
       if (sample.planned_stop_hold) {

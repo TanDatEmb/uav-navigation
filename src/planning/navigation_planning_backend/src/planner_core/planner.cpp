@@ -42,6 +42,75 @@ using std::isnan;
 
 namespace navigation_planning_backend {
 
+namespace {
+
+constexpr bool isPlannerTimelineStage(const int stage) noexcept {
+    return stage >= static_cast<int>(navigation_planning::PlannerDiagnosticStage::kSetup) &&
+           stage <= static_cast<int>(navigation_planning::PlannerDiagnosticStage::kBackup);
+}
+
+}  // namespace
+
+void Planner::resetPlannerTimeline(const std::int64_t request_received_steady_ns) noexcept {
+    std::lock_guard<std::mutex> guard(planner_timeline_mutex_);
+    planner_timeline_ = navigation_planning::PlannerTimelineDiagnostics{};
+    planner_timeline_.request_received_steady_ns = request_received_steady_ns;
+    planner_timeline_.solve_started_steady_ns = request_received_steady_ns;
+}
+
+std::int64_t Planner::remainingPlannerBudgetUs(
+        const std::int64_t now_steady_ns) const noexcept {
+    if (request_deadline_ns_ <= 0) return -1;
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::nanoseconds(request_deadline_ns_ - now_steady_ns)).count();
+}
+
+void Planner::setPlannerStage(const int stage) noexcept {
+    if (!isPlannerTimelineStage(stage)) {
+        solve_stage_.store(stage);
+        return;
+    }
+    const auto now_steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard<std::mutex> guard(planner_timeline_mutex_);
+    const int previous_stage = solve_stage_.load();
+    if (previous_stage != stage) {
+        if (isPlannerTimelineStage(previous_stage)) {
+            auto& previous = planner_timeline_.stages[static_cast<std::size_t>(previous_stage)];
+            if (previous.observed && previous.end_steady_ns == 0) {
+                previous.end_steady_ns = now_steady_ns;
+                previous.remaining_hard_budget_us = remainingPlannerBudgetUs(now_steady_ns);
+                previous.result_code = latestReplanReturnCode();
+            }
+        }
+        auto& current = planner_timeline_.stages[static_cast<std::size_t>(stage)];
+        current.observed = true;
+        current.begin_steady_ns = now_steady_ns;
+        current.end_steady_ns = 0;
+        current.remaining_hard_budget_us = -1;
+        current.result_code = 0;
+    }
+    solve_stage_.store(stage);
+}
+
+void Planner::finishPlannerTimeline(const int result_code) noexcept {
+    const auto now_steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard<std::mutex> guard(planner_timeline_mutex_);
+    const int current_stage = solve_stage_.load();
+    if (isPlannerTimelineStage(current_stage)) {
+        auto& current = planner_timeline_.stages[static_cast<std::size_t>(current_stage)];
+        if (current.observed && current.end_steady_ns == 0) {
+            current.end_steady_ns = now_steady_ns;
+            current.remaining_hard_budget_us = remainingPlannerBudgetUs(now_steady_ns);
+            current.result_code = result_code;
+        }
+    }
+    planner_timeline_.solve_finished_steady_ns = now_steady_ns;
+    planner_timeline_.remaining_hard_budget_us_at_finish =
+        remainingPlannerBudgetUs(now_steady_ns);
+}
+
 AbsoluteDeadline Planner::solveDeadlineForCurrentRequest() const {
     if (request_deadline_ns_ > 0) {
         const auto now_steady = std::chrono::steady_clock::now();
@@ -1861,7 +1930,7 @@ double mainGuideSupport(
         }
         const AbsoluteDeadline solve_deadline = solveDeadlineForCurrentRequest();
         candidate_terminal_stop_active_ = false;
-        solve_stage_.store(1);
+        setPlannerStage(1);
         latest_commit_decision_.store(static_cast<int>(
             navigation_world_model::WorldCommitDecision::kNotAttempted));
         latest_replan.reset();
@@ -1966,7 +2035,7 @@ double mainGuideSupport(
         }
 
         back_traj_info.setEmpty();
-        solve_stage_.store(5);
+        setPlannerStage(5);
         if (solve_deadline.expired(planner_context_->getSimTime()) ||
             solve_deadline.steadyExpired()) {
             planner_context_->warn(" -- [planner] solve deadline exhausted before backup stage");
@@ -2084,7 +2153,7 @@ double mainGuideSupport(
         }
         const AbsoluteDeadline solve_deadline = solveDeadlineForCurrentRequest();
         candidate_terminal_stop_active_ = false;
-        solve_stage_.store(1);
+        setPlannerStage(1);
         latest_commit_decision_.store(static_cast<int>(
             navigation_world_model::WorldCommitDecision::kNotAttempted));
 
@@ -2162,7 +2231,7 @@ double mainGuideSupport(
 
         BackupTraj back_traj_info;
         // 2）生成back轨迹
-        solve_stage_.store(5);
+        setPlannerStage(5);
         TimeConsuming t_back("t_back", false);
         if (solve_deadline.expired(planner_context_->getSimTime()) ||
             solve_deadline.steadyExpired()) {
@@ -2342,6 +2411,10 @@ double mainGuideSupport(
     navigation_planning::PlanningOutcome Planner::plan(
             const navigation_planning::PlanningRequest& request) {
         const auto started = std::chrono::steady_clock::now();
+        const auto started_steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            started.time_since_epoch()).count();
+        request_deadline_ns_ = 0;
+        resetPlannerTimeline(started_steady_ns);
         navigation_planning::PlanningOutcome outcome;
     outcome.failure_stage = navigation_planning::PlanningFailureStage::kInput;
     outcome.failure_reason = navigation_planning::PlanningFailureReason::kInvalidInput;
@@ -2355,6 +2428,7 @@ double mainGuideSupport(
             outcome.trace.elapsed_steady_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now() - started).count();
+            finishPlannerTimeline(static_cast<int>(outcome.outcome));
             request_deadline_ns_ = 0;
             return outcome;
         };
@@ -2370,6 +2444,10 @@ double mainGuideSupport(
         const ScopeExit cleanup_guard(cleanup);
         if (!request.valid()) return finish();
         request_deadline_ns_ = request.budget.steady_deadline_ns;
+        {
+            std::lock_guard<std::mutex> guard(planner_timeline_mutex_);
+            planner_timeline_.hard_deadline_steady_ns = request_deadline_ns_;
+        }
 
         last_nominal_solve_status_ = traj_opt::NominalSolveStatus::kFailed;
         last_nominal_deadline_observed_ = false;
@@ -3170,7 +3248,7 @@ double mainGuideSupport(
                 // NO NEED
             } else {
                 vec_Vec3f new_path;
-                solve_stage_.store(2);
+                setPlannerStage(2);
                 const double local_search_horizon =
                     geometry_utils::localRouteSearchHorizon(
                         temp_horizon, cfg_.visibility_horizon_m);
@@ -3622,7 +3700,7 @@ double mainGuideSupport(
                 desired_lookahead, outgoing_distance, search_distance,
                 cfg_.resolution)) {
                 vec_Vec3f next_path;
-                solve_stage_.store(2);
+                setPlannerStage(2);
                 const Vec3f outgoing_start = outgoing_search_start;
                 if (PathSearch(outgoing_start, next_target,
                                search_distance,
@@ -3966,7 +4044,7 @@ double mainGuideSupport(
             time_consuming_[VISUALIZATION] += t_viz.stop();
         }
         shifted_sfc_start_pt_ = Vec3f(9999,9999,9999);
-        solve_stage_.store(3);
+        setPlannerStage(3);
         bool bool_ret_code = cg_ptr_->SearchPolytopeOnPath(
             guide_path, sfc, shifted_sfc_start_pt_, cfg_.use_fov_cut,
             &solve_deadline, route_boundary_gate);
@@ -4269,7 +4347,7 @@ double mainGuideSupport(
         Trajectory out_traj;
         TimeConsuming t_exp_opt("t_exp_opt", false);
         auto original_sfc = sfc;
-        solve_stage_.store(4);
+        setPlannerStage(4);
         const auto committed_before_refinement = planner_warm_start_.snapshot();
         const double remaining_main_before_refinement_s =
             committed_before_refinement.empty

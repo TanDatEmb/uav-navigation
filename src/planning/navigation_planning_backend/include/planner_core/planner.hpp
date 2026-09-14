@@ -101,6 +101,7 @@ namespace navigation_planning_backend {
         mutable std::mutex replan_lock_;
         mutable std::mutex solve_commit_mutex_;
         mutable std::mutex command_identity_mutex_;
+        mutable std::mutex planner_timeline_mutex_;
         CommandIdentity command_identity_{};
         // Non-zero only while servicing a typed PlanningRequest. All planner
         // stages use this transaction-owned absolute deadline; compatibility
@@ -215,6 +216,7 @@ namespace navigation_planning_backend {
         // 0 idle, 1 setup, 2 A*, 3 corridor/CIRI, 4 main MINCO,
         // 5 backup generation/MINCO. Read by the external watchdog.
         std::atomic<int> solve_stage_{0};
+        navigation_planning::PlannerTimelineDiagnostics planner_timeline_{};
         std::atomic_bool solve_cancelled_{false};
         std::atomic<int> latest_commit_decision_{
             static_cast<int>(navigation_world_model::WorldCommitDecision::kNotAttempted)};
@@ -371,6 +373,10 @@ namespace navigation_planning_backend {
         }
         navigation_planning::BackupCertificateDiagnostics backupCertificateDiagnostics() const noexcept {
             return backup_certificate_diagnostics_;
+        }
+        navigation_planning::PlannerTimelineDiagnostics plannerTimelineDiagnostics() const {
+            std::lock_guard<std::mutex> guard(planner_timeline_mutex_);
+            return planner_timeline_;
         }
         int solveStage() const noexcept {
             const int stage = solve_stage_.load();
@@ -678,6 +684,11 @@ namespace navigation_planning_backend {
                    const bool &new_goal);
 
     private:
+        void resetPlannerTimeline(std::int64_t request_received_steady_ns) noexcept;
+        void setPlannerStage(int stage) noexcept;
+        void finishPlannerTimeline(int result_code) noexcept;
+        [[nodiscard]] std::int64_t remainingPlannerBudgetUs(
+            std::int64_t now_steady_ns) const noexcept;
         [[nodiscard]] AbsoluteDeadline solveDeadlineForCurrentRequest() const;
         // Internal request admission only. Current-body geometry is never a
         // public mutable planner setting.

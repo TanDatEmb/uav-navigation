@@ -1905,17 +1905,26 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                     return std::nullopt;
                 }
                 VecDf compatible = requested;
+                const int last_piece = compatible.size() - 1;
                 for (int piece = 0; piece < compatible.size(); ++piece) {
-                    const auto intervals =
+                    if (piece > 0 && piece < last_piece) continue;
+                    const auto& corridor = opt_vars.hPolytopes[opt_vars.hPolyIdx(piece)];
+                    auto intervals =
                             navigation_planning_backend::corridor_bezier_detail::
                                 durationCompatibilityIntervals(
-                                    navigation_planning_backend::pieceState(
-                                        corridor_seed_result.trajectory[piece], 0.0),
-                                    navigation_planning_backend::pieceState(
-                                        corridor_seed_result.trajectory[piece],
-                                        corridor_seed_result.trajectory[piece].getDuration()),
-                                    opt_vars.hPolytopes[opt_vars.hPolyIdx(piece)],
-                                    cfg_.corridor_plane_tolerance_m);
+                                    opt_vars.headPVAJ, opt_vars.tailPVAJ, corridor,
+                                    cfg_.corridor_plane_tolerance_m, 0, 3);
+                    if (piece == last_piece) {
+                        const auto tail_intervals =
+                                navigation_planning_backend::corridor_bezier_detail::
+                                    durationCompatibilityIntervals(
+                                        opt_vars.headPVAJ, opt_vars.tailPVAJ, corridor,
+                                        cfg_.corridor_plane_tolerance_m, 4, 7);
+                        intervals = piece == 0
+                                ? navigation_planning_backend::corridor_bezier_detail::
+                                      intersectDurationIntervals(intervals, tail_intervals)
+                                : tail_intervals;
+                    }
                     if (intervals.empty()) return std::nullopt;
                     bool selected = false;
                     double next_lower = std::numeric_limits<double>::infinity();
@@ -1952,8 +1961,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                 const auto compatible = selectCompatibleDurations(requested);
                 if (!compatible.has_value()) return;
                 for (const auto& existing : retry_duration_candidates) {
-                    if (existing.first == retry_mode &&
-                        existing.second.size() == compatible->size() &&
+                    if (existing.second.size() == compatible->size() &&
                         (existing.second - *compatible).norm() <= 1.0e-9) {
                         return;
                     }
@@ -2622,22 +2630,32 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                 return std::nullopt;
             }
             VecDf compatible = requested;
+            const int last_piece = compatible.size() - 1;
             for (int piece = 0; piece < compatible.size(); ++piece) {
+                if (piece > 0 && piece < last_piece) continue;
                 const int corridor_index = opt_vars.hPolyIdx(piece);
                 if (corridor_index < 0 ||
                     corridor_index >= static_cast<int>(opt_vars.hPolytopes.size())) {
                     return std::nullopt;
                 }
-                const auto intervals =
+                const auto& corridor =
+                        opt_vars.hPolytopes[static_cast<std::size_t>(corridor_index)];
+                auto intervals =
                         navigation_planning_backend::corridor_bezier_detail::
                             durationCompatibilityIntervals(
-                                navigation_planning_backend::pieceState(
-                                    corridor_seed_result.trajectory[piece], 0.0),
-                                navigation_planning_backend::pieceState(
-                                    corridor_seed_result.trajectory[piece],
-                                    corridor_seed_result.trajectory[piece].getDuration()),
-                                opt_vars.hPolytopes[static_cast<std::size_t>(corridor_index)],
-                                cfg_.corridor_plane_tolerance_m);
+                                opt_vars.headPVAJ, opt_vars.tailPVAJ, corridor,
+                                cfg_.corridor_plane_tolerance_m, 0, 3);
+                if (piece == last_piece) {
+                    const auto tail_intervals =
+                            navigation_planning_backend::corridor_bezier_detail::
+                                durationCompatibilityIntervals(
+                                    opt_vars.headPVAJ, opt_vars.tailPVAJ, corridor,
+                                    cfg_.corridor_plane_tolerance_m, 4, 7);
+                    intervals = piece == 0
+                            ? navigation_planning_backend::corridor_bezier_detail::
+                                  intersectDurationIntervals(intervals, tail_intervals)
+                            : tail_intervals;
+                }
                 if (intervals.empty()) return std::nullopt;
                 bool inside = false;
                 double next_lower = std::numeric_limits<double>::infinity();

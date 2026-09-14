@@ -1,5 +1,78 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-14 - Preserve pre-admission planner failure witness
+
+- **Owner/status:** navigation runtime/planning observability; `IMPLEMENTED`,
+  diagnostic-only.
+- **Scope:** Each structured planner decision trace now keeps the backend
+  `PlanningOutcome` captured immediately after the planner transaction and
+  separately reports the post-watchdog outcome consumed by runtime admission.
+  It also emits stable stage/reason names next to the wire-compatible enum
+  ordinals. The planner additionally records a backend-receipt/solve timeline
+  for setup, A*, corridor/CIRI, main MINCO and BACKUP, with steady timestamps,
+  stage result code and remaining hard budget. This prevents timeout or
+  stale-admission handling from erasing the first backend failure in evidence.
+  The runtime decision trace now also separates backend outcome, runtime
+  admission disposition and execution disposition; it records request/result,
+  currentness and admission timestamps, plus activation timing with the
+  pending bundle generation and latest command-sample timing. Worker queue/receipt timestamps are emitted only
+  when the worker's complete PlanningKey matches the scheduled transaction;
+  otherwise they are explicitly marked unmatched. The parser keeps missing
+  enum data distinct from an unknown enum value and derives a stable BACKUP
+  reject-stage name from the raw enum. Causal failures are now reduced from
+  same-transaction steady timestamps with deterministic sequence tie-breaks;
+  backend, watchdog and admission event classes are emitted separately, and
+  transaction completeness is reported independently from legacy key presence.
+  The baseline collector also records dirty-tree, source/config and
+  authoritative build identity in artifact-owned files.
+- **Safety impact:** None to command authorization, candidate certificates,
+  deadline values, UNKNOWN handling, backup policy, or fail-closed behavior.
+  The extra fields are telemetry only; missing fields remain incomplete
+  evidence.
+- **Evidence:** `planner_trace` transaction-authority, causal-race,
+  missing-data and enum fixture coverage, planner-baseline collector unit
+  coverage, canonical Release build and full Python/CTest checks.
+- **Removal/review condition:** Remove the dual witness only after the runtime
+  report has a replacement causal boundary with equivalent pre-admission and
+  post-admission identity coverage.
+- **Verification:** `test_planner_trace`, `test_planner_baseline`, canonical
+  Release build, `build.py test`, `build.py check`, and `git diff --check`.
+
+### 2026-09-10 - Correct duration compatibility attribution and bound replay authority
+
+- **Owner/status:** navigation planning backend; `IMPLEMENTED`, pending
+  post-change replay and canary evidence.
+- **Scope:** The nominal duration compatibility filter now uses the immutable
+  head/tail PVAJ for analytic endpoint controls only. Internal Bernstein
+  controls, which are recomputed by the candidate builder for each duration,
+  remain the builder's bounded check. Candidate retries are deduplicated by
+  their complete duration vector, independently of retry mode. The facade
+  regression for `PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT` (`-12`) is restored.
+  Offline nominal replay now applies the production curve-deviation temporal
+  subdivision rule, but explicitly labels its world result
+  `NON_AUTHORITATIVE` because it does not reproduce planner role scheduling,
+  current-body-support admission, or commit authorization.
+- **Safety impact:** This removes a false-negative fail-closed filter for
+  duration changes without accepting a candidate. Every candidate still goes
+  through bounded construction and the existing continuous corridor,
+  route-boundary, V/A/J, flatness, immutable-world and final authorization
+  checks. No deadline, UNKNOWN, collision, tracking, freshness, world or
+  backup gate is relaxed.
+- **Evidence:** The focused two-piece PVAJ/corridor tests and the specialized
+  planner facade test cover the corrected seams. Exact snapshot replay remains
+  diagnostic: build/corridor/dynamics results are usable for the captured
+  candidate set; the explicit world-authority label prevents treating an
+  offline world PASS or failure as a production executable-bundle verdict.
+- **Removal/review condition:** Replace this bounded endpoint-filter/builder
+  split only after a certified local connector or split corridor is available
+  from the same immutable world, with equivalent endpoint-PVAJ and hard-gate
+  coverage. Remove the replay authority limitation only when replay includes
+  the production role/body-support/commit certificate path.
+- **Verification:** direct `test_corridor_bezier_seed`,
+  `test_planner_facade`, `test_exp_optimizer_seed`, exact replay of all
+  captured snapshots, canonical Release build on clean HEAD, and
+  `git diff --check`.
+
 ### 2026-09-10 - Enumerate duration/corridor-compatible nominal retries
 
 - **Owner/status:** navigation planning backend; `IMPLEMENTED`, behavior change

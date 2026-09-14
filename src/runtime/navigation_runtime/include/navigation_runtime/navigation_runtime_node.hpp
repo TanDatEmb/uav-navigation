@@ -437,6 +437,21 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // boundary. This is observability only; a nonzero value never authorizes a
   // candidate and the active timeline remains the sole command authority.
   std::atomic_int last_execution_boundary_rejection_{0};
+  // These fields describe the latest command-timer activation attempt. They
+  // are diagnostic witnesses only; activation authority remains in the
+  // execution timeline store. A nonzero generation is required before a
+  // consumer may correlate the event with a candidate.
+  std::atomic_uint64_t last_execution_activation_generation_{0U};
+  std::atomic_int64_t last_execution_activation_started_steady_ns_{0};
+  std::atomic_int64_t last_execution_activation_finished_steady_ns_{0};
+  std::atomic_int last_execution_activation_result_{0};
+  std::atomic_uint64_t last_command_sampled_generation_{0U};
+  std::atomic_int64_t last_command_sampled_steady_ns_{0};
+  std::atomic_int last_command_sampled_result_{0};
+  // The watchdog witness is correlated by solve generation. It is never
+  // treated as a failure for another transaction.
+  std::atomic_uint64_t last_watchdog_generation_{0U};
+  std::atomic_int64_t last_watchdog_event_steady_ns_{0};
   std::atomic_int64_t command_execution_source_age_us_{0};
   std::atomic_int64_t command_execution_receive_age_us_{0};
   std::atomic_uint64_t map_update_exception_count_{0};

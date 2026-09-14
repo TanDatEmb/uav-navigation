@@ -45,6 +45,17 @@ struct PlanningWorkerSnapshot {
   std::int64_t last_worker_start_steady_ns{0};
   std::int64_t last_backend_entry_steady_ns{0};
   std::int64_t last_backend_exit_steady_ns{0};
+  // Identity of the latest worker transaction. Timing fields above are
+  // attributable to a planner cycle only when this tuple matches its key.
+  std::uint64_t last_transaction_localization_epoch{0};
+  std::uint64_t last_transaction_goal_epoch{0};
+  std::uint64_t last_transaction_request_id{0};
+  std::uint64_t last_transaction_route_revision{0};
+  std::uint64_t last_transaction_committed_bundle_generation{0};
+  std::uint64_t last_transaction_pinned_world_generation{0};
+  std::uint64_t last_transaction_pinned_world_revision{0};
+  std::uint64_t last_transaction_anchor_stamp_ns{0};
+  std::uint64_t last_transaction_dynamics_hash{0};
   std::uint64_t last_submit_disposition{0};
   bool in_flight{false};
   bool pending{false};
@@ -141,6 +152,20 @@ class PlanningWorker {
       snapshot_.last_submit_disposition = static_cast<std::uint64_t>(disposition);
       snapshot_.last_enqueue_time_steady_ns = std::chrono::duration_cast<
           std::chrono::nanoseconds>(pending_->enqueued_at.time_since_epoch()).count();
+      snapshot_.last_transaction_localization_epoch =
+          pending_->key.localization_epoch;
+      snapshot_.last_transaction_goal_epoch = pending_->key.goal_epoch;
+      snapshot_.last_transaction_request_id = pending_->key.request_id;
+      snapshot_.last_transaction_route_revision = pending_->key.route_revision;
+      snapshot_.last_transaction_committed_bundle_generation =
+          pending_->key.committed_bundle_generation;
+      snapshot_.last_transaction_pinned_world_generation =
+          pending_->key.pinned_world_generation;
+      snapshot_.last_transaction_pinned_world_revision =
+          pending_->key.pinned_world_revision;
+      snapshot_.last_transaction_anchor_stamp_ns =
+          static_cast<std::uint64_t>(pending_->key.anchor_stamp_ns);
+      snapshot_.last_transaction_dynamics_hash = pending_->key.dynamics_hash;
       snapshot_.pending = true;
     }
     cv_.notify_one();

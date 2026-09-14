@@ -66,6 +66,58 @@ enum class PlanningFailureReason : std::uint8_t {
   kCandidateExportInvalid,
 };
 
+inline const char* planningFailureStageName(
+    const PlanningFailureStage stage) noexcept {
+  switch (stage) {
+    case PlanningFailureStage::kNone: return "none";
+    case PlanningFailureStage::kInput: return "input";
+    case PlanningFailureStage::kWorldFreshness: return "world_freshness";
+    case PlanningFailureStage::kRouteWindow: return "route_window";
+    case PlanningFailureStage::kAStar: return "a_star";
+    case PlanningFailureStage::kCorridor: return "corridor";
+    case PlanningFailureStage::kNominalSeed: return "nominal_seed";
+    case PlanningFailureStage::kNominalRefinement: return "nominal_refinement";
+    case PlanningFailureStage::kBackupSeed: return "backup_seed";
+    case PlanningFailureStage::kBackupRefinement: return "backup_refinement";
+    case PlanningFailureStage::kDynamicCertificate: return "dynamic_certificate";
+    case PlanningFailureStage::kFlatnessCertificate: return "flatness_certificate";
+    case PlanningFailureStage::kWorldCertificate: return "world_certificate";
+    case PlanningFailureStage::kCommitRecertification: return "commit_recertification";
+    case PlanningFailureStage::kDeadline: return "deadline";
+  }
+  return "unknown";
+}
+
+inline const char* planningFailureReasonName(
+    const PlanningFailureReason reason) noexcept {
+  switch (reason) {
+    case PlanningFailureReason::kNone: return "none";
+    case PlanningFailureReason::kAnchorOutOfMap: return "anchor_out_of_map";
+    case PlanningFailureReason::kAnchorUnknown: return "anchor_unknown";
+    case PlanningFailureReason::kAnchorOccupied: return "anchor_occupied";
+    case PlanningFailureReason::kMainPathUnavailable: return "main_path_unavailable";
+    case PlanningFailureReason::kMainCorridorUnavailable:
+      return "main_corridor_unavailable";
+    case PlanningFailureReason::kNominalDynamics: return "nominal_dynamics";
+    case PlanningFailureReason::kNominalFlatness: return "nominal_flatness";
+    case PlanningFailureReason::kBackupKnownFreeInsufficient:
+      return "backup_known_free_insufficient";
+    case PlanningFailureReason::kBackupDynamics: return "backup_dynamics";
+    case PlanningFailureReason::kBackupFlatness: return "backup_flatness";
+    case PlanningFailureReason::kWorldChanged: return "world_changed";
+    case PlanningFailureReason::kNoCompleteBundleAtDeadline:
+      return "no_complete_bundle_at_deadline";
+    case PlanningFailureReason::kStaleResult: return "stale_result";
+    case PlanningFailureReason::kSuperseded: return "superseded";
+    case PlanningFailureReason::kInvalidInput: return "invalid_input";
+    case PlanningFailureReason::kMainKnownFreeInsufficient:
+      return "main_known_free_insufficient";
+    case PlanningFailureReason::kCandidateExportInvalid:
+      return "candidate_export_invalid";
+  }
+  return "unknown";
+}
+
 [[nodiscard]] constexpr bool completePlanningSucceeded(
     CompletePlanningOutcome outcome) noexcept {
   return outcome == CompletePlanningOutcome::kRefinedCompleteBundle ||

@@ -553,6 +553,7 @@ navigation_planning::PlannerDiagnostics PlannerFacade::diagnostics() const {
   };
   output.module_time_us = {read_time(EPX_TRAJ_FRONTEND), read_time(EXP_TRAJ_OPT),
                            read_time(BACK_TRAJ_FRONTEND), read_time(BACK_TRAJ_OPT)};
+  output.timeline = impl_->planner->plannerTimelineDiagnostics();
   output.latest_guide_start = toVector3d(impl_->planner->latestGuideStart());
   output.latest_guide_end = toVector3d(impl_->planner->latestGuideEnd());
   output.latest_guide_min = toVector3d(impl_->planner->latestGuideMin());

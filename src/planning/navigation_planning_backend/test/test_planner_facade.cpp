@@ -90,6 +90,7 @@ class PlannerBodySupportWorld final : public IdentityOnlyWorld {
  public:
   const navigation_world_model::Point3 measured_start{0.0, 0.0, 2.0};
   bool unknown_after_body_exit{false};
+  bool allow_unknown_for_path_search{false};
 
   navigation_world_model::CellState classify(
       const navigation_world_model::Point3& point,
@@ -138,6 +139,7 @@ class PlannerBodySupportWorld final : public IdentityOnlyWorld {
       navigation_world_model::GridLayer layer,
       navigation_world_model::UnknownPolicy policy,
       const navigation_world_model::CurrentBodySupportPtr& support) const noexcept override {
+    if (allow_unknown_for_path_search) return true;
     if (policy == navigation_world_model::UnknownPolicy::kAllowUnknown ||
         !support || classify(start, layer) != navigation_world_model::CellState::kUnknown ||
         !support->matchesWorldSnapshot(identity(), support->source_stamp_ns) ||
@@ -629,13 +631,25 @@ TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
   EXPECT_FALSE(navigation_planning::completePlanningSucceeded(
       without_support.outcome));
 
-  // A second full planner transaction has UNKNOWN spanning the route after
-  // the physical body OBB. A* may use the measured prefix but cannot cross
-  // this sensor-unknown barrier, so the planner must reject the route rather
-  // than renew the witness beyond B0.
+  // A second full planner transaction has UNKNOWN spanning the route. The
+  // synthetic support keeps A* and corridor construction admissible, but it
+  // does not contribute known-free distance; MAIN must therefore reject the
+  // route at its braking-evidence gate rather than reach commit recertification.
   auto blocked_world = std::make_shared<PlannerBodySupportWorld>();
   blocked_world->unknown_after_body_exit = true;
-  const auto blocked_support = plannerBodySupport(blocked_world->identity());
+  blocked_world->allow_unknown_for_path_search = true;
+  // Keep the path-search and corridor layers admissible through the synthetic
+  // UNKNOWN region, while making the strict known-free support calculation
+  // observe zero post-body evidence.  The deliberately oversized x extent is
+  // test-only; it prevents the A* invariant from becoming the failure under
+  // test before MAIN's braking-evidence gate runs.
+  const auto blocked_support_seed = plannerBodySupport(blocked_world->identity());
+  auto blocked_support_value =
+      std::make_shared<navigation_world_model::CurrentBodySupport>(
+          *blocked_support_seed);
+  blocked_support_value->body_box.half_extent.x() = 5.0;
+  const navigation_world_model::CurrentBodySupportPtr blocked_support =
+      blocked_support_value;
   TestCommitAuthorizer blocked_authorizer(blocked_world);
   navigation_planning_backend::PlannerFacade blocked_facade(
       PLANNER_FACADE_CONFIG_PATH, blocked_world, semanticFixtureMissionLimits(),
@@ -644,6 +658,12 @@ TEST(PlannerFacade, CurrentBodySupportCrossesPlannerLayersAndIsRequestLocal) {
       plannerBodySupportRequest(blocked_world, blocked_support));
   EXPECT_FALSE(blocked.candidate.has_value());
   EXPECT_FALSE(navigation_planning::completePlanningSucceeded(blocked.outcome));
+  EXPECT_EQ(blocked_facade.diagnostics().replan_return_code,
+            navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT);
+  EXPECT_EQ(blocked.failure_stage,
+            navigation_planning::PlanningFailureStage::kNominalSeed);
+  EXPECT_EQ(blocked.failure_reason,
+            navigation_planning::PlanningFailureReason::kMainKnownFreeInsufficient);
 }
 
 TEST(PlannerFacade, RejectsInvalidCommittedFutureRequestBeforeSolve) {
@@ -672,6 +692,14 @@ TEST(PlannerFacade, RejectsInvalidCommittedFutureRequestBeforeSolve) {
             navigation_planning::PlanningFailureReason::kInvalidInput);
   EXPECT_EQ(facade.solveStage(), 0);
   EXPECT_FALSE(facade.hasStagedCommandCandidate());
+  const auto timeline = facade.diagnostics().timeline;
+  EXPECT_GT(timeline.request_received_steady_ns, 0);
+  EXPECT_EQ(timeline.solve_started_steady_ns,
+            timeline.request_received_steady_ns);
+  EXPECT_GT(timeline.solve_finished_steady_ns,
+            timeline.solve_started_steady_ns);
+  EXPECT_EQ(timeline.hard_deadline_steady_ns, 0);
+  EXPECT_EQ(timeline.remaining_hard_budget_us_at_finish, -1);
 }
 
 TEST(PlannerFacade, ExpiredPlanReportsLatestTimeoutAtProductBoundary) {
@@ -695,6 +723,11 @@ TEST(PlannerFacade, ExpiredPlanReportsLatestTimeoutAtProductBoundary) {
             navigation_planning::PlanningFailureStage::kDeadline);
   EXPECT_EQ(outcome.failure_reason,
             navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline);
+  const auto timeline = facade.diagnostics().timeline;
+  EXPECT_EQ(timeline.hard_deadline_steady_ns, request.budget.steady_deadline_ns);
+  EXPECT_GT(timeline.solve_finished_steady_ns,
+            timeline.solve_started_steady_ns);
+  EXPECT_LE(timeline.remaining_hard_budget_us_at_finish, 0);
 }
 
 TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {

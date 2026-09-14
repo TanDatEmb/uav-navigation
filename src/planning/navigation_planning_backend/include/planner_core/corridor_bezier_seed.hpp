@@ -179,10 +179,15 @@ inline std::vector<DurationCompatibilityInterval> durationCompatibilityIntervals
     const navigation_math::StatePVAJ& start,
     const navigation_math::StatePVAJ& end,
     const navigation_math::PolyhedronH& source_planes,
-    const double tolerance_m) {
+    const double tolerance_m,
+    const int first_control_index = 0,
+    const int last_control_index = kDegree) {
   if (!start.allFinite() || !end.allFinite() || source_planes.rows() == 0 ||
       source_planes.cols() != 4 || !std::isfinite(tolerance_m) ||
-      tolerance_m < 0.0) return {};
+      tolerance_m < 0.0 || first_control_index < 0 ||
+      last_control_index > kDegree || first_control_index > last_control_index) {
+    return {};
+  }
   auto planes = source_planes;
   if (!normalizeCorridorPlanes(planes)) return {};
 
@@ -213,7 +218,9 @@ inline std::vector<DurationCompatibilityInterval> durationCompatibilityIntervals
 
   std::vector<DurationCompatibilityInterval> compatible{{0.0,
                                                          std::numeric_limits<double>::infinity()}};
-  for (const auto& control : polynomials) {
+  for (int control_index = first_control_index;
+       control_index <= last_control_index; ++control_index) {
+    const auto& control = polynomials[static_cast<std::size_t>(control_index)];
     for (Eigen::Index plane_index = 0; plane_index < planes.rows(); ++plane_index) {
       const auto plane = planes.row(plane_index);
       const std::array<double, 4> coefficients{
