@@ -113,7 +113,11 @@ For the source content committed as `e91c5615`, the affected and aggregate
 checks passed before the commit was created:
 
 - authoritative Release build: 23 packages;
-- CTest result aggregation: 83 tests, 0 errors, 0 failures, 0 skipped;
+- current product selection: 81 CTest entries, 0 errors, 0 failures, 0
+  skipped;
+- the raw result tree also contained two passing entries retained from older
+  `navigation_mission` and `uav_description` executions; they are not credited
+  to this baseline run;
 - Python runtime/tool contracts: 370 passed;
 - `ExecutionEpisode`: 9/9, including generation-bound safety-role alignment,
   atomic commit/recovery state and fail-closed non-resurrection;

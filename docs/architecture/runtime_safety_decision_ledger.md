@@ -21792,3 +21792,41 @@ release profiles must not use the former allowance.
   concurrent events. Focused planner-FSM serialization tests, the complete
   runtime suite, canonical Release build/test, authoritative manifest and
   `git diff --check` must pass.
+
+### 2026-09-16 - Bind SITL evidence to the external PX4 source and binary inputs
+
+- **Owner/status:** Runtime evidence provenance boundary; `IMPLEMENTED` at the
+  harness contract. Source review confirmed that the previous external-PX4
+  record preserved HEAD, porcelain status and a top-level tracked-diff hash,
+  but did not hash untracked nested repositories or the PX4 SITL binary and
+  generated runtime files actually loaded by the session.
+- **Scope:** Source fingerprinting now recursively records untracked nested Git
+  repositories in addition to registered submodules. Before starting SITL, the
+  runner captures the external PX4 status and binary diff, fingerprints its
+  complete non-ignored source tree, hashes the PX4 executable, generated init
+  tree and Gazebo plugin libraries, and copies the mutable parameter/dataman
+  inputs into the session-owned provenance directory. Report generation
+  requires these identities and rechecks the captured runtime files. The
+  capture runs before PX4 starts and performs no write in the external PX4
+  checkout.
+- **Safety impact:** Evidence eligibility becomes stricter. Two runs cannot be
+  treated as the same PX4 input merely because their HEAD and top-level status
+  text match while a nested dependency or built executable differs. A missing
+  or changed binary, generated environment, tracked diff, status snapshot or
+  mutable input makes the report fail closed. No PX4 parameter, runtime
+  behavior, planner limit, validation threshold or qualification gate is
+  relaxed.
+- **Evidence/removal condition:** The current PX4 checkout contains six
+  untracked nested repositories and a dirty registered submodule; the former
+  were represented only by directory names in `git status`. A focused
+  regression changes a committed file inside an untracked nested repository
+  and requires the parent fingerprint to change. A second regression captures
+  a synthetic PX4 input and requires report provenance to become invalid after
+  its recorded SITL binary changes. Keep this contract until PX4 supplies an
+  equivalent immutable, signed build manifest covering source, generated
+  inputs and runtime artifacts.
+- **Verification:** Run the focused nested-repository and external-PX4 capture
+  regressions, the complete runtime/tool contract suites, canonical Release
+  build/test, an actual diagnostic capture preflight against the selected PX4
+  checkout, and `git diff --check`. The capture overhead is startup-only and
+  must not be reported as command-path timing.

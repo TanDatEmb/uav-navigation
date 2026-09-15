@@ -70,6 +70,13 @@ def source_fingerprint(root: Path) -> dict[str, Any]:
     Paths and contents are both covered. Gitignored build/artifact outputs are
     intentionally excluded, while an untracked product source is authoritative.
     """
+    status = _git(root, "submodule", "status")
+    submodule_lines = [line for line in status.splitlines() if line.strip()]
+    submodule_paths = {
+        fields[1]
+        for line in submodule_lines
+        if len(fields := line.lstrip(" +-U").split()) >= 2
+    }
     raw = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         capture_output=True,
@@ -78,9 +85,31 @@ def source_fingerprint(root: Path) -> dict[str, Any]:
     paths = sorted(item.decode("utf-8", "surrogateescape") for item in raw.split(b"\0") if item)
     digest = hashlib.sha256()
     file_count = 0
+    nested_repositories: list[dict[str, Any]] = []
     for relative in paths:
         path = root / relative
+        normalized = relative.rstrip("/")
+        if normalized in submodule_paths:
+            continue
         if not path.is_file():
+            # Git reports an untracked nested repository as one directory
+            # entry instead of enumerating its files.  Hash it recursively so
+            # changing that dependency cannot preserve the parent identity.
+            if path.is_dir() and not path.is_symlink():
+                try:
+                    nested_root = Path(
+                        _git(path, "rev-parse", "--show-toplevel")
+                    ).resolve()
+                except RuntimeError:
+                    continue
+                if nested_root != path.resolve():
+                    continue
+                record = {
+                    "path": normalized,
+                    "source": source_fingerprint(path),
+                }
+                nested_repositories.append(record)
+                digest.update(json.dumps(record, sort_keys=True).encode("utf-8"))
             continue
         encoded = relative.encode("utf-8", "surrogateescape")
         digest.update(len(encoded).to_bytes(8, "big"))
@@ -88,38 +117,16 @@ def source_fingerprint(root: Path) -> dict[str, Any]:
         digest.update(bytes.fromhex(sha256_file(path)))
         file_count += 1
     submodules: list[dict[str, Any]] = []
-    status = _git(root, "submodule", "status", "--recursive")
-    for line in status.splitlines():
+    for line in submodule_lines:
         fields = line.lstrip(" +-U").split()
         if len(fields) < 2:
             continue
         relative = fields[1]
         subroot = root / relative
-        sub_raw = subprocess.run(
-            ["git", "-C", str(subroot), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-            capture_output=True, check=True,
-        ).stdout
-        sub_paths = sorted(
-            item.decode("utf-8", "surrogateescape")
-            for item in sub_raw.split(b"\0") if item
-        )
-        sub_digest = hashlib.sha256()
-        sub_count = 0
-        for sub_relative in sub_paths:
-            sub_path = subroot / sub_relative
-            if not sub_path.is_file():
-                continue
-            encoded = sub_relative.encode("utf-8", "surrogateescape")
-            sub_digest.update(len(encoded).to_bytes(8, "big"))
-            sub_digest.update(encoded)
-            sub_digest.update(bytes.fromhex(sha256_file(sub_path)))
-            sub_count += 1
+        sub_source = source_fingerprint(subroot)
         record = {
             "path": relative,
-            "git_head": _git(subroot, "rev-parse", "HEAD"),
-            "git_dirty": bool(_git(subroot, "status", "--porcelain")),
-            "sha256": sub_digest.hexdigest(),
-            "file_count": sub_count,
+            **sub_source,
         }
         submodules.append(record)
         digest.update(json.dumps(record, sort_keys=True).encode("utf-8"))
@@ -129,6 +136,7 @@ def source_fingerprint(root: Path) -> dict[str, Any]:
         "git_head": _git(root, "rev-parse", "HEAD"),
         "git_dirty": bool(_git(root, "status", "--porcelain")),
         "submodules": submodules,
+        "nested_repositories": nested_repositories,
     }
 
 

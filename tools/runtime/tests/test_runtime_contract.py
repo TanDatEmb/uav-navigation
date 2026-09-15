@@ -758,6 +758,87 @@ class RuntimeContractTest(unittest.TestCase):
                 first["submodules"][0]["sha256"], second["submodules"][0]["sha256"]
             )
 
+    def test_source_fingerprint_covers_untracked_nested_repository_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            nested = root / "nested"
+            nested.mkdir(parents=True)
+            subprocess = __import__("subprocess")
+            for repository in (root, nested):
+                subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repository, check=True)
+                subprocess.run(["git", "config", "user.name", "Test"], cwd=repository, check=True)
+            (root / "source.txt").write_text("root\n", encoding="utf-8")
+            subprocess.run(["git", "add", "source.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "root"], cwd=root, check=True)
+            nested_source = nested / "source.txt"
+            nested_source.write_text("one\n", encoding="utf-8")
+            subprocess.run(["git", "add", "source.txt"], cwd=nested, check=True)
+            subprocess.run(["git", "commit", "-qm", "nested"], cwd=nested, check=True)
+
+            first = build_provenance.source_fingerprint(root)
+            nested_source.write_text("two\n", encoding="utf-8")
+            second = build_provenance.source_fingerprint(root)
+
+            self.assertNotEqual(first["sha256"], second["sha256"])
+            self.assertEqual(first["nested_repositories"][0]["path"], "nested")
+            self.assertNotEqual(
+                first["nested_repositories"][0]["source"]["sha256"],
+                second["nested_repositories"][0]["source"]["sha256"],
+            )
+
+    def test_runtime_captures_complete_external_px4_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            px4 = base / "px4"
+            session = process_group.Session(base / "session")
+            px4.mkdir()
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=px4, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=px4, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=px4, check=True)
+            (px4 / ".gitignore").write_text("build/\n", encoding="utf-8")
+            (px4 / "source.txt").write_text("source\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=px4, check=True)
+            subprocess.run(["git", "commit", "-qm", "px4"], cwd=px4, check=True)
+
+            build = px4 / "build/px4_sitl_default"
+            px4_binary = build / "bin/px4"
+            gz_env = build / "rootfs/gz_env.sh"
+            generated_rc = build / "etc/init.d-posix/rcS"
+            parameters = build / "rootfs/parameters.bson"
+            for path, content in (
+                (px4_binary, b"px4"),
+                (gz_env, b"env"),
+                (generated_rc, b"rc"),
+                (parameters, b"params"),
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+
+            with mock.patch.object(
+                runner, "validate_manifest", return_value=_valid_captured_provenance()
+            ):
+                captured = runner._capture_build_provenance(session, px4)
+
+            external = captured["external_px4"]
+            self.assertEqual(external["source"]["git_head"], external["git_head"])
+            self.assertEqual(
+                {record["path"] for record in external["runtime_artifacts"]},
+                {
+                    "build/px4_sitl_default/bin/px4",
+                    "build/px4_sitl_default/etc/init.d-posix/rcS",
+                    "build/px4_sitl_default/rootfs/gz_env.sh",
+                },
+            )
+            self.assertEqual(len(external["mutable_input_snapshots"]), 1)
+            self.assertEqual(report._provenance_reasons({"build_provenance": captured}), [])
+            px4_binary.write_bytes(b"changed")
+            self.assertEqual(
+                report._provenance_reasons({"build_provenance": captured}),
+                ["runtime captured invalid external PX4 runtime artifact identity"],
+            )
+
     def test_manifest_covers_both_px4_odometry_bridge_executables(self) -> None:
         self.assertIn(
             "px4_odometry_bridge/lib/px4_odometry_bridge/px4_odometry_bridge_node",
@@ -3983,28 +4064,69 @@ class RuntimeContractTest(unittest.TestCase):
         )
 
     def test_project_customized_dirty_px4_provenance_is_explicitly_accepted(self) -> None:
-        captured = _valid_captured_provenance()
-        captured["external_px4"] = {
-            "path": "/tmp/px4",
-            "git_head": "px4-head",
-            "git_dirty": True,
-            "provenance_policy": "project_customized",
-            "dirty_entries": [" M src/modules/custom.yaml"],
-            "dirty_status_sha256": "a" * 64,
-            "tracked_diff_sha256": "b" * 64,
-        }
-        self.assertEqual(report._provenance_reasons({"build_provenance": captured}), [])
-        captured["external_px4"]["provenance_policy"] = "undeclared"
-        self.assertEqual(
-            report._provenance_reasons({"build_provenance": captured}),
-            ["dirty external PX4 checkout lacks project-customized provenance policy"],
-        )
-        captured["external_px4"]["provenance_policy"] = "project_customized"
-        captured["external_px4"]["dirty_status_sha256"] = "short"
-        self.assertEqual(
-            report._provenance_reasons({"build_provenance": captured}),
-            ["dirty external PX4 provenance is incomplete"],
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "px4"
+            session = Path(temporary) / "session"
+            px4_binary = root / "build/px4_sitl_default/bin/px4"
+            gz_env = root / "build/px4_sitl_default/rootfs/gz_env.sh"
+            status = session / "external_px4_status.txt"
+            diff = session / "external_px4_tracked.diff"
+            parameters = session / "external_px4_parameters.bson"
+            for path, content in (
+                (px4_binary, b"px4"),
+                (gz_env, b"env"),
+                (status, b" M src/modules/custom.yaml\n"),
+                (diff, b"diff"),
+                (parameters, b"params"),
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            captured = _valid_captured_provenance()
+            captured["external_px4"] = {
+                "schema_version": 1,
+                "path": str(root),
+                "git_head": "px4-head",
+                "git_dirty": True,
+                "provenance_policy": "project_customized",
+                "source": {
+                    "sha256": "c" * 64,
+                    "file_count": 1,
+                    "git_head": "px4-head",
+                    "git_dirty": True,
+                    "submodules": [],
+                    "nested_repositories": [],
+                },
+                "dirty_entries": [" M src/modules/custom.yaml"],
+                "dirty_status_sha256": hashlib.sha256(status.read_bytes()).hexdigest(),
+                "tracked_diff_sha256": hashlib.sha256(diff.read_bytes()).hexdigest(),
+                "captured_status": runner._file_identity(status, session),
+                "captured_tracked_diff": runner._file_identity(diff, session),
+                "runtime_artifacts": [
+                    runner._file_identity(px4_binary, root),
+                    runner._file_identity(gz_env, root),
+                ],
+                "mutable_input_snapshots": [
+                    runner._file_identity(parameters, session),
+                ],
+            }
+            self.assertEqual(report._provenance_reasons({"build_provenance": captured}), [])
+            captured["external_px4"]["schema_version"] = 2
+            self.assertEqual(
+                report._provenance_reasons({"build_provenance": captured}),
+                ["runtime captured unsupported external PX4 provenance schema"],
+            )
+            captured["external_px4"]["schema_version"] = 1
+            captured["external_px4"]["provenance_policy"] = "undeclared"
+            self.assertEqual(
+                report._provenance_reasons({"build_provenance": captured}),
+                ["dirty external PX4 checkout lacks project-customized provenance policy"],
+            )
+            captured["external_px4"]["provenance_policy"] = "project_customized"
+            captured["external_px4"]["dirty_status_sha256"] = "short"
+            self.assertEqual(
+                report._provenance_reasons({"build_provenance": captured}),
+                ["dirty external PX4 provenance is incomplete"],
+            )
 
     def test_captured_provenance_rechecks_artifact_digest(self) -> None:
         captured = _valid_captured_provenance()

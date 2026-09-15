@@ -27,7 +27,7 @@ import yaml
 
 from process_group import Session, resolve_latest, update_latest
 import report
-from build_provenance import validate_manifest
+from build_provenance import sha256_file, source_fingerprint, validate_manifest
 from runtime_environment import (
     BuildRuntimeBusyError,
     BuildRuntimeLock,
@@ -811,6 +811,39 @@ def _git(cwd: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _file_identity(path: Path, root: Path) -> dict[str, Any]:
+    resolved = path.resolve(strict=True)
+    try:
+        name = str(path.relative_to(root))
+    except ValueError:
+        name = str(path)
+    return {
+        "path": name,
+        "resolved_path": str(resolved),
+        "size_bytes": resolved.stat().st_size,
+        "mtime_ns": resolved.stat().st_mtime_ns,
+        "sha256": sha256_file(resolved),
+    }
+
+
+def _px4_runtime_artifact_paths(px4_dir: Path) -> list[Path]:
+    build = px4_dir / "build/px4_sitl_default"
+    paths = {
+        build / "bin/px4",
+        build / "rootfs/gz_env.sh",
+    }
+    generated_etc = build / "etc"
+    if generated_etc.is_dir():
+        paths.update(path for path in generated_etc.rglob("*") if path.is_file())
+    gazebo_plugins = build / "src/modules/simulation/gz_plugins"
+    if gazebo_plugins.is_dir():
+        paths.update(
+            path for path in gazebo_plugins.rglob("*")
+            if path.is_file() and (path.name.endswith(".so") or ".so." in path.name)
+        )
+    return sorted(paths, key=lambda path: str(path))
+
+
 def _capture_build_provenance(session: Session, px4_dir: Path | None = None) -> dict[str, Any]:
     evidence = validate_manifest(ROOT, ROOT / "install")
     if px4_dir is not None:
@@ -824,23 +857,58 @@ def _capture_build_provenance(session: Session, px4_dir: Path | None = None) -> 
         )
         px4_status_text = px4_status.stdout if px4_status.returncode == 0 else ""
         px4_diff = subprocess.run(
-            ["git", "-C", str(px4_dir), "diff", "--binary", "HEAD"],
+            [
+                "git", "-C", str(px4_dir), "diff", "--submodule=diff",
+                "--binary", "HEAD",
+            ],
             capture_output=True, check=False,
         )
         px4_diff_sha256 = (
             hashlib.sha256(px4_diff.stdout).hexdigest()
             if px4_diff.returncode == 0 else ""
         )
+        provenance_dir = session.directory / "provenance"
+        provenance_dir.mkdir(parents=True, exist_ok=True)
+        status_snapshot = provenance_dir / "external_px4_status.txt"
+        diff_snapshot = provenance_dir / "external_px4_tracked.diff"
+        status_snapshot.write_text(px4_status_text, encoding="utf-8")
+        diff_snapshot.write_bytes(px4_diff.stdout if px4_diff.returncode == 0 else b"")
+
+        mutable_inputs: list[dict[str, Any]] = []
+        rootfs = px4_dir / "build/px4_sitl_default/rootfs"
+        for source in (
+            rootfs / "parameters.bson",
+            rootfs / "parameters_backup.bson",
+            rootfs / "dataman",
+        ):
+            if not source.is_file():
+                continue
+            snapshot = provenance_dir / f"external_px4_{source.name}"
+            copy2(source, snapshot)
+            mutable_inputs.append(_file_identity(snapshot, session.directory))
+
+        runtime_artifacts = [
+            _file_identity(path, px4_dir)
+            for path in _px4_runtime_artifact_paths(px4_dir)
+            if path.is_file()
+        ]
+        px4_source = source_fingerprint(px4_dir)
         evidence["external_px4"] = {
+            "schema_version": 1,
             "path": str(px4_dir.resolve()),
             "git_head": px4_head.stdout.strip() if px4_head.returncode == 0 else "",
             "git_dirty": bool(px4_status_text.strip()) if px4_status.returncode == 0 else None,
             "provenance_policy": "project_customized",
+            "source": px4_source,
             "dirty_entries": px4_status_text.splitlines(),
             "dirty_status_sha256": hashlib.sha256(
                 px4_status_text.encode("utf-8")
             ).hexdigest() if px4_status.returncode == 0 else "",
             "tracked_diff_sha256": px4_diff_sha256,
+            "captured_status": _file_identity(status_snapshot, session.directory),
+            "captured_tracked_diff": _file_identity(diff_snapshot, session.directory),
+            "runtime_artifacts": runtime_artifacts,
+            "mutable_input_snapshots": mutable_inputs,
         }
     _write_runtime(session, build_provenance=evidence)
     return evidence

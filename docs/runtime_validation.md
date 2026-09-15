@@ -53,9 +53,15 @@ PY
 ```
 
 The PX4 checkout may be dirty only for the explicitly project-customized
-variant used by this repository. The runner records its exact HEAD, dirty
-status entries and tracked-diff fingerprints in the session provenance; an
-unknown or undeclared dirty state remains fail-closed for qualification.
+variant used by this repository. The runner records its exact HEAD, a complete
+non-ignored source fingerprint (including registered submodules and untracked
+nested repositories), and session-owned copies of its dirty status and binary
+tracked diff. It also hashes the PX4 SITL executable, generated init tree and
+Gazebo plugins, and snapshots the mutable parameter/dataman inputs before
+launch. An unknown, incomplete or changed external identity remains
+fail-closed. This identifies the exact diagnostic input; without an
+authoritative PX4 build manifest it does not prove that a dirty source tree can
+reproduce the captured binary.
 
 ## 3. Which command to use
 
@@ -317,7 +323,9 @@ Every runner invocation creates:
 
 Important files are `scenario.json`, `scenario_config.yaml`, `samples.jsonl`,
 `monitor.json`, `runtime.json`, `processes.json`, `report.json`,
-`REPORT.html`, and component logs. The only public report tool is:
+`REPORT.html`, `provenance/external_px4_status.txt`,
+`provenance/external_px4_tracked.diff`, the external PX4 mutable-input
+snapshots, and component logs. The only public report tool is:
 
 ```bash
 python3 tools/runtime/report.py \

@@ -212,6 +212,39 @@ def _session_provenance(session: Path, workspace: Path, px4_dir: Path | None = N
     }
 
 
+def _captured_file_identity_valid(record: Any, root: Path | None = None) -> bool:
+    if not (
+        isinstance(record, dict)
+        and isinstance(record.get("path"), str) and record["path"]
+        and isinstance(record.get("resolved_path"), str) and record["resolved_path"]
+        and isinstance(record.get("size_bytes"), int)
+        and not isinstance(record.get("size_bytes"), bool)
+        and record["size_bytes"] >= 0
+        and isinstance(record.get("sha256"), str)
+        and len(record["sha256"]) == 64
+    ):
+        return False
+    if any(character not in "0123456789abcdef" for character in record["sha256"].lower()):
+        return False
+    try:
+        resolved = Path(record["resolved_path"])
+        if not resolved.is_absolute():
+            return False
+        resolved = resolved.resolve(strict=True)
+        if root is not None and (root / record["path"]).resolve(strict=True) != resolved:
+            return False
+        stat = resolved.stat()
+        if not resolved.is_file() or stat.st_size != record["size_bytes"]:
+            return False
+        digest = hashlib.sha256()
+        with resolved.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest() == record["sha256"].lower()
+    except (OSError, ValueError):
+        return False
+
+
 def _provenance_reasons(runtime: dict[str, Any]) -> list[str]:
     captured = runtime.get("build_provenance") if isinstance(runtime, dict) else None
     if not _captured_provenance_valid(captured):
@@ -221,6 +254,8 @@ def _provenance_reasons(runtime: dict[str, Any]) -> list[str]:
         return []
     if not isinstance(external, dict):
         return ["runtime captured incomplete external PX4 provenance"]
+    if external.get("schema_version") != 1:
+        return ["runtime captured unsupported external PX4 provenance schema"]
     if not isinstance(external.get("path"), str) or not external["path"]:
         return ["runtime captured incomplete external PX4 provenance"]
     if not isinstance(external.get("git_head"), str) or not external["git_head"]:
@@ -237,6 +272,49 @@ def _provenance_reasons(runtime: dict[str, Any]) -> list[str]:
         or len(external["tracked_diff_sha256"]) != 64
     ):
         return ["dirty external PX4 provenance is incomplete"]
+    source = external.get("source")
+    if not (
+        isinstance(source, dict)
+        and isinstance(source.get("sha256"), str) and len(source["sha256"]) == 64
+        and isinstance(source.get("file_count"), int)
+        and not isinstance(source.get("file_count"), bool)
+        and source["file_count"] >= 0
+        and source.get("git_head") == external.get("git_head")
+        and source.get("git_dirty") == external.get("git_dirty")
+        and isinstance(source.get("submodules"), list)
+        and isinstance(source.get("nested_repositories"), list)
+    ):
+        return ["runtime captured incomplete external PX4 source fingerprint"]
+    status_snapshot = external.get("captured_status")
+    diff_snapshot = external.get("captured_tracked_diff")
+    if not (
+        _captured_file_identity_valid(status_snapshot)
+        and _captured_file_identity_valid(diff_snapshot)
+        and status_snapshot["sha256"] == external.get("dirty_status_sha256")
+        and diff_snapshot["sha256"] == external.get("tracked_diff_sha256")
+    ):
+        return ["runtime captured invalid external PX4 status or tracked diff"]
+    runtime_artifacts = external.get("runtime_artifacts")
+    if not isinstance(runtime_artifacts, list) or not runtime_artifacts:
+        return ["runtime captured no external PX4 runtime artifacts"]
+    required_artifacts = {
+        "build/px4_sitl_default/bin/px4",
+        "build/px4_sitl_default/rootfs/gz_env.sh",
+    }
+    captured_artifacts = {
+        record.get("path") for record in runtime_artifacts if isinstance(record, dict)
+    }
+    external_root = Path(external["path"])
+    if not required_artifacts.issubset(captured_artifacts) or any(
+        not _captured_file_identity_valid(record, external_root)
+        for record in runtime_artifacts
+    ):
+        return ["runtime captured invalid external PX4 runtime artifact identity"]
+    mutable_inputs = external.get("mutable_input_snapshots")
+    if not isinstance(mutable_inputs, list) or not mutable_inputs or any(
+        not _captured_file_identity_valid(record) for record in mutable_inputs
+    ):
+        return ["runtime captured no valid external PX4 mutable input snapshot"]
     return []
 
 
