@@ -1,5 +1,33 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-16 - Probe terminal-state feasibility without changing production
+
+- **Owner/status:** offline nominal replay diagnostics; `IMPLEMENTED`,
+  diagnostic-only.
+- **Scope:** Exact replay now holds the captured initial state, every other
+  terminal derivative, guide, corridor, world, planner configuration, physical
+  limits, and PlanFromRest entrypoint fixed while evaluating five
+  terminal-velocity scales from zero through the captured value. Every probe
+  uses the existing production optimizer and certificate checks with no
+  deadline. Results remain labeled as offline
+  candidates without MAIN/BACKUP scheduling, lease, or commit authority.
+- **Safety impact:** None. The scaled terminal states never enter a planning
+  request, active/pending store, recovery transition, command, or PX4 adapter.
+  A feasible diagnostic scale is not permission to change mission semantics or
+  relax the 5/5/8 dynamics envelope.
+- **Evidence:** Exact five-waypoint snapshots showed repeated dynamics failure
+  even with the deadline removed. The terminal-state sweep distinguishes a
+  formulation conflict from a generic optimizer-budget explanation while
+  retaining the original scale as a parity probe.
+- **Removal/review condition:** Remove the sweep after the terminal-state and
+  duration formulation has an independently certified replacement experiment.
+  Do not promote a scale into product behavior without a separate design
+  decision, contract tests, and targeted SITL/recorded-data evidence.
+- **Verification:** run the canonical `make build`, replay the
+  provenance-bound start/middle/end five-waypoint snapshots, confirm the
+  original scale matches the unmodified no-deadline result, run the full test
+  suite, and check the worktree diff.
+
 ### 2026-09-16 - Bind nominal replay capture to validated build provenance
 
 - **Owner/status:** runtime evidence runner and planning nominal-snapshot

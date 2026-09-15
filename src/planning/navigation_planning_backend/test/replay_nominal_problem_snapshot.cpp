@@ -1239,6 +1239,35 @@ int run(const std::string& path) {
         config, world_snapshot.get()), config_replay.exact);
   }
 
+  // F: hold the captured guide, corridor, physical limits, world, and
+  // PlanFromRest entrypoint fixed while varying only the terminal velocity.
+  // This is a formulation probe: a feasible scaled endpoint does not replace
+  // the mission-owned terminal state and cannot be admitted by production.
+  for (const double terminal_velocity_scale :
+       std::array<double, 5>{0.0, 0.25, 0.5, 0.75, 1.0}) {
+    auto diagnostic_tail = tail;
+    diagnostic_tail.col(1) *= terminal_velocity_scale;
+    geometry_utils::Trajectory trajectory;
+    auto sfcs = polytope_vec;
+    traj_opt::ExpTrajOpt optimizer(config, context);
+    optimizer.setSolveBudget(nullptr, 0, 0);
+    const auto nominal_result = optimizer.solve(
+        head, diagnostic_tail, guide_path, guide_times,
+        sfcs, trajectory, false, true, false);
+    std::cout << "F_terminal_velocity_scale=" << terminal_velocity_scale
+              << " status=" << static_cast<int>(nominal_result.status)
+              << " candidate_available=" << nominal_result.candidateAvailable()
+              << " lbfgs_attempts="
+              << optimizer.diagnostics().lbfgs_attempt_count
+              << " evaluations="
+              << optimizer.diagnostics().lbfgs_evaluation_count
+              << " retry_count=" << optimizer.diagnostics().retry_count
+              << '\n';
+    printReport("F_terminal_velocity_candidate", certify(
+        trajectory, head, diagnostic_tail, h_polytopes, h_poly_idx,
+        polytope_vec, config, world_snapshot.get()), config_replay.exact);
+  }
+
   // E: high-effort generic MINCO/L-BFGS. Multiple deterministic time starts
   // are allowed here only as a feasibility probe. No physical limit changes.
   config.feasibility_retry_max_iterations =
