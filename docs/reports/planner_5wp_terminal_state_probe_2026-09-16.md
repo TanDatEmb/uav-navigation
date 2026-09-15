@@ -180,3 +180,54 @@ build/navigation_planning_backend/replay_nominal_problem_snapshot \
 make test
 git diff --check
 ```
+
+## Integrated follow-up on clean Release commit `98008885`
+
+The direction-transition cap was then wired only into the existing
+non-mission frontier terminal-state branch and evaluated in three targeted
+5 m/s runs. This follow-up remains diagnostic because the external PX4 tree is
+project-customized, tracking mode is `relaxed`, and the versioned evaluation
+correctly reports missing lifecycle/reference/coverage acceptance evidence.
+The mission and safety dimensions are therefore reported separately from the
+top-level qualification verdict.
+
+| Session | Mission behavior | Safety | Cross-track p95 | Execution trace |
+| --- | --- | --- | --- | --- |
+| `external-mode-check-20260915T192839-692073` | `PAUSED_SAFETY_STOP`, 1/5 waypoints | 0 collisions, no failsafe, safety dimension PASS | 2.855 m | 1 active commit, 2 pending activations, 8 backend failures |
+| `external-mode-check-20260915T193350-698382` | COMPLETE, 5/5 waypoints | 0 collisions, no failsafe, safety dimension PASS | 0.259 m | 1 active commit, 11 pending activations, 4 backend failures |
+| `external-mode-check-20260915T193751-702298` | COMPLETE, 5/5 waypoints | 0 collisions, no failsafe, safety dimension PASS | 0.325 m | 2 active commits, 8 pending activations, 13 backend failures |
+
+All rolling trace records were complete: 11/11, 16/16, and 23/23. The two
+complete runs reached mission completion at 96.204 s and 45.808 s,
+respectively. Their top-level report verdict is still `FAIL`, rather than a
+qualification PASS, because the versioned evaluation is `NOT_EVALUABLE` under
+the experimental tracking and incomplete lifecycle/reference/coverage
+contracts. This does not negate the mission completion, and the mission
+completion does not repair those evidence gaps.
+
+The contained run is the limiting result. It activated generation 3, then had
+seven `nominal_dynamics` successor failures and one
+`no_complete_bundle_at_deadline` result. The final attempt found a MAIN
+candidate inside the existing V/A/J limits but could not complete BACKUP
+construction before the deadline. Once the certified BACKUP endpoint expired
+outside waypoint acceptance, the runtime retained only its bounded
+`STOPPED_HOLD` endpoint. Planner timers continued, but the recovery transaction
+correctly withheld `PlanFromRest` while measured speed remained above the
+unchanged 0.15 m/s stop gate. External Mode handed over to PX4 Hold after the
+unchanged 5 s bounded recovery window.
+
+This rules out a planner failure latch, stale publish, PX4 rejection, or
+collision as the cause of that run. It does not yet distinguish whether the
+non-repeatability is dominated by moving-state terminal formulation, BACKUP
+aligned-SFC availability, or optimizer deadline tails. A failure-only capture
+in the second run recorded one separate transient route-lookahead deadline
+miss with complete 1/1 writer accounting. Exact replay produced a valid
+no-deadline MAIN candidate, and the live next cycle recovered, so that capture
+is not a reproducer for the terminal safe-stop run.
+
+The targeted result is therefore 2/3 mission completion, not acceptance. The
+next discriminator must capture the successor transaction from a contained
+run and compare MAIN and BACKUP failure stages at the same immutable
+state/world/guide inputs. Neither the 0.15 m/s measured-stop gate nor the 5 s
+recovery window should be tuned from this sample, and the full 5 m/s matrix
+should remain deferred until the targeted case is repeatable.

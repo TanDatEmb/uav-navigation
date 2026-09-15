@@ -3,7 +3,8 @@
 ### 2026-09-16 - Bind frontier terminal speed to the final guide turn
 
 - **Owner/status:** planning backend terminal-state materialization;
-  `IMPLEMENTED`, integrated SITL validation pending.
+  `IMPLEMENTED`, integrated SITL result `CONDITIONAL` (two mission completions
+  and one contained recovery stop in three targeted runs).
 - **Scope:** A non-mission frontier now bounds its preferred terminal speed by
   the velocity-vector change that the final two guide segments can realize in
   their allocated time under the existing acceleration and jerk limits. The
@@ -20,15 +21,28 @@
   change. The direction-derived cap produced a production solver candidate in
   15/15 offline replays; 12/15 also passed the stricter seed PVAJ certificate.
   The remaining three are retained as a numerical evidence gap, not counted as
-  certificate PASS.
+  certificate PASS. On clean Release commit `98008885`, three 5 m/s
+  `long_three_pillars` runs with the same positive case and seed produced two
+  complete five-waypoint missions and one `PAUSED_SAFETY_STOP`; all three had
+  zero collisions and no PX4 failsafe. The contained run committed three
+  executable generations, then rejected eight successor attempts and retained
+  generation 3's certified BACKUP endpoint while waiting for the unchanged
+  measured-stop gate. It handed over to PX4 Hold when the vehicle had not
+  settled below 0.15 m/s within the existing 5 s recovery window. This is not
+  a failure-latch or command-rejection finding, and it is not 3/3 acceptance.
 - **Removal/review condition:** Revert if targeted SITL does not improve
   complete MAIN/BACKUP readiness, causes repeated low-speed frontier behavior,
   or regresses command continuity. Do not tune the formula from one run; any
   change requires replay distribution plus repeated SITL/recorded-data
   evidence.
 - **Verification:** canonical Release build and full tests; focused straight,
-  corner, invalid-input helper tests; three 5 m/s five-waypoint SITL runs with
-  command/activation/mission/performance evidence before the full matrix.
+  corner, invalid-input helper tests; three 5 m/s five-waypoint SITL runs under
+  `.artifacts/runtime/external-mode-check-20260915T192839-692073`,
+  `.artifacts/runtime/external-mode-check-20260915T193350-698382`, and
+  `.artifacts/runtime/external-mode-check-20260915T193751-702298`. The full
+  matrix remains blocked on a discriminator for the one-run successor
+  availability/recovery failure; do not relax the 0.15 m/s stop gate or 5 s
+  recovery window from this sample.
 
 ### 2026-09-16 - Probe terminal-state feasibility without changing production
 
