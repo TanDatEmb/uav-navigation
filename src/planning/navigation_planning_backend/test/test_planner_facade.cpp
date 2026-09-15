@@ -813,6 +813,33 @@ TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
             successor_request.key.anchor_stamp_ns);
 }
 
+TEST(PlannerFacade, SupersededUnactivatedProposalsNeverAliasGeneration) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      [&ros_time_s] { return ros_time_s; });
+
+  const auto request = plannerBodySupportRequest(world, nullptr);
+  ASSERT_TRUE(request.valid());
+  const auto first = facade.plan(request);
+  ASSERT_TRUE(first.valid());
+  ASSERT_TRUE(first.candidate.has_value());
+
+  // Do not activate the first proposal. A new solve supersedes the backend's
+  // staged value while execution may still hold the old pointer as pending.
+  const auto replacement = facade.plan(request);
+  ASSERT_TRUE(replacement.valid());
+  ASSERT_TRUE(replacement.candidate.has_value());
+  EXPECT_GT(replacement.candidate->bundle_generation,
+            first.candidate->bundle_generation);
+  EXPECT_FALSE(facade.validateStagedCommandCandidate(
+      world, ros_time_s, first.candidate->bundle_generation).valid);
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, ros_time_s, replacement.candidate->bundle_generation).valid);
+}
+
 TEST(PlannerFacade,
      StagesTerminalStopHoldWhenUnknownMeasuredStateIsAlreadyAccepted) {
   auto world = std::make_shared<PlannerBodySupportWorld>();

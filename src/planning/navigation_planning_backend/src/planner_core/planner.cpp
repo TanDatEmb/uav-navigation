@@ -951,8 +951,10 @@ double mainGuideSupport(
                         .retained_position_heading_rebind) {
                     return false;
                 }
+                const auto generation = reserveCandidateGenerationLocked();
+                if (!generation.has_value()) return false;
                 staged_planner_candidate_ = StagedCommandCandidate{
-                    std::move(candidate), certificate, planner_warm_start_.nextGeneration(),
+                    std::move(candidate), certificate, *generation,
                     std::nullopt, false};
                 return true;
             });
@@ -966,6 +968,17 @@ double mainGuideSupport(
         // admission. A later candidate must pass the sensor-only certificate.
         current_body_support_admission_pending_ = false;
         return true;
+    }
+
+    std::optional<std::uint64_t> Planner::reserveCandidateGenerationLocked() {
+        const auto committed_generation = planner_warm_start_.generationSnapshot();
+        const auto generation_floor =
+            std::max(committed_generation, last_reserved_candidate_generation_);
+        if (generation_floor == std::numeric_limits<std::uint64_t>::max()) {
+            return std::nullopt;
+        }
+        last_reserved_candidate_generation_ = generation_floor + 1U;
+        return last_reserved_candidate_generation_;
     }
 
     bool Planner::stageCommandHistoryForCandidate(const ExpTraj& exp_traj) {
@@ -988,7 +1001,8 @@ double mainGuideSupport(
         }
         auto staged = std::move(*staged_planner_candidate_);
         if (!planner_warm_start_.commitCandidate(
-                std::move(staged.command), staged.certificate)) {
+                std::move(staged.command), staged.certificate,
+                staged.generation)) {
             planner_context_->error(
                 " -- [planner] execution activated generation={} but warm-start "
                 "cache synchronization failed; execution remains authoritative",
@@ -1757,11 +1771,12 @@ double mainGuideSupport(
             !planner_warm_start_.canCommitCandidate(candidate)) {
             return std::nullopt;
         }
-        const auto generation = planner_warm_start_.nextGeneration();
+        const auto generation = reserveCandidateGenerationLocked();
+        if (!generation.has_value()) return std::nullopt;
         staged_planner_candidate_ = StagedCommandCandidate{
-            candidate, certificate, generation, std::nullopt, false};
+            candidate, certificate, *generation, std::nullopt, false};
         const auto exported = exportStagedCommandCandidate(
-            candidate, certificate, generation, localization_epoch,
+            candidate, certificate, *generation, localization_epoch,
             goal_epoch, request_id, valid_from_ns, valid_until_ns);
         if (!exported.candidate.has_value()) {
             staged_planner_candidate_.reset();

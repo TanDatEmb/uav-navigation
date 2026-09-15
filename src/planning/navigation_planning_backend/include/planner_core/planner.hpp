@@ -120,6 +120,10 @@ namespace navigation_planning_backend {
             bool clear_new_goal_on_activation{false};
         };
         std::optional<StagedCommandCandidate> staged_planner_candidate_;
+        // Monotonic proposal identity, including proposals superseded before
+        // activation. Protected by solve_commit_mutex_. Execution may skip a
+        // reserved value, but no later staged proposal may reuse it.
+        std::uint64_t last_reserved_candidate_generation_{0U};
 
         enum class CandidateExportFailure : std::uint8_t {
             kNone,
@@ -242,6 +246,9 @@ namespace navigation_planning_backend {
         bool lookahead_complete_{false};
 
         bool authorizeAndStage(CandidateCommandBundle&& candidate);
+
+        [[nodiscard]] std::optional<std::uint64_t>
+        reserveCandidateGenerationLocked();
 
         bool stageCommandHistoryForCandidate(const ExpTraj& exp_traj);
 

@@ -359,7 +359,8 @@ namespace navigation_planning_backend {
         }
 
         bool commitCandidate(CandidateCommandBundle&& candidate,
-                             const CommandCertificate& certificate) {
+                             const CommandCertificate& certificate,
+                             const std::uint64_t requested_generation = 0U) {
             if (!trajectoryFinite(candidate.position) ||
                 !trajectoryFinite(candidate.yaw) ||
                 std::abs(candidate.position.start_WT - candidate.yaw.start_WT) >
@@ -419,11 +420,22 @@ namespace navigation_planning_backend {
             // against a shorter planner-history trajectory than the bundle
             // already committed by runtime. Keep its structural and monotonic
             // checks, while leaving one owner for the handoff certificate.
-            if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
+            // Zero retains the legacy local-cache behavior. Product execution
+            // activation supplies the proposal generation reserved when the
+            // candidate was staged; rejected/superseded proposals may leave
+            // intentional gaps, but an old activation must never move this
+            // cache backwards or reuse an identity.
+            std::uint64_t committed_generation = requested_generation;
+            if (committed_generation == 0U) {
+                if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
+                    return false;
+                }
+                committed_generation = generation_ + 1U;
+            } else if (committed_generation <= generation_) {
                 return false;
             }
             CommitDiagnostics diagnostics;
-            diagnostics.generation = generation_ + 1U;
+            diagnostics.generation = committed_generation;
             diagnostics.previous_generation = generation_;
             diagnostics.candidate_start_wall_time = candidate.start_wall_time;
             diagnostics.candidate_start_pvaj = candidate.position.getState(0.0);
@@ -490,7 +502,7 @@ namespace navigation_planning_backend {
                     break;
                 }
             }
-            ++generation_;
+            generation_ = committed_generation;
             commit_diagnostics_ = diagnostics;
             return true;
         }

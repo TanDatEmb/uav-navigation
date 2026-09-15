@@ -21721,3 +21721,34 @@ release profiles must not use the former allowance.
   `navigation_execution`, `navigation_planning_backend` and
   `navigation_runtime`, followed by the canonical full build/test, clean
   authoritative manifest and `git diff --check`.
+
+### 2026-09-16 - Reserve a unique identity for every staged proposal
+
+- **Owner/status:** Planning backend proposal boundary and warm-start cache;
+  `IMPLEMENTED`. A deterministic facade regression confirmed that two valid
+  proposals superseding one another before activation both exported generation
+  1, so validation requested for the first generation evaluated the second.
+- **Scope:** The planner now reserves a monotonically increasing generation for
+  every staged proposal, including proposals later rejected or superseded.
+  Activation promotes the exact reserved generation into the planner's
+  warm-start cache, which may therefore advance across intentional gaps but
+  rejects a repeated or regressed generation. The execution timeline remains
+  the only command authority; this counter identifies proposals and does not
+  activate them. No second active/pending store or publication path is added.
+- **Safety impact:** Tightens fail-closed recertification. A mapping update can
+  no longer validate the backend's newer staged proposal B using pending
+  proposal A's reused generation and then retain or renew A from that boolean
+  result. Rejected proposals merely consume an identity. No collision,
+  dynamics, freshness, timing, tracking or qualification gate is changed.
+- **Evidence/removal condition:** Before the change,
+  `SupersededUnactivatedProposalsNeverAliasGeneration` observed equal exported
+  generations and validation by the superseded generation returned valid; the
+  focused test exited 1. Keep unique proposal identity until recertification
+  carries an equivalently immutable witness bound directly to the exact
+  trajectory, world and configuration. Public boolean certificate construction
+  remains separate design debt and is not claimed solved by this patch.
+- **Verification:** The facade regression must show strictly increasing
+  proposal generations and rejection of validation by the superseded value.
+  `CmdTraj` tests must allow a forward activation gap and reject repeated or
+  regressed generations. Run the focused backend suite, then canonical Release
+  build/test, authoritative manifest capture and `git diff --check`.

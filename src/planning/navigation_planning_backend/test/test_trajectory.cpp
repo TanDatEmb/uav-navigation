@@ -1588,6 +1588,42 @@ TEST(PlannerTrajectory, CommitDiagnosticsDescribeExactContinuousOldToNewSplice) 
   EXPECT_NEAR(second.diagnostics.yaw_residual, 0.0, 1.0e-12);
 }
 
+TEST(PlannerTrajectory, ExplicitProposalGenerationMayAdvanceWithGapsButNotRegress) {
+  navigation_planning_backend::CmdTraj command;
+  navigation_planning_backend::CommandCertificate certificate;
+  certificate.pinned_world = {1U, 1U, 1U, 1};
+  certificate.validated_world = certificate.pinned_world;
+  certificate.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  certificate.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  const auto make_candidate = [&](const double start_wall_time) {
+    auto candidate_position = linearTrajectory(1.0, start_wall_time);
+    auto candidate_yaw = linearTrajectory(1.0, start_wall_time);
+    navigation_planning_backend::CandidateCommandBundle candidate;
+    candidate.position = std::move(candidate_position);
+    candidate.yaw = std::move(candidate_yaw);
+    candidate.start_wall_time = start_wall_time;
+    candidate.roles = {{0.0, 1.0,
+                        navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+    candidate.backup_start_tt = 1.0;
+    candidate.backup_disposition =
+        navigation_planning_backend::BackupDisposition::NO_NEED;
+    candidate.localization_epoch = 1U;
+    candidate.goal_epoch = 1U;
+    candidate.request_id = 1U;
+    return candidate;
+  };
+
+  ASSERT_TRUE(command.commitCandidate(make_candidate(10.0), certificate, 3U));
+  EXPECT_EQ(command.generationSnapshot(), 3U);
+  EXPECT_FALSE(command.commitCandidate(make_candidate(10.5), certificate, 2U));
+  EXPECT_EQ(command.generationSnapshot(), 3U);
+  EXPECT_TRUE(command.commitCandidate(make_candidate(10.5), certificate, 5U));
+  const auto committed = command.snapshot();
+  EXPECT_EQ(committed.generation, 5U);
+  EXPECT_EQ(committed.diagnostics.previous_generation, 3U);
+  EXPECT_EQ(committed.diagnostics.generation, 5U);
+}
+
 TEST(PlannerTrajectory, CommitDiagnosticsClampPriorSampleAtFinishedEnd) {
   navigation_planning_backend::CmdTraj command;
   auto first_position = linearTrajectory(1.0, 10.0);
