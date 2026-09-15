@@ -4352,6 +4352,32 @@ double mainGuideSupport(
             double preferred_terminal_speed = std::min(
                 std::max(guide_path_end_vel, solve_state_.v.norm()),
                 route_terminal_speed_cap_mps);
+            if (guide_path.size() >= 3U &&
+                guide_stamp.size() == guide_path.size()) {
+                const Eigen::Vector3d incoming_direction =
+                    (guide_path[guide_path.size() - 2U] -
+                     guide_path[guide_path.size() - 3U]).cast<double>();
+                const Eigen::Vector3d outgoing_direction =
+                    (guide_path.back() -
+                     guide_path[guide_path.size() - 2U]).cast<double>();
+                const double transition_window_s =
+                    guide_stamp.back() - guide_stamp[guide_stamp.size() - 3U];
+                const double direction_transition_speed_cap =
+                    guideDirectionTransitionSpeedCap(
+                        incoming_direction, outgoing_direction,
+                        transition_window_s, terminal_velocity_cap,
+                        cfg_.exp_traj_cfg.max_acc,
+                        cfg_.exp_traj_cfg.max_jerk);
+                if (direction_transition_speed_cap > 0.0 &&
+                    direction_transition_speed_cap + 1.0e-6 <
+                        preferred_terminal_speed) {
+                    preferred_terminal_speed = direction_transition_speed_cap;
+                    planner_context_->info(
+                        " -- [planner] frontier tail direction transition "
+                        "terminal speed cap={:.3f} window={:.3f}",
+                        preferred_terminal_speed, transition_window_s);
+                }
+            }
             if (route_lookahead_active && route_lookahead_is_corner &&
                 pass_through_next_target_.has_value()) {
                 // The route-boundary corridor is intentionally local to the

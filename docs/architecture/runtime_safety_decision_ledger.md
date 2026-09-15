@@ -1,5 +1,35 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-16 - Bind frontier terminal speed to the final guide turn
+
+- **Owner/status:** planning backend terminal-state materialization;
+  `IMPLEMENTED`, integrated SITL validation pending.
+- **Scope:** A non-mission frontier now bounds its preferred terminal speed by
+  the velocity-vector change that the final two guide segments can realize in
+  their allocated time under the existing acceleration and jerk limits. The
+  policy applies only to the already-existing frontier continuation branch.
+  Mission pass-through, terminal STOP, measured handoff, execution ownership,
+  world validation, and PX4 publication are unchanged.
+- **Safety impact:** The change can only reduce a future frontier boundary
+  speed; it does not widen V/A/J, flatness, world, BACKUP, lease, or admission
+  gates. It may nevertheless reduce progress or create stop/go behavior if the
+  guide discretization is too conservative, so nominal availability alone is
+  not acceptance.
+- **Evidence:** In the bounded five-waypoint capture, all 15 nominal problems
+  used a 4.9 m/s frontier terminal state despite a final guide direction
+  change. The direction-derived cap produced a production solver candidate in
+  15/15 offline replays; 12/15 also passed the stricter seed PVAJ certificate.
+  The remaining three are retained as a numerical evidence gap, not counted as
+  certificate PASS.
+- **Removal/review condition:** Revert if targeted SITL does not improve
+  complete MAIN/BACKUP readiness, causes repeated low-speed frontier behavior,
+  or regresses command continuity. Do not tune the formula from one run; any
+  change requires replay distribution plus repeated SITL/recorded-data
+  evidence.
+- **Verification:** canonical Release build and full tests; focused straight,
+  corner, invalid-input helper tests; three 5 m/s five-waypoint SITL runs with
+  command/activation/mission/performance evidence before the full matrix.
+
 ### 2026-09-16 - Probe terminal-state feasibility without changing production
 
 - **Owner/status:** offline nominal replay diagnostics; `IMPLEMENTED`,
