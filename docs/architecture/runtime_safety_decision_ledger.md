@@ -1,5 +1,33 @@
 # Runtime safety decision and temporary-debt ledger
 
+### 2026-09-16 - Bind nominal replay capture to validated build provenance
+
+- **Owner/status:** runtime evidence runner and planning nominal-snapshot
+  diagnostics; `IMPLEMENTED`, diagnostic-only.
+- **Scope:** When nominal-problem capture is explicitly enabled, the runtime
+  runner derives the capture session, navigation commit, tracked-diff digest,
+  complete source fingerprint, workspace, Release-manifest path, and manifest
+  digest from the build provenance already validated for that session. The
+  bound values are forwarded to the planner snapshot and serialized with the
+  mathematical problem. A caller-supplied identity that conflicts with the
+  validated build stops the run at preflight instead of creating a misleading
+  replay artifact. Normal runs with capture disabled are unchanged.
+- **Safety impact:** None to planner formulation, deadlines, V/A/J or flatness
+  gates, world policy, candidate authority, recovery, or command publication.
+  The added fields are evidence identity only. A valid provenance record does
+  not make offline world replay authoritative and does not make the run
+  qualification-eligible.
+- **Evidence:** Unit coverage checks environment forwarding, automatic binding,
+  conflict rejection, and optimizer-side retention of every identity field.
+  The 2026-09-16 five-waypoint replay report records the prior
+  `not-provided` provenance gap that motivated this change.
+- **Removal/review condition:** Replace these environment-bound fields only
+  when the planner request carries an equivalent immutable evidence identity.
+  Do not remove conflict rejection or fall back to caller-declared provenance.
+- **Verification:** focused runtime-contract and optimizer snapshot tests,
+  canonical Release build, full test suite, `git diff --check`, then one
+  opt-in capture confirming the serialized values match the session manifest.
+
 ### 2026-09-14 - Preserve pre-admission planner failure witness
 
 - **Owner/status:** navigation runtime/planning observability; `IMPLEMENTED`,

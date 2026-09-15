@@ -101,6 +101,20 @@ TEST(ExpOptimizer,
      SnapshotDoesNotReusePostSetupGeometryAfterSimplifyReject) {
   ScopedEnvironmentVariable capture(
       "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR", "/tmp/uav-navigation-snapshot-test");
+  ScopedEnvironmentVariable session(
+      "UAV_NAVIGATION_NOMINAL_SNAPSHOT_SESSION_ID", "session-123");
+  ScopedEnvironmentVariable source_commit(
+      "UAV_NAVIGATION_SOURCE_COMMIT", "source-commit");
+  ScopedEnvironmentVariable source_diff(
+      "UAV_NAVIGATION_SOURCE_DIFF_SHA256", "source-diff");
+  ScopedEnvironmentVariable source_fingerprint(
+      "UAV_NAVIGATION_SOURCE_FINGERPRINT_SHA256", "source-fingerprint");
+  ScopedEnvironmentVariable workspace(
+      "UAV_NAVIGATION_WORKSPACE", "/workspace");
+  ScopedEnvironmentVariable build_manifest(
+      "UAV_NAVIGATION_BUILD_MANIFEST", "/workspace/manifest.json");
+  ScopedEnvironmentVariable build_manifest_sha(
+      "UAV_NAVIGATION_BUILD_MANIFEST_SHA256", "manifest-sha");
   const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   const auto planner_context =
       std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
@@ -120,6 +134,17 @@ TEST(ExpOptimizer,
       head, tail, guide_path, guide_times, valid_corridors, trajectory));
   const auto valid_snapshot = optimizer.takeNominalProblemSnapshot();
   ASSERT_TRUE(valid_snapshot.has_value());
+  EXPECT_EQ(valid_snapshot->provenance.session_id, "session-123");
+  EXPECT_EQ(valid_snapshot->provenance.source_revision, "source-commit");
+  EXPECT_EQ(valid_snapshot->provenance.source_diff_sha256, "source-diff");
+  EXPECT_EQ(
+      valid_snapshot->provenance.source_fingerprint_sha256,
+      "source-fingerprint");
+  EXPECT_EQ(valid_snapshot->provenance.workspace, "/workspace");
+  EXPECT_EQ(
+      valid_snapshot->provenance.build_manifest_path,
+      "/workspace/manifest.json");
+  EXPECT_EQ(valid_snapshot->provenance.build_manifest_sha256, "manifest-sha");
   EXPECT_TRUE(valid_snapshot->setup_completed);
   EXPECT_TRUE(valid_snapshot->post_setup_input_bound);
   ASSERT_EQ(valid_snapshot->h_polytopes.size(), 1U);

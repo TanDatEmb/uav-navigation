@@ -804,6 +804,14 @@ int run(const std::string& path) {
             << root["target_failure_signature"].as<bool>()
             << " source_revision="
             << root["provenance"]["source_revision"].as<std::string>()
+            << " session_id="
+            << root["provenance"]["session_id"].as<std::string>("not-provided")
+            << " source_fingerprint_sha256="
+            << root["provenance"]["source_fingerprint_sha256"].as<std::string>(
+                   "not-provided")
+            << " build_manifest_sha256="
+            << root["provenance"]["build_manifest_sha256"].as<std::string>(
+                   "not-provided")
             << " solve_generation="
             << (root["provenance"]["solve_generation"]
                     ? root["provenance"]["solve_generation"].as<std::uint64_t>()

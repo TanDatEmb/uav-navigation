@@ -385,10 +385,13 @@ def _ros_shell(command: list[str], *, enable_rviz: bool = False) -> list[str]:
         "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR",
         "UAV_NAVIGATION_NOMINAL_SNAPSHOT_INCLUDE_WORLD",
         "UAV_NAVIGATION_NOMINAL_SNAPSHOT_FAILURE_ONLY",
+        "UAV_NAVIGATION_NOMINAL_SNAPSHOT_SESSION_ID",
         "UAV_NAVIGATION_SOURCE_COMMIT",
         "UAV_NAVIGATION_SOURCE_DIFF_SHA256",
+        "UAV_NAVIGATION_SOURCE_FINGERPRINT_SHA256",
         "UAV_NAVIGATION_WORKSPACE",
         "UAV_NAVIGATION_BUILD_MANIFEST",
+        "UAV_NAVIGATION_BUILD_MANIFEST_SHA256",
     ):
         value = os.environ.get(key)
         if value:
@@ -912,6 +915,50 @@ def _capture_build_provenance(session: Session, px4_dir: Path | None = None) -> 
         }
     _write_runtime(session, build_provenance=evidence)
     return evidence
+
+
+def _bind_nominal_snapshot_provenance(
+    build_provenance: dict[str, Any], session_id: str
+) -> None:
+    """Bind opt-in planner snapshots to the validated runtime build.
+
+    Snapshot capture is diagnostic-only, but a caller-supplied identity must
+    not silently disagree with the authoritative manifest used by this run.
+    The full source fingerprint covers tracked, untracked, nested-repository,
+    and submodule inputs; the diff digest retains the narrower legacy field.
+    """
+    if not os.environ.get("UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR"):
+        return
+
+    manifest = build_provenance.get("manifest")
+    source = manifest.get("source") if isinstance(manifest, dict) else None
+    if not isinstance(source, dict):
+        raise RuntimeError("nominal snapshot capture requires manifest source identity")
+
+    source_diff = subprocess.run(
+        ["git", "-C", str(ROOT), "diff", "--submodule=diff", "--binary", "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    if source_diff.returncode != 0:
+        raise RuntimeError("unable to capture navigation source diff identity")
+
+    expected = {
+        "UAV_NAVIGATION_NOMINAL_SNAPSHOT_SESSION_ID": session_id,
+        "UAV_NAVIGATION_SOURCE_COMMIT": source.get("git_head"),
+        "UAV_NAVIGATION_SOURCE_DIFF_SHA256": hashlib.sha256(source_diff.stdout).hexdigest(),
+        "UAV_NAVIGATION_SOURCE_FINGERPRINT_SHA256": source.get("sha256"),
+        "UAV_NAVIGATION_WORKSPACE": str(ROOT.resolve()),
+        "UAV_NAVIGATION_BUILD_MANIFEST": build_provenance.get("manifest_path"),
+        "UAV_NAVIGATION_BUILD_MANIFEST_SHA256": build_provenance.get("manifest_sha256"),
+    }
+    for key, value in expected.items():
+        if not isinstance(value, str) or not value:
+            raise RuntimeError(f"nominal snapshot provenance field unavailable: {key}")
+        supplied = os.environ.get(key)
+        if supplied is not None and supplied != value:
+            raise RuntimeError(f"nominal snapshot provenance conflicts with validated build: {key}")
+        os.environ[key] = value
 
 
 def _write_runtime_evidence_metadata(
@@ -2978,6 +3025,9 @@ def _run_sim_unlocked(
     prereq = _sim_prerequisites(px4_dir, gz_command, ros_environment)
     try:
         build_provenance = _capture_build_provenance(session, px4_dir)
+        _bind_nominal_snapshot_provenance(
+            build_provenance, session.directory.name
+        )
         metadata_path = session.directory / "metadata.json"
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         metadata["build_timestamp_ns"] = build_provenance.get("validated_wall_ns")

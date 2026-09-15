@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import shlex
+import subprocess
 import sys
 import tempfile
 import time
@@ -1969,15 +1970,89 @@ class RuntimeContractTest(unittest.TestCase):
             "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR": "/tmp/nominal snapshots",
             "UAV_NAVIGATION_NOMINAL_SNAPSHOT_INCLUDE_WORLD": "1",
             "UAV_NAVIGATION_NOMINAL_SNAPSHOT_FAILURE_ONLY": "1",
+            "UAV_NAVIGATION_NOMINAL_SNAPSHOT_SESSION_ID": "session-123",
             "UAV_NAVIGATION_SOURCE_COMMIT": "abc123",
             "UAV_NAVIGATION_SOURCE_DIFF_SHA256": "def456",
+            "UAV_NAVIGATION_SOURCE_FINGERPRINT_SHA256": "fed654",
             "UAV_NAVIGATION_WORKSPACE": "/tmp/uav-navigation",
             "UAV_NAVIGATION_BUILD_MANIFEST": "/tmp/manifest.json",
+            "UAV_NAVIGATION_BUILD_MANIFEST_SHA256": "manifest789",
         }
         with mock.patch.dict(os.environ, values, clear=False):
             command = runner._ros_shell(["echo", "ok"])[-1]
         for key, value in values.items():
             self.assertIn(f"{key}={shlex.quote(value)}", command)
+
+    def test_nominal_snapshot_provenance_is_bound_to_validated_manifest(self) -> None:
+        build_provenance = {
+            "manifest_path": "/tmp/install/manifest.json",
+            "manifest_sha256": "b" * 64,
+            "manifest": {
+                "source": {
+                    "git_head": "a" * 40,
+                    "sha256": "c" * 64,
+                }
+            },
+        }
+        completed = subprocess.CompletedProcess(
+            args=["git"], returncode=0, stdout=b"tracked diff", stderr=b""
+        )
+        with mock.patch.dict(
+            os.environ,
+            {"UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR": "/tmp/snapshots"},
+            clear=True,
+        ), mock.patch.object(runner.subprocess, "run", return_value=completed):
+            runner._bind_nominal_snapshot_provenance(
+                build_provenance, "external-mode-check-123"
+            )
+            self.assertEqual(
+                os.environ["UAV_NAVIGATION_NOMINAL_SNAPSHOT_SESSION_ID"],
+                "external-mode-check-123",
+            )
+            self.assertEqual(
+                os.environ["UAV_NAVIGATION_SOURCE_COMMIT"], "a" * 40
+            )
+            self.assertEqual(
+                os.environ["UAV_NAVIGATION_SOURCE_DIFF_SHA256"],
+                hashlib.sha256(b"tracked diff").hexdigest(),
+            )
+            self.assertEqual(
+                os.environ["UAV_NAVIGATION_SOURCE_FINGERPRINT_SHA256"],
+                "c" * 64,
+            )
+            self.assertEqual(
+                os.environ["UAV_NAVIGATION_BUILD_MANIFEST_SHA256"], "b" * 64
+            )
+
+    def test_nominal_snapshot_provenance_rejects_caller_conflict(self) -> None:
+        build_provenance = {
+            "manifest_path": "/tmp/install/manifest.json",
+            "manifest_sha256": "b" * 64,
+            "manifest": {
+                "source": {
+                    "git_head": "a" * 40,
+                    "sha256": "c" * 64,
+                }
+            },
+        }
+        with mock.patch.dict(
+            os.environ,
+            {
+                "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR": "/tmp/snapshots",
+                "UAV_NAVIGATION_SOURCE_COMMIT": "wrong",
+            },
+            clear=True,
+        ), mock.patch.object(
+            runner.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(
+                args=["git"], returncode=0, stdout=b"", stderr=b""
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "conflicts with validated build"):
+                runner._bind_nominal_snapshot_provenance(
+                    build_provenance, "external-mode-check-123"
+                )
 
     def test_process_registry_rejects_unvalidated_records_and_roles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

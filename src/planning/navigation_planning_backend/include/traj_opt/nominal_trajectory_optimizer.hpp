@@ -136,10 +136,13 @@ namespace traj_opt {
     // admission, candidate selection, or any hard certificate.
     struct NominalProblemProvenance {
         std::string source_identity{"uav-navigation::ExpTrajOpt"};
+        std::string session_id{"not-provided"};
         std::string source_revision{"not-provided"};
         std::string source_diff_sha256{"not-provided"};
+        std::string source_fingerprint_sha256{"not-provided"};
         std::string workspace{"not-provided"};
         std::string build_manifest_path{"not-provided"};
+        std::string build_manifest_sha256{"not-provided"};
         navigation_world_model::WorldSnapshotIdentity world_identity{};
         navigation_world_model::WorldSnapshotIdentity execution_world_identity{};
         std::uint64_t execution_bundle_generation{0U};

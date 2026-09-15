@@ -345,17 +345,29 @@ void ExpTrajOpt::beginNominalProblemSnapshot(
     snapshot.provenance = std::move(diagnostic_provenance_);
     snapshot.diagnostic_world_snapshot =
             std::move(snapshot.provenance.diagnostic_world_snapshot);
+    if (const char* value = environmentValue(
+            "UAV_NAVIGATION_NOMINAL_SNAPSHOT_SESSION_ID")) {
+        snapshot.provenance.session_id = value;
+    }
     if (const char* value = environmentValue("UAV_NAVIGATION_SOURCE_COMMIT")) {
         snapshot.provenance.source_revision = value;
     }
     if (const char* value = environmentValue("UAV_NAVIGATION_SOURCE_DIFF_SHA256")) {
         snapshot.provenance.source_diff_sha256 = value;
     }
+    if (const char* value = environmentValue(
+            "UAV_NAVIGATION_SOURCE_FINGERPRINT_SHA256")) {
+        snapshot.provenance.source_fingerprint_sha256 = value;
+    }
     if (const char* value = environmentValue("UAV_NAVIGATION_WORKSPACE")) {
         snapshot.provenance.workspace = value;
     }
     if (const char* value = environmentValue("UAV_NAVIGATION_BUILD_MANIFEST")) {
         snapshot.provenance.build_manifest_path = value;
+    }
+    if (const char* value = environmentValue(
+            "UAV_NAVIGATION_BUILD_MANIFEST_SHA256")) {
+        snapshot.provenance.build_manifest_sha256 = value;
     }
 
     snapshot.snapshot_kind = snapshot.provenance.start_mode ==
@@ -495,14 +507,20 @@ std::string traj_opt::writeNominalProblemSnapshotJson(
     output << ",\"provenance\":{";
     output << "\"source_identity\":";
     writeJsonString(output, snapshot.provenance.source_identity);
+    output << ",\"session_id\":";
+    writeJsonString(output, snapshot.provenance.session_id);
     output << ",\"source_revision\":";
     writeJsonString(output, snapshot.provenance.source_revision);
     output << ",\"source_diff_sha256\":";
     writeJsonString(output, snapshot.provenance.source_diff_sha256);
+    output << ",\"source_fingerprint_sha256\":";
+    writeJsonString(output, snapshot.provenance.source_fingerprint_sha256);
     output << ",\"workspace\":";
     writeJsonString(output, snapshot.provenance.workspace);
     output << ",\"build_manifest_path\":";
     writeJsonString(output, snapshot.provenance.build_manifest_path);
+    output << ",\"build_manifest_sha256\":";
+    writeJsonString(output, snapshot.provenance.build_manifest_sha256);
     output << ",\"world_identity\":";
     writeJsonWorldIdentity(output, snapshot.provenance.world_identity);
     output << ",\"execution_world_identity\":";
