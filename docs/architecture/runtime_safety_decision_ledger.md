@@ -21644,3 +21644,43 @@ release profiles must not use the former allowance.
   `navigation_execution`, `navigation_planning_backend`, and
   `navigation_runtime`, followed by the canonical build/test/check and
   `git diff --check`.
+
+### 2026-09-15 - Recheck command leases at the exposure linearization point
+
+- **Owner/status:** Navigation execution timeline and runtime command boundary;
+  `IMPLEMENTED`. The pre-lock freshness defect is confirmed by a deterministic
+  store-contention reproducer; no claim is made that it caused an observed
+  flight failure on this branch.
+- **Scope:** `publishIfCurrent()` now requires its bounded exposure callback to
+  return an authorization decision while the exact active pointer, goal epoch
+  and world identity remain locked. The runtime pins its latest execution state
+  under the canonical transition locks, then checks ROS/source freshness,
+  steady receive freshness, the sampled world observation age, command-stream
+  lease, normal bundle lease and final `STOPPED_HOLD` proximity inside that
+  exposure callback. `NavigationCommand.state_source_stamp` is assigned from
+  the exact state lease that passed this final decision. An expired callback is
+  dropped and counted without revoking an otherwise valid execution; stale
+  world evidence keeps the existing recoverable suspension policy, while stale
+  execution state and an unsupported stopped hold keep their fail-closed
+  policies. Publication remains inside the timeline mutex because that is the
+  current command-invalidation linearization contract; this change does not
+  introduce an egress queue or a second execution owner.
+- **Safety impact:** Tightens producer-side authorization. A command cannot be
+  marked granted from freshness or lease facts computed before waiting for the
+  execution-store lock. PX4's independent command-age, odometry-freshness and
+  tracking-envelope checks remain containment layers, not substitutes for this
+  producer decision. No collision predicate, dynamic limit, timing threshold,
+  planner tuning or qualification gate is relaxed.
+- **Evidence/removal condition:** Before the change, a controlled callback held
+  the store mutex while a second publisher prechecked a world stamp at fake time
+  6 ns; after fake time advanced to 12 ns beyond the 10 ns freshness window, the
+  waiter still exposed the command and the regression test failed. Keep the
+  in-transaction decision until publication has an equivalent serialized
+  authority protocol with explicit ordering, lease and receiver-rejection
+  semantics. Moving ROS publication out of the mutex requires measured lock and
+  transport tails plus a separately reviewed egress design.
+- **Verification:** `test_committed_bundle_store` must show the waiting callback
+  re-evaluates its fake clock after acquiring the store and rejects exposure;
+  run Release builds/tests for `navigation_execution`, `navigation_contracts`
+  and `navigation_runtime`, then the canonical full build/test, evidence tests,
+  manifest capture and `git diff --check`.

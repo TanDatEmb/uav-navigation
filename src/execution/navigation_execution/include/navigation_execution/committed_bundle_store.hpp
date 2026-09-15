@@ -381,6 +381,9 @@ class ExecutionTimelineStore final {
   // reaching the transport. The callback is intentionally inside the lock so
   // invalidation cannot complete before an already-authorized exposure; the
   // caller must keep this callback bounded because it serializes store writes.
+  // Returning false rejects exposure at this exact linearization point; a
+  // freshness or transport lease checked before waiting for this mutex is not
+  // sufficient authorization.
   template <typename ExposureFn>
   bool publishIfCurrent(
       const std::shared_ptr<const navigation_planning::CandidateBundle>& expected,
@@ -394,7 +397,7 @@ class ExecutionTimelineStore final {
       return false;
     }
     try {
-      std::forward<ExposureFn>(expose)();
+      if (!static_cast<bool>(std::forward<ExposureFn>(expose)())) return false;
     } catch (...) {
       return false;
     }

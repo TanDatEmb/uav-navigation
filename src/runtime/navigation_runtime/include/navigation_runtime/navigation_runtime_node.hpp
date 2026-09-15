@@ -431,6 +431,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_bool world_freshness_suspended_safety_suffix_active_{false};
   std::atomic_uint64_t command_execution_lease_rejection_count_{0};
   std::atomic_uint64_t command_execution_lease_terminal_latch_count_{0};
+  std::atomic_uint64_t command_publication_deadline_miss_count_{0};
   navigation_execution::ExecutionStateFailureLatch command_execution_lease_failure_latch_;
   std::atomic_int command_execution_lease_reason_{0};
   // Structured reason for the last candidate rejection at the execution

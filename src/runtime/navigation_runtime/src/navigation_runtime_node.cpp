@@ -15,6 +15,7 @@
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include "navigation_runtime/mapping_observation_contract.hpp"
 #include <navigation_execution/timestamp_freshness.hpp>
+#include <navigation_contracts/navigation_command_contract.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
 #include <navigation_contracts/execution_state_freshness.hpp>
 #include <navigation_common/time.hpp>
@@ -3382,6 +3383,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             command_execution_lease_rejection_count_);
   add_value("command_execution_lease_terminal_latch_count",
             command_execution_lease_terminal_latch_count_);
+  add_value("command_publication_deadline_miss_count",
+            command_publication_deadline_miss_count_);
   add_value("command_execution_lease_failed",
             command_execution_lease_failure_latch_.latched() ? 1U : 0U);
   add_value("command_execution_lease_reason", command_execution_lease_reason_.load());
@@ -8100,48 +8103,29 @@ void NavigationRuntimeNode::publishCommand() {
             std::chrono::steady_clock::now() - publish_started).count(),
         std::memory_order_release);
   };
-  const auto authorize_and_publish_ros_command = [&command, &publish_ros_command] {
-    command.execution_authorization = navigation_contracts::msg::NavigationCommand::
-        EXECUTION_AUTHORIZATION_GRANTED;
-    command.execution_authorization_steady_ns = static_cast<std::uint64_t>(
-        std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds()));
-    publish_ros_command();
-  };
   if (sampled_command_valid) {
     bool exposed = false;
+    bool publication_boundary_evaluated = false;
+    bool final_command_lease_valid = false;
+    bool final_bundle_lease_valid = false;
+    bool final_stopped_hold_support_valid = false;
+    navigation_execution::TimestampFreshness final_world_freshness =
+        navigation_execution::TimestampFreshness::INVALID;
+    navigation_contracts::ExecutionStateFreshness final_execution_freshness;
+    std::shared_ptr<const navigation_execution::ExecutionStateLease>
+        final_execution_state;
     const auto store_publish_started = std::chrono::steady_clock::now();
-    // Re-evaluate the execution lease at the publication boundary. The
-    // callback-start state may have become stale while sampling and assembling
-    // the message; a valid epoch alone is not proof that source/receive time
-    // is still admissible.
-    const auto final_execution_state = execution_state_store_.load();
-    const auto final_publish_now_ns = now().nanoseconds();
-    const auto final_execution_freshness = final_execution_state
-        ? navigation_contracts::evaluateExecutionStateFreshness(
-              final_publish_now_ns,
-              final_execution_state->state.source_stamp_ns,
-              navigation_common::steadyClockNowNanoseconds(),
-              final_execution_state->state.receive_stamp_ns,
-              data_freshness_window_s_)
-        : navigation_contracts::ExecutionStateFreshness{};
-    command_execution_lease_reason_.store(
-        static_cast<int>(final_execution_freshness.reason), std::memory_order_release);
-    command_execution_source_age_us_.store(static_cast<std::int64_t>(
-        final_execution_freshness.source_age_ms * 1000.0), std::memory_order_release);
-    command_execution_receive_age_us_.store(static_cast<std::int64_t>(
-        final_execution_freshness.receive_age_ms * 1000.0), std::memory_order_release);
     {
-      // Recheck the non-store execution state immediately before entering the
-      // store's pointer/world transaction. Sampling and message assembly are
-      // intentionally outside this lock. The final store transaction keeps
-      // the canonical localization/input/transition locks while the exposure
-      // callback runs so a lease or goal transition cannot complete between
-      // validation and transport;
-      // its duration is recorded as store_publish_us for latency monitoring.
+      // Pin the latest state only after acquiring the canonical transition
+      // locks. Propagated odometry uses the same localization -> state-store
+      // order, so this witness cannot change before the exposure callback.
+      // Freshness itself is evaluated inside publishIfCurrent(): waiting for
+      // the timeline mutex must not consume a decision made at an earlier time.
       std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
       std::lock_guard<std::mutex> input_lock(input_mutex_);
       std::lock_guard<std::mutex> command_lock(
           command_execution_lease_failure_latch_.transitionMutex());
+      final_execution_state = execution_state_store_.load();
       const bool goal_identity_current = command_goal && active_goal_ &&
           sameGoalIdentity(command_goal, active_goal_) &&
           active_goal_epoch_.load(std::memory_order_acquire) == goal_epoch_at_command &&
@@ -8159,12 +8143,66 @@ void NavigationRuntimeNode::publishCommand() {
           final_execution_state && final_execution_state->state.finite() &&
           final_execution_state->state.localization_epoch ==
               localization_epoch_at_command &&
-          final_execution_freshness.valid() &&
           execution_episode_.snapshot().command_available &&
           command_execution_lease_failure_latch_.allowsCommandExposure()) {
         exposed = command_bundle_store_.publishIfCurrent(
             sampled_bundle, command_goal_epoch_at_command,
-            authorize_and_publish_ros_command);
+            [&, final_execution_state] {
+              publication_boundary_evaluated = true;
+              const auto authorization_ros_ns = now().nanoseconds();
+              const auto authorization_steady_ns =
+                  navigation_common::steadyClockNowNanoseconds();
+              final_execution_freshness =
+                  navigation_contracts::evaluateExecutionStateFreshness(
+                      authorization_ros_ns,
+                      final_execution_state->state.source_stamp_ns,
+                      authorization_steady_ns,
+                      final_execution_state->state.receive_stamp_ns,
+                      data_freshness_window_s_);
+              final_world_freshness =
+                  navigation_execution::classifyTimestampFreshness(
+                      authorization_ros_ns,
+                      sampled_bundle->world_identity.observation_stamp_ns,
+                      data_freshness_window_ns_);
+              final_command_lease_valid =
+                  navigation_contracts::commandValidAt(command, authorization_ros_ns);
+              final_bundle_lease_valid = sampled_planned_stop_hold ||
+                  (authorization_ros_ns >= sampled_bundle->valid_from_ns &&
+                   authorization_ros_ns <= sampled_bundle->valid_until_ns);
+              final_stopped_hold_support_valid = !sampled_planned_stop_hold ||
+                  (final_execution_state->state.position_world.allFinite() &&
+                   (pvaj.col(0) - final_execution_state->state.position_world).norm() <=
+                       navigation_contracts::kCommandAnchorErrorLimitM);
+              command_execution_lease_reason_.store(
+                  static_cast<int>(final_execution_freshness.reason),
+                  std::memory_order_release);
+              command_execution_source_age_us_.store(static_cast<std::int64_t>(
+                  final_execution_freshness.source_age_ms * 1000.0),
+                  std::memory_order_release);
+              command_execution_receive_age_us_.store(static_cast<std::int64_t>(
+                  final_execution_freshness.receive_age_ms * 1000.0),
+                  std::memory_order_release);
+              if (!final_execution_freshness.valid() ||
+                  final_world_freshness !=
+                      navigation_execution::TimestampFreshness::VALID ||
+                  !final_command_lease_valid || !final_bundle_lease_valid ||
+                  !final_stopped_hold_support_valid) {
+                return false;
+              }
+              // This is the state lease that actually authorized exposure;
+              // do not publish the earlier callback-start state as provenance.
+              command.state_source_stamp = navigation_common::nanosecondsToRosTime(
+                  final_execution_state->state.source_stamp_ns).value_or(
+                      builtin_interfaces::msg::Time{});
+              command.execution_authorization =
+                  navigation_contracts::msg::NavigationCommand::
+                      EXECUTION_AUTHORIZATION_GRANTED;
+              command.execution_authorization_steady_ns =
+                  static_cast<std::uint64_t>(
+                      std::max<std::int64_t>(0, authorization_steady_ns));
+              publish_ros_command();
+              return true;
+            });
       }
     }
     last_command_store_publish_us_.store(
@@ -8172,6 +8210,71 @@ void NavigationRuntimeNode::publishCommand() {
             std::chrono::steady_clock::now() - store_publish_started).count(),
         std::memory_order_release);
     if (!exposed) {
+      if (publication_boundary_evaluated &&
+          final_world_freshness !=
+              navigation_execution::TimestampFreshness::VALID) {
+        ++world_snapshot_freshness_rejection_count_;
+        if (planning_worker_) planning_worker_->cancelActive();
+        suspendCommandForWorldFreshness();
+        return;
+      }
+      if (publication_boundary_evaluated &&
+          !final_execution_freshness.valid()) {
+        ++command_execution_lease_rejection_count_;
+        bool first_failure = false;
+        bool sampled_execution_still_current = false;
+        {
+          std::lock_guard<std::mutex> localization_lock(
+              localization_transition_mutex_);
+          std::lock_guard<std::mutex> input_lock(input_mutex_);
+          std::lock_guard<std::mutex> command_lock(
+              command_execution_lease_failure_latch_.transitionMutex());
+          const auto current_bundle = command_bundle_store_.load();
+          sampled_execution_still_current = active_goal_ && executing_goal_ &&
+              sameGoalIdentity(command_goal, active_goal_) &&
+              sameGoalIdentity(executing_goal, executing_goal_) &&
+              active_goal_epoch_.load(std::memory_order_acquire) ==
+                  goal_epoch_at_command &&
+              active_localization_epoch_.load(std::memory_order_acquire) ==
+                  localization_epoch_at_command &&
+              current_bundle && sampled_bundle &&
+              current_bundle.get() == sampled_bundle.get();
+          if (sampled_execution_still_current) {
+            first_failure = command_execution_lease_failure_latch_.tryLatch();
+            if (first_failure) {
+              ++command_execution_lease_terminal_latch_count_;
+            }
+            failClosedLocked();
+            pending_goal_owner_.clearGoal();
+          }
+        }
+        if (sampled_execution_still_current && first_failure && planning_worker_) {
+          planning_worker_->cancelActive();
+        }
+        if (sampled_execution_still_current) {
+          RCLCPP_ERROR(
+              get_logger(),
+              "execution-state lease expired at command authorization "
+              "reason=%s source_age_ms=%.3f receive_age_ms=%.3f",
+              navigation_contracts::executionStateFreshnessReasonName(
+                  final_execution_freshness.reason),
+              final_execution_freshness.source_age_ms,
+              final_execution_freshness.receive_age_ms);
+        }
+        return;
+      }
+      if (publication_boundary_evaluated &&
+          (!final_command_lease_valid || !final_bundle_lease_valid)) {
+        ++command_publication_deadline_miss_count_;
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 1000,
+            "dropping command that expired before authorization "
+            "command_lease=%d bundle_lease=%d generation=%lu",
+            final_command_lease_valid ? 1 : 0,
+            final_bundle_lease_valid ? 1 : 0,
+            static_cast<unsigned long>(trajectory_generation));
+        return;
+      }
       // The world or goal advanced between sampling and publication. Never
       // expose the stale pointer. Mapping recertification deliberately copies
       // the same immutable bundle with a newer world identity, however, and a

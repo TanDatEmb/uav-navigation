@@ -7,6 +7,7 @@
 
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_execution/execution_state_store.hpp>
+#include <navigation_execution/timestamp_freshness.hpp>
 
 namespace {
 
@@ -963,7 +964,10 @@ TEST(CommittedBundleStore, ExposureRejectsBundleInvalidatedAfterSampling) {
   ASSERT_TRUE(publishWorldIdentityForTest(store, advanced));
 
   bool exposed = false;
-  EXPECT_FALSE(store.publishIfCurrent(sampled, 7, [&] { exposed = true; }));
+  EXPECT_FALSE(store.publishIfCurrent(sampled, 7, [&] {
+    exposed = true;
+    return true;
+  }));
   EXPECT_FALSE(exposed);
 }
 
@@ -980,8 +984,58 @@ TEST(CommittedBundleStore, ExposureKeepsRetainedExecutionBundleUntilActivation) 
   const auto sampled = store.load();
   ASSERT_TRUE(store.setActiveGoalEpoch(8, true));
   bool exposed = false;
-  EXPECT_TRUE(store.publishIfCurrent(sampled, 7, [&] { exposed = true; }));
+  EXPECT_TRUE(store.publishIfCurrent(sampled, 7, [&] {
+    exposed = true;
+    return true;
+  }));
   EXPECT_TRUE(exposed);
+}
+
+TEST(CommittedBundleStore, ExposureMustRecheckFreshnessAfterWaitingForStoreLock) {
+  navigation_execution::CommittedBundleStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto sampled = store.load();
+
+  std::promise<void> holder_entered;
+  std::promise<void> release_holder;
+  auto release = release_holder.get_future().share();
+  auto holder = std::async(std::launch::async, [&] {
+    return store.publishIfCurrent(sampled, 7, [&] {
+      holder_entered.set_value();
+      release.wait();
+      return true;
+    });
+  });
+  holder_entered.get_future().wait();
+
+  constexpr std::int64_t freshness_limit_ns = 10;
+  std::atomic<std::int64_t> fake_now_ns{6};
+  ASSERT_EQ(navigation_execution::classifyTimestampFreshness(
+                fake_now_ns.load(), world.observation_stamp_ns,
+                freshness_limit_ns),
+            navigation_execution::TimestampFreshness::VALID);
+  std::atomic_bool exposed{false};
+  auto waiter = std::async(std::launch::async, [&] {
+    return store.publishIfCurrent(sampled, 7, [&] {
+      const bool fresh = navigation_execution::classifyTimestampFreshness(
+          fake_now_ns.load(), world.observation_stamp_ns,
+          freshness_limit_ns) == navigation_execution::TimestampFreshness::VALID;
+      exposed.store(fresh);
+      return fresh;
+    });
+  });
+  fake_now_ns.store(12);
+  release_holder.set_value();
+
+  EXPECT_TRUE(holder.get());
+  EXPECT_FALSE(waiter.get());
+  EXPECT_FALSE(exposed.load());
 }
 
 TEST(CommittedBundleStore, RecertifiesOnlyTheValidatedBundleOnWorldAdvance) {
@@ -1001,7 +1055,7 @@ TEST(CommittedBundleStore, RecertifiesOnlyTheValidatedBundleOnWorldAdvance) {
   EXPECT_NE(recertified.get(), candidate.get());
   EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
       recertified->world_identity, next_world));
-  EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] {}));
+  EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] { return true; }));
 }
 
 TEST(CommittedBundleStore, RecertificationRenewsOnlyTheValidatedExecutionWindow) {
@@ -1020,7 +1074,7 @@ TEST(CommittedBundleStore, RecertificationRenewsOnlyTheValidatedExecutionWindow)
   const auto recertified = store.load();
   ASSERT_TRUE(recertified);
   EXPECT_EQ(recertified->valid_until_ns, 300);
-  EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] {}));
+  EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] { return true; }));
 }
 
 TEST(CommittedBundleStore, RecertificationMismatchOrGoalChangeClearsBundle) {

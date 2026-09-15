@@ -16,6 +16,9 @@ uint64 bundle_generation
 bool certified_main_continuation
 uint64 continuation_boundary_stamp_ns
 uint64 sample_id
+# Exact producer execution-state source time used by the final authorization
+# decision. It may be newer than the state used by an earlier diagnostic trace;
+# the PVA reference itself remains evaluated at header.stamp.
 builtin_interfaces/Time state_source_stamp
 builtin_interfaces/Time valid_until
 
