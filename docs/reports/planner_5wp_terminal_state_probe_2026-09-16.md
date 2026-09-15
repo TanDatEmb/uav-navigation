@@ -67,17 +67,28 @@ Every result remains `complete_executable_bundle=false` by construction.
 | --- | --- | --- | --- |
 | 0.00 | Certificate PASS; V/A/J 2.459/2.524/6.437 | Certificate PASS; 2.249/2.595/6.911 | Certificate PASS; 2.088/2.760/6.911 |
 | 0.25 | Certificate PASS; V/A/J 2.459/2.524/6.127 | Certificate PASS; 2.448/1.648/4.106 | Certificate PASS; 2.203/1.464/3.224 |
-| 0.50 | Candidate; route boundary NOT REACHED | Certificate PASS; 4.592/3.903/7.221 | Candidate; route boundary NOT REACHED |
-| 0.75 | Certificate PASS; 4.900/4.078/6.217 | Candidate; route boundary NOT REACHED | Candidate; route boundary NOT REACHED |
+| 0.50 | Candidate; PVAJ junction certificate FAIL | Certificate PASS; 4.592/3.903/7.221 | Candidate; PVAJ junction certificate FAIL |
+| 0.75 | Certificate PASS; 4.900/4.078/6.217 | Candidate; PVAJ junction certificate FAIL | Candidate; PVAJ junction certificate FAIL |
 | 1.00 | No candidate | No candidate | No candidate |
 
 All constructed rows passed the immutable-world sweep.  The scale-0 and
 scale-0.25 rows were accepted directly as deterministic certified seeds; the
 higher scales used production optimization where a candidate was available.
 The feasible set observed here is not monotonic: for example, scale 0.50 failed
-the route-boundary certificate at generation 1, passed at generation 16, and
-failed again at generation 49.  Therefore a global fixed scale cannot be
-inferred from these three probes.
+the independent PVAJ junction certificate at generation 1, passed at
+generation 16, and failed again at generation 49. Therefore a global fixed
+scale cannot be inferred from these three probes.
+
+The rejected optimized candidates failed certificate stage 3 (`boundary`),
+not stage 4 (`route_boundary`). Their reported failing component residuals
+were approximately `6e-14`--`1.6e-13` in the affected derivative units against
+computed roundoff bounds of approximately `3e-14`--`1.4e-13`. Production
+optimization had reported those trajectories as candidates because its
+post-L-BFGS gates check
+corridor, route boundary, dynamics, and flatness; it does not reuse the
+pre-L-BFGS seed's full PVAJ roundoff certificate. This is a separate numerical
+contract question. The table remains fail-closed and does not count these
+candidates as certified.
 
 The scale-1.0 result matched the unmodified no-deadline PlanFromRest result in
 all three snapshots: status 2, no candidate, three optimizer attempts, and two
@@ -93,13 +104,14 @@ retries.  This is the parity control for the experiment.
 - **Reachability:** the inputs came from real PlanFromRest requests at the
   beginning, middle, and end of one failed integrated run.
 - **Strongest counterargument:** the lower-velocity solutions may merely be
-  finite optimizer outputs that bypass route or dynamics semantics.
+  finite optimizer outputs that bypass boundary, corridor, route, or dynamics
+  semantics.
 - **Distinguishing test:** run the production optimizer without a deadline and
   apply the independent production certificate, dynamics, flatness, and world
   checks to every output.
 - **Result:** scale 1.0 failed 3/3; lower scales yielded certificate PASS in
-  3/3 snapshots, while several other candidates were correctly rejected at
-  the route-boundary stage.
+  3/3 snapshots, while several other candidates were excluded by the stricter
+  PVAJ junction-roundoff certificate.
 - **Minimal response:** next test a typed terminal-state policy that derives a
   dynamically reachable endpoint from route/continuation semantics, without
   changing the execution coordinator or hard gates.  Require MAIN/BACKUP bundle

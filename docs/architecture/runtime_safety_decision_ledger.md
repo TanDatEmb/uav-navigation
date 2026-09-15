@@ -18,7 +18,9 @@
 - **Evidence:** Exact five-waypoint snapshots showed repeated dynamics failure
   even with the deadline removed. The terminal-state sweep distinguishes a
   formulation conflict from a generic optimizer-budget explanation while
-  retaining the original scale as a parity probe.
+  retaining the original scale as a parity probe. Replay output names the
+  production certificate stage and reports PVAJ boundary residual/roundoff
+  details so an unevaluated route gate cannot be mistaken for its failure.
 - **Removal/review condition:** Remove the sweep after the terminal-state and
   duration formulation has an independently certified replacement experiment.
   Do not promote a scale into product behavior without a separate design

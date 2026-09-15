@@ -333,7 +333,19 @@ struct CandidateReport {
   bool route_boundary{false};
   std::string route_boundary_verdict{"NOT_REACHED"};
   int production_certificate_stage{-1};
+  const char* production_certificate_stage_name{"not_evaluated"};
   bool production_certificate_valid{false};
+  double maximum_boundary_residual{std::numeric_limits<double>::infinity()};
+  double maximum_boundary_roundoff_bound{
+      std::numeric_limits<double>::infinity()};
+  int boundary_failure_location{0};
+  int boundary_failure_piece_index{-1};
+  int boundary_failure_axis{-1};
+  int boundary_failure_derivative{-1};
+  double boundary_failure_residual{
+      std::numeric_limits<double>::quiet_NaN()};
+  double boundary_failure_roundoff_bound{
+      std::numeric_limits<double>::quiet_NaN()};
   double maximum_velocity{std::numeric_limits<double>::infinity()};
   double maximum_acceleration{std::numeric_limits<double>::infinity()};
   double maximum_jerk{std::numeric_limits<double>::infinity()};
@@ -529,9 +541,41 @@ CandidateReport certify(const geometry_utils::Trajectory& trajectory,
       navigation_planning_backend::certifyDeterministicNominalSeed(
           trajectory, corridors, piece_to_corridor, route_boundary_gates,
           route_boundary_points, route_boundary_radii, head, tail, config);
+  const auto certificateStageName = [](const auto stage) {
+    using Stage = navigation_planning_backend::
+        DeterministicNominalSeedFailureStage;
+    switch (stage) {
+      case Stage::kNone: return "none";
+      case Stage::kInput: return "input";
+      case Stage::kCorridor: return "corridor";
+      case Stage::kBoundary: return "boundary";
+      case Stage::kRouteBoundary: return "route_boundary";
+      case Stage::kDynamics: return "dynamics";
+      case Stage::kFlatness: return "flatness";
+    }
+    return "unknown";
+  };
   report.production_certificate_stage =
       static_cast<int>(production_certificate.failure_stage);
+  report.production_certificate_stage_name =
+      certificateStageName(production_certificate.failure_stage);
   report.production_certificate_valid = production_certificate.valid;
+  report.maximum_boundary_residual =
+      production_certificate.maximum_boundary_residual;
+  report.maximum_boundary_roundoff_bound =
+      production_certificate.maximum_boundary_roundoff_bound;
+  report.boundary_failure_location =
+      production_certificate.boundary_failure_location;
+  report.boundary_failure_piece_index =
+      production_certificate.boundary_failure_piece_index;
+  report.boundary_failure_axis =
+      production_certificate.boundary_failure_axis;
+  report.boundary_failure_derivative =
+      production_certificate.boundary_failure_derivative;
+  report.boundary_failure_residual =
+      production_certificate.boundary_failure_residual;
+  report.boundary_failure_roundoff_bound =
+      production_certificate.boundary_failure_roundoff_bound;
   const auto certificate_stage = production_certificate.failure_stage;
   report.route_boundary =
       certificate_stage == navigation_planning_backend::
@@ -579,7 +623,20 @@ void printReport(const std::string& label, const CandidateReport& report,
             << " route_boundary_verdict=" << report.route_boundary_verdict
             << " production_certificate_stage="
             << report.production_certificate_stage
+            << " production_certificate_stage_name="
+            << report.production_certificate_stage_name
             << " production_certificate=" << report.production_certificate_valid
+            << " maximum_boundary_residual="
+            << report.maximum_boundary_residual
+            << " maximum_boundary_roundoff_bound="
+            << report.maximum_boundary_roundoff_bound
+            << " boundary_failure="
+            << report.boundary_failure_location << '/'
+            << report.boundary_failure_piece_index << '/'
+            << report.boundary_failure_axis << '/'
+            << report.boundary_failure_derivative
+            << " boundary_value=" << report.boundary_failure_residual << '/'
+            << report.boundary_failure_roundoff_bound
             << " V=" << report.maximum_velocity
             << " A=" << report.maximum_acceleration
             << " J=" << report.maximum_jerk
