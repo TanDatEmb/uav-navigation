@@ -285,8 +285,12 @@ struct CandidateBundle {
     }
     TrajectoryPoint point;
     point.role = role;
-    if (!evaluator(stamp_ns, point) || !point.finite() ||
-        !sampledRoleAllowed(point.role)) {
+    try {
+      if (!evaluator(stamp_ns, point)) return std::nullopt;
+    } catch (...) {
+      return std::nullopt;
+    }
+    if (!point.finite() || !sampledRoleAllowed(point.role)) {
       return std::nullopt;
     }
     const auto scheduled = scheduledRole(point.trajectory_time_s);
@@ -308,8 +312,12 @@ struct CandidateBundle {
     }
     TrajectoryPoint point;
     point.role = role;
-    if (!evaluator(*end_stamp_ns, point) || !point.finite() ||
-        !sampledRoleAllowed(point.role)) {
+    try {
+      if (!evaluator(*end_stamp_ns, point)) return std::nullopt;
+    } catch (...) {
+      return std::nullopt;
+    }
+    if (!point.finite() || !sampledRoleAllowed(point.role)) {
       return std::nullopt;
     }
     const auto scheduled = scheduledRole(duration_s);
@@ -390,25 +398,21 @@ struct CandidateHandoffCertificate final {
   }
 
   const auto previous_sample = previous.sample(*handoff);
-  if (!previous_sample || !next.evaluator) return false;
-  TrajectoryPoint next_sample;
-  next_sample.role = next.role;
-  if (!next.evaluator(*handoff, next_sample) || !next_sample.finite()) return false;
-  const auto scheduled_role = next.scheduledRole(next_sample.trajectory_time_s);
-  if (!scheduled_role || *scheduled_role != next_sample.role) return false;
+  const auto next_sample = next.sampleAtDeclaredStamp(*handoff);
+  if (!previous_sample || !next_sample) return false;
 
   const double yaw_residual = std::remainder(
-      next_sample.yaw - previous_sample->yaw, 2.0 * std::acos(-1.0));
-  return (next_sample.position_world - previous_sample->position_world).norm() <=
+      next_sample->yaw - previous_sample->yaw, 2.0 * std::acos(-1.0));
+  return (next_sample->position_world - previous_sample->position_world).norm() <=
              CandidateHandoffCertificate::kPositionToleranceM &&
-         (next_sample.velocity_world - previous_sample->velocity_world).norm() <=
+         (next_sample->velocity_world - previous_sample->velocity_world).norm() <=
              CandidateHandoffCertificate::kVelocityToleranceMps &&
-         (next_sample.acceleration_world - previous_sample->acceleration_world).norm() <=
+         (next_sample->acceleration_world - previous_sample->acceleration_world).norm() <=
              CandidateHandoffCertificate::kAccelerationToleranceMps2 &&
-         (next_sample.jerk_world - previous_sample->jerk_world).norm() <=
+         (next_sample->jerk_world - previous_sample->jerk_world).norm() <=
              CandidateHandoffCertificate::kJerkToleranceMps3 &&
          std::abs(yaw_residual) <= CandidateHandoffCertificate::kYawToleranceRad &&
-         std::abs(next_sample.yaw_rate - previous_sample->yaw_rate) <=
+         std::abs(next_sample->yaw_rate - previous_sample->yaw_rate) <=
              CandidateHandoffCertificate::kYawRateToleranceRadS;
 }
 

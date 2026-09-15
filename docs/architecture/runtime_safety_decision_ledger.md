@@ -21684,3 +21684,40 @@ release profiles must not use the former allowance.
   run Release builds/tests for `navigation_execution`, `navigation_contracts`
   and `navigation_runtime`, then the canonical full build/test, evidence tests,
   manifest capture and `git diff --check`.
+
+### 2026-09-16 - Convert candidate evaluator exceptions at the sample contract
+
+- **Owner/status:** Immutable planning candidate and execution consumers;
+  `IMPLEMENTED`. The exception escape is confirmed at the public sample API,
+  while occurrence in flight remains `CONDITIONAL`: the production factory
+  captures trajectory, yaw and role values and has no explicit throw, but its
+  Eigen evaluation may still allocate and the callable type is not
+  non-throwing.
+- **Scope:** `CandidateBundle::sampleAtDeclaredStamp()` and
+  `sampleAtDeclaredEnd()` catch evaluator exceptions and return no sample.
+  `sample()` inherits the same policy. The analytic handoff check now consumes
+  `sampleAtDeclaredStamp()` rather than invoking the evaluator directly, so
+  every product consumer shares the same finite, role-schedule and exception
+  checks. No evaluator retry, fallback candidate, certificate synthesis or
+  alternate command path is added.
+- **Safety impact:** Tightens fail-closed behavior. A malformed plugin/test
+  evaluator or allocation failure can reject an anchor, handoff, tracking
+  witness, endpoint or command sample without terminating through a
+  `noexcept` caller or escaping a runtime callback. The currently active
+  execution remains owned by the timeline policy; this contract does not
+  convert evaluator failure into authority for another trajectory. No dynamic,
+  collision, freshness, tracking or qualification threshold is changed.
+- **Evidence/removal condition:** Before the change, a valid candidate with a
+  synthetic throwing evaluator let `std::runtime_error` escape from
+  `sample()`, and the focused regression exited 1. Keep the conversion until
+  the evaluator type itself provides an equivalent non-throwing result
+  contract and all construction paths enforce it. Boolean certificate typing
+  is intentionally not changed here: current production construction remains
+  under separate review and this patch does not claim the validators are
+  numerically correct.
+- **Verification:** `test_planning_contracts` must return no sample for the
+  executable, declared-stamp, endpoint and handoff entry points when the
+  evaluator throws; run Release builds/tests for `navigation_planning`,
+  `navigation_execution`, `navigation_planning_backend` and
+  `navigation_runtime`, followed by the canonical full build/test, clean
+  authoritative manifest and `git diff --check`.

@@ -1,4 +1,5 @@
 #include <chrono>
+#include <stdexcept>
 
 #include <gtest/gtest.h>
 
@@ -100,6 +101,22 @@ TEST(PlanningCandidate, RejectsEvaluatorRoleMutationAndUnknownRole) {
   EXPECT_FALSE(candidate.sample(150).has_value());
   candidate.role = static_cast<navigation_planning::CandidateRole>(255U);
   EXPECT_FALSE(candidate.valid());
+}
+
+TEST(PlanningCandidate, EvaluatorExceptionsFailClosedAtEverySampleBoundary) {
+  const auto previous = validCandidate();
+  auto candidate = validCandidate();
+  candidate.evaluator = [](
+                            std::int64_t,
+                            navigation_planning::TrajectoryPoint&) -> bool {
+    throw std::runtime_error("synthetic candidate evaluator failure");
+  };
+
+  EXPECT_FALSE(candidate.sample(150).has_value());
+  EXPECT_FALSE(candidate.sampleAtDeclaredStamp(150).has_value());
+  EXPECT_FALSE(candidate.sampleAtDeclaredEnd().has_value());
+  EXPECT_FALSE(navigation_planning::candidateBundleHandoffContinuous(
+      previous, candidate));
 }
 
 TEST(PlanningCandidate, AllowsDeclaredMainToBackupRoleSchedule) {
