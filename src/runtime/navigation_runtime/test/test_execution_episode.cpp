@@ -22,21 +22,77 @@ TEST(ExecutionEpisode, KeepsOneAuthoritativeLifecycleSnapshot) {
   EXPECT_EQ(initial.goal_epoch, 7U);
   EXPECT_EQ(initial.request_id, 11U);
   EXPECT_EQ(initial.phase, navigation_runtime::ExecutionEpisodePhase::kInitialHold);
+  EXPECT_EQ(initial.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kInitialHold);
   EXPECT_FALSE(initial.command_available);
 
   episode.commandCommitted(bundle(
       navigation_planning::CandidateBundleKind::kMainWithBackup, 20U));
   auto tracking = episode.snapshot();
   EXPECT_EQ(tracking.phase, navigation_runtime::ExecutionEpisodePhase::kTrackingMain);
+  EXPECT_EQ(tracking.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kTrackMain);
   EXPECT_TRUE(tracking.command_available);
   EXPECT_EQ(tracking.active_generation, 20U);
 
-  episode.roleObserved(navigation_planning::CandidateRole::kBackup, 20U);
-  EXPECT_EQ(episode.snapshot().phase,
+  episode.sampledSafetyRoleObserved(
+      navigation_planning::CandidateRole::kBackup, 20U);
+  const auto backup = episode.snapshot();
+  EXPECT_EQ(backup.phase,
             navigation_runtime::ExecutionEpisodePhase::kTrackingBackup);
+  EXPECT_EQ(backup.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kTrackBackup);
+  EXPECT_TRUE(backup.safety_suffix_active);
   episode.stoppedHold(20U);
-  EXPECT_EQ(episode.snapshot().phase,
+  episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved);
+  const auto stopped = episode.snapshot();
+  EXPECT_EQ(stopped.phase,
             navigation_runtime::ExecutionEpisodePhase::kStoppedHold);
+  EXPECT_EQ(stopped.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kStoppedRecovery);
+}
+
+TEST(ExecutionEpisode, SampledSafetyRoleCannotRewriteAnotherGeneration) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, false);
+  episode.commandCommitted(bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 4U));
+
+  episode.sampledSafetyRoleObserved(
+      navigation_planning::CandidateRole::kBackup, 5U);
+  const auto state = episode.snapshot();
+  EXPECT_EQ(state.active_generation, 4U);
+  EXPECT_EQ(state.phase,
+            navigation_runtime::ExecutionEpisodePhase::kTrackingMain);
+  EXPECT_EQ(state.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kTrackMain);
+  EXPECT_FALSE(state.safety_suffix_active);
+}
+
+TEST(ExecutionEpisode, CommitUpdatesLifecycleAndRecoveryInOneSnapshot) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, false);
+
+  auto main = bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 4U);
+  main.role = navigation_planning::CandidateRole::kMain;
+  episode.commandCommitted(main);
+  auto state = episode.snapshot();
+  EXPECT_EQ(state.phase,
+            navigation_runtime::ExecutionEpisodePhase::kTrackingMain);
+  EXPECT_EQ(state.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kTrackMain);
+
+  auto emergency = bundle(
+      navigation_planning::CandidateBundleKind::kEmergencyBrake, 5U);
+  emergency.role = navigation_planning::CandidateRole::kEmergency;
+  episode.commandCommitted(emergency);
+  state = episode.snapshot();
+  EXPECT_EQ(state.phase,
+            navigation_runtime::ExecutionEpisodePhase::kTrackingBackup);
+  EXPECT_EQ(state.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kEmergencyBrake);
 }
 
 TEST(ExecutionEpisode, UsesContiguousInternalPhasesAndVersionedTelemetryConversion) {
@@ -64,6 +120,8 @@ TEST(ExecutionEpisode, FailClosedClearsCommandExposure) {
   episode.failClosed();
   const auto state = episode.snapshot();
   EXPECT_EQ(state.phase, navigation_runtime::ExecutionEpisodePhase::kPx4Hold);
+  EXPECT_EQ(state.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kPx4Hold);
   EXPECT_FALSE(state.command_available);
   EXPECT_TRUE(state.failure_latched);
 }
@@ -77,6 +135,8 @@ TEST(ExecutionEpisode, ObservationsCannotResurrectFailClosedEpisode) {
   episode.setSafetySuffix(true);
   episode.requestRestartFromRest();
   episode.stoppedHold(7U);
+  episode.commandCommitted(bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 8U));
 
   const auto state = episode.snapshot();
   EXPECT_EQ(state.phase, navigation_runtime::ExecutionEpisodePhase::kPx4Hold);
@@ -85,6 +145,8 @@ TEST(ExecutionEpisode, ObservationsCannotResurrectFailClosedEpisode) {
   EXPECT_FALSE(state.safety_suffix_active);
   EXPECT_FALSE(state.restart_from_rest);
   EXPECT_EQ(state.active_generation, 0U);
+  EXPECT_EQ(state.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kPx4Hold);
 }
 
 TEST(ExecutionEpisode, StoppedHoldPreservesMeasuredRestartRequest) {
@@ -121,6 +183,28 @@ TEST(ExecutionEpisode, SuspendAndClearDoNotRetainCommandIdentity) {
   EXPECT_FALSE(cleared.failure_latched);
   EXPECT_EQ(cleared.phase,
             navigation_runtime::ExecutionEpisodePhase::kInitialHold);
+  EXPECT_EQ(cleared.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kInitialHold);
+}
+
+TEST(ExecutionEpisode, RecoveryEventsRemainOneWayInsideTheLifecycleRecord) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, true);
+  episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kEmergencyCommitted);
+  episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kMainCommitted);
+  EXPECT_EQ(episode.snapshot().recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kEmergencyBrake);
+
+  episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved);
+  EXPECT_EQ(episode.snapshot().recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kStoppedRecovery);
+  episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kMainCommitted);
+  EXPECT_EQ(episode.snapshot().recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kTrackMain);
 }
 
 }  // namespace

@@ -21752,3 +21752,43 @@ release profiles must not use the former allowance.
   `CmdTraj` tests must allow a forward activation gap and reject repeated or
   regressed generations. Run the focused backend suite, then canonical Release
   build/test, authoritative manifest capture and `git diff --check`.
+
+### 2026-09-16 - Put recovery policy in the execution lifecycle record
+
+- **Owner/status:** Navigation runtime physical-execution policy;
+  `IMPLEMENTED`. Source review confirmed that `ExecutionEpisode` and a separate
+  atomic `ExecutionRecoveryState` were both mutable policy records, and many
+  admission/recovery paths loaded them independently while reasoning about one
+  execution transition.
+- **Scope:** `ExecutionEpisodeSnapshot` now includes the recovery state, and
+  `ExecutionEpisode` owns the one-way recovery transition under its existing
+  mutex. Goal begin/clear, localization reset and fail-closed operations set
+  lifecycle and recovery state through that one record. Runtime readers obtain
+  recovery state from the same immutable snapshot used for command presence,
+  failure latch, safety suffix and active generation. The standalone recovery
+  atomic and its alternate load/transition/store helper are removed. A command
+  copies recovery and suffix telemetry from the final snapshot that authorizes
+  its exposure, rather than from a pre-sample read. A generation-bound sampled
+  BACKUP/emergency observation also updates phase, suffix ownership and
+  recovery as one mutation. Sampled phase remains a distinct field because a
+  terminal MAIN can legitimately emit `STOPPED_HOLD` before mission completion
+  advances recovery policy.
+- **Safety impact:** Product transition ordering is preserved while the local
+  lifecycle contract is tightened: commit now updates phase and recovery in
+  one snapshot, and a commit observation cannot resurrect an already latched
+  PX4 Hold. BACKUP and emergency remain one-way until a certified measured
+  stop, and command exposure still requires the independent execution-store
+  and lease gates. No mission, collision, dynamics, freshness, timing,
+  tracking or qualification threshold changes.
+- **Evidence/removal condition:** Before the change, the runtime header held
+  two independently mutable physical policy members and production contained
+  separate reads/writes for both. Keep the unified record unless recovery is
+  moved into an equivalent single-owner execution coordinator with an atomic
+  snapshot contract. This does not justify wrapping `ExecutionTimelineStore`:
+  its active/pending pointer transactions remain canonical and all production
+  mutation call sites are still owned by `NavigationRuntimeNode`.
+- **Verification:** `test_execution_episode` must cover coherent lifecycle and
+  recovery snapshots, fail-closed non-resurrection and one-way recovery across
+  concurrent events. Focused planner-FSM serialization tests, the complete
+  runtime suite, canonical Release build/test, authoritative manifest and
+  `git diff --check` must pass.

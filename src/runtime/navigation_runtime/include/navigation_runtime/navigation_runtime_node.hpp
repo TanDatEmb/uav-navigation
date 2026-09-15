@@ -464,8 +464,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // immutable record. It is copied into the command stream and never
   // consumed by admission or recovery predicates.
   ExecutionTraceStore execution_trace_store_;
-  std::atomic<ExecutionRecoveryState> execution_recovery_state_{
-      ExecutionRecoveryState::kInitialHold};
   std::atomic_uint64_t planner_solve_generation_{0U};
   std::uint64_t active_planner_solve_generation_{0U};
   std::atomic_uint64_t timed_out_planner_solve_generation_{0U};

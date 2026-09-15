@@ -1,5 +1,6 @@
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/commit_trace.hpp"
+#include "navigation_runtime/execution_episode.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include <navigation_planning/candidate_bundle.hpp>
 
@@ -528,51 +529,43 @@ TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
 }
 
 TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
-  std::atomic<ExecutionRecoveryState> state{ExecutionRecoveryState::kTrackMain};
-  std::mutex transition_mutex;
+  ExecutionEpisode episode;
+  episode.beginGoal(1U, 1U, 1U, true);
   std::barrier rendezvous(3);
   std::thread backup([&] {
     rendezvous.arrive_and_wait();
-    std::lock_guard<std::mutex> lock(transition_mutex);
-    applyExecutionRecoveryEventLocked(
-        state, ExecutionRecoveryEvent::kBackupActivated);
+    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated);
   });
   std::thread emergency([&] {
     rendezvous.arrive_and_wait();
-    std::lock_guard<std::mutex> lock(transition_mutex);
-    applyExecutionRecoveryEventLocked(
-        state, ExecutionRecoveryEvent::kEmergencyCommitted);
+    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kEmergencyCommitted);
   });
   rendezvous.arrive_and_wait();
   backup.join();
   emergency.join();
 
-  const auto result = state.load(std::memory_order_acquire);
+  const auto result = episode.snapshot().recovery_state;
   EXPECT_TRUE(result == ExecutionRecoveryState::kTrackBackup ||
               result == ExecutionRecoveryState::kEmergencyBrake);
 }
 
 TEST(PlannerFsm, SerializedFailClosedCannotBeResurrectedByNominalEvent) {
-  std::atomic<ExecutionRecoveryState> state{ExecutionRecoveryState::kTrackMain};
-  std::mutex transition_mutex;
+  ExecutionEpisode episode;
+  episode.beginGoal(1U, 1U, 1U, true);
   std::barrier rendezvous(3);
   std::thread nominal([&] {
     rendezvous.arrive_and_wait();
-    std::lock_guard<std::mutex> lock(transition_mutex);
-    applyExecutionRecoveryEventLocked(
-        state, ExecutionRecoveryEvent::kBackupActivated);
+    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated);
   });
   std::thread fail_closed([&] {
     rendezvous.arrive_and_wait();
-    std::lock_guard<std::mutex> lock(transition_mutex);
-    state.store(ExecutionRecoveryState::kPx4Hold,
-                std::memory_order_release);
+    episode.failClosed();
   });
   rendezvous.arrive_and_wait();
   nominal.join();
   fail_closed.join();
 
-  EXPECT_EQ(state.load(std::memory_order_acquire),
+  EXPECT_EQ(episode.snapshot().recovery_state,
             ExecutionRecoveryState::kPx4Hold);
 }
 
