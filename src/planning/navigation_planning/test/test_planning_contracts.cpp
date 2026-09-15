@@ -293,6 +293,7 @@ TEST(PlanningHistory, ZeroGenerationCannotCarryPriorCommandVelocity) {
 TEST(ExecutionAnchor, RequiresAnImmutableFutureCommandBoundary) {
   navigation_planning::ExecutionAnchor anchor;
   anchor.active_bundle_generation = 11;
+  anchor.execution_lineage_version = 12;
   anchor.localization_epoch = 3;
   anchor.goal_epoch = 7;
   anchor.request_id = 9;
@@ -302,6 +303,10 @@ TEST(ExecutionAnchor, RequiresAnImmutableFutureCommandBoundary) {
   anchor.active_bundle_end_ns = 1000;
   anchor.command_world = {3, 4, 8, 120};
   EXPECT_TRUE(anchor.valid());
+
+  anchor.execution_lineage_version = 0;
+  EXPECT_FALSE(anchor.valid());
+  anchor.execution_lineage_version = 12;
 
   anchor.active_main_end_ns = 499;
   EXPECT_FALSE(anchor.valid());
@@ -330,6 +335,7 @@ TEST(PlanningRequest, CommittedFutureStateCannotOmitOrMoveItsAnchor) {
 
   navigation_planning::ExecutionAnchor anchor;
   anchor.active_bundle_generation = 11;
+  anchor.execution_lineage_version = 12;
   anchor.localization_epoch = 3;
   anchor.goal_epoch = 7;
   anchor.request_id = 9;

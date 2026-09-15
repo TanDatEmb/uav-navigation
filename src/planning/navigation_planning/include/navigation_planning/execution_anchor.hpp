@@ -11,6 +11,9 @@ namespace navigation_planning {
 // carry the exact handoff witness without making planning depend on runtime.
 struct ExecutionAnchor final {
   std::uint64_t active_bundle_generation{0U};
+  // Opaque execution-store reservation identity. Bundle metadata alone cannot
+  // distinguish a replacement which accidentally reuses the same generation.
+  std::uint64_t execution_lineage_version{0U};
   std::uint64_t localization_epoch{0U};
   // These identify the active predecessor bundle, not necessarily the
   // successor request being planned at the activation boundary.
@@ -25,7 +28,8 @@ struct ExecutionAnchor final {
   navigation_world_model::WorldSnapshotIdentity command_world{};
 
   [[nodiscard]] bool valid() const noexcept {
-    return active_bundle_generation != 0U && localization_epoch != 0U &&
+    return active_bundle_generation != 0U && execution_lineage_version != 0U &&
+           localization_epoch != 0U &&
            goal_epoch != 0U && request_id != 0U && request_stamp_ns > 0 &&
            activation_stamp_ns >= request_stamp_ns && state.finite() &&
            candidateRoleValid(active_role) &&

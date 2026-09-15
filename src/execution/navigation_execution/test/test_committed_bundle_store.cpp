@@ -286,6 +286,59 @@ TEST(ExecutionTimelineStore, RejectsSuccessorWhenPredecessorAdvanced) {
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
+TEST(ExecutionTimelineStore, RejectsSuccessorAfterSameIdentityPredecessorReplacement) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+
+  auto replacement_data = candidateFor(7, 1);
+  replacement_data.evaluator = [](
+                                   std::int64_t stamp,
+                                   navigation_planning::TrajectoryPoint& point) {
+    point.position_world.x() = static_cast<double>(stamp + 10);
+    point.trajectory_time_s = static_cast<double>(stamp - 1) * 1.0e-9;
+    return true;
+  };
+  auto replacement = std::make_shared<const navigation_planning::CandidateBundle>(
+      std::move(replacement_data));
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, replacement),
+            navigation_execution::CommitDecision::kCommitted);
+
+  EXPECT_EQ(store.stagePending({world, 7, 3}, *anchor, successorFor(*anchor, 7)),
+            navigation_execution::StageDecision::kPredecessorAdvanced);
+  EXPECT_EQ(store.load(), replacement);
+  EXPECT_FALSE(store.snapshot().pending);
+}
+
+TEST(ExecutionTimelineStore, RevokedAnchorCannotBeRevivedByRecommittingSamePointer) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+
+  store.invalidate();
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, active),
+            navigation_execution::CommitDecision::kCommitted);
+
+  EXPECT_EQ(store.stagePending({world, 7, 3}, *anchor, successorFor(*anchor, 7)),
+            navigation_execution::StageDecision::kPredecessorAdvanced);
+  EXPECT_EQ(store.load(), active);
+  EXPECT_FALSE(store.snapshot().pending);
+}
+
 TEST(ExecutionTimelineStore, RejectsFinalizedSuccessorWhenPredecessorAdvanced) {
   navigation_execution::ExecutionTimelineStore store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};

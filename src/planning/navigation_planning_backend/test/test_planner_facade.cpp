@@ -775,6 +775,7 @@ TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
   successor_request.activation_stamp_ns = activation_stamp_ns;
   navigation_planning::ExecutionAnchor anchor;
   anchor.active_bundle_generation = committed.bundle_generation;
+  anchor.execution_lineage_version = 1U;
   anchor.localization_epoch = successor_request.key.localization_epoch;
   anchor.goal_epoch = successor_request.key.goal_epoch;
   anchor.request_id = successor_request.key.request_id;

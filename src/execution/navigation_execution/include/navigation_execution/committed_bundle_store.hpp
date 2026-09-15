@@ -79,7 +79,10 @@ class ExecutionTimelineStore final {
     std::lock_guard lock(mutex_);
     if (goal_epoch < active_goal_epoch_) return false;
     active_goal_epoch_ = goal_epoch;
-    if (!retain_committed_bundle) committed_.reset();
+    if (!retain_committed_bundle && committed_) {
+      committed_.reset();
+      ++active_lineage_version_;
+    }
     pending_.reset();
     pending_activation_ns_ = 0;
     enforceInvariantLocked();
@@ -116,6 +119,7 @@ class ExecutionTimelineStore final {
         navigation_world_model::sameWorldSnapshotIdentity(
             *world_identity_, expected_bundle->world_identity);
     const auto revokeInvalidActive = [this]() {
+      if (committed_) ++active_lineage_version_;
       committed_.reset();
       pending_.reset();
       pending_activation_ns_ = 0;
@@ -144,6 +148,7 @@ class ExecutionTimelineStore final {
       committed_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
           std::move(recertified));
     } else {
+      if (committed_) ++active_lineage_version_;
       committed_.reset();
     }
 
@@ -200,6 +205,7 @@ class ExecutionTimelineStore final {
     std::shared_ptr<const navigation_planning::CandidateBundle> predecessor;
     navigation_world_model::WorldSnapshotIdentity expected_world;
     std::uint64_t expected_version = 0U;
+    std::uint64_t expected_lineage_version = 0U;
     {
       std::lock_guard lock(mutex_);
       if (!committed_ || !world_identity_ ||
@@ -212,6 +218,7 @@ class ExecutionTimelineStore final {
       predecessor = committed_;
       expected_world = *world_identity_;
       expected_version = timeline_version_;
+      expected_lineage_version = active_lineage_version_;
     }
 
     // The pinned evaluator is not declared noexcept and may own an expensive
@@ -234,6 +241,7 @@ class ExecutionTimelineStore final {
       }
       ExecutionAnchor anchor;
       anchor.active_bundle_generation = predecessor->bundle_generation;
+      anchor.execution_lineage_version = expected_lineage_version;
       anchor.localization_epoch = predecessor->localization_epoch;
       anchor.goal_epoch = predecessor->goal_epoch;
       anchor.request_id = predecessor->request_id;
@@ -287,7 +295,8 @@ class ExecutionTimelineStore final {
         candidate->valid_until_ns < anchor.activation_stamp_ns) {
       return StageDecision::kActivationTooLate;
     }
-    if (!committed_ || !predecessorMatchesAnchor(*committed_, anchor)) {
+    if (active_lineage_version_ != anchor.execution_lineage_version || !committed_ ||
+        !predecessorMatchesAnchor(*committed_, anchor)) {
       return StageDecision::kPredecessorAdvanced;
     }
     pending_ = std::move(candidate);
@@ -323,7 +332,8 @@ class ExecutionTimelineStore final {
         candidate->valid_until_ns < anchor.activation_stamp_ns) {
       return StageDecision::kActivationTooLate;
     }
-    if (!committed_ || !predecessorMatchesAnchor(*committed_, anchor)) {
+    if (active_lineage_version_ != anchor.execution_lineage_version || !committed_ ||
+        !predecessorMatchesAnchor(*committed_, anchor)) {
       return StageDecision::kPredecessorAdvanced;
     }
     const auto previous_pending = pending_;
@@ -401,6 +411,7 @@ class ExecutionTimelineStore final {
       return false;
     }
     committed_.reset();
+    ++active_lineage_version_;
     pending_.reset();
     pending_activation_ns_ = 0;
     ++timeline_version_;
@@ -431,6 +442,7 @@ class ExecutionTimelineStore final {
       return CommitDecision::kCancelled;
     }
     committed_ = std::move(candidate);
+    ++active_lineage_version_;
     pending_.reset();
     pending_activation_ns_ = 0;
     last_transaction_id_ = expected.transaction_id;
@@ -492,11 +504,13 @@ class ExecutionTimelineStore final {
       ++timeline_version_;
       return CommitDecision::kFinalizationFailed;
     }
+    ++active_lineage_version_;
     return CommitDecision::kCommitted;
   }
 
   void invalidate() noexcept {
     std::lock_guard lock(mutex_);
+    if (committed_) ++active_lineage_version_;
     committed_.reset();
     pending_.reset();
     pending_activation_ns_ = 0;
@@ -567,15 +581,15 @@ class ExecutionTimelineStore final {
       ++timeline_version_;
       return false;
     }
+    ++active_lineage_version_;
     return true;
   }
 
   // Validate the immutable predecessor anchor without invoking its evaluator
-  // while holding the store mutex. All operations which replace or invalidate
-  // semantic replacements of committed_ clear pending_; a world-only
-  // recertification may copy the same trajectory identity. This stage check
-  // plus activation's current active/world check closes the interleaving
-  // without a second witness field.
+  // while holding the store mutex. The caller first checks the opaque active
+  // lineage reservation; these semantic fields independently guard accidental
+  // corruption and world recertification. Activation then checks the current
+  // active/world transaction before exposure.
   [[nodiscard]] static bool predecessorMatchesAnchor(
       const navigation_planning::CandidateBundle& predecessor,
       const ExecutionAnchor& anchor) noexcept {
@@ -634,6 +648,7 @@ class ExecutionTimelineStore final {
   mutable std::mutex mutex_;
   std::uint64_t active_goal_epoch_{0};
   mutable std::uint64_t timeline_version_{0};
+  mutable std::uint64_t active_lineage_version_{0};
   std::uint64_t last_transaction_id_{0};
   std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity_;
   mutable std::shared_ptr<const navigation_planning::CandidateBundle> committed_;

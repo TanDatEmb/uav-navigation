@@ -21606,3 +21606,41 @@ release profiles must not use the former allowance.
   bundle, and anchor matching returns `kNoSample` on evaluator failure; run the
   Release `navigation_execution` build/test, dependent runtime tests, full
   canonical build/test, and `git diff --check`.
+
+### 2026-09-15 - Bind successor staging to the reserved execution timeline
+
+- **Owner/status:** Navigation execution timeline and immutable planning
+  request contract; `IMPLEMENTED`. The store-level bypass is confirmed by a
+  deterministic test. Current production candidate generation is monotonic, so
+  reachability of a same-identity trajectory replacement in flight remains
+  `CONDITIONAL` rather than a claimed observed flight defect.
+- **Scope:** `ExecutionAnchor` carries an opaque nonzero active-lineage version
+  captured by `reserveAnchor()`. Both successor staging paths require that
+  exact lineage before accepting the handoff. Pending-only mutations and a
+  rolled-back finalizer do not advance this version because the active authority
+  remains unchanged. Trajectory generation,
+  request, goal and world identities remain independently checked. No
+  coordinator, second state store, planner protocol setter or transport token
+  is introduced.
+- **Safety impact:** Tightens fail-closed admission only. An active-command
+  revoke, replacement or activation after reservation makes the old anchor
+  unusable even if a caller reuses all public bundle metadata. World identity
+  checks continue to invalidate an anchor across recertification, while a
+  pending-only replacement may legitimately reuse the same active anchor. A
+  rejected successor leaves the current active command unchanged.
+  No dynamic, freshness, deadline or qualification threshold is changed.
+- **Evidence/removal condition:** Before the change, a controlled replacement
+  with a different evaluator but the same generation/request/world was accepted
+  as pending (`kStaged`) and the regression test exited 1. The contract suite
+  also covers revoke followed by recommit of the exact same pointer, so pointer
+  equality cannot revive a revoked reservation. Keep the opaque reservation
+  identity until every accepted predecessor has an equivalent collision-resistant
+  immutable identity whose uniqueness is enforced at the execution boundary,
+  not merely by the current producer implementation.
+- **Verification:** `test_committed_bundle_store` must reject the stale anchor
+  with `kPredecessorAdvanced`, preserve the replacement active bundle and leave
+  pending empty. Planning contract and backend tests must construct a nonzero
+  reservation version; run Release builds/tests for `navigation_planning`,
+  `navigation_execution`, `navigation_planning_backend`, and
+  `navigation_runtime`, followed by the canonical build/test/check and
+  `git diff --check`.
