@@ -961,6 +961,102 @@ def _bind_nominal_snapshot_provenance(
         os.environ[key] = value
 
 
+def _prepare_nominal_snapshot_directory() -> None:
+    """Give one runtime session exclusive ownership of its capture directory."""
+    value = os.environ.get("UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR")
+    if not value:
+        return
+    directory = Path(value).expanduser()
+    if directory.exists():
+        if not directory.is_dir():
+            raise RuntimeError("nominal snapshot capture path is not a directory")
+        if any(directory.iterdir()):
+            raise RuntimeError("nominal snapshot capture directory is not empty")
+    else:
+        directory.mkdir(parents=True)
+    os.environ["UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR"] = str(directory.resolve())
+
+
+def _finalize_nominal_snapshot_capture(session_id: str) -> dict[str, Any] | None:
+    """Close snapshot accounting only after every runtime process has stopped."""
+    value = os.environ.get("UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR")
+    if not value:
+        return None
+    directory = Path(value).expanduser().resolve()
+    sidecar = directory / "nominal_problem_snapshot_capture.json"
+    try:
+        capture = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return {
+            "schema_version": 1,
+            "session_id": session_id,
+            "capture_directory": str(directory),
+            "sidecar_path": str(sidecar),
+            "capture_complete": False,
+            "accounting_status": "NOT_EVALUABLE",
+            "reason": f"nominal snapshot sidecar unavailable: {error}",
+        }
+    if not isinstance(capture, dict):
+        return {
+            "schema_version": 1,
+            "session_id": session_id,
+            "capture_directory": str(directory),
+            "sidecar_path": str(sidecar),
+            "capture_complete": False,
+            "accounting_status": "NOT_EVALUABLE",
+            "reason": "nominal snapshot sidecar is not a mapping",
+        }
+
+    count_fields = (
+        "submitted_records",
+        "accepted_records",
+        "written_records",
+        "dropped_records",
+        "write_error_count",
+        "stats_write_error_count",
+        "pending_records",
+    )
+    counts_are_valid = all(
+        isinstance(capture.get(field), int)
+        and not isinstance(capture.get(field), bool)
+        and capture[field] >= 0
+        for field in count_fields
+    )
+    observed_files = len(list(directory.glob("nominal_problem_snapshot_[0-9]*.json")))
+    accounting_valid = bool(
+        counts_are_valid
+        and capture["submitted_records"]
+        == capture["accepted_records"] + capture["dropped_records"]
+        and capture["accepted_records"]
+        == capture["written_records"] + capture["write_error_count"]
+        and capture["written_records"] == observed_files
+        and capture["pending_records"] == 0
+    )
+    capture["writer_capture_complete_at_process_stop"] = bool(
+        capture.get("capture_complete") is True
+    )
+    capture.update({
+        "session_id": session_id,
+        "capture_directory": str(directory),
+        "sidecar_path": str(sidecar),
+        "observed_snapshot_files": observed_files,
+        "capture_complete": accounting_valid,
+        "accounting_status": "COMPLETE" if accounting_valid else "NOT_EVALUABLE",
+        "finalized_by": "runtime_runner_after_process_stop",
+    })
+    if not accounting_valid:
+        capture["reason"] = "nominal snapshot counters are incomplete or inconsistent"
+    else:
+        capture.pop("reason", None)
+
+    temporary = sidecar.with_suffix(".json.runner.tmp")
+    temporary.write_text(
+        json.dumps(capture, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    os.replace(temporary, sidecar)
+    return capture
+
+
 def _write_runtime_evidence_metadata(
     session: Session,
     *,
@@ -2155,6 +2251,13 @@ def _stop_and_report(session: Session, workflow: str, config_path: Path, *, px4_
     # intentionally begun shutting down.
     _write_runtime(session, observation_finished_wall_ns=time.time_ns())
     cleanup_failures = session.stop()
+    nominal_snapshot_capture = _finalize_nominal_snapshot_capture(
+        session.directory.name
+    )
+    if nominal_snapshot_capture is not None:
+        _write_runtime(
+            session, nominal_snapshot_capture=nominal_snapshot_capture
+        )
     if cleanup_failures:
         failures = _load_runtime_failures(session)
         _write_runtime(session, failures=failures + [f"cleanup: {item}" for item in cleanup_failures])
@@ -3025,6 +3128,7 @@ def _run_sim_unlocked(
     prereq = _sim_prerequisites(px4_dir, gz_command, ros_environment)
     try:
         build_provenance = _capture_build_provenance(session, px4_dir)
+        _prepare_nominal_snapshot_directory()
         _bind_nominal_snapshot_provenance(
             build_provenance, session.directory.name
         )

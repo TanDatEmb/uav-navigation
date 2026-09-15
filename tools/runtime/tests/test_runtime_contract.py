@@ -2054,6 +2054,102 @@ class RuntimeContractTest(unittest.TestCase):
                     build_provenance, "external-mode-check-123"
                 )
 
+    def test_nominal_snapshot_capture_requires_an_empty_owned_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            empty = root / "new capture"
+            with mock.patch.dict(
+                os.environ,
+                {"UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR": str(empty)},
+                clear=True,
+            ):
+                runner._prepare_nominal_snapshot_directory()
+                self.assertTrue(empty.is_dir())
+                self.assertEqual(
+                    os.environ["UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR"],
+                    str(empty.resolve()),
+                )
+
+            occupied = root / "occupied"
+            occupied.mkdir()
+            (occupied / "old.json").write_text("{}", encoding="utf-8")
+            with mock.patch.dict(
+                os.environ,
+                {"UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR": str(occupied)},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "is not empty"):
+                    runner._prepare_nominal_snapshot_directory()
+
+    def test_nominal_snapshot_capture_finalizes_only_consistent_accounting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for index in range(2):
+                (directory / f"nominal_problem_snapshot_1_2_{index}.json").write_text(
+                    "{}", encoding="utf-8"
+                )
+            sidecar = directory / "nominal_problem_snapshot_capture.json"
+            sidecar.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "capacity": 4,
+                    "submitted_records": 5,
+                    "accepted_records": 2,
+                    "written_records": 2,
+                    "dropped_records": 3,
+                    "write_error_count": 0,
+                    "stats_write_error_count": 0,
+                    "pending_records": 0,
+                    "capture_complete": False,
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR": str(directory)},
+                clear=True,
+            ):
+                capture = runner._finalize_nominal_snapshot_capture("session-123")
+            self.assertIsNotNone(capture)
+            assert capture is not None
+            self.assertTrue(capture["capture_complete"])
+            self.assertEqual(capture["accounting_status"], "COMPLETE")
+            self.assertEqual(capture["observed_snapshot_files"], 2)
+            self.assertFalse(capture["writer_capture_complete_at_process_stop"])
+            self.assertEqual(
+                json.loads(sidecar.read_text(encoding="utf-8")), capture
+            )
+
+    def test_nominal_snapshot_capture_does_not_finalize_bad_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            sidecar = directory / "nominal_problem_snapshot_capture.json"
+            sidecar.write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "capacity": 4,
+                    "submitted_records": 2,
+                    "accepted_records": 2,
+                    "written_records": 1,
+                    "dropped_records": 0,
+                    "write_error_count": 0,
+                    "stats_write_error_count": 0,
+                    "pending_records": 1,
+                    "capture_complete": False,
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR": str(directory)},
+                clear=True,
+            ):
+                capture = runner._finalize_nominal_snapshot_capture("session-123")
+            self.assertIsNotNone(capture)
+            assert capture is not None
+            self.assertFalse(capture["capture_complete"])
+            self.assertEqual(capture["accounting_status"], "NOT_EVALUABLE")
+
     def test_process_registry_rejects_unvalidated_records_and_roles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             session = process_group.Session(Path(temporary) / "session")

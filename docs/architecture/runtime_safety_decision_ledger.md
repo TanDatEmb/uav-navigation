@@ -11,16 +11,23 @@
   bound values are forwarded to the planner snapshot and serialized with the
   mathematical problem. A caller-supplied identity that conflicts with the
   validated build stops the run at preflight instead of creating a misleading
-  replay artifact. Normal runs with capture disabled are unchanged.
+  replay artifact. Each session must own an empty capture directory. The
+  bounded writer persists a sidecar with submitted, accepted, written,
+  dropped, write-error, pending, and completion counts; intermediate sidecars
+  remain explicitly incomplete until the writer drains and shuts down. Stats
+  and snapshot serialization remain on the diagnostic writer thread. Normal
+  runs with capture disabled are unchanged.
 - **Safety impact:** None to planner formulation, deadlines, V/A/J or flatness
   gates, world policy, candidate authority, recovery, or command publication.
   The added fields are evidence identity only. A valid provenance record does
   not make offline world replay authoritative and does not make the run
   qualification-eligible.
 - **Evidence:** Unit coverage checks environment forwarding, automatic binding,
-  conflict rejection, and optimizer-side retention of every identity field.
-  The 2026-09-16 five-waypoint replay report records the prior
-  `not-provided` provenance gap that motivated this change.
+  conflict rejection, exclusive-directory preparation, and optimizer-side
+  retention of every identity field. A focused bounded-writer canary checks
+  sidecar accounting and terminal completion. The 2026-09-16 five-waypoint
+  replay report records the prior `not-provided` provenance and missing writer
+  counter gaps that motivated this change.
 - **Removal/review condition:** Replace these environment-bound fields only
   when the planner request carries an equivalent immutable evidence identity.
   Do not remove conflict rejection or fall back to caller-declared provenance.
