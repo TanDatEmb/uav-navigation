@@ -529,6 +529,38 @@ TEST(PlannerPassThrough, UsesBoundedOutgoingTerminalVelocity) {
   EXPECT_DOUBLE_EQ(interior_velocity->norm(), 4.9);
 }
 
+TEST(PlannerPassThrough, CapsGuideDirectionChangeByAvailableTime) {
+  const double right_angle_cap =
+      navigation_planning_backend::guideDirectionTransitionSpeedCap(
+          Eigen::Vector3d::UnitX(), Eigen::Vector3d::UnitY(),
+          1.0, 5.0, 5.0, 8.0);
+  EXPECT_NEAR(right_angle_cap, std::sqrt(2.0), 1.0e-12);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::guideDirectionTransitionSpeedCap(
+          Eigen::Vector3d::UnitX(), Eigen::Vector3d::UnitX(),
+          1.0, 5.0, 5.0, 8.0),
+      5.0);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::guideDirectionTransitionSpeedCap(
+          Eigen::Vector3d::Zero(), Eigen::Vector3d::UnitX(),
+          1.0, 5.0, 5.0, 8.0),
+      0.0);
+  EXPECT_DOUBLE_EQ(
+      navigation_planning_backend::guideDirectionTransitionSpeedCap(
+          Eigen::Vector3d::UnitX(), Eigen::Vector3d::UnitX(),
+          0.0, 5.0, 5.0, 8.0),
+      0.0);
+
+  const Eigen::Vector3d incoming{0.8, 0.4, 0.0};
+  const Eigen::Vector3d outgoing{1.4, 0.0, 0.0};
+  const double captured_window_s = 0.4588854381999843;
+  const double captured_cap =
+      navigation_planning_backend::guideDirectionTransitionSpeedCap(
+          incoming, outgoing, captured_window_s, 4.9, 5.0, 8.0);
+  EXPECT_NEAR(captured_cap, 0.916532, 1.0e-6);
+  EXPECT_LT(captured_cap, 4.9);
+}
+
 TEST(PlannerPassThrough, LimitsOrthogonalVelocityChangeByTransitionTime) {
   const Eigen::Vector3d incoming_velocity{5.0, 0.0, 0.0};
   const auto terminal_velocity =

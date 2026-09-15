@@ -23,6 +23,7 @@
 #include <planner_core/corridor_bezier_seed.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/deterministic_nominal_seed.hpp>
+#include <planner_core/pass_through_terminal_velocity.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
 #include <traj_opt/config.hpp>
 #include <traj_opt/minco.h>
@@ -1321,6 +1322,58 @@ int run(const std::string& path) {
               << " retry_count=" << optimizer.diagnostics().retry_count
               << '\n';
     printReport("F_terminal_velocity_candidate", certify(
+        trajectory, head, diagnostic_tail, h_polytopes, h_poly_idx,
+        polytope_vec, config, world_snapshot.get()), config_replay.exact);
+  }
+
+  // G: derive one terminal-speed proposal from the final guide turn and its
+  // captured time window. This remains an offline discriminator; internal
+  // guide turns and complete bundle construction still require separate
+  // evidence before this policy can enter production.
+  if (guide_path.size() >= 3U && guide_times.size() == guide_path.size()) {
+    const Eigen::Vector3d incoming_direction =
+        (guide_path[guide_path.size() - 2U] -
+         guide_path[guide_path.size() - 3U]).cast<double>();
+    const Eigen::Vector3d outgoing_direction =
+        (guide_path.back() - guide_path[guide_path.size() - 2U]).cast<double>();
+    const double transition_window_s =
+        guide_times.back() - guide_times[guide_times.size() - 3U];
+    const double captured_terminal_speed_mps = tail.col(1).norm();
+    const double terminal_speed_cap_mps =
+        navigation_planning_backend::guideDirectionTransitionSpeedCap(
+            incoming_direction, outgoing_direction, transition_window_s,
+            captured_terminal_speed_mps, config.max_acc, config.max_jerk);
+    const double terminal_velocity_scale =
+        captured_terminal_speed_mps > 1.0e-9
+            ? terminal_speed_cap_mps / captured_terminal_speed_mps
+            : 0.0;
+    auto diagnostic_tail = tail;
+    diagnostic_tail.col(1) *= terminal_velocity_scale;
+    geometry_utils::Trajectory trajectory;
+    auto sfcs = polytope_vec;
+    traj_opt::ExpTrajOpt optimizer(config, context);
+    optimizer.setSolveBudget(nullptr, 0, 0);
+    const auto nominal_result = optimizer.solve(
+        head, diagnostic_tail, guide_path, guide_times,
+        sfcs, trajectory, false, true, false);
+    const double direction_cosine =
+        incoming_direction.norm() > 1.0e-9 &&
+            outgoing_direction.norm() > 1.0e-9
+        ? incoming_direction.normalized().dot(outgoing_direction.normalized())
+        : std::numeric_limits<double>::quiet_NaN();
+    std::cout << "G_tail_turn_cap_mps=" << terminal_speed_cap_mps
+              << " scale=" << terminal_velocity_scale
+              << " transition_window_s=" << transition_window_s
+              << " direction_cosine=" << direction_cosine
+              << " status=" << static_cast<int>(nominal_result.status)
+              << " candidate_available=" << nominal_result.candidateAvailable()
+              << " lbfgs_attempts="
+              << optimizer.diagnostics().lbfgs_attempt_count
+              << " evaluations="
+              << optimizer.diagnostics().lbfgs_evaluation_count
+              << " retry_count=" << optimizer.diagnostics().retry_count
+              << '\n';
+    printReport("G_tail_turn_candidate", certify(
         trajectory, head, diagnostic_tail, h_polytopes, h_poly_idx,
         polytope_vec, config, world_snapshot.get()), config_replay.exact);
   }

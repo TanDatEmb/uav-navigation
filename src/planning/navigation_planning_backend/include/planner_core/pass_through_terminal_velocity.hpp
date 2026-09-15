@@ -32,6 +32,46 @@ inline double passThroughMaximumVelocityChange(
   return std::isfinite(maximum_delta) ? std::max(0.0, maximum_delta) : 0.0;
 }
 
+// Bound an equal-magnitude velocity reorientation by the time available in a
+// guide window. This is a seed-parameterization guard: it neither changes the
+// declared dynamics envelope nor certifies the resulting trajectory.
+inline double guideDirectionTransitionSpeedCap(
+    const Eigen::Vector3d& incoming_direction,
+    const Eigen::Vector3d& outgoing_direction,
+    const double transition_duration_s,
+    const double maximum_velocity_mps,
+    const double maximum_acceleration_mps2,
+    const double maximum_jerk_mps3) noexcept {
+  if (!incoming_direction.allFinite() || !outgoing_direction.allFinite() ||
+      !std::isfinite(transition_duration_s) || transition_duration_s <= 0.0 ||
+      !std::isfinite(maximum_velocity_mps) || maximum_velocity_mps <= 0.0 ||
+      !std::isfinite(maximum_acceleration_mps2) ||
+      maximum_acceleration_mps2 <= 0.0 ||
+      !std::isfinite(maximum_jerk_mps3) || maximum_jerk_mps3 <= 0.0) {
+    return 0.0;
+  }
+  const double incoming_norm = incoming_direction.norm();
+  const double outgoing_norm = outgoing_direction.norm();
+  if (!std::isfinite(incoming_norm) || incoming_norm <= 1.0e-9 ||
+      !std::isfinite(outgoing_norm) || outgoing_norm <= 1.0e-9) {
+    return 0.0;
+  }
+  const double unit_velocity_delta =
+      (incoming_direction / incoming_norm -
+       outgoing_direction / outgoing_norm).norm();
+  if (!std::isfinite(unit_velocity_delta)) return 0.0;
+  if (unit_velocity_delta <= 1.0e-9) return maximum_velocity_mps;
+  const double maximum_velocity_change = passThroughMaximumVelocityChange(
+      transition_duration_s, maximum_acceleration_mps2,
+      maximum_jerk_mps3);
+  if (!std::isfinite(maximum_velocity_change) ||
+      maximum_velocity_change <= 0.0) {
+    return 0.0;
+  }
+  return std::clamp(maximum_velocity_change / unit_velocity_delta,
+                    0.0, maximum_velocity_mps);
+}
+
 // Invert the jerk/acceleration-bounded velocity-change envelope.  This is
 // used only to allocate time for a certified corner guide; it does not alter
 // the dynamic limits or certify a trajectory by itself.

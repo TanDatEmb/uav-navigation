@@ -9,7 +9,10 @@
   limits, and PlanFromRest entrypoint fixed while evaluating five
   terminal-velocity scales from zero through the captured value. Every probe
   uses the existing production optimizer and certificate checks with no
-  deadline. Results remain labeled as offline
+  deadline. A follow-up probe derives a terminal speed cap from the final guide
+  direction change, its captured time window, and the existing acceleration
+  and jerk envelope. The helper remains unused by production. Results remain
+  labeled as offline
   candidates without MAIN/BACKUP scheduling, lease, or commit authority.
 - **Safety impact:** None. The scaled terminal states never enter a planning
   request, active/pending store, recovery transition, command, or PX4 adapter.
@@ -20,7 +23,10 @@
   formulation conflict from a generic optimizer-budget explanation while
   retaining the original scale as a parity probe. Replay output names the
   production certificate stage and reports PVAJ boundary residual/roundoff
-  details so an unevaluated route gate cannot be mistaken for its failure.
+  details so an unevaluated route gate cannot be mistaken for its failure. The
+  direction-derived probe produced solver candidates in all 15 bounded-capture
+  records; 12 passed the full independent certificate, while three remained
+  excluded at its machine-scale PVAJ junction stage.
 - **Removal/review condition:** Remove the sweep after the terminal-state and
   duration formulation has an independently certified replacement experiment.
   Do not promote a scale into product behavior without a separate design

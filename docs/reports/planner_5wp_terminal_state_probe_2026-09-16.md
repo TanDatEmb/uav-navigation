@@ -132,6 +132,41 @@ targeted five-waypoint SITL regression.  The full 5 m/s matrix should only be
 repeated after that discriminator identifies a policy with no authority or
 safety regression.
 
+## Follow-up: direction-transition-derived cap
+
+The follow-up probe replaced the arbitrary fixed scale with a dimensional
+guide policy. For the final two guide segments, it computes the velocity-vector
+change per unit speed and caps equal-magnitude terminal speed by the existing
+jerk/acceleration-bounded velocity-change envelope over the captured two-edge
+time window. The helper is pure and is not called by production planning.
+
+Across all 15 captured snapshots:
+
+| Observation | Result |
+| --- | --- |
+| Captured terminal speed | 4.9 m/s in 15/15 |
+| Active route-boundary gates | 0 in 15/15 |
+| Derived cap, generations 1--11 | 1.090 m/s; scale 0.222; 0.365 s turn window |
+| Derived cap, generations 16--49 | 0.917 m/s; scale 0.187; 0.459 s turn window |
+| Production solver candidate | 15/15 |
+| Full independent certificate | 12/15 PASS |
+| Full-certificate exclusions | Generations 2, 6, 11: PVAJ junction roundoff stage |
+| V/A/J, flatness, immutable-world sweep | 15/15 PASS |
+| Complete executable bundle | 0/15 by replay scope |
+
+The 12 full-certificate PASS cases used the deterministic seed directly with
+zero L-BFGS evaluations. The other three required one L-BFGS attempt and were
+not counted as certified even though the production solver, dynamics,
+flatness, and world checks accepted them. Their additional certificate failure
+is the separate machine-scale PVAJ roundoff evidence gap documented above.
+
+This strengthens the endpoint/tangent-timing formulation hypothesis without
+proving a product policy. The derived cap is conservative and can reduce the
+future frontier speed substantially; using it unconditionally could trade
+availability for stop/go behavior. The next product experiment must therefore
+measure command continuity, MAIN/BACKUP readiness, activation rate, and actual
+vehicle speed rather than treating 15 nominal candidates as a flight PASS.
+
 Verification commands:
 
 ```bash
@@ -139,7 +174,8 @@ make build
 
 build/navigation_planning_backend/replay_nominal_problem_snapshot \
   SNAPSHOT.json 2>&1 | \
-  grep -aE '^(snapshot_kind=|D_recovery_no_deadline |F_terminal_velocity)'
+  grep -aE \
+  '^(snapshot_kind=|D_recovery_no_deadline |F_terminal_velocity|G_tail_turn_)'
 
 make test
 git diff --check
