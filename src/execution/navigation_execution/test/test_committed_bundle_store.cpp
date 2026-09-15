@@ -1,4 +1,7 @@
+#include <chrono>
+#include <future>
 #include <memory>
+#include <stdexcept>
 
 #include <gtest/gtest.h>
 
@@ -231,6 +234,31 @@ TEST(CommittedBundleStore, RetainedCommandStaysOldUntilSuccessorActivation) {
   EXPECT_EQ(store.load(), successor_ptr);
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 7)));
   EXPECT_TRUE(static_cast<bool>(sampler.sample(50, 8)));
+}
+
+TEST(ExecutionAnchor, CandidateMatchConvertsEvaluatorExceptionToNoSample) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+
+  auto successor = candidateFor(8, 1);
+  successor.valid_from_ns = anchor->activation_stamp_ns;
+  successor.activation_stamp_ns = anchor->activation_stamp_ns;
+  successor.evaluator = [](
+                            std::int64_t,
+                            navigation_planning::TrajectoryPoint&) -> bool {
+    throw std::runtime_error("synthetic anchor-match evaluator failure");
+  };
+
+  EXPECT_EQ(navigation_execution::candidateMatchesAnchor(successor, *anchor),
+            navigation_execution::AnchorMatchResult::kNoSample);
 }
 
 TEST(ExecutionTimelineStore, RejectsSuccessorWhenPredecessorAdvanced) {
@@ -1160,6 +1188,85 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesActiveAfterExpiredPendingIsDrop
   EXPECT_FALSE(store.invalidateIfCurrent(observed));
   EXPECT_EQ(store.load(), active);
   EXPECT_FALSE(store.snapshot().pending);
+}
+
+TEST(ExecutionTimelineStore, ReserveAnchorDoesNotHoldStoreLockDuringEvaluation) {
+  using namespace std::chrono_literals;
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+
+  auto evaluator_entered = std::make_shared<std::promise<void>>();
+  auto evaluator_release = std::make_shared<std::promise<void>>();
+  const auto evaluator_entered_future = evaluator_entered->get_future();
+  const auto evaluator_release_future = evaluator_release->get_future().share();
+  auto candidate_data = candidateFor(7, 1);
+  candidate_data.evaluator = [evaluator_entered, evaluator_release_future](
+                                 const std::int64_t stamp,
+                                 navigation_planning::TrajectoryPoint& point) {
+    evaluator_entered->set_value();
+    evaluator_release_future.wait();
+    point.position_world.x() = static_cast<double>(stamp);
+    point.trajectory_time_s = static_cast<double>(stamp - 1) * 1.0e-9;
+    return true;
+  };
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      std::move(candidate_data));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  auto anchor_future = std::async(std::launch::async, [&store]() {
+    return store.reserveAnchor(50, 50);
+  });
+  const auto evaluator_status = evaluator_entered_future.wait_for(1s);
+  if (evaluator_status != std::future_status::ready) {
+    evaluator_release->set_value();
+    EXPECT_EQ(evaluator_status, std::future_status::ready);
+    return;
+  }
+  auto invalidation_started = std::make_shared<std::promise<void>>();
+  const auto invalidation_started_future = invalidation_started->get_future();
+  auto invalidation_future = std::async(
+      std::launch::async, [&store, invalidation_started]() {
+        invalidation_started->set_value();
+        store.invalidate();
+      });
+  const auto invalidation_started_status = invalidation_started_future.wait_for(1s);
+  if (invalidation_started_status != std::future_status::ready) {
+    evaluator_release->set_value();
+    invalidation_future.get();
+    static_cast<void>(anchor_future.get());
+    EXPECT_EQ(invalidation_started_status, std::future_status::ready);
+    return;
+  }
+  const auto invalidation_status = invalidation_future.wait_for(250ms);
+
+  evaluator_release->set_value();
+  invalidation_future.get();
+  const auto anchor = anchor_future.get();
+  EXPECT_EQ(invalidation_status, std::future_status::ready);
+  EXPECT_FALSE(anchor);
+}
+
+TEST(ExecutionTimelineStore, ReserveAnchorConvertsEvaluatorExceptionToFailure) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate_data = candidateFor(7, 1);
+  candidate_data.evaluator = [](
+                                 std::int64_t,
+                                 navigation_planning::TrajectoryPoint&) -> bool {
+    throw std::runtime_error("synthetic evaluator failure");
+  };
+  auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      std::move(candidate_data));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  EXPECT_FALSE(store.reserveAnchor(50, 50));
+  EXPECT_EQ(store.load(), candidate);
 }
 
 TEST(ExecutionStateStore, RejectsOldEpochAndClearsStateOnReset) {

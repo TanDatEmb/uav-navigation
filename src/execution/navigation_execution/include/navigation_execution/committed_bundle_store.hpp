@@ -197,36 +197,67 @@ class ExecutionTimelineStore final {
   [[nodiscard]] std::optional<ExecutionAnchor> reserveAnchor(
       std::int64_t request_stamp_ns, std::int64_t activation_stamp_ns) const noexcept {
     if (request_stamp_ns <= 0 || activation_stamp_ns < request_stamp_ns) return std::nullopt;
+    std::shared_ptr<const navigation_planning::CandidateBundle> predecessor;
+    navigation_world_model::WorldSnapshotIdentity expected_world;
+    std::uint64_t expected_version = 0U;
+    {
+      std::lock_guard lock(mutex_);
+      if (!committed_ || !world_identity_ ||
+          !navigation_world_model::sameWorldSnapshotIdentity(
+              *world_identity_, committed_->world_identity) ||
+          activation_stamp_ns < committed_->valid_from_ns ||
+          activation_stamp_ns > committed_->valid_until_ns) {
+        return std::nullopt;
+      }
+      predecessor = committed_;
+      expected_world = *world_identity_;
+      expected_version = timeline_version_;
+    }
+
+    // The pinned evaluator is not declared noexcept and may own an expensive
+    // backend value. Evaluate it outside the store mutex, convert any failure
+    // to an unavailable anchor, then require the exact timeline to still be
+    // current before returning the witness.
+    std::optional<ExecutionAnchor> result;
+    try {
+      const auto point = predecessor->sample(activation_stamp_ns);
+      if (!point) return std::nullopt;
+      const auto end_ns = predecessor->declared_end_ns > 0
+          ? predecessor->declared_end_ns : predecessor->valid_until_ns;
+      const auto main_end_ns = predecessor->backup_available
+          ? navigation_common::secondsSumToNanoseconds(
+                predecessor->start_wall_time_s, predecessor->backup_start_time_s)
+          : std::optional<std::int64_t>{end_ns};
+      if (!main_end_ns || *main_end_ns < activation_stamp_ns ||
+          end_ns < activation_stamp_ns) {
+        return std::nullopt;
+      }
+      ExecutionAnchor anchor;
+      anchor.active_bundle_generation = predecessor->bundle_generation;
+      anchor.localization_epoch = predecessor->localization_epoch;
+      anchor.goal_epoch = predecessor->goal_epoch;
+      anchor.request_id = predecessor->request_id;
+      anchor.request_stamp_ns = request_stamp_ns;
+      anchor.activation_stamp_ns = activation_stamp_ns;
+      anchor.state = *point;
+      anchor.active_role = point->role;
+      anchor.active_main_end_ns = *main_end_ns;
+      anchor.active_bundle_end_ns = end_ns;
+      anchor.command_world = predecessor->world_identity;
+      if (!anchor.valid()) return std::nullopt;
+      result = std::move(anchor);
+    } catch (...) {
+      return std::nullopt;
+    }
+
     std::lock_guard lock(mutex_);
-    if (!committed_ || !world_identity_ ||
-        activation_stamp_ns < committed_->valid_from_ns ||
-        activation_stamp_ns > committed_->valid_until_ns) {
+    if (timeline_version_ != expected_version || !committed_ ||
+        committed_.get() != predecessor.get() || !world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected_world)) {
       return std::nullopt;
     }
-    const auto point = committed_->sample(activation_stamp_ns);
-    if (!point) return std::nullopt;
-    const auto end_ns = committed_->declared_end_ns > 0
-        ? committed_->declared_end_ns : committed_->valid_until_ns;
-    const auto main_end_ns = committed_->backup_available
-        ? navigation_common::secondsSumToNanoseconds(
-              committed_->start_wall_time_s, committed_->backup_start_time_s)
-        : std::optional<std::int64_t>{end_ns};
-    if (!main_end_ns || *main_end_ns < activation_stamp_ns || end_ns < activation_stamp_ns) {
-      return std::nullopt;
-    }
-    ExecutionAnchor anchor;
-    anchor.active_bundle_generation = committed_->bundle_generation;
-    anchor.localization_epoch = committed_->localization_epoch;
-    anchor.goal_epoch = committed_->goal_epoch;
-    anchor.request_id = committed_->request_id;
-    anchor.request_stamp_ns = request_stamp_ns;
-    anchor.activation_stamp_ns = activation_stamp_ns;
-    anchor.state = *point;
-    anchor.active_role = point->role;
-    anchor.active_main_end_ns = *main_end_ns;
-    anchor.active_bundle_end_ns = end_ns;
-    anchor.command_world = committed_->world_identity;
-    return anchor.valid() ? std::optional<ExecutionAnchor>{std::move(anchor)} : std::nullopt;
+    return result;
   }
 
   // Stage, but do not expose, a complete successor. The transaction watermark

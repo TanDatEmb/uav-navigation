@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 #include <navigation_planning/execution_anchor.hpp>
 
@@ -36,7 +37,12 @@ enum class AnchorMatchResult : std::uint8_t {
   if (candidate.valid_from_ns != anchor.activation_stamp_ns) {
     return AnchorMatchResult::kNoSample;
   }
-  const auto sample = candidate.sample(anchor.activation_stamp_ns);
+  std::optional<navigation_planning::TrajectoryPoint> sample;
+  try {
+    sample = candidate.sample(anchor.activation_stamp_ns);
+  } catch (...) {
+    return AnchorMatchResult::kNoSample;
+  }
   if (!sample) return AnchorMatchResult::kNoSample;
   constexpr double kPositionToleranceM = 1.0e-5;
   constexpr double kVelocityToleranceMps = 1.0e-5;

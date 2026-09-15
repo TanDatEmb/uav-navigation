@@ -21571,3 +21571,38 @@ release profiles must not use the former allowance.
   JSON--HTML relation tests; full Python runtime tests; C++ package build/tests;
   rerun the producer smoke benchmark only after the snapshot change. Review
   must use the current dirty-worktree snapshot, not checkpoint c4e70ba.
+
+### 2026-09-15 - Evaluate execution anchors outside the timeline mutex
+
+- **Owner/status:** Navigation execution timeline; `IMPLEMENTED`. The
+  production evaluator currently captures immutable trajectory values and no
+  ordinary throw path is confirmed, so the flight-bug reachability finding
+  remains `CONDITIONAL`; the API exception and lock-coupling defect is
+  confirmed.
+- **Scope:** `reserveAnchor()` snapshots the exact active bundle, world
+  identity and timeline version under the store mutex, evaluates the immutable
+  trajectory outside the mutex, converts evaluator exceptions to an unavailable
+  anchor, and rechecks the exact version/pointer/world transaction before
+  returning. The immediately following `candidateMatchesAnchor()` admission
+  boundary also converts evaluator exceptions to `kNoSample` instead of letting
+  them escape its `noexcept` contract. `stagePending()` continues to revalidate
+  the predecessor after planning, so no second execution owner or coordinator
+  is introduced.
+- **Safety impact:** Tightens fail-closed behavior only. An evaluator failure or
+  concurrent invalidation now rejects the anchor instead of terminating the
+  process or returning a witness for a superseded timeline. No trajectory,
+  world, freshness, certificate, deadline or tuning threshold is changed.
+- **Evidence/removal condition:** Before the change, the controlled evaluator
+  barrier blocked invalidation for 250 ms and returned the stale anchor; a
+  throwing evaluator terminated both `reserveAnchor()` and the subsequent
+  anchor-match boundary with exit 134. Keep the two-phase transaction and
+  fail-closed conversion while evaluator latency/exception behavior is not a
+  statically non-throwing operation. Revisit only if the candidate API is
+  replaced by an equivalent typed non-throwing sample result and preserves the
+  same revalidation semantics.
+- **Verification:** `test_committed_bundle_store` must show invalidation can
+  complete while evaluation is held, the superseded anchor is rejected, a
+  throwing evaluator returns no anchor without clearing the valid active
+  bundle, and anchor matching returns `kNoSample` on evaluator failure; run the
+  Release `navigation_execution` build/test, dependent runtime tests, full
+  canonical build/test, and `git diff --check`.
