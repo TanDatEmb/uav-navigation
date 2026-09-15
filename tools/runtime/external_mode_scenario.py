@@ -19,9 +19,12 @@ import math
 from pathlib import Path
 import signal
 import time
+import uuid
 from typing import Any
 
 import yaml
+
+from evidence_writer import EvidenceWriter
 
 def _time_ns(value: Any) -> int:
     return int(value.sec) * 1_000_000_000 + int(value.nanosec)
@@ -58,6 +61,14 @@ def _json_number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _integer_value(value: Any) -> int | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if math.isfinite(number) and number.is_integer() else None
 
 
 def _json_xyz(value: Any) -> list[float | None]:
@@ -337,8 +348,15 @@ class ExternalModeScenario:
         self.VehicleLandDetected = VehicleLandDetected
         self.output = output
         self.output.parent.mkdir(parents=True, exist_ok=True)
-        self.stream = output.with_suffix(".jsonl").open("w", encoding="utf-8")
         self.config = config.get("scenario", config)
+        # Session/instance identity is created once, not once per command.
+        self.session_id = str(self.config.get("session_id") or output.parent.name)
+        self.runtime_instance_id = str(
+            self.config.get("runtime_instance_id") or f"external-mode-{uuid.uuid4().hex}"
+        )
+        self._lifecycle_sequence = 0
+        self._activation_instance_id: str | None = None
+        self._activation_sequence = 0
         self.interactive_handover = bool(self.config.get("interactive_handover", False))
         self.manual_takeoff = bool(self.config.get("manual_takeoff", False))
         self.takeoff_reference = str(self.config.get("takeoff_reference", "amsl"))
@@ -347,6 +365,12 @@ class ExternalModeScenario:
         self.execution = str(self.config.get("execution", "single_goal"))
         if self.execution not in {"single_goal", "mission"}:
             raise ValueError(f"unsupported scenario execution: {self.execution}")
+        self.stream_path = output.with_suffix(".jsonl")
+        self._evidence_writer = EvidenceWriter(
+            self.stream_path,
+            capacity=int(self.config.get("evidence_writer_capacity", 4096)),
+            batch_size=int(self.config.get("evidence_writer_batch_size", 128)),
+        )
         self.wall_start = time.monotonic()
         self.sim_start_ns: int | None = None
         self.sim_now_ns = 0
@@ -517,12 +541,57 @@ class ExternalModeScenario:
         self.node.create_subscription(VehicleCommandAck, "/fmu/out/vehicle_command_ack", self._ack, px4_qos)
         self.timer = self.node.create_timer(0.05, self._tick)
 
-    def _record(self, kind: str, payload: dict[str, Any]) -> None:
-        self.stream.write(json.dumps({
-            "kind": kind,
-            "sim_time_ns": self.sim_now_ns,
-            "payload": payload,
-        }, sort_keys=True, allow_nan=False) + "\n")
+    def _record(
+        self,
+        kind: str,
+        payload: dict[str, Any],
+        *,
+        arrival_steady_ns: int | None = None,
+    ) -> None:
+        self._evidence_writer.enqueue(
+            {
+                "kind": kind,
+                "sim_time_ns": self.sim_now_ns,
+                "payload": payload,
+            },
+            observer_record_steady_ns=arrival_steady_ns,
+        )
+
+    def _record_lifecycle(
+        self,
+        phase: str,
+        disposition: str,
+        *,
+        source_stamp_ns: int | None = None,
+        **details: Any,
+    ) -> None:
+        """Record the observed authority handoff without affecting control."""
+        self._lifecycle_sequence = getattr(self, "_lifecycle_sequence", 0) + 1
+        inherited: dict[str, Any] = {}
+        for key in (
+            "localization_epoch", "goal_epoch", "request_id",
+            "causal_planning_cycle_id", "bundle_generation", "sample_id",
+        ):
+            latest_pva = getattr(self, "latest_pva_command", {})
+            if key not in details and isinstance(latest_pva, dict):
+                value = latest_pva.get(key)
+                if value not in (None, 0):
+                    inherited[key] = value
+        latest_goal = getattr(self, "latest_goal", {})
+        if "request_id" not in details and latest_goal.get("request_id") not in (None, 0):
+            inherited["request_id"] = latest_goal["request_id"]
+        payload = {
+            "phase": phase,
+            "disposition": disposition,
+            "source_stamp_ns": source_stamp_ns,
+            "clock_domain": "source_stamp_ns" if source_stamp_ns else "sim_time_ns",
+            "runtime_instance_id": getattr(self, "runtime_instance_id", "unknown"),
+            "session_id": getattr(self, "session_id", "unknown"),
+            "causal_event_sequence": self._lifecycle_sequence,
+            **inherited,
+            **details,
+        }
+        self._record("lifecycle", payload)
 
     def _clock(self, message: Any) -> None:
         self.sim_now_ns = _time_ns(message.clock)
@@ -557,6 +626,75 @@ class ExternalModeScenario:
         except (TypeError, ValueError):
             return 0
 
+    def _record_planner_trace_lifecycle(self, values: dict[str, str], stamp_ns: int) -> None:
+        """Translate runtime-owned disposition fields into causal evidence."""
+        parse_int = _integer_value
+        parse_bool = lambda value: parse_int(value) == 1
+        request_id = parse_int(values.get("desired_request_id"))
+        goal_epoch = parse_int(values.get("desired_epoch"))
+        localization_epoch = parse_int(values.get("planning_localization_epoch")) or parse_int(
+            values.get("active_execution_localization_epoch"))
+        bundle_generation = parse_int(values.get("candidate_generation")) or parse_int(
+            values.get("bundle_id"))
+        cycle_id = parse_int(values.get("planning_cycle_id"))
+        if request_id and goal_epoch and localization_epoch and cycle_id:
+            # The goal publisher owns request creation, while this runtime
+            # record is the first producer evidence that binds that request to
+            # a concrete planning cycle. The reducer requires this causal
+            # witness instead of guessing a cycle from later bundle events.
+            self._record_lifecycle(
+                "request", "PUBLISHED",
+                source_stamp_ns=stamp_ns or None,
+                request_id=request_id,
+                goal_epoch=goal_epoch,
+                localization_epoch=localization_epoch,
+                causal_planning_cycle_id=cycle_id,
+                bundle_owner_request_id=request_id,
+                bundle_owner_cycle_id=cycle_id,
+                request_boundary="navigation_runtime/planning_cycle",
+                disposition_source="navigation_runtime/planner",
+            )
+        if parse_bool(values.get("runtime_admission_attempted")):
+            succeeded = parse_bool(values.get("runtime_admission_succeeded"))
+            self._record_lifecycle(
+                "export", "EXPORTED" if succeeded else "REJECTED",
+                source_stamp_ns=stamp_ns or None,
+                request_id=request_id,
+                goal_epoch=goal_epoch,
+                localization_epoch=localization_epoch,
+                causal_planning_cycle_id=cycle_id,
+                bundle_generation=bundle_generation,
+                bundle_owner_request_id=request_id,
+                bundle_owner_cycle_id=cycle_id,
+                disposition_source="navigation_runtime/planner",
+                result=values.get("runtime_admission_disposition"),
+            )
+        activation_generation = parse_int(values.get("latest_execution_activation_generation"))
+        activation_result = parse_int(values.get("latest_execution_activation_result"))
+        if activation_generation and activation_result in {1, 2}:
+            activation_request_id = parse_int(values.get("active_execution_request_id")) or request_id
+            activation_goal_epoch = parse_int(values.get("active_execution_goal_epoch")) or goal_epoch
+            activation_localization_epoch = (
+                parse_int(values.get("active_execution_localization_epoch"))
+                or localization_epoch
+            )
+            # The runtime trace does not expose a planner cycle for this
+            # command-timer store transaction. Preserve the bundle identity
+            # and let the reducer attach it without inventing a cycle.
+            self._record_lifecycle(
+                "activate", "ACTIVATED" if activation_result == 1 else "FAILED",
+                source_stamp_ns=stamp_ns or None,
+                request_id=activation_request_id,
+                goal_epoch=activation_goal_epoch,
+                localization_epoch=activation_localization_epoch,
+                causal_planning_cycle_id=None,
+                bundle_generation=activation_generation,
+                bundle_owner_request_id=activation_request_id,
+                bundle_owner_cycle_id=None,
+                activation_result=activation_result,
+                disposition_source="navigation_runtime/execution_timeline",
+            )
+
     def _diagnostics(self, message: Any) -> None:
         receive_ns = self._receive_time_ns()
         for status in message.status:
@@ -575,6 +713,59 @@ class ExternalModeScenario:
                 if self.alignment_latch_witness is None:
                     self.alignment_latch_witness = witness
                 self._record("alignment_latch_witness", witness)
+            elif status.name == "navigation_external_mode/PX4_INPUT_SETPOINT":
+                trace_sequence = values.get("trace_sequence")
+                try:
+                    trace_sequence_value = int(trace_sequence)
+                except (TypeError, ValueError):
+                    trace_sequence_value = None
+                trace_duration = values.get("setpoint_update_duration_ns")
+                try:
+                    trace_duration_value = int(trace_duration)
+                except (TypeError, ValueError):
+                    trace_duration_value = None
+                self._record("px4_input_trace", {
+                    "trace_timestamp_ns": _time_ns(message.header.stamp),
+                    "trace_sequence": trace_sequence_value,
+                    "setpoint_update_duration_ns": trace_duration_value,
+                    "setpoint_boundary": values.get("setpoint_boundary"),
+                    "setpoint_kind": values.get("setpoint_boundary"),
+                    "trace_enqueued_count": _integer_value(
+                        values.get("trace_enqueued_count")),
+                    "trace_published_before_count": _integer_value(
+                        values.get("trace_published_before_count")),
+                    "trace_drop_count": _integer_value(values.get("trace_drop_count")),
+                    "trace_publish_error_count": _integer_value(
+                        values.get("trace_publish_error_count")),
+                    "attribution": "px4_input_trace",
+                    "phase": "publish",
+                    "runtime_instance_id": self.runtime_instance_id,
+                    "session_id": self.session_id,
+                    "sample_id": _integer_value(values.get("sample_id")),
+                    "request_id": _integer_value(values.get("request_id")),
+                    "goal_epoch": _integer_value(values.get("goal_epoch")),
+                    "localization_epoch": _integer_value(values.get("localization_epoch")),
+                    "bundle_generation": _integer_value(values.get("bundle_generation")),
+                    "causal_planning_cycle_id": _integer_value(
+                        values.get("causal_planning_cycle_id")),
+                    "world_generation": _integer_value(values.get("world_generation")),
+                    "world_revision": _integer_value(values.get("world_revision")),
+                    "world_observation_stamp_ns": _integer_value(
+                        values.get("world_observation_stamp_ns")),
+                    "adapter_trace_sequence": trace_sequence_value,
+                    "source_stamp_ns": _integer_value(values.get("update_end_ros_ns"))
+                    or _time_ns(message.header.stamp),
+                    "trace_values": values,
+                })
+            elif status.name == "navigation_runtime/planner":
+                planner_stamp = _integer_value(values.get("execution_stamp_ns")) or _time_ns(
+                    message.header.stamp)
+                self._record("planner_trace", {
+                    "trace_source": "navigation_runtime/planner",
+                    "source_stamp_ns": planner_stamp,
+                    "values": values,
+                })
+                self._record_planner_trace_lifecycle(values, planner_stamp)
             elif status.name == "fast_lio/estimator":
                 observability_valid = self._diagnostic_bool(values, "observability_valid")
                 if observability_valid is None:
@@ -881,6 +1072,7 @@ class ExternalModeScenario:
                 witness = {
                     "valid": True,
                     "reference_event": "first_post_takeoff_valid_lio_truth_pair",
+                    "validity_scope": "localization_epoch",
                     "reference_sim_time_ns": int(self.sim_now_ns),
                     "reference_source_stamp_ns": int(reference_source_stamp_ns),
                     "lio_localization_epoch": int(lio_reference["localization_epoch"]),
@@ -1007,9 +1199,30 @@ class ExternalModeScenario:
         mode_was_active = getattr(self, "mode_active", self.mode_entered)
         if self.external_mode_id is not None and nav_state == self.external_mode_id:
             if not mode_was_active:
+                self._activation_sequence = getattr(self, "_activation_sequence", 0) + 1
+                runtime_instance_id = getattr(self, "runtime_instance_id", "unknown")
+                self._activation_instance_id = (
+                    f"{runtime_instance_id}:activation:{self._activation_sequence}"
+                )
+                latest_pva = getattr(self, "latest_pva_command", {})
                 event = {"name": "external_mode_entered", "mode_id": self.external_mode_id}
                 self.events.append(event)
                 self._record("event", event)
+                self._record_lifecycle(
+                    # Entering PX4 External Mode is not proof that a
+                    # trajectory bundle became active. Keep it as a separate
+                    # observation; bundle activation is recorded at the
+                    # runtime execution-timeline boundary below.
+                    "mode_activate", "OBSERVED", mode_id=self.external_mode_id,
+                    activation_instance_id=self._activation_instance_id,
+                    request_id=latest_pva.get("request_id"),
+                    goal_epoch=latest_pva.get("goal_epoch"),
+                    localization_epoch=latest_pva.get("localization_epoch"),
+                    bundle_generation=latest_pva.get("trajectory_generation"),
+                    sample_id=latest_pva.get("sample_id"),
+                    causal_planning_cycle_id=latest_pva.get(
+                        "causal_planning_cycle_id"),
+                )
                 self.mode_entered_sim_ns = self.sim_now_ns
             self.mode_entered = True
             self.mode_active = True
@@ -1026,12 +1239,20 @@ class ExternalModeScenario:
             event = {"name": "external_mode_exit_observed", "nav_state": nav_state, "executor_in_charge": int(message.executor_in_charge)}
             self.events.append(event)
             self._record("event", event)
+            self._record_lifecycle(
+                "deactivate", "OBSERVED", mode_id=self.external_mode_id,
+                nav_state=nav_state,
+            )
         elif active_before_status and nav_state != self.external_mode_id and not self.mode_exit_observed:
             self.mode_exit_observed = True
             self.exit_request_sim_ns = getattr(self, "sim_now_ns", 0)
             event = {"name": "external_mode_exit_observed", "nav_state": nav_state}
             self.events.append(event)
             self._record("event", event)
+            self._record_lifecycle(
+                "deactivate", "OBSERVED", mode_id=self.external_mode_id,
+                nav_state=nav_state,
+            )
             self.mode_active = False
             if (
                 self.execution == "mission"
@@ -1085,6 +1306,7 @@ class ExternalModeScenario:
 
     def _navigation_command(self, message: Any) -> None:
         """Observe the native planner backend PVA contract used for PX4 setpoints."""
+        arrival_steady_ns = time.monotonic_ns()
         finite = lambda value: math.isfinite(float(value))
         header_ns = _time_ns(message.header.stamp)
         valid_until_ns = _time_ns(message.valid_until)
@@ -1107,6 +1329,41 @@ class ExternalModeScenario:
             ))
         )
         self.pva_command_received += 1
+        authorization = int(getattr(
+            message, "execution_authorization",
+            self.NavigationCommand.EXECUTION_AUTHORIZATION_UNSPECIFIED,
+        ))
+        if authorization in {
+            self.NavigationCommand.EXECUTION_AUTHORIZATION_GRANTED,
+            self.NavigationCommand.EXECUTION_AUTHORIZATION_REJECTED,
+        }:
+            self._record_lifecycle(
+                "authorize",
+                "AUTHORIZED"
+                if authorization == self.NavigationCommand.EXECUTION_AUTHORIZATION_GRANTED
+                else "REJECTED",
+                source_stamp_ns=header_ns if header_ns > 0 else None,
+                sample_id=int(message.sample_id),
+                request_id=int(message.request_id),
+                bundle_generation=int(getattr(message, "bundle_generation", 0)),
+                localization_epoch=int(message.localization_epoch),
+                goal_epoch=int(message.goal_epoch),
+                causal_planning_cycle_id=int(getattr(message, "causal_planning_cycle_id", 0)),
+                bundle_owner_request_id=int(message.request_id),
+                bundle_owner_cycle_id=int(getattr(message, "causal_planning_cycle_id", 0)),
+                authorization_boundary="execution_timeline_publish_if_current",
+                authorization_steady_ns=int(getattr(
+                    message, "execution_authorization_steady_ns", 0)),
+                world_generation=int(message.world_generation),
+                world_revision=int(message.world_revision),
+                world_observation_stamp_ns=world_stamp_ns,
+            )
+        else:
+            self._record("evidence_gap", {
+                "reason": "execution_authorization_witness_missing",
+                "sample_id": int(message.sample_id),
+                "request_id": int(message.request_id),
+            })
         if not valid:
             self.pva_command_failure_count += 1
             self._record("pva_command_failure", {"sample_id": int(message.sample_id)})
@@ -1124,6 +1381,14 @@ class ExternalModeScenario:
         else:
             self.trajectory_success_count += 1
         self.latest_pva_command = {
+            # These are the source timestamps already used by validation. They
+            # must remain distinct from the observer's sim-time envelope.
+            "stamp_ns": header_ns,
+            "source_clock": "ros_time",
+            "frame_id": str(message.header.frame_id),
+            "valid_until_ns": valid_until_ns,
+            "state_source_stamp_ns": state_stamp_ns,
+            "world_observation_stamp_ns": world_stamp_ns,
             "trajectory_id": int(message.sample_id),
             "trajectory_generation": int(getattr(message, "bundle_generation", 0)),
             "trajectory_time_s": float(getattr(message, "trajectory_time_s", 0.0)),
@@ -1132,6 +1397,16 @@ class ExternalModeScenario:
             "mission_id": str(message.mission_id),
             "waypoint_index": int(message.waypoint_index),
             "request_id": int(message.request_id),
+            "runtime_instance_id": self.runtime_instance_id,
+            "session_id": self.session_id,
+            "localization_epoch": int(message.localization_epoch),
+            "goal_epoch": int(message.goal_epoch),
+            "bundle_generation": int(getattr(message, "bundle_generation", 0)),
+            "causal_planning_cycle_id": int(getattr(message, "causal_planning_cycle_id", 0)),
+            "execution_authorization": authorization,
+            "execution_authorization_steady_ns": int(getattr(
+                message, "execution_authorization_steady_ns", 0)),
+            "sample_id": int(message.sample_id),
             "analytic_sample_role": int(getattr(
                 message, "analytic_sample_role",
                 self.NavigationCommand.ANALYTIC_ROLE_UNKNOWN)),
@@ -1206,9 +1481,10 @@ class ExternalModeScenario:
         record_index = self._trajectory_record_indices.get(record_key)
         if record_index is None:
             trajectory = {
+                "purpose": "display_preview",
                 "mission_id": mission_id,
                 "waypoint_index": waypoint_index,
-                "request_id": int(message.sample_id),
+                "request_id": int(message.request_id),
                 "trajectory_id": int(message.sample_id),
                 "trajectory_flag": int(message.role),
                 "analytic_sample_role": int(getattr(
@@ -1261,7 +1537,10 @@ class ExternalModeScenario:
             previous = trajectory.get("pillar_min_distance_m")
             trajectory["pillar_min_distance_m"] = distance if previous is None else min(previous, distance)
         self.latest_trajectory = dict(trajectory)
-        self._record("pva_command", self.latest_pva_command)
+        self._record(
+            "pva_command", self.latest_pva_command,
+            arrival_steady_ns=arrival_steady_ns,
+        )
 
     def _mission_complete(self, message: Any) -> None:
         if bool(message.data):
@@ -1400,6 +1679,13 @@ class ExternalModeScenario:
             "z": float(message.target.z),
         }
         self._record("goal", self.latest_goal)
+        self._record_lifecycle(
+            "request", "PUBLISHED",
+            source_stamp_ns=_time_ns(message.header.stamp),
+            mission_id=str(message.mission_id),
+            waypoint_index=waypoint_index,
+            request_id=int(message.request_id),
+        )
 
     def _local_position(self, message: Any) -> None:
         speed = math.sqrt(sum(float(value) ** 2 for value in (message.vx, message.vy, message.vz)))
@@ -1556,6 +1842,8 @@ class ExternalModeScenario:
                 "acceleration_ned": _json_vector(message.acceleration),
                 "yaw_ned_rad": float(message.yaw) if yaw_finite else None,
                 "yaw_rate_ned_rad_s": float(message.yawspeed) if yaw_rate_finite else None,
+                "attribution": "unresolved_topic_observation",
+                "topic": "/fmu/in/trajectory_setpoint",
             })
 
     def _ack(self, message: Any) -> None:
@@ -1834,6 +2122,17 @@ class ExternalModeScenario:
         route.measured_lateral_error_m = 0.0
         self.goal_pub.publish(message)
         self.goal_publish_count += 1
+        # This is the producer boundary for the planning request.  The
+        # subscription callback below may observe the same topic message, but
+        # lifecycle attribution must not depend on that transport observation.
+        self._record_lifecycle(
+            "request", "PUBLISHED",
+            source_stamp_ns=_time_ns(message.header.stamp),
+            mission_id=route_id,
+            waypoint_index=message.waypoint_index,
+            request_id=message.request_id,
+            request_boundary="goal_publisher",
+        )
         self.latest_goal = goal
         self.last_goal_ns = self.sim_now_ns
         self._record("goal", {"frame_id": message.header.frame_id, **goal})
@@ -2202,6 +2501,11 @@ class ExternalModeScenario:
         if self.finished:
             return
         self.finished = True
+        self._record("event", {
+            "name": "scenario_finished",
+            "outcome": reason,
+            "terminal_marker": True,
+        })
         failures = [self.failure] if self.failure else []
         warnings: list[str] = []
         expected_outcome = str(self.config.get("expected_outcome", "complete"))
@@ -2272,8 +2576,18 @@ class ExternalModeScenario:
             "reason": reason,
             "outcome": self.terminal_outcome or reason,
             "expected_outcome": expected_outcome,
+            "session_id": self.session_id,
+            "runtime_instance_id": self.runtime_instance_id,
+            "terminal_marker": True,
             "map_seed": self.config.get("map_seed", 0),
             "duration_s": self.sim_elapsed_s(),
+            "mission_completion_time_s": (
+                (self.mission_complete_sim_ns - self.sim_start_ns) / 1e9
+                if self.mission_complete_sim_ns is not None
+                and self.sim_start_ns is not None
+                and self.mission_complete_sim_ns >= self.sim_start_ns
+                else None
+            ),
             "wall_elapsed_s": time.monotonic() - self.wall_start,
             "external_mode_id": self.external_mode_id,
             "trajectory_received": self.trajectory_received,
@@ -2466,8 +2780,11 @@ class ExternalModeScenario:
                 failures.append("vehicle did not reach stable takeoff altitude")
             if summary["outcome"] not in {"COMPLETE", "ABORTED_OPERATOR", "PAUSED_SAFETY_STOP"}:
                 failures.append(f"unexpected terminal outcome: {summary['outcome']}")
+        writer_stats = self._evidence_writer.close().as_dict()
+        summary["evidence_writer"] = writer_stats
+        summary["capture_complete"] = bool(writer_stats["capture_complete"])
+        summary["dropped_records"] = int(writer_stats["dropped_records"])
         self.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        self.stream.close()
 
 
 def run(output: Path, config_path: Path) -> int:

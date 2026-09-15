@@ -21488,3 +21488,86 @@ release profiles must not use the former allowance.
   regression and passes snapshot/certificate parity.
 - **Verification:** Release build, runtime contract tests, and report parsing
   of the explicit validity field. Qualification gates remain unchanged.
+
+### 2026-09-15 - Bounded runtime evidence and versioned offline evaluation
+
+- **Owner/status:** Runtime evidence, external-mode boundary and offline
+  evaluator; `IMPLEMENTED`, diagnostic-only.
+- **Scope:** Define the metric-to-source contract, preserve source timestamps,
+  frame and identity witnesses, move JSONL serialization/file I/O to bounded
+  owner-managed writer queues, add lifecycle request/authorize/export/
+  activate/publish events including reject paths, and add the versioned
+  evaluator/report view. PX4 input trace handoff uses a fixed-size
+  `navigation_common` SPSC queue; the runtime owner accounts for drops.
+  Qualification is limited to C0, 1--5 m/s; 6/8 m/s remain characterization,
+  12 m/s is outside C0, and tracking experiments remain excluded.
+- **Safety impact:** No planner algorithm, command authority, certificate,
+  collision predicate, deadline, threshold or flight decision is changed.
+  Queue overflow, recorder failure, missing lifecycle/source/frame/clock
+  evidence and estimator-only tracking are `NOT_EVALUABLE`/incomplete;
+  guidance-polyline deviation remains descriptive and is not an acceptance
+  gate. The evaluator cannot qualify a run unless all required dimensions are
+  PASS and evidence is complete.
+- **Evidence/removal condition:** Keep the contract and raw-vs-display split
+  while reports consume these artifacts. Revisit the PX4 queue/recorder only
+  after A/B artifacts, fault tests and repeated runtime traces show bounded
+  producer overhead, zero unexplained loss and correct shutdown ownership.
+  Remove compatibility labels only after supported historical artifacts have
+  the corresponding source fields.
+- **Verification:**
+  `python3 -m pytest -q tools/runtime/tests/test_evaluation.py
+  tools/runtime/tests/test_evidence_writer.py
+  tools/runtime/tests/test_html_report.py
+  tools/runtime/tests/test_evidence_contract.py
+  tools/runtime/tests/test_planner_trace.py
+  tools/runtime/tests/test_runtime_contract.py`;
+  `python3 tools/runtime/benchmark_evidence_writer.py --output
+  <session>/benchmark_evidence_writer.json`; C++ common/PX4 tests and the
+  canonical Release build remain required before runtime qualification.
+
+### 2026-09-15 - Close evidence attribution blockers before re-review
+
+- **Owner/status:** Runtime evidence and offline evaluator; `IMPLEMENTED`,
+  correctness gate for qualification evidence.
+- **Scope:** Evidence records are snapshotted at enqueue with bounded supported
+  schema types and explicit snapshot/queue/serialization/write accounting.
+  Final writer summaries also preserve bounded per-record-category submitted,
+  accepted, written and dropped denominators. PX4 input traces expose queue
+  loss and publication errors; gaps or nonzero loss make the session evidence
+  incomplete. Monitor sample rows retain per-stream recorded, accepted,
+  rejected and normalized denominators; rejected required ground-truth rows
+  are explicit incomplete evidence. Navigation-command authorization is stamped by the runtime only
+  inside the final execution-timeline publication callback; the downstream
+  observer no longer manufactures an authorization decision from message shape.
+  Lifecycle reduction joins only producer-declared runtime, session, request,
+  cycle, bundle, command and adapter identities; topic-only setpoint
+  observations are unresolved. The runtime planner trace now emits the
+  request-to-planning-cycle identity explicitly; a cycle-less request cannot
+  be attached to a later bundle, contradictory authorization/world payloads
+  are conflicts independent of recorder order, and one valid transaction
+  cannot hide another incomplete transaction. Tracking qualification
+  separately requires source-time, a mapped common clock domain, an applied
+  frame transform, reference-lineage, valid nonzero time-coverage policy,
+  explicit acceptance thresholds with provenance, and capture completion
+  witnesses. Frame transforms are applied to position and velocity rather
+  than merely checked for presence. Motion metrics remain descriptive and
+  `NOT_EVALUABLE` for qualification until a separate acceptance policy is
+  pinned from distribution evidence. Explicit assessment/evidence status
+  fields preserve known safety FAIL results when evidence is incomplete.
+- **Safety impact:** No flight decision, planner algorithm, tuning value or
+  threshold is changed. Runs can lose qualification eligibility because
+  missing or contradictory evidence is surfaced instead of being guessed.
+  Missing/malformed recorder counters, category totals, JSONL rows, source
+  clocks, timestamp ordering, terminal events or artifact line counts fail
+  closed. JSON and HTML verdicts validate evaluator aggregate/dimension
+  consistency and never coerce string booleans into qualification authority.
+  Diagnostic metric values remain available where raw samples support them.
+- **Evidence/removal condition:** Keep these guards until independent review
+  confirms immutable payload ownership, causal lifecycle attribution, valid
+  source/frame/coverage/completion witnesses and JSON--HTML canonical
+  relation tests. Do not run benchmark interpretation or C0 qualification as
+  acceptance evidence before that review and the required integration tests.
+- **Verification:** Targeted snapshot, lifecycle, tracking/completeness and
+  JSON--HTML relation tests; full Python runtime tests; C++ package build/tests;
+  rerun the producer smoke benchmark only after the snapshot change. Review
+  must use the current dirty-worktree snapshot, not checkpoint c4e70ba.

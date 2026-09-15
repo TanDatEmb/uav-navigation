@@ -11,6 +11,7 @@ sys.path.insert(0, str(RUNTIME))
 import analyze_closed_loop_characterization as characterization
 import analyze_e5_tracking_root_cause as e5
 import closed_loop_characterization as recorder
+from evidence_contract import build_evidence_contract
 
 
 def odom(stamp=1_000_000_000, position=(0.0, 0.0, 0.0), velocity=(1.0, 0.0, 0.0),
@@ -341,6 +342,83 @@ class EvidenceContractTest(unittest.TestCase):
             result = e5.analyze(root)
             self.assertEqual(result["evidence_status"], "INSUFFICIENT_EVIDENCE")
             self.assertTrue(all(item["status"] == "INSUFFICIENT_EVIDENCE" for item in result["h8"].values()))
+
+
+class MetricSourceValidationTest(unittest.TestCase):
+    @staticmethod
+    def _inputs():
+        return {
+            "scenario": {
+                "mission_complete_observed": True,
+                "outcome": "COMPLETE",
+                "collision_count": 0,
+                "minimum_collision_clearance_m": 1.0,
+            },
+            "scenario_events": [{
+                "kind": "navigation_mode_status",
+                "payload": {"waypoint_accepted": True, "accepted_waypoint_index": 0},
+            }],
+            "pva": [{
+                "source_stamp_ns": 1_000_000_000,
+                "time_basis": "source_stamp",
+                "source_clock": "ros_time",
+                "session_id": "session-a",
+                "request_id": 1,
+                "bundle_generation": 1,
+                "sample_id": 1,
+                "position": [0.0, 0.0, 0.0],
+                "velocity": [1.0, 0.0, 0.0],
+                "frame_id": "world",
+                "trajectory_flag": 0,
+            }],
+            "streams": {"ground_truth_odometry": [{
+                "source_stamp_ns": 1_000_000_000,
+                "time_basis": "source_stamp",
+                "source_clock": "ros_time",
+                "position": [0.0, 0.0, 0.0],
+                "linear_velocity": [1.0, 0.0, 0.0],
+                "frame_id": "world",
+            }]},
+        }
+
+    @staticmethod
+    def _metric(contract, name):
+        return next(item for item in contract["metrics"] if item["metric"] == name)
+
+    def test_malformed_source_values_are_not_presence_only(self):
+        cases = (
+            ("source_stamp_ns", "1000000000", "SOURCE_TIME_INVALID"),
+            ("source_clock", "unknown", "SOURCE_CLOCK_UNVERIFIED"),
+            ("frame_id", 7, "FRAME_INVALID"),
+            ("position", [0.0, float("inf"), 0.0], "NONFINITE"),
+            ("request_id", 0, "IDENTITY_INVALID"),
+            ("sample_id", "sample-1", "IDENTITY_INVALID"),
+        )
+        for field, value, reason in cases:
+            with self.subTest(field=field):
+                data = self._inputs()
+                data["pva"][0][field] = value
+                contract = build_evidence_contract(data)
+                metric = self._metric(contract, "tracking.position_error_m")
+                source = metric["sources"][0]
+                self.assertEqual(metric["status"], "NOT_EVALUABLE")
+                self.assertIn(field, source["invalid_fields"])
+                self.assertIn(reason, source["invalid_reasons"])
+                self.assertIn(
+                    "tracking.position_error_m source incomplete",
+                    contract["qualification_missing"],
+                )
+
+    def test_missing_source_clock_and_identity_are_not_inferred(self):
+        data = self._inputs()
+        data["pva"][0].pop("source_clock")
+        data["pva"][0].pop("session_id")
+        source = self._metric(
+            build_evidence_contract(data), "tracking.position_error_m"
+        )["sources"][0]
+        self.assertEqual(source["status"], "NOT_EVALUABLE")
+        self.assertIn("source_clock", source["missing_fields"])
+        self.assertIn("session_id", source["missing_fields"])
 
 
 if __name__ == "__main__":

@@ -70,6 +70,15 @@ uint64 causal_planning_cycle_id
 uint64 causal_timestamp_ns
 uint8 emergency_candidate_commit_result
 
+# Producer-owned witness set only at the final execution-store publication
+# boundary. A receiver-side shape/freshness check must not synthesize this
+# decision when the field is unspecified.
+uint8 EXECUTION_AUTHORIZATION_UNSPECIFIED=0
+uint8 EXECUTION_AUTHORIZATION_GRANTED=1
+uint8 EXECUTION_AUTHORIZATION_REJECTED=2
+uint8 execution_authorization
+uint64 execution_authorization_steady_ns
+
 # Temporal-alignment evidence. These fields are diagnostic-only and are not
 # consumed by command admission, recovery, or PX4 control.
 uint64 evaluation_now_ns

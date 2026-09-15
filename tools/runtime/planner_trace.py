@@ -983,7 +983,10 @@ def collect_planner_trace_records(
     return sorted(records.values(), key=lambda item: (
         item.get("timestamp_s") is None,
         item.get("timestamp_s") if item.get("timestamp_s") is not None else 0.0,
-        item["record_key"],
+        # Legacy traces can contain a partially populated record key. Sort its
+        # presentation deterministically without comparing None to integers;
+        # identity validity is checked by the reducer, not hidden here.
+        tuple("" if value is None else str(value) for value in item["record_key"]),
     ))
 
 

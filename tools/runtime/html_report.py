@@ -139,13 +139,10 @@ def _acceptance_summary(
             reasons.append(
                 f"waypoint acceptance coverage incomplete: expected {expected_acceptance}, got {accepted_indices}"
             )
-        if cross_track_p95 is None:
-            reasons.append("tracking cross-track p95 is unavailable")
-        elif cross_track_p95 > threshold:
-            reasons.append(
-                f"tracking cross-track p95 exceeded {threshold:.3f} m "
-                f"(observed {cross_track_p95:.3f} m)"
-            )
+        # This value is retained for legacy artifact readers, but mission
+        # polyline distance is guidance geometry, not a tracking/acceptance
+        # gate.  Obstacle detours must be evaluated by their own corridor and
+        # collision contracts.
 
     return {
         "mission_complete_observed": scenario.get("mission_complete_observed"),
@@ -156,6 +153,8 @@ def _acceptance_summary(
         "expected_waypoint_indices": expected_acceptance,
         "initial_pass_through_skip_allowed": allow_initial_skip,
         "cross_track_p95_m": cross_track_p95,
+        "mission_guidance_deviation_xy_p95_m": cross_track_p95,
+        "cross_track_role": "legacy_descriptive_only",
         "max_cross_track_p95_m": threshold,
         "reasons": [str(reason) for reason in reasons],
     }
@@ -191,6 +190,16 @@ def _segment_distance_2d(
 
 
 def _mission_waypoints(session: Path, descriptor: dict[str, Any]) -> list[dict[str, Any]]:
+    resolved = session / "resolved_mission.yaml"
+    if resolved.is_file():
+        try:
+            import yaml
+            value = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+            waypoints = value.get("mission", {}).get("waypoints", []) if isinstance(value, dict) else []
+            if isinstance(waypoints, list):
+                return [item for item in waypoints if isinstance(item, dict) and _point(item.get("position"))]
+        except (OSError, ValueError, ImportError):
+            pass
     try:
         import yaml
         config = yaml.safe_load((session / "scenario_config.yaml").read_text(encoding="utf-8"))
@@ -518,21 +527,32 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
                     point = _point(payload.get("position"))
                     velocity = _point(payload.get("velocity"))
                     acceleration = _point(payload.get("acceleration"))
-                    if timestamp is None or point is None:
+                    source_timestamp = _sample_time_seconds({"sim_time_ns": timestamp * 1e9 if timestamp is not None else None}, payload)
+                    if source_timestamp is None or point is None:
                         continue
                     pva.append({
-                        "t": timestamp,
+                        "t": source_timestamp,
+                        "source_stamp_ns": int(round(source_timestamp * 1e9)),
                         "position": list(point),
                         "velocity": list(velocity) if velocity is not None else None,
                         "acceleration": list(acceleration) if acceleration is not None else None,
+                        "jerk": list(_point(payload.get("jerk"))) if _point(payload.get("jerk")) is not None else None,
+                        "stamp_ns": payload.get("stamp_ns"),
+                        "valid_until_ns": payload.get("valid_until_ns"),
+                        "state_source_stamp_ns": payload.get("state_source_stamp_ns"),
+                        "frame_id": payload.get("frame_id"),
+                        "localization_epoch": payload.get("localization_epoch"),
+                        "goal_epoch": payload.get("goal_epoch"),
+                        "request_id": payload.get("request_id"),
+                        "mission_id": payload.get("mission_id", current_goal.get("mission_id")),
+                        "waypoint_index": payload.get("waypoint_index", current_goal.get("waypoint_index")),
+                        "analytic_sample_role": payload.get("analytic_sample_role"),
                         "trajectory_id": payload.get("trajectory_id"),
                         "trajectory_flag": payload.get("trajectory_flag"),
                         "trajectory_status": payload.get("trajectory_status"),
                         "trajectory_generation": payload.get("trajectory_generation"),
                         "trajectory_time_s": payload.get("trajectory_time_s"),
                         "executable": payload.get("executable"),
-                        "waypoint_index": current_goal.get("waypoint_index"),
-                        "mission_id": current_goal.get("mission_id"),
                     })
                 elif kind == "lidar_observation":
                     observation = dict(payload)
@@ -701,6 +721,10 @@ def _runtime_observability(session: Path, limit: int = 900) -> dict[str, Any]:
         "diagnostics": diagnostics,
         "timing": timing,
         "health": health,
+        # Keep raw PVA for offline metrics and expose a separate decimated
+        # view for charts.  No evaluator may consume the display view.
+        "raw_pva": pva,
+        "raw_pva_count": len(pva),
         "pva": _sampled_dicts(pva, limit),
         "setpoints": _sampled_dicts(setpoints, limit),
         "goals": goals,
@@ -1037,13 +1061,27 @@ def _velocity_tracking_summary(
         if not measured_times:
             continue
         index = bisect.bisect_left(measured_times, command_time)
-        candidates = [index]
-        if index > 0:
-            candidates.append(index - 1)
-        nearest = min(candidates, key=lambda candidate: abs(measured_times[candidate] - command_time))
-        if abs(measured_times[nearest] - command_time) > match_window_s:
+        if index < len(measured_times) and measured_times[index] == command_time:
+            left = right = measured[index]
+            alpha = 0.0
+        elif index <= 0 or index >= len(measured_times):
+            # The command is outside the measured source-time domain.  Do not
+            # extrapolate through the head or tail of the ground-truth stream.
             continue
-        measured_velocity = _point(measured[nearest].get("velocity"))
+        else:
+            left, right = measured[index - 1], measured[index]
+            bracket_gap = float(right["t"]) - float(left["t"])
+            if bracket_gap <= 0.0 or bracket_gap > match_window_s:
+                continue
+            alpha = (command_time - float(left["t"])) / bracket_gap
+        left_velocity = _point(left.get("velocity"))
+        right_velocity = _point(right.get("velocity"))
+        if left_velocity is None or right_velocity is None:
+            continue
+        measured_velocity = tuple(
+            (1.0 - alpha) * left_velocity[axis] + alpha * right_velocity[axis]
+            for axis in range(3)
+        )
         if measured_velocity is None:
             continue
         command_speed = math.sqrt(sum(value * value for value in command_velocity))
@@ -1190,7 +1228,7 @@ def _analyze(session: Path) -> dict[str, Any]:
         "records": planner_trace_records,
     }
     velocity_tracking = _velocity_tracking_summary(
-        ground_truth, observability.get("pva", [])
+        ground_truth, observability.get("raw_pva", observability.get("pva", []))
     )
     oscillation = _oscillation_summary(
         ground_truth, observability.get("goals", [])
@@ -1259,6 +1297,7 @@ def _analyze(session: Path) -> dict[str, Any]:
         },
         "tracking": {
             "cross_track_error_m": _summary(tracking_errors),
+            "mission_guidance_deviation_xy_m": _summary(tracking_errors),
             "speed_mps": _summary(speeds),
             "speed_acceleration_mps2": _summary(acceleration),
             "heading_rate_rad_s": _summary(heading_rates),

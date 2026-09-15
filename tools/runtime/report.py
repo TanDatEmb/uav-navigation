@@ -24,9 +24,82 @@ from planner_trace import (
     planner_timing_is_current,
     planner_trace_summary,
 )
+from evaluation import evaluate_session, load_evaluation_inputs
 
 
 VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT_RUN", "OBSERVATION_COMPLETE"}
+_REQUIRED_EVALUATION_DIMENSIONS = (
+    "mission", "safety", "tracking", "motion_quality", "evidence",
+)
+_EVALUATION_DIMENSION_STATUSES = {"PASS", "FAIL", "NOT_EVALUABLE", "INCOMPLETE"}
+
+
+def _versioned_evaluation_guard(evaluation: Any) -> list[str]:
+    """Validate evaluator-owned aggregate fields before exposing success.
+
+    The report boundary must not infer qualification from a truthy string or
+    from a partial dimensions mapping.  This deliberately mirrors the
+    evaluator's required-dimension contract without changing evaluator code.
+    """
+    reasons: list[str] = []
+    if not isinstance(evaluation, dict):
+        return ["versioned evaluation is missing or malformed"]
+    dimensions = evaluation.get("dimensions")
+    if not isinstance(dimensions, dict):
+        reasons.append("versioned evaluation dimensions are missing or malformed")
+        dimensions = {}
+    statuses: list[str] = []
+    for name in _REQUIRED_EVALUATION_DIMENSIONS:
+        item = dimensions.get(name)
+        if not isinstance(item, dict):
+            reasons.append(f"versioned evaluation dimension missing or malformed: {name}")
+            statuses.append("NOT_EVALUABLE")
+            continue
+        status = item.get("status")
+        if not isinstance(status, str) or status.upper() not in _EVALUATION_DIMENSION_STATUSES:
+            reasons.append(f"versioned evaluation dimension status invalid: {name}")
+            statuses.append("NOT_EVALUABLE")
+            continue
+        statuses.append(status.upper())
+
+    assessment = evaluation.get("assessment_status")
+    assessment = assessment.upper() if isinstance(assessment, str) else ""
+    expected_assessment = (
+        "FAIL" if "FAIL" in statuses
+        else "PASS" if statuses and all(status == "PASS" for status in statuses)
+        else "NOT_EVALUABLE"
+    )
+    if assessment not in _EVALUATION_DIMENSION_STATUSES:
+        reasons.append("versioned evaluation assessment status is missing or invalid")
+    elif assessment != expected_assessment:
+        reasons.append(
+            f"versioned evaluation assessment contradicts required dimensions: "
+            f"{assessment} != {expected_assessment}"
+        )
+
+    evidence_status = evaluation.get("evidence_status")
+    evidence_status = evidence_status.upper() if isinstance(evidence_status, str) else ""
+    evidence_dimension = statuses[-1] if statuses else "NOT_EVALUABLE"
+    expected_evidence = "COMPLETE" if evidence_dimension == "PASS" else "INCOMPLETE"
+    if evidence_status not in {"COMPLETE", "INCOMPLETE"}:
+        reasons.append("versioned evaluation evidence status is missing or invalid")
+    elif evidence_status != expected_evidence:
+        reasons.append(
+            f"versioned evaluation evidence status contradicts evidence dimension: "
+            f"{evidence_status} != {expected_evidence}"
+        )
+
+    eligibility = evaluation.get("qualification_eligible")
+    if type(eligibility) is not bool:
+        reasons.append("versioned evaluation qualification_eligible is not a boolean")
+    qualification_reasons = evaluation.get("qualification_reasons", [])
+    if eligibility is True and (
+        not isinstance(qualification_reasons, list) or qualification_reasons
+    ):
+        reasons.append(
+            "versioned evaluation eligibility contradicts qualification reasons"
+        )
+    return reasons
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -422,7 +495,8 @@ def _mission_waypoints_for_acceptance(
     scenario = scenario_config.get("scenario", {})
     if not isinstance(scenario, dict):
         return []
-    mission_file = scenario.get("mission_file")
+    session_resolved = session / "resolved_mission.yaml"
+    mission_file = session_resolved if session_resolved.is_file() else scenario.get("mission_file")
     if not mission_file:
         return []
     mission_path = Path(str(mission_file))
@@ -481,8 +555,9 @@ def _mission_acceptance(
 
     ``scenario.json`` is an observation produced by the runner and may contain
     an optimistic terminal outcome. This gate is intentionally report-owned so
-    a missing completion event, incomplete waypoint coverage, or bad tracking
-    cannot become a quality PASS merely because the process exited cleanly.
+    a missing completion event or incomplete waypoint coverage cannot become a
+    mission PASS merely because the process exited cleanly.  Route-polyline
+    distance is retained as descriptive guidance evidence and is not a gate.
     Fail-closed scenarios are excluded because not completing the mission is
     their expected result.
     """
@@ -609,14 +684,11 @@ def _mission_acceptance(
     )
     result["cross_track_error_p95_m"] = cross_track_p95
     result["cross_track_sample_count"] = sample_count
-    if cross_track_p95 is None:
-        reasons.append("tracking cross-track p95 is unavailable")
-    elif cross_track_p95 > result["max_cross_track_p95_m"]:
-        reasons.append(
-            "tracking cross-track p95 exceeded "
-            f"{result['max_cross_track_p95_m']:.3f} m "
-            f"(observed {cross_track_p95:.3f} m)"
-        )
+    # Retain the legacy field for old consumers, but this geometry is a
+    # guidance-deviation description only.  It is not a mission acceptance
+    # gate: a valid obstacle detour is allowed to be farther from the soft
+    # waypoint polyline than the straight route.
+    result["mission_guidance_deviation_xy_p95_m"] = cross_track_p95
     if str(scenario.get("outcome", "")) != "COMPLETE":
         reasons.append(f"mission did not reach COMPLETE outcome: {scenario.get('outcome', 'UNKNOWN')}")
     return result
@@ -3485,6 +3557,23 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     descriptor = _load_json(session / "map_descriptor.json", {})
     if descriptor:
         report["map"] = descriptor
+    evaluation_inputs = load_evaluation_inputs(session, config)
+    report["evaluation"] = evaluate_session(evaluation_inputs)
+    evaluation_guard_reasons = _versioned_evaluation_guard(report["evaluation"])
+    evaluator = report["evaluation"] if isinstance(report["evaluation"], dict) else {}
+    evaluator_eligible = evaluator.get("qualification_eligible")
+    if report.get("verdict") == "PASS" and (
+        evaluation_guard_reasons
+        or evaluator.get("assessment_status") != "PASS"
+        or evaluator_eligible is not True
+    ):
+        report["verdict"] = "FAIL"
+        report.setdefault("reasons", []).extend(evaluation_guard_reasons)
+        if evaluator.get("assessment_status") != "PASS":
+            report["reasons"].append("versioned evaluation assessment is not PASS")
+        if evaluator_eligible is not True:
+            report["reasons"].append("versioned evaluation is not qualification eligible")
+        report["reasons"] = _dedupe_reasons(report["reasons"])
     if observation_complete:
         # Observation completion is a lifecycle fact, not an acceptance
         # verdict. Preserve the evaluated stream/mission reasons so an

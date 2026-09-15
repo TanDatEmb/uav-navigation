@@ -18,6 +18,8 @@ import signal
 import time
 from typing import Any, Callable
 
+from evidence_writer import EvidenceWriter
+
 
 # Gazebo simulation time starts near zero. PX4 can briefly publish wall-clock
 # timestamps before its simulation clock is active; those samples must not
@@ -101,6 +103,7 @@ class StreamStats:
     stale_after_s: float = 1.0
     timestamp_upper_bound_ns: int | None = None
     interval_history_enabled: bool = True
+    interval_history_limit: int = 4096
     received: int = 0
     first_stamp_ns: int = 0
     last_stamp_ns: int = 0
@@ -188,6 +191,8 @@ class StreamStats:
                     self.maximum_source_gap_ms = max(self.maximum_source_gap_ms, delta_ms)
                     if self.interval_history_enabled:
                         self.intervals_ms.append(delta_ms)
+                        if self.interval_history_limit > 0:
+                            del self.intervals_ms[:-self.interval_history_limit]
             if not self.first_stamp_ns:
                 self.first_stamp_ns = stamp_ns
             if stamp_ns > self.maximum_stamp_ns:
@@ -277,6 +282,7 @@ def _odom_payload(message: Any) -> dict[str, Any]:
     angular = getattr(twist, "angular", None)
     return {
         "stamp_ns": _message_stamp_ns(message),
+        "source_clock": "ros_time",
         "frame_id": str(getattr(getattr(message, "header", None), "frame_id", "")),
         "child_frame_id": str(getattr(message, "child_frame_id", "")),
         "position": [_finite(getattr(position, name, None)) for name in ("x", "y", "z")],
@@ -363,7 +369,9 @@ def _px4_actuator_motors_payload(message: Any) -> dict[str, Any]:
     }
 
 
-def _pointcloud_payload(message: Any) -> tuple[dict[str, Any], int]:
+def _pointcloud_payload(
+    message: Any, *, metadata_only: bool = False
+) -> tuple[dict[str, Any], int]:
     payload: dict[str, Any] = {
         "stamp_ns": _message_stamp_ns(message),
         "frame_id": str(getattr(getattr(message, "header", None), "frame_id", "")),
@@ -371,6 +379,10 @@ def _pointcloud_payload(message: Any) -> tuple[dict[str, Any], int]:
         "height": int(getattr(message, "height", 0)),
         "is_dense": bool(getattr(message, "is_dense", False)),
     }
+    if metadata_only:
+        payload["point_payload_checked"] = False
+        payload["point_payload_validity"] = "NOT_CHECKED"
+        return payload, 0
     nonfinite_points = 0
     try:
         from sensor_msgs_py import point_cloud2
@@ -524,7 +536,20 @@ class RuntimeMonitor:
         self.output.mkdir(parents=True, exist_ok=True)
         self.samples_path = output / "samples.jsonl"
         self.latest_path = output / "monitor.json"
-        self._sample_stream = self.samples_path.open("a", encoding="utf-8")
+        self._sample_stream = None  # retained only for isolated legacy tests
+        runtime_config = config.get("runtime", {})
+        self.pointcloud_metadata_only = str(
+            runtime_config.get("pointcloud_payload_mode", "metadata_only")
+        ).lower() == "metadata_only"
+        self._evidence_writer = EvidenceWriter(
+            self.samples_path,
+            capacity=int(runtime_config.get("monitor_evidence_queue_capacity", 4096)),
+            batch_size=int(runtime_config.get("monitor_evidence_batch_size", 128)),
+        )
+        self._last_graph_query_ns = 0
+        self._last_snapshot_wall_ns = 0
+        self._graph_query_period_ns = 2_000_000_000
+        self._snapshot_period_ns = 1_000_000_000
         self._rclpy = rclpy
         self.node = Node("uav_navigation_runtime_monitor")
         thresholds = config.get("runtime", {}).get("thresholds", {})
@@ -583,7 +608,7 @@ class RuntimeMonitor:
                 "angular_velocity": [_finite(m.angular_velocity.x), _finite(m.angular_velocity.y), _finite(m.angular_velocity.z)],
                 "linear_acceleration": [_finite(m.linear_acceleration.x), _finite(m.linear_acceleration.y), _finite(m.linear_acceleration.z)],
             }),
-            TopicSpec("lidar", str(self.config["fast_lio"]["ros__parameters"]["input"]["lidar_topic"]), PointCloud2, lambda m: _pointcloud_payload(m)[0]),
+            TopicSpec("lidar", str(self.config["fast_lio"]["ros__parameters"]["input"]["lidar_topic"]), PointCloud2, lambda m: _pointcloud_payload(m, metadata_only=self.pointcloud_metadata_only)[0]),
             TopicSpec("corrected_odometry", "/lio/odometry_corrected", Odometry, _odom_payload),
             TopicSpec(
                 "propagated_odometry",
@@ -720,11 +745,14 @@ class RuntimeMonitor:
 
     def _callback(self, spec: TopicSpec) -> Callable[[Any], None]:
         def callback(message: Any) -> None:
+            arrival_steady_ns = time.monotonic_ns()
             arrival_ns = time.time_ns()
             sampled_nonfinite_points = 0
             try:
                 if spec.name == "lidar":
-                    payload, sampled_nonfinite_points = _pointcloud_payload(message)
+                    payload, sampled_nonfinite_points = _pointcloud_payload(
+                        message, metadata_only=self.pointcloud_metadata_only
+                    )
                 else:
                     payload = spec.formatter(message)
             except (AttributeError, RuntimeError, TypeError, ValueError) as error:
@@ -765,6 +793,7 @@ class RuntimeMonitor:
                 "kind": "sample",
                 "stream": spec.name,
                 "arrival_wall_ns": arrival_ns,
+                "arrival_steady_ns": arrival_steady_ns,
                 "timestamp_ns": stamp_ns,
                 "payload": payload,
                 "accepted_by_monitor": accepted_by_monitor,
@@ -774,7 +803,14 @@ class RuntimeMonitor:
             # serializing every normal tick would perturb the scheduler being
             # measured. Other streams retain full sample history.
             if spec.name != "simulation_clock":
-                self._sample_stream.write(json.dumps(sample, sort_keys=True, allow_nan=False) + "\n")
+                writer = getattr(self, "_evidence_writer", None)
+                if writer is not None:
+                    writer.enqueue(sample, observer_record_steady_ns=arrival_steady_ns)
+                elif getattr(self, "_sample_stream", None) is not None:
+                    # Compatibility for the isolated no-ROS unit-test fixture.
+                    self._sample_stream.write(
+                        json.dumps(sample, sort_keys=True, allow_nan=False) + "\n"
+                    )
 
         return callback
 
@@ -800,11 +836,23 @@ class RuntimeMonitor:
         now_ns = time.time_ns()
         for stats in self.streams.values():
             stats.check_stale(now_ns)
-            try:
-                stats.publisher_count = len(self.node.get_publishers_info_by_topic(stats.topic))
-                stats.subscriber_count = len(self.node.get_subscriptions_info_by_topic(stats.topic))
-            except (AttributeError, RuntimeError):
-                pass
+        if now_ns - self._last_graph_query_ns >= self._graph_query_period_ns:
+            self._last_graph_query_ns = now_ns
+            for stats in self.streams.values():
+                try:
+                    stats.publisher_count = len(self.node.get_publishers_info_by_topic(stats.topic))
+                    stats.subscriber_count = len(self.node.get_subscriptions_info_by_topic(stats.topic))
+                except (AttributeError, RuntimeError):
+                    pass
+        if (
+            self._last_snapshot_wall_ns
+            and now_ns - self._last_snapshot_wall_ns < self._snapshot_period_ns
+        ):
+            return
+        self._last_snapshot_wall_ns = now_ns
+        self._write_snapshot()
+
+    def _write_snapshot(self) -> None:
         snapshot = self.snapshot()
         temporary = self.latest_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
@@ -818,11 +866,27 @@ class RuntimeMonitor:
             "latest": self.latest,
             "diagnostics": self.diagnostics,
             "blocked_topics": self.blocked_topics,
+            "evidence_writer": self._evidence_writer.stats().as_dict()
+            if hasattr(self, "_evidence_writer") else {},
+            "capture_complete": False,
         }
 
     def close(self) -> None:
         self._tick()
-        self._sample_stream.close()
+        writer = getattr(self, "_evidence_writer", None)
+        if writer is not None:
+            stats = writer.close()
+            snapshot = self.snapshot()
+            snapshot["evidence_writer"] = stats.as_dict()
+            snapshot["capture_complete"] = bool(stats.capture_complete)
+            temporary = self.latest_path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self.latest_path)
+        elif getattr(self, "_sample_stream", None) is not None:
+            self._sample_stream.close()
         self.node.destroy_node()
         self._rclpy.try_shutdown()
 

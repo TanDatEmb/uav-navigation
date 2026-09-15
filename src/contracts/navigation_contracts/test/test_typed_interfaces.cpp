@@ -114,6 +114,9 @@ TEST(NavigationContracts, NavigationCommandExposesAllProvenanceDimensions) {
   message.world_revision = 21U;
   message.bundle_generation = 34U;
   message.sample_id = 55U;
+  message.execution_authorization = navigation_contracts::msg::NavigationCommand::
+      EXECUTION_AUTHORIZATION_GRANTED;
+  message.execution_authorization_steady_ns = 89U;
   message.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
   message.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
 
@@ -127,6 +130,10 @@ TEST(NavigationContracts, NavigationCommandExposesAllProvenanceDimensions) {
   EXPECT_EQ(message.world_revision, 21U);
   EXPECT_EQ(message.bundle_generation, 34U);
   EXPECT_EQ(message.sample_id, 55U);
+  EXPECT_EQ(message.execution_authorization,
+            navigation_contracts::msg::NavigationCommand::
+                EXECUTION_AUTHORIZATION_GRANTED);
+  EXPECT_EQ(message.execution_authorization_steady_ns, 89U);
 }
 
 TEST(NavigationContracts, CommandsRequireHealthyTypedEpochHandshake) {

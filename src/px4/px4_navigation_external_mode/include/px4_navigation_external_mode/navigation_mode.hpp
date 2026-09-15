@@ -1,12 +1,16 @@
 #pragma once
 
-#include <cstdint>
+#include <atomic>
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <thread>
 
 #include <navigation_contracts/msg/navigation_goal.hpp>
 #include <tracking_experiment.hpp>
@@ -30,7 +34,10 @@
 
 #include "px4_navigation_external_mode/mission.hpp"
 #include "px4_navigation_external_mode/mission_controller.hpp"
+#include "px4_navigation_external_mode/px4_input_trace.hpp"
 #include "px4_navigation_external_mode/px4_tracking_adapter.hpp"
+#include <navigation_common/bounded_spsc_queue.hpp>
+
 #include "px4_navigation_external_mode/velocity_only_continuity.hpp"
 
 namespace px4_navigation_external_mode {
@@ -38,6 +45,7 @@ namespace px4_navigation_external_mode {
 class NavigationMode final : public px4_ros2::ModeBase {
  public:
   explicit NavigationMode(rclcpp::Node& node);
+  ~NavigationMode() override;
 
   void setPx4HoldHandover(std::function<void()> callback);
   void attachStateInputNode(rclcpp::Node& state_input_node);
@@ -83,16 +91,23 @@ class NavigationMode final : public px4_ros2::ModeBase {
   void safetyStopNavigation(const char* reason);
   void failNavigation(const char* reason);
   void logRuntimeMetrics(const rclcpp::Time& now);
-  void publishPx4InputTrace(
-      const std::optional<navigation_contracts::msg::NavigationCommand>& command,
+  [[nodiscard]] Px4InputTraceRecord makePx4InputTraceRecord(
+      const navigation_contracts::msg::NavigationCommand* command,
       const std::optional<Eigen::Vector3f>& position_ned,
       const std::optional<Eigen::Vector3f>& velocity_ned,
       const std::optional<Eigen::Vector3f>& acceleration_ned,
-      float yaw_ned, float yaw_rate_ned);
+      float yaw_ned, float yaw_rate_ned, Px4InputTraceBoundary boundary,
+      std::int64_t update_start_ros_ns, std::int64_t update_start_steady_ns,
+      std::string_view velocity_only_reason,
+      std::uint64_t velocity_only_limited_count);
+  void enqueuePx4InputTrace(Px4InputTraceRecord record);
+  void drainPx4InputTrace();
+  void publishPx4InputTrace(const Px4InputTraceRecord& record);
   void publishAlignmentLatchWitnessLocked();
   bool publishVelocityOnlySetpoint(
       const navigation_contracts::msg::NavigationCommand& command,
       const VelocityOnlySnapshot& snapshot, const rclcpp::Time& now);
+  void setVelocityOnlyLastReason(std::string_view reason);
   void requestVelocityOnlyHold(const char* reason);
   void publishStatus(std::uint8_t state, std::uint8_t reason,
                      const MissionControllerEvent* event = nullptr);
@@ -221,6 +236,18 @@ class NavigationMode final : public px4_ros2::ModeBase {
   Eigen::Vector3d last_velocity_command_enu_{Eigen::Vector3d::Zero()};
   std::uint64_t last_forward_guard_count_{0U};
   std::uint64_t px4_input_trace_sequence_{0U};
+  // Single producer: ModeBase invokes updateSetpoint(); its stationary,
+  // position-hold and velocity-only helpers are synchronous nested calls.
+  // Single consumer: px4_input_trace_worker_. Do not enqueue from ROS
+  // subscription/timer callbacks without replacing this queue contract.
+  navigation_common::BoundedSpscQueue<Px4InputTraceRecord, 256U>
+      px4_input_trace_queue_;
+  std::atomic<bool> px4_input_trace_worker_stop_{false};
+  std::thread px4_input_trace_worker_;
+  std::atomic<std::uint64_t> px4_input_trace_drop_count_{0U};
+  std::atomic<std::uint64_t> px4_input_trace_enqueued_count_{0U};
+  std::atomic<std::uint64_t> px4_input_trace_published_count_{0U};
+  std::atomic<std::uint64_t> px4_input_trace_publish_error_count_{0U};
   std::uint64_t alignment_latch_generation_{0U};
   std::optional<velocity_only::Previous> velocity_only_previous_;
   tracking_adapter::ResetCounters velocity_only_last_reset_counters_;

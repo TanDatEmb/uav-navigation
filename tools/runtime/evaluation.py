@@ -1,0 +1,1992 @@
+"""Offline navigation-quality evaluator.
+
+This module is deliberately separate from ROS callbacks and flight-control
+logic.  It consumes the session-owned evidence artifacts, computes metrics once
+from raw records, and returns a versioned assessment for ``report.py`` and the
+HTML renderer.  A missing timestamp, frame witness, epoch continuity or writer
+record is represented as ``NOT_EVALUABLE``; missing data is never converted to
+zero.
+"""
+
+from __future__ import annotations
+
+import bisect
+import json
+import math
+from pathlib import Path
+import statistics
+from typing import Any, Iterable
+
+from evidence_contract import build_evidence_contract
+from planner_trace import collect_planner_trace_records, planner_trace_summary
+
+
+EVALUATION_SCHEMA_VERSION = 1
+DEFAULT_MAX_MATCH_GAP_S = 0.15
+DEFAULT_STOP_ENTER_MPS = 0.10
+DEFAULT_STOP_EXIT_MPS = 0.20
+DEFAULT_STOP_MIN_DURATION_S = 0.20
+DEFAULT_C0_SPEED_MIN_MPS = 1.0
+DEFAULT_C0_SPEED_MAX_MPS = 5.0
+_SUCCESS_DISPOSITIONS = {
+    "PUBLISHED", "AUTHORIZED", "EXPORTED", "ACTIVATED", "OBSERVED", "SUCCESS", "ACTIVE",
+}
+_TERMINAL_REJECT_DISPOSITIONS = {"REJECTED", "FAILED", "CANCELED", "CANCELLED", "SUPERSEDED"}
+_LIFECYCLE_PHASES = {"request", "authorize", "export", "activate", "publish"}
+
+
+def _load(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def _number(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _integer(value: Any) -> int | None:
+    result = _number(value)
+    return int(result) if result is not None and result.is_integer() else None
+
+
+def _vector(value: Any, size: int = 3) -> tuple[float, ...] | None:
+    if not isinstance(value, (list, tuple)) or len(value) < size:
+        return None
+    result = tuple(_number(value[index]) for index in range(size))
+    return result if all(item is not None for item in result) else None
+
+
+def _norm(value: Iterable[float]) -> float:
+    return math.sqrt(sum(float(item) * float(item) for item in value))
+
+
+def _percentile(values: list[float], fraction: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * fraction)))
+    return ordered[index]
+
+
+def _summary(values: list[float], *, unit: str | None = None) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "count": len(values),
+        "mean": statistics.fmean(values) if values else None,
+        "rmse": math.sqrt(statistics.fmean([value * value for value in values])) if values else None,
+        "p50": _percentile(values, 0.50),
+        "p95": _percentile(values, 0.95),
+        "p99": _percentile(values, 0.99),
+        "maximum": max(values) if values else None,
+    }
+    if unit is not None:
+        result["unit"] = unit
+    return result
+
+
+def _source_stamp_ns(event: dict[str, Any], payload: dict[str, Any]) -> tuple[int | None, str]:
+    for key in ("stamp_ns", "source_stamp_ns"):
+        stamp = _integer(payload.get(key))
+        if stamp is not None and stamp > 0:
+            return stamp, "source_stamp"
+    stamp = _integer(event.get("sim_time_ns"))
+    if stamp is not None and stamp > 0:
+        return stamp, "observer_sim_time_legacy"
+    return None, "missing"
+
+
+def _source_time_status(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
+    """Validate provenance, not merely presence of a numeric timestamp."""
+    reasons: list[str] = []
+    if not rows:
+        return False, ["SOURCE_TIME_UNAVAILABLE"]
+    previous_stamp: int | None = None
+    previous_epoch: Any = None
+    for row in rows:
+        basis = str(row.get("time_basis", "unknown"))
+        stamp = _integer(row.get("source_stamp_ns"))
+        if basis == "observer_sim_time_legacy":
+            reasons.append("OBSERVER_TIME_ONLY")
+        elif basis != "source_stamp" or stamp is None or stamp <= 0:
+            reasons.append("SOURCE_TIMESTAMP_INVALID")
+        if row.get("source_clock") in (None, "", "unknown"):
+            reasons.append("CLOCK_RELATION_UNVERIFIED")
+        epoch = row.get("localization_epoch")
+        if previous_epoch is not None and epoch != previous_epoch:
+            reasons.append("SOURCE_TIME_EPOCH_CHANGE")
+            previous_stamp = None
+        if stamp is not None and stamp > 0 and previous_stamp is not None:
+            if stamp == previous_stamp:
+                reasons.append("SOURCE_TIMESTAMP_DUPLICATE")
+            elif stamp < previous_stamp:
+                reasons.append("SOURCE_TIMESTAMP_REGRESSION")
+        if stamp is not None and stamp > 0:
+            previous_stamp = stamp
+        previous_epoch = epoch
+    return not reasons, sorted(set(reasons))
+
+
+def _source_clock_relation_status(
+    reference: list[dict[str, Any]], measured: list[dict[str, Any]]
+) -> tuple[bool, list[str]]:
+    reference_clocks = {
+        str(row.get("source_clock")) for row in reference
+        if row.get("source_clock") not in (None, "", "unknown")
+    }
+    measured_clocks = {
+        str(row.get("source_clock")) for row in measured
+        if row.get("source_clock") not in (None, "", "unknown")
+    }
+    if len(reference_clocks) != 1 or len(measured_clocks) != 1:
+        return False, ["CLOCK_RELATION_UNVERIFIED"]
+    if reference_clocks != measured_clocks:
+        return False, ["CLOCK_RELATION_UNVERIFIED"]
+    return True, []
+
+
+def _record_identity(item: dict[str, Any]) -> tuple[Any, ...]:
+    """Identity used for segment boundaries; missing values stay explicit."""
+    return tuple(item.get(key) for key in (
+        "session_id", "localization_epoch", "goal_epoch", "request_id",
+        "bundle_generation", "analytic_sample_role",
+    ))
+
+
+def _present_identity(value: Any) -> bool:
+    if value is None or value == "":
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return math.isfinite(float(value)) and value > 0
+    return True
+
+
+def _lifecycle_transaction_key(event: dict[str, Any]) -> tuple[Any, ...]:
+    """Return the producer-declared transaction owner, never a guessed phase key."""
+    request_id = event.get("bundle_owner_request_id", event.get("request_id"))
+    cycle_id = event.get("bundle_owner_cycle_id", event.get("causal_planning_cycle_id"))
+    return (
+        event.get("runtime_instance_id"),
+        event.get("session_id"),
+        event.get("localization_epoch"),
+        event.get("goal_epoch"),
+        request_id,
+        cycle_id,
+    )
+
+
+def _lifecycle_consistency_signature(event: dict[str, Any]) -> tuple[Any, ...]:
+    """Fields that must not disagree for one producer event identity."""
+    return tuple(event.get(field) for field in (
+        "disposition", "runtime_instance_id", "session_id",
+        "localization_epoch", "goal_epoch", "request_id",
+        "causal_planning_cycle_id", "bundle_owner_request_id",
+        "bundle_owner_cycle_id", "bundle_generation", "sample_id",
+        "trace_sequence", "adapter_trace_sequence", "source_stamp_ns",
+        "authorization_boundary", "authorization_steady_ns",
+        "world_generation", "world_revision", "world_observation_stamp_ns",
+        "setpoint_kind", "setpoint_boundary",
+    ))
+
+
+def reduce_lifecycle(
+    events: Iterable[dict[str, Any]],
+    px4_input_trace: Iterable[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Reduce producer evidence by identity, independent of recorder order.
+
+    This is an evidence consistency reducer, not a second flight-control FSM.
+    A transaction is eligible only when its successful phases carry the same
+    runtime/session/request/cycle/bundle lineage and publish has an attributed
+    adapter trace. Repeated equal observations are deduplicated; contradictory
+    dispositions are retained as a conflict.
+    """
+    normalized = [dict(item) for item in events if isinstance(item, dict)]
+    normalized.extend(
+        dict(
+            item,
+            phase="publish",
+            disposition=str(item.get("disposition") or "OBSERVED"),
+            attribution="px4_input_trace",
+        )
+        for item in (px4_input_trace or [])
+        if isinstance(item, dict)
+        and item.get("attribution") == "px4_input_trace"
+    )
+    transactions: dict[tuple[Any, ...], dict[str, Any]] = {}
+    conflicts: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    seen: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+
+    for event in normalized:
+        phase = str(event.get("phase", ""))
+        if phase not in _LIFECYCLE_PHASES:
+            continue
+        if phase in {"request", "activate"} and not _present_identity(
+            event.get("causal_planning_cycle_id")
+        ):
+            # Request and command-timer activation evidence may not carry the
+            # planner cycle. Keep them for explicit request/bundle attachment
+            # below rather than creating a synthetic transaction key.
+            continue
+        disposition = str(event.get("disposition", "")).upper()
+        tx_key = _lifecycle_transaction_key(event)
+        transaction = transactions.setdefault(tx_key, {
+            "identity": {
+                "runtime_instance_id": tx_key[0],
+                "session_id": tx_key[1],
+                "localization_epoch": tx_key[2],
+                "goal_epoch": tx_key[3],
+                "request_id": tx_key[4],
+                "causal_planning_cycle_id": tx_key[5],
+            },
+            "events": {},
+            "events_all": {},
+            "status": "INCOMPLETE",
+            "reasons": [],
+            "terminal_outcome": None,
+        })
+        event_identity = (
+            phase,
+            tx_key,
+            event.get("bundle_generation"),
+            event.get("sample_id"),
+            event.get("trace_sequence", event.get("adapter_trace_sequence")),
+        )
+        signature = _lifecycle_consistency_signature(event)
+        if event_identity in seen:
+            if seen[event_identity] != signature:
+                conflicts.append({
+                    "phase": phase,
+                    "identity": transaction["identity"],
+                    "reason": "CONTRADICTORY_EVENT_PAYLOAD",
+                })
+                transaction["reasons"].append("CONFLICTING_EVIDENCE")
+            else:
+                continue
+        else:
+            seen[event_identity] = signature
+        transaction["events"].setdefault(phase, dict(event))
+        transaction["events_all"].setdefault(phase, []).append(dict(event))
+
+    valid_reference_ids: set[tuple[Any, ...]] = set()
+    valid_transactions: list[dict[str, Any]] = []
+    activation_events = [
+        item for item in normalized if str(item.get("phase", "")) == "activate"
+    ]
+    for transaction in transactions.values():
+        identity = transaction["identity"]
+        phase_events = transaction["events"]
+        if "activate" not in phase_events:
+            bundle_generation = phase_events.get("export", {}).get("bundle_generation")
+            for candidate in activation_events:
+                if (
+                    candidate.get("runtime_instance_id") == identity.get("runtime_instance_id")
+                    and candidate.get("session_id") == identity.get("session_id")
+                    and candidate.get("request_id") == identity.get("request_id")
+                    and candidate.get("bundle_generation") == bundle_generation
+                    and candidate.get("localization_epoch") == identity.get("localization_epoch")
+                    and candidate.get("goal_epoch") == identity.get("goal_epoch")
+                ):
+                    phase_events["activate"] = dict(candidate)
+                    break
+        if any(not _present_identity(identity.get(field)) for field in (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "goal_epoch", "request_id", "causal_planning_cycle_id",
+        )):
+            transaction["reasons"].append("LIFECYCLE_IDENTITY_MISSING")
+        request = phase_events.get("request")
+        authorize = phase_events.get("authorize")
+        export = phase_events.get("export")
+        activate = phase_events.get("activate")
+        publish = phase_events.get("publish")
+        request_disposition = str(request.get("disposition", "")).upper() if request else ""
+        if request_disposition in _TERMINAL_REJECT_DISPOSITIONS:
+            transaction["terminal_outcome"] = request_disposition
+            transaction["status"] = "VALID_REJECT" if not transaction["reasons"] else "CONFLICTING"
+            continue
+        if authorize and str(authorize.get("disposition", "")).upper() in _TERMINAL_REJECT_DISPOSITIONS:
+            transaction["terminal_outcome"] = str(authorize.get("disposition")).upper()
+            transaction["status"] = "VALID_REJECT" if not transaction["reasons"] else "CONFLICTING"
+            continue
+        required = {
+            "request": request,
+            "authorize": authorize,
+            "export": export,
+            "activate": activate,
+            "publish": publish,
+        }
+        missing = [phase for phase, value in required.items() if value is None]
+        if missing:
+            transaction["reasons"].extend(
+                f"LIFECYCLE_PHASE_INCOMPLETE:{phase}" for phase in missing
+            )
+        for phase, value in required.items():
+            if value is not None and str(value.get("disposition", "")).upper() not in _SUCCESS_DISPOSITIONS:
+                transaction["reasons"].append(f"LIFECYCLE_{phase.upper()}_NOT_SUCCESSFUL")
+        if export is not None and not _present_identity(export.get("bundle_generation")):
+            transaction["reasons"].append("BUNDLE_IDENTITY_MISSING")
+        bundle_generations = {
+            item.get("bundle_generation")
+            for phase in ("authorize", "export", "activate", "publish")
+            for item in transaction["events_all"].get(phase, [])
+            if _present_identity(item.get("bundle_generation"))
+        }
+        if len(bundle_generations) != 1:
+            transaction["reasons"].append("BUNDLE_IDENTITY_CONFLICT")
+        if publish is not None:
+            if not _present_identity(publish.get("sample_id")):
+                transaction["reasons"].append("COMMAND_IDENTITY_MISSING")
+            if not _present_identity(publish.get("adapter_trace_sequence", publish.get("trace_sequence"))):
+                transaction["reasons"].append("ADAPTER_TRACE_SEQUENCE_MISSING")
+            if not publish.get("setpoint_kind", publish.get("setpoint_boundary")):
+                transaction["reasons"].append("SETPOINT_KIND_MISSING")
+        authorize_events = transaction["events_all"].get("authorize", [])
+        publish_events = transaction["events_all"].get("publish", [])
+        valid_publishes: list[dict[str, Any]] = []
+        for publish_event in publish_events:
+            matching_authorizations = [
+                item for item in authorize_events
+                if item.get("sample_id") == publish_event.get("sample_id")
+                and item.get("bundle_generation") == publish_event.get("bundle_generation")
+                and str(item.get("disposition", "")).upper() == "AUTHORIZED"
+                and item.get("authorization_boundary") ==
+                    "execution_timeline_publish_if_current"
+                and _present_identity(item.get("authorization_steady_ns"))
+            ]
+            if not matching_authorizations:
+                transaction["reasons"].append("COMMAND_AUTHORIZATION_LINEAGE_MISSING")
+                continue
+            publish_world = (
+                publish_event.get("world_generation"),
+                publish_event.get("world_revision"),
+                publish_event.get("world_observation_stamp_ns"),
+            )
+            if any(not _present_identity(value) for value in publish_world):
+                transaction["reasons"].append("COMMAND_WORLD_IDENTITY_MISSING")
+                continue
+            if not any(
+                publish_world == (
+                    item.get("world_generation"),
+                    item.get("world_revision"),
+                    item.get("world_observation_stamp_ns"),
+                )
+                for item in matching_authorizations
+            ):
+                transaction["reasons"].append("COMMAND_WORLD_IDENTITY_MISMATCH")
+                continue
+            valid_publishes.append(publish_event)
+        if not transaction["reasons"]:
+            transaction["status"] = "VALID"
+            valid_transactions.append(transaction)
+            for publish_event in valid_publishes:
+                valid_reference_ids.add((
+                    identity.get("request_id"),
+                    export.get("bundle_generation") if export else None,
+                    publish_event.get("sample_id"),
+                ))
+        else:
+            unresolved.append(transaction)
+
+    return {
+        "status": (
+            "CONFLICTING" if conflicts else
+            "INCOMPLETE" if unresolved else
+            "VALID" if valid_transactions else
+            "INCOMPLETE"
+        ),
+        "transactions": sorted(
+            transactions.values(),
+            key=lambda item: tuple(str(item["identity"].get(field) or "") for field in (
+                "request_id", "causal_planning_cycle_id", "goal_epoch",
+            )),
+        ),
+        "valid_transaction_count": len(valid_transactions),
+        "valid_reference_ids": [list(item) for item in sorted(valid_reference_ids, key=str)],
+        "conflicts": conflicts,
+        "unresolved": unresolved,
+        "reasons": sorted(set(
+            reason for item in transactions.values() for reason in item["reasons"]
+        ) | ({"CONFLICTING_EVIDENCE"} if conflicts else set())),
+        "order_independent": True,
+    }
+
+
+def _read_jsonl(
+    path: Path,
+    *,
+    issues: list[str] | None = None,
+    label: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.is_file():
+        return rows
+    with path.open(encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            try:
+                value = json.loads(line)
+            except ValueError:
+                if issues is not None and line.strip():
+                    issues.append(f"MALFORMED_JSONL:{label}:{line_number}")
+                continue
+            if isinstance(value, dict):
+                value.setdefault("_line_number", line_number)
+                rows.append(value)
+            elif issues is not None:
+                issues.append(f"NON_OBJECT_JSONL:{label}:{line_number}")
+    return rows
+
+
+def _mission_waypoints(session: Path, scenario: dict[str, Any]) -> list[tuple[float, float, float]]:
+    candidates = [session / "resolved_mission.yaml", session / "resolved_mission.yml"]
+    configured = scenario.get("mission_file")
+    if configured:
+        configured_path = Path(str(configured))
+        candidates.append(
+            configured_path if configured_path.is_absolute() else session / configured_path
+        )
+    for path in candidates:
+        try:
+            import yaml
+            value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (ImportError, OSError, ValueError):
+            continue
+        raw = value.get("mission", {}).get("waypoints", []) if isinstance(value, dict) else []
+        if isinstance(raw, list):
+            result = []
+            for item in raw:
+                point = _vector(item.get("position")) if isinstance(item, dict) else None
+                if point is not None:
+                    result.append(tuple(float(v) for v in point))
+            if result:
+                return result
+    return []
+
+
+def _normalize_sample(row: dict[str, Any]) -> dict[str, Any] | None:
+    payload = row.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    stamp_ns, time_basis = _source_stamp_ns(row, payload)
+    if stamp_ns is None:
+        return None
+    result = dict(payload)
+    result.update({
+        "source_stamp_ns": stamp_ns,
+        "time_basis": time_basis,
+        "source_clock": payload.get("source_clock") or "unknown",
+        "arrival_wall_ns": row.get("arrival_wall_ns"),
+        "arrival_steady_ns": row.get("arrival_steady_ns"),
+        "record_sequence": row.get("record_sequence"),
+        "stream": row.get("stream"),
+        "accepted_by_monitor": row.get("accepted_by_monitor") is True,
+    })
+    return result
+
+
+def _normalize_pva(event: dict[str, Any], session_id: str) -> dict[str, Any] | None:
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    stamp_ns, time_basis = _source_stamp_ns(event, payload)
+    if stamp_ns is None:
+        return None
+    result = dict(payload)
+    result.update({
+        "source_stamp_ns": stamp_ns,
+        "time_basis": time_basis,
+        "source_clock": payload.get("source_clock") or "unknown",
+        "record_sim_time_ns": event.get("sim_time_ns"),
+        "observer_record_steady_ns": event.get("observer_record_steady_ns"),
+        "record_sequence": event.get("record_sequence"),
+        "session_id": session_id,
+    })
+    return result
+
+
+def _writer_integrity(
+    label: str,
+    value: dict[str, Any],
+    *,
+    require_terminal: bool,
+) -> list[str]:
+    reasons: list[str] = []
+    if "capture_complete" not in value:
+        reasons.append("CAPTURE_NOT_FINALIZED")
+    elif value.get("capture_complete") is not True:
+        reasons.append("CAPTURE_NOT_FINALIZED")
+    counter_fields = (
+        "submitted_records", "accepted_records", "written_records",
+        "pending_records", "dropped_records", "snapshot_rejected_records",
+        "queue_full_drop_records", "closed_rejected_records",
+        "serialization_error_count", "write_error_count",
+    )
+    counters: dict[str, int] = {}
+    for field in counter_fields:
+        raw = value.get(field)
+        parsed = None if isinstance(raw, bool) else _integer(raw)
+        if parsed is None or parsed < 0:
+            reasons.append("WRITER_COUNTER_INVALID")
+        else:
+            counters[field] = parsed
+    for field, reason in (
+        ("snapshot_rejected_records", "SNAPSHOT_REJECTED"),
+        ("queue_full_drop_records", "QUEUE_FULL_DROP"),
+        ("closed_rejected_records", "CLOSED_REJECTED"),
+        ("serialization_error_count", "SERIALIZATION_ERROR"),
+        ("write_error_count", "WRITE_ERROR"),
+    ):
+        if counters.get(field, 0) > 0:
+            reasons.append(reason)
+    if counters.get("dropped_records", 0) > 0:
+        reasons.append("EVIDENCE_DROP")
+    if all(field in counters for field in counter_fields):
+        submitted = counters["submitted_records"]
+        accepted = counters["accepted_records"]
+        written = counters["written_records"]
+        dropped = counters["dropped_records"]
+        pending = counters["pending_records"]
+        if submitted != accepted + dropped:
+            reasons.append("WRITER_SUBMISSION_ACCOUNTING_MISMATCH")
+        if accepted != written or pending != max(0, accepted - written):
+            reasons.append("WRITER_ACCOUNTING_MISMATCH")
+    category_counters = value.get("records_by_category")
+    if not isinstance(category_counters, dict):
+        reasons.append("WRITER_CATEGORY_ACCOUNTING_INVALID")
+    else:
+        category_totals = {
+            field: 0 for field in (
+                "submitted_records", "accepted_records", "written_records",
+                "dropped_records",
+            )
+        }
+        for counters in category_counters.values():
+            if not isinstance(counters, dict):
+                reasons.append("WRITER_CATEGORY_ACCOUNTING_INVALID")
+                continue
+            parsed_counters: dict[str, int] = {}
+            for field in category_totals:
+                raw = counters.get(field)
+                parsed = None if isinstance(raw, bool) else _integer(raw)
+                if parsed is None or parsed < 0:
+                    reasons.append("WRITER_CATEGORY_ACCOUNTING_INVALID")
+                    break
+                parsed_counters[field] = parsed
+            if len(parsed_counters) != len(category_totals):
+                continue
+            submitted = parsed_counters["submitted_records"]
+            accepted = parsed_counters["accepted_records"]
+            written = parsed_counters["written_records"]
+            dropped = parsed_counters["dropped_records"]
+            if submitted != accepted + dropped or accepted != written:
+                reasons.append("WRITER_CATEGORY_ACCOUNTING_MISMATCH")
+            for field, count in parsed_counters.items():
+                category_totals[field] += count
+        if all(field in counters for field in counter_fields) and (
+            category_totals["submitted_records"] != counters["submitted_records"]
+            or category_totals["accepted_records"] != counters["accepted_records"]
+            or category_totals["written_records"] != counters["written_records"]
+            or category_totals["dropped_records"] != counters["dropped_records"]
+        ):
+            reasons.append("WRITER_CATEGORY_TOTAL_MISMATCH")
+    if require_terminal and not value.get("terminal_marker"):
+        reasons.append("TERMINAL_MARKER_MISSING")
+    return [f"{label.upper()}_{reason}" for reason in sorted(set(reasons))]
+
+
+def _has_capture_terminal_marker(scenario: dict[str, Any], events: list[dict[str, Any]]) -> bool:
+    # A summary can be partially written or copied from another run. Require
+    # the terminal event from the append-only recorder stream.
+    terminal_names = {
+        "mission_complete_observed", "external_mode_completed",
+        "expected_fail_closed", "mission_aborted", "mission_cancelled",
+        "scenario_finished", "capture_complete",
+    }
+    return any(
+        event.get("kind") == "event"
+        and isinstance(event.get("payload"), dict)
+        and str(event["payload"].get("name", "")) in terminal_names
+        for event in events
+    )
+
+
+def _evidence_category(record: dict[str, Any]) -> str:
+    kind = record.get("kind")
+    stream = record.get("stream")
+    if isinstance(kind, str) and kind:
+        if kind == "sample" and isinstance(stream, str) and stream:
+            return f"sample:{stream}"
+        return kind
+    return "__unknown__"
+
+
+def _artifact_count_reasons(
+    label: str,
+    writer: dict[str, Any],
+    records: list[dict[str, Any]],
+) -> list[str]:
+    reasons: list[str] = []
+    written = _integer(writer.get("written_records"))
+    if written is not None and written != len(records):
+        reasons.append(f"{label}_WRITER_ARTIFACT_COUNT_MISMATCH")
+    categories = writer.get("records_by_category")
+    if not isinstance(categories, dict):
+        return reasons
+    observed: dict[str, int] = {}
+    for record in records:
+        category = _evidence_category(record)
+        observed[category] = observed.get(category, 0) + 1
+    declared: dict[str, int] = {}
+    for category, counters in categories.items():
+        if not isinstance(counters, dict):
+            continue
+        count = _integer(counters.get("written_records"))
+        if count is not None:
+            declared[str(category)] = count
+    if observed != declared:
+        reasons.append(f"{label}_WRITER_CATEGORY_ARTIFACT_MISMATCH")
+    return reasons
+
+
+def load_evaluation_inputs(
+    session: Path,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Load raw session-owned sources without using display-decimated data."""
+    session = Path(session)
+    scenario = _load(session / "scenario.json", {})
+    if not isinstance(scenario, dict):
+        scenario = {}
+    metadata = _load(session / "metadata.json", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    monitor = _load(session / "monitor.json", {})
+    if not isinstance(monitor, dict):
+        monitor = {}
+    read_issues: list[str] = []
+    scenario_events = _read_jsonl(
+        session / "scenario.jsonl", issues=read_issues, label="scenario"
+    )
+    sample_rows = _read_jsonl(
+        session / "samples.jsonl", issues=read_issues, label="monitor"
+    )
+    session_id = str(metadata.get("run_id") or metadata.get("session_id") or session.name)
+    pva_event_count = sum(
+        event.get("kind") == "pva_command" for event in scenario_events
+    )
+    pva = [
+        item for event in scenario_events
+        if event.get("kind") == "pva_command"
+        for item in [_normalize_pva(event, session_id)]
+        if item is not None
+    ]
+    streams: dict[str, list[dict[str, Any]]] = {}
+    monitor_sample_counts: dict[str, dict[str, int]] = {}
+    for row in sample_rows:
+        if row.get("kind") != "sample":
+            continue
+        stream = str(row.get("stream") or "unknown")
+        counters = monitor_sample_counts.setdefault(stream, {
+            "recorded_rows": 0,
+            "monitor_accepted_rows": 0,
+            "monitor_rejected_rows": 0,
+            "normalized_rows": 0,
+            "normalization_rejected_rows": 0,
+        })
+        counters["recorded_rows"] += 1
+        if row.get("accepted_by_monitor") is not True:
+            counters["monitor_rejected_rows"] += 1
+            if "accepted_by_monitor" not in row:
+                counters.setdefault("acceptance_witness_missing_rows", 0)
+                counters["acceptance_witness_missing_rows"] += 1
+            continue
+        counters["monitor_accepted_rows"] += 1
+        item = _normalize_sample(row)
+        if item is None:
+            counters["normalization_rejected_rows"] += 1
+            continue
+        counters["normalized_rows"] += 1
+        streams.setdefault(stream, []).append(item)
+    # Preserve recorder order. Metric helpers may sort local copies, while the
+    # source-time validator must still be able to detect duplicate or regressed
+    # producer timestamps instead of having load-time sorting hide them.
+    lifecycle = [
+        event.get("payload", {})
+        for event in scenario_events
+        if event.get("kind") == "lifecycle"
+        and isinstance(event.get("payload"), dict)
+    ]
+    px4_input_trace = [
+        event.get("payload", {})
+        for event in scenario_events
+        if event.get("kind") == "px4_input_trace"
+        and isinstance(event.get("payload"), dict)
+    ]
+    actual_config = config if isinstance(config, dict) else {}
+    if not actual_config:
+        try:
+            import yaml
+            raw = yaml.safe_load((session / "scenario_config.yaml").read_text(encoding="utf-8"))
+            actual_config = raw if isinstance(raw, dict) else {}
+        except (ImportError, OSError, ValueError):
+            actual_config = {}
+    configured_scenario = actual_config.get("scenario", {}) if isinstance(actual_config, dict) else {}
+    if not isinstance(configured_scenario, dict):
+        configured_scenario = {}
+    evaluation_config = actual_config.get("evaluation", {}) if isinstance(actual_config, dict) else {}
+    if not isinstance(evaluation_config, dict):
+        evaluation_config = {}
+    waypoint_source = dict(configured_scenario)
+    waypoint_source.update({key: value for key, value in scenario.items() if value is not None})
+    tracking_coverage_policy = scenario.get(
+        "tracking_coverage_policy",
+        configured_scenario.get("tracking_coverage_policy", evaluation_config.get("tracking_coverage_policy")),
+    )
+    tracking_acceptance_policy = scenario.get(
+        "tracking_acceptance_policy",
+        configured_scenario.get(
+            "tracking_acceptance_policy",
+            evaluation_config.get("tracking_acceptance_policy"),
+        ),
+    )
+    evaluation_window = scenario.get(
+        "evaluation_window",
+        configured_scenario.get("evaluation_window", evaluation_config.get("evaluation_window")),
+    )
+    writer = scenario.get("evidence_writer", {})
+    if not isinstance(writer, dict):
+        writer = {}
+    monitor_writer = monitor.get("evidence_writer", {})
+    if not isinstance(monitor_writer, dict):
+        monitor_writer = {}
+    lifecycle_reduction = reduce_lifecycle(lifecycle, px4_input_trace)
+    completeness_reasons: list[str] = list(read_issues)
+    if not (session / "scenario.jsonl").is_file():
+        completeness_reasons.append("scenario event stream is missing")
+    if not (session / "samples.jsonl").is_file():
+        completeness_reasons.append("monitor sample stream is missing")
+    if len(pva) != pva_event_count:
+        completeness_reasons.append("PVA_NORMALIZATION_REJECTED")
+    for stream in ("ground_truth_odometry",):
+        counters = monitor_sample_counts.get(stream, {})
+        if int(counters.get("monitor_rejected_rows", 0)) > 0:
+            completeness_reasons.append(
+                f"MONITOR_REJECTED_REQUIRED_SAMPLE:{stream}"
+            )
+        if int(counters.get("normalization_rejected_rows", 0)) > 0:
+            completeness_reasons.append(
+                f"MONITOR_UNUSABLE_REQUIRED_SAMPLE:{stream}"
+            )
+        if int(counters.get("acceptance_witness_missing_rows", 0)) > 0:
+            completeness_reasons.append(
+                f"MONITOR_ACCEPTANCE_WITNESS_MISSING:{stream}"
+            )
+        monitor_stream = monitor.get("streams", {}).get(stream, {})
+        if isinstance(monitor_stream, dict):
+            for field, reason in (
+                ("timestamp_duplicate_count", "SOURCE_TIMESTAMP_DUPLICATE"),
+                ("timestamp_regression_count", "SOURCE_TIMESTAMP_REGRESSION"),
+                ("timestamp_epoch_discard_count", "SOURCE_TIMESTAMP_EPOCH_DISCARD"),
+                ("invalid_source_timestamp_count", "SOURCE_TIMESTAMP_INVALID"),
+            ):
+                if int(_number(monitor_stream.get(field)) or 0) > 0:
+                    completeness_reasons.append(f"{reason}:{stream}")
+    for event in scenario_events:
+        if event.get("kind") != "evidence_gap" or not isinstance(event.get("payload"), dict):
+            continue
+        reason = str(event["payload"].get("reason") or "unspecified")
+        completeness_reasons.append(f"EVIDENCE_GAP:{reason}")
+    if lifecycle_reduction["status"] == "CONFLICTING":
+        completeness_reasons.append("CONFLICTING_EVIDENCE")
+    if lifecycle_reduction.get("unresolved"):
+        completeness_reasons.append("LIFECYCLE_ATTRIBUTION_INCOMPLETE")
+    if any(
+        int(_number(item.get("trace_drop_count")) or 0) > 0
+        for item in px4_input_trace
+    ):
+        completeness_reasons.append("PX4_INPUT_TRACE_QUEUE_DROP")
+    if any(
+        int(_number(item.get("trace_publish_error_count")) or 0) > 0
+        for item in px4_input_trace
+    ):
+        completeness_reasons.append("PX4_INPUT_TRACE_PUBLISH_ERROR")
+    required_trace_counters = (
+        "trace_enqueued_count", "trace_published_before_count",
+        "trace_drop_count", "trace_publish_error_count",
+    )
+    if px4_input_trace and any(
+        _integer(item.get(field)) is None
+        for item in px4_input_trace for field in required_trace_counters
+    ):
+        completeness_reasons.append("PX4_INPUT_TRACE_ACCOUNTING_MISSING")
+    elif px4_input_trace:
+        maximum_enqueued = max(
+            int(item["trace_enqueued_count"]) for item in px4_input_trace
+        )
+        maximum_published = max(
+            int(item["trace_published_before_count"]) + 1
+            for item in px4_input_trace
+        )
+        if maximum_enqueued != maximum_published:
+            completeness_reasons.append("PX4_INPUT_TRACE_TAIL_LOSS")
+    trace_sequences = sorted({
+        sequence for item in px4_input_trace
+        for sequence in [_integer(item.get("trace_sequence"))]
+        if sequence is not None and sequence > 0
+    })
+    if trace_sequences and trace_sequences[0] != 1:
+        completeness_reasons.append("PX4_INPUT_TRACE_SEQUENCE_PREFIX_MISSING")
+    if any(right != left + 1 for left, right in zip(trace_sequences, trace_sequences[1:])):
+        completeness_reasons.append("PX4_INPUT_TRACE_SEQUENCE_GAP")
+    if lifecycle and not lifecycle_reduction.get("valid_transaction_count"):
+        # A valid reject transaction is complete for its outcome, while an
+        # un-attributed success must not be promoted to an active reference.
+        if not any(
+            item.get("status") == "VALID_REJECT"
+            for item in lifecycle_reduction.get("transactions", [])
+        ):
+            completeness_reasons.append("LIFECYCLE_ATTRIBUTION_INCOMPLETE")
+    if not _has_capture_terminal_marker(scenario, scenario_events):
+        completeness_reasons.append("TERMINAL_MARKER_MISSING")
+    writer_integrity_reasons = []
+    for label, value, records in (
+        ("scenario", writer, scenario_events),
+        ("monitor", monitor_writer, sample_rows),
+    ):
+        reasons = _writer_integrity(label, value, require_terminal=False)
+        reasons.extend(_artifact_count_reasons(label.upper(), value, records))
+        completeness_reasons.extend(reasons)
+        writer_integrity_reasons.extend(reasons)
+    capture_integrity_valid = bool(writer or monitor_writer) and not writer_integrity_reasons
+    capture_integrity_valid = capture_integrity_valid and _has_capture_terminal_marker(
+        scenario, scenario_events
+    )
+    capture_integrity_valid = capture_integrity_valid and not any(
+        reason.startswith("PX4_INPUT_TRACE_") for reason in completeness_reasons
+    )
+    return {
+        "session": session,
+        "session_id": session_id,
+        "scenario": scenario,
+        "metadata": metadata,
+        "monitor": monitor,
+        "config": actual_config,
+        "scenario_events": scenario_events,
+        "lifecycle": lifecycle,
+        "lifecycle_reduction": lifecycle_reduction,
+        "px4_input_trace": px4_input_trace,
+        "streams": streams,
+        "monitor_sample_counts": monitor_sample_counts,
+        "pva": pva,
+        "planner_trace": collect_planner_trace_records(scenario, streams.get("mapping_diagnostics", []) + streams.get("diagnostics", [])),
+        "waypoints": _mission_waypoints(session, waypoint_source),
+        "tracking_coverage_policy": tracking_coverage_policy,
+        "tracking_acceptance_policy": tracking_acceptance_policy,
+        "evaluation_window": evaluation_window,
+        "capture_integrity_valid": capture_integrity_valid,
+        "writer": {"scenario": writer, "monitor": monitor_writer},
+        "completeness_reasons": sorted(set(completeness_reasons)),
+    }
+
+
+def _segment_rows(rows: list[dict[str, Any]], max_gap_s: float) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    ordered = sorted(rows, key=lambda item: int(item["source_stamp_ns"]))
+    segments: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] = []
+    previous_stamp: int | None = None
+    previous_identity: tuple[Any, ...] | None = None
+    for item in ordered:
+        stamp = int(item["source_stamp_ns"])
+        identity = _record_identity(item)
+        boundary = (
+            current and (
+                previous_stamp is None or stamp < previous_stamp or
+                (stamp - previous_stamp) / 1e9 > max_gap_s or
+                (previous_identity is not None and identity != previous_identity)
+            )
+        )
+        if boundary:
+            segments.append({
+                "identity": previous_identity,
+                "start_ns": int(current[0]["source_stamp_ns"]),
+                "end_ns": int(current[-1]["source_stamp_ns"]),
+                "sample_count": len(current),
+                "samples": current,
+            })
+            current = []
+        current.append(item)
+        previous_stamp = stamp
+        previous_identity = identity
+    if current:
+        segments.append({
+            "identity": previous_identity,
+            "start_ns": int(current[0]["source_stamp_ns"]),
+            "end_ns": int(current[-1]["source_stamp_ns"]),
+            "sample_count": len(current),
+            "samples": current,
+        })
+    for index, segment in enumerate(segments):
+        segment["segment_id"] = f"segment-{index}"
+    return segments
+
+
+def build_execution_segments(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MATCH_GAP_S) -> dict[str, Any]:
+    pva = list(inputs.get("pva", []))
+    return {
+        "reference_navigation": _segment_rows(pva, max_gap_s),
+        "adapter_setpoint": _segment_rows(inputs.get("adapter_setpoint", []), max_gap_s),
+        "px4_telemetry": _segment_rows(inputs.get("px4_telemetry", []), max_gap_s),
+        "policy": {"max_gap_s": max_gap_s, "identity_fields": [
+            "session_id", "localization_epoch", "goal_epoch", "request_id",
+            "bundle_generation", "analytic_sample_role",
+        ]},
+    }
+
+
+def _bracket(samples: list[dict[str, Any]], target_ns: int, max_gap_s: float) -> tuple[dict[str, Any], dict[str, Any], float] | None:
+    ordered = sorted(samples, key=lambda item: int(item["source_stamp_ns"]))
+    stamps = [int(item["source_stamp_ns"]) for item in ordered]
+    index = bisect.bisect_left(stamps, target_ns)
+    if index < len(ordered) and stamps[index] == target_ns:
+        return ordered[index], ordered[index], 0.0
+    if index <= 0 or index >= len(ordered):
+        return None
+    left, right = ordered[index - 1], ordered[index]
+    gap = int(right["source_stamp_ns"]) - int(left["source_stamp_ns"])
+    if gap <= 0 or gap / 1e9 > max_gap_s:
+        return None
+    # Do not interpolate through an identity/reset boundary.
+    if _record_identity(left) != _record_identity(right):
+        return None
+    return left, right, (target_ns - int(left["source_stamp_ns"])) / float(gap)
+
+
+def _interpolate_vector(bracket: tuple[dict[str, Any], dict[str, Any], float], field: str) -> tuple[float, ...] | None:
+    left, right, alpha = bracket
+    first = _vector(left.get(field))
+    second = _vector(right.get(field))
+    if first is None or second is None:
+        return None
+    return tuple((1.0 - alpha) * first[index] + alpha * second[index] for index in range(3))
+
+
+def _interpolate_velocity(
+    bracket: tuple[dict[str, Any], dict[str, Any], float],
+) -> tuple[float, ...] | None:
+    # Navigation commands use ``velocity`` while odometry evidence retains the
+    # producer-owned ``linear_velocity`` name.  Do not silently lose the
+    # velocity metric merely because the two typed sources use different field
+    # names.
+    for field in ("velocity", "linear_velocity"):
+        value = _interpolate_vector(bracket, field)
+        if value is not None:
+            return value
+    return None
+
+
+def _metric_from_errors(errors: list[float], *, unit: str, source: str, time_basis: str, frame: str | None, matched: int, total: int, max_gap_s: float | None = None) -> dict[str, Any]:
+    return {
+        "reference": source,
+        "time_basis": time_basis,
+        "frame": frame,
+        "unit": unit,
+        **_summary(errors, unit=unit),
+        "matched_sample_count": matched,
+        "unmatched_sample_count": max(0, total - matched),
+        "coverage_ratio": matched / total if total else None,
+        "maximum_gap_s": max_gap_s,
+        "status": "AVAILABLE" if matched else "NOT_EVALUABLE",
+        "reason": None if matched else "NO_VALID_BRACKETED_SAMPLES",
+    }
+
+
+def _tracking_pair(
+    reference: list[dict[str, Any]],
+    measured: list[dict[str, Any]],
+    max_gap_s: float,
+    measured_to_reference: dict[str, Any],
+) -> tuple[list[float], list[float], int, list[float], list[int]]:
+    errors: list[float] = []
+    vector_errors: list[float] = []
+    gaps: list[float] = []
+    matched_stamps: list[int] = []
+    matched = 0
+    for command in reference:
+        bracket = _bracket(measured, int(command["source_stamp_ns"]), max_gap_s)
+        if bracket is None:
+            continue
+        measured_position = _interpolate_vector(bracket, "position")
+        command_position = _vector(command.get("position"))
+        measured_velocity = _interpolate_velocity(bracket)
+        command_velocity = _vector(command.get("velocity"))
+        if measured_position is not None:
+            measured_position = _apply_frame_transform(
+                measured_position, measured_to_reference, is_position=True
+            )
+        if measured_velocity is not None:
+            measured_velocity = _apply_frame_transform(
+                measured_velocity, measured_to_reference, is_position=False
+            )
+        if command_position is not None and measured_position is not None:
+            errors.append(_norm(measured_position[index] - command_position[index] for index in range(3)))
+        if command_velocity is not None and measured_velocity is not None:
+            vector_errors.append(_norm(measured_velocity[index] - command_velocity[index] for index in range(3)))
+        if command_position is not None and measured_position is not None or command_velocity is not None and measured_velocity is not None:
+            matched += 1
+            gaps.append((int(bracket[1]["source_stamp_ns"]) - int(bracket[0]["source_stamp_ns"])) / 1e9)
+            matched_stamps.append(int(command["source_stamp_ns"]))
+    return errors, vector_errors, matched, gaps, matched_stamps
+
+
+def _matrix3(value: Any) -> list[list[float]] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return None
+    matrix: list[list[float]] = []
+    for row in value:
+        if not isinstance(row, (list, tuple)) or len(row) != 3:
+            return None
+        values = [_number(item) for item in row]
+        if any(item is None for item in values):
+            return None
+        matrix.append([float(item) for item in values])
+    return matrix
+
+
+def _rotation_matrix_valid(matrix: list[list[float]], tolerance: float = 1e-6) -> bool:
+    gram = [
+        [sum(matrix[k][i] * matrix[k][j] for k in range(3)) for j in range(3)]
+        for i in range(3)
+    ]
+    orthonormal = all(
+        abs(gram[i][j] - (1.0 if i == j else 0.0)) <= tolerance
+        for i in range(3) for j in range(3)
+    )
+    determinant = (
+        matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0])
+    )
+    return orthonormal and abs(determinant - 1.0) <= tolerance
+
+
+def _apply_frame_transform(
+    vector: tuple[float, ...],
+    transform: dict[str, Any],
+    *,
+    is_position: bool,
+) -> tuple[float, ...]:
+    matrix = transform["rotation"]
+    translation = transform["translation"]
+    if transform["direction"] == "target_to_source":
+        rotated = tuple(
+            sum(matrix[row][column] * vector[column] for column in range(3))
+            for row in range(3)
+        )
+        return tuple(
+            rotated[index] + (translation[index] if is_position else 0.0)
+            for index in range(3)
+        )
+    shifted = tuple(
+        vector[index] - (translation[index] if is_position else 0.0)
+        for index in range(3)
+    )
+    return tuple(
+        sum(matrix[column][row] * shifted[column] for column in range(3))
+        for row in range(3)
+    )
+
+
+def _frame_witness(
+    reference: list[dict[str, Any]],
+    measured: list[dict[str, Any]],
+    scenario: dict[str, Any],
+) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    ref_frames = {str(item.get("frame_id")) for item in reference if item.get("frame_id")}
+    measured_frames = {str(item.get("frame_id")) for item in measured if item.get("frame_id")}
+    if not ref_frames or not measured_frames:
+        return None, "FRAME_WITNESS_UNAVAILABLE", None
+    if len(ref_frames) != 1 or len(measured_frames) != 1:
+        return None, "FRAME_WITNESS_MISMATCH", None
+    witness = scenario.get("truth_frame_witness")
+    if not isinstance(witness, dict):
+        return None, "FRAME_WITNESS_UNAVAILABLE", None
+    if witness.get("valid") is not True:
+        return None, "FRAME_WITNESS_INVALID", None
+    transform = witness.get("T_L_G") if isinstance(witness.get("T_L_G"), dict) else witness
+    source_frame = witness.get("source_frame") or witness.get("lio_frame_id")
+    target_frame = witness.get("target_frame") or witness.get("gazebo_frame_id")
+    if not source_frame or not target_frame:
+        return None, "FRAME_WITNESS_FIELDS_MISSING", None
+    if not (
+        (str(source_frame) in ref_frames and str(target_frame) in measured_frames)
+        or (str(source_frame) in measured_frames and str(target_frame) in ref_frames)
+        or (ref_frames == measured_frames == {str(source_frame), str(target_frame)})
+    ):
+        return None, "FRAME_WITNESS_MISMATCH", None
+    point_semantics = witness.get("point_semantics") or witness.get("reference_event")
+    if not point_semantics:
+        return None, "FRAME_WITNESS_POINT_UNSPECIFIED", None
+    translation = (
+        transform.get("translation")
+        or transform.get("translation_lio_from_gazebo")
+    ) if isinstance(transform, dict) else None
+    if (
+        not isinstance(translation, (list, tuple))
+        or len(translation) != 3
+        or _vector(translation) is None
+    ):
+        return None, "FRAME_TRANSFORM_TRANSLATION_INVALID", None
+    matrix = (
+        transform.get("rotation_matrix")
+        or transform.get("rotation_matrix_lio_from_gazebo")
+    ) if isinstance(transform, dict) else None
+    matrix_value = _matrix3(matrix)
+    if matrix_value is None:
+        return None, "FRAME_TRANSFORM_ROTATION_INVALID", None
+    if not _rotation_matrix_valid(matrix_value):
+        return None, "FRAME_TRANSFORM_ROTATION_INVALID", None
+    epochs = {
+        item.get("localization_epoch") for item in reference + measured
+        if _present_identity(item.get("localization_epoch"))
+    }
+    witness_epoch = witness.get("localization_epoch", witness.get("lio_localization_epoch"))
+    if not _present_identity(witness_epoch) or any(int(epoch) != int(witness_epoch) for epoch in epochs):
+        return None, "FRAME_WITNESS_EPOCH_INVALID", None
+    validity_scope = witness.get("validity_scope")
+    if validity_scope not in {"localization_epoch", "source_interval"}:
+        return None, "FRAME_WITNESS_LIFETIME_MISSING", None
+    if validity_scope == "source_interval":
+        valid_from = _integer(witness.get("valid_from_source_stamp_ns"))
+        valid_until = _integer(witness.get("valid_until_source_stamp_ns"))
+        timestamps = [
+            _integer(item.get("source_stamp_ns")) for item in reference + measured
+        ]
+        if (
+            valid_from is None or valid_until is None or valid_until < valid_from
+            or any(stamp is None or stamp < valid_from or stamp > valid_until for stamp in timestamps)
+        ):
+            return None, "FRAME_WITNESS_OUTSIDE_LIFETIME", None
+    if not witness.get("provenance") and not witness.get("reference_event"):
+        return None, "FRAME_WITNESS_PROVENANCE_MISSING", None
+    reference_frame = next(iter(ref_frames))
+    measured_frame = next(iter(measured_frames))
+    if reference_frame == measured_frame:
+        identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        translation_value = _vector(translation)
+        if (
+            translation_value is None
+            or any(abs(value) > 1e-6 for value in translation_value)
+            or any(
+                abs(matrix_value[row][column] - identity[row][column]) > 1e-6
+                for row in range(3) for column in range(3)
+            )
+        ):
+            return None, "FRAME_WITNESS_SAME_FRAME_NONIDENTITY", None
+        direction = "target_to_source"
+        matrix_value = identity
+        translation_value = (0.0, 0.0, 0.0)
+    elif reference_frame == str(source_frame) and measured_frame == str(target_frame):
+        direction = "target_to_source"
+        translation_value = _vector(translation)
+    elif reference_frame == str(target_frame) and measured_frame == str(source_frame):
+        direction = "source_to_target"
+        translation_value = _vector(translation)
+    else:
+        return None, "FRAME_WITNESS_MISMATCH", None
+    return reference_frame, None, {
+        "rotation": matrix_value,
+        "translation": translation_value,
+        "direction": direction,
+    }
+
+
+def _tracking_coverage(
+    reference: list[dict[str, Any]],
+    matched_stamps: list[int],
+    inputs: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    policy = inputs.get("tracking_coverage_policy")
+    required = ("min_coverage_ratio", "max_uncovered_interval_s", "max_pairing_gap_s")
+    if not isinstance(policy, dict) or any(_number(policy.get(key)) is None for key in required):
+        return {
+            "required_duration_s": None, "valid_duration_s": None,
+            "coverage_ratio": None, "longest_uncovered_interval_s": None,
+            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
+            "reason": "TRACKING_COVERAGE_POLICY_UNAVAILABLE",
+        }, ["TRACKING_COVERAGE_POLICY_UNAVAILABLE"]
+    minimum_ratio = float(policy["min_coverage_ratio"])
+    maximum_uncovered = float(policy["max_uncovered_interval_s"])
+    maximum_pairing_gap = float(policy["max_pairing_gap_s"])
+    if not (
+        0.0 < minimum_ratio <= 1.0
+        and maximum_uncovered >= 0.0
+        and maximum_pairing_gap > 0.0
+    ):
+        return {
+            "required_duration_s": None, "valid_duration_s": None,
+            "coverage_ratio": None, "longest_uncovered_interval_s": None,
+            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
+            "reason": "TRACKING_COVERAGE_POLICY_INVALID",
+        }, ["TRACKING_COVERAGE_POLICY_INVALID"]
+    window = inputs.get("evaluation_window")
+    if not isinstance(window, dict):
+        return {
+            "required_duration_s": None, "valid_duration_s": None,
+            "coverage_ratio": None, "longest_uncovered_interval_s": None,
+            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
+            "reason": "COVERAGE_WINDOW_UNAVAILABLE",
+        }, ["COVERAGE_WINDOW_UNAVAILABLE"]
+    start = _integer(window.get("start_ns", window.get("source_start_ns")))
+    end = _integer(window.get("end_ns", window.get("source_end_ns")))
+    if start is None or end is None or end <= start:
+        return {
+            "required_duration_s": None, "valid_duration_s": None,
+            "coverage_ratio": None, "longest_uncovered_interval_s": None,
+            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
+            "reason": "COVERAGE_WINDOW_INVALID",
+        }, ["COVERAGE_WINDOW_INVALID"]
+    pairing_gap = maximum_pairing_gap * 1e9
+    valid = sorted({
+        stamp for stamp in matched_stamps if start <= stamp <= end
+    })
+    valid_intervals: list[tuple[int, int]] = []
+    for left, right in zip(valid, valid[1:]):
+        if right - left <= pairing_gap:
+            valid_intervals.append((left, right))
+    uncovered: list[tuple[int, int]] = []
+    cursor = start
+    for left, right in valid_intervals:
+        if left > cursor:
+            uncovered.append((cursor, left))
+        cursor = max(cursor, right)
+    if cursor < end:
+        uncovered.append((cursor, end))
+    required_duration_s = (end - start) / 1e9
+    uncovered_duration_s = sum(right - left for left, right in uncovered) / 1e9
+    valid_duration_s = max(0.0, required_duration_s - uncovered_duration_s)
+    ratio = valid_duration_s / required_duration_s if required_duration_s > 0.0 else None
+    longest_uncovered = max(
+        (right - left) / 1e9 for left, right in uncovered
+    ) if uncovered else 0.0
+    sufficient = (
+        ratio is not None
+        and ratio >= minimum_ratio
+        and longest_uncovered <= maximum_uncovered
+    )
+    result = {
+        "required_duration_s": required_duration_s,
+        "valid_duration_s": valid_duration_s,
+        "coverage_ratio": ratio,
+        "longest_uncovered_interval_s": longest_uncovered,
+        "uncovered_intervals": [
+            {"start_ns": left, "end_ns": right, "duration_s": (right - left) / 1e9}
+            for left, right in uncovered
+        ],
+        "evaluation_window": {"start_ns": start, "end_ns": end},
+        "status": "AVAILABLE" if sufficient else "NOT_EVALUABLE",
+        "reason": None if sufficient else "TRACKING_COVERAGE_INSUFFICIENT",
+    }
+    return result, [] if sufficient else ["TRACKING_COVERAGE_INSUFFICIENT"]
+
+
+def _reference_lineage_status(
+    inputs: dict[str, Any], reference: list[dict[str, Any]]
+) -> tuple[bool, list[str]]:
+    if inputs.get("reference_lineage_valid") is True:
+        return True, []
+    reduction = inputs.get("lifecycle_reduction")
+    if not isinstance(reduction, dict):
+        return False, ["REFERENCE_LINEAGE_UNAVAILABLE"]
+    valid_ids = {
+        tuple(item) for item in reduction.get("valid_reference_ids", [])
+        if isinstance(item, list) and len(item) == 3
+    }
+    if not valid_ids:
+        return False, ["REFERENCE_LINEAGE_UNAVAILABLE"]
+    for item in reference:
+        identity = (
+            item.get("request_id"),
+            item.get("bundle_generation", item.get("trajectory_generation")),
+            item.get("sample_id", item.get("trajectory_id")),
+        )
+        if identity not in valid_ids:
+            return False, ["REFERENCE_LINEAGE_MISMATCH"]
+    return True, []
+
+
+def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MATCH_GAP_S) -> dict[str, Any]:
+    reference = [item for item in inputs.get("pva", []) if item.get("executable", True) is not False]
+    truth = inputs.get("streams", {}).get("ground_truth_odometry", [])
+    corrected = inputs.get("streams", {}).get("corrected_odometry", [])
+    propagated = inputs.get("streams", {}).get("propagated_odometry", [])
+    metrics: dict[str, Any] = {}
+    reasons: list[str] = []
+    reference_time_valid, reference_time_reasons = _source_time_status(reference)
+    lineage_valid, lineage_reasons = _reference_lineage_status(inputs, reference)
+    policy = inputs.get("tracking_coverage_policy")
+    pairing_gap = (
+        _number(policy.get("max_pairing_gap_s"))
+        if isinstance(policy, dict) else None
+    )
+    diagnostic_gap = pairing_gap if pairing_gap is not None else max_gap_s
+    for name, measured in (("tracking.navigation_reference_vs_truth", truth), ("tracking.navigation_reference_vs_lio", corrected or propagated)):
+        frame, frame_reason, frame_transform = _frame_witness(
+            reference, measured, inputs.get("scenario", {})
+        )
+        measured_time_valid, measured_time_reasons = _source_time_status(measured)
+        clock_relation_valid, clock_relation_reasons = _source_clock_relation_status(
+            reference, measured
+        )
+        if frame_reason:
+            metric_reasons = sorted(set(
+                [frame_reason]
+                + reference_time_reasons
+                + measured_time_reasons
+                + clock_relation_reasons
+                + lineage_reasons
+            ))
+            metrics[name] = {
+                "reference": "published_navigation_command",
+                "time_basis": "command_source_stamp",
+                "frame": None,
+                "unit": "m",
+                "status": "NOT_EVALUABLE",
+                "reason": frame_reason,
+                "matched_sample_count": 0,
+                "unmatched_sample_count": len(reference),
+                "coverage_ratio": 0.0 if reference else None,
+                "maximum_gap_s": None,
+                "qualification_checks": {
+                    "source_time_valid": (
+                        reference_time_valid and measured_time_valid
+                        and clock_relation_valid
+                    ),
+                    "frame_transform_valid": False,
+                    "reference_lineage_valid": lineage_valid,
+                    "coverage_sufficient": False,
+                    "capture_integrity_valid": inputs.get("capture_integrity_valid") is True,
+                },
+                "qualification_role": "diagnostic_only",
+                "qualification_reasons": metric_reasons,
+            }
+            reasons.extend(metric_reasons)
+            continue
+        position_errors, velocity_errors, matched, gaps, matched_stamps = _tracking_pair(
+            reference, measured, diagnostic_gap, frame_transform
+        )
+        coverage, coverage_reasons = _tracking_coverage(reference, matched_stamps, inputs)
+        source_time_valid = (
+            reference_time_valid and measured_time_valid and clock_relation_valid
+        )
+        frame_transform_valid = frame_reason is None
+        capture_integrity_valid = inputs.get("capture_integrity_valid") is True
+        check_reasons = (
+            reference_time_reasons + measured_time_reasons +
+            clock_relation_reasons + lineage_reasons +
+            ([] if frame_transform_valid else [frame_reason or "FRAME_WITNESS_INVALID"]) +
+            coverage_reasons +
+            ([] if capture_integrity_valid else ["CAPTURE_NOT_FINALIZED"])
+        )
+        metrics[name] = _metric_from_errors(
+            position_errors, unit="m", source="published_navigation_command",
+            time_basis="command_source_stamp", frame=frame, matched=matched,
+            total=len(reference), max_gap_s=max(gaps, default=None),
+        )
+        coverage_status = coverage.get("status")
+        coverage_reason = coverage.get("reason")
+        metrics[name].update(coverage)
+        metrics[name]["coverage_status"] = coverage_status
+        metrics[name]["coverage_reason"] = coverage_reason
+        metrics[name]["status"] = "AVAILABLE" if matched else "NOT_EVALUABLE"
+        metrics[name]["matched_sample_ratio"] = (
+            matched / len(reference) if reference else None
+        )
+        metrics[name]["qualification_checks"] = {
+            "source_time_valid": source_time_valid,
+            "frame_transform_valid": frame_transform_valid,
+            "reference_lineage_valid": lineage_valid,
+            "coverage_sufficient": not coverage_reasons,
+            "capture_integrity_valid": capture_integrity_valid,
+        }
+        metrics[name]["qualification_role"] = (
+            "qualification_candidate" if not check_reasons else "diagnostic_only"
+        )
+        metrics[name]["qualification_reasons"] = sorted(set(check_reasons))
+        metrics[name + ".velocity"] = _metric_from_errors(
+            velocity_errors, unit="m/s", source="published_navigation_command",
+            time_basis="command_source_stamp", frame=frame, matched=matched,
+            total=len(reference), max_gap_s=max(gaps, default=None),
+        )
+        metrics[name + ".velocity"].update(coverage)
+        metrics[name + ".velocity"]["coverage_status"] = coverage_status
+        metrics[name + ".velocity"]["coverage_reason"] = coverage_reason
+        metrics[name + ".velocity"]["status"] = "AVAILABLE" if velocity_errors else "NOT_EVALUABLE"
+        metrics[name + ".velocity"]["qualification_checks"] = dict(
+            metrics[name]["qualification_checks"]
+        )
+        metrics[name + ".velocity"]["qualification_role"] = metrics[name]["qualification_role"]
+        metrics[name + ".velocity"]["qualification_reasons"] = sorted(set(check_reasons))
+        reasons.extend(check_reasons)
+    # Adapter/PX4 timestamps currently use a distinct PX4 clock unless a
+    # session-owned mapping witness is present. Never silently join by arrival.
+    metrics["tracking.adapter_reference_vs_px4_state"] = {
+        "reference": "adapter_px4_input_trace",
+        "time_basis": "px4_source_stamp",
+        "frame": None,
+        "unit": "m",
+        "status": "NOT_EVALUABLE",
+        "reason": "PX4_CLOCK_MAPPING_OR_ADAPTER_TRACE_UNAVAILABLE",
+        "matched_sample_count": 0,
+        "unmatched_sample_count": len(reference),
+        "coverage_ratio": 0.0 if reference else None,
+        "maximum_gap_s": None,
+    }
+    return {"metrics": metrics, "reasons": sorted(set(reasons)), "max_gap_s": diagnostic_gap}
+
+
+def _raw_velocity(item: dict[str, Any]) -> tuple[float, float, float] | None:
+    value = item.get("velocity")
+    if value is None:
+        value = item.get("linear_velocity")
+    vector = _vector(value)
+    return tuple(float(v) for v in vector) if vector is not None else None
+
+
+def _stop_events(pva: list[dict[str, Any]], truth: list[dict[str, Any]], config: dict[str, Any]) -> list[dict[str, Any]]:
+    enter = _number(config.get("stop_enter_threshold_mps")) or DEFAULT_STOP_ENTER_MPS
+    exit_value = _number(config.get("stop_exit_threshold_mps")) or DEFAULT_STOP_EXIT_MPS
+    minimum = _number(config.get("stop_min_duration_s")) or DEFAULT_STOP_MIN_DURATION_S
+    ordered = sorted(pva, key=lambda item: int(item["source_stamp_ns"]))
+    active: dict[str, Any] | None = None
+    events: list[dict[str, Any]] = []
+    previous_speed: float | None = None
+    for item in ordered:
+        velocity = _raw_velocity(item)
+        if velocity is None:
+            continue
+        stamp_ns = int(item["source_stamp_ns"])
+        speed = _norm(velocity)
+        if active is None and speed <= enter:
+            active = {
+                "start_ns": stamp_ns,
+                "samples": [item],
+                "command_speed_before_mps": previous_speed,
+            }
+            continue
+        if active is not None:
+            active["samples"].append(item)
+            if speed >= exit_value:
+                end_ns = stamp_ns
+                duration_s = (end_ns - int(active["start_ns"])) / 1e9
+                if duration_s >= minimum:
+                    first = active["samples"][0]
+                    actual = []
+                    for truth_item in truth:
+                        if int(truth_item["source_stamp_ns"]) < int(active["start_ns"]) or int(truth_item["source_stamp_ns"]) > end_ns:
+                            continue
+                        velocity_value = _raw_velocity(truth_item)
+                        if velocity_value is not None:
+                            actual.append(_norm(velocity_value))
+                    events.append({
+                        "start_ns": int(active["start_ns"]),
+                        "end_ns": end_ns,
+                        "duration_s": duration_s,
+                        "command_speed_before_mps": active.get("command_speed_before_mps"),
+                        "command_speed_during_mps": _norm(_raw_velocity(first) or (0.0, 0.0, 0.0)),
+                        "actual_speed_before_mps": None,
+                        "actual_speed_during_mps": statistics.fmean(actual) if actual else None,
+                        "bundle_generation": first.get("bundle_generation"),
+                        "role": first.get("trajectory_flag"),
+                        "mode": first.get("setpoint_kind", "TRACKING"),
+                        "reason_evidence": "raw_command_velocity_hysteresis",
+                        "classification": "expected" if first.get("trajectory_flag") in (0, None) else "safety-related",
+                    })
+                active = None
+        previous_speed = speed
+    return events
+
+
+def _measured_acceleration(truth: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
+    vector_values: list[float] = []
+    speed_values: list[float] = []
+    ordered = sorted(truth, key=lambda item: int(item["source_stamp_ns"]))
+    for left, right in zip(ordered, ordered[1:]):
+        first = _raw_velocity(left)
+        second = _raw_velocity(right)
+        dt = (int(right["source_stamp_ns"]) - int(left["source_stamp_ns"])) / 1e9
+        if first is None or second is None or dt <= 0.0:
+            continue
+        vector_values.append(_norm((second[index] - first[index]) / dt for index in range(3)))
+        speed_values.append(abs(_norm(second) - _norm(first)) / dt)
+    return vector_values, speed_values
+
+
+def _command_vector_metric(pva: list[dict[str, Any]], field: str, unit: str) -> dict[str, Any]:
+    values = [
+        _norm(vector)
+        for item in pva
+        for vector in [_vector(item.get(field))]
+        if vector is not None
+    ]
+    values = [value for value in values if math.isfinite(value)]
+    return {"source": "published_navigation_command", "unit": unit, **_summary(values, unit=unit), "status": "AVAILABLE" if values else "NOT_EVALUABLE", "reason": None if values else "NO_VALID_RAW_COMMAND_SAMPLES"}
+
+
+def _command_transitions(pva: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered = sorted(pva, key=lambda item: int(item["source_stamp_ns"]))
+    transitions: list[dict[str, Any]] = []
+    for previous, current in zip(ordered, ordered[1:]):
+        if previous.get("bundle_generation") == current.get("bundle_generation"):
+            continue
+        fields: dict[str, float | None] = {}
+        for field, unit in (("position", "m"), ("velocity", "m/s"), ("acceleration", "m/s2"), ("jerk", "m/s3")):
+            left, right = _vector(previous.get(field)), _vector(current.get(field))
+            fields[field + "_jump_" + unit.replace("/", "_")] = _norm(right[index] - left[index] for index in range(3)) if left is not None and right is not None else None
+        transitions.append({
+            "timestamp_ns": int(current["source_stamp_ns"]),
+            "previous_bundle_generation": previous.get("bundle_generation"),
+            "bundle_generation": current.get("bundle_generation"),
+            "previous_role": previous.get("trajectory_flag"),
+            "role": current.get("trajectory_flag"),
+            "observed_command_transition": fields,
+        })
+    return transitions
+
+
+def _chattering(pva: list[dict[str, Any]], truth: list[dict[str, Any]]) -> dict[str, Any]:
+    def total_variation(rows: list[dict[str, Any]], velocity_key: str) -> float:
+        ordered = sorted(rows, key=lambda item: int(item["source_stamp_ns"]))
+        result = 0.0
+        for left, right in zip(ordered, ordered[1:]):
+            a, b = _vector(left.get(velocity_key)), _vector(right.get(velocity_key))
+            if a is not None and b is not None:
+                result += _norm(b[index] - a[index] for index in range(3))
+        return result
+    roles = [item.get("trajectory_flag") for item in pva]
+    role_switches = sum(left != right for left, right in zip(roles, roles[1:]))
+    return {
+        "command_velocity_total_variation_mps": total_variation(pva, "velocity"),
+        "actual_velocity_total_variation_mps": total_variation(truth, "linear_velocity"),
+        "role_switch_count": role_switches,
+        "status": "AVAILABLE" if pva else "NOT_EVALUABLE",
+        "reason": None if pva else "NO_VALID_RAW_COMMAND_SAMPLES",
+    }
+
+
+def evaluate_motion_quality(inputs: dict[str, Any]) -> dict[str, Any]:
+    pva = [item for item in inputs.get("pva", []) if item.get("executable", True) is not False]
+    truth = inputs.get("streams", {}).get("ground_truth_odometry", [])
+    evaluator_config = inputs.get("config", {}).get("evaluation", {})
+    if not isinstance(evaluator_config, dict):
+        evaluator_config = {}
+    measured_acceleration, speed_change_rate = _measured_acceleration(truth)
+    transitions = _command_transitions(pva)
+    jerk = _command_vector_metric(pva, "jerk", "m/s3")
+    acceleration = _command_vector_metric(pva, "acceleration", "m/s2")
+    acceleration["name"] = "sampled_command_acceleration"
+    scenario = inputs.get("scenario", {})
+    completion_time_s = _number(
+        scenario.get("mission_completion_time_s", scenario.get("duration_s"))
+    ) if scenario.get("mission_complete_observed") is True else None
+    return {
+        "status": "AVAILABLE" if pva else "NOT_EVALUABLE",
+        "stop_go": {
+            "events": _stop_events(pva, truth, evaluator_config),
+            "detector": {
+                "enter_threshold_mps": _number(evaluator_config.get("stop_enter_threshold_mps")) or DEFAULT_STOP_ENTER_MPS,
+                "exit_threshold_mps": _number(evaluator_config.get("stop_exit_threshold_mps")) or DEFAULT_STOP_EXIT_MPS,
+                "minimum_duration_s": _number(evaluator_config.get("stop_min_duration_s")) or DEFAULT_STOP_MIN_DURATION_S,
+                "source": "offline_evaluator_config_snapshot",
+            },
+        },
+        "sampled_command_jerk": jerk,
+        "sampled_command_acceleration": acceleration,
+        "measured_vector_acceleration": {"source": "ground_truth_odometry", "unit": "m/s2", **_summary(measured_acceleration, unit="m/s2"), "status": "AVAILABLE" if measured_acceleration else "NOT_EVALUABLE"},
+        "speed_change_rate": {"source": "ground_truth_odometry", "unit": "m/s2", **_summary(speed_change_rate, unit="m/s2"), "status": "AVAILABLE" if speed_change_rate else "NOT_EVALUABLE"},
+        "stitching": {"observed_command_transition": transitions, "planned_splice_residual": {
+            field: {
+                "source": "planner_trace",
+                "unit": unit,
+                **_summary(
+                    [float(item[field]) for item in inputs.get("planner_trace", [])
+                     if _number(item.get(field)) is not None],
+                    unit=unit,
+                ),
+                "status": "AVAILABLE" if any(
+                    _number(item.get(field)) is not None
+                    for item in inputs.get("planner_trace", [])
+                ) else "NOT_EVALUABLE",
+            }
+            for field, unit in (
+                ("splice_position_residual_m", "m"),
+                ("splice_velocity_residual_mps", "m/s"),
+                ("splice_acceleration_residual_mps2", "m/s2"),
+                ("splice_jerk_residual_mps3", "m/s3"),
+            )
+        }},
+        "chattering": _chattering(pva, truth),
+        "completion_time_s": {
+            "source": "scenario mission completion event",
+            "unit": "s",
+            "value": completion_time_s,
+            "status": "AVAILABLE" if completion_time_s is not None else "NOT_EVALUABLE",
+            "reason": None if completion_time_s is not None else "MISSION_COMPLETION_TIME_UNAVAILABLE",
+        },
+    }
+
+
+def evaluate_planning(inputs: dict[str, Any]) -> dict[str, Any]:
+    records = [item for item in inputs.get("planner_trace", []) if isinstance(item, dict)]
+    summary = planner_trace_summary(records)
+    unique_solves = {
+        (item.get("cycle_id"), item.get("bundle_id"), item.get("request_id"))
+        for item in records
+    }
+    missing_terminal = sum(
+        bool(item.get("transaction_completeness") not in (None, "complete", "COMPLETE"))
+        for item in records
+    )
+    outcomes = {
+        "candidate_accepted": sum(bool(item.get("candidate_accepted") or item.get("commit_observed_this_cycle")) for item in records),
+        "staged": sum(bool(item.get("staged") or item.get("stage_result_code") is not None) for item in records),
+        "activated": sum(bool(item.get("activated") or item.get("activation_observed")) for item in records),
+    }
+    return {
+        "status": "AVAILABLE" if records else "NOT_EVALUABLE",
+        "solve_count": len(unique_solves - {(None, None, None)}),
+        "record_count": len(records),
+        "outcome_counts": outcomes,
+        "missing_terminal_event_count": missing_terminal,
+        "timing_by_outcome": summary,
+        "records": records,
+    }
+
+
+def evaluate_timing(inputs: dict[str, Any]) -> dict[str, Any]:
+    """Summarize observed timing without inferring missing producer phases."""
+    pva_times = sorted(
+        int(item["observer_record_steady_ns"])
+        for item in inputs.get("pva", [])
+        if _integer(item.get("observer_record_steady_ns")) is not None
+    )
+    pva_intervals_ms = [
+        (right - left) / 1e6
+        for left, right in zip(pva_times, pva_times[1:])
+        if right >= left
+    ]
+    px4_durations_ms = [
+        duration / 1e6
+        for item in inputs.get("px4_input_trace", [])
+        for duration in [_number(item.get("setpoint_update_duration_ns"))]
+        if duration is not None and duration >= 0.0
+    ]
+    return {
+        "pva_observer_interarrival_ms": {
+            "source": "pva observer_record_steady_ns",
+            **_summary(pva_intervals_ms, unit="ms"),
+            "status": "AVAILABLE" if pva_intervals_ms else "NOT_EVALUABLE",
+            "reason": None if pva_intervals_ms else "NO_CONSECUTIVE_OBSERVER_TIMESTAMPS",
+        },
+        "px4_setpoint_update_duration_ms": {
+            "source": "px4_input_trace setpoint_update_duration_ns",
+            **_summary(px4_durations_ms, unit="ms"),
+            "status": "AVAILABLE" if px4_durations_ms else "NOT_EVALUABLE",
+            "reason": None if px4_durations_ms else "NO_VALID_PX4_UPDATE_DURATION",
+        },
+    }
+
+
+def _ate_rpe(estimate: list[dict[str, Any]], truth: list[dict[str, Any]], max_gap_s: float) -> dict[str, Any]:
+    errors: list[float] = []
+    pairs: list[tuple[int, tuple[float, float, float], tuple[float, float, float]]] = []
+    for item in estimate:
+        bracket = _bracket(truth, int(item["source_stamp_ns"]), max_gap_s)
+        if bracket is None:
+            continue
+        expected = _interpolate_vector(bracket, "position")
+        if expected is not None:
+            estimate_value = _vector(item.get("estimate_position"))
+            if estimate_value is not None:
+                errors.append(_norm(estimate_value[index] - expected[index] for index in range(3)))
+                pairs.append((int(item["source_stamp_ns"]), estimate_value, expected))
+    rpe: list[float] = []
+    for (_, first_est, first_truth), (_, last_est, last_truth) in zip(pairs, pairs[1:]):
+        rpe.append(_norm((last_est[index] - first_est[index]) - (last_truth[index] - first_truth[index]) for index in range(3)))
+    return {"ate": _summary(errors, unit="m"), "rpe": _summary(rpe, unit="m"), "matched_sample_count": len(pairs), "status": "AVAILABLE" if pairs else "NOT_EVALUABLE"}
+
+
+def evaluate_localization(inputs: dict[str, Any]) -> dict[str, Any]:
+    truth = inputs.get("streams", {}).get("ground_truth_odometry", [])
+    outputs: dict[str, Any] = {}
+    for name in ("corrected_odometry", "propagated_odometry"):
+        estimate = inputs.get("streams", {}).get(name, [])
+        rows: list[dict[str, Any]] = []
+        for item in estimate:
+            bracket = _bracket(truth, int(item["source_stamp_ns"]), DEFAULT_MAX_MATCH_GAP_S)
+            if bracket is None:
+                continue
+            truth_position = _interpolate_vector(bracket, "position")
+            estimate_position = _vector(item.get("position"))
+            if truth_position is not None and estimate_position is not None:
+                rows.append(dict(item, estimate_position=list(estimate_position)))
+        outputs[name] = _ate_rpe(rows, truth, DEFAULT_MAX_MATCH_GAP_S)
+        outputs[name]["source"] = name
+    return {
+        "streams": outputs,
+        "status": "AVAILABLE" if any(
+            item.get("status") == "AVAILABLE" for item in outputs.values()
+        ) else "NOT_EVALUABLE",
+    }
+
+
+def _guidance_deviation(truth: list[dict[str, Any]], waypoints: list[tuple[float, float, float]]) -> dict[str, Any]:
+    if len(waypoints) < 2:
+        return {"status": "NOT_EVALUABLE", "reason": "MISSION_GUIDANCE_UNAVAILABLE", "unit": "m", "source": "mission_guidance_polyline"}
+    values: list[float] = []
+    for item in truth:
+        point = _vector(item.get("position"))
+        if point is None:
+            continue
+        distances = []
+        for start, end in zip(waypoints, waypoints[1:]):
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            denominator = dx * dx + dy * dy
+            alpha = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / denominator)) if denominator > 1e-12 else 0.0
+            distances.append(math.hypot(point[0] - (start[0] + alpha * dx), point[1] - (start[1] + alpha * dy)))
+        values.append(min(distances))
+    return {"source": "mission_guidance_polyline", "unit": "m", **_summary(values, unit="m"), "status": "AVAILABLE" if values else "NOT_EVALUABLE", "reason": None if values else "NO_VALID_TRUTH_SAMPLES", "qualification_role": "descriptive_only"}
+
+
+def _dimension(status: str, reasons: list[str], **extra: Any) -> dict[str, Any]:
+    return {"status": status, "reasons": sorted(set(str(item) for item in reasons)), **extra}
+
+
+def _tracking_acceptance_status(
+    position_metric: dict[str, Any],
+    velocity_metric: dict[str, Any],
+    policy: Any,
+) -> tuple[str, list[str]]:
+    required = {
+        "position_error_p95_max_m": (position_metric, "p95"),
+        "position_error_max_m": (position_metric, "maximum"),
+        "velocity_error_p95_max_mps": (velocity_metric, "p95"),
+        "velocity_error_max_mps": (velocity_metric, "maximum"),
+    }
+    if not isinstance(policy, dict):
+        return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_UNAVAILABLE"]
+    if not isinstance(policy.get("provenance"), str) or not policy["provenance"].strip():
+        return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_PROVENANCE_MISSING"]
+    limits: dict[str, float] = {}
+    for key in required:
+        value = _number(policy.get(key))
+        if value is None or value < 0.0:
+            return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_INVALID"]
+        limits[key] = value
+    reasons = []
+    for key, (metric, statistic) in required.items():
+        observed = _number(metric.get(statistic))
+        if observed is None:
+            return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_METRIC_UNAVAILABLE"]
+        if observed > limits[key]:
+            reasons.append(f"TRACKING_{key.upper()}_EXCEEDED")
+    return ("FAIL", reasons) if reasons else ("PASS", [])
+
+
+def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
+    scenario = inputs.get("scenario", {})
+    tracking = evaluate_tracking(inputs)
+    motion = evaluate_motion_quality(inputs)
+    planning = evaluate_planning(inputs)
+    localization = evaluate_localization(inputs)
+    timing = evaluate_timing(inputs)
+    completeness_reasons = list(inputs.get("completeness_reasons", []))
+    evidence_contract = build_evidence_contract(inputs)
+    completeness_reasons.extend(evidence_contract.get("qualification_missing", []))
+    capture_integrity_valid = inputs.get("capture_integrity_valid")
+    if capture_integrity_valid is None:
+        writer = inputs.get("writer")
+        if isinstance(writer, dict) and writer:
+            writer_reasons = []
+            for label, value in writer.items():
+                if isinstance(value, dict):
+                    writer_reasons.extend(_writer_integrity(
+                        str(label), value, require_terminal=False
+                    ))
+            capture_integrity_valid = bool(writer) and not writer_reasons
+        else:
+            # The public evaluator must not manufacture recorder completeness.
+            # Unit fixtures which intentionally model a complete capture set
+            # this input explicitly.
+            capture_integrity_valid = False
+    if not capture_integrity_valid and "CAPTURE_NOT_FINALIZED" not in completeness_reasons:
+        completeness_reasons.append("CAPTURE_NOT_FINALIZED")
+    pva = inputs.get("pva", [])
+    truth = inputs.get("streams", {}).get("ground_truth_odometry", [])
+    configured_scenario = inputs.get("config", {}).get("scenario", {})
+    if not isinstance(configured_scenario, dict):
+        configured_scenario = {}
+    requested_speed = _number(
+        scenario.get(
+            "requested_cruise_speed_mps",
+            inputs.get("metadata", {}).get(
+                "requested_cruise_speed_mps",
+                configured_scenario.get("requested_cruise_speed_mps"),
+            ),
+        )
+    )
+    if requested_speed is None:
+        requested_speed = _number(inputs.get("metadata", {}).get("requested_speed_mps"))
+    speed_reasons: list[str] = []
+    if requested_speed is None:
+        speed_reasons.append("REQUESTED_SPEED_UNAVAILABLE")
+    elif not DEFAULT_C0_SPEED_MIN_MPS <= requested_speed <= DEFAULT_C0_SPEED_MAX_MPS:
+        speed_reasons.append("SPEED_OUTSIDE_C0_SCOPE")
+    experiment = inputs.get("metadata", {}).get(
+        "tracking_experiment", configured_scenario.get("tracking_experiment", {})
+    )
+    bypass = scenario.get(
+        "experimental_bypasses",
+        inputs.get("metadata", {}).get(
+            "experimental_bypasses", configured_scenario.get("experimental_bypasses", {})
+        ),
+    )
+    if experiment and experiment.get("mode", "off") != "off":
+        speed_reasons.append("EXPERIMENTAL_TRACKING_MODE")
+    if isinstance(bypass, dict) and bypass:
+        speed_reasons.append("EXPERIMENTAL_BYPASS_PRESENT")
+    if speed_reasons:
+        for metric in tracking["metrics"].values():
+            if isinstance(metric, dict) and "qualification_role" in metric:
+                metric["qualification_role"] = "diagnostic_only"
+    mission_reasons: list[str] = []
+    # ``outcome`` is a recorder summary and may be optimistic after an early
+    # process exit.  Only the explicit completion event can satisfy this gate.
+    mission_complete = scenario.get("mission_complete_observed") is True
+    if not mission_complete:
+        mission_reasons.append("MISSION_COMPLETION_NOT_OBSERVED")
+    if scenario.get("waypoint_acceptance_events") is None and scenario.get("mission_waypoint_count", 0):
+        mission_reasons.append("WAYPOINT_ACCEPTANCE_EVIDENCE_MISSING")
+    if scenario.get("waypoint_acceptance_events") is not None:
+        expected = list(range(int(_number(scenario.get("mission_waypoint_count")) or 0)))
+        accepted = [int(item.get("accepted_waypoint_index")) for item in scenario.get("waypoint_acceptance_events", []) if isinstance(item, dict) and item.get("waypoint_accepted", True) and _integer(item.get("accepted_waypoint_index")) is not None]
+        if expected and accepted != expected:
+            mission_reasons.append("WAYPOINT_ACCEPTANCE_INCOMPLETE")
+    mission_status = "PASS" if mission_complete and not mission_reasons else "NOT_EVALUABLE" if not mission_complete else "FAIL"
+    collision_count = _number(scenario.get("collision_count"))
+    safety_reasons = [] if collision_count == 0 else ["COLLISION_EVIDENCE_MISSING" if collision_count is None else "COLLISION_ENVELOPE_BREACHED"]
+    safety_status = "PASS" if collision_count == 0 else "NOT_EVALUABLE" if collision_count is None else "FAIL"
+    evidence_dimension_status = "PASS" if not completeness_reasons else "NOT_EVALUABLE"
+    # Ground truth is the independent witness.  A command compared only with
+    # LIO/propagated state is internal consistency, not proof of real tracking
+    # quality when the estimator itself may have drifted.
+    truth_tracking = tracking["metrics"].get("tracking.navigation_reference_vs_truth", {})
+    truth_velocity_tracking = tracking["metrics"].get(
+        "tracking.navigation_reference_vs_truth.velocity", {}
+    )
+    tracking_checks = truth_tracking.get("qualification_checks", {})
+    # Optional command-vs-LIO diagnostics retain their own reasons but cannot
+    # invalidate the independent ground-truth tracking dimension.
+    tracking_reasons = list(truth_tracking.get("qualification_reasons", []))
+    tracking_evidence_valid = (
+        truth_tracking.get("status") == "AVAILABLE"
+        and truth_tracking.get("matched_sample_count", 0) > 0
+        and isinstance(tracking_checks, dict)
+        and all(tracking_checks.get(key) is True for key in (
+            "source_time_valid", "frame_transform_valid",
+            "reference_lineage_valid", "coverage_sufficient",
+            "capture_integrity_valid",
+        ))
+    )
+    if tracking_evidence_valid:
+        tracking_status, acceptance_reasons = _tracking_acceptance_status(
+            truth_tracking,
+            truth_velocity_tracking,
+            inputs.get("tracking_acceptance_policy"),
+        )
+        tracking_reasons.extend(acceptance_reasons)
+    else:
+        tracking_status = "NOT_EVALUABLE"
+    motion_reasons: list[str] = []
+    motion_status = "NOT_EVALUABLE"
+    if motion.get("status") == "AVAILABLE":
+        # Motion metrics are descriptive until W9 pins an explicit acceptance
+        # contract. Presence of jerk/chattering numbers is not a PASS.
+        motion_reasons.append("MOTION_ACCEPTANCE_POLICY_UNAVAILABLE")
+    qualification_reasons = (
+        completeness_reasons + speed_reasons + tracking_reasons + motion_reasons
+    )
+    if not all(status == "PASS" for status in (
+            mission_status, safety_status, tracking_status, motion_status,
+            evidence_dimension_status)):
+        qualification_reasons.append("REQUIRED_DIMENSION_NOT_PASS")
+    dimension_statuses = (
+        mission_status, safety_status, tracking_status, motion_status,
+        evidence_dimension_status,
+    )
+    assessment_status = (
+        "FAIL" if "FAIL" in dimension_statuses
+        else "PASS" if all(status == "PASS" for status in dimension_statuses)
+        else "NOT_EVALUABLE"
+    )
+    explicit_evidence_status = "COMPLETE" if not completeness_reasons else "INCOMPLETE"
+    return {
+        "schema_version": EVALUATION_SCHEMA_VERSION,
+        "profile": "navigation_quality",
+        "assessment_status": assessment_status,
+        "evidence_status": explicit_evidence_status,
+        "qualification_eligible": not qualification_reasons,
+        "blocking_reasons": sorted(set(qualification_reasons)),
+        "qualification_reasons": sorted(set(qualification_reasons)),
+        "scope": {
+            "speed_band": "C0",
+            "requested_speed_mps": requested_speed,
+            "allowed_speed_range_mps": [DEFAULT_C0_SPEED_MIN_MPS, DEFAULT_C0_SPEED_MAX_MPS],
+            "qualification_excludes": [
+                "6/8 m/s characterization",
+                "12 m/s outside C0",
+                "tracking experiments",
+                "writer drops",
+                "missing frame/time evidence",
+            ],
+        },
+        "tracking_coverage_policy": inputs.get("tracking_coverage_policy"),
+        "tracking_acceptance_policy": inputs.get("tracking_acceptance_policy"),
+        "evaluation_window": inputs.get("evaluation_window"),
+        "dimensions": {
+            "mission": _dimension(mission_status, mission_reasons),
+            "safety": _dimension(safety_status, safety_reasons),
+            "tracking": _dimension(tracking_status, tracking_reasons),
+            "motion_quality": _dimension(motion_status, motion_reasons),
+            "evidence": _dimension(evidence_dimension_status, completeness_reasons),
+        },
+        "evidence_contract": evidence_contract,
+        "lifecycle": [
+            dict(item) for item in inputs.get("lifecycle", [])
+            if isinstance(item, dict)
+        ],
+        "lifecycle_reduction": inputs.get("lifecycle_reduction", {}),
+        "metrics": {
+            **tracking["metrics"],
+            "mission_guidance_deviation_xy_m": _guidance_deviation(truth, inputs.get("waypoints", [])),
+            "motion_quality": motion,
+            "planning": planning,
+            "localization": localization,
+            "timing": timing,
+        },
+        "completeness": {
+            "status": explicit_evidence_status,
+            "reasons": sorted(set(completeness_reasons)),
+            "raw_pva_count": len(pva),
+            "raw_ground_truth_count": len(truth),
+            "monitor_sample_counts": inputs.get("monitor_sample_counts", {}),
+            "display_decimation_is_not_used_for_metrics": True,
+        },
+    }

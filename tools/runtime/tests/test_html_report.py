@@ -9,6 +9,7 @@ sys.path.insert(0, str(RUNTIME))
 
 from flight_review_report import (
     _configured_spatial_envelopes,
+    _canonical_evaluation_snapshot,
     _evaluation,
     _map_bounds,
     _mission_target_speed_mps,
@@ -215,6 +216,34 @@ class HtmlReportSmoothnessTest(unittest.TestCase):
 
 
 class HtmlReportEvaluationTest(unittest.TestCase):
+    def test_canonical_json_fields_are_invariant_to_display_decimation(self) -> None:
+        base = {
+            "evaluation": {
+                "schema_version": 1,
+                "assessment_status": "FAIL",
+                "evidence_status": "INCOMPLETE",
+                "qualification_eligible": False,
+                "blocking_reasons": ["CAPTURE_NOT_FINALIZED"],
+                "dimensions": {
+                    "safety": {"status": "FAIL", "reasons": ["COLLISION_ENVELOPE_BREACHED"]},
+                    "tracking": {"status": "NOT_EVALUABLE", "reasons": ["OBSERVER_TIME_ONLY"]},
+                },
+                "metrics": {
+                    "tracking.navigation_reference_vs_truth": {
+                        "status": "AVAILABLE", "p95": 0.4, "coverage_ratio": 0.5,
+                        "reason": None, "time_basis": "source_stamp",
+                    },
+                },
+            },
+        }
+        changed_display = json.loads(json.dumps(base))
+        changed_display["display_limit"] = 3
+        changed_display["evaluation"]["display_decimation"] = 999
+        self.assertEqual(
+            _canonical_evaluation_snapshot(base),
+            _canonical_evaluation_snapshot(changed_display),
+        )
+
     def test_timing_view_is_split_by_subsystem_and_time(self) -> None:
         observability = {
             "timing": [
@@ -598,6 +627,176 @@ rog_map:
             0.0,
         )
         self.assertEqual(result["gates"]["temporary_bypass"], "FAIL")
+        self.assertEqual(result["overall"], "FAIL")
+
+    def test_versioned_out_of_scope_speed_is_not_rendered_as_pass(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "PASS",
+                "evaluation": {
+                    "qualification_eligible": False,
+                    "dimensions": {
+                        name: {"status": "PASS"}
+                        for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
+        self.assertEqual(result["overall"], "INCOMPLETE")
+
+    def test_versioned_evaluation_does_not_hide_runtime_failure(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "FAIL",
+                "evaluation": {
+                    "qualification_eligible": True,
+                    "dimensions": {
+                        name: {"status": "PASS"}
+                        for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
+        self.assertEqual(result["overall"], "FAIL")
+
+    def test_versioned_assessment_status_is_the_html_aggregate(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "PASS",
+                "evaluation": {
+                    "assessment_status": "FAIL",
+                    "evidence_status": "INCOMPLETE",
+                    "qualification_eligible": True,
+                    "dimensions": {
+                        name: {"status": "PASS"}
+                        for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
+        self.assertEqual(result["overall"], "FAIL")
+
+    def test_versioned_string_qualification_flag_cannot_become_html_pass(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "PASS",
+                "evaluation": {
+                    "assessment_status": "PASS",
+                    "evidence_status": "COMPLETE",
+                    "qualification_eligible": "false",
+                    "dimensions": {
+                        name: {"status": "PASS"}
+                        for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
+        self.assertEqual(result["overall"], "INCOMPLETE")
+        self.assertNotEqual(result["overall"], "PASS")
+
+    def test_versioned_eligibility_cannot_contradict_blocking_reasons(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "PASS",
+                "evaluation": {
+                    "assessment_status": "PASS",
+                    "evidence_status": "COMPLETE",
+                    "qualification_eligible": True,
+                    "qualification_reasons": ["POLICY_NOT_PINNED"],
+                    "dimensions": {
+                        name: {"status": "PASS"}
+                        for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
+        self.assertEqual(result["overall"], "INCOMPLETE")
+
+    def test_versioned_inconsistent_aggregate_is_fail_closed(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "PASS",
+                "evaluation": {
+                    "assessment_status": "PASS",
+                    "evidence_status": "COMPLETE",
+                    "qualification_eligible": True,
+                    "dimensions": {
+                        **{
+                            name: {"status": "PASS"}
+                            for name in ("mission", "tracking", "motion_quality", "evidence")
+                        },
+                        "safety": {"status": "FAIL"},
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
+        self.assertEqual(result["overall"], "FAIL")
+
+    def test_versioned_evidence_status_must_match_evidence_dimension(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "PASS",
+                "evaluation": {
+                    "assessment_status": "NOT_EVALUABLE",
+                    "evidence_status": "COMPLETE",
+                    "qualification_eligible": False,
+                    "dimensions": {
+                        "mission": {"status": "PASS"},
+                        "safety": {"status": "PASS"},
+                        "tracking": {"status": "NOT_EVALUABLE"},
+                        "motion_quality": {"status": "PASS"},
+                        "evidence": {"status": "NOT_EVALUABLE"},
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
+        self.assertEqual(result["overall"], "INCOMPLETE")
+        self.assertNotEqual(result["overall"], "PASS")
+
+    def test_versioned_inconsistent_not_evaluable_aggregate_preserves_known_fail(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "PASS",
+                "evaluation": {
+                    "assessment_status": "NOT_EVALUABLE",
+                    "evidence_status": "INCOMPLETE",
+                    "qualification_eligible": False,
+                    "dimensions": {
+                        "mission": {"status": "PASS"},
+                        "safety": {"status": "FAIL"},
+                        "tracking": {"status": "NOT_EVALUABLE"},
+                        "motion_quality": {"status": "PASS"},
+                        "evidence": {"status": "NOT_EVALUABLE"},
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
+        self.assertEqual(result["overall"], "FAIL")
+
+    def test_versioned_evaluator_cannot_hide_top_level_runtime_failure(self) -> None:
+        result = _evaluation(
+            {
+                "verdict": "FAIL",
+                "evaluation": {
+                    "assessment_status": "PASS",
+                    "evidence_status": "COMPLETE",
+                    "qualification_eligible": True,
+                    "dimensions": {
+                        name: {"status": "PASS"}
+                        for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+                    },
+                },
+            },
+            {}, {}, {}, {}, None, None, 0.0,
+        )
         self.assertEqual(result["overall"], "FAIL")
 
     def test_unmeasured_evidence_is_not_scored_as_false_or_zero(self) -> None:

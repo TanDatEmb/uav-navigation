@@ -201,8 +201,22 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
         mission_complete_topic, rclcpp::QoS{rclcpp::KeepLast{1}}.reliable());
     mission_timer_ = node.create_wall_timer(std::chrono::milliseconds{50},
                                             [this]() { updateMission(); });
+    px4_input_trace_worker_ = std::thread([this]() {
+      while (!px4_input_trace_worker_stop_.load(std::memory_order_acquire)) {
+        drainPx4InputTrace();
+        std::this_thread::sleep_for(std::chrono::milliseconds{5});
+      }
+      drainPx4InputTrace();
+    });
   }
   setSetpointUpdateRate(50.0F);
+}
+
+NavigationMode::~NavigationMode() {
+  px4_input_trace_worker_stop_.store(true, std::memory_order_release);
+  if (px4_input_trace_worker_.joinable()) {
+    px4_input_trace_worker_.join();
+  }
 }
 
 void NavigationMode::setPx4HoldHandover(std::function<void()> callback) {
@@ -326,12 +340,96 @@ void NavigationMode::publishStatus(std::uint8_t state, std::uint8_t reason,
   last_status_state_ = state;
 }
 
-void NavigationMode::publishPx4InputTrace(
-    const std::optional<navigation_contracts::msg::NavigationCommand>& command,
+Px4InputTraceRecord NavigationMode::makePx4InputTraceRecord(
+    const navigation_contracts::msg::NavigationCommand* command,
     const std::optional<Eigen::Vector3f>& position_ned,
     const std::optional<Eigen::Vector3f>& velocity_ned,
     const std::optional<Eigen::Vector3f>& acceleration_ned,
-    const float yaw_ned, const float yaw_rate_ned) {
+    const float yaw_ned, const float yaw_rate_ned,
+    const Px4InputTraceBoundary boundary,
+    const std::int64_t update_start_ros_ns,
+    const std::int64_t update_start_steady_ns,
+    const std::string_view velocity_only_reason,
+    const std::uint64_t velocity_only_limited_count) {
+  Px4InputTraceRecord record;
+  record.trace_sequence = ++px4_input_trace_sequence_;
+  record.boundary = boundary;
+  record.update_start_ros_ns = update_start_ros_ns;
+  record.update_start_steady_ns = update_start_steady_ns;
+  record.velocity_only_limited_count = velocity_only_limited_count;
+  const auto reason_size = std::min(
+      velocity_only_reason.size(), record.velocity_only_reason.size() - 1U);
+  std::copy_n(velocity_only_reason.data(), reason_size,
+              record.velocity_only_reason.data());
+  const auto copy_vector = [](const std::optional<Eigen::Vector3f>& source,
+                              float target[3], bool& present) {
+    if (!source.has_value() || !source->allFinite()) return;
+    target[0] = source->x();
+    target[1] = source->y();
+    target[2] = source->z();
+    present = true;
+  };
+  copy_vector(position_ned, record.position_ned, record.position_present);
+  copy_vector(velocity_ned, record.velocity_ned, record.velocity_present);
+  copy_vector(acceleration_ned, record.acceleration_ned, record.acceleration_present);
+  if (std::isfinite(yaw_ned)) {
+    record.yaw_ned = yaw_ned;
+    record.yaw_present = true;
+  }
+  if (std::isfinite(yaw_rate_ned)) {
+    record.yaw_rate_ned = yaw_rate_ned;
+    record.yaw_rate_present = true;
+  }
+  if (command != nullptr) {
+    record.command_present = true;
+    record.sample_id = command->sample_id;
+    record.request_id = command->request_id;
+    record.goal_epoch = command->goal_epoch;
+    record.localization_epoch = command->localization_epoch;
+    record.bundle_generation = command->bundle_generation;
+    record.causal_planning_cycle_id = command->causal_planning_cycle_id;
+    record.world_generation = command->world_generation;
+    record.world_revision = command->world_revision;
+    record.world_observation_stamp_ns = navigation_common::rosTimeToNanoseconds(
+        command->world_observation_stamp).value_or(0);
+    record.waypoint_index = command->waypoint_index;
+    record.role = command->role;
+    const auto copy_size = std::min(
+        command->mission_id.size(), record.mission_id.size() - 1U);
+    std::copy_n(command->mission_id.data(), copy_size, record.mission_id.data());
+  }
+  return record;
+}
+
+void NavigationMode::enqueuePx4InputTrace(Px4InputTraceRecord record) {
+  if (!px4_input_trace_publisher_) return;
+  if (!px4_input_trace_queue_.tryPush(record)) {
+    px4_input_trace_drop_count_.fetch_add(1U, std::memory_order_relaxed);
+    return;
+  }
+  px4_input_trace_enqueued_count_.fetch_add(1U, std::memory_order_relaxed);
+}
+
+void NavigationMode::setVelocityOnlyLastReason(const std::string_view reason) {
+  std::lock_guard<std::mutex> lock(trajectory_mutex_);
+  velocity_only_last_reason_ = reason;
+}
+
+void NavigationMode::drainPx4InputTrace() {
+  Px4InputTraceRecord record;
+  while (px4_input_trace_queue_.tryPop(record)) {
+    try {
+      publishPx4InputTrace(record);
+    } catch (...) {
+      // Evidence transport must not terminate or delay the control owner.
+      // A later trace exposes the accumulated error; a missing terminal trace
+      // remains incomplete evidence at the offline boundary.
+      px4_input_trace_publish_error_count_.fetch_add(1U, std::memory_order_relaxed);
+    }
+  }
+}
+
+void NavigationMode::publishPx4InputTrace(const Px4InputTraceRecord& record) {
   if (!px4_input_trace_publisher_) return;
   diagnostic_msgs::msg::DiagnosticArray array;
   const auto now = node().get_clock()->now();
@@ -352,40 +450,69 @@ void NavigationMode::publishPx4InputTrace(
   const auto add_u64 = [&add](const std::string& key, const std::uint64_t value) {
     add(key, std::to_string(value));
   };
-  const auto add_vector = [&add](const std::string& key,
-                                 const std::optional<Eigen::Vector3f>& value) {
-    if (!value.has_value()) {
+  const auto add_vector = [&add](const std::string& key, const float value[3],
+                                 const bool present) {
+    if (!present) {
       add(key, "NOT_RECORDED");
       return;
     }
     std::ostringstream stream;
-    stream << std::setprecision(9) << '[' << value->x() << ',' << value->y() << ','
-           << value->z() << ']';
+    stream << std::setprecision(9) << '[' << value[0] << ',' << value[1] << ','
+           << value[2] << ']';
     add(key, stream.str());
   };
-  add_i64("trace_timestamp_ns", now.nanoseconds());
-  add_i64("trace_steady_timestamp_ns",
-          navigation_common::steadyClockNowNanoseconds());
-  add_u64("trace_sequence", ++px4_input_trace_sequence_);
-  if (command.has_value()) {
-    add("mission_id", command->mission_id);
-    add_u64("waypoint_index", command->waypoint_index);
-    add_u64("request_id", command->request_id);
-    add_u64("goal_epoch", command->goal_epoch);
-    add_u64("bundle_generation", command->bundle_generation);
-    add_u64("sample_id", command->sample_id);
-    add("role", std::to_string(command->role));
+  const auto boundary_name = [](const Px4InputTraceBoundary value) {
+    switch (value) {
+      case Px4InputTraceBoundary::kTracking: return "tracking";
+      case Px4InputTraceBoundary::kVelocityOnly: return "velocity_only";
+      case Px4InputTraceBoundary::kVelocityHold: return "velocity_hold";
+      case Px4InputTraceBoundary::kPositionHold: return "position_hold";
+    }
+    return "unknown";
+  };
+  add_i64("trace_timestamp_ns", record.update_end_ros_ns > 0
+      ? record.update_end_ros_ns : now.nanoseconds());
+  add_i64("trace_steady_timestamp_ns", record.update_end_steady_ns);
+  add_i64("update_start_ros_ns", record.update_start_ros_ns);
+  add_i64("update_end_ros_ns", record.update_end_ros_ns);
+  add_i64("update_start_steady_ns", record.update_start_steady_ns);
+  add_i64("update_end_steady_ns", record.update_end_steady_ns);
+  if (record.update_end_steady_ns >= record.update_start_steady_ns &&
+      record.update_start_steady_ns > 0) {
+    add_i64("setpoint_update_duration_ns",
+            record.update_end_steady_ns - record.update_start_steady_ns);
+  } else {
+    add("setpoint_update_duration_ns", "NOT_RECORDED");
+  }
+  add_u64("trace_sequence", record.trace_sequence);
+  add("command_present", record.command_present ? "true" : "false");
+  if (record.command_present) {
+    add("mission_id", std::string(record.mission_id.data()));
+    add_u64("waypoint_index", record.waypoint_index);
+    add_u64("request_id", record.request_id);
+    add_u64("goal_epoch", record.goal_epoch);
+    add_u64("localization_epoch", record.localization_epoch);
+    add_u64("bundle_generation", record.bundle_generation);
+    add_u64("causal_planning_cycle_id", record.causal_planning_cycle_id);
+    add_u64("world_generation", record.world_generation);
+    add_u64("world_revision", record.world_revision);
+    add_i64("world_observation_stamp_ns", record.world_observation_stamp_ns);
+    add_u64("sample_id", record.sample_id);
+    add("role", std::to_string(record.role));
   } else {
     add("mission_id", "NOT_RECORDED");
     add("waypoint_index", "NOT_RECORDED");
     add("request_id", "NOT_RECORDED");
     add("goal_epoch", "NOT_RECORDED");
     add("bundle_generation", "NOT_RECORDED");
+    add("causal_planning_cycle_id", "NOT_RECORDED");
+    add("world_generation", "NOT_RECORDED");
+    add("world_revision", "NOT_RECORDED");
+    add("world_observation_stamp_ns", "NOT_RECORDED");
     add("sample_id", "NOT_RECORDED");
     add("role", "NOT_RECORDED");
   }
-  add("setpoint_boundary", tracking_experiment_.velocity_only_enabled
-          ? "velocity_only" : "position_velocity_acceleration");
+  add("setpoint_boundary", boundary_name(record.boundary));
   add("velocity_only_gain_s_inv",
       std::to_string(tracking_experiment_.velocity_only_gain_s_inv));
   add("velocity_only_cap_mps",
@@ -394,16 +521,27 @@ void NavigationMode::publishPx4InputTrace(
       std::to_string(tracking_experiment_.velocity_only_max_acceleration_mps2));
   add("velocity_only_max_jerk_mps3",
       std::to_string(tracking_experiment_.velocity_only_max_jerk_mps3));
-  add("velocity_only_limited_count", std::to_string(velocity_only_limited_count_));
-  add("velocity_only_reason", velocity_only_last_reason_.empty()
-          ? "NOT_RECORDED" : velocity_only_last_reason_);
-  add_vector("position_ned", position_ned);
-  add_vector("velocity_ned", velocity_ned);
-  add_vector("acceleration_ned", acceleration_ned);
-  add("yaw_ned", std::to_string(yaw_ned));
-  add("yaw_rate_ned", std::to_string(yaw_rate_ned));
+  add("velocity_only_limited_count",
+      std::to_string(record.velocity_only_limited_count));
+  add("velocity_only_reason", record.velocity_only_reason[0] == '\0'
+          ? "NOT_RECORDED" : std::string(record.velocity_only_reason.data()));
+  add_u64("trace_enqueued_count",
+          px4_input_trace_enqueued_count_.load(std::memory_order_relaxed));
+  add_u64("trace_published_before_count",
+          px4_input_trace_published_count_.load(std::memory_order_relaxed));
+  add_u64("trace_drop_count",
+          px4_input_trace_drop_count_.load(std::memory_order_relaxed));
+  add_u64("trace_publish_error_count",
+          px4_input_trace_publish_error_count_.load(std::memory_order_relaxed));
+  add_vector("position_ned", record.position_ned, record.position_present);
+  add_vector("velocity_ned", record.velocity_ned, record.velocity_present);
+  add_vector("acceleration_ned", record.acceleration_ned, record.acceleration_present);
+  add("yaw_ned", record.yaw_present ? std::to_string(record.yaw_ned) : "NOT_RECORDED");
+  add("yaw_rate_ned", record.yaw_rate_present
+          ? std::to_string(record.yaw_rate_ned) : "NOT_RECORDED");
   array.status.push_back(std::move(status));
   px4_input_trace_publisher_->publish(std::move(array));
+  px4_input_trace_published_count_.fetch_add(1U, std::memory_order_relaxed);
 }
 
 void NavigationMode::publishAlignmentLatchWitnessLocked() {
@@ -590,6 +728,7 @@ void NavigationMode::onActivate() {
     velocity_only_previous_.reset();
     velocity_only_reset_counters_seen_ = false;
     velocity_only_last_reason_.clear();
+    velocity_only_limited_count_ = 0U;
   }
   if (mission_controller_) {
     if (mission_complete_publisher_) {
@@ -1733,11 +1872,11 @@ bool NavigationMode::publishVelocityOnlySetpoint(
   if (command.role != navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
       command.role != navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
       !certified_emergency) {
-    velocity_only_last_reason_ = "role_not_authorized_for_velocity_boundary";
+    setVelocityOnlyLastReason("role_not_authorized_for_velocity_boundary");
     return false;
   }
   if (command.status != navigation_contracts::msg::NavigationCommand::STATUS_READY) {
-    velocity_only_last_reason_ = "status_requires_native_px4_hold";
+    setVelocityOnlyLastReason("status_requires_native_px4_hold");
     return false;
   }
 
@@ -1752,7 +1891,7 @@ bool NavigationMode::publishVelocityOnlySetpoint(
   const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
   if (source_stamp_ns <= 0 || reference_stamp_ns <= 0 || lease_until_ns <= 0 || now_ns <= 0 ||
       now_ns < source_stamp_ns || now_ns < reference_stamp_ns || now_steady_ns <= 0) {
-    velocity_only_last_reason_ = "timestamp_contract_invalid";
+    setVelocityOnlyLastReason("timestamp_contract_invalid");
     return false;
   }
 
@@ -1763,7 +1902,7 @@ bool NavigationMode::publishVelocityOnlySetpoint(
       snapshot.odometry.pose.pose.orientation.w, snapshot.odometry.pose.pose.orientation.x,
       snapshot.odometry.pose.pose.orientation.y, snapshot.odometry.pose.pose.orientation.z);
   if (!isNormalizableOdometryQuaternion(orientation)) {
-    velocity_only_last_reason_ = "lio_orientation_invalid";
+    setVelocityOnlyLastReason("lio_orientation_invalid");
     return false;
   }
   const auto normalized = orientation.normalized();
@@ -1786,12 +1925,12 @@ bool NavigationMode::publishVelocityOnlySetpoint(
       ? static_cast<std::int64_t>(raw_px4.timestamp_sample_us * 1000U)
       : 0;
   if (px4_sample_ns <= 0 || now_ns < px4_sample_ns) {
-    velocity_only_last_reason_ = "px4_timestamp_contract_invalid";
+    setVelocityOnlyLastReason("px4_timestamp_contract_invalid");
     return false;
   }
   if (raw_px4.reset_counters != snapshot.last_reset_counters &&
       snapshot.reset_counters_seen) {
-    velocity_only_last_reason_ = "px4_reset_requires_new_velocity_epoch";
+    setVelocityOnlyLastReason("px4_reset_requires_new_velocity_epoch");
     return false;
   }
 
@@ -1882,7 +2021,7 @@ bool NavigationMode::publishVelocityOnlySetpoint(
 
   const auto adapted = tracking_adapter::adapt(reference, lio, raw_px4, timing, adapter_policy);
   if (!adapted.success()) {
-    velocity_only_last_reason_ = "adapter_rejected";
+    setVelocityOnlyLastReason("adapter_rejected");
     return false;
   }
   velocity_only::Identity continuity_identity{
@@ -1900,8 +2039,8 @@ bool NavigationMode::publishVelocityOnlySetpoint(
       adapted.output->witness.velocity_command_lio_enu, now_ns, continuity_identity,
       continuity_policy, previous ? &*previous : nullptr);
   if (!limited.success()) {
-    velocity_only_last_reason_ =
-        std::string("continuity_rejected:") + velocity_only::failureName(limited.failure);
+    setVelocityOnlyLastReason(
+        std::string("continuity_rejected:") + velocity_only::failureName(limited.failure));
     RCLCPP_WARN_THROTTLE(
         node().get_logger(), *node().get_clock(), 1000,
         "velocity-only continuity rejected: failure=%s requested=(%.3f,%.3f,%.3f) "
@@ -1929,7 +2068,7 @@ bool NavigationMode::publishVelocityOnlySetpoint(
   }
   if (!velocity_ned || !floatRepresentable(adapted.output->yaw_ned) ||
       !floatRepresentable(adapted.output->yaw_rate_ned_rad_s)) {
-    velocity_only_last_reason_ = "velocity_or_yaw_not_representable";
+    setVelocityOnlyLastReason("velocity_or_yaw_not_representable");
     return false;
   }
 
@@ -1937,6 +2076,8 @@ bool NavigationMode::publishVelocityOnlySetpoint(
   setpoint.withVelocity(*velocity_ned)
       .withYaw(static_cast<float>(adapted.output->yaw_ned))
       .withYawRate(static_cast<float>(adapted.output->yaw_rate_ned_rad_s));
+  std::string trace_velocity_only_reason;
+  std::uint64_t trace_velocity_only_limited_count = 0U;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     velocity_only_previous_ = velocity_only::Previous{
@@ -1945,14 +2086,23 @@ bool NavigationMode::publishVelocityOnlySetpoint(
     velocity_only_reset_counters_seen_ = true;
     velocity_only_last_reason_ = limited.limited ? "continuity_limited" : "accepted";
     if (limited.limited) ++velocity_only_limited_count_;
+    trace_velocity_only_reason = velocity_only_last_reason_;
+    trace_velocity_only_limited_count = velocity_only_limited_count_;
     last_velocity_command_enu_ = limited.velocity_enu;
     last_setpoint_time_ = now;
   }
-  publishPx4InputTrace(std::optional<navigation_contracts::msg::NavigationCommand>{command},
-                       std::nullopt, velocity_ned, std::nullopt,
-                       setpoint.yaw_ned_rad.value_or(NAN),
-                       setpoint.yaw_rate_ned_rad_s.value_or(NAN));
+  auto trace = makePx4InputTraceRecord(
+      &command,
+      std::nullopt, velocity_ned, std::nullopt,
+      setpoint.yaw_ned_rad.value_or(NAN), setpoint.yaw_rate_ned_rad_s.value_or(NAN),
+      Px4InputTraceBoundary::kVelocityOnly, 0, 0,
+      trace_velocity_only_reason, trace_velocity_only_limited_count);
+  trace.update_start_ros_ns = node().get_clock()->now().nanoseconds();
+  trace.update_start_steady_ns = navigation_common::steadyClockNowNanoseconds();
   trajectory_setpoint_->update(setpoint);
+  trace.update_end_ros_ns = node().get_clock()->now().nanoseconds();
+  trace.update_end_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  enqueuePx4InputTrace(trace);
   return true;
 }
 
@@ -2074,6 +2224,8 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   std::optional<navigation_contracts::msg::NavigationCommand> navigation_command;
   std::optional<nav_msgs::msg::Odometry> odometry;
   std::optional<VelocityOnlySnapshot> velocity_only_snapshot;
+  std::string trace_velocity_only_reason;
+  std::uint64_t trace_velocity_only_limited_count = 0U;
   std::int64_t odometry_receive_steady_ns = 0;
   std::optional<Eigen::Vector3d> lio_to_px4_local_translation_ned;
   const auto now = node().get_clock()->now();
@@ -2081,6 +2233,8 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     navigation_command = navigation_command_;
     odometry = odometry_;
+    trace_velocity_only_reason = velocity_only_last_reason_;
+    trace_velocity_only_limited_count = velocity_only_limited_count_;
     odometry_receive_steady_ns = last_odometry_receive_steady_ns_;
     if (tracking_experiment_.velocity_only_enabled && odometry_.has_value()) {
       VelocityOnlySnapshot snapshot;
@@ -2186,10 +2340,18 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         tracking_experiment_.velocity_only_enabled
         ? std::nullopt
         : std::optional<Eigen::Vector3f>{Eigen::Vector3f::Zero()};
-    publishPx4InputTrace(navigation_command, std::nullopt, Eigen::Vector3f::Zero(),
-                         trace_acceleration, setpoint.yaw_ned_rad.value_or(NAN),
-                         setpoint.yaw_rate_ned_rad_s.value_or(NAN));
+    auto trace = makePx4InputTraceRecord(
+        navigation_command ? &*navigation_command : nullptr,
+        std::nullopt, Eigen::Vector3f::Zero(), trace_acceleration,
+        setpoint.yaw_ned_rad.value_or(NAN), setpoint.yaw_rate_ned_rad_s.value_or(NAN),
+        Px4InputTraceBoundary::kVelocityHold, 0, 0,
+        trace_velocity_only_reason, trace_velocity_only_limited_count);
+    trace.update_start_ros_ns = node().get_clock()->now().nanoseconds();
+    trace.update_start_steady_ns = navigation_common::steadyClockNowNanoseconds();
     trajectory_setpoint_->update(setpoint);
+    trace.update_end_ros_ns = node().get_clock()->now().nanoseconds();
+    trace.update_end_steady_ns = navigation_common::steadyClockNowNanoseconds();
+    enqueuePx4InputTrace(trace);
   };
   const auto publishPositionHold = [&](const Eigen::Vector3d& position_enu) {
     // Velocity-only is the normal flight output, but a terminal hold needs a
@@ -2217,10 +2379,18 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         }
       }
     }
-    publishPx4InputTrace(navigation_command, position_ned, Eigen::Vector3f::Zero(),
-                         std::nullopt, setpoint.yaw_ned_rad.value_or(NAN),
-                         setpoint.yaw_rate_ned_rad_s.value_or(NAN));
+    auto trace = makePx4InputTraceRecord(
+        navigation_command ? &*navigation_command : nullptr,
+        position_ned, Eigen::Vector3f::Zero(), std::nullopt,
+        setpoint.yaw_ned_rad.value_or(NAN), setpoint.yaw_rate_ned_rad_s.value_or(NAN),
+        Px4InputTraceBoundary::kPositionHold, 0, 0,
+        trace_velocity_only_reason, trace_velocity_only_limited_count);
+    trace.update_start_ros_ns = node().get_clock()->now().nanoseconds();
+    trace.update_start_steady_ns = navigation_common::steadyClockNowNanoseconds();
     trajectory_setpoint_->update(setpoint);
+    trace.update_end_ros_ns = node().get_clock()->now().nanoseconds();
+    trace.update_end_steady_ns = navigation_common::steadyClockNowNanoseconds();
+    enqueuePx4InputTrace(trace);
     return true;
   };
   {
@@ -2535,8 +2705,12 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     if (tracking_experiment_.velocity_only_enabled) {
       if (!velocity_only_snapshot.has_value() ||
           !publishVelocityOnlySetpoint(command, *velocity_only_snapshot, now)) {
-        const auto reason = velocity_only_last_reason_.empty()
-            ? "velocity-only setpoint unavailable" : velocity_only_last_reason_;
+        std::string reason;
+        {
+          std::lock_guard<std::mutex> lock(trajectory_mutex_);
+          reason = velocity_only_last_reason_.empty()
+              ? "velocity-only setpoint unavailable" : velocity_only_last_reason_;
+        }
         requestVelocityOnlyHold(reason.c_str());
       }
       return;
@@ -2555,10 +2729,18 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         .withAcceleration(*acceleration_ned)
         .withYaw(px4_ros2::yawEnuToNed(static_cast<float>(command.yaw)))
         .withYawRate(px4_ros2::yawRateEnuToNed(static_cast<float>(command.yaw_rate)));
-    publishPx4InputTrace(navigation_command, position_ned, velocity_ned,
-                         acceleration_ned, setpoint.yaw_ned_rad.value_or(NAN),
-                         setpoint.yaw_rate_ned_rad_s.value_or(NAN));
+    auto trace = makePx4InputTraceRecord(
+        navigation_command ? &*navigation_command : nullptr,
+        position_ned, velocity_ned, acceleration_ned,
+        setpoint.yaw_ned_rad.value_or(NAN), setpoint.yaw_rate_ned_rad_s.value_or(NAN),
+        Px4InputTraceBoundary::kTracking, 0, 0,
+        trace_velocity_only_reason, trace_velocity_only_limited_count);
+    trace.update_start_ros_ns = node().get_clock()->now().nanoseconds();
+    trace.update_start_steady_ns = navigation_common::steadyClockNowNanoseconds();
     trajectory_setpoint_->update(setpoint);
+    trace.update_end_ros_ns = node().get_clock()->now().nanoseconds();
+    trace.update_end_steady_ns = navigation_common::steadyClockNowNanoseconds();
+    enqueuePx4InputTrace(trace);
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       last_velocity_command_enu_ = velocity_enu;

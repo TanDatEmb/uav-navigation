@@ -4,6 +4,7 @@
 #include <limits>
 
 #include <navigation_common/frame_conventions.hpp>
+#include <navigation_common/bounded_spsc_queue.hpp>
 #include <navigation_common/time.hpp>
 
 TEST(NavigationCommon, ConvertsRosTimeWithoutFloatingPointLoss) {
@@ -85,4 +86,19 @@ TEST(NavigationCommon, FrameConversionsAreSelfInverse) {
   const Eigen::Vector3d flu(-4.0, 5.0, -6.0);
   EXPECT_TRUE(navigation_common::nedToEnu(navigation_common::enuToNed(enu)).isApprox(enu));
   EXPECT_TRUE(navigation_common::frdToFlu(navigation_common::fluToFrd(flu)).isApprox(flu));
+}
+
+TEST(NavigationCommon, BoundedSpscQueueRejectsFullWithoutOverwriting) {
+  navigation_common::BoundedSpscQueue<int, 2U> queue;
+  int value = 0;
+  EXPECT_TRUE(queue.tryPush(11));
+  EXPECT_TRUE(queue.tryPush(22));
+  EXPECT_FALSE(queue.tryPush(33));
+  EXPECT_EQ(queue.sizeApprox(), 2U);
+  EXPECT_TRUE(queue.tryPop(value));
+  EXPECT_EQ(value, 11);
+  EXPECT_TRUE(queue.tryPop(value));
+  EXPECT_EQ(value, 22);
+  EXPECT_FALSE(queue.tryPop(value));
+  EXPECT_EQ(queue.sizeApprox(), 0U);
 }

@@ -2641,6 +2641,117 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(result["observation_complete"])
             self.assertEqual(result["observation_status"], "OBSERVATION_COMPLETE")
 
+    def test_versioned_not_evaluable_evaluation_cannot_leave_top_level_pass(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            fake_report = {"workflow": "sim", "verdict": "PASS", "reasons": []}
+            fake_evaluation = {
+                "assessment_status": "NOT_EVALUABLE",
+                "evidence_status": "INCOMPLETE",
+                "qualification_eligible": False,
+                "dimensions": {
+                    name: {"status": "NOT_EVALUABLE"}
+                    for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+                },
+            }
+            import flight_review_report
+
+            with mock.patch.object(report, "_sim_report", return_value=fake_report), \
+                    mock.patch.object(report, "load_evaluation_inputs", return_value={}), \
+                    mock.patch.object(report, "evaluate_session", return_value=fake_evaluation), \
+                    mock.patch.object(flight_review_report, "render", return_value=session / "REPORT.html"):
+                result = report._build_complete_report(
+                    session,
+                    "sim",
+                    ROOT / "config/runtime/sim.yaml",
+                    ROOT,
+                )
+
+        self.assertEqual(result["verdict"], "FAIL")
+        self.assertFalse(result["qualification_eligible"])
+        self.assertIn("versioned evaluation assessment is not PASS", result["reasons"])
+
+    def test_versioned_non_boolean_eligibility_cannot_leave_top_level_pass(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            fake_report = {"workflow": "sim", "verdict": "PASS", "reasons": []}
+            fake_evaluation = {
+                "assessment_status": "PASS",
+                "evidence_status": "COMPLETE",
+                "qualification_eligible": "true",
+                "dimensions": {
+                    name: {"status": "PASS"}
+                    for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+                },
+            }
+            import flight_review_report
+
+            with mock.patch.object(report, "_sim_report", return_value=fake_report), \
+                    mock.patch.object(report, "load_evaluation_inputs", return_value={}), \
+                    mock.patch.object(report, "evaluate_session", return_value=fake_evaluation), \
+                    mock.patch.object(flight_review_report, "render", return_value=session / "REPORT.html"):
+                result = report._build_complete_report(
+                    session,
+                    "sim",
+                    ROOT / "config/runtime/sim.yaml",
+                    ROOT,
+                )
+
+        self.assertEqual(result["verdict"], "FAIL")
+        self.assertFalse(result["qualification_eligible"])
+        self.assertIn("versioned evaluation qualification_eligible is not a boolean", result["reasons"])
+
+    def test_versioned_eligibility_with_blocking_reasons_cannot_leave_pass(self) -> None:
+        evaluation = {
+            "assessment_status": "PASS",
+            "evidence_status": "COMPLETE",
+            "qualification_eligible": True,
+            "qualification_reasons": ["POLICY_NOT_PINNED"],
+            "dimensions": {
+                name: {"status": "PASS"}
+                for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+            },
+        }
+        self.assertIn(
+            "versioned evaluation eligibility contradicts qualification reasons",
+            report._versioned_evaluation_guard(evaluation),
+        )
+
+    def test_versioned_inconsistent_evaluation_clears_top_level_eligibility(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            fake_report = {"workflow": "sim", "verdict": "PASS", "reasons": []}
+            fake_evaluation = {
+                "assessment_status": "PASS",
+                "evidence_status": "COMPLETE",
+                "qualification_eligible": True,
+                "dimensions": {
+                    **{
+                        name: {"status": "PASS"}
+                        for name in ("mission", "tracking", "motion_quality", "evidence")
+                    },
+                    "safety": {"status": "FAIL"},
+                },
+            }
+            import flight_review_report
+
+            with mock.patch.object(report, "_sim_report", return_value=fake_report), \
+                    mock.patch.object(report, "load_evaluation_inputs", return_value={}), \
+                    mock.patch.object(report, "evaluate_session", return_value=fake_evaluation), \
+                    mock.patch.object(flight_review_report, "render", return_value=session / "REPORT.html"):
+                result = report._build_complete_report(
+                    session,
+                    "sim",
+                    ROOT / "config/runtime/sim.yaml",
+                    ROOT,
+                )
+
+        self.assertEqual(result["verdict"], "FAIL")
+        self.assertFalse(result["qualification_eligible"])
+
     def test_simulation_config_is_lio_only_at_startup(self) -> None:
         config = runner.load_config("sim.yaml")["fast_lio"]["ros__parameters"]
         prior = config["initial_prior"]

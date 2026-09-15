@@ -6518,6 +6518,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         navigation_planning::planningFailureReasonName(
             planner_backend_outcome.failure_reason));
     add_trace_value("planning_cycle_id", cycle_count_);
+    add_trace_value("planning_localization_epoch",
+                    effective_scheduled_key.localization_epoch);
     add_trace_value("bundle_id", committed_generation);
     add_trace_value("solve_generation", solve_generation);
     add_trace_value("planning_start_mode",
@@ -8098,6 +8100,13 @@ void NavigationRuntimeNode::publishCommand() {
             std::chrono::steady_clock::now() - publish_started).count(),
         std::memory_order_release);
   };
+  const auto authorize_and_publish_ros_command = [&command, &publish_ros_command] {
+    command.execution_authorization = navigation_contracts::msg::NavigationCommand::
+        EXECUTION_AUTHORIZATION_GRANTED;
+    command.execution_authorization_steady_ns = static_cast<std::uint64_t>(
+        std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds()));
+    publish_ros_command();
+  };
   if (sampled_command_valid) {
     bool exposed = false;
     const auto store_publish_started = std::chrono::steady_clock::now();
@@ -8154,7 +8163,8 @@ void NavigationRuntimeNode::publishCommand() {
           execution_episode_.snapshot().command_available &&
           command_execution_lease_failure_latch_.allowsCommandExposure()) {
         exposed = command_bundle_store_.publishIfCurrent(
-            sampled_bundle, command_goal_epoch_at_command, publish_ros_command);
+            sampled_bundle, command_goal_epoch_at_command,
+            authorize_and_publish_ros_command);
       }
     }
     last_command_store_publish_us_.store(
@@ -8227,6 +8237,10 @@ void NavigationRuntimeNode::publishCommand() {
       return;
     }
   } else {
+    command.execution_authorization = navigation_contracts::msg::NavigationCommand::
+        EXECUTION_AUTHORIZATION_REJECTED;
+    command.execution_authorization_steady_ns = static_cast<std::uint64_t>(
+        std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds()));
     publish_ros_command();
   }
   ++command_publish_count_;

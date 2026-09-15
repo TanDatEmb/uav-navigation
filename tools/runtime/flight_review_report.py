@@ -869,7 +869,7 @@ def comparison_bars(items: list[tuple[str, float | None, str, str]], title: str)
 
 
 def status_class(status: str) -> str:
-    return {"PASS": "pass", "FAIL": "fail", "INCOMPLETE": "observe", "N/A": "na", "OBSERVE": "observe", "INFO": "info"}.get(status, "info")
+    return {"PASS": "pass", "FAIL": "fail", "INCOMPLETE": "observe", "NOT_EVALUABLE": "observe", "N/A": "na", "OBSERVE": "observe", "INFO": "info"}.get(status, "info")
 
 
 def status_chip(status: str, label: str | None = None) -> str:
@@ -899,6 +899,85 @@ def _gate_status(condition: bool | None) -> str:
     return "PASS" if condition else "FAIL"
 
 
+_REQUIRED_EVALUATION_DIMENSIONS = (
+    "mission", "safety", "tracking", "motion_quality", "evidence",
+)
+_EVALUATION_DIMENSION_STATUSES = {"PASS", "FAIL", "NOT_EVALUABLE", "INCOMPLETE"}
+
+
+def _versioned_evaluation_consistency(versioned: Any) -> dict[str, Any]:
+    """Return strict, fail-closed aggregate state for a versioned evaluator."""
+    reasons: list[str] = []
+    if not isinstance(versioned, dict):
+        return {
+            "valid": False,
+            "reasons": ["versioned evaluation is missing or malformed"],
+            "statuses": {name: "NOT_EVALUABLE" for name in _REQUIRED_EVALUATION_DIMENSIONS},
+            "assessment_status": "NOT_EVALUABLE",
+            "evidence_status": "INCOMPLETE",
+            "qualification_eligible": False,
+        }
+    dimensions = versioned.get("dimensions")
+    if not isinstance(dimensions, dict):
+        dimensions = {}
+        reasons.append("versioned evaluation dimensions are missing or malformed")
+    statuses: dict[str, str] = {}
+    for name in _REQUIRED_EVALUATION_DIMENSIONS:
+        item = dimensions.get(name)
+        status = item.get("status") if isinstance(item, dict) else None
+        if not isinstance(status, str) or status.upper() not in _EVALUATION_DIMENSION_STATUSES:
+            reasons.append(f"versioned evaluation dimension status invalid: {name}")
+            statuses[name] = "NOT_EVALUABLE"
+        else:
+            statuses[name] = status.upper()
+
+    assessment = versioned.get("assessment_status")
+    assessment = assessment.upper() if isinstance(assessment, str) else ""
+    expected_assessment = (
+        "FAIL" if "FAIL" in statuses.values()
+        else "PASS" if statuses and all(status == "PASS" for status in statuses.values())
+        else "NOT_EVALUABLE"
+    )
+    if assessment not in _EVALUATION_DIMENSION_STATUSES:
+        reasons.append("versioned evaluation assessment status is missing or invalid")
+    elif assessment != expected_assessment:
+        reasons.append(
+            f"versioned evaluation assessment contradicts required dimensions: "
+            f"{assessment} != {expected_assessment}"
+        )
+
+    evidence_status = versioned.get("evidence_status")
+    evidence_status = evidence_status.upper() if isinstance(evidence_status, str) else ""
+    expected_evidence = "COMPLETE" if statuses["evidence"] == "PASS" else "INCOMPLETE"
+    if evidence_status not in {"COMPLETE", "INCOMPLETE"}:
+        reasons.append("versioned evaluation evidence status is missing or invalid")
+    elif evidence_status != expected_evidence:
+        reasons.append(
+            f"versioned evaluation evidence status contradicts evidence dimension: "
+            f"{evidence_status} != {expected_evidence}"
+        )
+
+    qualification_eligible = versioned.get("qualification_eligible")
+    if type(qualification_eligible) is not bool:
+        reasons.append("versioned evaluation qualification_eligible is not a boolean")
+        qualification_eligible = False
+    qualification_reasons = versioned.get("qualification_reasons", [])
+    if qualification_eligible is True and (
+        not isinstance(qualification_reasons, list) or qualification_reasons
+    ):
+        reasons.append(
+            "versioned evaluation eligibility contradicts qualification reasons"
+        )
+    return {
+        "valid": not reasons,
+        "reasons": reasons,
+        "statuses": statuses,
+        "assessment_status": assessment or "NOT_EVALUABLE",
+        "evidence_status": evidence_status or "INCOMPLETE",
+        "qualification_eligible": qualification_eligible,
+    }
+
+
 def _evaluation(
     report: dict[str, Any],
     safety: dict[str, Any],
@@ -910,6 +989,77 @@ def _evaluation(
     collision_count: float | None,
 ) -> dict[str, Any]:
     """Compute display gates from recorded evidence, never from presentation defaults."""
+    versioned = report.get("evaluation") if isinstance(report, dict) else None
+    if isinstance(versioned, dict) and isinstance(versioned.get("dimensions"), dict):
+        dimensions = versioned["dimensions"]
+
+        def dimension_status(name: str) -> str:
+            item = dimensions.get(name, {})
+            status = str(item.get("status", "NOT_EVALUABLE")).upper() if isinstance(item, dict) else "NOT_EVALUABLE"
+            return status if status in {"PASS", "FAIL", "NOT_EVALUABLE", "INCOMPLETE"} else "NOT_EVALUABLE"
+
+        mission_status = dimension_status("mission")
+        safety_status = dimension_status("safety")
+        tracking_status = dimension_status("tracking")
+        motion_status = dimension_status("motion_quality")
+        evidence_status = dimension_status("evidence")
+        dimension_values = (mission_status, safety_status, tracking_status, motion_status, evidence_status)
+        consistency = _versioned_evaluation_consistency(versioned)
+        qualification_eligible = consistency["qualification_eligible"] is True
+        telemetry_verdict = str(report.get("verdict") or "N/A").upper()
+        assessment_status = consistency["assessment_status"]
+        evidence_status_value = consistency["evidence_status"]
+        if (
+            telemetry_verdict == "FAIL"
+            or assessment_status == "FAIL"
+            or "FAIL" in dimension_values
+        ):
+            overall = "FAIL"
+        elif (
+            consistency["valid"]
+            and assessment_status == "PASS"
+            and evidence_status_value == "COMPLETE"
+            and qualification_eligible
+            and all(item == "PASS" for item in dimension_values)
+        ):
+            overall = "PASS"
+        elif assessment_status in {"NOT_EVALUABLE", "INCOMPLETE"}:
+            overall = "INCOMPLETE"
+        elif not consistency["valid"]:
+            overall = "INCOMPLETE"
+        else:
+            # Compatibility for pre-versioned fixtures: the dimension block
+            # remains authoritative when the explicit aggregate is absent.
+            overall = (
+                "FAIL" if telemetry_verdict == "FAIL" or "FAIL" in dimension_values
+                else "PASS" if telemetry_verdict == "PASS" and all(item == "PASS" for item in dimension_values) and qualification_eligible
+                else "INCOMPLETE"
+            )
+        qualification_reasons = versioned.get("qualification_reasons", [])
+        experimental_reason = any(
+            "EXPERIMENTAL" in str(reason).upper()
+            for reason in qualification_reasons
+        ) if isinstance(qualification_reasons, list) else False
+        return {
+            "overall": overall,
+            "telemetry_verdict": telemetry_verdict,
+            "gates": {
+                "runtime_contract": _gate_status(telemetry_verdict == "PASS") if telemetry_verdict in {"PASS", "FAIL"} else "N/A",
+                "mission": mission_status,
+                "waypoint": mission_status,
+                # Guidance deviation is descriptive geometry, never an
+                # acceptance gate in the versioned evaluator.
+                "cross_track": "INFO",
+                "collision": safety_status,
+                "safety": safety_status,
+                "tracking": tracking_status,
+                "motion_quality": motion_status,
+                "evidence": evidence_status,
+                "lio": "N/A",
+                "px4": "N/A",
+                "temporary_bypass": "FAIL" if experimental_reason else "PASS",
+            },
+        }
     outcome = str(safety.get("outcome") or "").upper()
     expected = str(acceptance.get("expected_outcome") or "complete").lower()
     if expected == "fail_closed":
@@ -965,6 +1115,48 @@ def _evaluation(
     overall = "FAIL" if "FAIL" in required else "PASS" if all(item == "PASS" for item in required) else "INCOMPLETE"
     telemetry_verdict = telemetry_verdict or "N/A"
     return {"overall": overall, "telemetry_verdict": telemetry_verdict, "gates": gates}
+
+
+def _canonical_evaluation_snapshot(report: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the evaluator-owned fields that HTML is allowed to display."""
+    evaluation = report.get("evaluation") if isinstance(report, dict) else None
+    if not isinstance(evaluation, dict) or not isinstance(evaluation.get("dimensions"), dict):
+        return None
+    dimensions = {}
+    for name, value in evaluation["dimensions"].items():
+        if not isinstance(value, dict):
+            continue
+        dimensions[str(name)] = {
+            "status": value.get("status"),
+            "reasons": list(value.get("reasons", []))
+            if isinstance(value.get("reasons"), list) else [],
+        }
+    metrics = {}
+    metric_fields = (
+        "status", "value", "unit", "count", "p50", "p95", "p99", "rmse",
+        "coverage_ratio", "required_duration_s", "valid_duration_s",
+        "longest_uncovered_interval_s", "reason", "coverage_reason",
+        "evaluation_window",
+        "time_basis", "frame", "reference", "qualification_reasons",
+    )
+    for metric_id, value in evaluation.get("metrics", {}).items():
+        if not isinstance(value, dict):
+            continue
+        metrics[str(metric_id)] = {
+            field: value.get(field) for field in metric_fields if field in value
+        }
+    return {
+        "schema_version": evaluation.get("schema_version"),
+        "assessment_status": evaluation.get("assessment_status"),
+        "evidence_status": evaluation.get("evidence_status"),
+        "qualification_eligible": evaluation.get("qualification_eligible"),
+        "blocking_reasons": list(evaluation.get("blocking_reasons", []))
+        if isinstance(evaluation.get("blocking_reasons"), list) else [],
+        "tracking_coverage_policy": evaluation.get("tracking_coverage_policy"),
+        "evaluation_window": evaluation.get("evaluation_window"),
+        "dimensions": dimensions,
+        "metrics": metrics,
+    }
 
 
 def _timing_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2180,12 +2372,40 @@ def render(session: Path, output: Path) -> Path:
         report, safety, acceptance, lio, px4, cross_p95, cross_limit, collision_count
     )
     gates = evaluation["gates"]
+    canonical_evaluation = _canonical_evaluation_snapshot(report)
+    versioned_evaluation = report.get("evaluation", {}) if isinstance(report, dict) else {}
+    versioned_dimensions = (
+        canonical_evaluation.get("dimensions", {})
+        if isinstance(canonical_evaluation, dict) else {}
+    )
+    versioned_metrics = (
+        canonical_evaluation.get("metrics", {})
+        if isinstance(canonical_evaluation, dict) else {}
+    )
+    has_versioned_evaluation = canonical_evaluation is not None
+    guidance_metric = versioned_metrics.get("mission_guidance_deviation_xy_m", {})
+    guidance_p95 = (
+        finite(guidance_metric.get("p95"))
+        if isinstance(guidance_metric, dict) else cross_p95
+    )
     findings = [
         (gates["mission"], f"Mission outcome: {outcome or 'N/A'}; expected {expected_outcome}."),
         (gates["waypoint"], f"Waypoint acceptance: {accepted_count}/{waypoint_count}; only explicit acceptance events are counted."),
-        (gates["cross_track"], f"Cross-track p95: {fmt(cross_p95, 2, ' m')} against limit {fmt(cross_limit, 2, ' m')}."),
+        (gates["cross_track"], f"Mission guidance deviation XY p95: {fmt(guidance_p95, 2, ' m')} (descriptive geometry; no acceptance gate)."),
         (gates["collision"], f"Collision safety: {fmt(collision_count, 0)} collisions; minimum clearance {fmt(min_clearance, 2, ' m')}."),
     ]
+    if has_versioned_evaluation:
+        for name, label in (
+            ("tracking", "Tracking quality"),
+            ("motion_quality", "Motion quality"),
+            ("evidence", "Evidence completeness"),
+        ):
+            dimension = versioned_dimensions.get(name, {})
+            if isinstance(dimension, dict):
+                findings.append((
+                    str(dimension.get("status", "NOT_EVALUABLE")),
+                    f"{label}: {str(dimension.get('status', 'NOT_EVALUABLE')).upper()}.",
+                ))
     if gates["mission"] == "PASS" and evaluation["overall"] != "PASS":
         findings.append((
             "OBSERVE",
@@ -2281,7 +2501,7 @@ def render(session: Path, output: Path) -> Path:
     status_rows = [
         ("Mission outcome", outcome or "N/A", expected_outcome_text, gates["mission"]),
         ("Waypoint acceptance", f"{accepted_count}/{waypoint_count}", "explicit acceptance evidence only", gates["waypoint"]),
-        ("Tracking cross-track p95", fmt(cross_p95, 2, " m"), f"≤ {fmt(cross_limit, 2, ' m')}", gates["cross_track"]),
+        ("Mission guidance deviation XY p95", fmt(guidance_p95, 2, " m"), "descriptive geometry; no acceptance threshold", gates["cross_track"]),
         (
             "Matched speed error p95",
             fmt((command_tracking.get("speed_error_abs_mps") or {}).get("p95"), 2, " m/s"),
@@ -2301,10 +2521,122 @@ def render(session: Path, output: Path) -> Path:
         ("Telemetry verdict", telemetry_verdict, "informational", telemetry_gate),
         ("Planner safety-stop selection", percent(safety_stop_ratio), "diagnostic only", "OBSERVE" if safety_stop_ratio is not None else "N/A"),
     ]
+    if has_versioned_evaluation:
+        for name, label in (
+            ("safety", "Safety dimension"),
+            ("tracking", "Tracking dimension"),
+            ("motion_quality", "Motion quality dimension"),
+            ("evidence", "Evidence dimension"),
+        ):
+            dimension = versioned_dimensions.get(name, {})
+            if isinstance(dimension, dict):
+                reasons = dimension.get("reasons", [])
+                reason_text = "; ".join(str(reason) for reason in reasons[:2]) if isinstance(reasons, list) else ""
+                status_rows.append((
+                    label,
+                    str(dimension.get("status", "NOT_EVALUABLE")).upper(),
+                    reason_text or "versioned offline evaluator dimension",
+                    str(dimension.get("status", "NOT_EVALUABLE")).upper(),
+                ))
     table_rows = "".join(
         f'<tr><td>{esc(label)}</td><td class="observed">{esc(observed)}</td><td>{esc(criterion)}</td><td>{status_chip(status)}</td></tr>'
         for label, observed, criterion, status in status_rows
     )
+    evaluation_dimensions_html = ""
+    lifecycle_html = ""
+    if has_versioned_evaluation:
+        dimension_rows = []
+        for name, label in (
+            ("mission", "Mission"),
+            ("safety", "Safety"),
+            ("tracking", "Tracking"),
+            ("motion_quality", "Motion quality"),
+            ("evidence", "Evidence"),
+        ):
+            dimension = versioned_dimensions.get(name, {})
+            if not isinstance(dimension, dict):
+                continue
+            reasons = dimension.get("reasons", [])
+            reason_text = "; ".join(str(reason) for reason in reasons) if isinstance(reasons, list) else ""
+            status = str(dimension.get("status", "NOT_EVALUABLE")).upper()
+            dimension_rows.append(
+                f'<tr><td>{esc(label)}</td><td class="observed">{esc(status)}</td>'
+                f'<td>{esc(reason_text or "versioned offline evaluator dimension")}</td>'
+                f'<td>{status_chip(status)}</td></tr>'
+            )
+        canonical_metric_rows = []
+        for metric_id in (
+            "tracking.navigation_reference_vs_truth",
+            "tracking.navigation_reference_vs_lio",
+        ):
+            metric = versioned_metrics.get(metric_id, {})
+            if not isinstance(metric, dict):
+                continue
+            reason = metric.get("qualification_reason") or metric.get("coverage_reason") or metric.get("reason")
+            canonical_metric_rows.append(
+                f'<tr><td>{esc(metric_id)}</td><td>{esc(metric.get("status", "NOT_EVALUABLE"))}</td>'
+                f'<td>{fmt(metric.get("p95"), 3, "")}</td>'
+                f'<td>{fmt(metric.get("coverage_ratio"), 3, "")}</td>'
+                f'<td>{esc(reason or "—")}</td></tr>'
+            )
+        canonical_metrics_html = (
+            '<h3>Canonical evaluator metrics</h3>'
+            '<table class="evidence"><thead><tr><th>Metric ID</th><th>Status</th>'
+            '<th>P95</th><th>Coverage</th><th>Reason</th></tr></thead>'
+            f'<tbody>{"".join(canonical_metric_rows) or "<tr><td colspan=5>No canonical metrics recorded.</td></tr>"}</tbody></table>'
+        )
+        scope = versioned_evaluation.get("scope", {})
+        scope_text = (
+            f"Scope: {scope.get('speed_band', 'unknown')} · "
+            f"requested {fmt(scope.get('requested_speed_mps'), 2, ' m/s')} · "
+            f"qualification eligible = {versioned_evaluation.get('qualification_eligible')} · "
+            f"reasons = {', '.join(str(item) for item in versioned_evaluation.get('qualification_reasons', [])) or 'none'}"
+        ) if isinstance(scope, dict) else "Versioned offline evaluator"
+        timing_metrics = versioned_metrics.get("timing", {})
+        timing_text = ""
+        if isinstance(timing_metrics, dict):
+            timing_parts = []
+            for name in ("pva_observer_interarrival_ms", "px4_setpoint_update_duration_ms"):
+                metric = timing_metrics.get(name, {})
+                if isinstance(metric, dict):
+                    timing_parts.append(
+                        f"{name}: {metric.get('status', 'NOT_EVALUABLE')} p95="
+                        f"{fmt(metric.get('p95'), 3, ' ms')}"
+                    )
+            if timing_parts:
+                timing_text = " Offline timing: " + "; ".join(timing_parts) + "."
+        evaluation_dimensions_html = (
+            f'<section><h2>Versioned evaluation dimensions</h2>'
+            f'<p class="small">{esc(scope_text)}. Missing source, clock, frame or identity evidence remains NOT_EVALUABLE.{esc(timing_text)}</p>'
+            f'<table class="evidence"><thead><tr><th>Dimension</th><th>Observed</th><th>Reason / contract</th><th>Status</th></tr></thead>'
+            f'<tbody>{"".join(dimension_rows)}</tbody></table>{canonical_metrics_html}</section>'
+        )
+        lifecycle_rows = []
+        for item in versioned_evaluation.get("lifecycle", []):
+            if not isinstance(item, dict):
+                continue
+            lifecycle_rows.append(
+                f'<tr><td>{esc(item.get("phase", "—"))}</td>'
+                f'<td>{esc(item.get("disposition", "—"))}</td>'
+                f'<td>{esc(item.get("clock_domain", "—"))}</td>'
+                f'<td>{esc(item.get("source_stamp_ns", "—"))}</td>'
+                f'<td>{esc("R=" + str(item.get("request_id", "—")) + " B=" + str(item.get("bundle_generation", "—")) + " C=" + str(item.get("causal_planning_cycle_id", "—")) + " S=" + str(item.get("sample_id", "—")) + " T=" + str(item.get("adapter_trace_sequence", "—")))}</td>'
+                f'<td>{esc(item.get("reason") or item.get("authority") or "—")}</td></tr>'
+            )
+        lifecycle_reduction = versioned_evaluation.get("lifecycle_reduction", {})
+        lifecycle_reduction_text = ""
+        if isinstance(lifecycle_reduction, dict):
+            lifecycle_reduction_text = (
+                f' Reducer: {lifecycle_reduction.get("status", "INCOMPLETE")}; '
+                f'valid transactions={lifecycle_reduction.get("valid_transaction_count", 0)}; '
+                f'reasons={", ".join(str(item) for item in lifecycle_reduction.get("reasons", [])) or "none"}.'
+            )
+        lifecycle_html = (
+            '<section><h2>Execution lifecycle</h2>'
+            f'<p class="small">Observed authority handoff from request through publish; reject paths remain visible.{esc(lifecycle_reduction_text)}</p>'
+            '<table class="evidence"><thead><tr><th>Phase</th><th>Disposition</th><th>Clock</th><th>Source stamp (ns)</th><th>Lineage</th><th>Reason / authority</th></tr></thead>'
+            f'<tbody>{"".join(lifecycle_rows) or "<tr><td colspan=6>No lifecycle events recorded.</td></tr>"}</tbody></table></section>'
+        )
     failure_reasons_html = (
         f'<section><h2>Failure reasons</h2><ul>{"".join(f"<li>{esc(reason)}</li>" for reason in failure_reasons)}</ul></section>'
         if failure_reasons else ""
@@ -2440,7 +2772,7 @@ def render(session: Path, output: Path) -> Path:
 
     plot_html = "".join([
         map_svg(data),
-        line_chart("Cross-track error", [{"label": "error", "points": error_series, "color": RED}], "distance error (m)", threshold=cross_limit, threshold_label=f"acceptance limit {fmt(cross_limit, 2, ' m')}", state_intervals=observability.get("state_intervals", [])),
+        line_chart("Mission guidance deviation (descriptive)", [{"label": "deviation", "points": error_series, "color": RED}], "distance (m)", threshold=None if has_versioned_evaluation else cross_limit, threshold_label=None if has_versioned_evaluation else f"acceptance limit {fmt(cross_limit, 2, ' m')}", state_intervals=observability.get("state_intervals", [])),
         line_chart("Velocity components", [{"label": "vx", "points": velocity_series["vx"], "color": BLUE}, {"label": "vy", "points": velocity_series["vy"], "color": TEAL}, {"label": "vz", "points": velocity_series["vz"], "color": ORANGE}], "velocity (m/s)", state_intervals=observability.get("state_intervals", [])),
         line_chart("Speed magnitude", [{"label": "measured", "points": speed_series, "color": BLUE}, {"label": "PVA command", "points": setpoint_speed_series, "color": TEAL, "dash": "6 4"}], "speed (m/s)", state_intervals=observability.get("state_intervals", [])),
     ])
@@ -2460,6 +2792,8 @@ def render(session: Path, output: Path) -> Path:
     sitl_profile = metadata.get("sitl_profile", {}) if isinstance(metadata, dict) else {}
     profile_name = str(sitl_profile.get("name", "default")) if isinstance(sitl_profile, dict) else "default"
     qualification_eligible = sitl_profile.get("qualification_eligible") if isinstance(sitl_profile, dict) else None
+    if has_versioned_evaluation:
+        qualification_eligible = versioned_evaluation.get("qualification_eligible")
     hold_contract = sitl_profile.get("hold_contract") if isinstance(sitl_profile, dict) else None
     measured_peak_speed_mps = finite(tracking.get("speed_mps", {}).get("maximum"))
     sim_duration_s = finite(mission.get("duration_sim_s"))
@@ -2626,12 +2960,12 @@ def render(session: Path, output: Path) -> Path:
 
   <div class="run-log" aria-label="Simulation runtime and experiment context"><span><strong>Experiment time</strong> {esc(experiment_time)}</span><span><strong>SITL profile</strong> {esc(profile_name)}</span><span><strong>Qualification eligible</strong> {esc(qualification_eligible)}</span><span><strong>Requested speed</strong> {fmt(target_speed_mps, 2, ' m/s')}</span><span><strong>Governed speed</strong> {fmt(governed_speed_mps, 2, ' m/s')}</span><span><strong>Physical ceiling</strong> {fmt(physical_speed_mps, 2, ' m/s')}</span><span><strong>Measured peak</strong> {fmt(measured_peak_speed_mps, 2, ' m/s')}</span><span><strong>Simulation runtime</strong> {fmt(sim_duration_s, 3, ' s')}</span><span><strong>Recorded telemetry window</strong> {esc(sim_window)}</span><span><strong>Wall elapsed</strong> {fmt(wall_elapsed_s, 3, ' s')}</span></div>
 
-  <p class="lede">Acceptance is computed from explicit mission completion, waypoint acceptance, tracking, collision, LIO and PX4 evidence. Telemetry verdict: {esc(evaluation["telemetry_verdict"])}.</p>
+  <p class="lede">The versioned evaluator separates mission, safety, tracking, motion-quality and evidence dimensions. Guidance deviation is descriptive geometry only; it is not a tracking or mission gate. Telemetry verdict: {esc(evaluation["telemetry_verdict"])}.</p>
 
   <div class="kpis">
     <div class="card kpi {status_class(gates['mission'])}"><div class="kpi-label">Mission outcome</div><div class="kpi-value">{esc(outcome or 'N/A')}</div><div class="kpi-sub">{status_chip(gates['mission'])} expected {esc(acceptance.get('expected_outcome') or 'complete')}</div></div>
     <div class="card kpi {status_class(gates['waypoint'])}"><div class="kpi-label">Waypoint progress</div><div class="kpi-value">{accepted_count}/{waypoint_count}</div><div class="kpi-sub">{status_chip(gates['waypoint'])} explicit acceptance events</div></div>
-    <div class="card kpi {status_class(gates['cross_track'])}"><div class="kpi-label">Cross-track p95</div><div class="kpi-value">{fmt(cross_p95, 2, ' m')}</div><div class="kpi-sub">{status_chip(gates['cross_track'])} limit {fmt(cross_limit, 2, ' m')}</div></div>
+    <div class="card kpi {status_class(gates['cross_track'])}"><div class="kpi-label">Guidance deviation XY p95</div><div class="kpi-value">{fmt(guidance_p95, 2, ' m')}</div><div class="kpi-sub">{status_chip(gates['cross_track'])} descriptive only</div></div>
     <div class="card kpi {status_class(gates['collision'])}"><div class="kpi-label">Collision safety</div><div class="kpi-value">{fmt(collision_count, 0)}</div><div class="kpi-sub">{status_chip(gates['collision'])} collisions · min clearance {fmt(min_clearance, 2, ' m')}</div></div>
     <div class="card kpi {status_class(gates['lio'])}"><div class="kpi-label">Localization</div><div class="kpi-value">{esc(lio.get('state') or 'N/A')}</div><div class="kpi-sub">{status_chip(gates['lio'])} navigation_valid = {esc(lio.get('navigation_valid'))}</div></div>
   </div>
@@ -2647,6 +2981,10 @@ def render(session: Path, output: Path) -> Path:
   <section><h2>Position, velocity and setpoint traces</h2><p class="small">These traces are the system-level supervision view: ground truth, LIO propagated/corrected odometry, PX4 odometry/local position and recorded PVA commands. If a stream is absent, the corresponding chart explicitly reports no samples.</p><p class="small state-note"><span class="state-key normal"></span>normal/main <span class="state-key safety"></span>safety/backup · {esc(state_observation_note)}</p><div class="charts">{position_plot_html}{velocity_plot_html}</div></section>
 
   <section><h2>Acceptance gates</h2><table class="evidence"><thead><tr><th>Gate</th><th>Observed</th><th>Criterion / context</th><th>Status</th></tr></thead><tbody>{table_rows}</tbody></table></section>
+
+  {evaluation_dimensions_html}
+
+  {lifecycle_html}
 
   <section><h2>Waypoint and command-state timeline</h2><p class="small">The replay cursor exposes the latest vehicle state, active waypoint, acceptance result, and active command path. This table is the durable waypoint evidence behind the replay.</p><table class="evidence"><thead><tr><th>Time</th><th>Waypoint</th><th>State</th><th>Reason</th><th>Accepted</th><th>Position error</th><th>Speed at acceptance</th></tr></thead><tbody>{waypoint_event_rows}</tbody></table><p class="small">{esc(path_observation_note)}</p></section>
 
