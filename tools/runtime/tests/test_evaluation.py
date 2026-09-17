@@ -749,6 +749,41 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(reduced["valid_transaction_count"], 1)
         self.assertTrue(reduced["order_independent"])
 
+    def test_later_revalidation_cycle_does_not_relabel_bundle_owner(self):
+        events = self._lifecycle(bundle=4, cycle=9, sample=11)
+        for event in events:
+            if event["phase"] in {"authorize", "publish"}:
+                event["causal_planning_cycle_id"] = 14
+                # Legacy captures incorrectly copied the validation cycle into
+                # the owner field. The unique export witness is authoritative.
+                event["bundle_owner_cycle_id"] = 14
+        reduced = reduce_lifecycle(events)
+        self.assertEqual(reduced["status"], "VALID")
+        self.assertEqual(reduced["valid_transaction_count"], 1)
+        transaction = reduced["transactions"][0]
+        self.assertEqual(
+            transaction["identity"]["causal_planning_cycle_id"], 9
+        )
+        self.assertEqual(
+            transaction["events"]["authorize"]["causal_planning_cycle_id"], 14
+        )
+        self.assertEqual(
+            transaction["events"]["authorize"]["bundle_owner_cycle_id"], 9
+        )
+
+    def test_bundle_owner_is_not_guessed_without_export_witness(self):
+        events = [
+            event for event in self._lifecycle(bundle=4, cycle=9, sample=11)
+            if event["phase"] != "export"
+        ]
+        for event in events:
+            if event["phase"] in {"authorize", "publish"}:
+                event["causal_planning_cycle_id"] = 14
+                event.pop("bundle_owner_cycle_id", None)
+        reduced = reduce_lifecycle(events)
+        self.assertEqual(reduced["valid_transaction_count"], 0)
+        self.assertIn("BUNDLE_OWNER_MISSING_EXPORT", reduced["reasons"])
+
     def test_cycleless_request_cannot_be_attached_to_a_later_cycle(self):
         events = self._lifecycle()
         events[0]["causal_planning_cycle_id"] = None

@@ -170,7 +170,7 @@ def _present_identity(value: Any) -> bool:
 def _lifecycle_transaction_key(event: dict[str, Any]) -> tuple[Any, ...]:
     """Return the producer-declared transaction owner, never a guessed phase key."""
     request_id = event.get("bundle_owner_request_id", event.get("request_id"))
-    cycle_id = event.get("bundle_owner_cycle_id", event.get("causal_planning_cycle_id"))
+    cycle_id = event.get("bundle_owner_cycle_id")
     return (
         event.get("runtime_instance_id"),
         event.get("session_id"),
@@ -219,6 +219,66 @@ def reduce_lifecycle(
         if isinstance(item, dict)
         and item.get("attribution") == "px4_input_trace"
     )
+    # A command can be authorized by a later retained-command validation than
+    # the planning cycle which produced its immutable bundle. Build ownership
+    # only from export witnesses; treating causal_planning_cycle_id as the
+    # bundle owner silently relabels an old active command after every failed
+    # renewal.
+    export_owners: dict[tuple[Any, ...], set[Any]] = {}
+    for event in normalized:
+        if str(event.get("phase", "")) != "export":
+            continue
+        owner_cycle = event.get(
+            "bundle_owner_cycle_id", event.get("causal_planning_cycle_id")
+        )
+        bundle_key = tuple(event.get(field) for field in (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "goal_epoch", "request_id", "bundle_generation",
+        ))
+        if all(_present_identity(value) for value in bundle_key) and _present_identity(
+            owner_cycle
+        ):
+            export_owners.setdefault(bundle_key, set()).add(owner_cycle)
+
+    for event in normalized:
+        phase = str(event.get("phase", ""))
+        if phase in {"request", "export"}:
+            owner_cycle = event.get("bundle_owner_cycle_id")
+            if not _present_identity(owner_cycle):
+                owner_cycle = event.get("causal_planning_cycle_id")
+            event["bundle_owner_cycle_id"] = owner_cycle
+            event.setdefault("bundle_owner_attribution", "producer_declared")
+            continue
+        if (
+            phase == "authorize"
+            and str(event.get("disposition", "")).upper()
+            in _TERMINAL_REJECT_DISPOSITIONS
+        ):
+            # A rejected authorization is the terminal outcome of the
+            # producer request; no bundle was exported and therefore no
+            # export-owner witness can exist. Keep its declared causal cycle
+            # solely to close that rejected transaction.
+            owner_cycle = event.get("bundle_owner_cycle_id")
+            if not _present_identity(owner_cycle):
+                owner_cycle = event.get("causal_planning_cycle_id")
+            event["bundle_owner_cycle_id"] = owner_cycle
+            event.setdefault("bundle_owner_attribution", "producer_declared")
+            continue
+        if phase not in {"authorize", "activate", "publish"}:
+            continue
+        bundle_key = tuple(event.get(field) for field in (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "goal_epoch", "request_id", "bundle_generation",
+        ))
+        owners = export_owners.get(bundle_key, set())
+        if len(owners) == 1:
+            event["bundle_owner_cycle_id"] = next(iter(owners))
+            event["bundle_owner_attribution"] = "resolved_from_export"
+        else:
+            event["bundle_owner_cycle_id"] = None
+            event["bundle_owner_attribution"] = (
+                "missing_export" if not owners else "ambiguous_export"
+            )
     transactions: dict[tuple[Any, ...], dict[str, Any]] = {}
     conflicts: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
@@ -228,12 +288,18 @@ def reduce_lifecycle(
         phase = str(event.get("phase", ""))
         if phase not in _LIFECYCLE_PHASES:
             continue
-        if phase in {"request", "activate"} and not _present_identity(
+        if phase == "request" and not _present_identity(
             event.get("causal_planning_cycle_id")
         ):
             # Request and command-timer activation evidence may not carry the
-            # planner cycle. Keep them for explicit request/bundle attachment
-            # below rather than creating a synthetic transaction key.
+            # planner cycle. Keep the request unresolved rather than attaching
+            # it to a later planning transaction.
+            continue
+        if phase == "activate" and not _present_identity(
+            event.get("bundle_owner_cycle_id")
+        ):
+            # Without a unique export witness, command-timer activation has no
+            # producer cycle and must not be guessed from observer order.
             continue
         disposition = str(event.get("disposition", "")).upper()
         tx_key = _lifecycle_transaction_key(event)
@@ -252,6 +318,11 @@ def reduce_lifecycle(
             "reasons": [],
             "terminal_outcome": None,
         })
+        owner_attribution = event.get("bundle_owner_attribution")
+        if owner_attribution in {"missing_export", "ambiguous_export"}:
+            transaction["reasons"].append(
+                "BUNDLE_OWNER_" + str(owner_attribution).upper()
+            )
         event_identity = (
             phase,
             tx_key,

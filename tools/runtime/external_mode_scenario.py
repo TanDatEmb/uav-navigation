@@ -1350,7 +1350,14 @@ class ExternalModeScenario:
                 goal_epoch=int(message.goal_epoch),
                 causal_planning_cycle_id=int(getattr(message, "causal_planning_cycle_id", 0)),
                 bundle_owner_request_id=int(message.request_id),
-                bundle_owner_cycle_id=int(getattr(message, "causal_planning_cycle_id", 0)),
+                # causal_planning_cycle_id identifies the retained-command
+                # validation which authorized this sample. It is not
+                # necessarily the cycle which exported the still-active
+                # bundle. Leave ownership unresolved here; the evaluator may
+                # bind it only through the unique export witness for this
+                # complete bundle identity.
+                bundle_owner_cycle_id=None,
+                bundle_owner_attribution="resolve_from_export",
                 authorization_boundary="execution_timeline_publish_if_current",
                 authorization_steady_ns=int(getattr(
                     message, "execution_authorization_steady_ns", 0)),

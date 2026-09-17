@@ -21945,3 +21945,39 @@ release profiles must not use the former allowance.
   build/test, an actual diagnostic capture preflight against the selected PX4
   checkout, and `git diff --check`. The capture overhead is startup-only and
   must not be reported as command-path timing.
+
+### 2026-09-16 - Resolve command bundle ownership from export evidence
+
+- **Owner/status:** Runtime evidence correlation boundary;
+  `IMPLEMENTED_DIAGNOSTIC_ONLY`. The command contract and execution behavior
+  are unchanged.
+- **Scope:** Command authorization continues to record
+  `causal_planning_cycle_id` as the retained-command validation cycle which
+  produced its current witness. The recorder no longer copies that value into
+  `bundle_owner_cycle_id`. During evaluation, authorize, activate and publish
+  events are attached to a planning transaction only when one export event
+  has the same runtime, session, localization epoch, goal epoch, request and
+  bundle generation. A missing or ambiguous export witness leaves ownership
+  unresolved. Legacy captures which copied the validation cycle into the
+  owner field are re-resolved from the immutable export witness.
+- **Safety impact:** Evidence eligibility becomes stricter without changing
+  command exposure. A failed renewal can no longer make an older active bundle
+  appear to have been exported by the failed cycle. Missing or ambiguous
+  ownership is reported as incomplete evidence; observer order is never used
+  to invent a producer. No collision, dynamics, freshness, timing, tracking or
+  qualification gate is changed.
+- **Evidence/removal condition:** In session
+  `external-mode-check-20260915T194525-709883`, bundle generation 6 was exported
+  by cycle 150 and remained active while validation cycles 157--164 failed.
+  Raw command events therefore legitimately carry validation cycle 164, but
+  the previous recorder labeled cycle 164 as `bundle_owner_cycle_id`. Replaying
+  the same artifact now resolves all 155 authorization samples for generation
+  6 to owner cycle 150 while preserving validation cycles 157--164 separately.
+  Keep the reducer rule until the typed command/execution contract carries an
+  immutable producer transaction identity distinct from its latest validation
+  witness.
+- **Verification:** Run the lifecycle reducer regressions for reordered events,
+  a later validation cycle, a missing export witness and PX4 publish
+  attribution. Load the discriminator artifact and verify generation 6 owner
+  cycle 150, validation cycle 164 and `resolved_from_export`; then run the full
+  runtime tool suite, canonical Release build/test and `git diff --check`.
