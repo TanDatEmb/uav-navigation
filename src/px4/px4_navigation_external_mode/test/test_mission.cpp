@@ -894,6 +894,86 @@ mission:
   expectWaypointAccepted(complete, 0U);
 }
 
+TEST(MissionController, TerminalStopNearEarlierRouteKeepsMeasuredConfirmation) {
+  const auto path = writeMission(R"yaml(
+mission:
+  version: 1
+  id: overlapping_return_stop
+  frame: lio_odom
+  waypoints:
+    - id: origin
+      position: [0.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.9
+    - id: outbound
+      position: [48.0, 0.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.9
+    - id: north
+      position: [48.0, 5.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.8
+    - id: west
+      position: [41.0, 5.0, 3.0]
+      behavior: pass_through
+      acceptance_radius_m: 0.8
+    - id: finish
+      position: [41.0, 0.0, 3.0]
+      behavior: stop
+      acceptance_radius_m: 0.8
+      hold_s: 0.4
+  control:
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.5
+)yaml");
+  const auto mission = px4_navigation_external_mode::loadMission(path.string(), "lio_odom");
+  std::filesystem::remove(path);
+  px4_navigation_external_mode::MissionController controller(mission);
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::PublishGoal);
+  for (std::uint32_t index = 0; index < 4; ++index) {
+    controller.onNativeTrajectoryReady();
+    const auto event = controller.update(
+        0.1 + index, mission.waypoints[index].position_enu, true,
+        Eigen::Vector3d::Zero(),
+        testMainContinuation(mission.id, index, controller.activeRequestId()));
+    ASSERT_TRUE(event.waypoint_accepted);
+    ASSERT_EQ(controller.activeWaypointIndex(), index + 1U);
+  }
+  controller.onNativeTerminalHoldObserved();
+  // This settled SITL position is inside STOP's unchanged 0.8 m ball, but
+  // nearest-point projection chooses outbound segment 0, not final segment 3.
+  const Eigen::Vector3d settled{41.1963, -0.0178, 2.8478};
+  ASSERT_LT((settled - mission.waypoints[4].position_enu).norm(), 0.8);
+  const auto expect_wait = [&](double now, const std::optional<Eigen::Vector3d>& position,
+                               const std::optional<Eigen::Vector3d>& velocity) {
+    const auto event = controller.update(now, position, true, velocity);
+    EXPECT_EQ(event.type, px4_navigation_external_mode::MissionControllerEvent::Type::None);
+    expectNoWaypointAccepted(event);
+    EXPECT_EQ(controller.activeWaypointIndex(), 4U);
+  };
+  expect_wait(4.0, settled, Eigen::Vector3d{0.3, 0.0, 0.0});
+  expect_wait(4.1, settled, Eigen::Vector3d::Zero());
+  expect_wait(4.2, Eigen::Vector3d{42.0, 0.0, 3.0}, Eigen::Vector3d::Zero());
+  expect_wait(4.4, settled, std::nullopt);
+  expect_wait(4.5, settled, Eigen::Vector3d::Zero());
+  expect_wait(4.8, settled, Eigen::Vector3d{0.3, 0.0, 0.0});
+  expect_wait(5.0, settled, Eigen::Vector3d::Zero());
+  expect_wait(5.4, settled, Eigen::Vector3d::Zero());
+  EXPECT_TRUE(controller.terminalHoldPending());
+  EXPECT_EQ(controller.state(),
+            px4_navigation_external_mode::MissionControllerState::ExecutingWaypoint);
+  expect_wait(5.6, settled, Eigen::Vector3d::Zero());
+  EXPECT_EQ(controller.routeSnapshot().measured_progress.projection.segment_index, 0U);
+  EXPECT_EQ(controller.state(), px4_navigation_external_mode::MissionControllerState::Holding);
+  expect_wait(5.9, settled, Eigen::Vector3d::Zero());
+  const auto complete = controller.update(6.1, settled, true, Eigen::Vector3d::Zero());
+  EXPECT_EQ(complete.type,
+            px4_navigation_external_mode::MissionControllerEvent::Type::Complete);
+  expectWaypointAccepted(complete, 4U);
+}
+
 TEST(MissionController, NativeReadinessCannotClearPendingTerminalStopHold) {
   const auto path = writeMission(R"yaml(
 mission:

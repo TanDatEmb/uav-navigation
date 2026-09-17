@@ -502,7 +502,11 @@ MissionControllerEvent MissionController::update(
             route_progress_.snapshot(
                 mission_.id, mission_.frame, 1U, request_id_,
                 active_waypoint_index_));
-    const bool inside = passThroughAcceptance();
+    // Crossing order disambiguates PASS_THROUGH on a self-overlapping route.
+    // STOP instead requires the current measured position inside its ball;
+    // projecting a settled endpoint onto an earlier, closer segment must not
+    // prevent the unchanged measured-speed and confirmation gates below.
+    const bool inside = pass_through ? passThroughAcceptance() : insideAcceptance();
     // Only the initial pass-through checkpoint may be accepted before the
     // first native trajectory is acknowledged.  This is the takeoff/mission
     // handoff exception for a waypoint that is already inside the measured

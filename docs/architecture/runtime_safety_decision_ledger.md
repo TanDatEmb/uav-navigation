@@ -22110,3 +22110,45 @@ release profiles must not use the former allowance.
   current checkpoint diagnostics and reports certificate call/time totals;
   run the canonical Release build, `git diff --check`, then a fresh diagnostic
   SITL discriminator before the requested repeated 2/5/9-waypoint matrix.
+
+### 2026-09-17 - Keep terminal STOP acceptance independent of pass-through projection
+
+- **Owner/status:** External Mode mission controller; `IMPLEMENTED`, component
+  verification PASS; fresh integrated evidence pending. Mission authority stays
+  at its existing owner, not in the planner or execution coordinator.
+- **Scope:** Only `ExecutingWaypoint`'s STOP position predicate changes from
+  route-ordered pass-through crossing to current measured position inside the
+  active waypoint acceptance ball. PASS_THROUGH retains its ordered projection
+  and current accepted MAIN continuation witness. STOP retains trajectory
+  readiness, measured finite velocity, 0.15 m/s speed, continuous 0.5 s
+  confirmation and configured hold duration; no value or safety gate changes.
+- **Safety impact:** This removes a false rejection when a settled terminal
+  vehicle is geometrically closer to an earlier overlapping route segment.
+  It cannot accept STOP from a segment crossing while the current position is
+  outside the ball, from missing velocity or from a transient speed dip. It
+  does not authorize a new navigation command, LAND, disarm or a second
+  execution implementation. Prior waypoint progression remains unchanged.
+- **Evidence:** The frozen 2026-09-17 nine-run matrix's 5WP repetition 2
+  accepted WP0--WP3, held the last endpoint, then ended WALL_TIMEOUT. Its LIO
+  sample near source 243.968 s has approximately 0.249 m goal error and
+  0.0076 m/s speed. An isolated test linked to that exact Release mission
+  library failed to enter Holding/Complete with zero measured speed and
+  projected segment 0. A one-predicate source copy passed that reproducer and
+  all 43 existing mission tests. The new canonical regression additionally
+  checks outside-ball position, missing velocity, high speed and confirmation
+  timer resets before requiring completion. The pre-fix matrix remains
+  diagnostic, not post-fix acceptance. Canonical Release build passed all 23
+  packages; the mission binary passed all 44 tests, including the regression.
+  Canonical `make test` passed all 81 currently selected CTest entries and the
+  Python suite (379 executed passes plus one explicit artifact-dependent skip
+  out of 380 discovered tests), with seven auxiliary tests also passing. The
+  raw colcon total of 83 includes two retained legacy entries and is not the
+  current-run denominator. `git diff --check` passed.
+- **Removal/review condition:** Revert if route-ordered PASS_THROUGH regresses,
+  STOP can complete without continuous measured confirmation, or integrated
+  wiring fails to retain its certified endpoint hold. Do not adjust radii,
+  stop speed or confirmation windows from the single timeout.
+- **Verification:** canonical Release build, `test_mission` (including
+  `TerminalStopNearEarlierRouteKeepsMeasuredConfirmation`), complete `make
+  test`, `git diff --check`, then fresh 5 m/s five-waypoint SITL and a matched
+  repeated matrix. Missing integrated evidence remains pending, not PASS.
