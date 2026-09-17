@@ -2,16 +2,15 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest integrated follow-up: the frozen Release on `b2f25ab0` completed all18
-sequential SAFE/FAST cases: **SAFE2/9mission COMPLETE, FAST4/9mission COMPLETE,
+Latest integrated follow-up: the frozen Release on `8a775d128` completed all18
+sequential SAFE/FAST cases: **SAFE1/9mission COMPLETE, FAST4/9mission COMPLETE,
 0/18report PASS**. Completion remains below a majority and no run qualifies.
-The BACKUP-selector correction closes the component574.112640ms admission
-counterexample without lowering600ms, but that is not product closure.
-Two SAFE5WP cases accepted WP3, activated a current STOP4 command, and reached
-terminal MAIN COMPLETED before measured stopping failed to meet the existing
-speed gate within receiver recovery. Increasing solve budget or adding another
-suffix-reuse implementation does not explain those two failures.
-See [the latest matrix and budget review](#integrated-split-correction-matrix-and-budget-review).
+The BACKUP-witness repair is component verified and its corrected role appears
+at PX4, but this matrix does not demonstrate a completion-rate gain. Persistent
+9WP failures include complete-bundle construction/certification with spare
+budget; a late SAFE5WP run loses final command exposure before COMPLETED.
+See [the latest matrix and expert budget review](#postflight-closure-of-the-backup-witness-cycle).
+The earlier `b2f25ab0` SAFE2/9, FAST4/9 matrix remains separate below.
 
 Historical integrated evidence: the explicit FAST/AllowUnknown matrix on `80020ed0`
 completed all nine runs: **1/9mission COMPLETE,0/9report PASS**, three
@@ -3021,3 +3020,57 @@ coordinator, retry FSM, threshold or fallback path. Separately investigate
 boundary-control duration feasibility and BACKUP viability feedback; only
 then consider earlier renewal/adaptive budgets if complete-bundle evidence
 shows a benefit. No behavioral change is introduced by this postflight closure.
+
+### Corrected boundary: one execution-owned guide time origin
+
+The delayed-clock discriminator now runs through the real `PlannerFacade`,
+not only a helper with handcrafted matching times. The initial predecessor
+is produced and activated by that facade, the request samples its immutable
+future MAIN anchor at activation `a`, and backend source-clock entry is `b`.
+The request budget stays the existing steady-clock 80 ms. Test snapshot capture
+is evidence only; both capture jobs are drained, loss/error counts are checked,
+and the uniquely created temporary directory and scoped environment are cleaned.
+
+Before repair, the delayed 20/60 ms cases fail predecessor-position equality:
+the first 20 ms guide point's x is 0.79310053034 m, whereas the predecessor
+at `a + guide_elapsed` is 0.75357468081 m. Head PVAJ and declared start still
+match `a`; the wrong guide origin is the distinguishing failure. A backend
+entry at `a + 1 ms` also wrongly produces and stages a successful successor,
+although runtime admission separately rejects a late activation. These are
+confirmed backend-boundary defects, not evidence that an unsafe command passed
+runtime admission or that they caused the prior matrix failures.
+
+The repair removes `max(configured_lead, a-b)` and uses actual remaining lead
+`a-b` for request-owned successors; nonfinite or nonfuture activation rejects
+before guide generation. Legacy callers without an activation retain the
+configured lead. With canonical command start `c`, guide anchor time becomes
+`(b-c)+(a-b)=a-c`, matching head and declared activation. The existing
+post-MAIN overrun check now has the actual remaining interval, not a freshly
+extended 400 ms. There is no new coordinator, helper API, retry, shadow state,
+fallback, relaxed gate, budget increase or new diagnostic product authority.
+
+After repair all 30 tests in `test_planner_facade` pass, including delayed
+0/20/60 ms controls, rejection exactly at activation and 1 ms after it, exact
+head PVAJ/start/activation, predecessor preservation, old future export and
+both SAFE/FAST frontier/pass-through cases. The old export fixture's initial
+source/key/receive timestamps were aligned to its existing 10 s backend clock;
+its assertions were retained. Initial test-harness failures from incorrectly
+reading serialized 3x1 vectors as flat arrays are not counted as invariant RED.
+
+Independent adversarial review accepts the minimal ownership repair and keeps
+large-epoch rounding, cold private-history restart, clock jumps, and solve-time
+activation crossing as explicit unclosed test/evidence gaps. Double rounding
+may conservatively reject a near activation; it must never extend authority.
+The tests' retained-prefix oracle is for this straight STOP-only fixture, not
+a proof for corner guides that legitimately retime geometry. Complete corridor,
+world, dynamics/flatness, BACKUP, tracking, identity, lease, and runtime 20 ms
+activation guard remain mandatory. BACKUP viability and boundary-control
+construction remain separate leverage candidates. Canonical `make build`
+passes all 23 Release packages and `make test` exits zero; the colcon result
+summary is 84 targets with zero errors/failures/skips, including backend 9/9,
+runtime 12/12 and External Mode 8/8. The runtime Python suite passes 387 tests
+with one explicitly skipped absent historical GUI artifact. Safety-ledger
+validation and `git diff --check` pass; user-owned document migration remains
+untouched. Fresh postcommit build provenance and the new frozen 18-run
+integration comparison remain pending at this checkpoint; no completion gain
+or smooth sustained 5 m/s qualification is claimed.

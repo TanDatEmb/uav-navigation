@@ -3001,8 +3001,17 @@ double mainGuideSupport(
             std::isfinite(requested_activation_wall_time_s)
                 ? requested_activation_wall_time_s - replan_process_start_WT
                 : cfg_.replan_forward_dt_s;
-        const double successor_forward_s = std::max(
-            cfg_.replan_forward_dt_s, requested_forward_s);
+        // The execution request already owns the splice instant. A delayed
+        // backend has less time until that instant, not a fresh configured
+        // lead: extending the guide clock would disagree with the immutable
+        // anchor PVAJ and the successor's declared start.
+        if (requested_activation_stamp_ns_ > 0 &&
+            (!std::isfinite(requested_forward_s) || requested_forward_s <= 0.0)) {
+            planner_context_->warn(
+                    " -- [planner] execution-owned successor activation is no longer future");
+            return FAILED;
+        }
+        const double successor_forward_s = requested_forward_s;
         HotReplanWindow replan_window;
         // A hot replan normally preserves a short prefix of the currently
         // committed command so PVAJ remains continuous.  That prefix is not

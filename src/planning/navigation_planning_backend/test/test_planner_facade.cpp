@@ -17,15 +17,80 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <chrono>
+#include <filesystem>
 #include <limits>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
+#include <string>
+
+#include <yaml-cpp/yaml.h>
 
 #include <gtest/gtest.h>
 
 namespace {
+
+class ScopedSnapshotDirectory final {
+ public:
+  ScopedSnapshotDirectory() {
+    char pattern[] = "/tmp/uav-navigation-delayed-anchor-XXXXXX";
+    const char* const created = mkdtemp(pattern);
+    if (created == nullptr) throw std::runtime_error("mkdtemp failed");
+    path_ = created;
+    if (path_.parent_path() != "/tmp" ||
+        path_.filename().string().rfind("uav-navigation-delayed-anchor-", 0U) != 0U) {
+      throw std::runtime_error("invalid temporary snapshot directory");
+    }
+  }
+
+  ~ScopedSnapshotDirectory() {
+    std::error_code error;
+    std::filesystem::remove_all(path_, error);
+  }
+
+  ScopedSnapshotDirectory(const ScopedSnapshotDirectory&) = delete;
+  ScopedSnapshotDirectory& operator=(const ScopedSnapshotDirectory&) = delete;
+  const std::filesystem::path& path() const noexcept { return path_; }
+
+ private:
+  std::filesystem::path path_;
+};
+
+class ScopedSnapshotEnvironment final {
+ public:
+  ScopedSnapshotEnvironment(const char* name, const std::string& value)
+      : name_(name) {
+    if (const char* previous = std::getenv(name)) previous_ = previous;
+    if (setenv(name_.c_str(), value.c_str(), 1) != 0) {
+      throw std::runtime_error("snapshot environment setup failed");
+    }
+  }
+
+  ~ScopedSnapshotEnvironment() {
+    if (previous_) setenv(name_.c_str(), previous_->c_str(), 1);
+    else unsetenv(name_.c_str());
+  }
+
+  ScopedSnapshotEnvironment(const ScopedSnapshotEnvironment&) = delete;
+  ScopedSnapshotEnvironment& operator=(const ScopedSnapshotEnvironment&) = delete;
+
+ private:
+  std::string name_;
+  std::optional<std::string> previous_;
+};
+
+template <typename Value>
+Value snapshotScalar(const YAML::Node& node, const std::string& field) {
+  try {
+    return node.as<Value>();
+  } catch (const YAML::Exception& error) {
+    throw std::runtime_error("snapshot conversion failed for " + field +
+        ": " + error.what() + "; value=" + YAML::Dump(node));
+  }
+}
 
 class IdentityOnlyWorld : public navigation_world_model::WorldModelView {
  public:
@@ -889,6 +954,9 @@ TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
       [&ros_time_s] { return ros_time_s; });
 
   auto initial_request = plannerBodySupportRequest(world, nullptr);
+  initial_request.key.anchor_stamp_ns = 10'000'000'000LL;
+  initial_request.start_state.source_stamp_ns = initial_request.key.anchor_stamp_ns;
+  initial_request.start_state.receive_stamp_ns = initial_request.key.anchor_stamp_ns;
   ASSERT_TRUE(initial_request.valid());
   const auto initial = facade.plan(initial_request);
   ASSERT_TRUE(initial.valid())
@@ -961,6 +1029,228 @@ TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
             successor_request.activation_stamp_ns);
   EXPECT_NE(successor.candidate->activation_stamp_ns,
             successor_request.key.anchor_stamp_ns);
+}
+
+void expectRequestOwnedGuideOrigin(const std::int64_t backend_delay_ns,
+                                  const bool activation_expired = false) {
+  const ScopedSnapshotDirectory directory;
+  const ScopedSnapshotEnvironment capture(
+      "UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR", directory.path().string());
+  const ScopedSnapshotEnvironment failure_only(
+      "UAV_NAVIGATION_NOMINAL_SNAPSHOT_FAILURE_ONLY", "0");
+  const ScopedSnapshotEnvironment include_world(
+      "UAV_NAVIGATION_NOMINAL_SNAPSHOT_INCLUDE_WORLD", "0");
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::Config config(PLANNER_FACADE_CONFIG_PATH);
+  config.bindWorldGeometry(world->geometry());
+  std::optional<navigation_planning::CandidateBundle> predecessor;
+  navigation_planning::TrajectoryPoint anchor_point;
+  std::int64_t activation_ns = 0;
+  double backend_entry_s = 0.0;
+  {
+    double ros_time_s = 10.0;
+    navigation_planning_backend::PlannerFacade facade(
+        PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+        [&ros_time_s] { return ros_time_s; });
+    auto request = plannerBodySupportRequest(world, nullptr);
+    request.key.anchor_stamp_ns = 10'000'000'000LL;
+    request.start_state.source_stamp_ns = request.key.anchor_stamp_ns;
+    request.start_state.receive_stamp_ns = request.key.anchor_stamp_ns;
+    ASSERT_TRUE(request.valid());
+    const auto initial = facade.plan(request);
+    ASSERT_TRUE(initial.valid()) << static_cast<int>(initial.failure_stage)
+                                 << ":" << static_cast<int>(initial.failure_reason);
+    ASSERT_TRUE(initial.candidate);
+    predecessor = initial.candidate;
+    facade.onExecutionTimelineActivated(predecessor->bundle_generation);
+    const double main_end_s = predecessor->backup_available
+        ? predecessor->backup_start_time_s : predecessor->duration_s;
+    const double request_offset_s = std::min(0.5, main_end_s * 0.25);
+    const auto request_ns = predecessor->declared_start_ns +
+        static_cast<std::int64_t>(std::llround(request_offset_s * 1.0e9));
+    activation_ns = request_ns + 400'000'000LL;
+    ASSERT_LT(activation_ns, predecessor->declared_start_ns +
+        static_cast<std::int64_t>(std::llround(main_end_s * 1.0e9)));
+    const auto measured = predecessor->sampleAtDeclaredStamp(request_ns);
+    const auto anchor_sample = predecessor->sampleAtDeclaredStamp(activation_ns);
+    ASSERT_TRUE(measured);
+    ASSERT_TRUE(anchor_sample);
+    anchor_point = *anchor_sample;
+    ASSERT_EQ(anchor_point.role, navigation_planning::CandidateRole::kMain);
+    ASSERT_GT(anchor_point.velocity_world.norm(), 0.0);
+    request.key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
+    request.key.committed_bundle_generation = predecessor->bundle_generation;
+    request.key.anchor_stamp_ns = request_ns;
+    request.start_state.position_world = measured->position_world;
+    request.start_state.velocity_world = measured->velocity_world;
+    request.start_state.acceleration_world = measured->acceleration_world;
+    request.start_state.jerk_world = measured->jerk_world;
+    request.start_state.source_stamp_ns = request_ns;
+    request.start_state.receive_stamp_ns = request_ns;
+    request.activation_stamp_ns = activation_ns;
+    navigation_planning::ExecutionAnchor anchor;
+    anchor.active_bundle_generation = predecessor->bundle_generation;
+    anchor.execution_lineage_version = 1U;
+    anchor.localization_epoch = request.key.localization_epoch;
+    anchor.goal_epoch = request.key.goal_epoch;
+    anchor.request_id = request.key.request_id;
+    anchor.request_stamp_ns = request_ns;
+    anchor.activation_stamp_ns = activation_ns;
+    anchor.state = anchor_point;
+    anchor.active_role = anchor_point.role;
+    anchor.active_main_end_ns = predecessor->declared_start_ns +
+        static_cast<std::int64_t>(std::llround(main_end_s * 1.0e9));
+    anchor.active_bundle_end_ns = predecessor->declared_end_ns;
+    anchor.command_world = predecessor->world_identity;
+    request.anchor = anchor;
+    request.history.previous_bundle_generation = predecessor->bundle_generation;
+    request.history.previous_velocity_world = measured->velocity_world;
+    request.current_body_support.reset();
+    request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+        std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
+            std::chrono::duration<double>(
+                navigation_planning::PlanningTimingContract::kSolveDeadlineS));
+    request.budget.steady_deadline_ns = std::chrono::duration_cast<
+        std::chrono::nanoseconds>(request.budget.deadline.time_since_epoch()).count();
+    ASSERT_TRUE(request.valid());
+    // The request and anchor are immutable before the worker's source clock
+    // advances. No sleep or wall-time scheduling assumption is involved.
+    ros_time_s = static_cast<double>(activation_expired
+        ? activation_ns + backend_delay_ns : request_ns + backend_delay_ns) * 1.0e-9;
+    backend_entry_s = ros_time_s;
+    const auto successor = facade.plan(request);
+    if (activation_expired) {
+      EXPECT_FALSE(successor.candidate);
+      EXPECT_FALSE(navigation_planning::completePlanningSucceeded(successor.outcome));
+      EXPECT_FALSE(facade.hasStagedCommandCandidate());
+      EXPECT_EQ(facade.committedGeneration(), predecessor->bundle_generation);
+      return;
+    }
+    ASSERT_TRUE(successor.valid()) << static_cast<int>(successor.failure_stage)
+                                   << ":" << static_cast<int>(successor.failure_reason);
+    ASSERT_TRUE(successor.candidate);
+    EXPECT_EQ(successor.candidate->activation_stamp_ns, activation_ns);
+    EXPECT_EQ(successor.candidate->declared_start_ns, activation_ns);
+    const auto output_head = successor.candidate->sampleAtDeclaredStamp(activation_ns);
+    ASSERT_TRUE(output_head);
+    EXPECT_LE((output_head->position_world - anchor_point.position_world).norm(), 1.0e-8);
+    EXPECT_LE((output_head->velocity_world - anchor_point.velocity_world).norm(), 1.0e-8);
+    EXPECT_LE((output_head->acceleration_world - anchor_point.acceleration_world).norm(), 1.0e-8);
+    EXPECT_LE((output_head->jerk_world - anchor_point.jerk_world).norm(), 1.0e-8);
+  }  // Destruction joins the existing capture writer and drains both snapshots.
+
+  const auto accounting = YAML::LoadFile(
+      (directory.path() / "nominal_problem_snapshot_capture.json").string());
+  ASSERT_TRUE(snapshotScalar<bool>(accounting["capture_complete"], "capture.capture_complete"));
+  ASSERT_EQ(snapshotScalar<std::uint64_t>(accounting["dropped_records"],
+                                        "capture.dropped_records"), 0U);
+  ASSERT_EQ(snapshotScalar<std::uint64_t>(accounting["write_error_count"],
+                                        "capture.write_error_count"), 0U);
+  YAML::Node snapshot;
+  std::size_t matching_snapshots = 0U;
+  for (const auto& entry : std::filesystem::directory_iterator(directory.path())) {
+    if (entry.path().filename().string().rfind("nominal_problem_snapshot_", 0U) != 0U ||
+        entry.path().filename() == "nominal_problem_snapshot_capture.json" ||
+        entry.path().extension() != ".json") continue;
+    SCOPED_TRACE(entry.path().string());
+    const auto candidate = YAML::LoadFile(entry.path().string());
+    const auto candidate_activation = candidate["provenance"]["activation_stamp_ns"];
+    if (!candidate_activation || candidate_activation.IsNull() ||
+        !candidate_activation.IsScalar()) continue;
+    if (snapshotScalar<std::int64_t>(candidate_activation,
+                                    "provenance.activation_stamp_ns") == activation_ns) {
+      snapshot = candidate;
+      ++matching_snapshots;
+    }
+  }
+  ASSERT_EQ(matching_snapshots, 1U);
+  ASSERT_TRUE(snapshot["provenance"]["anchor_stamp_ns"].IsScalar())
+      << "successor snapshot anchor_stamp_ns is missing/non-scalar";
+  EXPECT_EQ(snapshotScalar<std::int64_t>(snapshot["provenance"]["anchor_stamp_ns"],
+                                        "provenance.anchor_stamp_ns"), activation_ns);
+  ASSERT_TRUE(snapshot["provenance"]["solve_start_wall_time_s"].IsScalar())
+      << "successor snapshot solve_start_wall_time_s is missing/non-scalar";
+  EXPECT_DOUBLE_EQ(snapshotScalar<double>(snapshot["provenance"]["solve_start_wall_time_s"],
+                                         "provenance.solve_start_wall_time_s"), backend_entry_s);
+  const auto head = snapshot["problem"]["head_pvaj"];
+  const Eigen::Vector3d derivatives[]{anchor_point.position_world,
+      anchor_point.velocity_world, anchor_point.acceleration_world, anchor_point.jerk_world};
+  ASSERT_TRUE(head.IsSequence());
+  ASSERT_EQ(head.size(), 3U);
+  for (std::size_t axis = 0U; axis < 3U; ++axis) {
+    ASSERT_TRUE(head[axis].IsSequence());
+    ASSERT_EQ(head[axis].size(), 4U);
+    for (std::size_t derivative = 0U; derivative < 4U; ++derivative) {
+      ASSERT_TRUE(head[axis][derivative].IsScalar())
+          << "head_pvaj axis=" << axis << " derivative=" << derivative;
+      EXPECT_DOUBLE_EQ(snapshotScalar<double>(head[axis][derivative],
+          "problem.head_pvaj[" + std::to_string(axis) + "][" +
+          std::to_string(derivative) + "]"), derivatives[derivative][axis]);
+    }
+  }
+  const auto points = snapshot["problem"]["guide_path"];
+  const auto times = snapshot["problem"]["guide_stamp"];
+  ASSERT_TRUE(points.IsSequence());
+  ASSERT_TRUE(times.IsSequence());
+  ASSERT_EQ(points.size(), times.size());
+  ASSERT_GT(points.size(), 1U);
+  ASSERT_TRUE(times[0U].IsScalar()) << "problem.guide_stamp[0]";
+  EXPECT_DOUBLE_EQ(snapshotScalar<double>(times[0U], "problem.guide_stamp[0]"), 0.0);
+  // Identify the actual retained prefix by the product's sample cadence and
+  // spatial window, not by accepting arbitrary A* points as predecessor data.
+  const double activation_tt_s = static_cast<double>(
+      activation_ns - predecessor->declared_start_ns) * 1.0e-9;
+  auto last_sample = anchor_point.position_world;
+  std::size_t retained_count = 0U;
+  for (double sample_tt_s = activation_tt_s + config.sample_traj_dt_s;
+       sample_tt_s < predecessor->duration_s; sample_tt_s += config.sample_traj_dt_s) {
+    const auto sample_ns = predecessor->declared_start_ns +
+        static_cast<std::int64_t>(std::llround(sample_tt_s * 1.0e9));
+    const auto sample = predecessor->sampleAtDeclaredStamp(sample_ns);
+    ASSERT_TRUE(sample);
+    if ((sample->position_world - last_sample).norm() < config.resolution * 0.8) continue;
+    last_sample = sample->position_world;
+    if ((sample->position_world - anchor_point.position_world).norm() >
+        config.receding_distance_m) break;
+    ++retained_count;
+    ASSERT_LT(retained_count, points.size());
+    ASSERT_TRUE(times[retained_count].IsScalar())
+        << "retained guide_stamp index=" << retained_count;
+    const double elapsed_s = snapshotScalar<double>(times[retained_count],
+        "problem.guide_stamp[" + std::to_string(retained_count) + "]");
+    EXPECT_GT(elapsed_s, 0.0);
+    EXPECT_NEAR(elapsed_s, sample_tt_s - activation_tt_s, 1.0e-9);
+    const auto corresponding = predecessor->sampleAtDeclaredStamp(activation_ns +
+        static_cast<std::int64_t>(std::llround(elapsed_s * 1.0e9)));
+    ASSERT_TRUE(corresponding);
+    ASSERT_TRUE(points[retained_count].IsSequence());
+    ASSERT_EQ(points[retained_count].size(), 3U);
+    for (std::size_t axis = 0U; axis < 3U; ++axis) {
+      // Vec3f uses the existing matrix serializer: three rows, one column.
+      ASSERT_TRUE(points[retained_count][axis].IsSequence());
+      ASSERT_EQ(points[retained_count][axis].size(), 1U);
+      ASSERT_TRUE(points[retained_count][axis][0U].IsScalar())
+          << "problem.guide_path[" << retained_count << "][" << axis << "]";
+      EXPECT_NEAR(snapshotScalar<double>(points[retained_count][axis][0U],
+                      "problem.guide_path[" + std::to_string(retained_count) + "][" +
+                      std::to_string(axis) + "][0]"),
+                  corresponding->position_world[axis], 1.0e-8);
+    }
+  }
+  ASSERT_GT(retained_count, 0U);
+}
+
+TEST(PlannerFacade, DelayedBackendKeepsRequestOwnedGuideOrigin) {
+  for (const std::int64_t delay_ns : {0LL, 20'000'000LL, 60'000'000LL}) {
+    SCOPED_TRACE(delay_ns);
+    expectRequestOwnedGuideOrigin(delay_ns);
+  }
+}
+
+TEST(PlannerFacade, ExpiredCommittedActivationDoesNotSlideOrReplacePredecessor) {
+  expectRequestOwnedGuideOrigin(0LL, true);
+  expectRequestOwnedGuideOrigin(1'000'000LL, true);
 }
 
 void expectMovingFrontierBehavior(const bool backup_allow_unknown) {
