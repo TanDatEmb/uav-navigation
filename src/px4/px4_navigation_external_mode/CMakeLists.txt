@@ -30,16 +30,21 @@ target_link_libraries(${PROJECT_NAME}_contract PUBLIC Eigen3::Eigen)
 ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC navigation_common diagnostic_msgs geometry_msgs navigation_contracts navigation_mission nav_msgs)
 target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic)
 
-add_executable(${PROJECT_NAME}_node
+add_library(${PROJECT_NAME}_adapter STATIC
   src/navigation_mode_node.cpp)
-target_include_directories(${PROJECT_NAME}_node PRIVATE
+target_include_directories(${PROJECT_NAME}_adapter PRIVATE
   include ${navigation_contracts_INCLUDE_DIRS})
-target_link_libraries(${PROJECT_NAME}_node
+target_link_libraries(${PROJECT_NAME}_adapter
   ${PROJECT_NAME}_contract
   Eigen3::Eigen
   px4_ros2_cpp::px4_ros2_cpp
   rclcpp::rclcpp)
-ament_target_dependencies(${PROJECT_NAME}_node navigation_common diagnostic_msgs navigation_contracts navigation_mission nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
+ament_target_dependencies(${PROJECT_NAME}_adapter navigation_common diagnostic_msgs navigation_contracts navigation_mission nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
+target_compile_options(${PROJECT_NAME}_adapter PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(${PROJECT_NAME}_node src/main.cpp)
+target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_adapter)
+ament_target_dependencies(${PROJECT_NAME}_node px4_ros2_cpp rclcpp)
 target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
 
 install(DIRECTORY include/ DESTINATION include)
