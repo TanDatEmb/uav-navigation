@@ -21946,6 +21946,51 @@ release profiles must not use the former allowance.
   checkout, and `git diff --check`. The capture overhead is startup-only and
   must not be reported as command-path timing.
 
+### 2026-09-16 - Separate evaluation error from stored-boundary error in offline replay
+
+- **Owner/status:** Offline nominal-problem replay and numerical audit;
+  `IMPLEMENTED_DIAGNOSTIC_ONLY`. This change does not alter the planner,
+  certificate, optimizer, command path or qualification verdict.
+- **Scope:** Candidate replay now independently evaluates stored power-basis
+  coefficients in `long double` at the initial, terminal and junction
+  boundaries. When the replay applies the product's deterministic-seed
+  certificate to a trajectory, it reports the high-precision residual for the
+  exact failed component, a half-ULP coefficient-storage quantization scale and
+  a componentwise boundary-equation backward error. It also reports candidate
+  piece durations and the maximum difference between the production double
+  evaluator and the independent evaluation relative to the existing
+  forward-roundoff bound. These are diagnostic scales, not alternate
+  acceptance tolerances.
+- **Safety impact:** None at runtime. In particular, the existing boundary,
+  corridor, dynamics, flatness, world, BACKUP, freshness and tracking gates are
+  unchanged. In particular, applying `certifyDeterministicNominalSeed()` to an
+  optimized L-BFGS output offline is not a production admission decision for
+  that output and did not cause the live planner failure. A small residual or
+  backward error must not be interpreted as an executable bundle, and the
+  replay continues to report
+  `complete_executable_bundle=0` because it has no certified BACKUP schedule or
+  commit lease.
+- **Evidence/removal condition:** Replays of planner cycles 161--163 from
+  session `external-mode-check-20260915T194525-709883` show that double versus
+  long-double evaluation consumes only 3.1--5.6 percent of the existing
+  roundoff bound. The rejected components remain discontinuous in long-double
+  evaluation by `3.2720e-15`, `6.0707e-16` and `3.6955e-17`, respectively,
+  which is 109--170 times their coefficient-storage quantization scale. Their
+  componentwise boundary-equation backward errors are `9.12e-15`, `1.45e-14`
+  and `9.24e-15`; passing terminal-speed diagnostic candidates in the same
+  snapshots reach approximately `2.23e-15`--`5.23e-15`. This confirms that the
+  observed reject is not caused only by `Piece` evaluation order, but it does
+  not yet establish a safe solver-error allowance or system conditioning. Keep
+  this probe until the MINCO construction path exports equivalent provenance
+  for a reviewed numerical contract. Classify this observation as
+  `DESIGN_DEBT` for optimized-trajectory continuity and `EVIDENCE_GAP` for
+  solver conditioning; do not use it as the root cause of cycles 161--163.
+- **Verification:** Build `replay_nominal_problem_snapshot`, replay snapshot
+  files 13--15 from
+  `.artifacts/runtime/5wp-frontier-cap-discriminator-r1-20260916`, preserve the
+  exact snapshot/build provenance in the output, then run canonical Release
+  build/test and `git diff --check`.
+
 ### 2026-09-16 - Resolve command bundle ownership from export evidence
 
 - **Owner/status:** Runtime evidence correlation boundary;

@@ -23,6 +23,7 @@
 #include <planner_core/corridor_bezier_seed.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/deterministic_nominal_seed.hpp>
+#include <planner_core/optimized_nominal_candidate.hpp>
 #include <planner_core/pass_through_terminal_velocity.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
 #include <traj_opt/config.hpp>
@@ -333,9 +334,11 @@ struct CandidateReport {
   double corridor_violation{std::numeric_limits<double>::infinity()};
   bool route_boundary{false};
   std::string route_boundary_verdict{"NOT_REACHED"};
-  int production_certificate_stage{-1};
-  const char* production_certificate_stage_name{"not_evaluated"};
-  bool production_certificate_valid{false};
+  int deterministic_seed_certificate_stage{-1};
+  const char* deterministic_seed_certificate_stage_name{"not_evaluated"};
+  bool deterministic_seed_certificate_valid{false};
+  int optimized_candidate_certificate_stage{-1};
+  bool optimized_candidate_certificate_valid{false};
   double maximum_boundary_residual{std::numeric_limits<double>::infinity()};
   double maximum_boundary_roundoff_bound{
       std::numeric_limits<double>::infinity()};
@@ -347,6 +350,23 @@ struct CandidateReport {
       std::numeric_limits<double>::quiet_NaN()};
   double boundary_failure_roundoff_bound{
       std::numeric_limits<double>::quiet_NaN()};
+  bool boundary_numeric_diagnostic_available{false};
+  long double boundary_failure_long_double_residual{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double boundary_failure_coefficient_quantization_scale{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double boundary_failure_residual_to_coefficient_quantization_ratio{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double boundary_failure_componentwise_backward_error{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double maximum_long_double_boundary_residual{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double maximum_boundary_equation_componentwise_backward_error{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double maximum_double_vs_long_double_evaluation_delta{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double maximum_evaluation_delta_to_roundoff_ratio{
+      std::numeric_limits<long double>::quiet_NaN()};
   double maximum_velocity{std::numeric_limits<double>::infinity()};
   double maximum_acceleration{std::numeric_limits<double>::infinity()};
   double maximum_jerk{std::numeric_limits<double>::infinity()};
@@ -356,7 +376,238 @@ struct CandidateReport {
   bool complete_executable_bundle{false};
   std::string world_failure{"not_replayed"};
   double duration{std::numeric_limits<double>::quiet_NaN()};
+  Eigen::VectorXd piece_durations_s;
 };
+
+using LongDoubleState = Eigen::Matrix<long double, 3, 4>;
+
+struct LongDoublePieceState {
+  bool valid{false};
+  LongDoubleState value{LongDoubleState::Zero()};
+  LongDoubleState absolute_term_sum{LongDoubleState::Zero()};
+  LongDoubleState coefficient_quantization_scale{LongDoubleState::Zero()};
+};
+
+struct BoundaryNumericalDiagnostics {
+  bool valid{false};
+  long double maximum_long_double_boundary_residual{0.0L};
+  long double maximum_componentwise_backward_error{0.0L};
+  long double target_residual{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double target_coefficient_quantization_scale{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double target_residual_to_coefficient_quantization_ratio{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double target_componentwise_backward_error{
+      std::numeric_limits<long double>::quiet_NaN()};
+  long double maximum_double_vs_long_double_evaluation_delta{0.0L};
+  long double maximum_evaluation_delta_to_roundoff_ratio{0.0L};
+};
+
+long double halfUlpScale(const double value) {
+  if (!std::isfinite(value)) {
+    return std::numeric_limits<long double>::infinity();
+  }
+  const double toward_positive = std::nextafter(
+      value, std::numeric_limits<double>::infinity());
+  const double toward_negative = std::nextafter(
+      value, -std::numeric_limits<double>::infinity());
+  const long double positive_spacing = std::abs(
+      static_cast<long double>(toward_positive) -
+      static_cast<long double>(value));
+  const long double negative_spacing = std::abs(
+      static_cast<long double>(value) -
+      static_cast<long double>(toward_negative));
+  return 0.5L * std::max(positive_spacing, negative_spacing);
+}
+
+LongDoublePieceState evaluatePieceStateInLongDouble(
+    const geometry_utils::Piece& piece, const double time_s) {
+  LongDoublePieceState result;
+  const auto& coefficients = piece.getCoeffMat();
+  const int degree = piece.getDegree();
+  if (!coefficients.allFinite() || !std::isfinite(time_s) || degree < 0 ||
+      coefficients.rows() != 3 || coefficients.cols() != degree + 1) {
+    return result;
+  }
+
+  const long double time = static_cast<long double>(time_s);
+  const long double absolute_time = std::abs(time);
+  for (int derivative = 0; derivative <= 3; ++derivative) {
+    for (int axis = 0; axis < 3; ++axis) {
+      long double value = 0.0L;
+      long double absolute_term_sum = 0.0L;
+      long double quantization_scale = 0.0L;
+      for (int column = 0; column < coefficients.cols(); ++column) {
+        const int power = degree - column;
+        if (power < derivative) continue;
+        long double multiplier = 1.0L;
+        for (int order = 0; order < derivative; ++order) {
+          multiplier *= static_cast<long double>(power - order);
+        }
+        const long double signed_time_power =
+            std::pow(time, power - derivative);
+        const long double absolute_time_power =
+            std::pow(absolute_time, power - derivative);
+        const double coefficient = coefficients(axis, column);
+        const long double term = static_cast<long double>(coefficient) *
+                                 multiplier * signed_time_power;
+        value += term;
+        absolute_term_sum += std::abs(term);
+        quantization_scale += halfUlpScale(coefficient) *
+                              std::abs(multiplier) * absolute_time_power;
+      }
+      result.value(axis, derivative) = value;
+      result.absolute_term_sum(axis, derivative) = absolute_term_sum;
+      result.coefficient_quantization_scale(axis, derivative) =
+          quantization_scale;
+    }
+  }
+  result.valid = result.value.allFinite() &&
+                 result.absolute_term_sum.allFinite() &&
+                 result.coefficient_quantization_scale.allFinite();
+  return result;
+}
+
+long double normalizedRatio(const long double numerator,
+                            const long double denominator) {
+  if (!std::isfinite(numerator) || !std::isfinite(denominator) ||
+      numerator < 0.0L || denominator < 0.0L) {
+    return std::numeric_limits<long double>::infinity();
+  }
+  if (denominator == 0.0L) {
+    return numerator == 0.0L
+        ? 0.0L
+        : std::numeric_limits<long double>::infinity();
+  }
+  return numerator / denominator;
+}
+
+BoundaryNumericalDiagnostics diagnoseBoundaryNumerics(
+    const geometry_utils::Trajectory& trajectory,
+    const navigation_math::StatePVAJ& expected_initial_state,
+    const navigation_math::StatePVAJ& expected_terminal_state,
+    const int target_location, const int target_piece_index,
+    const int target_axis, const int target_derivative) {
+  BoundaryNumericalDiagnostics result;
+  const int piece_count = trajectory.getPieceNum();
+  if (piece_count <= 0 || !expected_initial_state.allFinite() ||
+      !expected_terminal_state.allFinite()) {
+    return result;
+  }
+
+  const auto record_evaluation = [&result](
+      const geometry_utils::Piece& piece, const double time_s,
+      const LongDoublePieceState& high_precision) {
+    const auto double_state = navigation_planning_backend::pieceState(
+        piece, time_s);
+    const auto roundoff =
+        navigation_planning_backend::pieceStateRoundoffBound(piece, time_s);
+    if (!double_state.allFinite() || !roundoff.allFinite() ||
+        !high_precision.valid) {
+      result.valid = false;
+      return false;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+      for (int derivative = 0; derivative <= 3; ++derivative) {
+        const long double delta = std::abs(
+            static_cast<long double>(double_state(axis, derivative)) -
+            high_precision.value(axis, derivative));
+        result.maximum_double_vs_long_double_evaluation_delta = std::max(
+            result.maximum_double_vs_long_double_evaluation_delta, delta);
+        result.maximum_evaluation_delta_to_roundoff_ratio = std::max(
+            result.maximum_evaluation_delta_to_roundoff_ratio,
+            normalizedRatio(
+                delta,
+                static_cast<long double>(roundoff(axis, derivative))));
+      }
+    }
+    return true;
+  };
+
+  const auto record_boundary = [&result](
+      const int location, const int piece_index, const int target_location,
+      const int target_piece_index, const int target_axis,
+      const int target_derivative,
+      const LongDoubleState& residual,
+      const LongDoubleState& equation_scale,
+      const LongDoubleState& coefficient_quantization_scale) {
+    for (int axis = 0; axis < 3; ++axis) {
+      for (int derivative = 0; derivative <= 3; ++derivative) {
+        result.maximum_long_double_boundary_residual = std::max(
+            result.maximum_long_double_boundary_residual,
+            residual(axis, derivative));
+        result.maximum_componentwise_backward_error = std::max(
+            result.maximum_componentwise_backward_error,
+            normalizedRatio(
+                residual(axis, derivative), equation_scale(axis, derivative)));
+        if (location == target_location &&
+            piece_index == target_piece_index && axis == target_axis &&
+            derivative == target_derivative) {
+          result.target_residual = residual(axis, derivative);
+          result.target_coefficient_quantization_scale =
+              coefficient_quantization_scale(axis, derivative);
+          result.target_residual_to_coefficient_quantization_ratio =
+              normalizedRatio(
+                  result.target_residual,
+                  result.target_coefficient_quantization_scale);
+          result.target_componentwise_backward_error = normalizedRatio(
+              result.target_residual, equation_scale(axis, derivative));
+        }
+      }
+    }
+  };
+
+  const auto initial = evaluatePieceStateInLongDouble(trajectory[0], 0.0);
+  const auto terminal = evaluatePieceStateInLongDouble(
+      trajectory[piece_count - 1],
+      trajectory[piece_count - 1].getDuration());
+  result.valid = initial.valid && terminal.valid;
+  if (!result.valid ||
+      !record_evaluation(trajectory[0], 0.0, initial) ||
+      !record_evaluation(
+          trajectory[piece_count - 1],
+          trajectory[piece_count - 1].getDuration(), terminal)) {
+    result.valid = false;
+    return result;
+  }
+  record_boundary(
+      1, 0, target_location, target_piece_index, target_axis,
+      target_derivative,
+      (initial.value - expected_initial_state.cast<long double>()).cwiseAbs(),
+      (initial.absolute_term_sum +
+       expected_initial_state.cast<long double>().cwiseAbs()).eval(),
+      initial.coefficient_quantization_scale);
+  record_boundary(
+      2, piece_count - 1, target_location, target_piece_index, target_axis,
+      target_derivative,
+      (terminal.value - expected_terminal_state.cast<long double>()).cwiseAbs(),
+      (terminal.absolute_term_sum +
+       expected_terminal_state.cast<long double>().cwiseAbs()).eval(),
+      terminal.coefficient_quantization_scale);
+
+  for (int piece_index = 0; piece_index + 1 < piece_count; ++piece_index) {
+    const auto left = evaluatePieceStateInLongDouble(
+        trajectory[piece_index], trajectory[piece_index].getDuration());
+    const auto right = evaluatePieceStateInLongDouble(
+        trajectory[piece_index + 1], 0.0);
+    if (!left.valid || !right.valid ||
+        !record_evaluation(
+            trajectory[piece_index],
+            trajectory[piece_index].getDuration(), left) ||
+        !record_evaluation(trajectory[piece_index + 1], 0.0, right)) {
+      result.valid = false;
+      return result;
+    }
+    record_boundary(
+        3, piece_index, target_location, target_piece_index, target_axis,
+        target_derivative, (left.value - right.value).cwiseAbs(),
+        (left.absolute_term_sum + right.absolute_term_sum).eval(),
+        (left.coefficient_quantization_scale +
+         right.coefficient_quantization_scale).eval());
+  }
+  return result;
+}
 
 double boundaryResidual(const navigation_math::StatePVAJ& actual,
                         const navigation_math::StatePVAJ& expected) {
@@ -500,6 +751,7 @@ CandidateReport certify(const geometry_utils::Trajectory& trajectory,
     return report;
   }
   report.duration = trajectory.getTotalDuration();
+  report.piece_durations_s = trajectory.getDurations();
   navigation_math::StatePVAJ actual_head;
   navigation_math::StatePVAJ actual_tail;
   report.head_residual = trajectory.getState(0.0, actual_head)
@@ -538,10 +790,14 @@ CandidateReport certify(const geometry_utils::Trajectory& trajectory,
     route_boundary_points[index] = polytope_vec[index].GetRouteBoundaryPoint();
     route_boundary_radii[index] = polytope_vec[index].GetRouteBoundaryRadius();
   }
-  const auto production_certificate =
+  const auto deterministic_seed_certificate =
       navigation_planning_backend::certifyDeterministicNominalSeed(
           trajectory, corridors, piece_to_corridor, route_boundary_gates,
           route_boundary_points, route_boundary_radii, head, tail, config);
+  const auto optimized_candidate_certificate =
+      navigation_planning_backend::certifyOptimizedNominalCandidate(
+          trajectory, corridors, piece_to_corridor, route_boundary_gates,
+          route_boundary_points, route_boundary_radii, config);
   const auto certificateStageName = [](const auto stage) {
     using Stage = navigation_planning_backend::
         DeterministicNominalSeedFailureStage;
@@ -556,38 +812,66 @@ CandidateReport certify(const geometry_utils::Trajectory& trajectory,
     }
     return "unknown";
   };
-  report.production_certificate_stage =
-      static_cast<int>(production_certificate.failure_stage);
-  report.production_certificate_stage_name =
-      certificateStageName(production_certificate.failure_stage);
-  report.production_certificate_valid = production_certificate.valid;
+  report.deterministic_seed_certificate_stage =
+      static_cast<int>(deterministic_seed_certificate.failure_stage);
+  report.deterministic_seed_certificate_stage_name =
+      certificateStageName(deterministic_seed_certificate.failure_stage);
+  report.deterministic_seed_certificate_valid =
+      deterministic_seed_certificate.valid;
+  report.optimized_candidate_certificate_stage =
+      static_cast<int>(optimized_candidate_certificate.failure_stage);
+  report.optimized_candidate_certificate_valid =
+      optimized_candidate_certificate.valid;
   report.maximum_boundary_residual =
-      production_certificate.maximum_boundary_residual;
+      deterministic_seed_certificate.maximum_boundary_residual;
   report.maximum_boundary_roundoff_bound =
-      production_certificate.maximum_boundary_roundoff_bound;
+      deterministic_seed_certificate.maximum_boundary_roundoff_bound;
   report.boundary_failure_location =
-      production_certificate.boundary_failure_location;
+      deterministic_seed_certificate.boundary_failure_location;
   report.boundary_failure_piece_index =
-      production_certificate.boundary_failure_piece_index;
+      deterministic_seed_certificate.boundary_failure_piece_index;
   report.boundary_failure_axis =
-      production_certificate.boundary_failure_axis;
+      deterministic_seed_certificate.boundary_failure_axis;
   report.boundary_failure_derivative =
-      production_certificate.boundary_failure_derivative;
+      deterministic_seed_certificate.boundary_failure_derivative;
   report.boundary_failure_residual =
-      production_certificate.boundary_failure_residual;
+      deterministic_seed_certificate.boundary_failure_residual;
   report.boundary_failure_roundoff_bound =
-      production_certificate.boundary_failure_roundoff_bound;
-  const auto certificate_stage = production_certificate.failure_stage;
+      deterministic_seed_certificate.boundary_failure_roundoff_bound;
+  const auto boundary_numerics = diagnoseBoundaryNumerics(
+      trajectory, head, tail, report.boundary_failure_location,
+      report.boundary_failure_piece_index, report.boundary_failure_axis,
+      report.boundary_failure_derivative);
+  report.boundary_numeric_diagnostic_available = boundary_numerics.valid;
+  if (boundary_numerics.valid) {
+    report.maximum_long_double_boundary_residual =
+        boundary_numerics.maximum_long_double_boundary_residual;
+    report.maximum_boundary_equation_componentwise_backward_error =
+        boundary_numerics.maximum_componentwise_backward_error;
+    report.maximum_double_vs_long_double_evaluation_delta =
+        boundary_numerics.maximum_double_vs_long_double_evaluation_delta;
+    report.maximum_evaluation_delta_to_roundoff_ratio =
+        boundary_numerics.maximum_evaluation_delta_to_roundoff_ratio;
+    report.boundary_failure_long_double_residual =
+        boundary_numerics.target_residual;
+    report.boundary_failure_coefficient_quantization_scale =
+        boundary_numerics.target_coefficient_quantization_scale;
+    report.boundary_failure_residual_to_coefficient_quantization_ratio =
+        boundary_numerics.target_residual_to_coefficient_quantization_ratio;
+    report.boundary_failure_componentwise_backward_error =
+        boundary_numerics.target_componentwise_backward_error;
+  }
+  const auto optimized_stage = optimized_candidate_certificate.failure_stage;
   report.route_boundary =
-      certificate_stage == navigation_planning_backend::
-          DeterministicNominalSeedFailureStage::kDynamics ||
-      certificate_stage == navigation_planning_backend::
-          DeterministicNominalSeedFailureStage::kFlatness ||
-      certificate_stage == navigation_planning_backend::
-          DeterministicNominalSeedFailureStage::kNone;
+      optimized_stage == navigation_planning_backend::
+          OptimizedNominalCandidateFailureStage::kDynamics ||
+      optimized_stage == navigation_planning_backend::
+          OptimizedNominalCandidateFailureStage::kFlatness ||
+      optimized_stage == navigation_planning_backend::
+          OptimizedNominalCandidateFailureStage::kNone;
   report.route_boundary_verdict =
-      certificate_stage == navigation_planning_backend::
-          DeterministicNominalSeedFailureStage::kRouteBoundary
+      optimized_stage == navigation_planning_backend::
+          OptimizedNominalCandidateFailureStage::kRouteBoundary
           ? "FAIL"
           : (report.route_boundary ? "PASS" : "NOT_REACHED");
   report.maximum_velocity = trajectory.getMaxVelRate();
@@ -622,11 +906,16 @@ void printReport(const std::string& label, const CandidateReport& report,
             << " corridor_violation=" << report.corridor_violation
             << " route_boundary=" << report.route_boundary
             << " route_boundary_verdict=" << report.route_boundary_verdict
-            << " production_certificate_stage="
-            << report.production_certificate_stage
-            << " production_certificate_stage_name="
-            << report.production_certificate_stage_name
-            << " production_certificate=" << report.production_certificate_valid
+            << " optimized_candidate_certificate_stage="
+            << report.optimized_candidate_certificate_stage
+            << " optimized_candidate_certificate="
+            << report.optimized_candidate_certificate_valid
+            << " deterministic_seed_certificate_stage="
+            << report.deterministic_seed_certificate_stage
+            << " deterministic_seed_certificate_stage_name="
+            << report.deterministic_seed_certificate_stage_name
+            << " deterministic_seed_certificate="
+            << report.deterministic_seed_certificate_valid
             << " maximum_boundary_residual="
             << report.maximum_boundary_residual
             << " maximum_boundary_roundoff_bound="
@@ -649,6 +938,37 @@ void printReport(const std::string& label, const CandidateReport& report,
             << " exact_verdict="
             << (config_exact ? "ELIGIBLE" : "INCONCLUSIVE_LEGACY_CONFIG")
             << " duration=" << report.duration << '\n';
+  const auto previous_flags = std::cout.flags();
+  const auto previous_precision = std::cout.precision();
+  std::cout << std::scientific
+            << std::setprecision(std::numeric_limits<long double>::max_digits10)
+            << label << "_boundary_numeric_diagnostic"
+            << " available=" << report.boundary_numeric_diagnostic_available
+            << " offline_seed_certificate_failure_long_double_residual="
+            << report.boundary_failure_long_double_residual
+            << " offline_seed_certificate_failure_coefficient_quantization_scale="
+            << report.boundary_failure_coefficient_quantization_scale
+            << " offline_seed_certificate_failure_residual_to_quantization_ratio="
+            << report.boundary_failure_residual_to_coefficient_quantization_ratio
+            << " offline_seed_certificate_failure_componentwise_backward_error="
+            << report.boundary_failure_componentwise_backward_error
+            << " maximum_long_double_boundary_residual="
+            << report.maximum_long_double_boundary_residual
+            << " maximum_boundary_equation_componentwise_backward_error="
+            << report.maximum_boundary_equation_componentwise_backward_error
+            << " maximum_double_vs_long_double_evaluation_delta="
+            << report.maximum_double_vs_long_double_evaluation_delta
+            << " maximum_evaluation_delta_to_roundoff_ratio="
+            << report.maximum_evaluation_delta_to_roundoff_ratio
+            << " piece_durations_s=";
+  for (Eigen::Index index = 0;
+       index < report.piece_durations_s.size(); ++index) {
+    if (index != 0) std::cout << ',';
+    std::cout << report.piece_durations_s(index);
+  }
+  std::cout << '\n';
+  std::cout.flags(previous_flags);
+  std::cout.precision(previous_precision);
 }
 
 struct ConfigReplay {
@@ -1243,6 +1563,16 @@ int run(const std::string& path) {
               << " last_return="
               << optimizer.diagnostics().last_lbfgs_return_code
               << " retry_count=" << optimizer.diagnostics().retry_count
+              << " used_feasible_checkpoint="
+              << optimizer.diagnostics().used_feasible_iterate_checkpoint
+              << " checkpoint_attempt="
+              << optimizer.diagnostics().feasible_iterate_checkpoint_attempt
+              << " checkpoint_iteration="
+              << optimizer.diagnostics().feasible_iterate_checkpoint_iteration
+              << " certificate_count="
+              << optimizer.diagnostics().feasible_iterate_certificate_count
+              << " certificate_time_us="
+              << optimizer.diagnostics().feasible_iterate_certificate_time_us
               << '\n';
     printReport("D_budget_candidate", certify(
         trajectory, head, tail, h_polytopes, h_poly_idx, polytope_vec,
