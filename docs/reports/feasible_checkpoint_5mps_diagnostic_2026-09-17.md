@@ -709,7 +709,7 @@ small hot-path costs or extract a coordinator only after evidence says they
 limit these outcomes. No new coordinator, process split, alternate publisher,
 fallback or hard-gate relaxation is justified by this round.
 
-## Continuous overlap junction follow-up (component verified; SITL pending)
+## Continuous overlap junction follow-up (nine-run diagnostic closed)
 
 The next bounded repair normalizes geometry/time together at the existing
 optimizer setup owner, rather than tuning solver cost or extracting authority.
@@ -798,3 +798,121 @@ integrated benefit. Observation-supported stopping and estimator-state
 continuity remain separate unclosed product requirements. The declared
 `aist-mid360-drive` registry/config exists but its prepared local ROS2 bag
 does not; recorded-data verification is not silently counted as performed.
+
+### Retained continuous-guide matrix
+
+All nine sequential capture-OFF runs finished on clean navigation
+`82ef05ca161a18cf4d0e0dfd40ad257ec6a87509`, requested 5 m/s, positive/nominal,
+three-pillar 2/5/9WP, three repetitions per case, seed 0, visibility 4096/40 m,
+ROS domain 42/XRCE UDP 8892. No concurrent build/test/replay or source edits.
+All nine reports have VALID authoritative Release provenance, manifest
+`643bda00d7ae7ca155fb592aee6e27fffbb267ec17dd2c61cabbfd0e4207af88`, source
+`b8c4e498ec7151cf1fe366d40f54921c18e692af3c68b1c37154861eee489a92` and
+captured planner YAML SHA
+`6480ff9679e20c3d5f9f5a38efbe7702d9ca98e66c454299019b423d5d298356`.
+External PX4 remains the same project-customized dirty dependency and binary
+identity declared in the prior matrix; mutable parameters/dataman are pinned
+per artifact, not implicitly equal. The later documentation-ledger migration
+began at 04:19:40 UTC, after the final runner exited at 04:19:03 UTC; it is
+not part of this frozen source or runtime evidence.
+
+Session suffixes below resolve under `.artifacts/runtime/` as
+`external-mode-check-20260917T<suffix>`; experiment IDs are
+`continuous-guide-82ef05-5mps-<case>-r<rep>-20260917`.
+
+| Case | Session suffix | Report / outcome | Accepted | Planner p99=max ms (n) | Checkpoint / records | Cert calls / total us |
+|---|---|---|---|---|---|---|
+| 2WP-1 | 035846-286284 | BLOCKED / PAUSED | [0] | 74.153 (21) | 4/21 | 4/1258 |
+| 2WP-2 | 040029-290249 | FAIL / COMPLETE | [0,1] | 66.884 (31) | 4/31 | 4/1115 |
+| 2WP-3 | 040227-294163 | BLOCKED / PAUSED | [0] | 65.699 (9) | 0/9 | 0/0 |
+| 5WP-1 | 040346-297863 | FAIL / COMPLETE | [0..4] | 80.285 (22) | 7/22 | 7/2170 |
+| 5WP-2 | 040606-302065 | FAIL / WALL_TIMEOUT | [0] | 80.393 (17) | 2/17 | 2/721 |
+| 5WP-3 | 041318-308455 | BLOCKED / PAUSED | [0,1] | 85.390 (22) | 2/22 | 2/686 |
+| 9WP-1 | 041530-313123 | BLOCKED / PAUSED | [0] | 65.207 (7) | 5/7 | 5/2005 |
+| 9WP-2 | 041649-316844 | BLOCKED / PAUSED | [0] | 78.891 (10) | 5/10 | 5/1797 |
+| 9WP-3 | 041758-320471 | BLOCKED / PAUSED | [0] | 80.143 (4) | 1/4 | 1/408 |
+
+PAUSED is `PAUSED_SAFETY_STOP`, not mission acceptance. Completion is
+**2/9**: 2WP 1/3, 5WP 1/3, 9WP 0/3; report verdicts are 3 FAIL/6 BLOCKED,
+zero PASS. Total 143 trace records, 30 selected checkpoints, 30 certificates,
+10,160 us; largest observed certificate cost 0.539 ms. These are small
+diagnostic populations, not deadline upper bounds. Total completion is no
+better than the separate prior 2/9 matrix; no statistical or integrated
+performance improvement is established. Contract repair is not the completion
+solution, and the new failure below precludes a safety-improvement claim.
+
+All nine capture/writer counters are complete with zero writer/cloud drops
+and no observed PX4 failsafe. Qualification is false in every report;
+tracking/health-response suppressions remain the unchanged diagnostic baseline.
+Eight assessments are NOT_EVALUABLE/INCOMPLETE; 5WP-2 is FAIL/INCOMPLETE with
+an additional `safety.collision source incomplete` blocker. The six common
+blockers remain experimental tracking, lifecycle attribution, missing motion
+acceptance/coverage policies, reference lineage and required dimension not
+passing. Timeline invariant counter is missing in 2WP-2/5WP-1, not zero;
+the other seven have observed zero. Neither counter completeness nor zero
+observed collisions proves continuous stopping safety.
+
+### Failure discrimination and next whole-system priorities
+
+- **2WP-1:** active generation 18 fails new-world revalidation, failure 8,
+  BACKUP role, 112 samples (`mapping.log` near the final active invalidation).
+  Store authority is removed and External Mode requests native Hold. Validator
+  begins at current authorization time, so the inspected source does not
+  support a "rechecks already-flown prefix" explanation. Actual unsafe voxel,
+  deviation bound and world/sensing lineage remain to be distinguished.
+- **2WP-3:** repeated corridor CIRI INIT_ERROR has nonfinite ellipsoid radius,
+  then no successor and lease expiry; observed planner maximum is 65.699 ms.
+  **5WP-3** instead has MAIN MINCO hard-deadline rejection near 80 ms and a
+  retained endpoint 2.867 m outside WP2, followed by expiry/hold. Those are
+  different availability failures, not all solver latency.
+- **All three 9WP:** MAIN accepted/certified iterates are present, but final
+  BACKUP KNOWN_FREE tube checks reject (failure 8/cell UNKNOWN). Physical
+  minimum-snap seed and aligned-SFC hull pass in the final examples. The
+  generation remains untouched; the retained suffix then expires outside
+  the next waypoint. Cell/failure enums alone do not prove UNKNOWN's origin.
+- **5WP-2 containment:** report observes 67 collision-envelope samples and
+  7 rising-edge events, minimum clearance -0.14797 m at
+  `long_three_pillar_03`. This is the Gazebo-ground-truth geometry observer
+  minus the configured vehicle envelope, not physics-contact evidence.
+  Collision-source coverage is incomplete and exact first-contact ordering
+  is not available in the JSON counters; physical contact is NOT_EVALUABLE.
+  No LAND was requested. Safety stop is at 37.204 s, native Hold is observed,
+  first applicable Hold request at 37.352 s, and localization watchdog first
+  divergence at 39.480 s (position 0.412561 m, velocity 2.437277 m/s).
+  The second Hold-request event at 39.980 s has a different trigger
+  (localization divergence), not a provenance conflict with the first-request
+  summary. Ground truth is ENU/FLU with absolute sim time and 20 ms matching;
+  final LIO status LOST is not proof of its state at initial command loss.
+  The runner reaches 360 s wall timeout. Do not claim Hold implies a safe
+  stop, blame the seed repair, or assign LIO-to-PX4 causality from final status.
+
+The broad source review found a concrete production-reachable CIRI contract
+defect, not just a timing hypothesis. `Ellipsoid::pointsInside` preserves
+**input** point IDs while packing filtered output; `CIRI::findEllipsoid`
+indexes that packed output with an input ID. With outside points preceding
+the nearest inside point, the ID can exceed output columns: undefined behavior.
+The existing boundary test intentionally expects the original source ID,
+so changing the API to packed IDs would break its contract. Two CIRI calls
+also alias input/output while the utility clears output before reading input,
+silently ending obstacle-filter iterations. Read-only independent review
+confirmed both call paths. This is CONFIRMED source/API behavior with
+production reachability; attribution of a particular captured NaN or collision
+to it is CONDITIONAL without that exact CIRI obstacle input/reproducer.
+
+Highest-leverage next implementation is correct source-domain obstacle
+selection and non-destructive filtering with analytic/permutation regressions,
+not a coordinator or relaxed corridor gate. Keep the independent source-ID
+contract and all clearance/certificate limits. The natural later planner seam
+is complete-proposal construction: current MAIN precedes BACKUP, and a failed
+BACKUP only tries switch/duration variants or rejects the completed MAIN; no
+same-request geometry/speed feedback exists. That is DESIGN_DEBT/opportunity,
+not proof that adding a retry will solve these failures. Any linked retry must
+remain inside the existing deadline/world identity and final atomic validation.
+Separately close observation-supported stopping and synchronized estimator/
+PX4 containment before a stable/smooth product claim. No threshold tuning,
+unsafe fallback, secondary publisher or qualification closure is justified.
+
+All nine outcomes, denominators, provenance and aggregate counters were
+independently audited without discrepancy. CIRI implementation remains pending
+coordination with the concurrent safety-ledger migration; no unrelated WIP is
+staged, overwritten or treated as this feature.
