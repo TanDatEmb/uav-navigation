@@ -57,6 +57,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
  private:
   struct VelocityOnlySnapshot final {
     nav_msgs::msg::Odometry odometry;
+    Px4InputStateTrace state_input_trace;
     tracking_adapter::RawPx4State px4;
     std::optional<velocity_only::Previous> previous;
     tracking_adapter::ResetCounters last_reset_counters;
@@ -99,7 +100,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
       float yaw_ned, float yaw_rate_ned, Px4InputTraceBoundary boundary,
       std::int64_t update_start_ros_ns, std::int64_t update_start_steady_ns,
       std::string_view velocity_only_reason,
-      std::uint64_t velocity_only_limited_count);
+      std::uint64_t velocity_only_limited_count,
+      const Px4InputStateTrace& state_input_trace);
   void enqueuePx4InputTrace(Px4InputTraceRecord record);
   void drainPx4InputTrace();
   void publishPx4InputTrace(const Px4InputTraceRecord& record);
@@ -225,6 +227,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t stale_state_failure_count_{0U};
   std::int64_t last_odometry_receive_ns_{0};
   std::int64_t last_odometry_receive_steady_ns_{0};
+  Px4InputStateTrace odometry_input_trace_;
   std::int64_t last_goal_publish_ns_{0};
   std::int64_t last_command_receive_ns_{0};
   std::int64_t maximum_odometry_callback_gap_us_{0};

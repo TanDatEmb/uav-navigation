@@ -350,13 +350,15 @@ Px4InputTraceRecord NavigationMode::makePx4InputTraceRecord(
     const std::int64_t update_start_ros_ns,
     const std::int64_t update_start_steady_ns,
     const std::string_view velocity_only_reason,
-    const std::uint64_t velocity_only_limited_count) {
+    const std::uint64_t velocity_only_limited_count,
+    const Px4InputStateTrace& state_input_trace) {
   Px4InputTraceRecord record;
   record.trace_sequence = ++px4_input_trace_sequence_;
   record.boundary = boundary;
   record.update_start_ros_ns = update_start_ros_ns;
   record.update_start_steady_ns = update_start_steady_ns;
   record.velocity_only_limited_count = velocity_only_limited_count;
+  record.state_input = state_input_trace;
   const auto reason_size = std::min(
       velocity_only_reason.size(), record.velocity_only_reason.size() - 1U);
   std::copy_n(velocity_only_reason.data(), reason_size,
@@ -485,6 +487,29 @@ void NavigationMode::publishPx4InputTrace(const Px4InputTraceRecord& record) {
     add("setpoint_update_duration_ns", "NOT_RECORDED");
   }
   add_u64("trace_sequence", record.trace_sequence);
+  const auto& state = record.state_input;
+  const bool state_present = state.sequence > 0U && state.localization_epoch > 0U;
+  add("state_input_present", state_present ? "true" : "false");
+  const auto add_state_stamp = [&add, &add_i64, state_present](
+      const std::string& key, const std::int64_t value) {
+    if (state_present && value > 0) add_i64(key, value);
+    else add(key, "NOT_RECORDED");
+  };
+  if (state_present) {
+    add_u64("state_sequence", state.sequence);
+    add_u64("state_localization_epoch", state.localization_epoch);
+  } else {
+    add("state_sequence", "NOT_RECORDED");
+    add("state_localization_epoch", "NOT_RECORDED");
+  }
+  add_state_stamp("state_source_stamp_ros_ns", state.source_stamp_ros_ns);
+  add_state_stamp("state_callback_enter_ros_ns", state.callback_enter_ros_ns);
+  add_state_stamp("state_callback_enter_steady_ns", state.callback_enter_steady_ns);
+  add_state_stamp("state_lock_requested_steady_ns", state.lock_requested_steady_ns);
+  add_state_stamp("state_lock_acquired_steady_ns", state.lock_acquired_steady_ns);
+  add_state_stamp("state_receive_steady_ns", state.receive_steady_ns);
+  add_state_stamp("state_snapshot_ros_ns", state.snapshot_ros_ns);
+  add_state_stamp("state_snapshot_steady_ns", state.snapshot_steady_ns);
   add("command_present", record.command_present ? "true" : "false");
   if (record.command_present) {
     add("mission_id", std::string(record.mission_id.data()));
@@ -1627,6 +1652,8 @@ void NavigationMode::handleMissionEvent(const MissionControllerEvent& event, dou
 void NavigationMode::onOdometry(
     const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message) {
   if (!message || message->localization_epoch == 0U || message->sequence == 0U) return;
+  const auto callback_enter_ros_ns = node().get_clock()->now().nanoseconds();
+  const auto callback_enter_steady_ns = navigation_common::steadyClockNowNanoseconds();
   const auto& odometry = message->odometry;
   const auto& position = odometry.pose.pose.position;
   const auto& velocity = odometry.twist.twist.linear;
@@ -1641,7 +1668,9 @@ void NavigationMode::onOdometry(
                          "Rejecting navigation odometry with invalid frame or values");
     return;
   }
+  const auto lock_requested_steady_ns = navigation_common::steadyClockNowNanoseconds();
   std::lock_guard<std::mutex> lock(trajectory_mutex_);
+  const auto lock_acquired_steady_ns = navigation_common::steadyClockNowNanoseconds();
   if (!typed_health_seen_ ||
       (!lio_health_valid_ &&
        !tracking_experiment_.suppress_estimator_health_response) ||
@@ -1667,6 +1696,11 @@ void NavigationMode::onOdometry(
   }
   last_odometry_receive_ns_ = receive_ns;
   last_odometry_receive_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
+  odometry_input_trace_ = Px4InputStateTrace{
+      message->localization_epoch, message->sequence, source_stamp_ns,
+      callback_enter_ros_ns, callback_enter_steady_ns,
+      lock_requested_steady_ns, lock_acquired_steady_ns,
+      last_odometry_receive_steady_ns_, 0, 0};
   last_propagated_state_stamp_ns_ = source_stamp_ns;
   last_propagated_state_sequence_ = message->sequence;
   ++odometry_callback_count_;
@@ -1813,6 +1847,7 @@ void NavigationMode::onEstimatorHealth(
     odometry_.reset();
     last_odometry_receive_ns_ = 0;
     last_odometry_receive_steady_ns_ = 0;
+    odometry_input_trace_ = {};
     last_propagated_state_stamp_ns_ = 0;
     last_propagated_state_sequence_ = 0U;
     px4_local_frame_aligned_ = false;
@@ -2096,7 +2131,8 @@ bool NavigationMode::publishVelocityOnlySetpoint(
       std::nullopt, velocity_ned, std::nullopt,
       setpoint.yaw_ned_rad.value_or(NAN), setpoint.yaw_rate_ned_rad_s.value_or(NAN),
       Px4InputTraceBoundary::kVelocityOnly, 0, 0,
-      trace_velocity_only_reason, trace_velocity_only_limited_count);
+      trace_velocity_only_reason, trace_velocity_only_limited_count,
+      snapshot.state_input_trace);
   trace.update_start_ros_ns = node().get_clock()->now().nanoseconds();
   trace.update_start_steady_ns = navigation_common::steadyClockNowNanoseconds();
   trajectory_setpoint_->update(setpoint);
@@ -2227,18 +2263,23 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   std::string trace_velocity_only_reason;
   std::uint64_t trace_velocity_only_limited_count = 0U;
   std::int64_t odometry_receive_steady_ns = 0;
+  Px4InputStateTrace state_input_trace;
   std::optional<Eigen::Vector3d> lio_to_px4_local_translation_ned;
   const auto now = node().get_clock()->now();
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     navigation_command = navigation_command_;
     odometry = odometry_;
+    state_input_trace = odometry_input_trace_;
+    state_input_trace.snapshot_ros_ns = node().get_clock()->now().nanoseconds();
+    state_input_trace.snapshot_steady_ns = navigation_common::steadyClockNowNanoseconds();
     trace_velocity_only_reason = velocity_only_last_reason_;
     trace_velocity_only_limited_count = velocity_only_limited_count_;
     odometry_receive_steady_ns = last_odometry_receive_steady_ns_;
     if (tracking_experiment_.velocity_only_enabled && odometry_.has_value()) {
       VelocityOnlySnapshot snapshot;
       snapshot.odometry = *odometry_;
+      snapshot.state_input_trace = state_input_trace;
       snapshot.px4.position_ned = px4_local_position_ned_.value_or(
           Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN()));
       snapshot.px4.velocity_ned = px4_local_velocity_ned_.value_or(
@@ -2345,7 +2386,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         std::nullopt, Eigen::Vector3f::Zero(), trace_acceleration,
         setpoint.yaw_ned_rad.value_or(NAN), setpoint.yaw_rate_ned_rad_s.value_or(NAN),
         Px4InputTraceBoundary::kVelocityHold, 0, 0,
-        trace_velocity_only_reason, trace_velocity_only_limited_count);
+        trace_velocity_only_reason, trace_velocity_only_limited_count, state_input_trace);
     trace.update_start_ros_ns = node().get_clock()->now().nanoseconds();
     trace.update_start_steady_ns = navigation_common::steadyClockNowNanoseconds();
     trajectory_setpoint_->update(setpoint);
@@ -2384,7 +2425,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         position_ned, Eigen::Vector3f::Zero(), std::nullopt,
         setpoint.yaw_ned_rad.value_or(NAN), setpoint.yaw_rate_ned_rad_s.value_or(NAN),
         Px4InputTraceBoundary::kPositionHold, 0, 0,
-        trace_velocity_only_reason, trace_velocity_only_limited_count);
+        trace_velocity_only_reason, trace_velocity_only_limited_count, state_input_trace);
     trace.update_start_ros_ns = node().get_clock()->now().nanoseconds();
     trace.update_start_steady_ns = navigation_common::steadyClockNowNanoseconds();
     trajectory_setpoint_->update(setpoint);
@@ -2734,7 +2775,7 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         position_ned, velocity_ned, acceleration_ned,
         setpoint.yaw_ned_rad.value_or(NAN), setpoint.yaw_rate_ned_rad_s.value_or(NAN),
         Px4InputTraceBoundary::kTracking, 0, 0,
-        trace_velocity_only_reason, trace_velocity_only_limited_count);
+        trace_velocity_only_reason, trace_velocity_only_limited_count, state_input_trace);
     trace.update_start_ros_ns = node().get_clock()->now().nanoseconds();
     trace.update_start_steady_ns = navigation_common::steadyClockNowNanoseconds();
     trajectory_setpoint_->update(setpoint);

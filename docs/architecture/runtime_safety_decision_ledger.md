@@ -22170,3 +22170,49 @@ release profiles must not use the former allowance.
   test`, `git diff --check`, then fresh 5 m/s five-waypoint SITL and a matched
   repeated matrix. All nine simulations and reports are terminal; integrated
   reachability is observed, not qualification or stable/smooth 5 m/s acceptance.
+
+### 2026-09-17 - Observe the exact propagated state used at PX4 update
+
+- **Owner/status:** External Mode state adapter and existing PX4 input evidence
+  worker; `IMPLEMENTED`, Release/component verification PASS; integrated
+  capture pending. This instrumentation is not the completion-rate fix.
+- **Scope:** The existing fixed-size `PX4_INPUT_SETPOINT` record now carries
+  the accepted propagated state's epoch, sequence and source ROS stamp,
+  callback-entry ROS/steady stamps, mutex-request/acquisition steady stamps,
+  the unchanged freshness receive steady stamp and state-snapshot ROS/steady
+  stamps. The tuple is copied under the same mutex as odometry and passed
+  explicitly through tracking, velocity-only and both hold paths. Epoch
+  invalidation clears live odometry and its tuple together; queued records
+  retain their original identity. Serialization stays on the existing bounded
+  evidence worker, not in the state/setpoint callbacks.
+- **Safety impact:** Observation only. No command authority, freshness
+  timestamp semantics, V/A/J, UNKNOWN/world/clearance, tracking, stop, deadline,
+  recovery, thread count, or queue policy changes. This is not a final
+  admissibility check or proof that PX4 accepted a command. The callback-entry
+  witness starts after executor dispatch and therefore cannot establish DDS
+  or producer latency. Rejected state callbacks are not a captured census.
+- **Evidence:** The matched nine-run matrix contains a 512 ms propagated-state
+  source gap and a receive-age command rejection but no receiver-entry/mutex
+  witness. The legacy `last_state_age_s=-1` field is not upgraded by inference.
+  Offline timing retains signed ROS age, uses only steady time for local
+  durations and reports missing/invalid records explicitly. Statistics are
+  weighted per PX4 update, including repeated use of one state, not per unique
+  receiver callback. Command/state epoch mismatch is visible but does not
+  create an execution decision or qualify the diagnostic run.
+- **Removal/review condition:** Replace only with equivalent coherent
+  source-to-use identity and raw-clock evidence. Remove if measured record or
+  transport overhead adversely affects command/state deadlines; no overhead
+  improvement or bound is claimed without a matched experiment.
+- **Verification:** immutable queued-record/epoch-reset C++ regression;
+  Python timing fixtures for missing/invalid fields, integer identity,
+  per-update denominator, pause/backward jump and epoch mismatch; canonical
+  Release build, complete `make test`, `git diff --check`, then an integrated
+  three-pillar capture at 5 m/s. Keep capture failures and old artifacts;
+  absent legacy fields remain NOT_EVALUABLE, not filled from observer time.
+  Release build passed 23 packages; `make test` exited 0 with all selected
+  current CTest entries passing, 385 executed Python runtime-tool passes plus
+  one explicit artifact-dependent skip (386 discovered), and seven auxiliary
+  passes. The navigation-command binary passed 26 cases including the new
+  immutable-record regression. Source-to-use capture is deferred into the
+  completion-focused experiment rather than starting a separate timing-tuning
+  cycle.

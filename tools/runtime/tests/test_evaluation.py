@@ -12,6 +12,7 @@ from evaluation import (
     build_evidence_contract,
     evaluate_motion_quality,
     evaluate_session,
+    evaluate_timing,
     load_evaluation_inputs,
     reduce_lifecycle,
 )
@@ -247,6 +248,93 @@ class EvaluationTest(unittest.TestCase):
         timing = evaluate_session(data)["metrics"]["timing"]
         self.assertEqual(timing["pva_observer_interarrival_ms"]["p95"], 10.0)
         self.assertEqual(timing["px4_setpoint_update_duration_ms"]["p50"], 2.0)
+
+    @staticmethod
+    def state_use_trace(**overrides):
+        values = {
+            "state_input_present": "true", "state_sequence": "42",
+            "state_localization_epoch": "7", "localization_epoch": "7",
+            "state_source_stamp_ros_ns": "1000000000",
+            "state_callback_enter_ros_ns": "1010000000",
+            "state_callback_enter_steady_ns": "10000000000",
+            "state_lock_requested_steady_ns": "10001000000",
+            "state_lock_acquired_steady_ns": "10011000000",
+            "state_receive_steady_ns": "10012000000",
+            "state_snapshot_ros_ns": "1020000000",
+            "state_snapshot_steady_ns": "10022000000",
+            "update_start_ros_ns": "1030000000",
+            "update_start_steady_ns": "10025000000",
+            "update_end_steady_ns": "10027000000",
+        }
+        values.update(overrides)
+        return {"trace_values": values}
+
+    def test_state_use_separates_mutex_wait_from_validation_and_source_age(self):
+        trace = self.state_use_trace()
+        timing = evaluate_timing({"px4_input_trace": [trace, trace]})["px4_state_use"]
+        self.assertEqual(timing["usable_record_count"], 2)
+        self.assertEqual(timing["distinct_state_count"], 1)
+        expected = {
+            "callback_validation_ms": 1.0, "receiver_mutex_wait_ms": 10.0,
+            "post_lock_to_receive_ms": 1.0, "receive_to_snapshot_ms": 10.0,
+            "snapshot_to_update_ms": 3.0, "px4_update_ms": 2.0,
+            "source_age_at_callback_ms": 10.0, "source_age_at_update_ms": 30.0,
+        }
+        for metric, value in expected.items():
+            self.assertEqual(timing["metrics"][metric]["p50"], value, metric)
+
+    def test_state_use_legacy_missing_fields_are_not_zero_or_observer_time(self):
+        trace = self.state_use_trace(state_receive_steady_ns="NOT_RECORDED")
+        timing = evaluate_timing({"px4_input_trace": [
+            {"trace_timestamp_ns": 100, "observer_record_steady_ns": 200}, trace,
+        ]})["px4_state_use"]
+        self.assertEqual(timing["status"], "NOT_EVALUABLE")
+        self.assertEqual(timing["record_count"], 2)
+        self.assertEqual(timing["missing_record_count"], 2)
+        self.assertIsNone(timing["metrics"]["receiver_mutex_wait_ms"]["maximum"])
+
+    def test_state_use_invalid_timestamps_keep_the_denominator(self):
+        for field, value in (
+            ("state_sequence", True),
+            ("state_receive_steady_ns", "1.5"),
+            ("state_receive_steady_ns", "0"),
+            ("state_lock_acquired_steady_ns", "9999999999"),
+            ("state_snapshot_steady_ns", str(1 << 63)),
+        ):
+            with self.subTest(field=field, value=value):
+                timing = evaluate_timing({"px4_input_trace": [
+                    self.state_use_trace(**{field: value}),
+                ]})["px4_state_use"]
+                self.assertEqual(timing["invalid_record_count"], 1)
+                self.assertEqual(timing["usable_record_count"], 0)
+                self.assertEqual(timing["record_count"], 1)
+
+    def test_state_use_ros_pause_and_backward_jump_do_not_change_steady_durations(self):
+        for update_ros, expected_age, backward_count in (
+            ("1020000000", 20.0, 0), ("990000000", -10.0, 1),
+        ):
+            with self.subTest(update_ros=update_ros):
+                timing = evaluate_timing({"px4_input_trace": [
+                    self.state_use_trace(update_start_ros_ns=update_ros),
+                ]})["px4_state_use"]
+                self.assertEqual(timing["metrics"]["source_age_at_update_ms"]["p50"], expected_age)
+                self.assertEqual(timing["metrics"]["receiver_mutex_wait_ms"]["p50"], 10.0)
+                self.assertEqual(timing["ros_backward_interval_count"], backward_count)
+                self.assertEqual(timing["negative_source_age_at_update_count"], backward_count)
+
+    def test_state_use_uint64_identity_is_not_rounded_through_float(self):
+        records = [self.state_use_trace(state_sequence=str((1 << 53) + index))
+                   for index in (0, 1)]
+        timing = evaluate_timing({"px4_input_trace": records})["px4_state_use"]
+        self.assertEqual(timing["distinct_state_count"], 2)
+
+    def test_state_use_epoch_mismatch_is_visible_not_a_freshness_verdict(self):
+        timing = evaluate_timing({"px4_input_trace": [
+            self.state_use_trace(localization_epoch="8"),
+        ]})["px4_state_use"]
+        self.assertEqual(timing["command_state_epoch_mismatch_count"], 1)
+        self.assertEqual(timing["status"], "AVAILABLE")
+        self.assertNotIn("PASS", timing.values())
 
     def test_internal_lio_consistency_without_independent_truth_is_not_tracking_pass(self):
         commands = [pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))]

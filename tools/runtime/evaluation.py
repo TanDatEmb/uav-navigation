@@ -1772,6 +1772,102 @@ def evaluate_timing(inputs: dict[str, Any]) -> dict[str, Any]:
             "status": "AVAILABLE" if px4_durations_ms else "NOT_EVALUABLE",
             "reason": None if px4_durations_ms else "NO_VALID_PX4_UPDATE_DURATION",
         },
+        "px4_state_use": _px4_state_use_timing(inputs.get("px4_input_trace", [])),
+    }
+
+
+def _px4_state_use_timing(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Observed state tuple at PX4 update, not a freshness/qualification verdict.
+
+    Duration clocks stay local and monotonic; signed ROS ages retain pauses and
+    backward jumps. Repeated uses of one state are retained (per-update weight),
+    not misrepresented as a census of receiver callbacks or DDS latency.
+    """
+    steady_fields = (
+        "state_callback_enter_steady_ns", "state_lock_requested_steady_ns",
+        "state_lock_acquired_steady_ns", "state_receive_steady_ns",
+        "state_snapshot_steady_ns", "update_start_steady_ns",
+        "update_end_steady_ns",
+    )
+    ros_fields = (
+        "state_source_stamp_ros_ns", "state_callback_enter_ros_ns",
+        "state_snapshot_ros_ns", "update_start_ros_ns",
+    )
+    intervals = (
+        "callback_validation_ms", "receiver_mutex_wait_ms",
+        "post_lock_to_receive_ms", "receive_to_snapshot_ms",
+        "snapshot_to_update_ms", "px4_update_ms",
+    )
+    values = {name: [] for name in intervals}
+    values.update({"source_age_at_callback_ms": [], "source_age_at_update_ms": []})
+    missing = invalid = epoch_mismatch = ros_backward = 0
+    states: set[tuple[int, int]] = set()
+
+    def positive_integer(raw: Any) -> int | None:
+        # Diagnostic values arrive as decimal strings. Avoid float conversion
+        # losing integer identity or accepting booleans/fractional timestamps.
+        if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+            return None
+        if isinstance(raw, str) and not raw.isdecimal():
+            return None
+        number = int(raw)
+        return number if 0 < number <= (1 << 64) - 1 else None
+
+    for record in records:
+        trace = record.get("trace_values", {}) if isinstance(record, dict) else {}
+        if not isinstance(trace, dict):
+            missing += 1
+            continue
+        present = trace.get("state_input_present")
+        if present is not True and present != "true":
+            missing += 1
+            continue
+        fields = (*steady_fields, *ros_fields, "state_sequence", "state_localization_epoch")
+        if any(trace.get(field) in (None, "NOT_RECORDED") for field in fields):
+            missing += 1
+            continue
+        parsed = {field: positive_integer(trace[field]) for field in fields}
+        if any(value is None for value in parsed.values()):
+            invalid += 1
+            continue
+        # Timestamp producers are signed int64, unlike the uint64 identities.
+        if any(parsed[field] > (1 << 63) - 1 for field in (*steady_fields, *ros_fields)):
+            invalid += 1
+            continue
+        steady = [parsed[field] for field in steady_fields]
+        if any(right < left for left, right in zip(steady, steady[1:])):
+            invalid += 1
+            continue
+        states.add((parsed["state_localization_epoch"], parsed["state_sequence"]))
+        command_epoch = positive_integer(trace.get("localization_epoch"))
+        if command_epoch is not None and command_epoch != parsed["state_localization_epoch"]:
+            epoch_mismatch += 1
+        for name, left, right in zip(intervals, steady, steady[1:]):
+            values[name].append((right - left) / 1e6)
+        source = parsed["state_source_stamp_ros_ns"]
+        values["source_age_at_callback_ms"].append(
+            (parsed["state_callback_enter_ros_ns"] - source) / 1e6)
+        values["source_age_at_update_ms"].append(
+            (parsed["update_start_ros_ns"] - source) / 1e6)
+        if (parsed["state_snapshot_ros_ns"] < parsed["state_callback_enter_ros_ns"] or
+                parsed["update_start_ros_ns"] < parsed["state_snapshot_ros_ns"]):
+            ros_backward += 1
+    usable = len(values["px4_update_ms"])
+    return {
+        "status": "AVAILABLE" if usable else "NOT_EVALUABLE",
+        "reason": None if usable else "NO_VALID_DIRECT_STATE_USE_TIMESTAMPS",
+        "record_count": len(records), "usable_record_count": usable,
+        "missing_record_count": missing, "invalid_record_count": invalid,
+        "distinct_state_count": len(states),
+        "command_state_epoch_mismatch_count": epoch_mismatch,
+        "ros_backward_interval_count": ros_backward,
+        "negative_source_age_at_callback_count": sum(
+            age < 0 for age in values["source_age_at_callback_ms"]),
+        "negative_source_age_at_update_count": sum(
+            age < 0 for age in values["source_age_at_update_ms"]),
+        "sample_weighting": "per PX4 update; repeated state uses retained",
+        "scope": "local receiver-to-update observation; no DDS/producer/PX4 acceptance proof",
+        "metrics": {name: _summary(samples, unit="ms") for name, samples in values.items()},
     }
 
 

@@ -9,6 +9,40 @@
 #include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
 #include "px4_navigation_external_mode/runtime_metrics_policy.hpp"
+#include "px4_navigation_external_mode/px4_input_trace.hpp"
+#include <navigation_common/bounded_spsc_queue.hpp>
+
+TEST(Px4InputStateTrace, QueuedSnapshotKeepsItsStateAcrossMutationAndEpochReset) {
+  using namespace px4_navigation_external_mode;
+  navigation_common::BoundedSpscQueue<Px4InputTraceRecord, 8U> queue;
+  Px4InputStateTrace live{7U, 42U, 1'000, 1'010, 2'000, 2'005,
+                         2'100, 2'110, 1'020, 2'120};
+  for (const auto boundary : {Px4InputTraceBoundary::kTracking,
+                              Px4InputTraceBoundary::kVelocityOnly,
+                              Px4InputTraceBoundary::kVelocityHold,
+                              Px4InputTraceBoundary::kPositionHold}) {
+    Px4InputTraceRecord record;
+    record.boundary = boundary;
+    record.state_input = live;
+    ASSERT_TRUE(queue.tryPush(record));
+  }
+  live = {};  // Epoch invalidation must not relabel already enqueued records.
+  live.localization_epoch = 8U;
+  live.sequence = 1U;
+  for (int index = 0; index < 4; ++index) {
+    Px4InputTraceRecord record;
+    ASSERT_TRUE(queue.tryPop(record));
+    EXPECT_EQ(record.state_input.localization_epoch, 7U);
+    EXPECT_EQ(record.state_input.sequence, 42U);
+    EXPECT_EQ(record.state_input.source_stamp_ros_ns, 1'000);
+    EXPECT_EQ(record.state_input.callback_enter_steady_ns, 2'000);
+    EXPECT_EQ(record.state_input.lock_requested_steady_ns, 2'005);
+    EXPECT_EQ(record.state_input.lock_acquired_steady_ns, 2'100);
+    EXPECT_EQ(record.state_input.receive_steady_ns, 2'110);
+    EXPECT_EQ(record.state_input.snapshot_steady_ns, 2'120);
+  }
+}
+
 TEST(RuntimeMetricsPolicy, RejectsClockRegressionWithoutOverflow) {
   EXPECT_FALSE(px4_navigation_external_mode::runtimeMetricsLogDue(
       std::numeric_limits<std::int64_t>::max(), 1));
