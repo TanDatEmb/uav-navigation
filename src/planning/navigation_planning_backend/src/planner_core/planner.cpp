@@ -4744,6 +4744,19 @@ double mainGuideSupport(
         } frontend_timing{time_consuming_[BACK_TRAJ_FRONTEND]};
         backup_certificate_diagnostics_ = {};
         backup_certificate_diagnostics_.attempted = true;
+        // Use the same request-owned abort policy as the outer transaction.
+        // A deadline passed only to CIRI cannot stop the surrounding switch
+        // search. Abort is FAILED, never permission for a MAIN-only command.
+        const auto should_abort = [this, &solve_deadline] {
+            const auto failure = classifySolveFailure(solve_deadline);
+            if (failure == PLANNER_SOLVE_TIMEOUT) {
+                backup_certificate_diagnostics_.last_reject_stage = static_cast<int>(
+                    navigation_planning::BackupCertificateRejectStage::kDeadline);
+            }
+            return failure == PLANNER_SOLVE_CANCELLED ||
+                   failure == PLANNER_SOLVE_TIMEOUT;
+        };
+        if (should_abort()) return FAILED;
         double total_dur = ref_exp_traj.getTotalDuration();
         double start_t = planner_context_->getSimTime() - ref_exp_traj.getStartWallTime();
 
@@ -4781,6 +4794,7 @@ double mainGuideSupport(
             for (double candidate_t = command_start_t + sample_step;
                  candidate_t < total_dur + 0.5 * sample_step;
                  candidate_t = std::min(total_dur, candidate_t + sample_step)) {
+                if (should_abort()) return FAILED;
                 const double bounded_t = std::min(candidate_t, total_dur);
                 const Vec3f candidate = ref_exp_traj.getPos(bounded_t);
                 if (candidate.allFinite() && map_ptr_->contains(candidate) &&
@@ -4797,6 +4811,7 @@ double mainGuideSupport(
             }
         }
         const double visibility_start_t = command_start_t;
+        if (should_abort()) return FAILED;
         if (!command_start_backup_admitted) {
             backup_certificate_diagnostics_.last_reject_stage = static_cast<int>(
                 navigation_planning::BackupCertificateRejectStage::kCommandBoundary);
@@ -4834,6 +4849,7 @@ double mainGuideSupport(
         Vec3f last_pos = ref_exp_traj.getPos(visibility_start_t);
         for (out_t = visibility_start_t; out_t < total_dur;
              out_t += cfg_.sample_traj_dt_s) {
+            if (should_abort()) return FAILED;
             temp_point = ref_exp_traj.getPos(out_t);
             if ((last_pos - temp_point).norm() < cfg_.resolution * 0.8) {
                 continue;
@@ -4909,6 +4925,7 @@ double mainGuideSupport(
         } else {
             eval_ps.clear();
             for (const auto &sample : candidate_ps) {
+                if (should_abort()) return FAILED;
                 out_t = sample.first;
                 eval_ps.push_back(sample);
                 if (!inflated_line_visible(sample.second)) {
@@ -4918,6 +4935,7 @@ double mainGuideSupport(
             }
             if (all_traj_visible) out_t = total_dur;
         }
+        if (should_abort()) return FAILED;
         if (all_traj_visible &&
             trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) &&
             !candidate_terminal_stop_active_ && !goal_endpoint_adjusted_) {
@@ -4963,6 +4981,7 @@ double mainGuideSupport(
         }
         Vec3f invisible_p = eval_ps.back().second;
         while (out_t > visibility_start_t) {
+            if (should_abort()) return FAILED;
             out_t -= cfg_.sample_traj_dt_s;
             Vec3f out_p = ref_exp_traj.getPos(out_t);
             if ((out_p - invisible_p).norm() > cfg_.robot_r) {
@@ -5154,6 +5173,7 @@ double mainGuideSupport(
                             main_acceptance_entry_t = previous_time;
                         } else {
                             for (std::size_t sample = 1U; sample <= sample_count; ++sample) {
+                                if (should_abort()) return FAILED;
                                 const double time_s = std::min(
                                     total_duration,
                                     visibility_start_t +
@@ -5222,6 +5242,7 @@ double mainGuideSupport(
         // This retains the latest certifiable switch instead of either
         // disabling backup or imposing an unrelated fixed replan horizon.
         for (double candidate_ts = heu_ts;;) {
+            if (should_abort()) return FAILED;
             auto& certificate_diagnostics = backup_certificate_diagnostics_;
             ++certificate_diagnostics.switch_candidate_count;
             // The visibility ray is a map certificate, not an optimizer
@@ -5240,6 +5261,7 @@ double mainGuideSupport(
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt_s,
                     0.0, backup_altitude_target);
+            if (should_abort()) return FAILED;
             geometry_utils::Piece candidate_braking_piece;
             if (braking_seed.feasible &&
                 std::isfinite(braking_seed.duration_s) &&
@@ -5316,6 +5338,9 @@ double mainGuideSupport(
                         navigation_planning::BackupCertificateRejectStage::kAlignedSfc);
                 }
             }
+            // Invalidation may arrive inside the world/CIRI query above.
+            // Do not evaluate another hull or advance to another switch.
+            if (should_abort()) return FAILED;
             if (braking_seed_inside_sfc) {
                 const auto validation = minimum_snap_backup_validation(
                         candidate_ts, braking_seed.duration_s, candidate_braking_piece);
@@ -5323,6 +5348,7 @@ double mainGuideSupport(
                     validation,
                     navigation_planning::BackupCertificateRejectStage::kKnownFree);
             }
+            if (should_abort()) return FAILED;
             if (braking_seed_inside_sfc &&
                 backup_crosses_uncompleted_pass_through(
                     candidate_ts, candidate_braking_piece)) {
@@ -5337,6 +5363,7 @@ double mainGuideSupport(
                     active_pass_through_waypoint->y(), active_pass_through_waypoint->z(),
                     active_pass_through_radius_m);
             }
+            if (should_abort()) return FAILED;
             if (braking_seed_inside_sfc) {
                 temp_poly = candidate_sfc;
                 certificate_diagnostics.selected = true;
@@ -5449,6 +5476,7 @@ double mainGuideSupport(
                                                 opt_ts);
         }
         time_consuming_[BACK_TRAJ_OPT] = t_back_opt.stop();
+        if (should_abort()) return FAILED;
 
         if (cfg_.backup_refinement_enabled) {
             double init_ts;
@@ -5561,6 +5589,7 @@ double mainGuideSupport(
         // authorizeAndStage discover this only after the full mission solve.
         auto backup_validation = backupCandidateValidation(
             temp_pos_traj, ref_exp_traj.getStartWallTime() + opt_ts);
+        if (should_abort()) return FAILED;
         if (!record_known_free_validation(
                     backup_validation,
                     navigation_planning::BackupCertificateRejectStage::kRefinementKnownFree)) {
@@ -5577,6 +5606,7 @@ double mainGuideSupport(
             }
             backup_validation = backupCandidateValidation(
                 temp_pos_traj, ref_exp_traj.getStartWallTime() + opt_ts);
+            if (should_abort()) return FAILED;
             if (!record_known_free_validation(
                         backup_validation,
                         navigation_planning::BackupCertificateRejectStage::kRefinementKnownFree)) {
@@ -5615,6 +5645,7 @@ double mainGuideSupport(
             double yaw_stop_duration_s = temp_pos_traj.getTotalDuration();
             bool yaw_stop_certificate_valid = false;
             for (int attempt = 0; attempt < 24; ++attempt) {
+                if (should_abort()) return FAILED;
                 const auto yaw_piece = minimumSnapStopPiece(
                     yaw_state, yaw_stop_duration_s);
                 const double yaw_max_rate = yaw_piece.getMaxVelRate();
@@ -5683,6 +5714,7 @@ double mainGuideSupport(
                     opt_ts, backup_switch_lower_bound, te);
             return OPT_FAILED;
         }
+        if (should_abort()) return FAILED;
         double new_ts_WT = ref_exp_traj.getStartWallTime() + opt_ts;
         // The switch estimate is allowed to move earlier between hot replans.
         // An earlier switch is the more conservative backup choice; rejecting

@@ -762,7 +762,8 @@ class InterruptBackupWorld final : public IdentityOnlyWorld {
 };
 
 void expectBackupInterruptRecordsFailure(const bool cancel,
-                                        const bool install_active = false) {
+                                        const bool install_active = false,
+                                        const bool expect_bounded = false) {
   auto world = std::make_shared<InterruptBackupWorld>();
   TestCommitAuthorizer authorizer(world);
   double ros_time_s = 10.0;
@@ -832,6 +833,10 @@ void expectBackupInterruptRecordsFailure(const bool cancel,
   EXPECT_TRUE(diagnostics.backup_certificate.attempted);
   EXPECT_GT(diagnostics.module_time_us[2], 0.0);
   EXPECT_FALSE(diagnostics.backup_certificate.selected);
+  if (expect_bounded) {
+    EXPECT_LE(diagnostics.backup_certificate.switch_candidate_count, 1U);
+    EXPECT_LE(world->queries_after_interrupt, 1U);
+  }
   EXPECT_EQ(diagnostics.replan_return_code,
             cancel ? navigation_planning_backend::PLANNER_SOLVE_CANCELLED
                    : navigation_planning_backend::PLANNER_SOLVE_TIMEOUT);
@@ -840,11 +845,32 @@ void expectBackupInterruptRecordsFailure(const bool cancel,
   const auto after = facade.committedSnapshot();
   EXPECT_EQ(after.generation, previous.generation);
   EXPECT_EQ(after.position.duration_s, previous.position.duration_s);
+  if (install_active) {
+    for (const double time_s : {0.0, previous.position.duration_s * 0.5,
+                               previous.position.duration_s}) {
+      navigation_planning::TrajectoryPoint old_point;
+      navigation_planning::TrajectoryPoint retained_point;
+      ASSERT_TRUE(previous.position.sample(time_s, old_point));
+      ASSERT_TRUE(after.position.sample(time_s, retained_point));
+      EXPECT_TRUE(old_point.position_world.isApprox(retained_point.position_world));
+      EXPECT_TRUE(old_point.velocity_world.isApprox(retained_point.velocity_world));
+      EXPECT_TRUE(old_point.acceleration_world.isApprox(retained_point.acceleration_world));
+      EXPECT_TRUE(old_point.jerk_world.isApprox(retained_point.jerk_world));
+    }
+  }
 }
 
 TEST(PlannerFacade, BackupInterruptedFirstAttemptAccountsFrontend) {
   expectBackupInterruptRecordsFailure(false);
   expectBackupInterruptRecordsFailure(true);
+}
+
+TEST(PlannerFacade, BackupSourceExpiryStopsEnumerationAndPreservesActive) {
+  expectBackupInterruptRecordsFailure(false, true, true);
+}
+
+TEST(PlannerFacade, BackupCancellationStopsEnumerationAndPreservesActive) {
+  expectBackupInterruptRecordsFailure(true, true, true);
 }
 
 TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {

@@ -1107,3 +1107,34 @@ zero errors/failures; `git diff --check` passes. Independent read-only review
 found no concrete gate, authority, phase-accounting or fixture defect. The
 unrelated safety-document migration remains dirty and is excluded from this
 commit. The last complete SITL baseline remains 2/9, not a new measurement.
+
+### BACKUP budget propagation — separate behavior correction
+
+On the timing-corrected `dc01ef2a` baseline, both production-facade tests
+`BackupSourceExpiryStopsEnumerationAndPreservesActive` and
+`BackupCancellationStopsEnumerationAndPreservesActive` fail: 74 switch
+candidates and 71 BACKUP world queries are performed despite the first query
+expiring/cancelling the request. The prior active bundle survives, but this
+work cannot create an admissible successor and delays the worker's next job.
+
+BACKUP now uses the outer transaction's existing `classifySolveFailure()`
+policy at phase/loop boundaries and after world/certification calls. Each
+abort returns `FAILED`, never `NO_NEED`/MAIN-only permission. No deadline,
+dynamic limit, UNKNOWN, tracking, clearance, admission or recovery policy
+changes. Both before-failing tests pass after the correction, with at most
+one candidate and exactly the first interrupting world query. They also
+verify unchanged active generation, duration and sampled P/V/A/J at origin,
+midpoint and end; no replacement candidate is admitted.
+
+Verification: three focused BACKUP cases pass; `make build` finishes 23
+Release packages (12.3 s); `make test` exits zero, with all 20 facade cases
+and the 386-case runtime Python suite passing (one existing GUI-artifact
+skip). The test-result summary reports 83 entries, zero errors/failures.
+Independent review found no concrete authority/gate regression. Individual
+world/CIRI/seed calls remain non-preemptible: these checks stop subsequent
+work but do **not** establish a hard WCET or deadline upper bound.
+
+This is a request-budget correctness fix, not yet a demonstrated completion
+lever. The next nine-run matrix must retain all failed runs, compare complete
+MAIN+BACKUP readiness and terminal cause, and preserve the existing 2/9
+baseline. No new bypass or qualification claim is introduced.
