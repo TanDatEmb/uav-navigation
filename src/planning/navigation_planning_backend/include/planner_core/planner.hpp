@@ -691,6 +691,9 @@ namespace navigation_planning_backend {
                    const bool &new_goal);
 
     private:
+        RET_CODE planSuccessorFromExecutionAnchorImpl(
+            const Vec3f &goal_p, const double &goal_yaw, const bool &new_goal,
+            const navigation_planning::PlanningRequest* request);
         void resetPlannerTimeline(std::int64_t request_received_steady_ns) noexcept;
         void setPlannerStage(int stage) noexcept;
         void finishPlannerTimeline(int result_code) noexcept;
@@ -707,7 +710,8 @@ namespace navigation_planning_backend {
                                  ExpTraj &out_exp_traj_info,
                                  const AbsoluteDeadline &solve_deadline,
                                  bool baseline_only = false,
-                                 PlannerResultCode* failure_detail = nullptr);
+                                 PlannerResultCode* failure_detail = nullptr,
+                                 const navigation_planning::PlanningRequest* request = nullptr);
 
         /* For Backup traj generation */
         RET_CODE generateBackupTrajectory(ExpTraj &ref_exp_traj,

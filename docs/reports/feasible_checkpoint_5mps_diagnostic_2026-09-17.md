@@ -2,15 +2,18 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest integrated follow-up: the frozen Release on `8a775d128` completed all18
-sequential SAFE/FAST cases: **SAFE1/9mission COMPLETE, FAST4/9mission COMPLETE,
+Latest integrated follow-up: the frozen Release on `76a2e8ed` completed all18
+sequential SAFE/FAST cases: **SAFE1/9mission COMPLETE, FAST3/9mission COMPLETE,
 0/18report PASS**. Completion remains below a majority and no run qualifies.
-The BACKUP-witness repair is component verified and its corrected role appears
-at PX4, but this matrix does not demonstrate a completion-rate gain. Persistent
-9WP failures include complete-bundle construction/certification with spare
-budget; a late SAFE5WP run loses final command exposure before COMPLETED.
-See [the latest matrix and expert budget review](#postflight-closure-of-the-backup-witness-cycle).
-The earlier `b2f25ab0` SAFE2/9, FAST4/9 matrix remains separate below.
+Request-owned guide time is component verified, but this matrix does not
+demonstrate a completion-rate gain. The separate exact-input FAST9 capture
+confirms a producer guide that passes the active waypoint, returns to its
+centre, then proceeds again. A scoped geometry repair now has RED/GREEN
+component evidence; integrated verification remains pending. Actual PX4
+feedback also reaches the tilt limit in two failed BACKUP stopping windows.
+See [the latest closure and guide composition review](#request-owned-time-matrix-closure-and-guide-composition-repair).
+The earlier `8a775d128` SAFE1/9, FAST4/9 and `b2f25ab0` SAFE2/9,
+FAST4/9 matrices remain separate below.
 
 Historical integrated evidence: the explicit FAST/AllowUnknown matrix on `80020ed0`
 completed all nine runs: **1/9mission COMPLETE,0/9report PASS**, three
@@ -3074,3 +3077,234 @@ validation and `git diff --check` pass; user-owned document migration remains
 untouched. Fresh postcommit build provenance and the new frozen 18-run
 integration comparison remain pending at this checkpoint; no completion gain
 or smooth sustained 5 m/s qualification is claimed.
+
+### Request-owned-time matrix closure and guide composition repair
+
+The sequential 18-case campaign on `76a2e8ed530e33394b24caa07f6001117049de03`
+is terminal. Every slot has exactly one unique experiment/session, VALID
+provenance, typed acceptance data, successful cleanup and `stopped=true`.
+All runs remain qualification-ineligible. Manifest SHA-256 is
+`d48c0567ee8210413c743f9c38d33b1aba75299d046bc0883ab5921f82fab426`;
+source SHA-256 is
+`4015ff23f996012204f9140a9d9b89d07bd96a40f98b4aa054eb73af005b8ed0`
+(1,924 files, including separately captured user-owned documentation WIP).
+PX4 HEAD is still `deaff86ee335dd697677bcfc2415a23878e1b895`, dirty inputs
+captured. Same seed 0, requested speed 5 m/s, positive/nominal profiles,
+40 m/4,096 visibility, domain 42/UDP 8892, snapshots/visualization OFF;
+no source/config changes, builds, replay or parallel simulations inside this
+normal matrix. SAFE requires known-free BACKUP; FAST explicitly allows UNKNOWN
+BACKUP but still rejects OCCUPIED, undefined and out-of-map space.
+
+Session prefix: `.artifacts/runtime/external-mode-check-20260917T`.
+
+| Policy | WP | r1 suffix / acceptance | r2 suffix / acceptance | r3 suffix / acceptance | COMPLETE |
+|---|---:|---|---|---|---:|
+| SAFE | 2 | `121028-403882` / 0 | `121224-407631` / 0 | `121415-411519` / 0,1 | 1/3 |
+| SAFE | 5 | `121606-415441` / 0 | `121724-418916` / 0 | `121906-422425` / 0 | 0/3 |
+| SAFE | 9 | `122015-425841` / 0 | `122122-429404` / 0 | `122228-432681` / 0 | 0/3 |
+| FAST | 2 | `122338-435915` / 0 | `122531-440076` / 0,1 | `122732-444114` / 0,1 | 2/3 |
+| FAST | 5 | `122923-448028` / 0 | `123123-451692` / 0 | `123258-455434` / 0..4 | 1/3 |
+| FAST | 9 | `123518-459178` / 0 | `123630-462924` / 0 | `123740-466400` / 0 | 0/3 |
+
+All 2WP reports and the COMPLETE FAST5 report are FAIL; all remaining 5/9WP
+reports are BLOCKED. Thus SAFE is 1/9, FAST 3/9, report PASS 0/18. Three
+repetitions are not a causal statistical comparison against `8a775d128`.
+Completion does not imply assessment/qualification PASS, and a correctly
+contained stop does not establish healthy mission liveness.
+
+#### First-failure discriminators, not one universal planner cause
+
+- SAFE2-r1/r2 and FAST2-r1 show estimator observability rejection followed by
+  loss of advancing propagated-state exposure and receiver RECEIVE_STALE.
+  FAST2-r1 last state source is 56.200 s, observability ratio 0.009172,
+  navigation false; receiver stops at 56.364 s (164 ms source/205.915 ms
+  steady age). The preceding complete solve takes 17.290 ms, not 80 ms.
+  SAFE2-r1 captures `MAIN_ESTIMATOR_INVALID` and `requires_reanchor=true`;
+  r2's short invalid window lacks that propagation diagnostic. Why the
+  association/normal information becomes poorly observable remains
+  INCONCLUSIVE. LiDAR/IMU continuation is not permission to publish invalid
+  control state or relax the observability/freshness gates.
+- SAFE5-r1 renewals cycle 45--51/solve 8--14 fail preferred and unrestricted
+  A* TIME_OUT at about 66.26--66.45 ms. Whole-job deadline-exceeded zero does
+  **not** mean search was not budget-limited: the nested 30/60 ms search
+  budgets were exhausted. No matching failed-search world snapshot proves
+  that a feasible path existed. The final gen6 endpoint is about 21.9 m
+  from WP1; native endpoint error is 0.983 m near its BACKUP end, so the
+  unchanged 0.75 m hold anchor rejects it. Later recertification failure
+  `InvalidTimeWindow` with zero samples is not an obstacle collision.
+- SAFE9 all three first produce complete bundles. Subsequent dynamically
+  feasible BACKUP hulls fail the known-free swept certificate on typed
+  UNKNOWN. Some jobs separately hit the MAIN deadline; preserve those jobs
+  rather than replacing every failure with one category. The stopping
+  endpoint subsequently exceeds its measured anchor. Do not repair SAFE
+  by silently selecting FAST or infer optimizer convergence failure from
+  a world-policy rejection.
+- FAST5-r1 activates gen3, then loses its retained tracking witness at
+  elapsed 0.428 s: anchor/projected error 0.535/0.522 m exceeds 0.25 m,
+  despite retained world sweep clear. The attempted emergency start is
+  OCCUPIED, not UNKNOWN. FAST5-r2 activates gen2 after recovering from one
+  80.191 ms solve; later replacement MAIN fails jerk 11.404/8 and immutable
+  seed 33.604/8 (later much larger). Duration stretch leaves the corridor
+  or has no compatible interval. BACKUP exhaustion/recovery timeout follows.
+  No matching old/new solver input establishes causal regression.
+
+#### Braking reaches a real controller constraint
+
+Existing telemetry, not newly enabled instrumentation, records PX4's internal
+post-P/V-feedback acceleration/thrust setpoints. Source-time joins use native
+`lio_odom`, exact generation/localization identity, captured alignment and FMU
+timestamps; no observer-time fallback or unaligned absolute GT positions.
+
+| Window | Internal SP samples | Thrust tilt near configured 45 degrees | Near-end native / PX4 position error |
+|---|---:|---:|---|
+| SAFE5-r1, 29.2--30.3 s | 56 | 25/56 | 0.983 / 1.180 m (state skew 8 ms) |
+| SAFE9-r3, 27.3--28.31 s | 50 | 18/50 | 0.999 / 0.810 m (same source time) |
+
+At 29.820 s SAFE5 actual internal acceleration NED is
+`[-1.958,-13.662,+2.192] m/s2`, versus planned approximately
+`[-0.192,-7.779,+0.038]`. At 27.940 s SAFE9 actual internal demand is
+`[-6.379,-10.391,+2.460]`, versus planned `[-2.472,-6.124,+0.024]`.
+Captured thrust direction is tilt-limited in both. PX4 `PositionControl`
+adds position/velocity feedback before `ControlMath::limitTilt()`; checking
+planned feedforward alone does not prove closed-loop braking feasibility.
+
+SAFE5 motor upper-rail rows are 0/55 (maximum 0.956); SAFE9 is 1/51.
+Persistent motor saturation is therefore unproven. Desired attitude samples
+are absent, not zero. Odometry reset counters remain 14/12 and local position
+validity holds; terminal xy/z reset counters are not decoded, a coverage gap.
+Aligned PX4-native position residual is about 0.217/0.265 m: this rejects the
+counterfactual that PX4 is near its own reference while only native LIO shows
+the roughly 1 m overshoot, but does not exclude a fusion contribution.
+Constant-lag fitting does not remove terminal overshoot. These are evidence
+of binding controller demand before fatal containment, not proof of a unique
+cause. No tilt, thrust, anchor or tracking threshold is tuned from two cases.
+The existing MAIN control envelope is not a verified BACKUP feedback reserve;
+controller-state/model coverage and braking distributions remain prerequisites.
+
+#### Exact input reveals a guide-phase contradiction
+
+After the normal matrix was terminal, a separate intrusive FAST9 capture ran
+on the same frozen build/source: session `124102-470121`, experiment
+`request-owned-guide-76a2e8ed-fast9-capture-nominal-bundle-capture-77MPw0-20260917`,
+directory `.artifacts/diagnostics/nominal-bundle-capture-77MPw0`,
+FAILURE_ONLY=0/INCLUDE_WORLD=1. It is BLOCKED with only WP0 accepted, VALID
+provenance/cleanup PASS, not part of the 18-case denominator or timing A/B.
+Writer accounting is 9 submitted, 8 accepted/written, **1 dropped**, zero
+write/stat errors/pending. Job8 is missing. `capture_complete=true` means
+accounted closure, **not lossless capture**. Retained job3/cycle57 has matching
+individual source/job/world provenance and complete diagnostic world; no
+conclusion is made about the dropped job.
+
+Snapshot `nominal_problem_snapshot_2_2_2.json` has head
+`[19.224083,4.768632,3.000154]`, speed about 4.89 m/s, inside WP1's actual
+0.9 m sphere (distance about 0.810 m). Retained guide reaches
+`[22.121734,5.178000,2.999841]` at elapsed 0.600 s, then **returns** through
+`[20.672637,5.056430,2.999949]` at 1.220644 s to WP `[20,5,3]` at
+1.508733 s, then proceeds to `[31.737362,5.055243,3]`.
+
+The active-leg backbone clamps a past-boundary start to the active endpoint;
+with no positive incoming arc it returns invalid. Frontend falls back to
+searching from the retained tail back to the active goal. The resulting
+backward edge is misclassified as a genuine local corner; arc-based corner
+trimming retains the already folded prefix. Mission geometry's bend is only
+about 14 degrees. This is a CONFIRMED producer-composition defect, not evidence
+that the mission should accept an unmeasured waypoint.
+
+Exact replay reconstructs Bezier first-boundary-control failure (piece0,
+control3, plane `x<=21.5`, violation 0.843734 m). Immutable MINCO has corridor
+PASS but V/A/J approximately 9.788/30.041/235.966 against 5/5/8, with a
+separate componentwise boundary-certificate failure. Current production
+L-BFGS also returns no candidate **with the deadline disabled** and at both
+40/80 and 0/80 ms replay settings. This falsifies “extra budget alone rescues
+this exact current solve”; it does not prove all formulations infeasible.
+Every replay has `complete_executable_bundle=0`: diagnostic world checks do
+not reproduce the production body-support/role/BACKUP/admission transaction.
+
+```mermaid
+flowchart TD
+    A[Immutable request and MAIN future anchor] --> B{Same goal, head in actual PASS sphere, shallow mission bend?}
+    B -- no --> C[Existing incoming-leg or corner guide]
+    B -- yes --> D[Retained prefix then outgoing geometry; no return to centre]
+    C --> E[Fresh MAIN plus BACKUP and all validators]
+    D --> E
+    E --> F[Admission and exact activation under unchanged identity]
+    F --> G[Measured ordered mission acceptance]
+```
+
+The scoped repair passes the immutable request synchronously into the existing
+frontend, not via a stored flag, protocol setter or new coordinator. The pure
+geometry helper requires valid request-owned MAIN roles, same predecessor
+goal/request, actual immutable mission sphere, an outgoing waypoint and the
+existing non-genuine-corner classification. Genuine corners, outside-sphere
+AABB points, later-route proximity, handoff, BACKUP, emergency, measured rest
+and coincident STOP keep their existing paths. Active identity/progress never
+advances. The fresh trajectory exporter independently emits the active
+boundary constraint/event at the head; positive 600 ms MAIN reserve and all
+world/corridor/PVAJ/dynamics/flatness/BACKUP/lease/activation gates remain.
+SAFE/FAST semantics, 80 ms deadline and 400 ms activation lead are unchanged.
+
+The real-facade regression produces and activates its predecessor, keeps the
+measured state outside the ball, and samples its request-owned future PVAJ.
+At requested 5 m/s the pre-repair guide returns approximately
+`2.3 -> 0.599 -> 0`, fails MAIN and has no successor. After repair it produces
+a complete candidate with unchanged activation/head/goal/request and boundary
+event. The existing 0.5625 m/s semantic fixture retains its assertions.
+A first overstrict monotonic oracle also rejected A*'s valid voxel-centre
+offset `2.150 -> 2.1`; the revised straight-fixture oracle permits one actual
+map cell of representation offset, not a mission-scale return fold. Six
+focused tests and seven backbone tests pass. Negative controls cover actual
+sphere versus AABB/later branch, safety roles, handoff, measured rest, true
+90-degree corner, coincident STOP, stopped goal and mismatched world identity.
+The cruise fixture now also requires actual future Vx above 4 m/s (observed
+about 4.18), a fresh available BACKUP, at least the unchanged 600 ms MAIN
+reserve, and active junction index 1 on both fresh constraint and event.
+Independent authority/formulation reviewers find no new geometry/mission
+authority bypass in this scoped repair. This is component evidence, not a
+flight completion gain; the next separate SAFE/FAST 18-run matrix is pending.
+
+Verification must not be summarized as whole-suite PASS. The canonical
+Release build passes all 23 packages. Three normal `make test` attempts
+remain RED in the existing bounded 80 ms SAFE/FAST renewal/crossing probes;
+the particular failing probes vary. A sequential-package diagnostic also
+remains RED (84 CTest targets, one failing facade target). Colcon's test
+invocation exits zero despite that target failure; the independent
+`test-result` check correctly rejects it. No deadline, assertion or test
+failure was suppressed. New failed-step properties establish whole-deadline
+exhaustion, stage 14/reason 12, while the head is 16.029088 m from the active
+waypoint and the outgoing geometry helper returns false. Third normal-run
+budget remainders are -51 to -1,304 us. Mandatory feasibility uses the whole
+hard deadline here, not the optional 40 ms refinement cutoff.
+
+The same current binary run directly passes all 35 facade tests in each of
+three iterations; all four unchanged SAFE/FAST probes and both future-head
+fixtures pass. Those direct repetitions overlap the separate Python runtime
+unit suite and are not a controlled CPU/IO stress or timing A/B experiment.
+The tools suite passes 7 tests; the runtime suite reports 387 tests, one
+explicitly skipped absent historical GUI artifact. Full-gate RED remains an
+open timing/assurance finding. These observations do not identify CPU
+contention, output capture or patch overhead as its unique cause. Even a
+null geometry helper adds request validation: a matched anchored-job
+before/after comparison with stage wall/CPU time, iterations and first
+certificate time is still needed to exclude a near-deadline performance
+regression. They also do not justify declaring a corrected qualified
+baseline or increasing the 80 ms cap.
+
+Later failures in probes that already achieve crossing are different:
+outgoing target 50 m lacks bounded-world AABB support, 2.198 m available
+versus 14.4 m required, with partial route disallowed and about 79.97 ms hard
+budget still remaining. Preserve this viability limitation rather than
+classifying it as optimizer timeout or mission rejection. User-owned
+documentation/safety-ledger migration remains untouched.
+
+Budget conclusions remain separate: ordinary renewal already uses declared
+MAIN trajectory time minus elapsed command time, not distance/speed.
+Its 1 s lead is derived from 80+2x400+100+20 ms; moving candidate MAIN reserve
+is 600 ms. These are development accounting policies, not a WCET or braking
+proof. The fixed steady-clock 80 ms cap does not expand with remaining MAIN;
+the 400 ms value is a future splice lead, not solver CPU time. Stage clocks,
+pending activation, scheduler phase/jitter, complete-bundle finalization,
+data/lease validity and end-to-end feedback stopping remain distinct. Source
+review additionally identifies conditional stage-clock/quiet-tick accounting
+gaps; controlled reproductions are still needed and they are not substituted
+for measured first-failure attribution. No adaptive budget or threshold change
+is introduced to mask the confirmed geometry contradiction.

@@ -2206,6 +2206,14 @@ double mainGuideSupport(
     Planner::planSuccessorFromExecutionAnchor(const Vec3f &goal_p,
                                               const double &goal_yaw,
                                               const bool &new_goal) {
+        return planSuccessorFromExecutionAnchorImpl(goal_p, goal_yaw, new_goal, nullptr);
+    }
+
+    RET_CODE
+    Planner::planSuccessorFromExecutionAnchorImpl(const Vec3f &goal_p,
+                                              const double &goal_yaw,
+                                              const bool &new_goal,
+                                              const navigation_planning::PlanningRequest* request) {
         TimeConsuming replan_total_t("ReplanOnce", false);
         std::lock_guard<std::mutex> guard(replan_lock_);
         if (new_goal) baseline_candidate_ready_for_refinement_ = false;
@@ -2251,7 +2259,7 @@ double mainGuideSupport(
         PlannerResultCode exp_failure = PLANNER_EXP_FAILED;
         RET_CODE exp_ret_code = generateExpTraj(
                 previous_exp_snapshot, exp_traj_info, solve_deadline,
-                !baseline_candidate_ready_for_refinement_, &exp_failure);
+                !baseline_candidate_ready_for_refinement_, &exp_failure, request);
         time_consuming_[GENERATE_EXP_TRAJ] = t_exp.stop();
 
         if (exp_ret_code == FAILED) {
@@ -2585,8 +2593,8 @@ double mainGuideSupport(
                     planner_context_->getSimTime(), std::nullopt)
                     ? RET_CODE::SUCCESS : RET_CODE::EMER;
               })()
-            : planSuccessorFromExecutionAnchor(
-                target_world, 0.0, false);
+            : planSuccessorFromExecutionAnchorImpl(
+                target_world, 0.0, false, &request);
         requested_activation_stamp_ns_ = 0;
         requested_activation_yaw_rate_rad_s_ = 0.0;
         if (result == NO_NEED) {
@@ -2956,7 +2964,8 @@ double mainGuideSupport(
             ExpTraj &last_exp_traj_info, ExpTraj &out_exp_traj_info,
             const AbsoluteDeadline &solve_deadline,
             const bool baseline_only,
-            PlannerResultCode* const failure_detail) {
+            PlannerResultCode* const failure_detail,
+            const navigation_planning::PlanningRequest* request) {
         if (failure_detail != nullptr) {
             *failure_detail = PLANNER_EXP_FAILED;
         }
@@ -3296,6 +3305,20 @@ double mainGuideSupport(
             guide_path.insert(guide_path.begin(), pos_init_state.col(0));
             guide_stamp.insert(guide_stamp.begin(), 0.0);
         }
+        // A request-owned MAIN anchor may enter the still-unaccepted mission
+        // boundary before the measured vehicle. Continue its outgoing geometry
+        // without visiting the active centre a second time: a retained prefix
+        // can already extend past it, so active-leg A* would introduce a U-turn.
+        // This does not advance the mission or rebind execution identity. The
+        // exported fresh trajectory must still witness the active boundary at
+        // its head and pass every ordinary world/dynamics/BACKUP/admission gate.
+        const auto outgoing_geometry_goal = request
+            ? outgoingGoalAtUnacceptedMainBoundary(*request) : std::nullopt;
+        if (outgoing_geometry_goal) {
+            gi_.goal_p = *outgoing_geometry_goal;
+            planning_goal_p_ = gi_.goal_p;
+            goal_endpoint_adjusted_ = true;
+        }
         const double guide_path_length = geometry_utils::computePathLength(guide_path);
         const double temp_horizon = cfg_.local_window_m - guide_path_length;
 
@@ -3323,7 +3346,8 @@ double mainGuideSupport(
                         temp_horizon, cfg_.visibility_horizon_m);
                 Vec3f local_search_goal = gi_.goal_p;
                 RouteBackboneTarget route_backbone_target;
-                if (route_snapshot_.has_value()) {
+                if (route_snapshot_.has_value() &&
+                    !outgoing_geometry_goal) {
                     route_backbone_target = selectRouteBackboneTarget(
                         *route_snapshot_, guide_path.back().cast<double>(),
                         local_search_horizon);

@@ -3,10 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 #include <Eigen/Core>
 
 #include <navigation_mission/route_progress.hpp>
+#include <navigation_planning/planning_request.hpp>
+#include <navigation_world_model/goal_contract.hpp>
+#include <planner_core/pass_through_terminal_velocity.hpp>
 
 namespace navigation_planning_backend {
 
@@ -17,6 +21,40 @@ struct RouteBackboneTarget {
   Eigen::Vector3d point{Eigen::Vector3d::Zero()};
   bool reaches_active_waypoint{false};
 };
+
+// Geometry only: an immutable same-goal MAIN head inside a shallow
+// pass-through boundary may continue toward the outgoing waypoint. The active
+// mission identity/progress is unchanged; fresh export/admission still require
+// the active boundary witness and the complete certified command. Genuine
+// corners retain the existing acceptance-ball shaping path.
+inline std::optional<Eigen::Vector3d> outgoingGoalAtUnacceptedMainBoundary(
+    const navigation_planning::PlanningRequest& request) noexcept {
+  if (!request.valid() || request.key.start_mode !=
+          navigation_planning::PlanningStartMode::kCommittedFutureState ||
+      !request.anchor ||
+      request.anchor->active_role != navigation_planning::CandidateRole::kMain ||
+      request.anchor->state.role != navigation_planning::CandidateRole::kMain ||
+      request.anchor->goal_epoch != request.key.goal_epoch ||
+      request.anchor->request_id != request.key.request_id) return std::nullopt;
+  const auto& route = request.route_snapshot;
+  const auto index = route.active_waypoint_index;
+  if (index == 0U || index + 1U >= route.waypoints.size()) return std::nullopt;
+  const auto& active = route.waypoints[index];
+  const auto& next = route.waypoints[index + 1U];
+  if (active.behavior != navigation_mission::MissionWaypoint::Behavior::PassThrough ||
+      (request.anchor->state.position_world - active.position_enu).norm() >
+          active.acceptance_radius_m ||
+      (next.position_enu - active.position_enu).norm() <=
+          navigation_world_model::kGoalConnectionToleranceM) return std::nullopt;
+  const auto incoming = std::find_if(route.segments.begin(), route.segments.end(),
+      [index](const navigation_mission::RouteSegment& segment) {
+        return segment.end_waypoint_index == index;
+      });
+  if (incoming == route.segments.end() ||
+      passThroughGenuineCorner(active.position_enu, next.position_enu,
+                               incoming->tangent)) return std::nullopt;
+  return next.position_enu;
+}
 
 // Select a deterministic local-search target on the active mission leg.  The
 // target advances from the larger of measured route progress and the planning
