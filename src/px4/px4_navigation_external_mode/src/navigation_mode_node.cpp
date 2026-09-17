@@ -1325,6 +1325,15 @@ void NavigationMode::onNavigationCommand(
         mission_controller_->nativeTrajectoryReady() ? "true" : "false",
         mission_controller_->terminalHoldPending() ? "true" : "false");
   }
+  // A current MAIN continuation can overlap measured crossing for less than
+  // the 50 ms mission timer period. Evaluate on its admission too, on the
+  // same serialized mode callback group, after releasing trajectory_mutex_.
+  // updateMission() rechecks every lease/identity/lifecycle predicate; this
+  // does not latch permission across a later false or predecessor command.
+  if (accepted && message->certified_main_continuation &&
+      !prior_safety_suffix_command && !prior_pass_through_command) {
+    updateMission();
+  }
 }
 
 void NavigationMode::updateMission() {

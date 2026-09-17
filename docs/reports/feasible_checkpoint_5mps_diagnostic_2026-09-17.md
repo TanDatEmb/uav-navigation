@@ -1639,3 +1639,81 @@ planned anchor passed it. Complete-bundle known-free readiness and estimator
 validity at measured settling remain parallel system-level levers. Terminal
 tail normalization alone has not demonstrated a completion benefit, and a
 large coordinator or isolated micro-optimization is not justified by this matrix.
+
+#### Controlled adapter reproducer and admission-driven progression
+
+The next cycle reproduced the short-window schedule through the actual
+`NavigationMode::onEstimatorHealth`, `onOdometry`, `onNavigationCommand` and
+`updateMission` implementations, not a standalone duplicate predicate. The
+private adapter is now compiled once into an internal static library; its
+process entry point is separate, with the original `main()` body byte-identical.
+Executable name, installation path, paired-node lifetime, public contract
+exports and command implementation path are unchanged. This mechanical seam
+was committed separately as `eaf6ba55`; Release package build and all seven
+pre-existing CTests passed before the behavior change.
+
+The fixture uses the normal strict policy (`use_sim_time=false`, no suppressed
+health/tracking response) and a locally controlled ROS clock. It initializes
+the canonical MissionController through its public activation/measured initial
+checkpoint API. A friend declaration permits callback access but adds no
+test-specific runtime branch, threshold override, alternate mission owner,
+arming bypass or command publisher. FMU registration/arming, DDS delivery,
+planner certificates and PX4 execution are explicitly outside this unit
+fixture. The product trace worker remains unchanged; no wall-clock sleeps
+control the tested event ordering.
+
+| Virtual source/use time | Event | Old adapter | Admission-driven adapter |
+| --- | --- | --- | --- |
+| 38.140 s | Fresh state outside ball, admitted true MAIN, mission timer | Keep WP1/request2 | Keep WP1/request2 |
+| 38.156 s | Fresh measured error0.871 m inside0.9 m ball; accepted current true MAIN | Keep WP1/request2 | Accept WP1, publish WP2/request3 |
+| 38.172 s | Next MAIN sample has continuation=false | Replace current permission | Retain exact predecessor only; no second advancement |
+| 38.190 s | Next mission timer | Keep WP1: earlier permission is gone | Keep WP2/request3 |
+
+Before the fix, the positive regression failed on WP/request expectations
+despite successful command admission; the other eleven callback/control tests
+passed. After the fix and four additional adversarial checks, all sixteen
+passed. This **CONFIRMS a reachable adapter scheduling bug**, not that every
+historical WP3 failure or the precise unrecorded timer phase of 9WP-r2 has this
+single cause.
+
+The behavior patch invokes the **existing** `updateMission()` at the end of
+successful current certified MAIN continuation admission, after all acceptance,
+recovery and mutex scopes. It excludes predecessor pass-through and prior safety
+suffix streams. The existing timer remains responsible for periodic progression,
+STOP confirmation and recovery deadlines. Both subscription and timer are in
+the same default mutually exclusive mode callback group; the fixture verifies
+their actual group membership. State-input callbacks remain on the paired
+receiver node and cannot mutate mission progress.
+
+```mermaid
+flowchart TD
+  P[Planner solves incoming path plus outgoing lookahead] --> V{Complete MAIN and BACKUP certificates?}
+  V -->|no| R[Retain independently valid active command or certified recovery]
+  V -->|yes| A[Identity and deadline admission; stage then activate]
+  A --> C[External Mode command shape, lease, epoch, identity and tracking gates]
+  C -->|reject| R
+  C -->|accept current true MAIN continuation| U[Existing serialized updateMission]
+  T[50 ms mission timer] --> U
+  S[Fresh typed health and measured ordered P/V] --> U
+  U --> J{Same current identity and live leases plus measured acceptance?}
+  J -->|no| K[Keep current waypoint; no readiness latch]
+  J -->|yes| N[MissionController advances once and publishes next goal]
+  N --> P
+```
+
+All existing use-time command/receive/state/health leases, localization epoch,
+mission/request identity, ordered measured crossing, finite velocity, terminal
+and handover guards are rechecked inside the same ownership lock. No ball,
+continuation reserve, dynamic/world certificate, UNKNOWN policy, STOP speed or
+confirmation threshold changes. The sixteen tests also cover false replacement,
+ordinary timer progression, duplicate admission, wrong epoch/mission/request,
+expired command, stale health at use, stale odometry failure, invalid health,
+BACKUP without MAIN permission, epoch reset, accepted predecessor, terminal
+handover and callback serialization.
+
+The fix intentionally does **not** latch a historical continuation when a later
+false sample arrives before measured crossing. The independent post-boundary
+future-anchor obligation, complete-bundle/BACKUP readiness and estimator-validity
+blockers remain open. The unchanged 2/5/9WP three-repetition5 m/s diagnostic
+matrix must measure whether this seam changes integrated completion; callback
+unit PASS is not mission or flight acceptance.

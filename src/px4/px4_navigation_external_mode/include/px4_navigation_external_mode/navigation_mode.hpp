@@ -55,6 +55,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
  void updateSetpoint(float dt_s) override;
 
  private:
+  friend class NavigationModeProgressionTest;
+
   struct VelocityOnlySnapshot final {
     nav_msgs::msg::Odometry odometry;
     Px4InputStateTrace state_input_trace;
