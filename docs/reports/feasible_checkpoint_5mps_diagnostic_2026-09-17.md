@@ -1413,8 +1413,9 @@ runner (`ament_cmake_test` unavailable), then passed after sourcing the existing
 environment. `git diff --check` passes. This is workflow/contract evidence,
 **not** a full fresh Release build, new SITL matrix or qualification.
 
-The corridor-tail proposal and its two previously added RED test files remain
-uncommitted and paused. No new bypass, threshold/config change, runtime
+At this audit snapshot, the corridor-tail proposal and its two previously
+added RED test files were uncommitted and paused; the next section records
+their subsequent resolution. No new bypass, threshold/config change, runtime
 implementation path, or larger coordinator is introduced by this audit.
 Priority now is the explicit boundary-obligation/future-anchor reproducer and
 closed-loop clearance/trackability, followed by the smallest justified change
@@ -1483,5 +1484,158 @@ optimizer API can reject a seed whose dimensions describe a longer corridor;
 do not claim unchanged compatibility or reuse those vectors after trimming.
 The production `solve()` path rebuilds its seed after normalization.
 
-The required retained sequential 2/5/9WP three-repetition 5 m/s matrix remains
-pending for this cycle; no completion or performance improvement is claimed.
+#### Completed gate-tail diagnostic matrix
+
+The required sequential matrix completed at 07:28:29 UTC on September17.
+All nine unique labels are
+`gate-tail-d4db6a0b-5mps-{2,5,9}wp-r{1,2,3}-20260917`; the same runner handle
+was retained through all terminal results. No build, replay, source/config
+edit or second SITL ran during the matrix. Release HEAD is
+`d4db6a0b34436332087a3f9607bdc757514fb8d1`, source fingerprint
+`b303b0e0c4a6b6e692d3d48f314cac71aa612923f465d56d3ad2e4f2180ec152`,
+manifest SHA256
+`2e647bec0d21004edaf72c713f174bbff89e823787a82b5729d576bb023e65c8`.
+The documentation-migration dirty worktree is explicitly captured, not folded
+into clean-commit evidence. A final canonical post-commit Release build passed
+23 packages before launch. Git push and local UDP bind/send/receive succeeded.
+
+Configuration is unchanged: planner snapshot SHA256
+`6480ff9679e20c3d5f9f5a38efbe7702d9ca98e66c454299019b423d5d298356`,
+positive/nominal, seed0, requested5 m/s, DDS42/XRCE8892, visibility40 m/4096,
+raycasting-on strict BACKUP, nominal snapshots OFF and RViz OFF. Profiles are
+`long_three_pillars_speed` (2WP), `long_three_pillars` (5WP), and
+`long_three_pillars_multiwaypoint` (9WP); per-run resolved mission/configuration
+hashes remain in metadata. Customized PX4 HEAD is
+`deaff86ee335dd697677bcfc2415a23878e1b895`, tracked diff SHA256
+`d492bca20bd947a3d24c6657197d3cb84baf534a069825df5d320ff6139758b7`,
+dirty-status SHA256
+`4165f8bc803e4dbc91afb1a5b198c5d914bea455e5d91ec0ac3165983cf02546`.
+All nine bind the same source/build/PX4/planner identities with provenance
+`VALID`. This is diagnostic identity, not qualification eligibility.
+
+Artifact suffixes below belong to `.artifacts/runtime/external-mode-check-20260917T`.
+Planning p99 equals the observed max for these small per-run sample counts;
+neither is a deadline bound.
+
+| Case | Artifact suffix | Mission outcome | Report | Accepted indices | Planning samples | p99/max (ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2WP-r1 | `071421-73217` | FAILED_COMPONENT / ODOMETRY_STALE | FAIL | [0] | 31 | 75.424 |
+| 2WP-r2 | `071618-76835` | COMPLETE | FAIL | [0,1] | 28 | 80.179 |
+| 2WP-r3 | `071816-80545` | FAILED_COMPONENT / ODOMETRY_STALE | FAIL | [0] | 28 | 66.235 |
+| 5WP-r1 | `072010-84297` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 8 | 73.409 |
+| 5WP-r2 | `072138-87690` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 13 | 60.532 |
+| 5WP-r3 | `072310-91283` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 9 | 77.816 |
+| 9WP-r1 | `072444-94897` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 8 | 80.323 |
+| 9WP-r2 | `072550-98237` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 23 | 83.040 |
+| 9WP-r3 | `072721-102012` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 6 | 80.264 |
+
+Measured mission completion is **1/9**: 2WP1/3, 5WP0/3, 9WP0/3. The previous
+`backup-budget-06e59cd0` matrix also completed1/9; keep it a separate baseline,
+not a pooled denominator or statistical evidence of parity/improvement.
+There are zero report PASSes, three FAILs and six BLOCKEDs. All nine are
+`qualification_eligible=false`, evaluation `NOT_EVALUABLE`; the unchanged
+relaxed tracking profile is explicitly reported. Even the COMPLETE mission is
+not qualified. Evidence-writer capture is complete with zero reported drops,
+pending records, serialization errors and write errors on all nine; this does
+not imply every required typed field/topic was captured.
+
+The three 5WP runs stop while WP1/request2 is active, before the reported WP3
+handoff. Their 30 completed backend transactions contain twelve successful
+admission transactions and eighteen failures: fifteen nominal_dynamics, two invalid_input and
+one backup_dynamics. None reaches the solve deadline. For example, 5WP-r3's
+cycle202 fails BACKUP at59.995 ms with eight known-free checks and zero passes;
+the detailed witness is UNKNOWN cell1, not a demonstrated dynamics failure.
+Prior BACKUP-selection counters in later MAIN failures can be sticky and must
+not be treated as new solves. The broad failure taxonomy needs this detailed
+discriminator before tuning.
+
+The three 9WP runs contain37 completed backend transactions: eight admitted
+and29 failed, including nine deadline failures, eight nominal_dynamics, eight
+backup_dynamics and four world_changed. The strict BACKUP rejection witnesses
+in r1/r3 name UNKNOWN at their future braking positions. Do not relax UNKNOWN
+to improve completion. Two 2WP failures are a different input-validity class:
+the retained diagnostics show `navigation_valid=false` and failed translation
+observability at source55.100 s (r1) and55.300 s (r3), preceding receiver stale
+status55.276/55.472 s. r1 explicitly records `MAIN_ESTIMATOR_INVALID` and last
+propagation55.108 s. The worker's source contract stops propagation on invalid
+main-estimator state. These observations distinguish producer invalidation
+from a mere command-permission/network failure; they do not prove the sensing,
+registration, covariance, PX4 or physical root cause. Typed `/lio/health` is
+not in these bags, so a full health/frame/epoch attribution remains incomplete.
+
+#### New discriminator: measured crossing can miss a short continuation window
+
+9WP-r2 is a separate **inside-ball, not accepted** example at WP1 `(20,5,3)`.
+This is not substituted for the four historical 5WP WP3 examples above. In
+source38--44 s,23 propagated samples enter its configured0.9 m ball, with
+minimum error0.058808 m. The first source-stamped entry is38.156 s,
+error0.871099 m, speed3.493665 m/s. MAIN generation8/request2 is still
+executable with small tracking error; ordinary PASS has no low-speed gate.
+
+Read-only SQLite/CDR inspection of the actual recorded NavigationCommand,
+not the reduced scenario PVA payload, establishes this timing:
+
+| Fact | Source time / value |
+| --- | --- |
+| Declared generation8 start | 37.612 s |
+| Planned route boundary | 38.139283003 s |
+| MAIN ends at BACKUP switch | 38.764074591 s |
+| Existing minimum MAIN reserve | 0.600 s |
+| Final producer continuation deadline, end minus reserve | 38.164074591 s |
+| First measured in-ball source stamp | 38.156 s |
+| Last sampled true continuation near entry | 38.155999999 s |
+| Next sampled continuation | 38.171999999 s, false, boundary stamp0 |
+
+The permitted interval after the planned boundary is only24.792 ms. The
+observer/rosbag receives the first measured in-ball sample at wall
+`1789630008988132856`, then the false-continuation command at
+`1789630009011881861`: an observed intersection of23.749 ms. These are recorder
+arrival witnesses, not proof of the receiver's exact callback schedule.
+`NavigationMode` polls mission progress every50 ms of wall time. Its existing
+throttled tick logs are phase-consistent with a tick before entry and another
+after continuation loss, but do not record every tick or witness decision.
+
+**CONFIRMED facts:** measured entry, unchanged mission/request, admitted MAIN,
+and loss of the producer continuation field before subsequent in-ball samples.
+The true command's ordinary lease lasts beyond the producer reserve cutoff;
+the false field arrives in a newer command and replaces it. Do not treat the
+producer cutoff as a separately transmitted receiver expiry or infer a
+receiver callback timestamp from the recorder arrival.
+
+**CONDITIONAL causal finding:** timer phase can miss a valid simultaneous
+crossing/continuation window shorter than its period. The source already
+allows this schedule; the exact integrated receiver tick must be reproduced
+with a controlled clock/barrier or recorded directly before calling it the
+sole production cause. No stale witness may be latched to bridge the gap.
+
+```mermaid
+flowchart TD
+  P[Planner path and outgoing lookahead] --> B[Certified MAIN plus BACKUP; stage and activate]
+  B --> C[Current admitted command and MAIN continuation window]
+  V[Fresh source-stamped measured P/V] --> G[Ordered current-WP ball entry]
+  C --> J{Same mission update: crossing AND live continuation?}
+  G --> J
+  T[50 ms wall mission timer] --> J
+  J -->|yes| A[Measured acceptance; publish next WP/request]
+  J -->|no| K[Keep current WP even if geometric path exists]
+  K --> R[Same-request renewal or certified braking/recovery]
+```
+
+The smallest next experiment is a deterministic adversarial-phase reproducer,
+then evaluate the already-admitted current MAIN command against measured
+progress at its input event boundary as well as the existing timer. Reuse the
+same mission owner/update function; recheck lease, health, epoch, identity and
+continuation at use, release the adapter mutex before invoking it, and prove
+duplicate events cannot advance twice or accept a predecessor. This proposed
+event-driven seam is **not implemented** in this cycle. It changes when the
+unchanged predicate is evaluated, not the ball, reserve or authority contract.
+
+Independently, cycles129--136 in this same run repeatedly reconstruct the
+current hard boundary and reject renewal at the continuous corridor gate
+before deadline. The earlier inside-ball-anchor fixture does not test a future
+anchor already beyond the boundary. That remains the next immutable
+predecessor-prefix obligation test; do not remove a gate merely because the
+planned anchor passed it. Complete-bundle known-free readiness and estimator
+validity at measured settling remain parallel system-level levers. Terminal
+tail normalization alone has not demonstrated a completion benefit, and a
+large coordinator or isolated micro-optimization is not justified by this matrix.
