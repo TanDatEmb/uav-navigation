@@ -861,6 +861,109 @@ TEST(PlannerPassThrough, RouteBoundaryTimingSplitsDirectEndpointInterval) {
       10.0);
 }
 
+TEST(PlannerGuideBoundary, FutureSamplesKeepExecutionAnchorTimeOrigin) {
+  using Point = navigation_math::Vec3f;
+  const Point anchor{6.7837760523974495, 0.6872646789876435, 2.9923668129214027};
+  const std::vector<std::pair<double, Point>> samples{
+      {3.04, {6.947323527063799, 0.7324120077089683, 2.993000234383666}},
+      {3.08, {7.1079502364728455, 0.7788035685436968, 2.9935992406922534}}};
+  navigation_math::vec_Vec3f guide;
+  std::vector<double> times;
+  ASSERT_TRUE(navigation_planning_backend::buildAnchoredGuidePrefix(
+      anchor, 3.0, samples, guide, times));
+  ASSERT_EQ(guide.size(), 3U);
+  ASSERT_EQ(times.size(), guide.size());
+  EXPECT_EQ(guide.front(), anchor);
+  EXPECT_DOUBLE_EQ(times.front(), 0.0);
+  EXPECT_NEAR(times[1], 0.04, 1.0e-14);
+  EXPECT_NEAR(times[2], 0.08, 1.0e-14);
+  EXPECT_GT((guide[1] - guide[0]).norm(), 0.16);
+  EXPECT_GT(times[1], times[0]);
+  // The anchor-to-first-sample edge must be counted in the spatial horizon.
+  EXPECT_GT(geometry_utils::computePathLength(guide),
+            (samples.back().second - samples.front().second).norm() + 0.16);
+}
+
+TEST(PlannerGuideBoundary, RejectsInvalidOrUnorderedAnchorRelativeSamples) {
+  using Point = navigation_math::Vec3f;
+  navigation_math::vec_Vec3f guide;
+  std::vector<double> times;
+  for (const auto& samples : std::vector<std::vector<std::pair<double, Point>>>{
+           {{3.0, {1.0, 0.0, 0.0}}},
+           {{2.9, {1.0, 0.0, 0.0}}},
+           {{3.1, {1.0, 0.0, 0.0}}, {3.05, {2.0, 0.0, 0.0}}},
+           {{std::numeric_limits<double>::infinity(), {1.0, 0.0, 0.0}}},
+           {{3.1, Point::Constant(std::numeric_limits<double>::quiet_NaN())}}}) {
+    EXPECT_FALSE(navigation_planning_backend::buildAnchoredGuidePrefix(
+        Point::Zero().eval(), 3.0, samples, guide, times));
+    EXPECT_TRUE(guide.empty());
+    EXPECT_TRUE(times.empty());
+  }
+  const std::vector<std::pair<double, Point>> empty;
+  ASSERT_TRUE(navigation_planning_backend::buildAnchoredGuidePrefix(
+      Point::Zero().eval(), 3.0, empty, guide, times));
+  EXPECT_EQ(guide.size(), 1U);
+  EXPECT_EQ(times, std::vector<double>{0.0});
+}
+
+TEST(PlannerGuideBoundary, CornerEntryTrimsShortSuffixWithoutFolding) {
+  const navigation_math::vec_Vec3f guide{
+      {8.0, 5.0, 3.0}, {19.5, 5.0, 3.0}, {19.9, 5.0, 3.0}, {20.0, 5.0, 3.0}};
+  const std::vector<double> times{0.0, 2.3, 2.38, 2.4};
+  const auto window = navigation_planning_backend::passThroughRouteWindow(
+      Eigen::Vector3d{20.0, 5.0, 3.0}, Eigen::Vector3d{20.0, -5.0, 3.0},
+      Eigen::Vector3d{1.0, 0.0, 0.0}, 0.9, 0.2);
+  ASSERT_TRUE(window.has_value());
+  ASSERT_LT(window->entry.x(), guide[guide.size() - 2U].x());
+  navigation_math::vec_Vec3f prefix;
+  std::vector<double> prefix_times;
+  ASSERT_TRUE(navigation_planning_backend::truncateTimedGuideAtDistance(
+      guide, times, 12.0 - 0.675, prefix, prefix_times));
+  ASSERT_EQ(prefix.size(), 2U);
+  EXPECT_NEAR(prefix.back().x(), 19.325, 1.0e-12);
+  EXPECT_NEAR(prefix_times.back(), 2.265, 1.0e-12);
+  EXPECT_EQ(prefix.front(), guide.front());
+  EXPECT_DOUBLE_EQ(prefix_times.front(), 0.0);
+  EXPECT_GT((guide.back() - prefix.back()).dot(
+                prefix.back() - prefix.front()), 0.0);
+}
+
+TEST(PlannerGuideBoundary, TimedPrefixPreservesCurvedGeometryAndAnchor) {
+  const navigation_math::vec_Vec3f guide{
+      {0.0, 0.0, 3.0}, {2.0, 0.0, 3.0}, {2.0, 2.0, 3.0}};
+  const std::vector<double> times{0.0, 1.0, 3.0};
+  navigation_math::vec_Vec3f prefix;
+  std::vector<double> prefix_times;
+  ASSERT_TRUE(navigation_planning_backend::truncateTimedGuideAtDistance(
+      guide, times, 3.0, prefix, prefix_times));
+  ASSERT_EQ(prefix.size(), 3U);
+  EXPECT_TRUE(prefix.back().isApprox(navigation_math::Vec3f{2.0, 1.0, 3.0}));
+  EXPECT_DOUBLE_EQ(prefix_times.back(), 2.0);
+  ASSERT_TRUE(navigation_planning_backend::truncateTimedGuideAtDistance(
+      guide, times, 0.0, prefix, prefix_times));
+  EXPECT_EQ(prefix.size(), 1U);
+  EXPECT_EQ(prefix.front(), guide.front());
+  EXPECT_EQ(prefix_times, std::vector<double>{0.0});
+  EXPECT_FALSE(navigation_planning_backend::truncateTimedGuideAtDistance(
+      guide, {0.0, 0.0, 3.0}, 3.0, prefix, prefix_times));
+}
+
+TEST(PlannerGuideBoundary, OutgoingPrefixConsumesBudgetWithoutClaimingCompleteEnvelope) {
+  const double required = navigation_planning_backend::passThroughCruiseLookaheadDistance(
+      5.0, 5.0, 8.0, 0.4, 3.0);
+  ASSERT_GT(required, 3.0);
+  const navigation_math::vec_Vec3f outgoing{
+      {20.0, 5.0, 3.0}, {23.0, 5.0, 3.0}, {30.0, 5.0, 3.0}};
+  navigation_math::vec_Vec3f prefix;
+  bool truncated = false;
+  ASSERT_TRUE(geometry_utils::truncatePathAtDistance(
+      outgoing, std::min(required, 3.0), prefix, truncated));
+  EXPECT_TRUE(truncated);
+  EXPECT_LE(17.0 + geometry_utils::computePathLength(prefix), 20.0);
+  EXPECT_FALSE(navigation_planning_backend::passThroughLookaheadComplete(
+      required, geometry_utils::computePathLength(prefix)));
+}
+
 TEST(PlannerPassThrough, RouteBoundaryUsesItsOwnGuideTimeAnchor) {
   const std::vector<Eigen::Vector3f> guide_path{
       Eigen::Vector3f{0.0F, 0.0F, 0.0F},

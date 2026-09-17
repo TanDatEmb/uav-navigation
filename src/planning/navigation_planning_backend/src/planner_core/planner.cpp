@@ -17,6 +17,7 @@
 #include <planner_core/guide_endpoint.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
 #include <planner_core/replan_contract.hpp>
+#include <planner_core/route_boundary_timing.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
 #include <utils/optimization/polynomial_interpolation.h>
 #include <navigation_world_model/continuous_clearance.hpp>
@@ -3273,16 +3274,10 @@ double mainGuideSupport(
                 planner_context_->warn(" -- [generateExpTraj] invalid guide state at replan boundary");
                 return FAILED;
             }
-            // Build the hot-start guide path. Stamps are relative to its first
-            // retained point.
-            guide_stamp.clear();
-            guide_path.clear();
+            // Retained samples keep the immutable execution anchor's time
+            // origin. The first future point must not be assigned t=0.
             if (split_dis <= 0 || last_exp_traj_time_pos.empty()) {
-                /// No need receding, just path search.
-                guide_path.push_back(pos_init_state.col(0));
-                guide_stamp.push_back(0.0);
                 last_exp_traj_time_pos.clear();
-                last_exp_traj_time_pos.emplace_back(replan_state_TT, pos_init_state.col(0));
                 guide_path_end_vel = solve_state_.v.norm();
             } else {
                 temp_pt = last_exp_traj_time_pos.back().second;
@@ -3302,25 +3297,21 @@ double mainGuideSupport(
                     temp_pt = last_exp_traj_time_pos.back().second;
                 }
                 if (!last_exp_traj_time_pos.empty()) {
-                    for (long unsigned int i = 0; i < last_exp_traj_time_pos.size(); i++) {
-                        guide_path.push_back(last_exp_traj_time_pos[i].second);
-                        guide_stamp.push_back(last_exp_traj_time_pos[i].first - last_exp_traj_time_pos.front().first);
-                        guide_path_end_vel = last_exp_traj_vel[i];
-                    }
+                    guide_path_end_vel = last_exp_traj_vel.back();
                 } else {
-                    guide_path.push_back(pos_init_state.col(0));
-                    guide_stamp.push_back(0.0);
-                    last_exp_traj_time_pos.emplace_back(replan_state_TT, pos_init_state.col(0));
                     guide_path_end_vel = solve_state_.v.norm();
                 }
+            }
+            if (!buildAnchoredGuidePrefix(
+                    pos_init_state.col(0).eval(), replan_state_TT,
+                    last_exp_traj_time_pos, guide_path, guide_stamp)) {
+                planner_context_->warn(" -- [planner] invalid anchor-relative guide prefix");
+                return FAILED;
             }
         }
 
         // second, geometry part of the guide path
         ///=================The Second Part of Guide Path ================================================
-
-        double guide_path_length = geometry_utils::computePathLength(guide_path);
-        double temp_horizon = cfg_.local_window_m - guide_path_length;
 
         vector<int> path_passed_waypoint_id;
         vec_Vec3f inside_poly_goals;
@@ -3331,6 +3322,8 @@ double mainGuideSupport(
             guide_path.insert(guide_path.begin(), pos_init_state.col(0));
             guide_stamp.insert(guide_stamp.begin(), 0.0);
         }
+        const double guide_path_length = geometry_utils::computePathLength(guide_path);
+        const double temp_horizon = cfg_.local_window_m - guide_path_length;
 
         // if need a geometry path
         if (temp_horizon > cfg_.resolution * 2) {
@@ -3341,9 +3334,12 @@ double mainGuideSupport(
                     navigation_world_model::kNearGoalShortcutToleranceM &&
                 navigation_world_model::isGoalSegmentTraversable(
                     *map_ptr_, guide_path.back().cast<double>(), gi_.goal_p.cast<double>())) {
-                guide_stamp.push_back(guide_stamp.back() +
-                                      (guide_path.back() - gi_.goal_p).norm() / cfg_.exp_traj_cfg.max_vel);
-                guide_path.push_back(gi_.goal_p);
+                const double connection_length = (guide_path.back() - gi_.goal_p).norm();
+                if (connection_length > 0.0) {
+                    guide_stamp.push_back(guide_stamp.back() +
+                                          connection_length / cfg_.exp_traj_cfg.max_vel);
+                    guide_path.push_back(gi_.goal_p);
+                }
                 // NO NEED
             } else {
                 vec_Vec3f new_path;
@@ -3385,10 +3381,11 @@ double mainGuideSupport(
                 const double route_distance =
                     (gi_.goal_p - guide_path.back()).norm();
                 const double local_prefix_limit = local_search_horizon;
-                if (std::isfinite(route_distance) &&
+                const double searched_path_length = geometry_utils::computePathLength(new_path);
+                if (std::isfinite(searched_path_length) &&
                     std::isfinite(local_prefix_limit) &&
                     local_prefix_limit > cfg_.resolution * 2.0 &&
-                    route_distance > local_prefix_limit + cfg_.resolution) {
+                    searched_path_length > local_prefix_limit + 1.0e-6) {
                     vec_Vec3f bounded_path;
                     bool prefix_truncated = false;
                     if (!geometry_utils::truncatePathAtDistance(
@@ -3708,6 +3705,8 @@ double mainGuideSupport(
             // the shorter desired_lookahead is applied only when selecting the
             // certified prefix from that returned route.
             std::optional<PassThroughRouteWindow> corner_window;
+            vec_Vec3f incoming_window_prefix;
+            std::vector<double> incoming_window_stamp;
             double search_distance = remaining_horizon;
             Eigen::Vector3d outgoing_search_start = current_endpoint;
             if (effective_genuine_corner && guide_path.size() >= 2U) {
@@ -3721,8 +3720,22 @@ double mainGuideSupport(
                         goal_acceptance_radius_m_,
                         navigation_world_model::kGoalConnectionToleranceM);
                 }
-                const Eigen::Vector3d predecessor =
-                    guide_path[guide_path.size() - 2U].cast<double>();
+                // Locate entry by arc length on the ordered incoming guide.
+                // The final edge may be shorter than the acceptance offset;
+                // extrapolating behind it would insert a backward fold.
+                const bool ordered_entry = candidate_window.has_value() &&
+                    truncateTimedGuideAtDistance(
+                        guide_path, guide_stamp,
+                        std::max(0.0, guide_length -
+                            (candidate_window->entry - current_endpoint).norm()),
+                        incoming_window_prefix, incoming_window_stamp);
+                if (ordered_entry) {
+                    candidate_window->entry = incoming_window_prefix.back().cast<double>();
+                }
+                const Eigen::Vector3d predecessor = ordered_entry &&
+                        incoming_window_prefix.size() >= 2U
+                    ? incoming_window_prefix[incoming_window_prefix.size() - 2U].cast<double>()
+                    : guide_path.front().cast<double>();
                 const auto point_is_traversable = [this](const Eigen::Vector3d& point) {
                     return point.allFinite() && map_ptr_->contains(point) &&
                         navigation_world_model::isCellTraversable(
@@ -3730,13 +3743,14 @@ double mainGuideSupport(
                                 point, navigation_world_model::GridLayer::kInflated),
                             unknownPolicy());
                 };
-                const auto segment_is_traversable = [this](
+                const auto segment_is_traversable = [this, &point_is_traversable](
                         const Eigen::Vector3d& start, const Eigen::Vector3d& end) {
+                    if (start == end) return point_is_traversable(start);
                     return map_ptr_->isSegmentTraversable(
                         start, end, navigation_world_model::GridLayer::kInflated,
                         unknownPolicy());
                 };
-                const bool window_certified = candidate_window.has_value() &&
+                const bool window_certified = ordered_entry &&
                     point_is_traversable(candidate_window->entry) &&
                     point_is_traversable(candidate_window->outgoing_blend) &&
                     point_is_traversable(candidate_window->endpoint) &&
@@ -3748,17 +3762,14 @@ double mainGuideSupport(
                     segment_is_traversable(candidate_window->outgoing_blend,
                                            candidate_window->endpoint);
                 if (window_certified) {
-                    const double current_leg_length =
-                        (current_endpoint - predecessor).norm();
                     const double window_length =
-                        (candidate_window->entry - predecessor).norm() +
                         (current_endpoint - candidate_window->entry).norm() +
                         (candidate_window->outgoing_blend -
                          current_endpoint).norm() +
                         (candidate_window->endpoint -
                          candidate_window->outgoing_blend).norm();
-                    const double guide_length_with_window = guide_length -
-                        current_leg_length + window_length;
+                    const double guide_length_with_window =
+                        geometry_utils::computePathLength(incoming_window_prefix) + window_length;
                     search_distance = cfg_.local_window_m - guide_length_with_window;
                     outgoing_search_start = candidate_window->endpoint;
                     if (search_distance > 2.0 * cfg_.resolution) {
@@ -3805,35 +3816,13 @@ double mainGuideSupport(
                                search_distance,
                                next_path, solve_deadline, true) && next_path.size() >= 2U) {
                     vec_Vec3f lookahead_points;
-                    double accumulated_distance = 0.0;
-                    Vec3f previous_point = outgoing_start;
-                    for (const auto& point : next_path) {
-                        const double segment_length =
-                            (point - previous_point).norm();
-                        if (!std::isfinite(segment_length) || segment_length <= 1.0e-6) {
-                            previous_point = point;
-                            continue;
-                        }
-                        if (accumulated_distance + segment_length <=
-                            desired_lookahead + 1.0e-6) {
-                            lookahead_points.emplace_back(point);
-                            accumulated_distance += segment_length;
-                            previous_point = point;
-                            continue;
-                        }
-                        const double remaining_distance =
-                            desired_lookahead - accumulated_distance;
-                        if (remaining_distance > 1.0e-6) {
-                            const double fraction = std::clamp(
-                                remaining_distance / segment_length, 0.0, 1.0);
-                            lookahead_points.emplace_back(
-                                previous_point + static_cast<float>(fraction) *
-                                    (point - previous_point));
-                            accumulated_distance = desired_lookahead;
-                        }
-                        break;
-                    }
-                    if (!lookahead_points.empty()) {
+                    bool lookahead_truncated = false;
+                    // Search may return a whole route. Consume only the
+                    // remaining spatial budget, independently of the required
+                    // continuity envelope; a clipped prefix is not complete.
+                    if (geometry_utils::truncatePathAtDistance(
+                            next_path, std::min(desired_lookahead, search_distance),
+                            lookahead_points, lookahead_truncated)) {
                         geometry_utils::GuideTimeAllocation allocation;
                         if (geometry_utils::allocateGuideElapsedTimes(
                                 cfg_.exp_traj_cfg.max_acc,
@@ -3883,6 +3872,8 @@ double mainGuideSupport(
                                     }
                                 }
                                 if (corner_window.has_value()) {
+                                    guide_path = std::move(incoming_window_prefix);
+                                    guide_stamp = std::move(incoming_window_stamp);
                                     const double predecessor_stamp =
                                         guide_stamp.size() >= 2U
                                             ? guide_stamp[guide_stamp.size() - 2U]
@@ -3943,9 +3934,12 @@ double mainGuideSupport(
                                             (outgoing_velocity - incoming_velocity).norm(),
                                             cfg_.exp_traj_cfg.max_acc,
                                             cfg_.exp_traj_cfg.max_jerk);
+                                    const Eigen::Vector3d entry_predecessor = guide_path.size() >= 2U
+                                        ? guide_path[guide_path.size() - 2U].cast<double>()
+                                        : guide_path.front().cast<double>();
                                     const double base_window_duration =
                                         ((corner_window->entry -
-                                          guide_path[guide_path.size() - 2U].cast<double>()).norm() +
+                                          entry_predecessor).norm() +
                                          (current_endpoint -
                                           corner_window->entry).norm() +
                                          (corner_window->outgoing_blend -
@@ -3978,11 +3972,10 @@ double mainGuideSupport(
                                             corner_time_scale, base_window_duration,
                                             required_transition_duration);
                                     }
-                                    guide_path.back() = corner_window->entry;
-                                    guide_stamp.back() = predecessor_stamp +
-                                        segment_duration(
-                                            guide_path[guide_path.size() - 2U].cast<double>(),
-                                            corner_window->entry);
+                                    if (guide_path.size() >= 2U) {
+                                        guide_stamp.back() = predecessor_stamp +
+                                            segment_duration(entry_predecessor, corner_window->entry);
+                                    }
                                     // Preserve the waypoint order.  Inserting
                                     // the outgoing blend before the exact
                                     // waypoint creates a folded guide

@@ -8,6 +8,76 @@
 
 namespace navigation_planning_backend {
 
+// Retained command samples are future points relative to the immutable splice
+// boundary, not relative to the first retained sample. Keep the anchor in the
+// same point/time sequence before calculating any spatial horizon.
+template <typename Point, typename SampleContainer, typename PointContainer>
+inline bool buildAnchoredGuidePrefix(
+    const Point& anchor, const double anchor_time_s,
+    const SampleContainer& samples, PointContainer& points,
+    std::vector<double>& elapsed_s) {
+  points.clear();
+  elapsed_s.clear();
+  if (!anchor.allFinite() || !std::isfinite(anchor_time_s)) return false;
+  double previous_time_s = anchor_time_s;
+  for (const auto& sample : samples) {
+    if (!sample.second.allFinite() || !std::isfinite(sample.first) ||
+        !(sample.first > previous_time_s) ||
+        !std::isfinite(sample.first - anchor_time_s)) return false;
+    previous_time_s = sample.first;
+  }
+  points.emplace_back(anchor);
+  elapsed_s.emplace_back(0.0);
+  for (const auto& sample : samples) {
+    points.emplace_back(sample.second);
+    elapsed_s.emplace_back(sample.first - anchor_time_s);
+  }
+  return true;
+}
+
+// Select an entry on the ordered incoming guide, rather than extrapolating
+// behind its final (possibly very short) edge. Interpolate point and time on
+// the same edge; a zero-length prefix retains the immutable anchor alone.
+template <typename PointContainer>
+inline bool truncateTimedGuideAtDistance(
+    const PointContainer& points, const std::vector<double>& elapsed_s,
+    const double maximum_length_m, PointContainer& prefix,
+    std::vector<double>& prefix_elapsed_s) {
+  prefix.clear();
+  prefix_elapsed_s.clear();
+  if (points.empty() || points.size() != elapsed_s.size() ||
+      !std::isfinite(maximum_length_m) || maximum_length_m < 0.0 ||
+      !std::isfinite(elapsed_s.front()) || elapsed_s.front() != 0.0) return false;
+  for (std::size_t index = 0U; index < points.size(); ++index) {
+    if (!points[index].allFinite() || !std::isfinite(elapsed_s[index]) ||
+        (index > 0U && !(elapsed_s[index] > elapsed_s[index - 1U]))) return false;
+  }
+  prefix.emplace_back(points.front());
+  prefix_elapsed_s.emplace_back(elapsed_s.front());
+  double remaining_m = maximum_length_m;
+  for (std::size_t index = 1U; index < points.size() && remaining_m > 0.0; ++index) {
+    const double length_m = (points[index] - points[index - 1U]).norm();
+    if (!std::isfinite(length_m)) {
+      prefix.clear();
+      prefix_elapsed_s.clear();
+      return false;
+    }
+    if (length_m <= remaining_m) {
+      prefix.emplace_back(points[index]);
+      prefix_elapsed_s.emplace_back(elapsed_s[index]);
+      remaining_m -= length_m;
+      continue;
+    }
+    const double fraction = remaining_m / length_m;
+    prefix.emplace_back(points[index - 1U] +
+                        fraction * (points[index] - points[index - 1U]));
+    prefix_elapsed_s.emplace_back(elapsed_s[index - 1U] +
+        fraction * (elapsed_s[index] - elapsed_s[index - 1U]));
+    break;
+  }
+  return true;
+}
+
 // Use the geometric route-boundary point as the temporal anchor.  An overlap
 // interior can be closer to an unrelated early guide sample than the point
 // that the boundary contract actually requires the trajectory to reach.

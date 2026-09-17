@@ -470,9 +470,12 @@ tracking position/velocity sources. Diagnostic tracking 0/0/0 remains active.
   callback starvation remain indistinguishable from the captured witnesses;
   do not attribute this to the receiver mutex or LIO algorithm.
 - **2WP-2/3 and 9WP-2/3:** complete successor loss includes strict known-free
-  BACKUP rejection. In 9WP-3, four feasible braking seeds are within BACKUP
-  12/12/30 (last V/A/J 4.682/8.526/26.274) but all four fail known-free tube
-  checks, last blocked cell UNKNOWN (`mapping.log:324`). The coarse
+  BACKUP rejection. In 9WP-3, two explicit batches contain eight and four
+  feasible braking seeds within BACKUP 12/12/30, with zero known-free passes
+  (`mapping.log:305,324`). Last V/A/J in the four-seed batch is
+  4.682/8.526/26.274; its blocked cell is UNKNOWN at (12.3,2.1,2.9), role
+  BACKUP, time 0.327808 s. Aggregate visibility reception cannot distinguish
+  missing tube observation from discretization/body support/reset effects. The coarse
   `backup_dynamics` reason is not a physical-dynamics diagnosis. Five
   `input/invalid_input` trace records there also require producer-contract
   discrimination; stale cached stage timings are not fresh solve durations.
@@ -526,3 +529,33 @@ include the actual route contract needed by the complete MAIN/BACKUP bundle.
 Keep the terminal measured-state/hold authority case separately reproduced.
 Do not increase solve budget, allow UNKNOWN BACKUP, tune jerk weights, widen
 anchor/acceptance tolerances, or treat telemetry/partial progress as success.
+
+## Next implementation: coherent guide boundary (integrated result pending)
+
+The existing planner now owns one anchor-relative ordered point/time sequence
+and one spatial-window accounting path. The hot guide starts at immutable
+anchor elapsed zero; every retained future sample keeps `sample_tt - anchor_tt`,
+including its actual first positive delay. The anchor edge is counted before
+A* search. Returned routes are clipped by actual polyline length rather than
+the straight goal chord. A corner entry is selected on the incoming guide by
+arc length, with aligned time interpolation and the old suffix removed; it
+cannot be extrapolated behind the penultimate sample. Outgoing geometry is
+capped by remaining window while the required envelope remains unchanged and
+incomplete when insufficient. No coordinator, extra command path, tuning or
+hard-gate relaxation is introduced.
+
+The initial full test rejected two facade route-event fixtures. Their fake
+world mapped all grid coordinates to zero and manufactured a 3 m descent/
+climb in a horizontal route; actual-length clipping exposed it. Correcting
+the declared 0.2 m voxel transforms and relocating the synthetic BACKUP-only
+event volume retained the same tight radius, first-entry-after-MAIN and role
+assertions. A voxel round-trip regression now protects that fixture contract.
+
+Final Release build passed 23 packages (15.8 s), full `make test` exited zero:
+all 83 selected CTest entries passed; 386 Python tests included one explicit
+artifact-dependent skip; seven auxiliary tests passed. Planner config passed
+75 cases, including five guide-boundary cases; facade passed 17. Independent
+diff review found no concrete P1/P2 bypass. These tests do not prove improved
+completion or fix strict BACKUP visibility, terminal tracking or odometry loss.
+The clean repeated integrated matrix must have a new SHA/manifest and retain
+all nine results before any completion improvement is claimed.

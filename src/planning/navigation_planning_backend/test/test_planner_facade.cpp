@@ -51,12 +51,12 @@ class IdentityOnlyWorld : public navigation_world_model::WorldModelView {
   }
   bool contains(const navigation_world_model::Point3&) const noexcept override { return true; }
   navigation_world_model::GridIndex3 positionToIndex(
-      const navigation_world_model::Point3&, navigation_world_model::GridLayer) const noexcept override {
-    return navigation_world_model::GridIndex3::Zero();
+      const navigation_world_model::Point3& point, navigation_world_model::GridLayer) const noexcept override {
+    return (point.array() / 0.2).floor().cast<int>();
   }
   navigation_world_model::Point3 indexToPosition(
-      const navigation_world_model::GridIndex3&, navigation_world_model::GridLayer) const noexcept override {
-    return navigation_world_model::Point3::Zero();
+      const navigation_world_model::GridIndex3& index, navigation_world_model::GridLayer) const noexcept override {
+    return (index.cast<double>().array() + 0.5).matrix() * 0.2;
   }
   std::optional<navigation_world_model::Point3> nearestNotOccupied(
       const navigation_world_model::Point3& point,
@@ -169,6 +169,17 @@ TEST(WorldGeometryBoundaries, ContinuousClearanceRejectsOverflowingDerivedQueryB
   EXPECT_FALSE(navigation_world_model::observedOccupiedTubeIsClear(
       *world, Eigen::Vector3d{limit, 0.0, 0.0},
       Eigen::Vector3d{-limit, 0.0, 0.0}, limit));
+}
+
+TEST(WorldGeometryBoundaries, SyntheticWorldPreservesItsDeclaredVoxelCoordinates) {
+  const IdentityOnlyWorld world;
+  const Eigen::Vector3d point{10.0, -0.3, 3.0};
+  const auto layer = navigation_world_model::GridLayer::kInflated;
+  const auto index = world.positionToIndex(point, layer);
+  const auto center = world.indexToPosition(index, layer);
+  EXPECT_EQ(world.positionToIndex(center, layer), index);
+  EXPECT_LE((center - point).cwiseAbs().maxCoeff(), 0.1 + 1.0e-14);
+  EXPECT_NEAR(center.z(), 3.1, 1.0e-14);
 }
 
 TEST(WorldGeometryBoundaries,
@@ -1129,9 +1140,12 @@ TEST(PlannerFacade, PassThroughEntryAfterBackupDoesNotAdvertiseBoundaryEvent) {
   mission.frame = "lio_odom";
   navigation_mission::MissionWaypoint active;
   active.id = "active";
-  // Keep the route-boundary witness on the currently certified BACKUP suffix
-  // after the development envelope changed from the former low-speed profile.
-  active.position_enu = Eigen::Vector3d{6.17, 0.0, 1.925};
+  // Place this semantic witness on the BACKUP suffix in the coherent 0.2 m
+  // voxel fixture. The former witness at z=1.925 lay on the artificial descent
+  // manufactured by mapping every grid index to zero. Keep the same tight
+  // event volume and prove the first entry is after MAIN, not just near an
+  // arbitrary sampled point.
+  active.position_enu = Eigen::Vector3d{14.05, 0.06, 3.0};
   active.behavior = navigation_mission::MissionWaypoint::Behavior::PassThrough;
   active.acceptance_radius_m = 0.2;
   navigation_mission::MissionWaypoint next;

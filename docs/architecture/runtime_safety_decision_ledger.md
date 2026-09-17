@@ -22324,3 +22324,72 @@ release profiles must not use the former allowance.
   table rows, denominators and missing invariant fields. The nine-run result above belongs to the
   pre-withdrawal commit, not the source after this partial rollback; the
   retained-screen/normalized-guide round requires its own matrix.
+
+### 2026-09-17 - Normalize the existing guide geometry/time/window boundary
+
+- **Owner/status:** Complete-bundle planner frontend; `IMPLEMENTED`,
+  Release/component verification PASS, integrated verification pending. This is a boundary repair
+  inside the existing planner, not a coordinator or second execution path.
+- **System contract:** A successor starts at its immutable execution anchor;
+  retained command samples use that same trajectory-time origin. The entire
+  ordered guide, including the anchor edge and corner transition, consumes
+  one configured local spatial window. The required outgoing continuity
+  envelope remains independent of the prefix that fits; truncation cannot
+  create a complete-lookahead witness. Mission acceptance stays measured.
+- **Scope:** Build the hot prefix as anchor at elapsed zero followed by
+  strictly future retained samples at `sample_tt - replan_state_tt`. Count
+  the anchor edge before allocating A* horizon. Bound returned A* geometry
+  by actual polyline length rather than goal chord length. Select corner
+  entry on the ordered incoming polyline using arc length and interpolate
+  its time on the same edge; remove the superseded suffix instead of
+  extrapolating behind a short final edge. Reuse the existing spatial-prefix
+  helper to bound outgoing geometry by the remaining window. A zero-length
+  connection does not manufacture a distinct point with the same timestamp;
+  coincident window endpoints consume the existing point traversability
+  check, not a fictitious traversable segment.
+- **Evidence/reachability:** Frozen current 9WP cycle 21/27 inputs contain two
+  distinct points with guide time zero; cycle 27 starts with a 0.1697 m
+  anchor edge excluded from its horizon accounting. Recovery cycle 83
+  inserts a corner entry behind its predecessor and has a 25.341 m guide
+  against the configured 20 m window. Existing duplicate-junction time
+  spreading interpolates real neighboring times; it does not cure the
+  producer's wrong time origin or geometry. Large seed jerk is observed,
+  but its exact share of mission failures is not established. The prior
+  0/9 and 2/9 rounds remain separate evidence, not attributed to this source.
+- **Safety impact:** No MAIN/BACKUP limits, objective weights, solve budget,
+  validator tolerances, UNKNOWN/clearance, epoch/goal/identity, freshness,
+  command authority, terminal support, recovery or mission gates change.
+  New prefix geometry is still checked against the same inflated world;
+  final corridor/dynamics/world/route/BACKUP and execution admission remain
+  mandatory. A coherent guide is not a certified executable bundle. Strict
+  BACKUP visibility, terminal tracking and odometry gaps are not solved by
+  this change, and no complete/smooth 5 m/s claim is made.
+- **Adversarial/removal condition:** Reject if immutable anchor PVAJ is
+  rebased, waypoint order/gate metadata is lost, clipped lookahead is called
+  complete, clearance/continuity regresses, or complete-bundle availability
+  or timing tails worsen. Do not tune thresholds from this single seed.
+- **Verification:** `PlannerGuideBoundary.*` tests for future sample origin,
+  invalid/unordered samples, short-edge and curved corner entry, zero-prefix
+  anchor and incomplete capped lookahead; canonical Release build and full
+  `make test`; independent diff review; then clean sequential 2/5/9WP at
+  requested 5 m/s, three repetitions each, unchanged config/seed, snapshots
+  OFF and all failures/denominators retained. Representative recorded-data
+  and hardware qualification remain outstanding.
+  Initial Release build passed 23 packages; five new guide fixtures passed,
+  but full test rejected two existing facade route-event fixtures. Their
+  all-free world mapped every grid index to `(0,0,0)`, manufacturing a 3 m
+  descent/climb in an otherwise horizontal route; actual-length clipping
+  correctly exposed that inconsistency. The test world now implements its
+  declared 0.2 m position/index transforms. Route-event, BACKUP role and
+  identity assertions are retained, not weakened. The old BACKUP-only event
+  witness at z=1.925 depended on the fake descent; relocate that synthetic
+  event center onto the coherent horizontal BACKUP suffix, retaining its
+  0.2 m radius and first-entry-after-MAIN/role assertions. Add a grid
+  round-trip regression; no product threshold changes. Final Release build
+  passed 23 packages (15.8 s); full `make test` exited zero, all 83 selected
+  CTest entries passed, 386 Python tests with one explicit artifact-dependent
+  skip plus seven auxiliary tests passed. Planner config passed 75 cases
+  (five new guide fixtures); facade passed 17 including the retained route
+  event/BACKUP role assertions and voxel round trip. Independent diff review
+  found no concrete P1/P2 bypass. The first failed test attempt is retained
+  above, not counted as a successful verification. Integrated matrix pending.
