@@ -2,18 +2,18 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: a scoped BACKUP-selector correction closes the real-facade
-574.112640ms admission counterexample without changing the600ms gate. Shared
-first-AABB-entry timing skips only admission-ineligible crossing splits;
-exit+reserve is a preference, not a mandatory bound. Shorter valid crossing
-fallbacks and terminal/coincident STOP exceptions remain. SAFE/FAST fixture
-sequences now each contain two ideal measured-handoff windows; backend9/9CTest
-executables pass. Three repeated nominal failures on the later frozen input
-remain. These are component results, not completion improvement: a new frozen
-Release/integrated matrix is still required. Exact-prefix salvage remains a
-discriminator only. See the final construction/admission follow-up below.
+Latest integrated follow-up: the frozen Release on `b2f25ab0` completed all18
+sequential SAFE/FAST cases: **SAFE2/9mission COMPLETE, FAST4/9mission COMPLETE,
+0/18report PASS**. Completion remains below a majority and no run qualifies.
+The BACKUP-selector correction closes the component574.112640ms admission
+counterexample without lowering600ms, but that is not product closure.
+Two SAFE5WP cases accepted WP3, activated a current STOP4 command, and reached
+terminal MAIN COMPLETED before measured stopping failed to meet the existing
+speed gate within receiver recovery. Increasing solve budget or adding another
+suffix-reuse implementation does not explain those two failures.
+See [the latest matrix and budget review](#integrated-split-correction-matrix-and-budget-review).
 
-The last integrated evidence remains the explicit FAST/AllowUnknown matrix on `80020ed0`
+Historical integrated evidence: the explicit FAST/AllowUnknown matrix on `80020ed0`
 completed all nine runs: **1/9mission COMPLETE,0/9report PASS**, three
 ODOMETRY_STALE failures and five safety stops. The previous
 `aedb4b96` SAFE/RequireKnownFree matrix remains a separate denominator:
@@ -24,7 +24,8 @@ no planning/control decision or default gate was changed in `80020ed0`.
 The FAST campaign does not demonstrate an improvement, qualify either mode,
 or establish a statistical causal A/B conclusion. Historical rounds and every
 unsuccessful outcome below remain separate; the stable smooth5m/s product
-target is still unmet. The latest integrated closure is at the end of this report.
+target is still unmet. Historical rounds below retain their original denominators;
+the latest integrated closure is at the end of this report.
 
 ## Original checkpoint-round verdict
 
@@ -2551,3 +2552,257 @@ ctest --test-dir build/navigation_planning_backend --output-on-failure
 script -q -e -c './build/navigation_planning_backend/replay_nominal_problem_snapshot .artifacts/diagnostics/complete-bundle-06e59cd0-9wp-20260917/nominal_problem_snapshot_2_2_3.json' .artifacts/diagnostics/independent-bundle-review-20260917/replay_after_seed_dimension_guard.log
 git diff --check
 ```
+
+## Integrated split-correction matrix and budget review
+
+This section supersedes earlier statements that a post-`b2f25ab0` integrated
+matrix is still pending. It does not overwrite historical results or convert
+component/replay evidence into flight acceptance. All 18 cases and the sequencer
+are terminal; no concurrent build, test or artifact analysis ran during flight.
+
+### Frozen identity and outcomes
+
+- Navigation commit: `b2f25ab04d12ce3f5f5931b8ec92514c890ce2ba`, with the
+  separately preserved user documentation/safety-migration worktree, dirty.
+- Complete source SHA-256:
+  `39c442822f1bf59831478acf7a152ad2ddf6eb39a2cd0a98c120bbdc8860cf9b`.
+- Whole-workspace Release build: 23 packages, terminal success. Manifest
+  SHA-256 `0ea1bd1779f46428b5e6022b700361d820c34913c8c727dfecb6f4d9e4b20860`.
+  Each of the 18 session metadata records reports build provenance VALID against
+  this same manifest. This describes flight-time provenance, not validity of a
+  later worktree after this report is edited/committed.
+- Requested speed 5 m/s, nominal motion preset, seed 0, three-pillar profiles,
+  visibility 40 m/4096 endpoints, ROS domain 42, XRCE UDP 8892; nominal snapshot
+  capture OFF. PX4 HEAD `deaff86ee335dd697677bcfc2415a23878e1b895`.
+- SAFE explicitly requires known-free BACKUP; FAST explicitly permits UNKNOWN
+  BACKUP and its later-disclosure risk. Neither permits currently OCCUPIED,
+  UNDEFINED or OUT_OF_MAP. Policy is not inferred from requested speed.
+- Tracking remains the relaxed 0/0/0 diagnostic mode. All 18 reports retain
+  `qualification_eligible=false`; lifecycle/lineage/acceptance-policy gaps are
+  not converted to PASS. Mission COMPLETE is a discrete observation, not
+  qualification, smooth sustained 5 m/s or collision-free stopping proof.
+
+Sessions below are under `.artifacts/runtime/external-mode-check-20260917T`;
+the suffix identifies the exact directory. `latest` is an alias, not a 19th run.
+Acceptance comes from canonical `report.json.acceptance`, not runner exit code.
+
+| Policy | WP | Repeat | Session suffix | Accepted indices | Mission COMPLETE | Report |
+|---|---:|---:|---|---|---|---|
+| SAFE | 2 | 1 | `100638-242642` | 0,1 | yes | FAIL |
+| SAFE | 2 | 2 | `100833-246070` | 0,1 | yes | FAIL |
+| SAFE | 2 | 3 | `101025-249784` | 0 | no | FAIL |
+| SAFE | 5 | 1 | `101214-253372` | 0,1,2,3 | no | BLOCKED |
+| SAFE | 5 | 2 | `101448-257018` | 0,1,2,3 | no | BLOCKED |
+| SAFE | 5 | 3 | `101715-260585` | 0 | no | BLOCKED |
+| SAFE | 9 | 1 | `101851-263859` | 0 | no | BLOCKED |
+| SAFE | 9 | 2 | `101959-267101` | 0 | no | BLOCKED |
+| SAFE | 9 | 3 | `102114-272325` | 0 | no | BLOCKED |
+| FAST | 2 | 1 | `102241-275614` | 0 | no | BLOCKED |
+| FAST | 2 | 2 | `102436-278855` | 0,1 | yes | FAIL |
+| FAST | 2 | 3 | `102630-282340` | 0 | no | FAIL |
+| FAST | 5 | 1 | `102828-285682` | 0,1,2,3,4 | yes | FAIL |
+| FAST | 5 | 2 | `103013-288856` | 0,1,2 | no | BLOCKED |
+| FAST | 5 | 3 | `103216-292176` | 0 | no | BLOCKED |
+| FAST | 9 | 1 | `103403-295977` | 0,1 | no | BLOCKED |
+| FAST | 9 | 2 | `103514-299262` | 0..8 | yes | FAIL |
+| FAST | 9 | 3 | `103805-302871` | 0..8 | yes | FAIL |
+
+SAFE completion by route is 2/3, 0/3, 0/3; FAST is 1/3, 1/3, 2/3. No statistical
+causal A/B improvement is established by three repetitions or comparison with
+older source snapshots. No further tuning was performed within the matrix.
+
+### Actual budget mechanism: four different clocks/windows
+
+The user asked whether 10 m at 5 m/s allows 2 s of planning, rather than abandoning
+the task after 600 ms. On this source, **600 ms is not a solve budget**.
+
+| Contract | Current value | Meaning |
+|---|---:|---|
+| Planner scheduler | 100 ms / 10 Hz | Opportunity to submit/recheck work, not 10 solver completions per second. |
+| Complete-plan job budget | 80 ms | One absolute bounded solve across frontend, MAIN, yaw/BACKUP and certification; not 80 ms independently per stage. |
+| Future activation lead | 400 ms | Immutable successor head is sampled from the active predecessor at `now+400 ms`; result must remain eligible for that activation. |
+| Candidate MAIN reserve | 600 ms | `80+400+100+20 ms`, consumed by admission/continuation policy, not time spent optimizing. |
+| Normal renewal trigger | MAIN remaining <=1 s | `80+2*400+100+20 ms`; remaining ends at the declared BACKUP switch, not at full bundle end. |
+| Optional finalization reserve | 40 ms | Stops optional numerical refinement early enough to finish a complete bundle; does not extend the 80 ms hard deadline. |
+
+Sources: `planning_timing.hpp:9-21`, `planner_fsm.hpp:352-414`, runtime
+`navigation_runtime_node.cpp:4476-4496,4702-4756`, config
+`planner.yaml:44-50`, backend `planner.cpp:4435-4465` and
+`absolute_deadline.hpp:20-78`. The request's steady deadline is shared through
+the backend; ROS/simulation-time checks do not permit extending it during a
+paused source clock. An 80 ms declared hard deadline is not an established
+wall-time upper bound: cancellation is checked cooperatively, and SAFE9r1's
+first timed-out renewal reports 80.196 ms. Tail latency and containment still
+require measurement.
+
+Normal renewal deliberately defers the expensive optimizer while certified
+MAIN remaining is above 1 s. New goal/anchor-pressure/recovery transitions can
+force earlier work; world revalidation and 50 Hz commands continue independently.
+One worker owns one mutable planner, one active job and one latest coalesced
+pending job (`planning_worker.hpp:66-74,144-148`). After execution successor
+staging, scheduler waits for activation rather than solving against that
+pending successor (`navigation_runtime_node.cpp:2887-2895`).
+
+For an illustrative **certified MAIN duration 2 s**, ignoring acceleration and
+other events: normal optimizer starts near t=1 s, is allocated an 80 ms budget,
+and selects future activation near t=1.4 s. With MAIN duration 1 s it is due immediately. These
+are relative clock examples, not measured schedules or qualification at 10 m/s.
+A 10 m numerical path is not necessarily 10 m of executable MAIN: BACKUP may
+replace its tail much earlier, world/state may invalidate it, and the actual
+polynomial schedule need not equal distance/cruise-speed.
+
+Failed solves do not automatically discard a still-valid predecessor. Further
+bounded attempts may run while its MAIN future anchor and other certificates
+remain available; otherwise certified recovery/revocation policy applies.
+Thus the current implementation neither spends the whole 2 s on one online
+solve nor gives up simply because one 80 ms attempt fails.
+
+This is a policy, **not evidence that resource utilization is optimal**.
+There is no CPU/lock-tail/resource-isolation measurement here proving full
+utilization. In particular startup explicitly requires the solve budget to
+match the typed 80 ms contract and fit the 100 ms scheduler period
+(`navigation_runtime_node.cpp:1488-1493`). An asynchronous bounded worker does
+not inherently require job deadline <=trigger period; changing that product
+policy nevertheless requires deadline, cancellation, resource and admission
+evidence, not just a larger YAML number.
+
+An alternative to test, not an implementation claim, is to start complete-bundle
+search earlier and allocate work from **actual continuation/activation
+slack**, with an independently verified resource cap and time reserved for
+final validation. A deadline cannot just become `distance/speed`: a job whose
+head was fixed at now+400 ms cannot spend 1-2 s and still activate that same head.
+Earlier search, future-anchor selection, latest-world recertification and
+invalidation must be considered together. SAFE/FAST and all hard certificates
+remain unchanged. No budget, timeout or gate was changed in this review.
+
+```mermaid
+flowchart TD
+    A[Active certified MAIN and current state/world/goal] --> B{Successor pending?}
+    B -->|Yes| C[Wait for activation; keep sampling and recertifying]
+    C --> A
+    B -->|No| D{Forced event or MAIN remaining at most 1 s?}
+    D -->|No| E[Defer optimizer, not command/world work]
+    E --> A
+    D -->|Yes| F[Reserve active future anchor at now plus 400 ms]
+    F --> G[Complete MAIN/BACKUP search within 80 ms]
+    G --> H{Current identities, world, anchor and admission valid?}
+    H -->|No| I[Retain predecessor only while valid; else recovery/revoke]
+    H -->|Yes| J[Stage and activate in canonical timeline]
+    J --> K[Publish leased command; evaluate ordered measured PASS or settled STOP]
+    K -->|PASS accepted| A
+    K -->|STOP not settled| L[Certified endpoint hold plus bounded recovery semantics]
+    K -->|STOP confirmed and hold complete| M[Mission COMPLETE]
+```
+
+### Independent critiques and first-failure discriminators
+
+Two independent reasoning agents challenged protocol/formulation; an actual
+`gpt-5.6-luna` agent inventoried canonical outcomes/provenance. Root verified
+the critical source paths and independently parsed nested
+`record.payload.values`. An initial mechanical parse at the wrong nesting
+level falsely reported missing causal fields; it was rejected and corrected.
+All 18 sessions contain causal cycle/solve-generation trace fields. Reviewer
+agreement is not a correctness proof.
+
+**CONFIRMED terminal behavior, not a confirmed erroneous safety policy:**
+SAFE5r1/r2 accepted WP3 and reached a current STOP4 MAIN endpoint before pause:
+
+| Source event | SAFE5r1 | SAFE5r2 | FAST5 COMPLETE |
+|---|---:|---:|---:|
+| WP3 acceptance / goal4 request5 | 73.984 s | 68.976 s | 39.392 s |
+| Current MAIN command | 74.156 s, gen12 | 69.088 s, gen14 | 39.552 s, gen11 |
+| Terminal MAIN COMPLETED | 77.408 s, gen14 | 72.432 s, gen17 | 47.984 s, gen13 |
+| Terminal outcome | PAUSED82.416 s | PAUSED77.464 s | COMPLETE55.956 s |
+
+Receiver includes inside-STOP measured speed above 0.15 m/s in
+`terminal_recovery_needed` (`navigation_mode_node.cpp:1031-1043`), starts its
+5 s recovery timer (`:1230-1258`), and tests expiry before mission update
+(`:1345-1353`). Neither SAFE terminal window contains a captured propagated
+sample both inside 0.8 m and speed <=0.15 m/s. Near pause, synchronized speed
+norms corroborate real residual motion:
+
+- r1: LIO 0.282 m/s at 82.396 s; ground truth 0.275 at 82.380 s;
+  PX4 odometry 0.208 at 82.396 s.
+- r2: LIO 0.409 at 77.436 s; ground truth 0.384 at 77.440 s;
+  PX4 odometry 0.294 at 77.440 s; enclosing terminal log at 77.444 s.
+
+This does not attribute the deeper stopping failure to LIO or PX4/controller.
+The norms do not require a broken reference-tracking lineage, but do not prove
+complete frame/health/control acceptance. Terminal containment may be
+intentional. Do not raise timeout, stop speed or acceptance radius to get PASS.
+The leverage investigation is end-to-end **terminal stopping/settling**, with
+exact commands and synchronized independent ground truth, not further WP3
+acceptance patches. Evidence includes r1/r2 `logs/external_mode.log:229,199`,
+planning/execution timelines and the resolved mission's 0.15 m/s,0.5scontinuous
+confirmation,0.4 s hold policy.
+
+**REJECTED for these two transactions:** insufficient 80 ms solve budget or
+missing certified-suffix reuse. Both already activated the existing
+out-of-band heading rebind (gen12/gen14). Backend
+`planner.cpp:1679-1691,1769-1786,1804-1817` extracts the committed position
+suffix, retains MAIN/BACKUP roles and recertifies the new candidate; runtime
+`navigation_runtime_node.cpp:3079` schedules it. Post-goal4 solve times are
+4.631/1.949/1.933 ms and 3.958/3.852/2.410/1.888 ms, without deadline hit.
+Implementing a second suffix-reuse path would duplicate existing behavior.
+
+**CONFIRMED timer semantics, requirement CONDITIONAL:** FAST's inside-ball
+low-speed dips initially last only 80/100/140/200/300/400 ms. Receiver clears and
+re-arms its recovery timer after transient low-speed samples
+(`navigation_mode_node.cpp:1268`), whereas mission requires continuous 0.5 s
+confirmation (`mission_controller.cpp:526`). Its eventual 560 ms window is
+54.568-55.128 s; completion occurs more than 5 s after terminal MAIN completion.
+The timer is bounded per episode, not necessarily total settling time. A
+finite fake-clock discriminator alternates0.14/0.16 m/s every 200msfor12 s while
+keeping identity/world/leases valid: check both non-COMPLETE and timeout
+semantics, then resolve the contract before changing either owner. This test
+is planned, not run.
+
+**REJECTED nominal protocol hypothesis:** pending B cannot normally supply an
+anchor while history still A. Store `reserveAnchor` samples `committed_` only
+(`committed_bundle_store.hpp:218`); scheduler refuses execution-pending work
+(`navigation_runtime_node.cpp:2891`); worker applies activation notifications
+before key-recheck (`:3015`); request requires anchor generation==key generation
+(`planning_request.hpp:106`). A narrow cache ACK debt remains: backend
+activation may no-op/fail (`planner.cpp:1084`), runtime still advances its
+notification watermark (`navigation_runtime_node.cpp:3171`), and guide reads
+the private warm-start cache (`planner.cpp:3120`). This is DESIGN_DEBT with
+CONDITIONAL consequence, not observed flight causality or a second command
+authority. Test no-op/failing notification with a barrier before considering
+request-owned full context or a new coordinator.
+
+**Separate early-leg bottleneck:** SAFE9r1 has causal renewal traces at 24.844 s
+and 24.916 s whose MAIN solve completes, but BACKUP rejects UNKNOWN. At24.844 s,
+hard budget remaining is 42.777 ms and source age 16 ms; backup blocked-cell enum 1
+is UNKNOWN (`world_model_view.hpp:24-30`), not OCCUPIED. More MINCO time cannot
+make that tested suffix known-free. This is one failed local seed, not proof
+that all alternative bundles are infeasible. Next discriminator must include
+visibility/braking/complete-bundle geometry, not relax SAFE to FAST.
+
+Root's last-record-per-solve-generation fold of attributed trace records yields
+353 observed generations:226 with no reported final failure, 27 deadline,
+57 `commit_recertification/world_changed`, 33 `nominal_dynamics`, 9 strict-BACKUP
+known-free and 1 BACKUP-dynamics classifications. These are captured labels, not
+an optimizer-call census, first mission-failure distribution or physical proof.
+In particular `classifyPlannerFailure` maps generic
+`PLANNER_CANDIDATE_REJECTED` to `world_changed`
+(`replan_contract.hpp:101-102`) even for build/staging/history failures
+(`planner.cpp:2140-2148`). Do not blame mapping from that label alone or tune
+budget using it as a precise failure taxonomy.
+
+### Next cycle and verification boundary
+
+Prioritize synchronized terminal stopping and a finite receiver/mission replay
+for the two late SAFE 5WP cases; separately test early-leg complete-bundle viability
+and actual activation slack. A request-owned dynamic-budget design remains a
+discriminator, not a chosen repair. No new coordinator, duplicate reuse path,
+control tuning, hard-gate change or permanent bypass was introduced here.
+
+The full Release build and backend component verification preceded the 18runs.
+This postflight review changes only this existing report; no new behavioral
+test is claimed. The user's dirty safety-document migration was preserved.
+Its HG-001 summary still names older 180 ms/200msvalues and its global UNKNOWN
+wording differs from explicit FAST experiment semantics; the report pins
+effective source/config rather than silently editing that user-owned contract.
+The stable/smooth majority-completion product objective remains active and
+unmet. Future behavior changes require a new frozen build and repeated separate
+SAFE/FAST integrated evidence, including failures and assurance blockers.
