@@ -4726,7 +4726,22 @@ double mainGuideSupport(
         // actual command boundary;
         // authorizeAndStage() still validates the complete main+backup bundle
         // against the latest immutable world before publication.
-        TimeConsuming t_back_frontend("t_back_frontend", false);
+        // Close this phase on every return, including failed certification.
+        // Once optimization starts, finish() keeps its cost out of frontend.
+        struct FrontendTiming final {
+            double& seconds;
+            const std::chrono::steady_clock::time_point start{
+                std::chrono::steady_clock::now()};
+            bool finished{false};
+            void finish() noexcept {
+                if (!finished) {
+                    seconds = std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - start).count();
+                    finished = true;
+                }
+            }
+            ~FrontendTiming() { finish(); }
+        } frontend_timing{time_consuming_[BACK_TRAJ_FRONTEND]};
         backup_certificate_diagnostics_ = {};
         backup_certificate_diagnostics_.attempted = true;
         double total_dur = ref_exp_traj.getTotalDuration();
@@ -4913,7 +4928,7 @@ double mainGuideSupport(
             // otherwise tracking drift can expose an uncertified main-only
             // endpoint and force a reactive emergency brake later.
             back_traj_info.setEmpty();
-            time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
+            frontend_timing.finish();
             return FINISH;
         }
         const bool terminal_rest_capture_ready = all_traj_visible &&
@@ -4934,7 +4949,7 @@ double mainGuideSupport(
                     "distance={} radius={}",
                     (candidate_ps.back().second - command_start).norm(), cfg_.robot_r);
             back_traj_info.setEmpty();
-            time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
+            frontend_timing.finish();
             return FINISH;
         }
         if (all_traj_visible) {
@@ -5405,7 +5420,7 @@ double mainGuideSupport(
         // toward the visibility boundary.
         const double backup_switch_upper_bound = std::min(
                 te, heu_ts + std::max(0.01, cfg_.replan_forward_dt_s * 0.25));
-        time_consuming_[BACK_TRAJ_FRONTEND] = t_back_frontend.stop();
+        frontend_timing.finish();
         TimeConsuming t_back_opt("t_back_opt", false);
         double opt_ts = heu_ts;
         Trajectory temp_pos_traj;

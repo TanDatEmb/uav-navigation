@@ -741,6 +741,112 @@ TEST(PlannerFacade, ExpiredPlanReportsLatestTimeoutAtProductBoundary) {
   EXPECT_LE(timeline.remaining_hard_budget_us_at_finish, 0);
 }
 
+class InterruptBackupWorld final : public IdentityOnlyWorld {
+ public:
+  std::function<int()> current_stage;
+  std::function<void()> interrupt;
+  mutable std::size_t queries_after_interrupt{0U};
+  mutable bool interrupted{false};
+
+  navigation_world_model::PointVector observedOccupiedPoints(
+      const navigation_world_model::AxisAlignedBox& box) const override {
+    if (interrupt && current_stage && current_stage() == 5) {
+      ++queries_after_interrupt;
+      if (!interrupted) {
+        interrupted = true;
+        interrupt();
+      }
+    }
+    return IdentityOnlyWorld::observedOccupiedPoints(box);
+  }
+};
+
+void expectBackupInterruptRecordsFailure(const bool cancel,
+                                        const bool install_active = false) {
+  auto world = std::make_shared<InterruptBackupWorld>();
+  TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
+  const auto limits = semanticFixtureMissionLimits();
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, limits, authorizer,
+      [&ros_time_s] { return ros_time_s; });
+
+  navigation_mission::Mission mission;
+  mission.id = "backup-interruption-contract";
+  mission.frame = "lio_odom";
+  mission.planning.requested_cruise_speed_mps =
+      limits->intent.requested_cruise_speed_mps;
+  navigation_mission::MissionWaypoint active;
+  active.id = "active";
+  active.position_enu = Eigen::Vector3d{10.0, 0.0, 3.0};
+  active.behavior = navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  active.acceptance_radius_m = 0.5;
+  auto next = active;
+  next.id = "next";
+  next.position_enu.x() = 20.0;
+  next.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
+  mission.waypoints = {active, next};
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(Eigen::Vector3d{0.0, 0.0, 3.0}).valid);
+  const auto route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
+  ASSERT_TRUE(route.valid());
+  ASSERT_TRUE(facade.setRouteSnapshot(route));
+  navigation_planning::KinematicState state;
+  state.position_world = Eigen::Vector3d{0.0, 0.0, 3.0};
+  state.source_stamp_ns = 10'000'000'000LL;
+  state.receive_stamp_ns = state.source_stamp_ns;
+  state.localization_epoch = 1U;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+  ASSERT_TRUE(facade.setState(state));
+  facade.setCommandIdentity(1U, 1U, 1U);
+  facade.setGoalAcceptanceRadius(active.acceptance_radius_m);
+
+  if (install_active) {
+    ASSERT_EQ(facade.planInitialFromStoppedState(active.position_enu, 0.0, true),
+              navigation_planning::PlannerStatus::kSuccess);
+    const auto initial = facade.exportCommandCandidate(
+        1U, 1U, 1U, state.source_stamp_ns, 30'000'000'000LL);
+    ASSERT_TRUE(initial);
+    ASSERT_TRUE(initial->valid());
+    ASSERT_TRUE(initial->backup_available);
+    facade.onExecutionTimelineActivated(initial->bundle_generation);
+  }
+  const auto previous = facade.committedSnapshot();
+  if (install_active) ASSERT_FALSE(previous.empty());
+  else ASSERT_EQ(previous.generation, 0U);
+
+  // Interrupt only when the actual BACKUP corridor queries its world. MAIN
+  // therefore completes first, and the source clock is not globally advanced
+  // before reaching the phase under test. No sleep or wall-time threshold.
+  world->current_stage = [&facade] { return facade.solveStage(); };
+  world->interrupt = [&] {
+    if (cancel) facade.cancelActiveSolve();
+    else ros_time_s = 1000.0;
+  };
+  EXPECT_EQ(facade.planInitialFromStoppedState(
+                active.position_enu, 0.0, !install_active),
+            navigation_planning::PlannerStatus::kFailed);
+  ASSERT_TRUE(world->interrupted);
+  const auto diagnostics = facade.diagnostics();
+  EXPECT_TRUE(diagnostics.backup_certificate.attempted);
+  EXPECT_GT(diagnostics.module_time_us[2], 0.0);
+  EXPECT_FALSE(diagnostics.backup_certificate.selected);
+  EXPECT_EQ(diagnostics.replan_return_code,
+            cancel ? navigation_planning_backend::PLANNER_SOLVE_CANCELLED
+                   : navigation_planning_backend::PLANNER_SOLVE_TIMEOUT);
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
+  EXPECT_EQ(facade.committedGeneration(), previous.generation);
+  const auto after = facade.committedSnapshot();
+  EXPECT_EQ(after.generation, previous.generation);
+  EXPECT_EQ(after.position.duration_s, previous.position.duration_s);
+}
+
+TEST(PlannerFacade, BackupInterruptedFirstAttemptAccountsFrontend) {
+  expectBackupInterruptRecordsFailure(false);
+  expectBackupInterruptRecordsFailure(true);
+}
+
 TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
   auto world = std::make_shared<IdentityOnlyWorld>();
   TestCommitAuthorizer authorizer(world);

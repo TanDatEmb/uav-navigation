@@ -1081,3 +1081,29 @@ false rejection from a genuinely unsafe/untrackable proposal. No relaxed
 UNKNOWN/tracking/corridor gate, large coordinator, unbounded linked retry or
 new parallel command path is justified by this matrix. Correctness is repaired
 locally; product completion and stable/smooth 5 m/s flight remain unclosed.
+
+### BACKUP failure timing closure — observability only
+
+The production-facade regression now interrupts the first BACKUP corridor
+world query, either by advancing the injected source clock or by cancelling
+the solve. MAIN completes before the interruption; there is no sleep or
+absolute latency assertion. With no preceding successful BACKUP to leave a
+stale timing value, both cases fail on the old source because
+`module_time_us[2] == 0`. A scope timer now closes BACKUP frontend accounting
+on every return, and closes it explicitly before optional optimization so
+optimizer work is not double-counted. The regression passes after this change.
+
+This patch does **not** stop enumeration or increase completion: the old
+74-candidate/71-world-query behavior remains visible after the interruption.
+The existing timeout/cancellation classifications and absence of an admitted
+candidate remain unchanged. A separate behavior patch will test stopping
+that wasted work while preserving the previously committed trajectory.
+
+Verification: `make build` finishes 23 Release packages (11.9 s);
+`make test` exits zero, with 18 facade cases passing and the runtime Python
+suite passing 386 cases with one existing unavailable-GUI-artifact skip.
+`colcon test-result --test-result-base test-results` reports 83 test entries,
+zero errors/failures; `git diff --check` passes. Independent read-only review
+found no concrete gate, authority, phase-accounting or fixture defect. The
+unrelated safety-document migration remains dirty and is excluded from this
+commit. The last complete SITL baseline remains 2/9, not a new measurement.
