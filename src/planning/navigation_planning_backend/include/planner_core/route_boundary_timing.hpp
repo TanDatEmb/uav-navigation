@@ -78,6 +78,81 @@ inline bool truncateTimedGuideAtDistance(
   return true;
 }
 
+// Project onto the portion of the ordered guide inside a convex overlap.
+// Clip each chord by its halfspaces, then project within the clipped interval.
+// The guide coordinate (edge index + fraction), position and time describe
+// the same point. Discrete sample lookup cannot represent a narrow overlap
+// between two samples and must not supply time for an unrelated interior.
+template <typename PointContainer, typename PlaneMatrix, typename Point>
+inline bool projectOrderedGuideIntoOverlap(
+    const PointContainer& guide, const std::vector<double>& elapsed_s,
+    const PlaneMatrix& planes, const Point& target,
+    const double minimum_coordinate, const double maximum_coordinate,
+    Point& point, double& time_s, double& coordinate) {
+  if (guide.size() < 2U || guide.size() != elapsed_s.size() ||
+      planes.rows() == 0 || planes.cols() != 4 || !planes.allFinite() ||
+      !target.allFinite() || !std::isfinite(minimum_coordinate) ||
+      !std::isfinite(maximum_coordinate) || minimum_coordinate < 0.0 ||
+      maximum_coordinate < minimum_coordinate ||
+      maximum_coordinate > static_cast<double>(guide.size() - 1U)) return false;
+  for (std::size_t index = 0U; index < guide.size(); ++index) {
+    if (!guide[index].allFinite() || !std::isfinite(elapsed_s[index]) ||
+        (index > 0U && !(elapsed_s[index] > elapsed_s[index - 1U]))) return false;
+  }
+  double best_distance_squared = std::numeric_limits<double>::infinity();
+  Point best_point = target;
+  double best_time = 0.0, best_coordinate = 0.0;
+  const auto first_edge = std::min(
+      static_cast<std::size_t>(std::floor(minimum_coordinate)), guide.size() - 2U);
+  for (std::size_t edge = first_edge; edge + 1U < guide.size(); ++edge) {
+    if (static_cast<double>(edge) > maximum_coordinate) break;
+    double lower = std::max(0.0, minimum_coordinate - static_cast<double>(edge));
+    double upper = std::min(1.0, maximum_coordinate - static_cast<double>(edge));
+    const Point direction = guide[edge + 1U] - guide[edge];
+    const double length_squared = direction.squaredNorm();
+    if (!direction.allFinite() || !std::isfinite(length_squared)) return false;
+    for (decltype(planes.rows()) row = 0; row < planes.rows() && lower <= upper; ++row) {
+      const double value = planes(row, 0) * guide[edge].x() +
+          planes(row, 1) * guide[edge].y() + planes(row, 2) * guide[edge].z() +
+          planes(row, 3);
+      const double slope = planes(row, 0) * direction.x() +
+          planes(row, 1) * direction.y() + planes(row, 2) * direction.z();
+      if (!std::isfinite(value) || !std::isfinite(slope)) return false;
+      if (slope == 0.0) {
+        if (value > 0.0) upper = -1.0;
+      } else if (slope > 0.0) {
+        upper = std::min(upper, -value / slope);
+      } else {
+        lower = std::max(lower, -value / slope);
+      }
+    }
+    if (lower > upper) continue;
+    double fraction = lower;
+    if (length_squared > 0.0) {
+      const double projection = (target - guide[edge]).dot(direction) / length_squared;
+      if (!std::isfinite(projection)) return false;
+      fraction = std::clamp(projection, lower, upper);
+    }
+    const Point candidate = guide[edge] + fraction * direction;
+    const double distance_squared = (candidate - target).squaredNorm();
+    const double candidate_time = elapsed_s[edge] + fraction *
+        (elapsed_s[edge + 1U] - elapsed_s[edge]);
+    if (!candidate.allFinite() || !std::isfinite(distance_squared) ||
+        !std::isfinite(candidate_time)) return false;
+    if (distance_squared < best_distance_squared) {
+      best_distance_squared = distance_squared;
+      best_point = candidate;
+      best_time = candidate_time;
+      best_coordinate = static_cast<double>(edge) + fraction;
+    }
+  }
+  if (!std::isfinite(best_distance_squared)) return false;
+  point = best_point;
+  time_s = best_time;
+  coordinate = best_coordinate;
+  return true;
+}
+
 // Use the geometric route-boundary point as the temporal anchor.  An overlap
 // interior can be closer to an unrelated early guide sample than the point
 // that the boundary contract actually requires the trajectory to reach.

@@ -22452,3 +22452,91 @@ release profiles must not use the former allowance.
   the complete 5WP run's setpoint maximum 4.900114 m/s. No smooth/stable
   5 m/s claim. Every later behavior change requires contract tests, full
   Release/test verification and another retained sequential nine-run matrix.
+
+### 2026-09-17 - Couple overlap junction position and time to the continuous guide
+
+- **Owner/status:** Existing nominal optimizer setup boundary; `IMPLEMENTED`,
+  full component verification PASS; isolated nominal replay mixed,
+  integrated SITL verification pending. No new execution owner,
+  fallback, ROS thread or alternative authority path.
+- **System invariant:** An initialized overlap junction selected from the
+  collision-checked ordered guide must use the position and elapsed time of
+  the same guide-edge fraction, inside its convex overlap and mission phase.
+  A narrow overlap between samples is not evidence that the guide misses it.
+- **Evidence:** Clean `08cb9d3f` current-guide 2WP discriminator
+  `external-mode-check-20260917T034028-259405` completed the mission but
+  report FAIL/qualification ineligible. Manifest
+  `0bd58069607e92c75a216ca243e09ed95b65c51fc1d701cea6d8042893d4964e`,
+  source `692472f228aa8fa161e24a9f8fe33e6d041998d6937525b70b74ca4a0895c531`.
+  Capture ON/world ON, so it is not in the prior capture-OFF nine-run
+  denominator or a timing A/B. 30 submitted/written, zero drops/errors/
+  pending; runner-finalized accounting COMPLETE but writer completion at
+  process stop false, not independently graceful writer closure. In 26/30
+  snapshots initial junctions differ from discrete route references. Cycle 1
+  uses (7.1,-1.5,3.1) for the [7.0,7.2] overlap of a guide at y=-0.1,z=3;
+  the old nearest sample x=5.7 is outside that overlap. The new analytic
+  optimizer regression fails before the fix by 1.4 m lateral, 0.1 m vertical
+  and 0.3 s position/time inconsistency. This confirms initialization aliasing,
+  not that it alone causes all mission failures; the discriminator completed.
+- **Scope:** Preserve existing sampled junctions already inside their overlap
+  with coherent sample time. When discrete lookup misses the guide/overlap
+  intersection, clip ordered guide chords by overlap halfspaces, project the
+  overlap interior onto the feasible chord fraction, and interpolate its
+  time at that fraction. Track continuous guide coordinate across overlaps
+  and restrict both sides of marked mission gates. Existing independently
+  certified interior fallback remains when no ordered chord intersects;
+  empty/reversed fallback sample intervals no longer silently reuse an old
+  index. Mission-owned boundary point override, immutable anchor PVAJ,
+  repeated-time handling and all final certificates remain.
+- **Safety impact:** No MAIN/BACKUP/flatness, world/UNKNOWN, route tolerance,
+  cost weights, budgets/deadlines, freshness, admission/activation, recovery,
+  stopped-hold or mission gate changes. This changes setup geometry/time,
+  not authority. The existing analytic 1e-6 guide-plane containment check and
+  final independent continuous validators still reject invalid candidates.
+  No measured completion/5-m/s improvement claim until integrated evidence.
+- **Adversarial/removal condition:** Reject if guide order or gate ownership
+  is lost, extrapolation leaves a guide chord, position/time diverge, an
+  unobserved chord is called known-free, or initialization improvements
+  regress complete-bundle availability, clearance/tracking or timing tails.
+  BACKUP code 8 can represent failed curve-deviation bound or unsafe tube;
+  logs alone do not uniquely identify the underlying UNKNOWN origin.
+- **Verification:**
+  `test_exp_optimizer_seed --gtest_filter=ExpOptimizer.SparseStraightGuideKeepsJunctionGeometryAndTimeOnTheSameEdge`
+  before/after; `test_planner_config --gtest_filter=PlannerGuideProjection.*`;
+  exact frozen cycle 1/106/263 replays (world verdict non-authoritative,
+  no BACKUP/admission claim); full Release/build/test; independent diff
+  review; fresh clean sequential three-pillar 2/5/9WP requested 5 m/s,
+  three repetitions each, capture OFF and all failures retained.
+  Before/after optimizer regression FAIL/PASS; five analytic projection
+  fixtures and existing sparse-gate timing fixture PASS. Serial exact-config
+  cycle 1/106/263 nominal replays return candidate/unavailable/candidate at
+  unchanged 40/80 ms; cycle 106 failure is retained, not tuned away. Cycle 1
+  objective evaluations fall 714 to 278, but duration grows 4.119645 to
+  4.250264 s and zero-refinement effort grows 60 to 201 evaluations. These
+  are discriminator observations, not a general performance gain. Independent
+  numerical boundary failures remain visible. Every replay has executable
+  bundle zero/non-authoritative world verdict, not integrated acceptance.
+  Read-only adversarial diff review found no concrete P1/P2 bypass.
+  The first full-test attempt rejected the unrestricted projection prototype:
+  three optimizer fixtures and one facade fixture failed, including certified
+  high-speed corridor availability. Moving already-valid sampled junctions
+  changes the optimization basin unnecessarily. Restrict continuous lookup
+  to discrete containment misses; retain valid sample geometry/time and the
+  existing sampled route-gate outgoing temporal split. Do not weaken fixture
+  success/dynamics assertions or raise corridor cost tolerance to accept the
+  prototype. Full verification must be rerun on this revised source.
+  Revised prefer-valid-sample source: canonical Release 23 packages PASS;
+  `make test` exit 0, optimizer/config/facade XML 24/81/17 tests with zero
+  failures; runtime Python contracts 386 tests, one existing missing-artifact
+  skip, zero failures. Six projection fixtures PASS, including atomic output
+  preservation on late arithmetic failure. The four prototype regressions
+  pass with unchanged assertions. Independent review rejected the earlier
+  boundary-time finding because geometry/reference are overridden to the
+  producer guide boundary before its corresponding time; no concrete P1/P2
+  bypass remains. Revised exact-config serial cycle 1/106/263 replays at
+  40/80 ms use 386/264/823 evaluations, candidate/unavailable/candidate;
+  cycles 1/263 durations 4.123666/4.781459 s and both optimized/deterministic
+  certificates pass. Cycle 106 remains unavailable without a deadline
+  failure. At 0/80 ms cycle 1 retains independent boundary rejection;
+  executable bundle is zero in every replay. No general speed/completion
+  claim; clean capture-OFF nine-run verification still required.

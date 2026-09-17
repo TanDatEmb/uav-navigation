@@ -964,6 +964,109 @@ TEST(PlannerGuideBoundary, OutgoingPrefixConsumesBudgetWithoutClaimingCompleteEn
       required, geometry_utils::computePathLength(prefix)));
 }
 
+namespace {
+Eigen::Matrix<double, 6, 4> guideProjectionBox(
+    double x_min, double x_max, double y_min, double y_max) {
+  Eigen::Matrix<double, 6, 4> planes;
+  planes << 1.0, 0.0, 0.0, -x_max,
+           -1.0, 0.0, 0.0, x_min,
+            0.0, 1.0, 0.0, -y_max,
+            0.0,-1.0, 0.0, y_min,
+            0.0, 0.0, 1.0, -4.0,
+            0.0, 0.0,-1.0, 2.0;
+  return planes;
+}
+}  // namespace
+
+TEST(PlannerGuideProjection, NarrowOverlapBetweenSamplesUsesItsOwnInterpolatedTime) {
+  const navigation_math::vec_Vec3f guide{{0.0,-0.1,3.0}, {10.0,-0.1,3.0}};
+  navigation_math::Vec3f point;
+  double time = -1.0, coordinate = -1.0;
+  ASSERT_TRUE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0}, guideProjectionBox(7.0, 7.2, -1.6, 1.4),
+      navigation_math::Vec3f{7.1, -1.5, 3.1}, 0.0, 1.0,
+      point, time, coordinate));
+  EXPECT_TRUE(point.isApprox(navigation_math::Vec3f{7.1, -0.1, 3.0}, 1.0e-12));
+  EXPECT_NEAR(time, 1.42, 1.0e-12);
+  EXPECT_NEAR(coordinate, 0.71, 1.0e-12);
+}
+
+TEST(PlannerGuideProjection, ObliqueHalfspacesClipOneConsistentEdge) {
+  const navigation_math::vec_Vec3f guide{{0.0,0.0,3.0}, {10.0,10.0,3.0}};
+  navigation_math::Vec3f point;
+  double time = -1.0, coordinate = -1.0;
+  ASSERT_TRUE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0}, guideProjectionBox(4.0, 6.0, 5.0, 7.0),
+      navigation_math::Vec3f{5.8, 5.2, 3.0}, 0.0, 1.0,
+      point, time, coordinate));
+  EXPECT_TRUE(point.isApprox(navigation_math::Vec3f{5.5, 5.5, 3.0}, 1.0e-12));
+  EXPECT_NEAR(time, 1.1, 1.0e-12);
+  EXPECT_NEAR(coordinate, 0.55, 1.0e-12);
+}
+
+TEST(PlannerGuideProjection, OrderedIntervalCannotSelectAnEarlierNearbyBranch) {
+  const navigation_math::vec_Vec3f guide{
+      {0.0,0.0,3.0}, {10.0,0.0,3.0}, {0.0,0.0,3.0}};
+  navigation_math::Vec3f point;
+  double time = -1.0, coordinate = -1.0;
+  ASSERT_TRUE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0, 4.0}, guideProjectionBox(2.0, 4.0, -1.0, 1.0),
+      navigation_math::Vec3f{3.0, 0.0, 3.0}, 1.0, 2.0,
+      point, time, coordinate));
+  EXPECT_TRUE(point.isApprox(navigation_math::Vec3f{3.0, 0.0, 3.0}, 1.0e-12));
+  EXPECT_NEAR(coordinate, 1.7, 1.0e-12);
+  EXPECT_NEAR(time, 3.4, 1.0e-12);
+}
+
+TEST(PlannerGuideProjection, GateIntervalIncludesItsExactBoundaryButNotFutureGeometry) {
+  const navigation_math::vec_Vec3f guide{{0.0,0.0,3.0}, {10.0,0.0,3.0}};
+  navigation_math::Vec3f point;
+  double time = -1.0, coordinate = -1.0;
+  ASSERT_TRUE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0}, guideProjectionBox(4.0, 8.0, -1.0, 1.0),
+      navigation_math::Vec3f{7.0, 0.0, 3.0}, 0.0, 0.5,
+      point, time, coordinate));
+  EXPECT_TRUE(point.isApprox(navigation_math::Vec3f{5.0, 0.0, 3.0}, 1.0e-12));
+  EXPECT_DOUBLE_EQ(time, 1.0);
+  ASSERT_TRUE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0}, guideProjectionBox(4.0, 8.0, -1.0, 1.0),
+      navigation_math::Vec3f{7.0, 0.0, 3.0}, 0.5, 0.5,
+      point, time, coordinate));
+  EXPECT_DOUBLE_EQ(coordinate, 0.5);
+}
+
+TEST(PlannerGuideProjection, RejectsDisjointReversedOrMalformedInputs) {
+  const navigation_math::vec_Vec3f guide{{0.0,0.0,3.0}, {10.0,0.0,3.0}};
+  const navigation_math::Vec3f target{5.0, 0.0, 3.0};
+  navigation_math::Vec3f point;
+  double time = -1.0, coordinate = -1.0;
+  auto planes = guideProjectionBox(4.0, 6.0, -1.0, 1.0);
+  EXPECT_FALSE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0}, guideProjectionBox(4.0, 6.0, 1.0, 2.0), target,
+      0.0, 1.0, point, time, coordinate));
+  EXPECT_FALSE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0}, planes, target, 0.8, 0.2, point, time, coordinate));
+  EXPECT_FALSE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 0.0}, planes, target, 0.0, 1.0, point, time, coordinate));
+  planes(0, 0) = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0}, planes, target, 0.0, 1.0, point, time, coordinate));
+}
+
+TEST(PlannerGuideProjection, ArithmeticFailureDoesNotOverwriteTheSampledFallback) {
+  const navigation_math::vec_Vec3f guide{
+      {0.0,0.0,3.0}, {10.0,0.0,3.0}, {1.0e308,0.0,3.0}};
+  navigation_math::Vec3f point{-11.0, -12.0, -13.0};
+  double time = -1.0, coordinate = -1.0;
+  EXPECT_FALSE(navigation_planning_backend::projectOrderedGuideIntoOverlap(
+      guide, {0.0, 2.0, 4.0}, guideProjectionBox(4.0, 6.0, -1.0, 1.0),
+      navigation_math::Vec3f{5.0, 0.0, 3.0}, 0.0, 2.0,
+      point, time, coordinate));
+  EXPECT_EQ(point, (navigation_math::Vec3f{-11.0, -12.0, -13.0}));
+  EXPECT_DOUBLE_EQ(time, -1.0);
+  EXPECT_DOUBLE_EQ(coordinate, -1.0);
+}
+
 TEST(PlannerPassThrough, RouteBoundaryUsesItsOwnGuideTimeAnchor) {
   const std::vector<Eigen::Vector3f> guide_path{
       Eigen::Vector3f{0.0F, 0.0F, 0.0F},

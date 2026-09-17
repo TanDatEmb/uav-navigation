@@ -661,6 +661,57 @@ TEST(ExpOptimizer, PassThroughJunctionRemainsInsideAcceptanceBall) {
   EXPECT_LE(closest_junction_distance_m, kAcceptanceRadiusM + 1.0e-6);
 }
 
+TEST(ExpOptimizer, SparseStraightGuideKeepsJunctionGeometryAndTimeOnTheSameEdge) {
+  ScopedEnvironmentVariable capture("UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR",
+                                    "/unused/guide-junction-fixture");
+  const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  const auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, context);
+  auto head = makePositionState(0.0);
+  auto tail = makePositionState(13.8);
+  head.col(0) << 0.0, -0.1, 3.0;
+  tail.col(0) << 13.8, -0.1, 3.0;
+  const navigation_math::vec_Vec3f guide{
+      head.col(0), {2.7, -0.1, 3.0}, {5.7, -0.1, 3.0},
+      {8.5, -0.1, 3.0}, {11.5, -0.1, 3.0}, tail.col(0)};
+  const std::vector<double> guide_times{0.0, 0.8, 1.4, 2.0, 2.6, 3.2};
+  // The middle overlap [7.0,7.2] contains no discrete guide sample, but
+  // does contain its collision-checked straight edge. Its asymmetric box
+  // interior is deliberately off that guide, as in the frozen 2WP input.
+  geometry_utils::PolytopeVec corridors{
+      makeBox(-1.6, 4.2, -1.6, 1.4, 2.7, 3.2),
+      makeBox(1.2, 7.2, -1.6, 1.4, 2.8, 3.2),
+      makeBox(7.0, 13.0, -1.6, 1.4, 2.8, 3.2),
+      makeBox(10.7, 15.8, -1.6, 1.4, 2.8, 3.2)};
+  geometry_utils::Trajectory trajectory;
+  // Read immutable pre-optimization state regardless of solve success;
+  // optimizer convergence cannot hide a defective initialization.
+  optimizer.optimize(head, tail, guide, guide_times, corridors, trajectory, true);
+  const auto snapshot = optimizer.takeNominalProblemSnapshot();
+  ASSERT_TRUE(snapshot.has_value());
+  ASSERT_TRUE(snapshot->setup_completed);
+  ASSERT_EQ(snapshot->initial_spatial_variables.cols(), 3);
+  double junction_time_s = 0.0;
+  for (Eigen::Index junction = 0; junction < 3; ++junction) {
+    const auto point = snapshot->initial_spatial_variables.col(junction);
+    EXPECT_NEAR(point.y(), -0.1, 1.0e-12);
+    EXPECT_NEAR(point.z(), 3.0, 1.0e-12);
+    junction_time_s += snapshot->initial_durations_s(junction);
+    const auto upper = std::upper_bound(
+        guide.begin(), guide.end(), point.x(),
+        [](double x, const auto& p) { return x < p.x(); });
+    ASSERT_NE(upper, guide.begin());
+    ASSERT_NE(upper, guide.end());
+    const auto edge = static_cast<std::size_t>(upper - guide.begin() - 1);
+    const double fraction = (point.x() - guide[edge].x()) /
+        (guide[edge + 1U].x() - guide[edge].x());
+    EXPECT_NEAR(junction_time_s, guide_times[edge] + fraction *
+        (guide_times[edge + 1U] - guide_times[edge]), 1.0e-12);
+  }
+}
+
 TEST(ExpOptimizer, RepeatedSparseGuideProjectionAvoidsTinyClampPieces) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.max_vel = 20.0;

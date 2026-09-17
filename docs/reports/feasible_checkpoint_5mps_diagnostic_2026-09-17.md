@@ -708,3 +708,93 @@ estimator-state continuity under a validated uncertainty envelope. Optimize
 small hot-path costs or extract a coordinator only after evidence says they
 limit these outcomes. No new coordinator, process split, alternate publisher,
 fallback or hard-gate relaxation is justified by this round.
+
+## Continuous overlap junction follow-up (component verified; SITL pending)
+
+The next bounded repair normalizes geometry/time together at the existing
+optimizer setup owner, rather than tuning solver cost or extracting authority.
+The current-guide discriminator `external-mode-check-20260917T034028-259405`
+is separate from the nine-run matrix: requested 5 m/s, positive/nominal,
+`long_three_pillars_speed`, same seed/config/visibility, snapshot/world capture
+ON. Navigation clean `08cb9d3fbc9c535f72f36b69c41bc0219355b210`, source
+`692472f228aa8fa161e24a9f8fe33e6d041998d6937525b70b74ca4a0895c531`, Release
+manifest `0bd58069607e92c75a216ca243e09ed95b65c51fc1d701cea6d8042893d4964e`.
+Outcome COMPLETE, accepted [0,1], report FAIL and qualification ineligible.
+This refutes universal straight-route infeasibility, not prior failures or
+the product target. Capture produced 30/30 submitted snapshots, zero drops,
+errors or pending records. The runner finalized COMPLETE accounting after
+process stop; writer completion at process stop remained false, so this is
+not independently graceful writer closure.
+
+In 26/30 frozen inputs, initialized junctions differ from their discrete
+guide references. Cycle 1 has a guide near y=-0.1,z=3, but its overlap
+[7.0,7.2] contains no discrete sample: nearest x=5.7 is outside. Setup
+therefore uses overlap interior (7.1,-1.5,3.1), while retaining the time at
+x=5.7. The same guide **edge** intersects the overlap. An analytic optimizer
+regression against pre-optimization state fails before the repair with
+1.4 m lateral, 0.1 m vertical and 0.3 s timing error. Solver convergence is
+deliberately not the test oracle; this run nevertheless completed, so the
+defect alone does not explain every non-completion.
+
+The repair preserves an existing sampled junction already inside its overlap,
+with its coherent sample time. If discrete lookup misses that intersection,
+it clips ordered guide chords by overlap halfspaces, projects the
+interior onto the feasible chord fraction, and interpolates position/time
+at that fraction. Continuous guide coordinates retain mission-gate phase
+and order. Existing interior fallback remains when no ordered chord
+intersects, but an empty/reversed sample interval cannot silently reuse an
+old index. Mission boundary override and all independent final certificates
+remain. No limits, costs, deadlines, UNKNOWN, freshness, execution or mission
+gates are relaxed. Six analytic projection tests and the optimizer
+before/after regression pass; the existing sparse-gate timing test also passes.
+Independent diff review found no concrete P1/P2 authority/certificate bypass.
+
+Frozen current 2WP snapshots 0/6/17 (cycles 1/106/263) replay serially with
+exact config. At 40/80 ms, cycles 1 and 263 return nominal candidates; cycle
+106 remains unavailable, without a hard-deadline failure. The cycle-1
+isolated baseline used 714 objective evaluations; the repaired replay used
+278, with nominal duration 4.250264 s versus 4.119645 s. This is one
+discriminator, not a timing distribution or completion improvement. Its
+zero-refinement case also increases effort (60 to 201 evaluations), so do
+not claim uniform performance gain. Frozen raw construction and independent
+numerical checks remain in the replay; some deterministic boundary witnesses
+still reject even when the production optimized-candidate certificate passes.
+Every replay still reports `complete_executable_bundle=0`, and its world
+verdict is non-authoritative (no complete role/BACKUP/admission transaction).
+
+The first full-test attempt rejected unrestricted projection at three
+optimizer fixtures and one facade fixture, including high-speed certified
+corridor availability. Moving already-valid sampled junctions unnecessarily
+changed the optimization basin. The revised source limits continuous lookup
+to discrete containment misses and retains valid sampled geometry/time and
+the existing sampled outgoing gate split. Existing success/dynamics/corridor
+assertions and tolerances are not weakened. The isolated replay numbers above
+belong to the unrestricted prototype, not the revised source; they must be
+rerun before drawing conclusions about it.
+
+The revised prefer-valid-sample source passes canonical Release build (23
+packages) and `make test` (exit 0). Optimizer XML has 24 tests/zero failures,
+config XML 81/zero and facade XML 17/zero; the four fixtures rejected by the
+prototype now pass unchanged. Python runtime contracts: 386 tests, one
+existing artifact-dependent skip, zero failures. A sixth analytic fixture
+also confirms arithmetic failure leaves output point/time/coordinate intact,
+so a failed projection cannot corrupt the sampled fallback. Read-only
+adversarial review rejected its earlier mission-boundary time finding:
+geometry and reference are both overridden to the producer-owned guide
+boundary before its time is assigned; no concrete P1/P2 bypass remains.
+
+Revised-source exact-config serial replays at 40/80 ms return nominal
+candidate/unavailable/candidate for cycles 1/106/263, with objective
+evaluations 386/264/823. Cycle 1 duration is 4.123666 s; optimized and
+independent deterministic certificates pass. Cycle 263 duration is 4.781459 s
+and both certificates pass. At 0/80 ms, cycle 1 uses 31 evaluations and
+retains an independent boundary rejection; cycle 263 uses 653 and passes.
+Cycle 106 remains unavailable at both budgets without a deadline failure.
+No executable bundle or authoritative world/role/BACKUP/admission proof is
+created by these replays; no general latency or completion gain is claimed.
+
+A fresh clean capture-OFF nine-run matrix is required before judging
+integrated benefit. Observation-supported stopping and estimator-state
+continuity remain separate unclosed product requirements. The declared
+`aist-mid360-drive` registry/config exists but its prepared local ROS2 bag
+does not; recorded-data verification is not silently counted as performed.
