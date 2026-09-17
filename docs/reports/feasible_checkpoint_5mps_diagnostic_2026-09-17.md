@@ -1248,3 +1248,175 @@ handoff and actual braking/settling are the next coupled layer; state-ingress
 freshness is an independent containment lever. No UNKNOWN, tracking, mission,
 recovery timeout or deadline relaxation, MAIN-only early return, unbounded
 retry, large coordinator or parallel command authority is justified.
+
+### WP3-to-terminal workflow audit: measured progress versus planned progress
+
+The completion-first review was redirected to the reported 5WP west-turn
+stall before implementing the proposed corridor-tail compaction. This audit
+reads current source at `0c6ede18` and exact retained artifacts; production
+behavior, thresholds and configuration are unchanged. Waypoint indices below
+are zero-based. The route is `(0,0,3) -> (48,0,3) -> (48,5,3) -> (41,5,3)
+-> (41,0,3)`, with WP0--WP3 PASS_THROUGH and WP4 STOP.
+
+The actual integrated ownership is mission progress in External Mode,
+immutable execution authority in the timeline, proposal construction in the
+planning worker/backend, and direct P/V/A/yaw setpoints at the PX4 adapter.
+The workflow below describes existing source, not a proposed coordinator or
+an active OMMPC/controller path.
+
+```mermaid
+flowchart TD
+  M[External Mode: current measured mission WP] --> R[Immutable request: route, world, state, future execution anchor]
+  R --> P[Planner: incoming guide + bounded outgoing lookahead]
+  P --> N{MAIN and required BACKUP certified?}
+  N -->|yes| A{Latest-world + identity + freshness + splice/reserve admission}
+  A -->|pass| S[Timeline: stage pending, then activate at splice]
+  S --> C{Active sample and final lease/identity checks valid?}
+  C -->|yes| X[External Mode admission and direct PX4 PVA setpoints]
+  C -->|no| O
+  X --> V[Fresh measured state]
+  V --> G{PASS: ordered measured entry/crossing in current ball?}
+  G -->|yes| W{Finite velocity and valid current MAIN continuation witness?}
+  W -->|yes| H[Accept WP; increment request; publish next goal]
+  H --> M
+  W -->|no| M
+  G -->|no| M
+  N -->|no| F{Existing command still certified and usable?}
+  A -->|reject| F
+  F -->|yes| C
+  F -->|no| E{One-shot measured emergency authorized and certified?}
+  E -->|yes| B[Execute certified brake; measured-stop recovery]
+  B --> R
+  E -->|no| O[Reject navigation command; PX4 Hold]
+```
+
+This MAIN progression branch has explicit initial/coincident/completed-suffix
+exceptions, not a generic planner-success exception. The terminal branch is:
+
+```mermaid
+flowchart LR
+  T[WP4 STOP command ready / certified endpoint hold] --> I{Current measured position inside STOP ball?}
+  I -->|yes| L{Finite measured speed at most 0.15 m/s?}
+  L -->|yes continuously for 0.5 s| K[Holding]
+  K -->|inside and slow for configured 0.4 s| D[Measured WP4 acceptance / mission COMPLETE]
+  I -->|no| U[Do not accept; confirmation resets / bounded recovery]
+  L -->|no| U
+```
+
+Key source cuts, separating logic from runtime evidence:
+
+| Boundary | Existing condition and ownership |
+| --- | --- |
+| PASS position | `navigation_mission/src/route_progress.cpp:430-489`: current in-ball position or recent forward measured segment intersecting the ball, with projection onto an incoming/outgoing arc of the current waypoint. Spatial proximity on a later self-crossing branch is insufficient. |
+| PASS velocity | `mission_controller.cpp:488-495`: measured velocity must exist and be finite. Ordinary PASS does **not** require speed <=0.15 m/s or outgoing-heading alignment. |
+| PASS progression | `mission_controller.cpp:569-579`: current mission/WP/request continuation witness, or the explicit certified suffix-stop/coincident/initial exception, AND measured crossing AND finite velocity. Generic `trajectory_ready_` alone is insufficient. |
+| Continuation production | `navigation_runtime_node.cpp:7904-7916` and `certified_continuation.hpp:60-101`: sampled unfinished MAIN, current boundary event/constraint and identity, plus remaining MAIN reserve. Current product reserve is `0.08 + 0.40 + 0.10 + 0.02 = 0.60 s`; this is not a waypoint acceptance radius. |
+| Continuation consumption | `navigation_mode_node.cpp:1367-1399`: accepted command lease, source/receive freshness, health/epoch and exact current mission/WP/request precede the per-update witness. A retained predecessor cannot advance the successor WP. |
+| Next goal | `mission_controller.cpp:587-613` and `navigation_mode_node.cpp:1468-1500`: only measured acceptance advances WP/request; preserve eligible predecessor under its old identity while the successor activates. |
+| Future anchor | `navigation_runtime_node.cpp:2083-2146` and `planner.cpp:3264-3275`: desired goal and executing predecessor remain distinct; new PVAJ comes from immutable execution anchor, not private trajectory history. |
+| Safety continuity | `navigation_runtime_node.cpp:5474-5500`: having `backup_available=1` does not establish that the physical state can still enter that suffix; strict current-anchor/tracking and world checks remain necessary. |
+| Terminal STOP | `mission_controller.cpp:505-545,615-669`: current measured in-ball position, measured speed, continuous confirmation and hold. The earlier overlapping-route STOP false rejection is already corrected in current source. |
+
+#### Discriminating the reported WP3 stall
+
+Four retained exact-5WP runs have WP0--WP2 accepted but terminate with WP3
+still active. The search inspected 89 retained September-15/17 runtime
+manifests; these are diagnostic examples, **not one matched rate denominator**.
+Each minimum uses finite source-stamped `lio_odom` propagated positions only
+after its own WP2 acceptance event and no later than its safety-stop event.
+
+| Artifact suffix (20260917T) | Build navigation SHA | Measured interval (s) | Samples | Minimum WP3 error (m) | Samples inside 0.8 m |
+| --- | --- | --- | --- | --- | --- |
+| `025336-174950` | `c3d7c841` | 81.216--84.320 | 155 | 1.218105 | 0 |
+| `032600-235030` | `4a6369d3` | 54.636--56.896 | 113 | 1.540812 | 0 |
+| `043622-353500` | `478855ee` | 59.416--62.316 | 145 | 3.795044 | 0 |
+| `063036-28118` | `06e59cd0` | 71.908--74.088 | 110 | 1.210296 | 0 |
+
+All four use the `long_three_pillars` 5WP route, not the distinct
+`long_three_pillars_multiwaypoint` 9WP mission. The first two manifests are
+clean; the later two include the separately identified documentation-migration
+dirty fingerprint. Their separate full SHA, manifest hash and config snapshots
+remain in each `runtime.json`/`metadata.json`; they are not pooled as an A/B.
+
+**CONFIRMED:** the four examples do not show a vehicle entering WP3's ball and
+then being refused by acceptance. They lose executable continuity before
+measured entry. All four report an existing BACKUP and clear sampled command
+path but current/projected anchor beyond its 0.25 m tracking certificate:
+raw errors 0.520/0.906/0.864/0.714 m respectively. This is a different invariant
+from the receiver's independent 0.75 m outer command-anchor cap. A clear
+sampled path does not prove closed-loop trackability or reachability from the
+diverged measured state.
+
+The latest run closes the causal chain particularly clearly:
+
+1. WP2 acceptance at source 71.908 s publishes WP3/request4. WP4/request5 is
+   never published. An outgoing path towards `(41,0,3)` is WP3's lookahead,
+   not proof that mission authority has advanced to WP4.
+2. Generation11 activates at 72.444 s and is authorized/sampled as MAIN
+   WP3/request4. PX4 input traces still attribute its PVA update at 74.072 s.
+   Thus this path was not merely waiting behind an admission/queue blocker.
+3. Cycle620's replacement fails at 35.244 ms, before its 80 ms deadline.
+   `mapping.log:734` shows seed stage3 with a per-component continuity failure;
+   the coarse failure taxonomy says `nominal_dynamics`. Do not interpret the
+   sticky earlier BACKUP selection fields as a new successful BACKUP solve.
+4. The retained current/source-aligned/projected errors are
+   0.714447/0.706650/0.901935 m, above 0.25 m; relative velocity error is
+   1.952851 m/s. A one-shot measured emergency is authorized (reason1), but
+   commit result2 records failure. `mapping.log:745-746` resolves the reason:
+   `initial_point_blocked`, inflated cell3 (`kOccupied`) at
+   `(42.043676,5.649716,3.039761)`. The first two examples have the same
+   explicit reason at their mapping lines451/668. Do not infer the remaining
+   `043622-353500` example's emergency rejection reason without its exact witness.
+5. A REJECTED command appears at 74.076 s; External Mode enters safety Hold at
+   74.088 s. The planned WP3 boundary timestamp is 74.073629581 s, while
+   measured entry has not occurred. Planned event time is not measured arrival.
+
+**CONDITIONAL architecture seam:** planned/future progress can outrun measured
+mission progress. In cycle620 the new guide starts near
+`(41.047565,4.315124,2.994670)`, while the measured state remains north/east of
+WP3. Source `planner.cpp:3632-3642,3992-4030` reconstructs the current mission
+boundary gate when extending that guide to the outgoing leg; it does not
+explicitly consume a predecessor-prefix boundary obligation in the immutable
+request. `PlanningHistory` currently carries generation/velocity and
+`ExecutionAnchor` carries PVAJ/role/end/world/lineage, not the predecessor route
+event. This may force a future-anchor solve to revisit an unacknowledged gate,
+but the observed reinserted gate and solver failure do **not** by themselves
+prove that removing it would be correct or restore availability.
+
+The next controlled reproducer must put the planned boundary before successor
+activation while measured acceptance is still pending, with both an in-tube
+case and a diverged/occupied case. Compare the obligation covered by the
+retained prefix, the new suffix, certificate/identity lifetimes, and exact
+measured progression. Preserve the hard waypoint obligation; do not waive it
+because an anchor or solver path is already on the outgoing leg.
+
+The second high-leverage discriminator is synchronized closed-loop corner
+trackability and braking clearance: command PVA versus source-matched measured
+P/V, independent aligned ground truth, and actual inflated-world classification.
+An optimizer certificate does not establish that the vehicle remains inside
+its reserved tracking tube. The new census does not isolate LIO, PX4, frame
+anchoring, sensing/inflation, or controller dynamics as the root cause.
+
+#### Verification and implementation boundary
+
+Added `FiveWaypointWestTurnUsesMeasuredCrossingAndCurrentWitness` in the
+existing mission test file. It keeps the exact 5WP geometry and existing
+0.8 m/0.15 m/s/0.5 s/0.4 s semantics. It rejects the latest outside-ball
+measured position, generic readiness and predecessor witness, then accepts
+in-ball WP3 at 2.9 m/s with the exact current witness and publishes WP4/request5.
+It also preserves STOP speed, confirmation and hold before COMPLETE.
+
+The rebuilt mission target passes 45/45 cases; runtime planner-FSM 69/69 and
+continuation/completion 11/11 pass. Tests require the ordinary Jazzy/install
+environment; an initial unsourced CTest invocation failed in the Python test
+runner (`ament_cmake_test` unavailable), then passed after sourcing the existing
+environment. `git diff --check` passes. This is workflow/contract evidence,
+**not** a full fresh Release build, new SITL matrix or qualification.
+
+The corridor-tail proposal and its two previously added RED test files remain
+uncommitted and paused. No new bypass, threshold/config change, runtime
+implementation path, or larger coordinator is introduced by this audit.
+Priority now is the explicit boundary-obligation/future-anchor reproducer and
+closed-loop clearance/trackability, followed by the smallest justified change
+and a fresh sequential 2/5/9WP three-repetition matrix. The broader complete-
+MAIN+BACKUP readiness failures remain independent completion blockers.

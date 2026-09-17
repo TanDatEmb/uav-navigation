@@ -974,6 +974,84 @@ mission:
   expectWaypointAccepted(complete, 4U);
 }
 
+TEST(MissionController, FiveWaypointWestTurnUsesMeasuredCrossingAndCurrentWitness) {
+  using px4_navigation_external_mode::Mission;
+  using px4_navigation_external_mode::MissionController;
+  using px4_navigation_external_mode::MissionControllerEvent;
+  using px4_navigation_external_mode::MissionControllerState;
+  using px4_navigation_external_mode::MissionWaypoint;
+  Mission mission;
+  mission.id = "five_waypoint_handoff";
+  mission.frame = "lio_odom";
+  mission.waypoints = {
+      {"origin", {0.0, 0.0, 3.0}, 0.9, 0.0, MissionWaypoint::Behavior::PassThrough},
+      {"outbound", {48.0, 0.0, 3.0}, 0.9, 0.0, MissionWaypoint::Behavior::PassThrough},
+      {"north", {48.0, 5.0, 3.0}, 0.8, 0.0, MissionWaypoint::Behavior::PassThrough},
+      {"west", {41.0, 5.0, 3.0}, 0.8, 0.0, MissionWaypoint::Behavior::PassThrough},
+      {"finish", {41.0, 0.0, 3.0}, 0.8, 0.4, MissionWaypoint::Behavior::Stop}};
+  ASSERT_TRUE(mission.valid());
+  MissionController controller(mission);
+  controller.activate(0.0);
+  ASSERT_EQ(controller.update(0.0, std::nullopt).type,
+            MissionControllerEvent::Type::PublishGoal);
+  for (std::uint32_t index = 0; index < 3; ++index) {
+    const auto event = controller.update(
+        0.1 + index, mission.waypoints[index].position_enu, true,
+        Eigen::Vector3d::Zero(),
+        testMainContinuation(mission.id, index, controller.activeRequestId()));
+    ASSERT_TRUE(event.waypoint_accepted);
+    ASSERT_EQ(controller.activeWaypointIndex(), index + 1U);
+  }
+  ASSERT_EQ(controller.activeRequestId(), 4U);
+  controller.onNativeTrajectoryReady();
+  // The latest 5WP failure's measured position is still outside WP3's ball.
+  // A current MAIN witness cannot turn proximity or outgoing lookahead into
+  // measured acceptance.
+  const auto outside = controller.update(
+      3.0, Eigen::Vector3d{42.04367568416794, 5.649716091543489,
+                           3.0397609726464507},
+      true, Eigen::Vector3d{-1.4432899141601752, 0.43466892255184653,
+                            0.30943159414876076},
+      testMainContinuation(mission.id, 3U, 4U));
+  expectNoWaypointAccepted(outside);
+  EXPECT_EQ(controller.activeWaypointIndex(), 3U);
+  const Eigen::Vector3d inside{41.3, 5.2, 3.0};
+  const Eigen::Vector3d incoming_velocity{-2.9, 0.0, 0.0};
+  const auto generic_ready_only =
+      controller.update(4.0, inside, true, incoming_velocity);
+  expectNoWaypointAccepted(generic_ready_only);
+  EXPECT_EQ(controller.activeWaypointIndex(), 3U);
+  const auto predecessor_witness = controller.update(
+      4.1, inside, true, incoming_velocity,
+      testMainContinuation(mission.id, 2U, 3U));
+  expectNoWaypointAccepted(predecessor_witness);
+  EXPECT_EQ(controller.activeWaypointIndex(), 3U);
+  // PASS -> STOP does not require the vehicle to stop or align its velocity
+  // with the outgoing leg before publishing the distinct STOP goal.
+  const auto handoff = controller.update(
+      4.2, inside, true, incoming_velocity,
+      testMainContinuation(mission.id, 3U, 4U));
+  expectWaypointAccepted(handoff, 3U);
+  EXPECT_EQ(handoff.type, MissionControllerEvent::Type::PublishGoal);
+  EXPECT_EQ(handoff.waypoint_index, 4U);
+  EXPECT_EQ(handoff.request_id, 5U);
+  EXPECT_GT(handoff.acceptance_speed_mps, mission.control.acceptance_speed_mps);
+  controller.onNativeTrajectoryReady();
+  const auto moving_stop = controller.update(
+      5.0, mission.waypoints[4].position_enu, true, incoming_velocity);
+  expectNoWaypointAccepted(moving_stop);
+  EXPECT_EQ(controller.state(), MissionControllerState::ExecutingWaypoint);
+  expectNoWaypointAccepted(controller.update(
+      6.0, mission.waypoints[4].position_enu, true, Eigen::Vector3d::Zero()));
+  expectNoWaypointAccepted(controller.update(
+      6.6, mission.waypoints[4].position_enu, true, Eigen::Vector3d::Zero()));
+  EXPECT_EQ(controller.state(), MissionControllerState::Holding);
+  const auto complete = controller.update(
+      7.1, mission.waypoints[4].position_enu, true, Eigen::Vector3d::Zero());
+  expectWaypointAccepted(complete, 4U);
+  EXPECT_EQ(complete.type, MissionControllerEvent::Type::Complete);
+}
+
 TEST(MissionController, NativeReadinessCannotClearPendingTerminalStopHold) {
   const auto path = writeMission(R"yaml(
 mission:
