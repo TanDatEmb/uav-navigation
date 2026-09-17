@@ -329,6 +329,11 @@ geometry_utils::PolytopeVec makePolytopes(
 
 struct CandidateReport {
   bool constructed{false};
+  bool evaluation_input_valid{true};
+  bool piece_mapping_aligned{false};
+  const char* evaluation_status{"NO_CANDIDATE"};
+  int trajectory_piece_count{0};
+  Eigen::Index mapped_piece_count{0};
   double head_residual{std::numeric_limits<double>::infinity()};
   double tail_residual{std::numeric_limits<double>::infinity()};
   double corridor_violation{std::numeric_limits<double>::infinity()};
@@ -745,11 +750,21 @@ CandidateReport certify(const geometry_utils::Trajectory& trajectory,
                         const navigation_world_model::WorldModelView* world) {
   CandidateReport report;
   report.constructed = !trajectory.empty();
+  report.trajectory_piece_count = trajectory.getPieceNum();
+  report.mapped_piece_count = piece_to_corridor.size();
+  report.piece_mapping_aligned =
+      report.constructed && piece_to_corridor.size() == trajectory.getPieceNum();
   report.world = false;
   report.world_failure = world == nullptr ? "not_replayed" : "failed";
-  if (!report.constructed || piece_to_corridor.size() != trajectory.getPieceNum()) {
+  if (!report.constructed) {
     return report;
   }
+  if (!report.piece_mapping_aligned) {
+    report.evaluation_input_valid = false;
+    report.evaluation_status = "NOT_EVALUABLE_PIECE_MAPPING";
+    return report;
+  }
+  report.evaluation_status = "EVALUATED";
   report.duration = trajectory.getTotalDuration();
   report.piece_durations_s = trajectory.getDurations();
   navigation_math::StatePVAJ actual_head;
@@ -901,6 +916,9 @@ void printReport(const std::string& label, const CandidateReport& report,
                 const bool config_exact) {
   std::cout << label
             << " constructed=" << report.constructed
+            << " evaluation_status=" << report.evaluation_status
+            << " trajectory_pieces=" << report.trajectory_piece_count
+            << " mapped_pieces=" << report.mapped_piece_count
             << " head_residual=" << report.head_residual
             << " tail_residual=" << report.tail_residual
             << " corridor_violation=" << report.corridor_violation
@@ -936,7 +954,9 @@ void printReport(const std::string& label, const CandidateReport& report,
             << " complete_executable_bundle="
             << report.complete_executable_bundle
             << " exact_verdict="
-            << (config_exact ? "ELIGIBLE" : "INCONCLUSIVE_LEGACY_CONFIG")
+            << (!config_exact ? "INCONCLUSIVE_LEGACY_CONFIG"
+                : !report.evaluation_input_valid
+                    ? report.evaluation_status : "ELIGIBLE")
             << " duration=" << report.duration << '\n';
   const auto previous_flags = std::cout.flags();
   const auto previous_precision = std::cout.precision();
@@ -1525,7 +1545,8 @@ int run(const std::string& path) {
               << " last_return=" << optimizer.diagnostics().last_lbfgs_return_code
               << " retry_count=" << optimizer.diagnostics().retry_count << '\n';
     printReport("D_production_lbfgs_candidate", certify(
-        trajectory, head, tail, h_polytopes, h_poly_idx, polytope_vec,
+        trajectory, head, tail, optimizer.diagnosticEffectiveCorridors(),
+        optimizer.diagnosticEffectivePieceMapping(), sfcs,
         config, world_snapshot.get()), config_replay.exact);
   }
 
@@ -1575,7 +1596,8 @@ int run(const std::string& path) {
               << optimizer.diagnostics().feasible_iterate_certificate_time_us
               << '\n';
     printReport("D_budget_candidate", certify(
-        trajectory, head, tail, h_polytopes, h_poly_idx, polytope_vec,
+        trajectory, head, tail, optimizer.diagnosticEffectiveCorridors(),
+        optimizer.diagnosticEffectivePieceMapping(), sfcs,
         config, world_snapshot.get()), config_replay.exact);
   }
 
@@ -1623,7 +1645,8 @@ int run(const std::string& path) {
               << " retry_count=" << optimizer.diagnostics().retry_count
               << '\n';
     printReport(label, certify(
-        trajectory, head, tail, h_polytopes, h_poly_idx, polytope_vec,
+        trajectory, head, tail, optimizer.diagnosticEffectiveCorridors(),
+        optimizer.diagnosticEffectivePieceMapping(), sfcs,
         config, world_snapshot.get()), config_replay.exact);
   }
 
@@ -1652,8 +1675,10 @@ int run(const std::string& path) {
               << " retry_count=" << optimizer.diagnostics().retry_count
               << '\n';
     printReport("F_terminal_velocity_candidate", certify(
-        trajectory, head, diagnostic_tail, h_polytopes, h_poly_idx,
-        polytope_vec, config, world_snapshot.get()), config_replay.exact);
+        trajectory, head, diagnostic_tail,
+        optimizer.diagnosticEffectiveCorridors(),
+        optimizer.diagnosticEffectivePieceMapping(), sfcs,
+        config, world_snapshot.get()), config_replay.exact);
   }
 
   // G: derive one terminal-speed proposal from the final guide turn and its
@@ -1704,8 +1729,10 @@ int run(const std::string& path) {
               << " retry_count=" << optimizer.diagnostics().retry_count
               << '\n';
     printReport("G_tail_turn_candidate", certify(
-        trajectory, head, diagnostic_tail, h_polytopes, h_poly_idx,
-        polytope_vec, config, world_snapshot.get()), config_replay.exact);
+        trajectory, head, diagnostic_tail,
+        optimizer.diagnosticEffectiveCorridors(),
+        optimizer.diagnosticEffectivePieceMapping(), sfcs,
+        config, world_snapshot.get()), config_replay.exact);
   }
 
   // E: high-effort generic MINCO/L-BFGS. Multiple deterministic time starts
@@ -1721,16 +1748,29 @@ int run(const std::string& path) {
     optimizer.setSolveBudget(nullptr, 0, 0);
     const bool success = optimizer.optimize(
         head, tail, sfcs, initial_points, times, trajectory);
+    const bool seed_mapping_aligned =
+        times.size() == optimizer.diagnosticEffectivePieceMapping().size() &&
+        initial_points.size() + 1U == static_cast<std::size_t>(
+            optimizer.diagnosticEffectivePieceMapping().size());
     std::cout << "E_high_effort_scale=" << scale
               << " success=" << success
+              << " seed_mapping_aligned=" << seed_mapping_aligned
               << " lbfgs_attempts=" << optimizer.diagnostics().lbfgs_attempt_count
               << " evaluations=" << optimizer.diagnostics().lbfgs_evaluation_count
               << " first_return=" << optimizer.diagnostics().first_lbfgs_return_code
               << " last_return=" << optimizer.diagnostics().last_lbfgs_return_code
               << " retry_count=" << optimizer.diagnostics().retry_count << '\n';
-    printReport("E_high_effort_candidate", certify(
-        trajectory, head, tail, h_polytopes, h_poly_idx, polytope_vec,
-        config, world_snapshot.get()), config_replay.exact);
+    auto candidate_report = certify(
+        trajectory, head, tail, optimizer.diagnosticEffectiveCorridors(),
+        optimizer.diagnosticEffectivePieceMapping(), sfcs,
+        config, world_snapshot.get());
+    if (!seed_mapping_aligned) {
+      // No search was performed on the requested seed representation. This
+      // is a replay-input incompatibility, not proof of planner infeasibility.
+      candidate_report.evaluation_input_valid = false;
+      candidate_report.evaluation_status = "NOT_EVALUABLE_SEED_MAPPING";
+    }
+    printReport("E_high_effort_candidate", candidate_report, config_replay.exact);
   }
   return 0;
 }

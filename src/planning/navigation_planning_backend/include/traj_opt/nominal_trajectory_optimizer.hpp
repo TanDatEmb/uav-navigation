@@ -591,6 +591,16 @@ namespace traj_opt {
         ~ExpTrajOpt();
 
 #ifdef UAV_NAVIGATION_DIAGNOSTIC_REPLAY
+        // A replay must certify against the same effective geometry/mapping
+        // that produced its output, not a frozen mapping from another setup.
+        const PolyhedraH& diagnosticEffectiveCorridors() const noexcept {
+            return opt_vars.hPolytopes;
+        }
+
+        const VecDi& diagnosticEffectivePieceMapping() const noexcept {
+            return opt_vars.hPolyIdx;
+        }
+
         // Diagnostic-only seam for replaying a frozen corridor through the
         // production pre-MINCO setup path.  This deliberately bypasses
         // SimplifySFC so a replay can compare the captured PRE and POST

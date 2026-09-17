@@ -2,13 +2,14 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: independent execution and planner-formulation reviews exposed
-why a green planned-boundary reserve test would not close measured handoff.
-A real-facade renewal probe reproduces a crossing proposal with574.112640ms
-MAIN reserve under both policies; the experimental entry+600ms selector was
-withdrawn, not shipped as a completion fix. The final section ranks the
-bundle-first and measured-window discriminators. No product decision or gate
-is changed by this diagnostic review.
+Latest follow-up: divergent formulation/protocol reviews prioritize complete-
+bundle viability from actual full PVAJ and measured-handoff/identity tests;
+exact-prefix salvage is only a discriminator, not the default repair. The
+574.112640ms facade reserve counterexample remains; the experimental
+entry+600ms selector was withdrawn. A frozen moving replay also exposed a
+warm-start dimension hazard and stale certificate mapping. The invalid-seed
+boundary is corrected separately; no valid-command policy, hard gate or
+completion improvement is claimed. See the final divergent-review section.
 
 The last integrated evidence remains the explicit FAST/AllowUnknown matrix on `80020ed0`
 completed all nine runs: **1/9mission COMPLETE,0/9report PASS**, three
@@ -2321,5 +2322,138 @@ cmake --build build/navigation_runtime --target test_certified_continuation -j2
 ./build/navigation_planning_backend/test_planner_facade --gtest_filter='PlannerFacade.*ProductPassRenewalProbe*' --gtest_output=xml:.artifacts/diagnostics/independent-bundle-review-20260917/product_pass_renewal.gtest.xml
 ctest --test-dir build/navigation_planning_backend --output-on-failure
 ctest --test-dir build/navigation_runtime -R '^test_certified_continuation$' --output-on-failure
+git diff --check
+```
+
+##### Divergent review: viability, protocol, and representation
+
+The second independent review challenged the exact-prefix recommendation
+itself. Two reasoning agents reviewed formulation and mission/execution
+protocol independently; an actual `gpt-5.6-luna` agent inventoried replay
+dimensions and APIs. The root checked current source and exercised the frozen
+moving-state replay. Their conclusions are not votes and do not establish
+flight causality. The latest integrated denominators remain separately
+SAFE3/9 and FAST1/9; no new completion improvement is claimed here.
+
+**Revised priority, superseding the previous discriminator ordering:**
+design a request-owned speed/profile seed from actual
+full future PVAJ and the viability of the complete MAIN–BACKUP bundle, before
+optimizing MAIN. Exact-prefix certification remains a discriminator, not the
+default repair. More accepted short prefixes can mean more BACKUP transitions,
+restarts and worse mission completion. Historical nominal-only early return
+and reverted HG-026 are counterexamples to optimizing proposal acceptance or
+solver milliseconds as the product outcome.
+
+The current logical workflow has no absolute circular dependency requiring
+waypoint acceptance before outgoing planning: outgoing lookahead already exists.
+It does, however, impose separate geometric, temporal and identity decisions:
+
+```mermaid
+flowchart TD
+    A[Actual future PVAJ, world, immutable route and selected policy] --> B[Guide, corridor and terminal target]
+    B --> C[Full MAIN certificate, then BACKUP on selected MAIN]
+    C --> D[Executed MAIN prefix plus BACKUP]
+    D --> E{Admission: identities, world and MAIN reserve}
+    E -->|Valid| F[Canonical active bundle]
+    E -->|Rejected| K[Keep predecessor only while its certificates remain valid]
+    F --> G[Sample: continuation boolean from remaining MAIN time]
+    G --> H[Final execution leases and publish]
+    H --> I{PX4: current request witness and ordered measured arrival}
+    I -->|Not yet| F
+    I -->|PASS accepted| J[Next request: cancel old solve and advance goal epoch]
+    J --> A
+    K -->|Expires or invalidates| L[Certified recovery or navigation authority revoked]
+```
+
+Three deliberately different alternatives are falsifiable:
+
+| Direction | Evidence and strongest objection | Discriminator and rejection criterion |
+|---|---|---|
+| Complete-bundle viability before optimization | `evidence_speed_governor.hpp:39-47` evaluates a hypothetical speed by replacing V while retaining A/J; it does not prove the actual fast anchor can reach that speed. `planner.cpp` chooses terminal targets before searching BACKUP on a fixed MAIN. A conservative profile can nevertheless turn every crossing into a slow approach. | Freeze actual full PVAJ/world/corridor/80ms and selected policy. Seed from bounded anticipated corner/frontier/braking viability, without modifying the head. Measure complete bundle readiness, ordered progress, handoff-window overlap and BACKUP/restart count. Reject if only braking availability improves or progress degrades. |
+| Route intent distinct from measured checkpoint | Every new waypoint request cancels the worker and advances goal epoch (`navigation_runtime_node.cpp:2132-2145`). PX4 may execute an adjacent predecessor but it cannot authorize the new waypoint (`navigation_mode_node.cpp:1401-1403`). This is intentional stale-result containment, not itself a bug. | Fake-clock three PASS plus STOP; vary spacing, solve/future-anchor/DDS delay. Determine whether a still-useful outgoing solve is cancelled or a crossing is missed before the next current-request witness. Only then consider multi-junction certificates for one immutable route window. Reject without a reproducible liveness loss; never relabel an old command. |
+| Equivalent geometry independent of discretization | One polynomial piece per SFC (`nominal_trajectory_optimizer.cpp:1674-1712`); overlap guide timestamps set durations (`:1636`). Frozen request `_2_2_3` contains two approximately58ms pieces. Short durations alone do not establish numerical or physical infeasibility. | Preserve head/tail, allowed physical region, route gates and budget; compare only provably equivalent redundant-corridor representations. Track conditioning, boundary residuals and first violating piece, not just solve time. Reject if redundancy is not proven or the failure remains. Never replace corridors with an uncertified convex hull. |
+
+Protocol review also identified two semantic questions, not confirmed flight
+causes. Continuation is computed at sample time (`navigation_runtime_node.cpp:7904`)
+and is not recomputed at final publication (`:8173`). The receiver has a
+boolean/boundary stamp, not MAIN-end expiry. A command published at10.000s
+with MAIN-end10.620s and100ms command lease can arrive50ms later with valid
+generic leases but570ms MAIN remaining. The600ms derivation is80ms solve +
+400ms stitch +100ms scheduler +20ms guard (`planning_timing.hpp:9-20`). History
+defines an admission reserve; it does not by itself require600ms at the
+receiver. Define that linearization contract before adding an expiry field or
+claiming a receiver bug. A deterministic test should vary local wait and
+receiver delay while keeping the other leases valid.
+
+`MissionController::update` stores previous position time as mission-update NOW
+even for repeated use of one odometry snapshot (`mission_controller.cpp:367-371`).
+The adapter does not pass source sequence/stamp into that API. A duplicate
+update at10.190s can make measurements sourced at10.000s and10.300s appear to
+have only110ms crossing gap. This is a confirmed time-domain mismatch; whether
+the250ms limit means source-sample gap or update gap is a contract question.
+Test duplicate updates, source gaps around250ms and epoch reset before changing
+it. Do not latch a stale permission to accept a crossing retrospectively.
+
+**Replay integrity closure, separate from a completion fix:** the frozen
+moving request `nominal_problem_snapshot_2_2_3.json` from session
+`external-mode-check-20260917T064057-44569`, source
+`06e59cd0678538cbae16dabf52bc4a5a55dc303b`, caused exit139; a GDB rerun reported
+heap corruption in the E high-effort warm-start call. This does not prove a
+flight-process crash. Source review found that the supplied seed is written
+after SimplifySFC without checking against the resulting piece/junction
+dimensions. The boundary now rejects mismatched/invalid seeds before any
+write. A matching seed still works; a three-piece seed whose three identical
+corridors simplify to one is rejected with no L-BFGS evaluation. No valid head,
+deadline, dynamic limit, world policy or certificate is changed.
+
+D/F/G/E replay certificates previously used the frozen piece mapping even
+when fresh setup produced a different mapping. Constructed outputs could
+therefore print infinite unevaluated metrics despite a solver success. Replay
+now uses its optimizer's own effective corridors/mapping; an unaligned mapping
+is explicitly `NOT_EVALUABLE_PIECE_MAPPING`. These are evidence-tool/boundary
+corrections, not numerical proof or flight acceptance. Current-code replay of
+the historical input is not a matched current-runtime A/B. No failed finite
+optimized trajectory has yet been captured with sufficient attribution to
+close the unused-tail discriminator; an empty rejected output is not such a
+trajectory. Generic D/F/G probes also remain distinct from the captured moving
+request's `baseline_only=false, suppress_optional_refinement=true` entrypoint.
+
+SAFE still requires known-free BACKUP. Explicit FAST still permits UNKNOWN
+and its later-disclosure risk; both block currently OCCUPIED, UNDEFINED and
+OUT_OF_MAP. No new coordinator, supervisor FSM, hard-gate tuning or nested
+retry is justified by this review. Choose a minimal formulation/protocol
+change only after its discriminator, then freeze a fresh authoritative Release
+build and repeat the separate-policy integrated matrix.
+
+Verification of this evidence closure: backend9/9CTest executables pass;
+optimizer27/27cases pass, including both warm-start regressions. The complete
+moving replay exits0. Fresh setup produces8pieces whereas the captured
+mapping has9; all evaluated output certificates now have matching counts.
+All four E seed scales are `NOT_EVALUABLE_SEED_MAPPING` with zero optimizer
+evaluations, not evidence of four physically infeasible paths. Generic D
+selects a full optimized-MAIN certificate with V4.893159/A4.116713/J7.592581;
+`complete_executable_bundle=0` throughout. Its deterministic seed-import
+boundary verdict differs from the optimized-MINCO construction contract and
+must not be used to reclassify that output as an executable success or failure.
+The captured moving-mode entrypoint and full bundle remain untested here.
+
+The warm-start correction is commit `781fd805`, pushed to the current branch.
+The diagnostic follow-up source identities are replay SHA-256
+`db63684c99fdf48e65004489347a8e6215973da6e1ce30fe5a240fda502ff0ef`
+and optimizer header SHA-256
+`c8c9f871016d3acf578812731ffcde0707b4caf01891ebba1e5f6c265a16385c`.
+The retained transcript is
+`.artifacts/diagnostics/independent-bundle-review-20260917/replay_after_seed_dimension_guard.log`,
+SHA-256 `79172963cebb5329a07e4535fd458ba31b6b4bfc9f0259a29978719f201ded01`.
+The historical input SHA-256 is
+`8ce75b78fe1a3531699b23809a4a6dc68d92b5e1c377644048464d43cbd411e4`.
+No new SITL matrix or current whole-workspace Release manifest is claimed.
+
+```sh
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+cmake --build build/navigation_planning_backend -j2
+ctest --test-dir build/navigation_planning_backend --output-on-failure
+script -q -e -c './build/navigation_planning_backend/replay_nominal_problem_snapshot .artifacts/diagnostics/complete-bundle-06e59cd0-9wp-20260917/nominal_problem_snapshot_2_2_3.json' .artifacts/diagnostics/independent-bundle-review-20260917/replay_after_seed_dimension_guard.log
 git diff --check
 ```
