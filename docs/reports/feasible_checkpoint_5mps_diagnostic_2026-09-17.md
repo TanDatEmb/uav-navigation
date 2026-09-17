@@ -2,12 +2,15 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: clean commit `c3d7c841` completed the ready-first nine-run
-matrix. Mission completion was 0/9 and report PASS 0/9. The earlier post-STOP
-round was 2/9 complete; these are separate rounds, not a pooled denominator
-or statistically established causal regression. The early-return proposal is
-rejected for promotion; its independent raw A/J screen is retained separately.
-The product target remains unmet. Historical rounds below are preserved.
+Latest follow-up: clean commit `4a6369d3` completed all nine normalized-guide
+runs and reports. Mission completion is **2/9** (2WP 0/3, 5WP 1/3, 9WP 1/3);
+report PASS is **0/9**. The repair does not establish a completion-rate gain
+over the separate post-STOP 2/9 round. It does expose MAIN/certificate,
+BACKUP known-free and estimator-state continuity as higher-leverage boundaries
+than isolated optimizer throughput. The withdrawn early-return round remains
+0/9, with its independent raw A/J screen retained separately. No denominator
+is pooled, failure discarded or qualification claimed. The product target
+remains unmet. Historical rounds below are preserved.
 
 ## Original checkpoint-round verdict
 
@@ -530,7 +533,7 @@ Keep the terminal measured-state/hold authority case separately reproduced.
 Do not increase solve budget, allow UNKNOWN BACKUP, tune jerk weights, widen
 anchor/acceptance tolerances, or treat telemetry/partial progress as success.
 
-## Next implementation: coherent guide boundary (integrated result pending)
+## Coherent guide boundary: implementation and component evidence
 
 The existing planner now owns one anchor-relative ordered point/time sequence
 and one spatial-window accounting path. The hot guide starts at immutable
@@ -557,5 +560,151 @@ artifact-dependent skip; seven auxiliary tests passed. Planner config passed
 75 cases, including five guide-boundary cases; facade passed 17. Independent
 diff review found no concrete P1/P2 bypass. These tests do not prove improved
 completion or fix strict BACKUP visibility, terminal tracking or odometry loss.
-The clean repeated integrated matrix must have a new SHA/manifest and retain
-all nine results before any completion improvement is claimed.
+The clean repeated integrated matrix below has its own SHA/manifest and all
+nine results. Component correctness is not a completion improvement claim.
+
+## Normalized-guide integrated round: systemic completion review
+
+All nine simulations **and** reports are terminal. Two missions completed:
+5WP-2 and 9WP-3. The other seven are six PAUSED_SAFETY_STOP and one
+FAILED_COMPONENT. Report verdicts are three FAIL, six BLOCKED, zero PASS.
+A report FAIL must not be counted automatically as mission non-completion:
+both COMPLETE runs fail the evidence/qualification assessment. Conversely,
+partial waypoint progress is not COMPLETE.
+
+### Frozen inputs and denominator
+
+- Navigation: clean `4a6369d338506dd4cb4864b8a9f89dd77530df60`, source
+  fingerprint `e091e06a7e5637732e74a6e0cc2a2a1ed9aca0fb10b6831206258fcdcafd3e52`.
+- Authoritative 23-package Release manifest SHA-256:
+  `2cf81e62ab8d320bd1c7f1b785cdda26c0fba09994142a977a78814fc94652c7`.
+  The post-commit clean build completed in 9.92 s. All nine reports record
+  this manifest/source and VALID provenance, not qualification.
+- All nine captured `planner.yaml` files have SHA-256
+  `6480ff9679e20c3d5f9f5a38efbe7702d9ca98e66c454299019b423d5d298356`.
+  Positive/nominal, requested 5 m/s, seed 0, MAIN V/A/J 5/5/8, BACKUP
+  12/12/30, visibility 40 m/4096, DDS 42/XRCE 8892 are unchanged.
+  PX4 has the same separately captured dirty HEAD/source/binary stated
+  above; its mutable parameter/dataman snapshots remain per-session inputs.
+- Nominal snapshot capture OFF; sequential order 9WP-1, 2WP-1--3,
+  5WP-1--3, 9WP-2--3. No concurrent build/test/replay, tracked-source edit,
+  injected fault or gate/tuning change during the matrix. Small read-only
+  inspections occurred; this is not an otherwise workload-free-machine claim.
+- IDs: `normalized-guide-4a6369-5mps-{2wp,5wp,9wp}-r{1,2,3}-20260917`.
+  Use the earlier command template with explicit positive/nominal arguments.
+
+Accepted indices below are
+`report.json.mission_outcome.acceptance.waypoint_acceptance_indices`, not
+published goal indices or the scenario's next-waypoint field. Sessions are
+under `.artifacts/runtime/`. Planning samples are captured decision durations,
+not all triggers or solver-only durations; p99/max are not deadline bounds.
+
+| Case | Session | Report / outcome | Accepted | Planning p99/max ms (n) | Checkpoints / records | Certificate aggregate max ms |
+|---|---|---|---|---|---|---|
+| 2WP-1 | `external-mode-check-20260917T032129-223352` | FAIL / FAILED_COMPONENT | 0 | 80.119/80.119 (30) | 3/30 | 0.502 |
+| 2WP-2 | `external-mode-check-20260917T032321-227164` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 80.086/80.086 (9) | 0/9 | 0.000 |
+| 2WP-3 | `external-mode-check-20260917T032430-231058` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 56.550/56.550 (19) | 3/19 | 0.290 |
+| 5WP-1 | `external-mode-check-20260917T032600-235030` | BLOCKED / PAUSED_SAFETY_STOP | 0,1,2 | 80.368/80.368 (24) | 6/24 | 0.539 |
+| 5WP-2 | `external-mode-check-20260917T032754-238676` | FAIL / COMPLETE | 0,1,2,3,4 | 82.018/82.018 (26) | 9/26 | 0.424 |
+| 5WP-3 | `external-mode-check-20260917T032953-243355` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 55.973/55.973 (10) | 4/10 | 1.181 |
+| 9WP-1 | `external-mode-check-20260917T032010-219652` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 66.332/66.332 (8) | 5/8 | 0.485 |
+| 9WP-2 | `external-mode-check-20260917T033127-247127` | BLOCKED / PAUSED_SAFETY_STOP | 0,1 | 80.364/80.364 (19) | 6/19 | 0.400 |
+| 9WP-3 | `external-mode-check-20260917T033305-250648` | FAIL / COMPLETE | 0,1,2,3,4,5,6,7,8 | 122.899/122.899 (48) | 10/48 | 0.598 |
+
+Sparse totals: 193 decision records, 46 checkpoint selections, 64 certificate
+calls and 16,102 us summed checkpoint certificate work. Certificate aggregate
+max is per record, not one validator call. All nine capture-complete flags
+are true, scenario-writer/cloud drops and recorded collisions are zero, and
+PX4 failsafe flags are false. Observed minimum-clearance values range
+0.121171--3.868828 m; this is not collision-free stopping proof. Timeline
+invariant counts are missing in 2WP-2, 5WP-1, 5WP-2 and 9WP-3; the other
+five report zero. Missing values remain missing, never an inferred zero.
+
+All runs remain relaxed diagnostic/ineligible, with NOT_EVALUABLE assessment,
+INCOMPLETE evidence and the six core qualification blockers listed above;
+2WP-2 and 5WP-1 additionally lack complete tracking-position/velocity sources.
+No hardware, recorded-data or C0 acceptance has been established.
+
+### Decisive boundaries, counterarguments and leverage
+
+The seven non-completions have one explicitly matched odometry-lease loss and
+six planner/execution-continuity losses. This identifies the failed boundary,
+not seven uniquely proved underlying causes. Multiple rejection types can
+coexist; later successful commits mean an earlier rejection alone is not a
+sufficient causal explanation.
+
+1. **Complete-proposal readiness, not nominal convergence.** 2WP-3 rejects
+   an optimized MAIN with V=5.0333/5 and J=9.3710/8
+   (`logs/mapping.log:428`), then repeatedly fails to replace generation 11.
+   5WP-1 rejects J=9.7146/8 although corridor residual 0.004202 is within
+   0.01 (`mapping.log:656,662`); it stops after accepting WP2, not all goals.
+   9WP-2 reaches WP1, then repeats MAIN deadline rejection before WP2
+   (`mapping.log:502,517,547`). These are distinct dynamics/availability and
+   budget boundaries; a coarse failure enum is not a numerical root cause.
+   Even COMPLETE 5WP-2 has repeated final MAIN route-regression rejection
+   near 1.5667 m against 0.5 m (`mapping.log:598,610,624,636`) after a local
+   nominal seed certificate. Therefore final route/BACKUP readiness must
+   inform seed construction; merely returning nominal incumbents sooner is
+   not an adequate architecture. Next review: continuous ordered
+   guide-to-overlap junction selection and coherent per-piece seed timing,
+   tested on exact frozen inputs before changing costs, budgets or gates.
+2. **Stopping tube and observed-free support must be designed together.**
+   2WP-2 has batches of 7/7, 7/7 and 5/5 physically feasible BACKUP seeds
+   with SFC hull passes but zero known-free passes (`mapping.log:322,329,342`),
+   including UNKNOWN at (22.9,-0.7,3.1). 5WP-3 similarly ends with 6/6
+   feasible seeds/hull passes and 0/6 known-free at (23.9,-0.7,2.9), BACKUP
+   t=0.317506 s (`mapping.log:357`); it is not solely a MAIN failure.
+   9WP-1 has the same boundary and then a retained recovery endpoint outside
+   WP1 acceptance. Earlier/later MAIN failures and successful stages remain
+   in the traces. The exact origin of those UNKNOWN cells is EVIDENCE_GAP;
+   visibility endpoint counts alone do not prove the braking tube was seen.
+   Next discriminator must compare the actual swept body/reaction/braking
+   tube with observation support, grid semantics and world lineage. Do not
+   permit UNKNOWN, inflate map uniformly by guess, or raise BACKUP limits.
+3. **Estimator observability and validated prediction continuity.** In
+   2WP-1 the direct External Mode input becomes stale
+   (`external_mode.log:147`, wall 1789615370.163107692): source age 164 ms,
+   receive age 207.044 ms, generation 22. The exact state-use witness reuses
+   sequence 2619/source 56.296 s. Diagnostics at source 56.300/56.424 s show
+   DEGRADED, `INSUFFICIENT_TRANSLATIONAL_OBSERVABILITY`, navigation/corrected
+   validity false and correction rejects 1 then 2; IMU/LiDAR ingress continues,
+   queue overflow is zero and replay is false. Tracking recovers at 56.820 s.
+   `fast_lio_ros/src/propagated_odometry_worker.cpp:342--367` suppresses
+   publication unless the main estimator is TRACKING/navigation-valid and
+   no transition/correction/replay is pending. This strongly supports that
+   policy mechanism for the direct state gap, not CPU congestion or the
+   reason observability was lost. External Mode subscribes directly to
+   `/lio/odometry_propagated`; the separate PX4 odometry bridge's
+   `DT_TOO_LARGE` appears later and is containment, not its upstream cause.
+   Underlying observability loss and per-message skip attribution remain
+   INCONCLUSIVE. Next review must distinguish correction rejection from
+   demonstrably bounded prediction uncertainty, with recorded-data and
+   fault evidence. Do not lower observability thresholds, call unhealthy
+   state healthy, extend freshness or assume PX4 GPS is a navigation fallback.
+
+### Whole-system decision
+
+Keep one implementation path and existing owners. The normalized guide is a
+necessary input-contract repair, not the completion solution. Compared with
+the separate post-STOP 2/9 round, total completion is still 2/9; 9WP now has
+one complete run but 2WP has none. Same deterministic scene/seed does not
+make these scheduler-dependent runs a paired statistical A/B. Current
+9WP-3 completes with planning max 122.899 ms, while 2WP-3 and 5WP-3 fail
+with maxima below 57 ms: reducing one timing number cannot by itself secure
+completion. Hard deadlines and containment remain mandatory.
+
+Run-wide speed must use `external_mode.speed_metrics`, not the final
+`planning.execution.maximum_velocity_mps` snapshot. In COMPLETE 5WP-2,
+setpoint maximum/p95 are 4.900114/4.722138 m/s (2679 samples), measured
+maximum/p95 5.615598/4.800785 m/s (2844). The final planner diagnostic is
+1.600849 m/s and is **not** the whole-run maximum. COMPLETE 9WP-3 has
+setpoint maximum/p95 4.950888/4.898737 m/s and measured maximum/p95
+5.794046/5.148808 m/s. These include braking/hover and are descriptive,
+not a matched tracking proof or stable/smooth 5 m/s qualification.
+
+Priority is joint executable-proposal reliability (ordered seed plus actual
+MAIN/BACKUP/route contract), observation-supported stopping continuity, and
+estimator-state continuity under a validated uncertainty envelope. Optimize
+small hot-path costs or extract a coordinator only after evidence says they
+limit these outcomes. No new coordinator, process split, alternate publisher,
+fallback or hard-gate relaxation is justified by this round.

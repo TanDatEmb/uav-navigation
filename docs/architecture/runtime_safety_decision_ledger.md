@@ -22328,7 +22328,8 @@ release profiles must not use the former allowance.
 ### 2026-09-17 - Normalize the existing guide geometry/time/window boundary
 
 - **Owner/status:** Complete-bundle planner frontend; `IMPLEMENTED`,
-  Release/component verification PASS, integrated verification pending. This is a boundary repair
+  Release/component verification PASS, integrated matrix terminal with 2/9
+  mission completion and 0/9 report PASS. This is a boundary repair
   inside the existing planner, not a coordinator or second execution path.
 - **System contract:** A successor starts at its immutable execution anchor;
   retained command samples use that same trajectory-time origin. The entire
@@ -22392,4 +22393,62 @@ release profiles must not use the former allowance.
   (five new guide fixtures); facade passed 17 including the retained route
   event/BACKUP role assertions and voxel round trip. Independent diff review
   found no concrete P1/P2 bypass. The first failed test attempt is retained
-  above, not counted as a successful verification. Integrated matrix pending.
+  above, not counted as a successful verification. Integrated results below
+  do not establish a completion-rate improvement or product acceptance.
+
+### 2026-09-17 - Completion-first reassessment after normalized-guide matrix
+
+- **Owner/status:** Planner, mapping/visibility, estimator and execution
+  input boundaries; `REVIEWED`, product target **UNMET**. Existing owners and
+  one execution path remain; no new bypass, fallback or tuning is introduced.
+- **Evidence/scope:** Clean `4a6369d338506dd4cb4864b8a9f89dd77530df60`,
+  Release manifest `2cf81e62ab8d320bd1c7f1b785cdda26c0fba09994142a977a78814fc94652c7`,
+  source `e091e06a7e5637732e74a6e0cc2a2a1ed9aca0fb10b6831206258fcdcafd3e52`.
+  All nine positive/nominal requested-5-m/s runs and reports terminal;
+  2WP 0/3, 5WP 1/3, 9WP 1/3: **COMPLETE 2/9**, noncomplete 7/9,
+  report PASS 0/9 (FAIL 3, BLOCKED 6). Same pinned config/seed/visibility,
+  MAIN/BACKUP limits, snapshots OFF, sequential, no concurrent builds/tests/
+  replay or source changes. Exact sessions and denominators are retained in
+  `docs/reports/feasible_checkpoint_5mps_diagnostic_2026-09-17.md`.
+  Sparse trace totals 193 records, 46 checkpoints, 64 certificate calls/
+  16,102 us. Provenance VALID/capture complete, recorded collision/cloud/
+  writer drop zero and no PX4 failsafe are not qualification. Four timeline
+  invariant counts are missing, not zero. Every run remains diagnostic,
+  evidence INCOMPLETE, assessment NOT_EVALUABLE and qualification ineligible.
+- **System reasoning/counterevidence:** Six noncomplete runs lose planner/
+  execution continuity, with observed MAIN dynamics/deadline, BACKUP UNKNOWN
+  and recovery barriers; one explicitly loses the direct odometry receive
+  lease. Do not force a unique cause from the final coarse enum or an earlier
+  rejected solve followed by successful admission. Feasible BACKUP V/A/J/SFC
+  with zero known-free passes is not a dynamics diagnosis. Local nominal seed
+  success followed by final route rejection is not executable readiness.
+  A complete 9WP run with 122.899 ms observed planning max and failed runs
+  below 57 ms refute isolated timing as a sufficient completion metric.
+  Previous 2/9 and withdrawn 0/9 rounds remain separate, not pooled or a
+  statistically established causal A/B improvement.
+- **Estimator finding:** Matched new 2WP-1 diagnostics show DEGRADED /
+  INSUFFICIENT_TRANSLATIONAL_OBSERVABILITY during the direct propagated-state
+  gap, then recovery. Existing FAST-LIO publication requires main TRACKING/
+  navigation validity; the policy mechanism is strongly supported, while the
+  reason observability was lost and per-message suppression are INCONCLUSIVE.
+  The separate PX4 bridge's later DT_TOO_LARGE is containment, not the cause
+  of External Mode's direct-topic lease loss. No CPU overload, sensor-drop,
+  forward-only FOV or automatic GPS-fallback diagnosis is established.
+- **Safety impact/next review:** Keep the guide repair, measured mission
+  acceptance and all gates. Focus exact-input reproducer and independent
+  oracle on coherent ordered junction/per-piece initialization plus actual
+  complete MAIN/BACKUP/route readiness; separately compare stopping tubes
+  with observed-free world support and distinguish correction observability
+  from validated prediction uncertainty. Do not enlarge deadlines, freshness,
+  anchor/acceptance tolerance, relax UNKNOWN/observability or add fallback/
+  parallel command authority from these runs. Recorded-data and integrated
+  fault evidence are required before any estimator policy change.
+- **Verification/review condition:** Re-read each named session's experiment
+  ID, `mission_outcome.acceptance.waypoint_acceptance_indices`,
+  `external_mode.outcome`, provenance, planning trace and qualification
+  blockers using `/usr/bin/python3` JSON inspection; correlate `logs/` and
+  `samples.jsonl` source timestamps for causal findings. Run-wide speed uses
+  `external_mode.speed_metrics`: final planner diagnostic 1.600849 m/s is not
+  the complete 5WP run's setpoint maximum 4.900114 m/s. No smooth/stable
+  5 m/s claim. Every later behavior change requires contract tests, full
+  Release/test verification and another retained sequential nine-run matrix.
