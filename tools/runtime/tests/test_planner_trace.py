@@ -540,6 +540,29 @@ class PlannerTraceTest(unittest.TestCase):
             summary["exp_feasible_iterate_certificate_time_us_max"], 420
         )
 
+    def test_backup_world_failure_reasons_preserve_safe_fast_distinction(self) -> None:
+        for value, reason in ((8, "backup_known_free_insufficient"),
+                              (18, "backup_world_blocked")):
+            with self.subTest(reason=reason):
+                record = normalize_planner_trace_record(
+                    {
+                        "planning_cycle_id": 1,
+                        "bundle_id": 2,
+                        "planner_backend_outcome": 5,
+                        "planner_backend_failure_stage": 8,
+                        "planner_backend_failure_reason": value,
+                        "planner_backend_failure_stage_name": "backup_seed",
+                        "planner_backend_failure_reason_name": reason,
+                        "first_causal_failure_scope": "BACKEND",
+                        "first_causal_failure_stage": "backup_seed",
+                        "first_causal_failure_reason": reason,
+                    }, source="fixture.explicit_backup_policy_failure",
+                )
+                self.assertIsNotNone(record)
+                self.assertEqual(record["planner_backend_failure_reason"], value)
+                self.assertEqual(record["planner_backend_failure_reason_name"], reason)
+                self.assertEqual(record["first_causal_failure_reason"], reason)
+
     def test_transaction_authorities_and_first_causal_failure_are_independent(self) -> None:
         backend_failure = normalize_planner_trace_record(
             {

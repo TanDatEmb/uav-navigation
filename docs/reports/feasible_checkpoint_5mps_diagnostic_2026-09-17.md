@@ -2,15 +2,14 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: clean commit `4a6369d3` completed all nine normalized-guide
-runs and reports. Mission completion is **2/9** (2WP 0/3, 5WP 1/3, 9WP 1/3);
-report PASS is **0/9**. The repair does not establish a completion-rate gain
-over the separate post-STOP 2/9 round. It does expose MAIN/certificate,
-BACKUP known-free and estimator-state continuity as higher-leverage boundaries
-than isolated optimizer throughput. The withdrawn early-return round remains
-0/9, with its independent raw A/J screen retained separately. No denominator
-is pooled, failure discarded or qualification claimed. The product target
-remains unmet. Historical rounds below are preserved.
+Latest follow-up: the `aedb4b96` admission-progression matrix completed all
+nine strict-BACKUP runs: **3/9mission COMPLETE,0/9report PASS**. The WP3 case
+lost execution before measured arrival, not after a valid in-ball rejection.
+The subsequent paired real-planner fixture separates SAFE/RequireKnownFree
+from FAST/AllowUnknown; only failure attribution changes, not flight behavior.
+An explicit FAST matrix is the next discriminator. Neither policy is qualified
+by these component tests. Historical rounds and every unsuccessful outcome
+below remain separate; the stable smooth5m/s product target is still unmet.
 
 ## Original checkpoint-round verdict
 
@@ -1865,18 +1864,28 @@ added to obtain these observations.
 ##### MAIN–BACKUP formulation review after the admission matrix
 
 This review uses the nine `admission-progress-aedb4b96` artifacts above, not a
-new SITL campaign. Product behavior remains unchanged in this review patch.
+new SITL campaign. They all select strict BACKUP (the SAFE policy), even
+though requested speed is5m/s. Their UNKNOWN suffix failures do **not** establish
+the same failure under FAST/AllowUnknown. Product behavior remains unchanged
+in this review patch.
 The existing measured progression fix remains necessary, but it is not a
 complete explanation for the five safety stops and one component failure.
 
-The current decision path is:
+The shared decision path, parameterized by the independently selected BACKUP
+policy rather than by requested speed, is:
 
 ```mermaid
 flowchart TD
-    R[Immutable route, world, state and execution anchor] --> M[Construct and certify one MAIN profile]
+    R[Immutable route, world, state, anchor and selected flight policy] --> M[Construct and certify one MAIN profile]
+    R --> Q
     M -->|MAIN ready| B[Search BACKUP switch times on that fixed MAIN]
-    B -->|Complete suffix certified| C[Build and authorize complete candidate]
-    B -->|No admitted suffix| F[No complete bundle; MAIN cannot be exposed]
+    Q{Selected BACKUP policy} -->|SAFE| SF[Require known-free; reject UNKNOWN]
+    Q -->|FAST| FF[Permit UNKNOWN; accept incomplete-world risk]
+    SF --> B
+    FF --> B
+    B --> X[Both reject currently OCCUPIED, UNDEFINED and OUT_OF_MAP]
+    X -->|Complete suffix certified| C[Build and authorize complete candidate]
+    X -->|No admitted suffix| F[No complete bundle; MAIN cannot be exposed]
     C --> A[Runtime admission, activation and final command checks]
     A --> P{Waypoint behavior?}
     P -->|PASS| W{Fresh measured state inside ordered ball and continuation permitted?}
@@ -1970,7 +1979,7 @@ an execution anchor. Compare bounded reuse of request-owned geometry against
 re-running frontend/optimization: an unbounded nested retry would trade this
 failure for deadline misses. Keep the single authority path and preservation
 of valid active/pending state. Do not add another coordinator/FSM, shorten
-reserve, permit UNKNOWN, accept a post-Hold waypoint, or attribute tracking to
+reserve or permit UNKNOWN in SAFE, accept a post-Hold waypoint, or attribute tracking to
 LIO/PX4 without synchronized typed state/health and independent truth.
 This points to architecture optionA first: a planner construction/validation
 boundary correction with existing execution ownership, rather than a large
@@ -1984,3 +1993,78 @@ closure, not the next product behavior/A/B cycle. The matrix remains3/9mission
 COMPLETE,0report PASS and qualification-ineligible. A new sequential
 2/5/9WP×3at requested5m/s matrix is still required after the justified product
 change, not repeated unchanged to imply improvement.
+
+##### SAFE/FAST discriminator through the real planner
+
+The user's behavior contract distinguishes SAFE/strict BACKUP from
+FAST/AllowUnknown BACKUP. These are **policy modes, not speed labels**.
+`Planner::backupPolicy()` already selects the appropriate predicate from
+`planner.backup_allow_unknown`. The runner explicitly exposes
+`raycasting_on_backup_strict` and `raycasting_on_backup_unknown`; its existing
+eligibility metadata still marks UNKNOWN experiments as non-qualifying.
+Allowing a currently UNKNOWN cell accepts the risk that it will later be
+revealed occupied. It does not authorize a cell already known occupied, or
+grandfather an old certificate after latest-world invalidation.
+
+The new paired facade fixture uses a bounded synthetic immutable world
+(50×50×8m product geometry), MAIN AllowUnknown, product5/5/8 and12/12/30,
+an actual planner-produced/activated predecessor, its sampled full-PVAJ
+future anchor,0.4s activation lead and the same80ms absolute budget.
+Activation is4.25m before the known-free frontier. The FAST config is
+mechanically derived in the build tree from the product config; its only
+parameter difference is `backup_allow_unknown: true`.
+
+| Behavior | Real successor construction | Authority disposition |
+|---|---|---|
+| SAFE | MAIN solved; feasible BACKUP seed and aligned hull; strict world sweep encounters UNKNOWN | No complete bundle, no staged successor, predecessor unchanged |
+| FAST | MAIN and BACKUP complete; UNKNOWN accepted by the selected policy | Valid staged proposal, predecessor still unchanged until activation |
+
+The canonical component JUnit run samples the actual anchor at
+`p.x=10.75m`, speed4.898255m/s, longitudinalA0.008014m/s² andJ0.003675m/s³.
+SAFE's rejected selected BACKUP ends atx16.323672m beyond thex15m frontier;
+the independently constructed nominal deceleration plus strict BACKUP ends
+atx14.611755m. FAST's selected BACKUP ends atx25.114202m, in UNKNOWN but
+inside the fixture'sx[−15,35)m map bounds. Successor steady elapsed times
+4.630244/5.329637ms are fixture observations, not a runtime deadline bound or
+SITL performance gain. JUnit properties preserve these exact observations.
+
+The SAFE case additionally constructs a decelerating prefix on **that same
+actual sampled PVAJ**, not on a fabricated4.5m/s anchor. It retains0.6s MAIN,
+all nominal/physical limits, terminal rest, flatness, continuous polynomial
+containment in an independently supplied known-free corridor and the strict
+production role-specific world validator. This separates failure of the
+chosen MAIN profile from absence of another certified prefix. It does not
+claim that CIRI/frontend selects this alternative, reproduce the actual failed
+recorded map, test runtime world/state freshness, or establish PX4 admission,
+measured waypoint arrival or closed-loop tracking.
+
+The constructive cruise fixture separately verifies that FAST accepts its
+UNKNOWN suffix but rejects the same geometry when those cells are currently
+OCCUPIED. SAFE gates are not loosened to produce that FAST result.
+
+**Attribution correction only:** `classifyPlannerFailure()` now consults the
+actual BACKUP world-witness rejection rather than mislabelling raw
+`OPT_FAILED` as dynamics. SAFE reports `backup_known_free_insufficient`;
+FAST reports `backup_world_blocked`. The latter reason is appended at ordinal18;
+existing wire ordinals are unchanged. Timeout/cancellation, nominal failure,
+world-change rejection and missing/inapplicable witness retain their previous
+precedence. No return code, planning decision, certificate, recovery FSM,
+threshold, configuration default, sampler or PX4 action changes. Runtime
+consumers use these reasons for evidence, not command authorization.
+
+Component verification before the FAST campaign: backend9/9CTest executables
+PASS (trajectory144GoogleTests; facade23GoogleTests), Python trace14/14PASS.
+The new unit tests cover stale/inapplicable diagnostics, selected/passing
+suffixes, deadline/cancellation precedence, policy-specific attribution and
+JSON trace preservation. Qualification remains unproven.
+
+**Next discriminator, not a planner retuning:** run the sequential
+2/5/9WP×3 requested5m/s matrix explicitly with
+`--backup-evidence-experiment raycasting_on_backup_unknown`, raycastingON,
+visibility40m/4096, nominal motion/seed0 and unchanged tracking configuration.
+Retain every FAST outcome separately from the previous strict matrix. This
+tests whether a policy mismatch explains a material part of non-completion
+before adding alternative-profile orchestration or a new coordinator. Even a
+completed FAST mission does not qualify SAFE or prove collision-free stopping
+against future undiscovered occupancy. The prior strict matrix remains
+3/9COMPLETE,0report PASS; no new integrated rate is claimed here.

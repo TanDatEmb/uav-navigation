@@ -2,8 +2,15 @@
 #include <navigation_mapping/current_body_support.hpp>
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/mapping_observation.hpp>
+#include <planner_core/planner.hpp>
 #include <planner_core/route_yaw_reference.hpp>
 #include <planner_core/planner_result.hpp>
+#include <planner_core/backup_braking.hpp>
+#include <planner_core/config.hpp>
+#include <planner_core/corridor_plane_validation.hpp>
+#include <planner_core/trajectory_world_validator.hpp>
+#include <data_structure/cmd_traj.h>
+#include <traj_opt/trajectory_dynamics.hpp>
 #include <navigation_planning/planning_timing.hpp>
 #include <navigation_world_model/continuous_clearance.hpp>
 
@@ -954,6 +961,287 @@ TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
             successor_request.activation_stamp_ns);
   EXPECT_NE(successor.candidate->activation_stamp_ns,
             successor_request.key.anchor_stamp_ns);
+}
+
+void expectMovingFrontierBehavior(const bool backup_allow_unknown) {
+  // Exercise the real product transaction, with a predecessor produced and
+  // activated by this same facade. No moving state is labelled stopped, no
+  // execution anchor is invented, and the immutable world never changes.
+  class FrontierWorld final : public IdentityOnlyWorld {
+   public:
+    navigation_world_model::WorldGeometry geometry() const noexcept override {
+      auto value = IdentityOnlyWorld::geometry();
+      // Same product dimensions, with the synthetic local window centred at
+      // x=10 m. All authorized FAST samples must remain inside this window.
+      value.evidence_bounds.global_min_index = Eigen::Vector3i{-75, -125, -5};
+      value.inflated_bounds.global_min_index = value.evidence_bounds.global_min_index;
+      return value;
+    }
+    bool contains(const navigation_world_model::Point3& point) const noexcept override {
+      return point.allFinite() && point.x() >= -15.0 && point.x() < 35.0 &&
+             point.y() >= -25.0 && point.y() < 25.0 &&
+             point.z() >= -1.0 && point.z() < 5.0;
+    }
+    navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
+      return {1U, 1U, 1U, 10'000'000'000LL};
+    }
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& point,
+        navigation_world_model::GridLayer) const noexcept override {
+      if (!contains(point)) return navigation_world_model::CellState::kOutOfMap;
+      return point.x() < 15.0 ? navigation_world_model::CellState::kKnownFree
+                             : navigation_world_model::CellState::kUnknown;
+    }
+    bool isSegmentTraversable(
+        const navigation_world_model::Point3& start,
+        const navigation_world_model::Point3& end,
+        navigation_world_model::GridLayer,
+        navigation_world_model::UnknownPolicy policy) const noexcept override {
+      return contains(start) && contains(end) &&
+             (policy == navigation_world_model::UnknownPolicy::kAllowUnknown ||
+              std::max(start.x(), end.x()) < 15.0);
+    }
+    navigation_world_model::AxisAlignedBox clampToLocalBounds(
+        const navigation_world_model::AxisAlignedBox& box) const noexcept override {
+      return {box.minimum.cwiseMax(Eigen::Vector3d{-15.0, -25.0, -1.0}),
+              box.maximum.cwiseMin(Eigen::Vector3d{35.0, 25.0, 5.0})};
+    }
+  };
+  auto world = std::make_shared<const FrontierWorld>();
+  TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
+  navigation_planning::DynamicLimits limits;
+  limits.intent.requested_cruise_speed_mps = 5.0;
+  limits.unknown_space_policy = navigation_world_model::UnknownPolicy::kAllowUnknown;
+  const char* config_path = backup_allow_unknown
+      ? PLANNER_FACADE_FAST_CONFIG_PATH : PLANNER_FACADE_CONFIG_PATH;
+  navigation_planning_backend::PlannerFacade facade(
+      config_path, world, limits, authorizer,
+      [&ros_time_s] { return ros_time_s; });
+  auto request = plannerBodySupportRequest(
+      world, nullptr, Eigen::Vector3d{32.0, 0.0, 2.0});
+  request.start_state.source_stamp_ns = 10'000'000'000LL;
+  request.start_state.receive_stamp_ns = request.start_state.source_stamp_ns;
+  request.key.anchor_stamp_ns = request.start_state.source_stamp_ns;
+  request.dynamics = limits;
+  const auto set_product_budget = [&] {
+    request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+        std::chrono::milliseconds(80);
+    request.budget.steady_deadline_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            request.budget.deadline.time_since_epoch()).count();
+  };
+  set_product_budget();
+  ASSERT_TRUE(request.valid());
+  const auto initial = facade.plan(request);
+  ASSERT_TRUE(initial.valid()) << static_cast<int>(initial.failure_stage) << ":"
+                              << static_cast<int>(initial.failure_reason);
+  ASSERT_TRUE(initial.candidate);
+  ASSERT_TRUE(initial.candidate->backup_available);
+  const auto& predecessor = *initial.candidate;
+  facade.onExecutionTimelineActivated(predecessor.bundle_generation);
+
+  // Place activation 4.25 m before the known-free frontier, on actual MAIN.
+  // Binary search samples only this already-certified immutable predecessor.
+  const auto stamp_at = [&](const double time_s) {
+    return predecessor.declared_start_ns +
+        static_cast<std::int64_t>(std::llround(time_s * 1.0e9));
+  };
+  const auto final_main = predecessor.sampleAtDeclaredStamp(
+      stamp_at(predecessor.backup_start_time_s - 1.0e-5));
+  ASSERT_TRUE(final_main);
+  ASSERT_GT(final_main->position_world.x(), 10.75);
+  double lower_s = 0.0;
+  double upper_s = predecessor.backup_start_time_s - 1.0e-5;
+  for (int iteration = 0; iteration < 60; ++iteration) {
+    const double middle_s = 0.5 * (lower_s + upper_s);
+    const auto sample = predecessor.sampleAtDeclaredStamp(stamp_at(middle_s));
+    ASSERT_TRUE(sample);
+    if (sample->position_world.x() < 10.75) lower_s = middle_s;
+    else upper_s = middle_s;
+  }
+  const auto activation_stamp_ns = stamp_at(upper_s);
+  const auto anchor_sample = predecessor.sampleAtDeclaredStamp(activation_stamp_ns);
+  ASSERT_TRUE(anchor_sample);
+  ASSERT_EQ(anchor_sample->role, navigation_planning::CandidateRole::kMain);
+  ASSERT_GT(anchor_sample->velocity_world.norm(), 4.0);
+  request.key.anchor_stamp_ns = activation_stamp_ns - 400'000'000LL;
+  const auto measured = predecessor.sampleAtDeclaredStamp(request.key.anchor_stamp_ns);
+  ASSERT_TRUE(measured);
+  ros_time_s = static_cast<double>(request.key.anchor_stamp_ns) * 1.0e-9;
+  request.start_state.position_world = measured->position_world;
+  request.start_state.velocity_world = measured->velocity_world;
+  request.start_state.acceleration_world = measured->acceleration_world;
+  request.start_state.jerk_world = measured->jerk_world;
+  request.start_state.source_stamp_ns = request.key.anchor_stamp_ns;
+  request.start_state.receive_stamp_ns = request.key.anchor_stamp_ns;
+  request.key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
+  request.key.committed_bundle_generation = predecessor.bundle_generation;
+  request.activation_stamp_ns = activation_stamp_ns;
+  navigation_planning::ExecutionAnchor anchor;
+  anchor.active_bundle_generation = predecessor.bundle_generation;
+  anchor.execution_lineage_version = 1U;
+  anchor.localization_epoch = request.key.localization_epoch;
+  anchor.goal_epoch = request.key.goal_epoch;
+  anchor.request_id = request.key.request_id;
+  anchor.request_stamp_ns = request.key.anchor_stamp_ns;
+  anchor.activation_stamp_ns = activation_stamp_ns;
+  anchor.state = *anchor_sample;
+  anchor.active_role = anchor_sample->role;
+  anchor.active_main_end_ns = stamp_at(predecessor.backup_start_time_s);
+  anchor.active_bundle_end_ns = predecessor.declared_end_ns;
+  anchor.command_world = predecessor.world_identity;
+  request.anchor = anchor;
+  request.history.previous_bundle_generation = predecessor.bundle_generation;
+  request.history.previous_velocity_world = anchor_sample->velocity_world;
+  set_product_budget();
+  ASSERT_TRUE(request.valid());
+  const auto successor = facade.plan(request);
+  const auto diagnostics = facade.diagnostics();
+  ::testing::Test::RecordProperty("backup_policy", backup_allow_unknown ? "allow_unknown" : "require_known_free");
+  ::testing::Test::RecordProperty("anchor_speed_mps", std::to_string(anchor_sample->velocity_world.norm()));
+  ::testing::Test::RecordProperty("anchor_acceleration_mps2", std::to_string(anchor_sample->acceleration_world.x()));
+  ::testing::Test::RecordProperty("anchor_jerk_mps3", std::to_string(anchor_sample->jerk_world.x()));
+  ::testing::Test::RecordProperty("frontier_support_m", std::to_string(15.0 - anchor_sample->position_world.x()));
+  ::testing::Test::RecordProperty("failure_stage", std::to_string(static_cast<int>(successor.failure_stage)));
+  ::testing::Test::RecordProperty("failure_reason", std::to_string(static_cast<int>(successor.failure_reason)));
+  ::testing::Test::RecordProperty("backup_reject_stage", std::to_string(diagnostics.backup_certificate.last_reject_stage));
+  ::testing::Test::RecordProperty("chosen_main_backup_stop_x_m", std::to_string(
+      diagnostics.backup_certificate.last_seed_endpoint.x()));
+  ::testing::Test::RecordProperty("solve_elapsed_ms", std::to_string(
+      static_cast<double>(successor.trace.elapsed_steady_ns) * 1.0e-6));
+  if (backup_allow_unknown) {
+    ASSERT_TRUE(successor.valid());
+    ASSERT_TRUE(navigation_planning::completePlanningSucceeded(successor.outcome));
+    ASSERT_TRUE(successor.candidate);
+    EXPECT_TRUE(successor.candidate->backup_available);
+    EXPECT_GT(successor.candidate->bundle_generation, predecessor.bundle_generation);
+    EXPECT_TRUE(diagnostics.backup_certificate.selected);
+    EXPECT_TRUE(facade.hasStagedCommandCandidate());
+    EXPECT_TRUE(facade.validateStagedCommandCandidate(
+        world, ros_time_s, successor.candidate->bundle_generation).valid);
+    EXPECT_EQ(facade.committedGeneration(), predecessor.bundle_generation);
+    return;  // Staging is not activation or measured waypoint acceptance.
+  }
+  EXPECT_TRUE(successor.valid());  // A well-formed failure is not executable.
+  EXPECT_EQ(successor.outcome,
+            navigation_planning::CompletePlanningOutcome::kNoCompleteBundle);
+  EXPECT_EQ(successor.failure_stage,
+            navigation_planning::PlanningFailureStage::kBackupSeed);
+  EXPECT_EQ(successor.failure_reason,
+            navigation_planning::PlanningFailureReason::kBackupKnownFreeInsufficient);
+  EXPECT_FALSE(successor.candidate);
+  EXPECT_TRUE(diagnostics.backup_certificate.attempted);
+  EXPECT_FALSE(diagnostics.backup_certificate.selected);
+  EXPECT_GT(diagnostics.backup_certificate.feasible_seed_count, 0U);
+  EXPECT_GT(diagnostics.backup_certificate.aligned_hull_pass_count, 0U);
+  EXPECT_GT(diagnostics.backup_certificate.known_free_check_count, 0U);
+  EXPECT_EQ(diagnostics.backup_certificate.known_free_pass_count, 0U);
+  EXPECT_EQ(diagnostics.backup_certificate.last_known_free_cell_state,
+            static_cast<int>(navigation_world_model::CellState::kUnknown));
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
+  EXPECT_EQ(facade.committedGeneration(), predecessor.bundle_generation);
+
+  // Independent construction on the exact same actual anchor. This is a
+  // search-completeness discriminator, NOT a second online authority path or
+  // a claim that the frontend/CIRI can select this profile on a real map.
+  navigation_planning_backend::Config config(PLANNER_FACADE_CONFIG_PATH, limits);
+  config.bindWorldGeometry(world->geometry());
+  navigation_math::StatePVAJ actual_initial = navigation_math::StatePVAJ::Zero();
+  actual_initial.col(0) = anchor_sample->position_world;
+  actual_initial.col(1) = anchor_sample->velocity_world;
+  actual_initial.col(2) = anchor_sample->acceleration_world;
+  actual_initial.col(3) = anchor_sample->jerk_world;
+  constexpr double kJerkRampS = 0.1;
+  const double reserve_s =
+      navigation_planning::PlanningTimingContract::kMinimumMainReserveS;
+  const Eigen::Vector3d target_jerk =
+      -config.exp_traj_cfg.max_jerk *
+      config.exp_traj_cfg.optimization_dynamic_reserve_ratio *
+      anchor_sample->velocity_world.normalized();
+  Eigen::MatrixXd ramp = Eigen::MatrixXd::Zero(3, 8);
+  ramp.col(7) = actual_initial.col(0);
+  ramp.col(6) = actual_initial.col(1);
+  ramp.col(5) = actual_initial.col(2) / 2.0;
+  ramp.col(4) = actual_initial.col(3) / 6.0;
+  ramp.col(3) = (target_jerk - actual_initial.col(3)) / (24.0 * kJerkRampS);
+  geometry_utils::Trajectory decelerating({kJerkRampS}, {ramp});
+  const auto ramp_end = decelerating.getState(kJerkRampS);
+  Eigen::MatrixXd hold = Eigen::MatrixXd::Zero(3, 8);
+  hold.col(7) = ramp_end.col(0);
+  hold.col(6) = ramp_end.col(1);
+  hold.col(5) = ramp_end.col(2) / 2.0;
+  hold.col(4) = ramp_end.col(3) / 6.0;
+  decelerating.emplace_back(reserve_s - kJerkRampS, hold);
+  ASSERT_TRUE(decelerating.getState(0.0).isApprox(actual_initial, 1.0e-12));
+  ASSERT_TRUE(decelerating[1].getState(0.0).isApprox(ramp_end, 1.0e-12));
+  ASSERT_LE(decelerating.getMaxVelRate(), config.exp_traj_cfg.max_vel);
+  ASSERT_LE(decelerating.getMaxAccRate(), config.exp_traj_cfg.max_acc);
+  ASSERT_LE(decelerating.getMaxJerRate(), config.exp_traj_cfg.max_jerk);
+  const auto switch_state = decelerating.getState(reserve_s);
+  const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+      reserve_s, switch_state, config.back_traj_cfg.max_vel,
+      config.back_traj_cfg.max_acc, config.back_traj_cfg.max_jerk,
+      config.sample_traj_dt_s, 0.0);
+  ASSERT_TRUE(seed.feasible);
+  geometry_utils::Trajectory stop;
+  stop.emplace_back(navigation_planning_backend::minimumSnapStopPiece(
+      switch_state, seed.duration_s));
+  ASSERT_TRUE(stop.getState(0.0).isApprox(switch_state, 1.0e-12));
+  const Eigen::MatrixXd yaw_coefficients = [&] {
+    Eigen::MatrixXd value = Eigen::MatrixXd::Zero(3, 8);
+    value(0, 7) = anchor_sample->yaw;
+    return value;
+  }();
+  ASSERT_NEAR(anchor_sample->yaw_rate, 0.0, 1.0e-12);
+  geometry_utils::Trajectory main_yaw({reserve_s}, {yaw_coefficients});
+  geometry_utils::Trajectory backup_yaw({seed.duration_s}, {yaw_coefficients});
+  ASSERT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+      decelerating, config.exp_traj_cfg, nullptr, 0.01, &main_yaw));
+  ASSERT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+      stop, config.back_traj_cfg, nullptr, 0.01, &backup_yaw));
+  navigation_planning_backend::ExpTraj alternate_main;
+  const double activation_s = static_cast<double>(activation_stamp_ns) * 1.0e-9;
+  alternate_main.setTrajectory(activation_s, decelerating, main_yaw);
+  ASSERT_TRUE(alternate_main.setRequiredMainPrefixDuration(reserve_s));
+  navigation_planning_backend::BackupTraj alternate_backup;
+  alternate_backup.setTrajectory(activation_s + reserve_s, reserve_s,
+                                 stop, backup_yaw);
+  const auto alternate = navigation_planning_backend::CmdTraj::buildCandidate(
+      alternate_main, &alternate_backup,
+      navigation_planning_backend::BackupDisposition::SUCCESS);
+  ASSERT_TRUE(alternate);
+  ASSERT_DOUBLE_EQ(alternate->backup_start_tt, reserve_s);
+  // Independently supplied convex corridor wholly inside the synthetic
+  // world's known-free half-space. This does not bypass product CIRI.
+  navigation_math::MatD4f corridor(6, 4);
+  corridor << 1.0, 0.0, 0.0, -14.8,
+             -1.0, 0.0, 0.0, 10.5,
+              0.0, 1.0, 0.0, -1.0,
+              0.0,-1.0, 0.0, -1.0,
+              0.0, 0.0, 1.0, -3.0,
+              0.0, 0.0,-1.0,  1.0;
+  for (int piece = 0; piece < alternate->position.getPieceNum(); ++piece) {
+    ASSERT_LE(navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+                  alternate->position[piece], corridor),
+              config.exp_traj_cfg.corridor_plane_tolerance_m);
+  }
+  ASSERT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      *world, *alternate, activation_s,
+      navigation_world_model::UnknownPolicy::kAllowUnknown, {}, false,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree).valid);
+  ::testing::Test::RecordProperty("decelerating_stop_x_m", std::to_string(
+      alternate->position.getPos(alternate->position.getTotalDuration()).x()));
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
+  EXPECT_EQ(facade.committedGeneration(), predecessor.bundle_generation);
+}
+
+TEST(PlannerFacade, SafeMovingFrontierRejectsChosenMainWhileDecelerationPassesCertificates) {
+  expectMovingFrontierBehavior(false);
+}
+
+TEST(PlannerFacade, FastMovingFrontierAdmitsBackupUnknownWithoutActivatingSuccessor) {
+  expectMovingFrontierBehavior(true);
 }
 
 TEST(PlannerFacade, SupersededUnactivatedProposalsNeverAliasGeneration) {

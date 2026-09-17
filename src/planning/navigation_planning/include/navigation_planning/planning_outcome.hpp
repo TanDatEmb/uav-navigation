@@ -64,6 +64,9 @@ enum class PlanningFailureReason : std::uint8_t {
   // remains distinct from a deadline failure; the internal exporter records
   // the first violated invariant.
   kCandidateExportInvalid,
+  // A BACKUP world sweep failed under AllowUnknown: UNKNOWN is permitted,
+  // but currently occupied/undefined/out-of-map cells remain forbidden.
+  kBackupWorldBlocked,
 };
 
 inline const char* planningFailureStageName(
@@ -114,6 +117,8 @@ inline const char* planningFailureReasonName(
       return "main_known_free_insufficient";
     case PlanningFailureReason::kCandidateExportInvalid:
       return "candidate_export_invalid";
+    case PlanningFailureReason::kBackupWorldBlocked:
+      return "backup_world_blocked";
   }
   return "unknown";
 }

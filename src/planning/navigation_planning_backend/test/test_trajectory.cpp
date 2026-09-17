@@ -1869,6 +1869,9 @@ TEST(PlannerTrajectory, BackupFeasibilityDependsOnMainPrefixNotOnlyCruiseSpeed) 
   // exactly the same initial PVAJ, nominal/physical limits and world policy.
   class FrontierWorld final : public SweepWorld {
    public:
+    explicit FrontierWorld(const navigation_world_model::CellState frontier_cell =
+                               navigation_world_model::CellState::kUnknown)
+        : frontier_cell_(frontier_cell) {}
     navigation_world_model::WorldGeometry geometry() const noexcept override {
       auto value = SweepWorld::geometry();
       value.evidence_resolution_m = value.inflated_resolution_m;
@@ -1880,16 +1883,19 @@ TEST(PlannerTrajectory, BackupFeasibilityDependsOnMainPrefixNotOnlyCruiseSpeed) 
         const navigation_world_model::Point3& point,
         navigation_world_model::GridLayer) const noexcept override {
       return point.x() < 4.0 ? navigation_world_model::CellState::kKnownFree
-                            : navigation_world_model::CellState::kUnknown;
+                            : frontier_cell_;
     }
     bool isSegmentTraversable(
         const navigation_world_model::Point3& begin,
         const navigation_world_model::Point3& end,
         navigation_world_model::GridLayer,
         navigation_world_model::UnknownPolicy policy) const noexcept override {
-      return policy == navigation_world_model::UnknownPolicy::kAllowUnknown ||
-             std::max(begin.x(), end.x()) < 4.0;
+      return std::max(begin.x(), end.x()) < 4.0 ||
+             (policy == navigation_world_model::UnknownPolicy::kAllowUnknown &&
+              frontier_cell_ == navigation_world_model::CellState::kUnknown);
     }
+   private:
+    const navigation_world_model::CellState frontier_cell_;
   } world;
   navigation_planning_backend::Config config(PLANNER_PRODUCT_CONFIG_PATH);
   config.bindWorldGeometry(world.geometry());
@@ -2010,6 +2016,22 @@ TEST(PlannerTrajectory, BackupFeasibilityDependsOnMainPrefixNotOnlyCruiseSpeed) 
             navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
   EXPECT_EQ(cruise_validation.blocked_cell_state,
             navigation_world_model::CellState::kUnknown);
+  // FAST is a distinct policy, not a relaxed SAFE result. The same cruise
+  // bundle may use UNKNOWN, but cannot use currently known OCCUPIED cells.
+  const auto validate_fast = [&](const FrontierWorld& snapshot) {
+    return navigation_planning_backend::validateExecutableCandidate(
+        snapshot, *cruise_bundle, 10.0,
+        navigation_world_model::UnknownPolicy::kAllowUnknown, {}, false,
+        navigation_world_model::UnknownPolicy::kAllowUnknown);
+  };
+  EXPECT_TRUE(validate_fast(world).valid);
+  const FrontierWorld occupied_world(navigation_world_model::CellState::kOccupied);
+  const auto occupied_validation = validate_fast(occupied_world);
+  EXPECT_FALSE(occupied_validation.valid);
+  EXPECT_EQ(occupied_validation.blocked_role,
+            navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+  EXPECT_EQ(occupied_validation.blocked_cell_state,
+            navigation_world_model::CellState::kOccupied);
   // Independently supplied known-free convex corridor, not a claim that CIRI
   // or the frontend can construct/select this corridor on a runtime map.
   navigation_math::MatD4f corridor(6, 4);
@@ -3837,6 +3859,70 @@ TEST(PlannerTrajectory, MainKnownFreeFailureUsesTypedNominalSeedReason) {
           false);
   EXPECT_EQ(main_stage, Stage::kNominalSeed);
   EXPECT_EQ(main_reason, Reason::kMainKnownFreeInsufficient);
+}
+
+TEST(PlannerTrajectory, BackupWorldWitnessDoesNotBecomeDynamicsOrOverrideEarlierFailure) {
+  using Stage = navigation_planning::PlanningFailureStage;
+  using Reason = navigation_planning::PlanningFailureReason;
+  using Rejection = navigation_planning::BackupCertificateRejectStage;
+  using namespace navigation_planning_backend;
+  navigation_planning::BackupCertificateDiagnostics backup;
+  backup.attempted = true;
+  backup.feasible_seed_count = 1U;
+  backup.aligned_hull_pass_count = 1U;
+  backup.known_free_check_count = 1U;
+  backup.last_reject_stage = static_cast<int>(Rejection::kKnownFree);
+  const auto classify = [&](const int result) {
+    return classifyPlannerFailure(result, true, backup);
+  };
+  EXPECT_EQ(classify(PLANNER_BACKUP_OPTIMIZATION_FAILED),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupKnownFreeInsufficient));
+  EXPECT_EQ(classify(PLANNER_BACKUP_FAILED),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupKnownFreeInsufficient));
+  EXPECT_EQ(classify(PLANNER_BACKUP_NO_PATH),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupKnownFreeInsufficient));
+  EXPECT_EQ(classifyPlannerFailure(PLANNER_BACKUP_NO_PATH, true, backup,
+                navigation_world_model::UnknownPolicy::kAllowUnknown),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupWorldBlocked));
+  backup.last_known_free_cell_state =
+      static_cast<int>(navigation_world_model::CellState::kOccupied);
+  EXPECT_EQ(classifyPlannerFailure(PLANNER_BACKUP_OPTIMIZATION_FAILED, true, backup,
+                navigation_world_model::UnknownPolicy::kAllowUnknown),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupWorldBlocked));
+  EXPECT_EQ(static_cast<int>(Reason::kCandidateExportInvalid), 17);
+  EXPECT_EQ(static_cast<int>(Reason::kBackupWorldBlocked), 18);
+  EXPECT_STREQ(navigation_planning::planningFailureReasonName(Reason::kBackupWorldBlocked),
+               "backup_world_blocked");
+  EXPECT_EQ(classify(PLANNER_SOLVE_TIMEOUT),
+            std::make_pair(Stage::kDeadline, Reason::kNoCompleteBundleAtDeadline));
+  EXPECT_EQ(classify(PLANNER_SOLVE_CANCELLED),
+            std::make_pair(Stage::kDeadline, Reason::kSuperseded));
+  EXPECT_EQ(classify(PLANNER_EXP_FAILED),
+            std::make_pair(Stage::kNominalSeed, Reason::kNominalDynamics));
+  EXPECT_EQ(classify(PLANNER_CANDIDATE_REJECTED),
+            std::make_pair(Stage::kCommitRecertification, Reason::kWorldChanged));
+  const auto expect_generic = [&] {
+    EXPECT_EQ(classify(PLANNER_BACKUP_OPTIMIZATION_FAILED),
+              std::make_pair(Stage::kBackupRefinement, Reason::kBackupDynamics));
+  };
+  backup.attempted = false;
+  expect_generic();
+  backup.attempted = true;
+  backup.selected = true;
+  expect_generic();
+  backup.selected = false;
+  backup.known_free_check_count = 0U;
+  expect_generic();
+  backup.known_free_check_count = 1U;
+  backup.known_free_pass_count = 1U;
+  expect_generic();
+  backup.known_free_pass_count = 0U;
+  for (const auto rejection : {Rejection::kSeed, Rejection::kAlignedSfc,
+                               Rejection::kAlignedHull, Rejection::kDynamic,
+                               Rejection::kRefinementKnownFree, Rejection::kDeadline}) {
+    backup.last_reject_stage = static_cast<int>(rejection);
+    expect_generic();
+  }
 }
 
 TEST(PlannerTrajectory, BackupFailureKeepsActionableCause) {

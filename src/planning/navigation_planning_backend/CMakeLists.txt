@@ -134,10 +134,25 @@ if(BUILD_TESTING)
   configure_backend_test(test_planner_config)
 
   ament_add_gtest(test_planner_facade test/test_planner_facade.cpp)
+  # Compare SAFE/FAST with the product configuration, changing only the
+  # explicit BACKUP UNKNOWN policy. Keep the derivative in the build tree.
+  set(facade_product_config "${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${facade_product_config}")
+  file(READ "${facade_product_config}" facade_fast_config)
+  string(REGEX MATCHALL "backup_allow_unknown: false" facade_backup_policy_matches "${facade_fast_config}")
+  list(LENGTH facade_backup_policy_matches facade_backup_policy_match_count)
+  if(NOT facade_backup_policy_match_count EQUAL 1)
+    message(FATAL_ERROR "SAFE/FAST facade fixture requires one explicit strict BACKUP policy")
+  endif()
+  string(REPLACE "backup_allow_unknown: false" "backup_allow_unknown: true"
+         facade_fast_config "${facade_fast_config}")
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/test_fixtures/planner_fast.yaml"
+       CONTENT "${facade_fast_config}")
   target_compile_definitions(test_planner_facade PRIVATE
     USE_ROS2
     ORIGIN_AT_CORNER
-    PLANNER_FACADE_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
+    PLANNER_FACADE_CONFIG_PATH="${facade_product_config}"
+    PLANNER_FACADE_FAST_CONFIG_PATH="${CMAKE_CURRENT_BINARY_DIR}/test_fixtures/planner_fast.yaml")
   target_link_libraries(test_planner_facade ${PROJECT_NAME})
   target_link_libraries(test_planner_facade navigation_mapping::navigation_mapping)
   configure_backend_test(test_planner_facade)

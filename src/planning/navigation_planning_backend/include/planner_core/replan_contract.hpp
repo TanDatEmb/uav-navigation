@@ -1,6 +1,7 @@
 #pragma once
 
 #include <navigation_math/type_utils.hpp>
+#include <navigation_planning/planner_diagnostics.hpp>
 #include <navigation_planning/planning_outcome.hpp>
 #include <planner_core/planner_result.hpp>
 
@@ -57,9 +58,16 @@ inline PlannerResultCode classifyBackupResult(
 inline std::pair<navigation_planning::PlanningFailureStage,
                  navigation_planning::PlanningFailureReason>
 classifyPlannerFailure(const int planner_result,
-                       const bool nominal_solve_failed) noexcept {
+                       const bool nominal_solve_failed,
+                       const navigation_planning::BackupCertificateDiagnostics&
+                           backup = {},
+                       const navigation_world_model::UnknownPolicy backup_policy =
+                           navigation_world_model::UnknownPolicy::kRequireKnownFree) noexcept {
   using Stage = navigation_planning::PlanningFailureStage;
   using Reason = navigation_planning::PlanningFailureReason;
+  const Reason backup_world_reason =
+      backup_policy == navigation_world_model::UnknownPolicy::kRequireKnownFree
+          ? Reason::kBackupKnownFreeInsufficient : Reason::kBackupWorldBlocked;
   switch (planner_result) {
     case PLANNER_NO_ODOM:
       return {Stage::kInput, Reason::kInvalidInput};
@@ -72,11 +80,23 @@ classifyPlannerFailure(const int planner_result,
     case PLANNER_SOLVE_CANCELLED:
       return {Stage::kDeadline, Reason::kSuperseded};
     case PLANNER_BACKUP_NO_PATH:
-      return {Stage::kBackupSeed, Reason::kBackupKnownFreeInsufficient};
+      return {Stage::kBackupSeed, backup_world_reason};
     case PLANNER_BACKUP_INITIALIZATION_FAILED:
       return {Stage::kBackupSeed, Reason::kBackupDynamics};
     case PLANNER_BACKUP_OPTIMIZATION_FAILED:
     case PLANNER_BACKUP_FAILED:
+      // A dynamically feasible seed may fail its independent world witness
+      // before any optional refinement. Attribute that observed rejection,
+      // not the raw OPT_FAILED enum, without claiming global infeasibility.
+      // Only BACKUP failures consult this witness: diagnostics from a prior
+      // request cannot reclassify a nominal failure, timeout or cancellation.
+      if (backup.attempted && !backup.selected &&
+          backup.last_reject_stage == static_cast<int>(
+              navigation_planning::BackupCertificateRejectStage::kKnownFree) &&
+          backup.known_free_check_count > 0U &&
+          backup.known_free_pass_count == 0U) {
+        return {Stage::kBackupSeed, backup_world_reason};
+      }
       return {Stage::kBackupRefinement, Reason::kBackupDynamics};
     case PLANNER_CANDIDATE_REJECTED:
       return {Stage::kCommitRecertification, Reason::kWorldChanged};
