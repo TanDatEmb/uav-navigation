@@ -2,7 +2,20 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: PASS event export and BACKUP switch-window timing
+Latest offline follow-up: replay now feeds captured PRE corridors to the
+ordinary optimizer and checks exact setup against capture. The21 captured
+jobs produced672 terminal factor records;18 setup witnesses match exactly,
+while initial cycles1/2/3 do not. Increasing retry cap64to256 adds no nominal
+passes; a universal0.5x guide clock is rejected. Moving cycles332/333 expose
+an early certified nominal iterate lost by the current refinement-window
+selection, not a hard-deadline failure. Complete-bundle benefit remains unproven.
+Focused optimizer tests pass28/28, but the normal repository test execution
+fails1/84 CTest targets; the isolated SAFE renewal repeat fails8/10. Those
+failures are retained, not superseded by historical green tests.
+See [factorized replay and incumbent discriminator](#factorized-replay-and-incumbent-discriminator).
+No runtime timing, optimizer policy, gate or command authority changed here.
+
+Latest integrated follow-up: PASS event export and BACKUP switch-window timing
 now share the actual mission sphere and a checked native elapsed-ns witness.
 A genuine rotated 90-degree real-facade regression failed on the old producer
 despite a complete certified bundle; the corrected producer passes. One normal
@@ -3951,14 +3964,174 @@ Dynamic activation also does not establish overlap between measured ordered
 waypoint eligibility and the receiver's valid continuation capability; it is
 not, by itself, a repair of the600ms handoff window.
 
-The next highest-leverage discriminator is feasibility-by-construction of the
-exact canonical prefix/PVAJ and complete MAIN+BACKUP, rather than repeated
-whole-prefix refits or a larger literal timeout. First obtain matched native
-polynomial, fixed-time boundary and corridor inputs to compare preserved
-prefix/suffix-only versus current formulation without weakening gates. In
-parallel, use existing world-query witnesses to distinguish curve-bound from
-cell-policy failure and measure terminal physical settling/source-validity
+Independent source review rejects the implied whole-prefix-refit defect:
+`planner.cpp:4628` already constructs a suffix-only successor from the exact
+future anchor. The predecessor's pre-activation polynomial is not refit.
+Future guide geometry is reconstructed and may include points sampled from
+the predecessor's BACKUP; that does not transfer BACKUP command authority to
+MAIN. Native polynomial/role/guide witnesses are needed before blaming this
+geometry for renewal failure or proposing a new suffix-only architecture.
+In parallel, use existing world-query witnesses to distinguish curve-bound
+from cell-policy failure and measure terminal physical settling/source-validity
 contracts. No new coordinator, cache, adaptive timing, retry authority or
-safety bypass is implemented in this report closure. This documentation
-commit changes the source fingerprint for future runs; it does not retroactively
-change the frozen470b208f manifest or make the18diagnostic outcomes qualified.
+safety bypass was implemented in this documentation closure. Its commit changes
+the source fingerprint for future runs; it does not retroactively change the
+frozen470b208f manifest or make the18diagnostic outcomes qualified.
+
+## Factorized replay and incumbent discriminator
+
+This is an offline/evidence closure, not a behavioral integration round.
+The corrected input path and macro-only route-reference getter cannot publish,
+commit, activate or advance a mission. Normal runtime optimization and all
+budgets, gates and SAFE/FAST policies are unchanged. The latest normal18-run
+matrix remains SAFE1/9 and FAST4/9 mission COMPLETE on470b208f; the following
+snapshot counts must not be pooled with that denominator.
+
+### Frozen capture, loss accounting and replay identity
+
+The intrusive SAFE5WP capture on d3a801cea3f97295262affd1a8a71b014bcac09d is
+`external-mode-check-20260917T151202-663235`, experiment
+`d3a801ce-safe5-renewal-capture-20260917-1`. Its input/build fingerprints are:
+
+- Source fingerprint: `6e256135066a66b70e9cd1335777c0810ad68492102222b4a41b94e35811e092`.
+- Release manifest: `ba7a29dc2403dad1d03777e27906030dc477404be2340324813f12ce67502e64`.
+- Snapshot artifact directory: `.artifacts/diagnostics/nominal-renewal-capture-nod2nN/`.
+- Session state is STOPPED, stopped=true, cleanup=PASS. Provenance is valid,
+  report BLOCKED, accepted indices[0], issued[0,1], mission not COMPLETE and
+  qualification_eligible=false. The terminal error to WP1 is28.809m, not an
+  in-ball WP3 acceptance rejection.
+
+Writer accounting closes47submitted =21written +26dropped, with0pending and
+0errors. `capture_complete=true` means known loss was accounted for, not a
+lossless solver census; the writer was not complete at process stop and the
+runner finalized accounting afterward. World materialization/writing can
+perturb timing. This diagnostic capture is excluded from the normal matrix.
+
+All21 serialized optimizer setups completed. Fourteen are initial requests;
+seven are moving requests (cycles326,331,332,333,334,340,342). They are not21
+independent missions. Runtime331--333 rejected nominal dynamics;334 recovered
+with a complete proposal. Runtime342 observed the80ms backend deadline. These
+are different requests, not matched causal A/B pairs.
+
+The full corrected PRE replay uses a locally built diagnostic executor, not
+the frozen runtime binary above. Its hashes are:
+
+- Replay executable: `3256bac364c279a887a18d57a249f53fc207fe9c74e24cb842b31a565623b7d5`.
+- Replay source: `2c987fc735d65c44b40f5a2a9c907510205314c0e812ae86cec789ba26d9082a`.
+- Optimizer header: `4ce5bb9df9a583c416fcca2a7aea5916589ceb13a18c1bab718dfd24897fa3d7`.
+
+The earlier POST-reentry factor logs are retained as superseded diagnostic
+inputs, not relabeled PRE or pooled. Their executable/source hashes were
+`7b1e83b76694da51da9d324192edd42d3e3f91f71fd9ed47989b0bdae291147c` /
+`3edda83d483cd42d0e86001208f0c08acff0e4185b33c5aa1c4e5606577dd87f`.
+
+### Disentangle clock, effort and geometric problem
+
+The former high-effort E probe changed three things at once: retry cap,
+duration initialization and dense-guide/reference representation. The new
+factorial is2guide families x2retry caps(64/256) x2optimizer-only hard budgets
+(none/80ms) x4clock scales(0.5/1/2/4) =32records per input. All672 records
+finished with script exit0; exit0 means the probes ran, not all passed.
+
+H retains the captured spatial guide. E uses the existing junction-seed
+overload and reconstructs a sparse guide/reference. Exact equality compares
+effective planes, piece mapping, initial positions, route-reference points
+and gate flag/marked point/radius. Every H probe matches its fresh D setup;
+every E probe changes that geometric problem. Dimensions alone are not parity.
+The new setup test checks that clock scaling and retry-cap changes preserve
+geometry/reference on an independent fixture.
+
+Normal optimize simplifies its input. Feeding POST into that path had been
+a second simplification, not a demonstrated reproduction of runtime setup.
+Optimizer calls now take captured PRE, with missing legacy PRE explicitly
+labeled LEGACY_POST_REENTRY. D_setup compares to the serialized runtime POST
+and frozen guide setup clock:18/21 geometry+clock exact matches; suffix0/1/2
+(initial cycles1/2/3) have geometry mismatch and clock match. They remain
+non-parity cases, not silently accepted. All seven moving setups match.
+Exact setup does not imply full runtime-mode, remaining-budget or world parity.
+
+With captured cap64 and fresh optimizer-only80ms (refinement cutoff disabled):
+
+| H guide clock | Nominal certificate /21 | Nominal + independent seed-import + offline world /21 | Optimizer wall p50/max ms | Valid nominal duration p50 s |
+|---|---:|---:|---:|---:|
+| 0.5x |18|5|7.150 /15.550|4.994|
+| 1x |20|8|7.559 /30.015|5.038|
+| 2x |19|9|10.813 /21.864|5.020|
+| 4x |19|5|15.840 /22.445|5.032|
+
+These are descriptive counts on the captured set, including the three labeled
+non-parity setups; they are not completion rates or an online80ms resource
+guarantee. Timing starts before optimize and ends before witness copies and
+post-hoc certification, excludes constructor/input-copy time, and includes
+optimizer setup/internal validation/logging. It is wall elapsed, not CPU/WCET
+or search-to-PX4 latency. No hard deadline was observed in any H/E factor.
+
+Changing cap64to256 increases no nominal pass count at any family/clock/budget.
+A universal half clock is rejected: exact moving setups332/333 pass at1x but
+fail at0.5x/2x/4x. Cycle331 is the opposite discriminator: H0.5x and4x pass
+nominal gates, while1x/2x fail; its4x output lasts12.584s, versus5.239s at0.5x.
+Slower solved trajectories must not be presented as a cruise/completion win.
+
+Production optimized-nominal and independent imported-seed certificates are
+reported separately. The latter can reject tiny boundary residuals on an
+otherwise production-certified optimized output; its stricter import policy
+is not a demonstrated runtime veto. Offline world sweep lacks full body/role/
+BACKUP/commit semantics. Every probe explicitly has complete_executable_bundle=0
+because that procedure does not construct or authorize a complete bundle.
+
+### Lost incumbent, not yet a completion fix
+
+On the same exact PRE setups/config/head/tail, D40/80 returns nominal candidates
+on18/21 inputs; D0/80 on20/21. The differences are cycles332/333:
+
+| Cycle | D40/80 | D0/80 |
+|---|---|---|
+|332|969evaluations, no checkpoint/certificate, reject|10evaluations, attempt1/iteration9 certified checkpoint|
+|333|1131evaluations, no checkpoint/certificate, reject|9evaluations, attempt1/iteration8 certified checkpoint|
+
+Neither rejection observes a hard deadline. `monitorProgress()` only tries
+the accepted-iterate certificate after the refinement cutoff; a feasible
+iterate before it can therefore be lost before natural solver termination.
+Cycle331 still fails both modes, so this is not a universal explanation.
+
+Independent critique distinguishes retaining an early immutable incumbent
+while CONTINUING refinement from the withdrawn nominal-only early return.
+The minimal next discriminator preserves the existing cutoff and final-valid
+preference; only final rejection/cutoff may select the frozen incumbent.
+Cancellation or hard expiry after capture must still reject. A successful
+MAIN must still construct SAFE known-free or FAST policy-consistent BACKUP,
+yaw, latest-world admission and activation. Retention adds certificate work
+and can retain a MAIN with no viable BACKUP; complete-bundle and normal18-run
+integration evidence is required before claiming benefit. No such policy
+change is implemented in this offline closure.
+
+System review keeps two other contracts in parallel: exact latest-world/
+health containment witnesses, and a consumable measured PASS continuation
+window plus physical terminal STOP settling. Current matrix failures in those
+families are not explained by a missing400ms activation. A dynamic lead alone
+does not extend MAIN_end-minus-reserve, restore world authority or stop the UAV.
+
+### Verification and adverse renewal evidence
+
+Focused optimizer suite:28/28PASS on the current diagnostic source; replay
+and test targets build successfully. Safety-ledger validator and diff-check
+PASS. The normal `make test` execution fails1of84 CTest targets:
+SafeProductPassRenewalProbePreservesActivatedPredecessor at the independent
+crossing-count assertion. The raw XML/log are preserved as
+`facade-full-suite-failure.xml` /`facade-full-suite-failure.log` in the same
+artifact directory. Its three failed successors report stage14/reason12 and
+remaining hard budget -63/-79/-486us; observed crossing count0. A missing
+reserve witness appears as LLONG_MAX and is not a valid huge measured reserve.
+The make target stops before its Python suites; those suites are not claimed
+as executed in this failed run.
+
+Isolated repeat10 in one process gives2PASS then8FAIL, retained in
+`facade-safe-renewal-repeat.log`. Each iteration creates a fresh facade, but
+process-global allocator/CPU/scheduling state is not reset. PASS logs include
+a certified attempt2/iteration3 and outgoing horizons8.271/11.866/15.968;
+FAIL logs include lookahead/remaining3.970 followed by nominal failure and
+crossing count0. Per-successor hard-budget witnesses are absent from that text
+log, so causality is not assigned from gtest wall duration alone. Build-only
+PARALLEL_WORKERS=1 does not make colcon tests sequential, but the isolated
+8/10 failure refutes dismissing this as solely parallel-package load. Keep
+the failure open; no assertion is disabled and no budget/gate is increased.

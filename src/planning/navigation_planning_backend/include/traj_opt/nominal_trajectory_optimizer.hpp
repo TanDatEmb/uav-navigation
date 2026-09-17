@@ -601,6 +601,12 @@ namespace traj_opt {
             return opt_vars.hPolyIdx;
         }
 
+        // The immutable route-reference geometry is a separate part of the
+        // objective. Equal seed dimensions do not imply an equal problem.
+        const Mat3Df& diagnosticRouteReferencePoints() const noexcept {
+            return opt_vars.route_reference_points;
+        }
+
         // Diagnostic-only seam for replaying a frozen corridor through the
         // production pre-MINCO setup path.  This deliberately bypasses
         // SimplifySFC so a replay can compare the captured PRE and POST

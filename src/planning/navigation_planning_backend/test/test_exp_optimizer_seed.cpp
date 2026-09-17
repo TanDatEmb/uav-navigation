@@ -823,6 +823,71 @@ TEST(ExpOptimizer, RepeatedSparseGuideProjectionAvoidsTinyClampPieces) {
   ASSERT_FALSE(trajectory.empty());
 }
 
+TEST(ExpOptimizer, GuideClockSweepKeepsSetupGeometryAndRouteReference) {
+  ScopedEnvironmentVariable capture("UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR",
+                                    "/unused/guide-clock-fixture");
+  const traj_opt::Config captured_config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  const auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  const auto head = makePositionState(0.0);
+  const auto tail = makePositionState(20.0);
+  const navigation_math::vec_Vec3f guide{
+      head.col(0), {10.0, 0.0, 1.0}, tail.col(0)};
+  const std::vector<double> captured_times{0.0, 2.0, 4.0};
+  const geometry_utils::PolytopeVec captured_corridors{
+      makeBox(-1.0, 8.0, -2.0, 2.0, 0.0, 2.0),
+      makeBox(4.0, 12.0, -2.0, 2.0, 0.0, 2.0),
+      makeBox(8.0, 16.0, -2.0, 2.0, 0.0, 2.0),
+      makeBox(12.0, 21.0, -2.0, 2.0, 0.0, 2.0)};
+  std::optional<traj_opt::NominalProblemSnapshot> baseline;
+  for (const int retry_cap : {
+       captured_config.feasibility_retry_max_iterations,
+       traj_opt::Config::kMaximumFeasibilityRetryIterations}) {
+    for (const double scale : {1.0, 0.5, 2.0, 4.0}) {
+      auto config = captured_config;
+      config.feasibility_retry_max_iterations = retry_cap;
+      traj_opt::ExpTrajOpt optimizer(config, context);
+      auto corridors = captured_corridors;
+      corridors[2].SetRouteBoundaryContract({10.0, 0.0, 1.0}, 1.0);
+      auto times = captured_times;
+      for (auto& stamp : times) stamp *= scale;
+      geometry_utils::Trajectory trajectory;
+      // Setup is the subject of this test, not solver convergence. A failed
+      // numerical search must not hide a changed geometric problem.
+      optimizer.optimize(head, tail, guide, times, corridors, trajectory, true);
+      auto snapshot = optimizer.takeNominalProblemSnapshot();
+      ASSERT_TRUE(snapshot.has_value());
+      ASSERT_TRUE(snapshot->setup_completed);
+      EXPECT_EQ(snapshot->config.feasibility_retry_max_iterations, retry_cap);
+      if (!baseline) baseline = *snapshot;
+      ASSERT_EQ(snapshot->h_polytopes.size(), baseline->h_polytopes.size());
+      for (std::size_t index = 0; index < snapshot->h_polytopes.size(); ++index) {
+        EXPECT_TRUE(snapshot->h_polytopes[index].isApprox(
+            baseline->h_polytopes[index], 0.0));
+      }
+      EXPECT_TRUE(snapshot->initial_spatial_variables.isApprox(
+          baseline->initial_spatial_variables, 0.0));
+      EXPECT_TRUE(snapshot->initial_route_reference_points.isApprox(
+          baseline->initial_route_reference_points, 0.0));
+      EXPECT_TRUE(snapshot->h_poly_idx.isApprox(baseline->h_poly_idx, 0.0));
+      EXPECT_EQ(snapshot->route_boundary_gates, baseline->route_boundary_gates);
+      for (std::size_t index = 0; index < snapshot->route_boundary_gates.size();
+           ++index) {
+        if (snapshot->route_boundary_gates[index] == 0U) continue;
+        EXPECT_TRUE(snapshot->route_boundary_points[index].isApprox(
+            baseline->route_boundary_points[index], 0.0));
+        EXPECT_DOUBLE_EQ(snapshot->route_boundary_radii[index],
+                         baseline->route_boundary_radii[index]);
+      }
+      ASSERT_EQ(snapshot->initial_durations_s.size(),
+                baseline->initial_durations_s.size());
+      EXPECT_TRUE(snapshot->initial_durations_s.isApprox(
+          baseline->initial_durations_s * scale, 1.0e-12));
+    }
+  }
+}
+
 TEST(ExpOptimizer, HighSpeedDetourCorridorSolveKeepsObstacleBypassCertified) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   // This fixture intentionally starts at the exact physical velocity cap;

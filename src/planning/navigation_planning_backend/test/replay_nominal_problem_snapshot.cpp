@@ -1191,25 +1191,26 @@ int run(const std::string& path) {
   const auto config_replay = makeConfig(root["config"]);
   auto config = config_replay.config;
   const auto context = makeContext();
-  const auto polytope_vec = makePolytopes(
-      h_polytopes, route_gates, route_points, route_radii);
-  const auto world_snapshot = readWorldSnapshot(
-      problem["diagnostic_world_snapshot"]);
+  const auto polytope_vec = makePolytopes(h_polytopes, route_gates, route_points, route_radii);
+  // Normal optimize() performs SimplifySFC itself. Feed its captured PRE
+  // input, not a POST chain through a second simplification. Older snapshots
+  // without PRE remain a labeled re-entry probe, not runtime setup parity.
+  const auto optimizer_input_sfcs = pre_simplify_h_polytopes.empty()
+                                        ? polytope_vec
+                                        : makePolytopes(pre_simplify_h_polytopes, pre_route_gates,
+                                                        pre_route_points, pre_route_radii);
+  const auto world_snapshot = readWorldSnapshot(problem["diagnostic_world_snapshot"]);
 
-  std::cout << std::setprecision(17)
+  std::cout << std::setprecision(17) << "optimizer_corridor_input="
+            << (pre_simplify_h_polytopes.empty() ? "LEGACY_POST_REENTRY" : "CAPTURED_PRE") << '\n'
             << "snapshot_kind=" << root["snapshot_kind"].as<std::string>()
-            << " target_failure_signature="
-            << root["target_failure_signature"].as<bool>()
-            << " source_revision="
-            << root["provenance"]["source_revision"].as<std::string>()
-            << " session_id="
-            << root["provenance"]["session_id"].as<std::string>("not-provided")
+            << " target_failure_signature=" << root["target_failure_signature"].as<bool>()
+            << " source_revision=" << root["provenance"]["source_revision"].as<std::string>()
+            << " session_id=" << root["provenance"]["session_id"].as<std::string>("not-provided")
             << " source_fingerprint_sha256="
-            << root["provenance"]["source_fingerprint_sha256"].as<std::string>(
-                   "not-provided")
+            << root["provenance"]["source_fingerprint_sha256"].as<std::string>("not-provided")
             << " build_manifest_sha256="
-            << root["provenance"]["build_manifest_sha256"].as<std::string>(
-                   "not-provided")
+            << root["provenance"]["build_manifest_sha256"].as<std::string>("not-provided")
             << " solve_generation="
             << (root["provenance"]["solve_generation"]
                     ? root["provenance"]["solve_generation"].as<std::uint64_t>()
@@ -1218,15 +1219,15 @@ int run(const std::string& path) {
             << (root["provenance"]["planner_cycle"]
                     ? root["provenance"]["planner_cycle"].as<std::uint64_t>()
                     : 0U)
-            << " world_available=" << (world_snapshot != nullptr) << '\n'
+            << " world_available=" << (world_snapshot != nullptr)
+            << '\n'
             // The temporal curve-deviation/tube sweep follows the production
             // subdivision rule.  This offline binary still lacks the planner
             // role schedule, body-support admission, and commit authorization,
             // so its world result is not an executable-candidate verdict.
             << "world_verdict_authority=NON_AUTHORITATIVE"
             << " world_verdict_scope=offline_curve_and_tube_sweep_only\n"
-            << "config_exact=" << config_replay.exact
-            << " config_missing=";
+            << "config_exact=" << config_replay.exact << " config_missing=";
   for (std::size_t index = 0; index < config_replay.missing.size(); ++index) {
     if (index != 0U) std::cout << ',';
     std::cout << config_replay.missing[index];
@@ -1530,35 +1531,87 @@ int run(const std::string& path) {
 
   // D: production MINCO/L-BFGS with the deadline disabled. This is a
   // diagnostic replay only; all physical certificates remain unchanged.
+  PolyhedraH original_effective_corridors;
+  geometry_utils::PolytopeVec original_effective_sfcs;
+  VecDi original_piece_mapping;
+  Mat3Df original_route_reference;
+  vec_Vec3f original_initial_points;
+  VecDf original_initial_times;
+  bool original_setup_witness_available = false;
   {
     geometry_utils::Trajectory trajectory;
-    auto sfcs = polytope_vec;
+    auto sfcs = optimizer_input_sfcs;
     traj_opt::ExpTrajOpt optimizer(config, context);
     optimizer.setSolveBudget(nullptr, 0, 0);
-    const bool success = optimizer.optimize(
-        head, tail, guide_path, guide_times,
-        sfcs, trajectory, false, false);
+    const bool success =
+        optimizer.optimize(head, tail, guide_path, guide_times, sfcs, trajectory, false, false);
+    original_effective_corridors = optimizer.diagnosticEffectiveCorridors();
+    original_effective_sfcs = sfcs;
+    original_piece_mapping = optimizer.diagnosticEffectivePieceMapping();
+    original_route_reference = optimizer.diagnosticRouteReferencePoints();
+    optimizer.getInitValue(original_initial_times, original_initial_points);
+    original_setup_witness_available =
+        optimizer.diagnostics().valid && original_initial_times.size() > 0 &&
+        original_initial_times.size() == original_piece_mapping.size() &&
+        original_initial_points.size() + 1U ==
+            static_cast<std::size_t>(original_piece_mapping.size());
+    Mat3Df setup_points(3, original_initial_points.size());
+    for (std::size_t index = 0; index < original_initial_points.size(); ++index) {
+      setup_points.col(static_cast<Eigen::Index>(index)) = original_initial_points[index];
+    }
+    const bool captured_setup_available = original_setup_witness_available &&
+                                          problem["initial_route_reference_points"] &&
+                                          h_poly_idx.size() > 0 && initial_times.size() > 0;
+    bool captured_geometry_equal =
+        captured_setup_available &&
+        matrixNodeMatches(problem["initial_spatial_variables"], setup_points) &&
+        matrixNodeMatches(problem["initial_route_reference_points"], original_route_reference) &&
+        original_piece_mapping.size() == h_poly_idx.size() &&
+        (original_piece_mapping.array() == h_poly_idx.array()).all() &&
+        original_effective_corridors.size() == h_polytopes.size() &&
+        original_effective_sfcs.size() == polytope_vec.size();
+    for (std::size_t index = 0;
+         captured_geometry_equal && index < original_effective_corridors.size(); ++index) {
+      captured_geometry_equal =
+          matrixNodeMatches(problem["h_polytopes"][index], original_effective_corridors[index]) &&
+          original_effective_sfcs[index].IsRouteBoundaryGate() ==
+              polytope_vec[index].IsRouteBoundaryGate();
+      if (captured_geometry_equal && polytope_vec[index].IsRouteBoundaryGate()) {
+        captured_geometry_equal = original_effective_sfcs[index].GetRouteBoundaryPoint().isApprox(
+                                      polytope_vec[index].GetRouteBoundaryPoint(), 0.0) &&
+                                  original_effective_sfcs[index].GetRouteBoundaryRadius() ==
+                                      polytope_vec[index].GetRouteBoundaryRadius();
+      }
+    }
+    const int captured_clock_equal =
+        !captured_setup_available
+            ? -1
+            : original_initial_times.size() == initial_times.size() &&
+                  (original_initial_times.array() == initial_times.array()).all();
+    std::cout << "D_setup geometry_matches_capture="
+              << (!captured_setup_available ? -1 : int(captured_geometry_equal))
+              << " guide_clock_matches_capture=" << captured_clock_equal << '\n';
     std::cout << "D_production_lbfgs success=" << success
               << " lbfgs_attempts=" << optimizer.diagnostics().lbfgs_attempt_count
               << " evaluations=" << optimizer.diagnostics().lbfgs_evaluation_count
               << " first_return=" << optimizer.diagnostics().first_lbfgs_return_code
               << " last_return=" << optimizer.diagnostics().last_lbfgs_return_code
               << " retry_count=" << optimizer.diagnostics().retry_count << '\n';
-    printReport("D_production_lbfgs_candidate", certify(
-        trajectory, head, tail, optimizer.diagnosticEffectiveCorridors(),
-        optimizer.diagnosticEffectivePieceMapping(), sfcs,
-        config, world_snapshot.get()), config_replay.exact);
+    printReport(
+        "D_production_lbfgs_candidate",
+        certify(trajectory, head, tail, optimizer.diagnosticEffectiveCorridors(),
+                optimizer.diagnosticEffectivePieceMapping(), sfcs, config, world_snapshot.get()),
+        config_replay.exact);
   }
 
   // D-budget: replay the same production optimizer under the development
   // 10 Hz timing contract.  This is diagnostic only; the deadline is not
   // relaxed and no result is used as qualification evidence.
-  for (const auto [refinement_ms, hard_ms] :
-       std::array<std::pair<std::int64_t, std::int64_t>, 2>{
+  for (const auto [refinement_ms, hard_ms] : std::array<std::pair<std::int64_t, std::int64_t>, 2>{
            std::pair<std::int64_t, std::int64_t>{40, 80},
            std::pair<std::int64_t, std::int64_t>{0, 80}}) {
     geometry_utils::Trajectory trajectory;
-    auto sfcs = polytope_vec;
+    auto sfcs = optimizer_input_sfcs;
     traj_opt::ExpTrajOpt optimizer(config, context);
     const auto start_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1614,7 +1667,7 @@ int run(const std::string& path) {
            std::tuple<const char*, std::int64_t, std::int64_t>{
                "D_recovery_budget_0_80", 0, 80}}) {
     geometry_utils::Trajectory trajectory;
-    auto sfcs = polytope_vec;
+    auto sfcs = optimizer_input_sfcs;
     traj_opt::ExpTrajOpt optimizer(config, context);
     if (hard_ms > 0) {
       const auto start_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1659,7 +1712,7 @@ int run(const std::string& path) {
     auto diagnostic_tail = tail;
     diagnostic_tail.col(1) *= terminal_velocity_scale;
     geometry_utils::Trajectory trajectory;
-    auto sfcs = polytope_vec;
+    auto sfcs = optimizer_input_sfcs;
     traj_opt::ExpTrajOpt optimizer(config, context);
     optimizer.setSolveBudget(nullptr, 0, 0);
     const auto nominal_result = optimizer.solve(
@@ -1705,7 +1758,7 @@ int run(const std::string& path) {
     auto diagnostic_tail = tail;
     diagnostic_tail.col(1) *= terminal_velocity_scale;
     geometry_utils::Trajectory trajectory;
-    auto sfcs = polytope_vec;
+    auto sfcs = optimizer_input_sfcs;
     traj_opt::ExpTrajOpt optimizer(config, context);
     optimizer.setSolveBudget(nullptr, 0, 0);
     const auto nominal_result = optimizer.solve(
@@ -1728,49 +1781,136 @@ int run(const std::string& path) {
               << optimizer.diagnostics().lbfgs_evaluation_count
               << " retry_count=" << optimizer.diagnostics().retry_count
               << '\n';
-    printReport("G_tail_turn_candidate", certify(
-        trajectory, head, diagnostic_tail,
-        optimizer.diagnosticEffectiveCorridors(),
-        optimizer.diagnosticEffectivePieceMapping(), sfcs,
-        config, world_snapshot.get()), config_replay.exact);
+    printReport(
+        "G_tail_turn_candidate",
+        certify(trajectory, head, diagnostic_tail, optimizer.diagnosticEffectiveCorridors(),
+                optimizer.diagnosticEffectivePieceMapping(), sfcs, config, world_snapshot.get()),
+        config_replay.exact);
   }
 
-  // E: high-effort generic MINCO/L-BFGS. Multiple deterministic time starts
-  // are allowed here only as a feasibility probe. No physical limit changes.
-  config.feasibility_retry_max_iterations =
-      traj_opt::Config::kMaximumFeasibilityRetryIterations;
+  // Factor the former E high-effort probe: it changed the retry cap, time
+  // initialization AND guide/reference representation at once. H retains
+  // the original guide geometry and scales only its initialization clock;
+  // E uses the existing junction-seed overload, which reconstructs a sparse
+  // guide. Report effective overrides and actual setup equality, not just
+  // seed dimensions. These offline probes cannot authorize a complete bundle.
+  const auto exactlyEqual = [](const auto& first, const auto& second) {
+    return first.rows() == second.rows() && first.cols() == second.cols() && first.allFinite() &&
+           second.allFinite() && (first.array() == second.array()).all();
+  };
   const std::array<double, 4> effort_scales{0.5, 1.0, 2.0, 4.0};
-  for (const double scale : effort_scales) {
-    geometry_utils::Trajectory trajectory;
-    auto sfcs = polytope_vec;
-    const VecDf times = initial_times * scale;
-    traj_opt::ExpTrajOpt optimizer(config, context);
-    optimizer.setSolveBudget(nullptr, 0, 0);
-    const bool success = optimizer.optimize(
-        head, tail, sfcs, initial_points, times, trajectory);
-    const bool seed_mapping_aligned =
-        times.size() == optimizer.diagnosticEffectivePieceMapping().size() &&
-        initial_points.size() + 1U == static_cast<std::size_t>(
-            optimizer.diagnosticEffectivePieceMapping().size());
-    std::cout << "E_high_effort_scale=" << scale
-              << " success=" << success
-              << " seed_mapping_aligned=" << seed_mapping_aligned
+  for (const bool original_guide : {true, false}) {
+    for (const int retry_cap : {config.feasibility_retry_max_iterations,
+                                traj_opt::Config::kMaximumFeasibilityRetryIterations}) {
+      for (const std::int64_t hard_ms : {std::int64_t{0}, std::int64_t{80}}) {
+        for (const double scale : effort_scales) {
+          auto probe_config = config;
+          probe_config.feasibility_retry_max_iterations = retry_cap;
+          geometry_utils::Trajectory trajectory;
+          auto sfcs = optimizer_input_sfcs;
+          const VecDf times = initial_times * scale;
+          auto probe_guide_times = guide_times;
+          for (auto& stamp : probe_guide_times) stamp *= scale;
+          traj_opt::ExpTrajOpt optimizer(probe_config, context);
+          const auto start = std::chrono::steady_clock::now();
+          const auto start_ns =
+              std::chrono::duration_cast<std::chrono::nanoseconds>(start.time_since_epoch())
+                  .count();
+          optimizer.setSolveBudget(nullptr, 0, hard_ms > 0 ? start_ns + hard_ms * 1000000 : 0);
+          const bool success =
+              original_guide
+                  ? optimizer.optimize(head, tail, guide_path, probe_guide_times, sfcs, trajectory,
+                                       false, false)
+                  : optimizer.optimize(head, tail, sfcs, initial_points, times, trajectory);
+          // Stop timing before witness copies and post-hoc certification. This is
+          // optimizer-only wall duration, NOT end-to-end ready time or a CPU WCET.
+          const auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                      std::chrono::steady_clock::now() - start)
+                                      .count();
+          VecDf probe_initial_times;
+          vec_Vec3f probe_initial_points;
+          optimizer.getInitValue(probe_initial_times, probe_initial_points);
+          const auto& effective_corridors = optimizer.diagnosticEffectiveCorridors();
+          bool corridors_equal = effective_corridors.size() == original_effective_corridors.size();
+          for (std::size_t index = 0; corridors_equal && index < effective_corridors.size();
+               ++index) {
+            corridors_equal =
+                exactlyEqual(effective_corridors[index], original_effective_corridors[index]);
+          }
+          bool gates_equal = sfcs.size() == original_effective_sfcs.size();
+          for (std::size_t index = 0; gates_equal && index < sfcs.size(); ++index) {
+            gates_equal = sfcs[index].IsRouteBoundaryGate() ==
+                          original_effective_sfcs[index].IsRouteBoundaryGate();
+            if (gates_equal && sfcs[index].IsRouteBoundaryGate()) {
+              gates_equal = exactlyEqual(sfcs[index].GetRouteBoundaryPoint(),
+                                         original_effective_sfcs[index].GetRouteBoundaryPoint()) &&
+                            std::isfinite(sfcs[index].GetRouteBoundaryRadius()) &&
+                            sfcs[index].GetRouteBoundaryRadius() ==
+                                original_effective_sfcs[index].GetRouteBoundaryRadius();
+            }
+          }
+          bool points_equal = probe_initial_points.size() == original_initial_points.size();
+          for (std::size_t index = 0; points_equal && index < probe_initial_points.size();
+               ++index) {
+            points_equal =
+                exactlyEqual(probe_initial_points[index], original_initial_points[index]);
+          }
+          const bool setup_witness_available =
+              original_setup_witness_available && optimizer.diagnostics().valid &&
+              probe_initial_times.size() > 0 &&
+              probe_initial_times.size() == optimizer.diagnosticEffectivePieceMapping().size() &&
+              probe_initial_points.size() + 1U ==
+                  static_cast<std::size_t>(probe_initial_times.size());
+          const int geometry_equal =
+              !setup_witness_available
+                  ? -1
+                  : corridors_equal && gates_equal && points_equal &&
+                        exactlyEqual(optimizer.diagnosticEffectivePieceMapping(),
+                                     original_piece_mapping) &&
+                        exactlyEqual(optimizer.diagnosticRouteReferencePoints(),
+                                     original_route_reference);
+          const bool seed_mapping_aligned =
+              probe_initial_times.size() > 0 &&
+              probe_initial_times.size() == optimizer.diagnosticEffectivePieceMapping().size() &&
+              probe_initial_points.size() + 1U ==
+                  static_cast<std::size_t>(optimizer.diagnosticEffectivePieceMapping().size());
+          const std::string label = original_guide ? "H_original_guide" : "E_junction_guide";
+          std::cout
+              << label << " scale=" << scale << " effective_retry_max_iterations=" << retry_cap
+              << " captured_retry_max_iterations=" << config.feasibility_retry_max_iterations
+              << " config_matches_capture="
+              << (retry_cap == config.feasibility_retry_max_iterations) << " hard_ms=" << hard_ms
+              << " optimizer_wall_elapsed_us=" << elapsed_us
+              << " setup_witness_available=" << setup_witness_available
+              << " geometry_equal_to_original=" << geometry_equal << " guide_setup_seed_duration_s="
+              << (setup_witness_available ? probe_initial_times.sum()
+                                          : std::numeric_limits<double>::quiet_NaN())
+              << " guide_setup_time_scale_residual_s="
+              << (setup_witness_available &&
+                          probe_initial_times.size() == original_initial_times.size()
+                      ? (probe_initial_times - original_initial_times * scale).cwiseAbs().maxCoeff()
+                      : std::numeric_limits<double>::quiet_NaN())
+              << " success=" << success << " seed_mapping_aligned=" << seed_mapping_aligned
+              << " hard_deadline_observed=" << optimizer.diagnostics().hard_deadline_observed
               << " lbfgs_attempts=" << optimizer.diagnostics().lbfgs_attempt_count
               << " evaluations=" << optimizer.diagnostics().lbfgs_evaluation_count
               << " first_return=" << optimizer.diagnostics().first_lbfgs_return_code
               << " last_return=" << optimizer.diagnostics().last_lbfgs_return_code
               << " retry_count=" << optimizer.diagnostics().retry_count << '\n';
-    auto candidate_report = certify(
-        trajectory, head, tail, optimizer.diagnosticEffectiveCorridors(),
-        optimizer.diagnosticEffectivePieceMapping(), sfcs,
-        config, world_snapshot.get());
-    if (!seed_mapping_aligned) {
-      // No search was performed on the requested seed representation. This
-      // is a replay-input incompatibility, not proof of planner infeasibility.
-      candidate_report.evaluation_input_valid = false;
-      candidate_report.evaluation_status = "NOT_EVALUABLE_SEED_MAPPING";
+          auto candidate_report =
+              certify(trajectory, head, tail, optimizer.diagnosticEffectiveCorridors(),
+                      optimizer.diagnosticEffectivePieceMapping(), sfcs, probe_config,
+                      world_snapshot.get());
+          if (!seed_mapping_aligned) {
+            // No search was performed on the requested seed representation. This
+            // is a replay-input incompatibility, not proof of planner infeasibility.
+            candidate_report.evaluation_input_valid = false;
+            candidate_report.evaluation_status = "NOT_EVALUABLE_SEED_MAPPING";
+          }
+          printReport(label + "_candidate", candidate_report, config_replay.exact);
+        }
+      }
     }
-    printReport("E_high_effort_candidate", candidate_report, config_replay.exact);
   }
   return 0;
 }
