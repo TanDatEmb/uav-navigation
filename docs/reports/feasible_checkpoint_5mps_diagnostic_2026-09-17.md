@@ -2,14 +2,18 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: the `aedb4b96` admission-progression matrix completed all
-nine strict-BACKUP runs: **3/9mission COMPLETE,0/9report PASS**. The WP3 case
-lost execution before measured arrival, not after a valid in-ball rejection.
-The subsequent paired real-planner fixture separates SAFE/RequireKnownFree
-from FAST/AllowUnknown; only failure attribution changes, not flight behavior.
-An explicit FAST matrix is the next discriminator. Neither policy is qualified
-by these component tests. Historical rounds and every unsuccessful outcome
-below remain separate; the stable smooth5m/s product target is still unmet.
+Latest follow-up: the explicit FAST/AllowUnknown matrix on `80020ed0`
+completed all nine runs: **1/9mission COMPLETE,0/9report PASS**, three
+ODOMETRY_STALE failures and five safety stops. The previous
+`aedb4b96` SAFE/RequireKnownFree matrix remains a separate denominator:
+**3/9mission COMPLETE,0/9report PASS**. Its WP3 case lost execution before
+measured arrival, not after a valid in-ball rejection. The paired real-planner
+fixture and policy-specific failure attribution preserve the two behaviors;
+no planning/control decision or default gate was changed in `80020ed0`.
+The FAST campaign does not demonstrate an improvement, qualify either mode,
+or establish a statistical causal A/B conclusion. Historical rounds and every
+unsuccessful outcome below remain separate; the stable smooth5m/s product
+target is still unmet. The latest integrated closure is at the end of this report.
 
 ## Original checkpoint-round verdict
 
@@ -1884,10 +1888,11 @@ flowchart TD
     SF --> B
     FF --> B
     B --> X[Both reject currently OCCUPIED, UNDEFINED and OUT_OF_MAP]
-    X -->|Complete suffix certified| C[Build and authorize complete candidate]
+    X -->|Complete suffix certified| C[Build certified complete proposal]
     X -->|No admitted suffix| F[No complete bundle; MAIN cannot be exposed]
-    C --> A[Runtime admission, activation and final command checks]
-    A --> P{Waypoint behavior?}
+    C --> A{Admission, activation and final checks; PASS MAIN reserve at least 0.6 s?}
+    A -->|Granted command| P{Waypoint behavior?}
+    A -->|Rejected or invalidated| V
     P -->|PASS| W{Fresh measured state inside ordered ball and continuation permitted?}
     P -->|STOP| S{Fresh measured in-ball rest and stop confirmation?}
     W -->|Yes| N[Mission owner accepts waypoint; next leg or final COMPLETE]
@@ -2058,7 +2063,7 @@ The new unit tests cover stale/inapplicable diagnostics, selected/passing
 suffixes, deadline/cancellation precedence, policy-specific attribution and
 JSON trace preservation. Qualification remains unproven.
 
-**Next discriminator, not a planner retuning:** run the sequential
+**Discriminator planned after the fixture, now closed below:** run the sequential
 2/5/9WP×3 requested5m/s matrix explicitly with
 `--backup-evidence-experiment raycasting_on_backup_unknown`, raycastingON,
 visibility40m/4096, nominal motion/seed0 and unchanged tracking configuration.
@@ -2067,4 +2072,121 @@ tests whether a policy mismatch explains a material part of non-completion
 before adding alternative-profile orchestration or a new coordinator. Even a
 completed FAST mission does not qualify SAFE or prove collision-free stopping
 against future undiscovered occupancy. The prior strict matrix remains
-3/9COMPLETE,0report PASS; no new integrated rate is claimed here.
+3/9COMPLETE,0report PASS; the fixture alone claims no integrated rate.
+
+##### Explicit FAST integrated campaign closure
+
+All nine sequential runs are terminal,08:54:23–09:07:47UTC on17September.
+Labels are `behavior-fast-80020ed0-5mps-{2,5,9}wp-r{1,2,3}-20260917`.
+The three-pillar profiles are respectively `long_three_pillars_speed`,
+`long_three_pillars` and `long_three_pillars_multiwaypoint`. Each run requests
+5m/s, nominal motion, seed0, raycastingON,40m/4096 visibility, domain42 and
+XRCE UDP8892. The selected BACKUP policy is explicitly AllowUnknown.
+Tracking remains the existing0/0/0 relaxed diagnostic configuration; there is
+no nominal snapshot capture, fault injection, threshold retuning or second
+command implementation. No build, test or source edit ran during the batch.
+
+Frozen provenance, identical across all nine canonical reports:
+
+- Navigation feature SHA `80020ed03724a76d2b325bd3b23bc8c408598459`;
+  complete dirty-source fingerprint
+  `4254c33dadee64182ec58931cbad0e127097af5aae02e4a36adb5d8df868c147`.
+  The preserved user-owned safety-document migration is part of the dirty
+  manifest; the run is not attributed to HEAD alone.
+- Authoritative Release manifest SHA-256
+  `5337d10aec385a3488cf0f4184ce2c5d60aba0eee37b74d2470e6e8506fc34f6`.
+- Effective planner snapshot SHA-256
+  `255f20af6eab087e38d5bc2285307bc4275f4782c8314bafa141bdb72ab3458e`.
+  Diff against the previous strict campaign's effective planner snapshot is
+  exactly one parameter: `backup_allow_unknown: false`→`true`.
+- PX4 git SHA `deaff86ee335dd697677bcfc2415a23878e1b895`; complete PX4
+  source fingerprint
+  `25341a3df3acb2e557ef386affdf7a67f070603e924eb8107e8d291d22e2081f`.
+
+Artifact suffixes below share
+`.artifacts/runtime/external-mode-check-20260917T`; each contains its own
+canonical `report.json`, `metadata.json`, config snapshots, timelines and bag.
+Planning n and timings are the report's observed backend samples, **not all
+generated proposals or an upper bound**. Small-sample p99 equals observed max.
+
+| Case | Artifact suffix | Mission outcome / report verdict | Accepted indices | Planning n | p99=max ms | Writer accepted=written |
+|---|---|---|---|---:|---:|---:|
+| 2WP-r1 | `085423-179859` | FAILED_COMPONENT / FAIL | [0] |19|39.563|7252|
+| 2WP-r2 | `085611-183320` | COMPLETE / FAIL | [0,1] |21|76.417|8740|
+| 2WP-r3 | `085806-186919` | FAILED_COMPONENT / FAIL | [0] |20|80.182|7666|
+| 5WP-r1 | `090010-192162` | PAUSED_SAFETY_STOP / BLOCKED | [0] |12|80.513|2453|
+| 5WP-r2 | `090129-195753` | PAUSED_SAFETY_STOP / BLOCKED | [0] |4|76.272|4593|
+| 5WP-r3 | `090306-199278` | FAILED_COMPONENT / FAIL | [0] |1|49.723|739|
+| 9WP-r1 | `090408-202603` | PAUSED_SAFETY_STOP / BLOCKED | [0] |10|50.481|1812|
+| 9WP-r2 | `090520-206117` | PAUSED_SAFETY_STOP / BLOCKED | [0] |13|80.261|1894|
+| 9WP-r3 | `090639-209485` | PAUSED_SAFETY_STOP / BLOCKED | [0] |2|80.150|1296|
+
+All reports have `provenance.status=VALID` and
+`external_mode.evidence_writer.capture_complete=true`, with zero dropped,
+pending, queue-full, serialization-error and write-error records.
+Nevertheless `evaluation.assessment_status=NOT_EVALUABLE`,
+`evaluation.evidence_status=INCOMPLETE`, and `qualification_eligible=false`.
+Writer completeness covers enqueued/accepted records, not un-emitted runtime
+events. All failures are retained. FAST outcomes are not pooled with SAFE,
+and a COMPLETE FAST mission is not a SAFE stopping proof.
+
+**Causal discriminators and strongest counterarguments:**
+
+- The three component failures (2WP-r1/r3,5WP-r3) explicitly report odometry
+  `RECEIVE_STALE`, respectively source/receive ages168/209.933,
+  160/200.703 and172/215.290ms before setpoint update. This confirms lease
+  failure at the receiver; it does not distinguish source silence, rejection
+  of ingress, executor starvation or lock delay. Recent low callback-gap
+  metrics do not bound the final outage. Fresh unhealthy-health suppression
+  messages are diagnostic bypass evidence, not a reason to relax freshness.
+  Synchronized typed state/health, frame/epoch and receive/use timing are still
+  required before blaming LIO, DDS or PX4.
+- All three9WP runs show **5/2/5 raw log records** rejecting a proposal for
+  insufficient MAIN handoff reserve after its PASS boundary. The gate is
+  `commitPlannerCandidate()` in `navigation_runtime_node.cpp:2629`; it uses
+  `certifiedMainContinuationWindow()` and the canonical MAIN role interval,
+  not the total MAIN+BACKUP end. This is a confirmed construction→admission
+  incompatibility path, not proof that the admission gate is wrong.
+  `generateBackupTrajectory()` at `planner.cpp:5052` deliberately excludes
+  route crossing from its minimum switch bound, allowing approach bundles
+  that stop before the waypoint. That is the strongest counterargument to
+  universally forcing BACKUP after a waypoint: valid receding-horizon
+  approach/braking must remain possible. A proposal claiming PASS crossing,
+  however, must satisfy the same post-crossing MAIN reserve as its consumer.
+  The later `valid=0 → PVA stale → Hold` is not waypoint acceptance refusal.
+- 5WP-r1 runs out of renewed MAIN after repeated deadline/nominal failures;
+  its final full revalidation reports failure1/zero samples. Failure1 is
+  `invalid_time_window`, not OCCUPIED or UNKNOWN. At least one earlier deadline
+  reaches BACKUP; later ones are observed in MAIN.9WP also has nominal/deadline
+  failures and expiry, so reserve rejection is not asserted as its sole cause.
+  5WP-r2 loses active generation3 on swept-world failure8, BACKUP role,
+  174samples. That is `certificate_tube_blocked` under AllowUnknown, but the
+  log omits the blocked cell/witness; do not rename it UNKNOWN or claim a
+  physical collision. Staging a successor must not be counted as observed
+  activation.
+- Telemetry has an assurance gap: the12 raw9WP reserve-rejection records are
+  not represented as12 independent runtime-admission failures in the canonical
+  backend sample denominator. Some later deadline traces carry legacy boundary
+  rejection13. Those values cannot substitute for the original rejected
+  transaction identity. Zero writer drops does not close this upstream event
+  attribution gap; do not claim a complete backend/admission failure census.
+- There is a separate policy seam to review: expired recovery endpoint
+  retention and STOPPED_HOLD currently require known-free even for FAST.
+  Do not silently treat this post-polynomial hold contract as the BACKUP
+  certificate policy, or blindly replace every strict predicate. Its intended
+  mode-specific semantics need tests and a policy witness. These runs do not
+  establish UNKNOWN at that endpoint as their root cause.
+
+**Highest-leverage next work, not another gate adjustment:** construct a real
+facade/route reproducer for the observed9WP PASS seam, checking both planned
+crossing and exact MAIN role end. Share the producer/consumer eligibility
+predicate: preserve a certified partial approach without claiming waypoint
+crossing, and require the full0.6s MAIN window when it does claim crossing.
+Keep the physical envelope, selected SAFE/FAST world policy, future full-PVAJ
+anchor, existing absolute80ms budget and predecessor preservation. A universal
+later switch, unbounded retry, accepting planned arrival or relaxing reserve
+would hide the contract problem. Separately close receiver freshness tails and
+transaction-event attribution before treating timing counts as complete.
+Alternative MAIN-prefix selection for SAFE remains a distinct problem; a
+large coordinator extraction or local MINCO micro-optimization is not justified
+by this FAST matrix. No completion-improving product fix is claimed yet.
