@@ -2,7 +2,15 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: the explicit FAST/AllowUnknown matrix on `80020ed0`
+Latest follow-up: independent execution and planner-formulation reviews exposed
+why a green planned-boundary reserve test would not close measured handoff.
+A real-facade renewal probe reproduces a crossing proposal with574.112640ms
+MAIN reserve under both policies; the experimental entry+600ms selector was
+withdrawn, not shipped as a completion fix. The final section ranks the
+bundle-first and measured-window discriminators. No product decision or gate
+is changed by this diagnostic review.
+
+The last integrated evidence remains the explicit FAST/AllowUnknown matrix on `80020ed0`
 completed all nine runs: **1/9mission COMPLETE,0/9report PASS**, three
 ODOMETRY_STALE failures and five safety stops. The previous
 `aedb4b96` SAFE/RequireKnownFree matrix remains a separate denominator:
@@ -2190,3 +2198,128 @@ transaction-event attribution before treating timing counts as complete.
 Alternative MAIN-prefix selection for SAFE remains a distinct problem; a
 large coordinator extraction or local MINCO micro-optimization is not justified
 by this FAST matrix. No completion-improving product fix is claimed yet.
+
+##### Independent critique: certify execution, not an unused planning tail
+
+This follow-up is component/source analysis, not another flight matrix.
+Two independent reasoning agents reviewed execution semantics and planner
+formulation; a bounded mechanical audit separately checked policy propagation.
+The analysis is allowed to reject the previous proposed fix. Existing store
+ownership, measured mission authority, Release80ms budget, full future PVAJ,
+MAIN5/5/8, physical/BACKUP12/12/30 and all world/dynamic/flatness checks remain
+unchanged. The product target remains unmet.
+
+**Policy separation:** SAFE requires known-free BACKUP; FAST explicitly allows
+UNKNOWN and accepts that it may reveal an obstacle later. Neither permits a
+currently known OCCUPIED, UNDEFINED or OUT_OF_MAP cell. This is selected policy,
+not a synonym for5m/s or `motion_preset=fast`. Initial and full-candidate
+recertification preserve `backupPolicy()` separately from MAIN policy
+(`planner.hpp:434-441`, `planner_facade.cpp:475-485`,
+`trajectory_world_validator.hpp:474-488`). These diagnostic results do not
+qualify either behavior. The user-owned safety-document migration still
+describes UNKNOWN globally as diagnostic-only; this review does not silently
+rewrite or commit that unrelated migration, or infer FAST flight qualification.
+
+**Controlled real-planner evidence:** the paired product-config facade probe
+uses the first9WP junction `(0,0,3) -> (20,5,3) -> (50,5,3)`, radius0.9m,
+requested5m/s, a bounded50x50x8m obstacle-free world, and actual activated
+predecessor samples for full future PVAJ. Each solve has an absolute80ms
+deadline. It is not a replay of the three-pillar map, a full mission, or a
+product-cadence scheduling test: its synthetic activation steps are bounded
+construction probes and failed retries do not simulate continuing measured
+motion. The fixture must set the facade's acceptance radius to0.9m; the default
+0.2m version produced a misleading different optimization problem.
+
+On the first real crossing, the exported canonical MAIN interval leaves
+**574,112,640ns**, below600,000,000ns. SAFE and FAST produce the same counterexample
+in this all-known-free world. Reference-admission arithmetic rejects it and
+the fixture does not activate it; the facade's activated predecessor remains
+unchanged. The probe records rejected and successful proposals separately;
+its test PASS means predecessor preservation; two component successors were
+available, but sustained online availability and mission completion are not
+proved. The retained component artifact is
+`.artifacts/diagnostics/independent-bundle-review-20260917/product_pass_renewal.gtest.xml`.
+
+An experimental producer selector sharing export's first AABB-entry scan and
+requiring entry+600ms made both reserve assertions green. The chain then
+produced five successors/three crossing proposals, with minimum reserve
+600,000,000ns, before three repeated corridor failures on the same next request.
+It did not complete the waypoint. More importantly, the independent review
+showed that exact planned-entry reserve can have no valid measured-handoff
+window. That selector and its product-header changes were removed before
+commit; it is **not** an implemented fix or a runtime A/B outcome.
+
+| Mechanism | Verified fact and strongest counterargument | Discriminating test / minimal alternative |
+|---|---|---|
+| Certify full MAIN, execute only a prefix | `nominal_trajectory_optimizer.cpp:2584-2624` tests full-trajectory extrema; `optimized_nominal_candidate.hpp:125-143` certifies full MAIN. `cmd_traj.h:236-250` executes MAIN only up to the BACKUP split. A rejected unused tail might still carry deliberate lookahead/viability evidence, and failures may already occur in the prefix. | Locate the first violating piece/time on an actual failed renewal. Clip the polynomial exactly before it, without refitting; construct BACKUP and certify the **entire executed bundle** under unchanged gates. If the prefix fails too, reject this alternative. |
+| One MAIN, then BACKUP search on that fixed profile | `planner.cpp:2123-2146` and `:5254` fix MAIN before trying BACKUP switch states. Existing constructive SAFE evidence shows a decelerating MAIN can have a known-free suffix where the selected cruise MAIN cannot. It does not prove the frontend can find that alternative online; FAST1/9 also disproves UNKNOWN as the complete explanation. | Feed BACKUP viability into MAIN endpoint/duration construction, reuse certified geometry, and compare complete proposals ready within the same80ms. No nested unbounded retry or failure-count velocity table. |
+| Planned AABB reserve differs from measured sphere+NOW | Export scans an AABB (`planner.cpp:1382-1412`); ordered measured acceptance uses a sphere (`route_progress.cpp:466-477`); continuation also requires MAIN-end minus NOW at least600ms (`certified_continuation.hpp:82-101`). Candidates often have surplus reserve, so this is not evidence that every failed waypoint is this case. | Test actual candidate samples and measured update cadence, requiring overlap between ordered measured arrival and a current valid continuation window. Share mission-crossing semantics; AABB may remain a corridor constraint. Do not substitute planned acceptance or lower the reserve. |
+| Moving head is paired with a restrictive terminal state | Actual future anchor supplies full PVAJ (`planner.cpp:3265-3274`); terminal state zeros A/J (`:4215`) and incomplete outgoing lookahead reduces terminal V (`:3864`). Fixed-head time stretching is not monotonically feasibility-improving. Existing bounded repairs may nevertheless suffice in some scenes. | Freeze head/world/corridor/budget; record terminal target and first V/A/J violation through renewal. Compare full-tail vs exact executable-prefix feasibility before changing endpoint formulation. |
+| FAST suffix policy does not automatically authorize a stopped hold | Expired endpoint retention (`navigation_runtime_node.cpp:937-941`) and STOPPED_HOLD (`:7600-7605`) require known-free. A hold after the polynomial is a new permission, so it may intentionally be stricter than FAST BACKUP. The FAST matrix does not establish UNKNOWN endpoint causality. | Paired SAFE/FAST endpoint cases known-free/UNKNOWN/OCCUPIED, before/after expiry/world update and measured-stop confirmation. Define lifecycle scope, rather than globally replacing strict predicates. |
+
+For the temporal counterexample, a straight45degree approach at5m/s with
+radius0.9m reaches the sphere74.558441ms after first entering its enclosing
+AABB. If MAIN ends exactly600ms after the AABB entry, only525.441559ms remains
+at ideal measured sphere entry. For the actual `(20,5)` direction, the same
+geometric difference is5.539753ms, leaving594.460247ms. These are explicit
+constant-speed geometric calculations, not reconstructed vehicle timings.
+Even sphere-entry+600ms gives zero slack for a later update. The new runtime
+contract test verifies that planned boundary eligibility at exact reserve does
+not authorize a handoff1ns,20ms or100ms later; it does not manufacture a mission
+or flight certificate.
+
+The alternative under review is **offline first**, not another production
+authority path:
+
+```mermaid
+flowchart TD
+    R[Freeze actual failed request, world, full future PVAJ and selected policy] --> S[Finite search profile; not command authority]
+    S --> P[Locate violation; exact polynomial MAIN prefix]
+    P --> B[Construct BACKUP under SAFE or FAST policy]
+    B --> C{Full executed-bundle certificates and truthful route claims?}
+    C -->|No| N[Alternative rejected; inspect geometry or endpoint formulation]
+    C -->|Yes| W{Measured-arrival and valid-MAIN handoff windows overlap?}
+    W -->|No| A[Certified approach only; no false crossing claim]
+    W -->|Yes| D[Evidence for a minimal existing-planner change]
+    D --> T[Then repeated separate-policy integrated matrices]
+```
+
+Priority is to run the exact-prefix discriminator on immutable failed renewal
+problems and the measured-window discriminator, then choose the smaller
+supported change. This is not permission to return an uncertified nominal
+iterate early: the historical nominal-only early-return experiment was
+rejected after its integrated matrix, and HG-026 curved-prefix was reverted.
+It is also not permission to weaken unseen-space, frame, epoch, lease, tracking,
+world, dynamics or route-order checks. A large coordinator, extra FSM or many
+small performance patches are not justified by the current evidence.
+Receiver freshness failures remain an independent failure class; they require
+source/receive/use attribution rather than a larger freshness gate.
+
+No new SITL completion rate is claimed for this diagnostic change. The last
+integrated FAST denominator remains1/9; the prior SAFE denominator remains3/9.
+After a justified product change and a frozen authoritative Release build,
+repeat the requested sequential2/5/9WP x3 at5m/s, preserving every failure and
+keeping SAFE and FAST results separate.
+
+Final diagnostic verification: backend9/9CTest executables pass (facade25/25
+cases), runtime continuation12/12cases pass, and the retained paired probe
+reports two successful successors, one reserve-rejected crossing and zero
+failed solves per policy before stopping at that rejection. No production
+source or effective planner parameter is changed in this patch. Production
+baseline is `4cf74042` plus the preserved user-owned document migration;
+component fixture source SHA-256 is
+`a9738166c113887dc713a4f207faf780806ade7452dc93de02e140b234ad911e`, and runtime
+test source SHA-256 is
+`b979fcfc932b341ab95580256be7691ee5c2106dbfff9100627f615d0c83c0b1`.
+The exact verification commands are:
+
+```sh
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+cmake --build build/navigation_planning_backend -j2
+cmake --build build/navigation_runtime --target test_certified_continuation -j2
+./build/navigation_planning_backend/test_planner_facade --gtest_filter='PlannerFacade.*ProductPassRenewalProbe*' --gtest_output=xml:.artifacts/diagnostics/independent-bundle-review-20260917/product_pass_renewal.gtest.xml
+ctest --test-dir build/navigation_planning_backend --output-on-failure
+ctest --test-dir build/navigation_runtime -R '^test_certified_continuation$' --output-on-failure
+git diff --check
+```

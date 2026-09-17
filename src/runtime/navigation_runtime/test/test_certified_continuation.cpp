@@ -71,6 +71,21 @@ TEST(CertifiedContinuation, HandoffReadinessUsesMainExpiryNotBoundaryOrdering) {
       boundary_already_passed, 1'050'000'000LL));
 }
 
+TEST(CertifiedContinuation, ExactPlannedEntryReserveDoesNotAuthorizeLaterMeasuredHandoff) {
+  auto facts = validFacts();
+  const auto reserve_ns = minimumMainContinuationReserveNs();
+  facts.main_interval_end_ns = facts.boundary_stamp_ns - facts.declared_start_ns + reserve_ns;
+  ASSERT_TRUE(certifiedMainContinuationBoundaryEligible(facts));
+  const CertifiedMainContinuationWindow window{
+      facts.boundary_stamp_ns, facts.declared_start_ns + facts.main_interval_end_ns};
+  EXPECT_TRUE(certifiedMainContinuationHandoffReady(window, facts.boundary_stamp_ns));
+  // A source/receive-fresh arrival can be later than the planned witness.
+  // This is a temporal-contract counterexample, not a measured flight claim.
+  EXPECT_FALSE(certifiedMainContinuationHandoffReady(window, facts.boundary_stamp_ns + 1LL));
+  EXPECT_FALSE(certifiedMainContinuationHandoffReady(window, facts.boundary_stamp_ns + 20'000'000LL));
+  EXPECT_FALSE(certifiedMainContinuationHandoffReady(window, facts.boundary_stamp_ns + 100'000'000LL));
+}
+
 TEST(CertifiedContinuation, RejectsTerminalAndCoincidentPassThrough) {
   auto terminal = validFacts();
   terminal.boundary_kind = navigation_planning::RouteBoundaryEventKind::kTerminalStop;

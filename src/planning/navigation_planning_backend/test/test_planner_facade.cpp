@@ -1447,6 +1447,194 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   EXPECT_LE(std::abs(after_turn.yaw_rate), facade.yawRateLimitRadS() + 1.0e-6);
 }
 
+void probeProductPassRenewal(const bool backup_allow_unknown) {
+  // Preserve the product's bounded map geometry and the first 9WP junction,
+  // without pretending this obstacle-free fixture replays the recorded map.
+  class BoundedFreeWorld final : public IdentityOnlyWorld {
+   public:
+    navigation_world_model::WorldGeometry geometry() const noexcept override {
+      auto result = IdentityOnlyWorld::geometry();
+      result.evidence_bounds.global_min_index = Eigen::Vector3i{-50, -125, -5};
+      result.inflated_bounds.global_min_index = result.evidence_bounds.global_min_index;
+      return result;
+    }
+    navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
+      return {1U, 1U, 1U, 10'000'000'000LL};
+    }
+    bool contains(const navigation_world_model::Point3& p) const noexcept override {
+      return p.allFinite() && p.x() >= -10.0 && p.x() < 40.0 &&
+          p.y() >= -25.0 && p.y() < 25.0 && p.z() >= -1.0 && p.z() < 7.0;
+    }
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& p,
+        navigation_world_model::GridLayer) const noexcept override {
+      return contains(p) ? navigation_world_model::CellState::kKnownFree
+                         : navigation_world_model::CellState::kOutOfMap;
+    }
+    bool isSegmentTraversable(
+        const navigation_world_model::Point3& begin,
+        const navigation_world_model::Point3& end,
+        navigation_world_model::GridLayer,
+        navigation_world_model::UnknownPolicy) const noexcept override {
+      return contains(begin) && contains(end);
+    }
+    navigation_world_model::AxisAlignedBox clampToLocalBounds(
+        const navigation_world_model::AxisAlignedBox& box) const noexcept override {
+      return {box.minimum.cwiseMax(Eigen::Vector3d{-10.0, -25.0, -1.0}),
+              box.maximum.cwiseMin(Eigen::Vector3d{40.0, 25.0, 7.0})};
+    }
+  };
+  auto world = std::make_shared<const BoundedFreeWorld>();
+  TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
+  navigation_planning::DynamicLimits limits;
+  limits.intent.requested_cruise_speed_mps = 5.0;
+  limits.unknown_space_policy = navigation_world_model::UnknownPolicy::kAllowUnknown;
+  navigation_planning_backend::PlannerFacade facade(
+      backup_allow_unknown ? PLANNER_FACADE_FAST_CONFIG_PATH : PLANNER_FACADE_CONFIG_PATH,
+      world, limits, authorizer, [&ros_time_s] { return ros_time_s; });
+
+  navigation_mission::Mission mission;
+  mission.id = "product-pass-reserve";
+  mission.frame = "lio_odom";
+  mission.planning.requested_cruise_speed_mps = 5.0;
+  mission.waypoints = {
+      {"previous", Eigen::Vector3d{0.0, 0.0, 3.0}, 0.9, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"current", Eigen::Vector3d{20.0, 5.0, 3.0}, 0.9, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"next", Eigen::Vector3d{50.0, 5.0, 3.0}, 0.9, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::Stop}};
+  facade.setGoalAcceptanceRadius(mission.waypoints[1].acceptance_radius_m);
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(mission.waypoints.front().position_enu).valid);
+  auto initial_request = plannerBodySupportRequest(world, nullptr);
+  initial_request.route_snapshot = progress.snapshot(mission.id, mission.frame, 1U, 31U, 1U);
+  initial_request.key.route_revision = initial_request.route_snapshot.route_revision;
+  initial_request.goal.mission_id = mission.id;
+  initial_request.start_state.position_world = mission.waypoints.front().position_enu;
+  initial_request.dynamics = limits;
+  initial_request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+      std::chrono::milliseconds(80);
+  initial_request.budget.steady_deadline_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      initial_request.budget.deadline.time_since_epoch()).count();
+  ASSERT_TRUE(initial_request.valid());
+  const auto initial = facade.plan(initial_request);
+  ASSERT_TRUE(initial.candidate.has_value())
+      << static_cast<int>(initial.failure_stage) << ":"
+      << static_cast<int>(initial.failure_reason);
+  auto predecessor = *initial.candidate;
+  ASSERT_TRUE(predecessor.valid());
+  facade.onExecutionTimelineActivated(predecessor.bundle_generation);
+  int crossing_proposals = 0;
+  std::int64_t minimum_observed_reserve_ns = std::numeric_limits<std::int64_t>::max();
+  const auto check_boundary = [&](const navigation_planning::CandidateBundle& candidate) {
+    if (!candidate.route_boundary_event || candidate.route_boundary_event->kind !=
+        navigation_planning::RouteBoundaryEventKind::kPassThrough) return true;
+    ++crossing_proposals;
+    const auto offset_ns = candidate.route_boundary_event->boundary_stamp_ns -
+        candidate.declared_start_ns;
+    bool main_interval_found = false;
+    bool reserve_valid = false;
+    for (const auto& interval : candidate.role_schedule) {
+      if (interval.role != navigation_planning::CandidateRole::kMain) continue;
+      const auto begin_ns = static_cast<std::int64_t>(std::llround(interval.begin_time_s * 1.0e9));
+      const auto end_ns = static_cast<std::int64_t>(std::llround(interval.end_time_s * 1.0e9));
+      if (offset_ns < begin_ns || offset_ns >= end_ns) continue;
+      main_interval_found = true;
+      const auto reserve_ns = end_ns - offset_ns;
+      minimum_observed_reserve_ns = std::min(minimum_observed_reserve_ns, reserve_ns);
+      // Independent arithmetic on the exported canonical schedule, not an
+      // invocation of the producer's eligibility predicate under test.
+      reserve_valid = reserve_ns >= static_cast<std::int64_t>(std::llround(
+          navigation_planning::PlanningTimingContract::kMinimumMainReserveS * 1.0e9));
+    }
+    EXPECT_TRUE(main_interval_found);
+    return main_interval_found && reserve_valid;
+  };
+  ASSERT_TRUE(check_boundary(predecessor));
+  int failed_successor_count = 0;
+  int successful_successor_count = 0;
+  int reserve_rejected_proposals = 0;
+  for (int step = 0; step < 16; ++step) {
+    SCOPED_TRACE(step);
+    const auto main_end_ns = predecessor.declared_start_ns +
+        static_cast<std::int64_t>(std::llround(predecessor.backup_start_time_s * 1.0e9));
+    const auto activation_offset_ns = std::min<std::int64_t>(
+        1'000'000'000LL, (main_end_ns - predecessor.declared_start_ns) / 2);
+    const auto activation_ns = predecessor.declared_start_ns +
+        activation_offset_ns;
+    const auto measured_ns = activation_ns - 400'000'000LL;
+    ASSERT_GE(measured_ns, predecessor.declared_start_ns);
+    const auto measured = predecessor.sampleAtDeclaredStamp(measured_ns);
+    const auto future = predecessor.sampleAtDeclaredStamp(activation_ns);
+    ASSERT_TRUE(measured.has_value());
+    ASSERT_TRUE(future.has_value());
+    ASSERT_EQ(future->role, navigation_planning::CandidateRole::kMain);
+    // Stop this same-identity construction probe once ideal measured motion
+    // reaches the ball. Only MissionController may advance the real route.
+    if ((measured->position_world - mission.waypoints[1].position_enu).norm() <= 0.9) break;
+    auto request = initial_request;
+    request.key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
+    request.key.committed_bundle_generation = predecessor.bundle_generation;
+    request.key.anchor_stamp_ns = measured_ns;
+    request.start_state.source_stamp_ns = measured_ns;
+    request.start_state.receive_stamp_ns = measured_ns;
+    request.start_state.position_world = measured->position_world;
+    request.start_state.velocity_world = measured->velocity_world;
+    request.start_state.acceleration_world = measured->acceleration_world;
+    request.start_state.jerk_world = measured->jerk_world;
+    request.activation_stamp_ns = activation_ns;
+    request.history.previous_bundle_generation = predecessor.bundle_generation;
+    request.history.previous_velocity_world = future->velocity_world;
+    request.anchor = navigation_planning::ExecutionAnchor{
+        predecessor.bundle_generation, 1U, 1U, 1U, 31U, measured_ns, activation_ns,
+        *future, future->role, main_end_ns, predecessor.declared_end_ns,
+        predecessor.world_identity};
+    request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+        std::chrono::milliseconds(80);
+    request.budget.steady_deadline_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        request.budget.deadline.time_since_epoch()).count();
+    ASSERT_TRUE(request.valid());
+    ros_time_s = static_cast<double>(measured_ns) * 1.0e-9;
+    const auto successor = facade.plan(request);
+    EXPECT_EQ(facade.committedGeneration(), predecessor.bundle_generation);
+    if (!successor.candidate) {
+      ++failed_successor_count;
+      if (failed_successor_count >= 3) break;
+      continue;
+    }
+    ::testing::Test::RecordProperty("last_anchor_position_x_m", std::to_string(future->position_world.x()));
+    ::testing::Test::RecordProperty("last_anchor_speed_mps", std::to_string(future->velocity_world.norm()));
+    if (!check_boundary(*successor.candidate)) {
+      // Diagnostic reference-admission arithmetic only. The real runtime
+      // owns authority; do not activate a staged crossing that it rejects.
+      ++reserve_rejected_proposals;
+      EXPECT_EQ(facade.committedGeneration(), predecessor.bundle_generation);
+      break;
+    }
+    ++successful_successor_count;
+    ros_time_s = static_cast<double>(activation_ns) * 1.0e-9;
+    facade.onExecutionTimelineActivated(successor.candidate->bundle_generation);
+    predecessor = *successor.candidate;
+  }
+  ::testing::Test::RecordProperty("failed_successor_count", failed_successor_count);
+  ::testing::Test::RecordProperty("successful_successor_count", successful_successor_count);
+  ::testing::Test::RecordProperty("reserve_rejected_proposal_count", reserve_rejected_proposals);
+  ::testing::Test::RecordProperty("minimum_post_pass_main_reserve_ns", std::to_string(minimum_observed_reserve_ns));
+  ::testing::Test::RecordProperty("observed_pass_crossing_proposal_count", crossing_proposals);
+  EXPECT_GT(crossing_proposals, 0);
+  EXPECT_EQ(facade.committedGeneration(), predecessor.bundle_generation);
+}
+
+TEST(PlannerFacade, SafeProductPassRenewalProbePreservesActivatedPredecessor) {
+  probeProductPassRenewal(false);
+}
+
+TEST(PlannerFacade, FastProductPassRenewalProbePreservesActivatedPredecessor) {
+  probeProductPassRenewal(true);
+}
+
 TEST(PlannerFacade, PassThroughLookaheadExportsRouteBoundaryEvent) {
   auto world = std::make_shared<IdentityOnlyWorld>();
   TestCommitAuthorizer authorizer(world);
