@@ -24,6 +24,7 @@
 #include <navigation_world_model/goal_contract.hpp>
 #include <navigation_common/time.hpp>
 #include <navigation_planning/planning_timing.hpp>
+#include <navigation_mission/route_progress.hpp>
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <atomic>
 #include <cmath>
@@ -1353,54 +1354,17 @@ double mainGuideSupport(
                 // declared endpoint: a long MAIN prefix can cross the
                 // waypoint and then continue toward the next leg before its
                 // BACKUP suffix begins.
-                std::optional<double> boundary_entry_tt;
                 const double total_duration = command.position.getTotalDuration();
-                const auto inside_boundary = [&] (const double time_s) {
-                    const auto point = command.position.getPos(time_s);
-                    return point.allFinite() &&
-                        (point.array() >= boundary_min.array()).all() &&
-                        (point.array() <= boundary_max.array()).all();
-                };
-                if (std::isfinite(total_duration) && total_duration >= 0.0) {
-                    double previous_t = 0.0;
-                    bool previous_inside = inside_boundary(previous_t);
-                    if (previous_inside) {
-                        boundary_entry_tt = previous_t;
-                    } else {
-                        // The witness is a safety boundary, not a plotting
-                        // sample.  A 20 ms probe could miss a short AABB
-                        // crossing when the composed MAIN/BACKUP trajectory
-                        // enters and exits between probes; keep the bracket
-                        // conservative and refine its timestamp below.
-                        constexpr double kBoundaryProbeDtS = 0.005;
-                        const std::size_t probe_count = static_cast<std::size_t>(
-                            std::ceil(total_duration / kBoundaryProbeDtS));
-                        if (probe_count > 10000000U) {
-                            return {std::nullopt,
-                                    CandidateExportFailure::kIncompleteRouteBoundary};
-                        }
-                        for (std::size_t probe = 1U; probe <= probe_count; ++probe) {
-                            const double current_t = std::min(
-                                total_duration,
-                                static_cast<double>(probe) * kBoundaryProbeDtS);
-                            const bool current_inside = inside_boundary(current_t);
-                            if (current_inside && !previous_inside) {
-                                double lower = previous_t;
-                                double upper = current_t;
-                                for (int iteration = 0; iteration < 32; ++iteration) {
-                                    const double middle = 0.5 * (lower + upper);
-                                    if (inside_boundary(middle)) upper = middle;
-                                    else lower = middle;
-                                }
-                                boundary_entry_tt = upper;
-                                break;
-                            }
-                            previous_t = current_t;
-                            previous_inside = current_inside;
-                            if (current_t >= total_duration) break;
-                        }
-                    }
+                const auto boundary_visit =
+                    navigation_planning_backend::firstAcceptanceVolumeVisit(
+                        [&](const double time_s) { return command.position.getPos(time_s); },
+                        boundary_min, boundary_max, total_duration,
+                        [] { return false; }, false);
+                if (!boundary_visit) {
+                    return {std::nullopt,
+                            CandidateExportFailure::kIncompleteRouteBoundary};
                 }
+                const auto boundary_entry_tt = boundary_visit->entry_time_s;
                 const bool boundary_reached = boundary_entry_tt.has_value();
                 // A pass-through witness is executable only while the command
                 // is still in MAIN.  If the first entry occurs after the
@@ -5144,6 +5108,8 @@ double mainGuideSupport(
         // certificate must reject. Compute the MAIN entry once so each switch
         // candidate can be classified without changing the safety window.
         std::optional<double> main_acceptance_entry_t;
+        std::optional<navigation_planning_backend::PassThroughSwitchWindow>
+            pass_switch_window;
         std::optional<Eigen::Vector3d> active_pass_through_waypoint;
         double active_pass_through_radius_m =
                 std::numeric_limits<double>::quiet_NaN();
@@ -5158,6 +5124,28 @@ double mainGuideSupport(
                 active_waypoint.acceptance_radius_m > 0.0) {
                 active_pass_through_waypoint = active_waypoint.position_enu;
                 active_pass_through_radius_m = active_waypoint.acceptance_radius_m;
+                const bool requires_pass_continuation =
+                    !candidate_terminal_stop_active_ &&
+                    route_snapshot_->active_waypoint_index + 1U < route_snapshot_->waypoints.size() &&
+                    !navigation_mission::passThroughNextWaypointIsCoincidentStop(*route_snapshot_);
+                if (requires_pass_continuation) {
+                    const double export_radius = std::max(
+                        navigation_world_model::kGoalCompletionToleranceM,
+                        active_pass_through_radius_m);
+                    const Eigen::Vector3d boundary_min = *active_pass_through_waypoint -
+                        Eigen::Vector3d::Constant(export_radius);
+                    const Eigen::Vector3d boundary_max = *active_pass_through_waypoint +
+                        Eigen::Vector3d::Constant(export_radius);
+                    const auto visit = navigation_planning_backend::firstAcceptanceVolumeVisit(
+                        [&](const double time_s) { return ref_exp_traj.getPos(time_s); },
+                        boundary_min, boundary_max, ref_exp_traj.getTotalDuration(),
+                        should_abort);
+                    if (!visit) return FAILED;
+                    if (visit->entry_time_s) {
+                        pass_switch_window = navigation_planning_backend::passThroughSwitchWindow(
+                            *visit, navigation_planning::PlanningTimingContract::kMinimumMainReserveS);
+                    }
+                }
                 const auto inside_acceptance = [&](const double time_s) {
                     const auto position = ref_exp_traj.getPos(time_s);
                     return position.allFinite() &&
@@ -5188,6 +5176,21 @@ double mainGuideSupport(
                     }
                 }
             }
+        }
+        if (pass_switch_window) {
+            const auto& window = *pass_switch_window;
+            // Prefer enough MAIN beyond the first volume visit for measured
+            // arrival, but retain shorter admission-valid crossings below.
+            // A no-exit/stop-in-ball trajectory keeps its original heuristic.
+            if (window.preferred_crossing_s && *window.preferred_crossing_s <= te) {
+                heu_ts = std::max(heu_ts, *window.preferred_crossing_s);
+            }
+            if (heu_ts > window.approach_upper_s && heu_ts < window.crossing_lower_s) {
+                heu_ts = window.crossing_lower_s <= te
+                    ? std::max(backup_switch_lower_bound, window.crossing_lower_s)
+                    : window.approach_upper_s;
+            }
+            if (heu_ts < backup_switch_lower_bound) return OPT_FAILED;
         }
         const auto backup_crosses_uncompleted_pass_through =
                 [&](const double candidate_ts, const geometry_utils::Piece& piece) {
@@ -5382,9 +5385,25 @@ double mainGuideSupport(
                 break;
             }
             if (candidate_ts <= backup_switch_lower_bound + 1.0e-9) break;
-            candidate_ts = std::max(
-                    backup_switch_lower_bound,
-                    candidate_ts - cfg_.sample_traj_dt_s);
+            double next_ts = std::max(
+                backup_switch_lower_bound, candidate_ts - cfg_.sample_traj_dt_s);
+            if (pass_switch_window) {
+                const auto& window = *pass_switch_window;
+                // Do not spend the solve budget certifying splits whose
+                // exported MAIN boundary is already known to miss admission.
+                // Try the shortest valid crossing before falling back to an
+                // approach that advertises no MAIN boundary (export has 1ns
+                // tolerance, hence its canonical 2ns separation).
+                if (candidate_ts > window.crossing_lower_s &&
+                    next_ts < window.crossing_lower_s) {
+                    next_ts = std::max(backup_switch_lower_bound, window.crossing_lower_s);
+                } else if (next_ts < window.crossing_lower_s &&
+                           next_ts > window.approach_upper_s) {
+                    next_ts = window.approach_upper_s;
+                }
+            }
+            if (next_ts < backup_switch_lower_bound || !(next_ts < candidate_ts)) break;
+            candidate_ts = next_ts;
         }
         const auto& certificate_diagnostics = backup_certificate_diagnostics_;
         if (!braking_seed_inside_sfc) {
@@ -5446,8 +5465,17 @@ double mainGuideSupport(
         // small interval avoids mapping an exact interval endpoint to
         // infinity while preventing the split-time reward from drifting back
         // toward the visibility boundary.
-        const double backup_switch_upper_bound = std::min(
+        double refinement_lower_bound = backup_switch_lower_bound;
+        double backup_switch_upper_bound = std::min(
                 te, heu_ts + std::max(0.01, cfg_.replan_forward_dt_s * 0.25));
+        if (pass_switch_window) {
+            const auto& window = *pass_switch_window;
+            if (heu_ts >= window.crossing_lower_s) {
+                refinement_lower_bound = std::max(refinement_lower_bound, window.crossing_lower_s);
+            } else {
+                backup_switch_upper_bound = std::min(backup_switch_upper_bound, window.approach_upper_s);
+            }
+        }
         frontend_timing.finish();
         TimeConsuming t_back_opt("t_back_opt", false);
         double opt_ts = heu_ts;
@@ -5463,11 +5491,13 @@ double mainGuideSupport(
                     cfg_.back_traj_cfg.piece_num));
         }
         bool temp_ret = false;
-        if (cfg_.backup_refinement_enabled) {
+        const bool refinement_attempted = cfg_.backup_refinement_enabled &&
+            refinement_lower_bound < backup_switch_upper_bound;
+        if (refinement_attempted) {
             back_traj_opt_->setSolveBudget(
                     &solve_cancelled_, solve_deadline.steadyDeadlineNanoseconds());
             temp_ret = back_traj_opt_->optimize(ref_exp_traj.posTraj(),
-                                                backup_switch_lower_bound,
+                                                refinement_lower_bound,
                                                 backup_switch_upper_bound,
                                                 heu_ts,
                                                 back_traj_info.getSFC(),
@@ -5479,13 +5509,20 @@ double mainGuideSupport(
         time_consuming_[BACK_TRAJ_OPT] = t_back_opt.stop();
         if (should_abort()) return FAILED;
 
-        if (cfg_.backup_refinement_enabled) {
+        if (temp_ret && (!std::isfinite(opt_ts) || opt_ts < refinement_lower_bound ||
+                         opt_ts > backup_switch_upper_bound)) {
+            // Optional refinement cannot move an approach into the rejected
+            // boundary/reserve gap, or shorten a certified crossing. Keep the
+            // already certified seed instead of discarding a valid bundle.
+            temp_ret = false;
+        }
+        if (refinement_attempted) {
             double init_ts;
             VecDf init_times;
             vec_Vec3f init_ps;
             back_traj_opt_->getInitValue(init_ts, init_times, init_ps);
             latest_replan.setBackupCondition(init_ts, init_times, init_ps,
-                                             backup_switch_lower_bound,
+                                             refinement_lower_bound,
                                              backup_switch_upper_bound,
                                              back_traj_info.getSFC());
         }

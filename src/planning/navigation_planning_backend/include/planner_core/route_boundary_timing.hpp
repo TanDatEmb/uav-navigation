@@ -4,9 +4,100 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace navigation_planning_backend {
+
+struct FirstAcceptanceVolumeVisit {
+  std::optional<double> entry_time_s;
+  std::optional<double> exit_time_s;
+};
+
+// Share the exporter's existing 5 ms AABB bracket/refinement with construction.
+// This locates the first sampled visit, not a continuous intersection proof or
+// a measured/ordered sphere crossing. An unfinished visit has no invented exit.
+template <typename PositionAt, typename Point, typename Abort>
+inline std::optional<FirstAcceptanceVolumeVisit> firstAcceptanceVolumeVisit(
+    PositionAt position_at, const Point& minimum, const Point& maximum,
+    const double duration_s, Abort abort, const bool find_exit = true) {
+  constexpr double kProbeDtS = 0.005;
+  if (!minimum.allFinite() || !maximum.allFinite() ||
+      !(minimum.array() <= maximum.array()).all() ||
+      !std::isfinite(duration_s) || duration_s < 0.0) return std::nullopt;
+  const double count = std::ceil(duration_s / kProbeDtS);
+  // Validate before converting: a huge/nonfinite double-to-size_t is unsafe.
+  if (!std::isfinite(count) || count > 10000000.0) return std::nullopt;
+  const auto probe_count = static_cast<std::size_t>(count);
+  const auto inside = [&](const double time_s) -> std::optional<bool> {
+    if (abort()) return std::nullopt;
+    const auto point = position_at(time_s);
+    if (!point.allFinite()) return std::nullopt;
+    return (point.array() >= minimum.array()).all() &&
+           (point.array() <= maximum.array()).all();
+  };
+  FirstAcceptanceVolumeVisit visit;
+  auto previous_inside = inside(0.0);
+  if (!previous_inside) return std::nullopt;
+  if (*previous_inside) visit.entry_time_s = 0.0;
+  if (visit.entry_time_s && !find_exit) return visit;
+  double previous_time = 0.0;
+  for (std::size_t probe = 1U; probe <= probe_count; ++probe) {
+    const double time_s = std::min(duration_s, probe * kProbeDtS);
+    const auto current_inside = inside(time_s);
+    if (!current_inside) return std::nullopt;
+    if (*current_inside != *previous_inside) {
+      double lower = previous_time, upper = time_s;
+      for (int iteration = 0; iteration < 32; ++iteration) {
+        const double middle = 0.5 * (lower + upper);
+        const auto middle_inside = inside(middle);
+        if (!middle_inside) return std::nullopt;
+        if (*middle_inside == *previous_inside) lower = middle;
+        else upper = middle;
+      }
+      if (*current_inside && !visit.entry_time_s) {
+        visit.entry_time_s = upper;
+        if (!find_exit) return visit;
+      } else if (!*current_inside && visit.entry_time_s) {
+        visit.exit_time_s = upper;
+        return visit;
+      }
+    }
+    previous_time = time_s;
+    previous_inside = current_inside;
+    if (time_s >= duration_s) break;
+  }
+  return visit;
+}
+
+struct PassThroughSwitchWindow {
+  double crossing_lower_s;
+  double approach_upper_s;
+  std::optional<double> preferred_crossing_s;
+};
+
+// Same 600 ms reserve as admission, with only ns representation accounting.
+// Exit+reserve is a preference, never a lower bound: shorter valid crossings
+// must remain searchable when the later braking hull cannot be certified.
+inline std::optional<PassThroughSwitchWindow> passThroughSwitchWindow(
+    const FirstAcceptanceVolumeVisit& visit, const double reserve_s) {
+  if (!visit.entry_time_s || !std::isfinite(*visit.entry_time_s) ||
+      *visit.entry_time_s < 0.0 || !std::isfinite(reserve_s) || reserve_s < 0.0 ||
+      (visit.exit_time_s && (!std::isfinite(*visit.exit_time_s) ||
+                            *visit.exit_time_s < *visit.entry_time_s))) return std::nullopt;
+  const double entry_ns = *visit.entry_time_s * 1.0e9;
+  if (!std::isfinite(entry_ns) || !std::isfinite(reserve_s * 1.0e9) ||
+      !std::isfinite(entry_ns + reserve_s * 1.0e9) ||
+      (visit.exit_time_s && !std::isfinite((*visit.exit_time_s + reserve_s) * 1.0e9)))
+    return std::nullopt;
+  const auto crossing_after = [&](const double time_s) {
+    return (std::ceil(time_s * 1.0e9) + std::ceil(reserve_s * 1.0e9) + 2.0) * 1.0e-9;
+  };
+  return PassThroughSwitchWindow{crossing_after(*visit.entry_time_s),
+          (std::floor(entry_ns) - 2.0) * 1.0e-9,
+          visit.exit_time_s ? std::optional<double>{crossing_after(*visit.exit_time_s)}
+                            : std::nullopt};
+}
 
 // Retained command samples are future points relative to the immutable splice
 // boundary, not relative to the first retained sample. Keep the anchor in the

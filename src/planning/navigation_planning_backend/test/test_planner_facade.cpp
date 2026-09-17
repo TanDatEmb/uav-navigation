@@ -1447,7 +1447,8 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   EXPECT_LE(std::abs(after_turn.yaw_rate), facade.yawRateLimitRadS() + 1.0e-6);
 }
 
-void probeProductPassRenewal(const bool backup_allow_unknown) {
+void probeProductPassRenewal(const bool backup_allow_unknown,
+                             const bool require_measured_handoff_window = false) {
   // Preserve the product's bounded map geometry and the first 9WP junction,
   // without pretending this obstacle-free fixture replays the recorded map.
   class BoundedFreeWorld final : public IdentityOnlyWorld {
@@ -1527,6 +1528,7 @@ void probeProductPassRenewal(const bool backup_allow_unknown) {
   ASSERT_TRUE(predecessor.valid());
   facade.onExecutionTimelineActivated(predecessor.bundle_generation);
   int crossing_proposals = 0;
+  int measured_window_proposals = 0;
   std::int64_t minimum_observed_reserve_ns = std::numeric_limits<std::int64_t>::max();
   const auto check_boundary = [&](const navigation_planning::CandidateBundle& candidate) {
     if (!candidate.route_boundary_event || candidate.route_boundary_event->kind !=
@@ -1536,12 +1538,14 @@ void probeProductPassRenewal(const bool backup_allow_unknown) {
         candidate.declared_start_ns;
     bool main_interval_found = false;
     bool reserve_valid = false;
+    std::int64_t main_end_stamp_ns = 0;
     for (const auto& interval : candidate.role_schedule) {
       if (interval.role != navigation_planning::CandidateRole::kMain) continue;
       const auto begin_ns = static_cast<std::int64_t>(std::llround(interval.begin_time_s * 1.0e9));
       const auto end_ns = static_cast<std::int64_t>(std::llround(interval.end_time_s * 1.0e9));
       if (offset_ns < begin_ns || offset_ns >= end_ns) continue;
       main_interval_found = true;
+      main_end_stamp_ns = candidate.declared_start_ns + end_ns;
       const auto reserve_ns = end_ns - offset_ns;
       minimum_observed_reserve_ns = std::min(minimum_observed_reserve_ns, reserve_ns);
       // Independent arithmetic on the exported canonical schedule, not an
@@ -1550,6 +1554,36 @@ void probeProductPassRenewal(const bool backup_allow_unknown) {
           navigation_planning::PlanningTimingContract::kMinimumMainReserveS * 1.0e9));
     }
     EXPECT_TRUE(main_interval_found);
+    // Exercise the shared measured/ordered sphere predicate independently
+    // of the producer's AABB event. Ideal measurements are candidate samples,
+    // not flight evidence; no callback/DDS delay or tracking error is assumed.
+    navigation_mission::RouteProgress measured_progress(mission);
+    std::optional<Eigen::Vector3d> previous_position;
+    int measured_handoff_samples = 0;
+    constexpr std::int64_t sample_period_ns = 20'000'000LL;
+    const auto reserve_ns = static_cast<std::int64_t>(std::llround(
+        navigation_planning::PlanningTimingContract::kMinimumMainReserveS * 1.0e9));
+    for (auto stamp_ns = candidate.declared_start_ns;
+         main_interval_found && stamp_ns < main_end_stamp_ns;
+         stamp_ns += sample_period_ns) {
+      const auto point = candidate.sampleAtDeclaredStamp(stamp_ns);
+      EXPECT_TRUE(point.has_value());
+      if (!point) break;
+      (void)measured_progress.update(point->position_world);
+      const auto crossing = measured_progress.measuredWaypointCrossingError(
+          1U, point->position_world, previous_position, 0.02, 0.25);
+      if (reserve_valid && point->role == navigation_planning::CandidateRole::kMain &&
+          main_end_stamp_ns - stamp_ns >= reserve_ns && crossing.has_value()) {
+        ++measured_handoff_samples;
+      }
+      previous_position = point->position_world;
+    }
+    ::testing::Test::RecordProperty("measured_handoff_samples_at_last_crossing",
+                                    measured_handoff_samples);
+    if (require_measured_handoff_window) {
+      EXPECT_TRUE(reserve_valid);
+    }
+    if (measured_handoff_samples > 0) ++measured_window_proposals;
     return main_interval_found && reserve_valid;
   };
   ASSERT_TRUE(check_boundary(predecessor));
@@ -1624,6 +1658,11 @@ void probeProductPassRenewal(const bool backup_allow_unknown) {
   ::testing::Test::RecordProperty("minimum_post_pass_main_reserve_ns", std::to_string(minimum_observed_reserve_ns));
   ::testing::Test::RecordProperty("observed_pass_crossing_proposal_count", crossing_proposals);
   EXPECT_GT(crossing_proposals, 0);
+  ::testing::Test::RecordProperty("observed_measured_window_proposal_count", measured_window_proposals);
+  // Shorter admission-valid crossing fallbacks remain allowed. This bounded
+  // construction sequence must eventually expose an ideal measured window;
+  // it does not require every earlier receding-horizon bundle to have one.
+  if (require_measured_handoff_window) EXPECT_GT(measured_window_proposals, 0);
   EXPECT_EQ(facade.committedGeneration(), predecessor.bundle_generation);
 }
 
@@ -1633,6 +1672,58 @@ TEST(PlannerFacade, SafeProductPassRenewalProbePreservesActivatedPredecessor) {
 
 TEST(PlannerFacade, FastProductPassRenewalProbePreservesActivatedPredecessor) {
   probeProductPassRenewal(true);
+}
+
+TEST(PlannerFacade, SafeProductCrossingHasIdealMeasuredHandoffWindow) {
+  probeProductPassRenewal(false, true);
+}
+
+TEST(PlannerFacade, FastProductCrossingHasIdealMeasuredHandoffWindow) {
+  probeProductPassRenewal(true, true);
+}
+
+TEST(PlannerFacade, CoincidentPassToStopPreservesCertifiedTerminalBackup) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning::DynamicLimits limits;
+  limits.intent.requested_cruise_speed_mps = 5.0;
+  limits.unknown_space_policy = navigation_world_model::UnknownPolicy::kAllowUnknown;
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, limits, authorizer, [] { return 10.0; });
+  navigation_mission::Mission mission;
+  mission.id = "coincident-pass-stop-backup";
+  mission.frame = "lio_odom";
+  mission.planning.requested_cruise_speed_mps = 5.0;
+  mission.waypoints = {
+      {"previous", Eigen::Vector3d{0.0, 0.0, 2.0}, 0.8, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"current", Eigen::Vector3d{5.0, 0.0, 2.0}, 0.8, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"terminal", Eigen::Vector3d{5.0, 0.0, 2.0}, 0.8, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::Stop}};
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(mission.waypoints.front().position_enu).valid);
+  auto request = plannerBodySupportRequest(world, nullptr);
+  request.route_snapshot = progress.snapshot(mission.id, mission.frame, 1U, 31U, 1U);
+  request.key.route_revision = request.route_snapshot.route_revision;
+  request.goal.mission_id = mission.id;
+  request.dynamics = limits;
+  facade.setGoalAcceptanceRadius(0.8);
+  ASSERT_TRUE(navigation_mission::passThroughNextWaypointIsCoincidentStop(request.route_snapshot));
+  ASSERT_TRUE(request.valid());
+  const auto result = facade.plan(request);
+  ASSERT_TRUE(result.candidate) << static_cast<int>(result.failure_stage) << ":"
+                                << static_cast<int>(result.failure_reason);
+  const auto& candidate = *result.candidate;
+  ASSERT_TRUE(candidate.valid());
+  EXPECT_TRUE(candidate.terminal_stop);
+  // Start is 5m from the goal, beyond the main-only/rest radius shortcut.
+  EXPECT_TRUE(candidate.backup_available);
+  const auto endpoint = candidate.sampleAtDeclaredEnd();
+  ASSERT_TRUE(endpoint);
+  EXPECT_LE((endpoint->position_world - mission.waypoints[1].position_enu).norm(), 0.8);
+  EXPECT_NEAR(endpoint->velocity_world.norm(), 0.0, 1.0e-6);
+  EXPECT_EQ(facade.committedGeneration(), 0U);
 }
 
 TEST(PlannerFacade, PassThroughLookaheadExportsRouteBoundaryEvent) {

@@ -2,14 +2,16 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: divergent formulation/protocol reviews prioritize complete-
-bundle viability from actual full PVAJ and measured-handoff/identity tests;
-exact-prefix salvage is only a discriminator, not the default repair. The
-574.112640ms facade reserve counterexample remains; the experimental
-entry+600ms selector was withdrawn. A frozen moving replay also exposed a
-warm-start dimension hazard and stale certificate mapping. The invalid-seed
-boundary is corrected separately; no valid-command policy, hard gate or
-completion improvement is claimed. See the final divergent-review section.
+Latest follow-up: a scoped BACKUP-selector correction closes the real-facade
+574.112640ms admission counterexample without changing the600ms gate. Shared
+first-AABB-entry timing skips only admission-ineligible crossing splits;
+exit+reserve is a preference, not a mandatory bound. Shorter valid crossing
+fallbacks and terminal/coincident STOP exceptions remain. SAFE/FAST fixture
+sequences now each contain two ideal measured-handoff windows; backend9/9CTest
+executables pass. Three repeated nominal failures on the later frozen input
+remain. These are component results, not completion improvement: a new frozen
+Release/integrated matrix is still required. Exact-prefix salvage remains a
+discriminator only. See the final construction/admission follow-up below.
 
 The last integrated evidence remains the explicit FAST/AllowUnknown matrix on `80020ed0`
 completed all nine runs: **1/9mission COMPLETE,0/9report PASS**, three
@@ -2323,6 +2325,98 @@ cmake --build build/navigation_runtime --target test_certified_continuation -j2
 ctest --test-dir build/navigation_planning_backend --output-on-failure
 ctest --test-dir build/navigation_runtime -R '^test_certified_continuation$' --output-on-failure
 git diff --check
+```
+
+##### Construction/admission alignment after independent counterexamples
+
+This is a minimal change inside the existing planner, not execution ownership
+extraction or a new authority path. `ExecutionTimelineStore`, runtime admission,
+activation, measured MissionController progress and PX4 publication are
+unchanged. An optimizer-successful path still does not authorize a command.
+
+The real-facade counterexample was reproduced before the change in both
+explicit policies: first exported PASS crossing had574,112,640ns MAIN reserve,
+and zero ideal measured samples with600ms MAIN remaining. Producer construction
+had not incorporated the consumer's post-boundary reserve. The correction
+shares export's existing5ms AABB bracket/32-step entry refinement with BACKUP
+construction; it does not replace ordered measured sphere arrival with AABB
+arrival or claim continuous intersection proof.
+
+The selector prefers first AABB exit plus the existing600ms reserve only when
+that time fits the visibility interval. It then searches backwards through
+shorter valid crossings, explicitly tries the entry+reserve lower endpoint,
+and can fall back to an approach before entry. The rejected entry-to-reserve
+gap is skipped, not the entire entry-to-exit interval. Canonical nanosecond
+rounding includes2ns representation separation from export's1ns tolerance.
+Optional BACKUP refinement stays within the selected crossing/approach domain;
+an empty domain or out-of-domain refinement retains the already certified
+seed. No-exit trajectories have no manufactured exit or mandatory exit rule.
+
+Independent review rejected a stronger rule: entry1.00s, exit1.50s and split
+1.65s can have a valid measured sample at1.02s with630ms MAIN remaining, even
+when braking at2.10s is world-blocked. Therefore exit+reserve is not a proof
+that shorter splits are impossible. Review also found a reachable exemption:
+coincident PASS→STOP and final PASS without outgoing have no consumer
+post-boundary continuation requirement. The new timing rule excludes them,
+as well as actual terminal candidates. A real-facade0→5m coincident PASS→STOP
+test requires a valid terminal candidate with BACKUP and an in-ball stationary
+endpoint; its request has a10s test budget and proves semantics, not80ms
+readiness. The source predicate and strict lower-endpoint comparison were
+re-reviewed after correction; no concrete diff blocker remained.
+
+| Same initial route/product-config facade probe | Before | After, each policy |
+|---|---:|---:|
+| Observed crossing proposals | 1 | 3 |
+| Reference static-reserve rejections | 1 | 0 |
+| Minimum exported post-PASS MAIN reserve | 574,112,640ns | 600,000,004ns |
+| Crossing proposals with an ideal measured window | 0 | 2 |
+| Successful successor constructions before fixture stops | 2 | 5 |
+
+The after sequence also has three nominal failures on one later frozen input;
+these are repeated component attempts, not three flight failures. The last
+crossing has23 ideal20ms samples meeting the existing ordered sphere predicate
+and600ms remaining MAIN. An earlier shorter crossing has zero such samples
+and remains searchable by design. The test therefore requires all observed
+crossings to meet static admission reserve and at least one ideal measured
+window in the bounded sequence, not a window for every shorter fallback.
+The retained before XML used the stricter per-crossing window assertion;
+its first reserve failure/zero samples are the comparison evidence, not a
+claimed byte-identical test-suite A/B. Both policy fixtures use the same
+geometry/dynamics and differ only in explicit BACKUP UNKNOWN policy.
+
+Verification: backend9/9CTest executables pass, including28facade cases; the
+five new geometry/timing tests cover first/repeated visits, start-inside,
+end-inside/no-exit, cube-without-sphere arrival, cancellation/nonfinite inputs,
+and the shorter-crossing review counterexample. Focused SAFE/FAST measured
+window plus coincident-terminal tests pass3/3. Initial unsourced CTest could
+not import ament and executed no test binary; the ROS-sourced rerun above is
+the reported result. Retained artifacts:
+
+- `.artifacts/diagnostics/independent-bundle-review-20260917/measured_window_before.gtest.xml`
+- `.artifacts/diagnostics/independent-bundle-review-20260917/measured_window_after.gtest.xml`
+- `.artifacts/diagnostics/independent-bundle-review-20260917/measured_window_after.log`
+- `.artifacts/diagnostics/independent-bundle-review-20260917/pass_visit_after.gtest.xml`
+
+The remaining discriminator is integrated completion, not proposal count.
+First-visit geometry does not guarantee a sphere crossing on that visit,
+correct route ordering on a self-overlap, tracking or DDS/callback-delay
+margin, or all sampling phases. Exit preference can consume more BACKUP/SFC
+attempts and make a mathematically preserved fallback unreachable within80ms.
+Freeze a fresh whole-workspace Release build and run sequential2/5/9WP×3 at
+requested5m/s, retaining attempts/deadlines, measured progress, tracking,
+restarts, every failed outcome and SAFE/FAST denominators separately. Do not
+change configuration, run analysis/build load alongside the batch, or claim
+product/qualification closure from these component tests.
+
+```sh
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+cmake --build build/navigation_planning_backend -j2
+ctest --test-dir build/navigation_planning_backend --output-on-failure
+./build/navigation_planning_backend/test_planner_config --gtest_filter='PlannerPassThroughVisit.*'
+./build/navigation_planning_backend/test_planner_facade --gtest_filter='PlannerFacade.*IdealMeasuredHandoffWindow:PlannerFacade.CoincidentPassToStopPreservesCertifiedTerminalBackup'
+git diff --check
+make build
 ```
 
 ##### Divergent review: viability, protocol, and representation

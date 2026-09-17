@@ -21,6 +21,95 @@
 #include <navigation_planning/planning_timing.hpp>
 #include <utils/optimization/optimization_utils.h>
 
+TEST(PlannerPassThroughVisit, RefinesFirstEntryAndExitWithoutInventingAnotherVisit) {
+  const Eigen::Vector3d minimum{-1.0, -1.0, -1.0}, maximum{1.0, 1.0, 1.0};
+  const auto straight = navigation_planning_backend::firstAcceptanceVolumeVisit(
+      [](double t) { return Eigen::Vector3d{2.0 - 2.0 * t, 0.0, 0.0}; },
+      minimum, maximum, 2.0, [] { return false; });
+  ASSERT_TRUE(straight);
+  ASSERT_TRUE(straight->entry_time_s);
+  ASSERT_TRUE(straight->exit_time_s);
+  EXPECT_NEAR(*straight->entry_time_s, 0.5, 1.0e-10);
+  EXPECT_NEAR(*straight->exit_time_s, 1.5, 1.0e-10);
+  const auto repeated = navigation_planning_backend::firstAcceptanceVolumeVisit(
+      [](double t) { return Eigen::Vector3d{2.0 * std::cos(4.0 * M_PI * t), 0.0, 0.0}; },
+      minimum, maximum, 1.0, [] { return false; });
+  ASSERT_TRUE(repeated);
+  ASSERT_TRUE(repeated->entry_time_s);
+  ASSERT_TRUE(repeated->exit_time_s);
+  EXPECT_NEAR(*repeated->entry_time_s, 1.0 / 12.0, 1.0e-10);
+  EXPECT_NEAR(*repeated->exit_time_s, 1.0 / 6.0, 1.0e-10);
+}
+
+TEST(PlannerPassThroughVisit, DistinguishesNoHitStartInsideAndUnfinishedVisit) {
+  const Eigen::Vector3d minimum{-1.0, -1.0, -1.0}, maximum{1.0, 1.0, 1.0};
+  const auto no_hit = navigation_planning_backend::firstAcceptanceVolumeVisit(
+      [](double) { return Eigen::Vector3d{2.0, 0.0, 0.0}; },
+      minimum, maximum, 1.0, [] { return false; });
+  ASSERT_TRUE(no_hit);
+  EXPECT_FALSE(no_hit->entry_time_s);
+  EXPECT_FALSE(no_hit->exit_time_s);
+  const auto start_inside = navigation_planning_backend::firstAcceptanceVolumeVisit(
+      [](double t) { return Eigen::Vector3d{2.0 * t, 0.0, 0.0}; },
+      minimum, maximum, 1.0, [] { return false; });
+  ASSERT_TRUE(start_inside);
+  ASSERT_TRUE(start_inside->entry_time_s);
+  EXPECT_DOUBLE_EQ(*start_inside->entry_time_s, 0.0);
+  ASSERT_TRUE(start_inside->exit_time_s);
+  EXPECT_NEAR(*start_inside->exit_time_s, 0.5, 1.0e-10);
+  const auto end_inside = navigation_planning_backend::firstAcceptanceVolumeVisit(
+      [](double t) { return Eigen::Vector3d{2.0 - 2.0 * t, 0.0, 0.0}; },
+      minimum, maximum, 1.0, [] { return false; });
+  ASSERT_TRUE(end_inside);
+  ASSERT_TRUE(end_inside->entry_time_s);
+  EXPECT_FALSE(end_inside->exit_time_s);
+  const auto window = navigation_planning_backend::passThroughSwitchWindow(*end_inside, 0.6);
+  ASSERT_TRUE(window);
+  EXPECT_FALSE(window->preferred_crossing_s);
+}
+
+TEST(PlannerPassThroughVisit, CubeVisitDoesNotClaimMeasuredSphereArrival) {
+  const Eigen::Vector3d minimum{-1.0, -1.0, -1.0}, maximum{1.0, 1.0, 1.0};
+  const Eigen::Vector3d corner{0.9, 0.9, 0.0};
+  const auto visit = navigation_planning_backend::firstAcceptanceVolumeVisit(
+      [&](double) { return corner; }, minimum, maximum, 1.0, [] { return false; });
+  ASSERT_TRUE(visit);
+  ASSERT_TRUE(visit->entry_time_s);
+  EXPECT_FALSE(visit->exit_time_s);
+  EXPECT_GT(corner.norm(), 1.0);
+}
+
+TEST(PlannerPassThroughVisit, RejectsInvalidOrCancelledScanBeforeUnsafeConversion) {
+  const Eigen::Vector3d minimum{-1.0, -1.0, -1.0}, maximum{1.0, 1.0, 1.0};
+  int samples = 0;
+  const auto point = [&](double) { ++samples; return Eigen::Vector3d::Zero().eval(); };
+  EXPECT_FALSE(navigation_planning_backend::firstAcceptanceVolumeVisit(
+      point, minimum, maximum, 50001.0, [] { return false; }));
+  EXPECT_EQ(samples, 0);
+  EXPECT_FALSE(navigation_planning_backend::firstAcceptanceVolumeVisit(
+      point, minimum, maximum, 1.0, [] { return true; }));
+  EXPECT_EQ(samples, 0);
+  EXPECT_FALSE(navigation_planning_backend::firstAcceptanceVolumeVisit(
+      [](double) { return Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN()).eval(); },
+      minimum, maximum, 1.0, [] { return false; }));
+}
+
+TEST(PlannerPassThroughVisit, ExitPreferencePreservesShorterValidCrossingAndCanonicalApproach) {
+  navigation_planning_backend::FirstAcceptanceVolumeVisit visit{1.0, 1.5};
+  const auto window = navigation_planning_backend::passThroughSwitchWindow(visit, 0.6);
+  ASSERT_TRUE(window);
+  ASSERT_TRUE(window->preferred_crossing_s);
+  EXPECT_NEAR(window->crossing_lower_s, 1.600000002, 1.0e-12);
+  EXPECT_NEAR(*window->preferred_crossing_s, 2.100000002, 1.0e-12);
+  // Independent review's counterexample: 1.65s is still in the valid crossing
+  // search domain even if the preferred 2.10s braking hull is world-blocked.
+  EXPECT_LT(window->crossing_lower_s, 1.65);
+  EXPECT_LT(window->approach_upper_s + 1.0e-9, *visit.entry_time_s);
+  EXPECT_FALSE(navigation_planning_backend::passThroughSwitchWindow({}, 0.6));
+  EXPECT_FALSE(navigation_planning_backend::passThroughSwitchWindow(
+      {std::numeric_limits<double>::max(), std::nullopt}, 0.6));
+}
+
 TEST(PlannerDynamicLimits, BoundaryAccountingIsUlpsOnly) {
   const double limit = 3.0;
   EXPECT_TRUE(navigation_planning::withinNumericalDynamicLimit(
