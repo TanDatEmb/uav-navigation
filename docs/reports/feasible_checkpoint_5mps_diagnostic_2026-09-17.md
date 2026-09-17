@@ -2,16 +2,16 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest integrated follow-up: the frozen Release on `76a2e8ed` completed all18
-sequential SAFE/FAST cases: **SAFE1/9mission COMPLETE, FAST3/9mission COMPLETE,
+Latest integrated follow-up: the frozen Release on `90716e93` completed all18
+sequential SAFE/FAST cases: **SAFE2/9mission COMPLETE, FAST3/9mission COMPLETE,
 0/18report PASS**. Completion remains below a majority and no run qualifies.
-Request-owned guide time is component verified, but this matrix does not
-demonstrate a completion-rate gain. The separate exact-input FAST9 capture
-confirms a producer guide that passes the active waypoint, returns to its
-centre, then proceeds again. A scoped geometry repair now has RED/GREEN
-component evidence; integrated verification remains pending. Actual PX4
-feedback also reaches the tilt limit in two failed BACKUP stopping windows.
-See [the latest closure and guide composition review](#request-owned-time-matrix-closure-and-guide-composition-repair).
+This closes integration of the scoped unaccepted-MAIN guide repair; it does
+not establish a causal completion-rate improvement. FAST9-r1 exposes a
+non-overlapping measured-sphere/handoff window, including sampled nominal
+positions outside the sphere before the handoff cutoff. Other failures include
+estimator publication loss, current-world recertification and terminal
+braking/tracking containment. The fixed solve cap alone cannot explain them.
+See [the latest terminal matrix and temporal-contract review](#unaccepted-main-guide-matrix-closure-and-temporal-contract-review).
 The earlier `8a775d128` SAFE1/9, FAST4/9 and `b2f25ab0` SAFE2/9,
 FAST4/9 matrices remain separate below.
 
@@ -3260,7 +3260,8 @@ about 4.18), a fresh available BACKUP, at least the unchanged 600 ms MAIN
 reserve, and active junction index 1 on both fresh constraint and event.
 Independent authority/formulation reviewers find no new geometry/mission
 authority bypass in this scoped repair. This is component evidence, not a
-flight completion gain; the next separate SAFE/FAST 18-run matrix is pending.
+flight completion gain. At this component checkpoint the separate SAFE/FAST
+18-run matrix was pending; its terminal closure follows below.
 
 Verification must not be summarized as whole-suite PASS. The canonical
 Release build passes all 23 packages. Three normal `make test` attempts
@@ -3308,3 +3309,290 @@ review additionally identifies conditional stage-clock/quiet-tick accounting
 gaps; controlled reproductions are still needed and they are not substituted
 for measured first-failure attribution. No adaptive budget or threshold change
 is introduced to mask the confirmed geometry contradiction.
+
+### Unaccepted-MAIN guide matrix closure and temporal-contract review
+
+The `90716e93` campaign is now **terminal, all18slots retained**, not a live
+or pending simulation. Each session independently has typed waypoint
+acceptance/completion, VALID provenance, cleanup PASS, runtime stopped=true
+and qualification eligible=false. Simulations were sequential with no
+concurrent build, test, replay or resource-pressure campaign. Only small
+source/closed-log reads were performed until all18runs terminated. Snapshot
+capture and RViz were OFF. No solve, tracking, world, mission or PX4 threshold
+was tuned between runs.
+
+Frozen navigation HEAD is `90716e9385fba2bb2fab97aa8b40fa00a213f623`;
+authoritative Release manifest SHA-256 is
+`5dfc7f35a88b586036bac6db0af5a6176baf3807c0d2fbbc0cc4cca330ac1f9d`;
+source fingerprint is
+`f6cdf2bb3ed9f03680f13cc7a9fef19f601dc0793d7534c5a2a11b45263b81a1`
+(1,924 files, including captured user-owned dirty documentation).
+PX4 HEAD remains `deaff86ee335dd697677bcfc2415a23878e1b895`, with captured
+dirty provenance and binary SHA-256
+`e440bd77fbacdc422eaafdb168fec01554298d545f11e2b004a640b04e324ff9`.
+The full source/build identities are stored in each session's metadata;
+later documentation commits do not redefine this frozen campaign.
+
+The command/profile/route configuration remains requested5m/s, `nominal`,
+seed0, visibility40m/4096, ROS domain42, XRCE UDP8892. Experiments use
+`unaccepted-main-guide-90716e93-5mps-{safe|fast}-{2|5|9}wp-r{1|2|3}-20260917`.
+SAFE selects `raycasting_on_backup_strict`; FAST selects
+`raycasting_on_backup_unknown`. **MAIN permits UNKNOWN in both profiles**;
+the two experiments differ in BACKUP evidence policy. SAFE BACKUP requires
+known-free; FAST explicitly permits UNKNOWN but still rejects current
+OCCUPIED, UNDEFINED and OUT_OF_MAP. Expired STOPPED_HOLD support remains
+known-free in both. FAST is the existing explicit diagnostic opt-in, not a
+newly qualified product mode or permission to execute a currently occupied
+backup. Tracking0/0/0 remains diagnostic and invalidates qualification.
+
+All session suffixes below have prefix
+`.artifacts/runtime/external-mode-check-20260917T`. Accepted indices include
+takeoff WP0; `COMPLETE` is the typed mission outcome, not report acceptance.
+
+| Policy | WP | Repeat | Session suffix | Accepted | COMPLETE | Report |
+|---|---:|---:|---|---|---|---|
+| SAFE | 2 | 1 | `130705-505880` | 0 | no | FAIL |
+| SAFE | 2 | 2 | `130853-509567` | 0,1 | yes | FAIL |
+| SAFE | 2 | 3 | `131046-513589` | 0,1 | yes | FAIL |
+| SAFE | 5 | 1 | `131236-517276` | 0 | no | BLOCKED |
+| SAFE | 5 | 2 | `131400-520576` | 0 | no | BLOCKED |
+| SAFE | 5 | 3 | `131544-524052` | 0 | no | BLOCKED |
+| SAFE | 9 | 1 | `131724-527370` | 0 | no | BLOCKED |
+| SAFE | 9 | 2 | `131829-530457` | 0..7 | no | FAIL |
+| SAFE | 9 | 3 | `132059-534159` | 0..3 | no | BLOCKED |
+| FAST | 2 | 1 | `132316-538361` | 0 | no | FAIL |
+| FAST | 2 | 2 | `132505-542247` | 0,1 | yes | FAIL |
+| FAST | 2 | 3 | `132702-546177` | 0 | no | FAIL |
+| FAST | 5 | 1 | `132847-549838` | 0..4 | yes | FAIL |
+| FAST | 5 | 2 | `133100-553655` | 0 | no | BLOCKED |
+| FAST | 5 | 3 | `133233-557235` | 0 | no | BLOCKED |
+| FAST | 9 | 1 | `133404-560806` | 0..3 | no | BLOCKED |
+| FAST | 9 | 2 | `133545-564217` | 0..8 | yes | FAIL |
+| FAST | 9 | 3 | `133805-567638` | 0..3 | no | BLOCKED |
+
+SAFE completion by route is **2/3,0/3,0/3**; FAST is **1/3,1/3,1/3**.
+Do not pool the two behavioral policies. The previous `76a2e8ed` SAFE1/9,
+FAST3/9 remains a separate observed sample, not a statistical or causally
+controlled improvement claim. Scene seed0 does not establish deterministic
+sensor noise or identical asynchronous interleavings.
+
+#### Which time is actually used?
+
+Current scheduler source `planner_fsm.hpp:398-425` computes
+`remaining_MAIN = backup_start_time_s - command_elapsed_s`. Both refer to
+the canonical trajectory schedule. Curve length, acceleration, corner speed
+and previous optimization affect that schedule; no distance/speed quotient
+is used to decide ordinary renewal. MAIN validity can still end earlier
+through health, freshness, world, identity or tracking invalidation. BACKUP
+duration is not spare nominal planning time.
+
+| Value | Current meaning | Evidence limit |
+|---|---|---|
+| 80ms | One shared absolute steady-clock backend deadline, created in the worker-owned runtime cycle before `plan()` | Fixed, not CPU service or adaptive to remaining MAIN; cooperative checks are not preemptive WCET |
+| 400ms | Immutable future execution anchor/activation lead from that cycle's ROS time | Not solver budget; a longer solve cannot silently slide this head |
+| 100ms | Planner scheduler period/10Hz, not successful completion or activation rate | Pending activation suppresses ordinary submissions; callback, queue and lock delay are separate |
+| 20ms | Admission commit guard; independently also the command sampling period | Neither is an observed end-to-end latency upper bound |
+| 600ms | Candidate moving MAIN reserve, `80+400+100+20` | Development accounting, not physical stopping or measured-crossing robustness |
+| 1000ms | Ordinary renewal lead, `80+2*400+100+20` | Uses trajectory MAIN time but depends on fixed component assumptions |
+| 40ms | Configured minimum optional-refinement finalization reserve | Mandatory feasibility can use the full80ms, but still needs complete BACKUP and all final gates |
+| 30/60ms | A* attempt/total stage budgets inside the same80ms deadline | Not additional budgets; exhausting60ms leaves little time for corridor/MINCO/BACKUP |
+
+The typed constants are in `navigation_planning/planning_timing.hpp:5-24`.
+Runtime initialization additionally requires exact matching80ms and a solve
+deadline shorter than one planner period (`runtime_boundaries.hpp:142-155`,
+node:1487). This is an implemented development policy, not a mathematical
+requirement of a worker with one active and one coalesced pending request.
+Targeted history, 2026-09-06 "Adopt a bounded10Hz development planner
+contract", explicitly derives the change from one Q1 latency dataset and
+does **not** qualify all scenes. The index's QUALIFIED label must not override
+that full entry's development-only scope. User-owned HG-001 still records
+stale180/200ms values; it remains untouched.
+
+The80ms deadline is created after worker enqueue/dispatch/backend-access
+waiting, and does not cover all post-solve admission/publication work.
+`planning_worker.hpp:301-308` records backend entry before acquiring the
+backend-access lock; that timestamp is not an independent solver-start or CPU
+measurement. Runtime node:4725 pins activation and node:4751 constructs the
+absolute steady deadline. The steady deadline is carried through frontend,
+corridor, nominal solve and BACKUP without resetting it at each stage.
+The40ms configured reserve has no measured-p99 runtime updater found in
+source; the qualification YAML's update rule is a required evidence policy,
+not evidence that online adaptation is implemented.
+
+Captured planner traces remain sparse, not a complete job/trigger census or
+CPU-utilization distribution. For example, SAFE5-r1's terminal solve179
+reports **29.396ms elapsed,50.670ms budget remaining**, nominal-dynamics
+failure and a failed retained tracking/continuation disposition. Conversely
+SAFE9-r2 survives many recorded deadline misses and reaches the final STOP
+before a state failure. These distinguish insufficient solve time from
+formulation/viability and unrelated state invalidation. No claim that80ms is
+universally sufficient or universally wrong follows from either example.
+
+```mermaid
+flowchart TD
+    A[Canonical MAIN schedule minus command elapsed] --> B{Ordinary renewal due at <= 1s?}
+    B -- no --> C[Retain and independently recertify current command]
+    B -- yes --> D[Worker creates immutable future head +400ms and steady deadline +80ms]
+    D --> E[MAIN plus BACKUP plus required validators]
+    E --> F{Identity, latest world, final state and activation still valid?}
+    F -- yes --> G[Stage then activate at the exact pinned head]
+    F -- no --> C
+    C --> H{Current authority still valid?}
+    H -- no --> I[Certified recovery if admissible; otherwise PX4 Hold]
+```
+
+This simplified diagram is the ordinary-renewal path, not the goal-change/
+emergency FSM. It omits pending-activation gating, the quiet tick and request
+coalescing; renewal due does not guarantee that a solve job starts that tick.
+Planner proposal readiness, execution authority and measured mission progress
+remain distinct. A failed proposal does not itself erase a valid current
+command, and no successful solver result can override a final invalidation.
+
+#### A measured handoff window that cannot open
+
+FAST9-r1 reaches actual WP4 `[85,-5,3]`, radius0.9m, request5, MAINgen11,
+but remains at WP4. `external_mode.log:121` reports measured error0.433m,
+speed3.753m/s and `trajectory_ready=true`. PASS_THROUGH is not governed by
+STOP's0.15m/s criterion: it independently needs ordered measured crossing
+and a current certified continuation (`mission_controller.cpp:569-580`).
+Generic trajectory readiness is insufficient.
+
+The exact active PVA record gives start43.124s, BACKUP switch4.202435629s,
+so MAIN ends **47.326435629s**. Its exported PASS event is
+**46.726435625s**, leaving approximately600.000004ms MAIN after the event.
+`certifiedMainContinuationHandoffReady()` requires at least600ms remaining
+at the current handoff, so readiness ends at **46.726435629s**.
+The recorded propagated-odometry in-sphere samples span
+**46.836s to47.256s**, not a proven continuous entry/exit interval. At
+measured source47.136s the position is
+`[85.058850,-4.583788,2.895663]`, error about0.43316m. The PX4 input update
+at47.144s uses that state with MAINgen11/request5/WP4: remaining MAIN is
+only **182.436ms**. The readiness and observed measured-sphere windows do
+not intersect. The required reserve predicate is definitely false in that
+observed visit; this is a reachable liveness veto, not proof that every other
+acceptance predicate passed or that relaxing600ms is safe.
+
+Crucially, this is not just measured tracking lag. The sampled nominal
+command is still outside the sphere immediately before the cutoff (sample
+46.723999999s, error about1.14424m); its first recorded in-sphere sample is
+46.804s, error about0.88196m. Capture was OFF, so continuous polynomial entry
+and complete wire continuation fields are not independently available.
+Sampled evidence is not renamed a continuous proof.
+
+Source explains the differing geometry: exporter `planner.cpp:1337-1365`
+finds the first visit to the outer AABB `waypoint +/- radius`, and emits the
+event there. BACKUP switch-window construction:5165-5179 uses that same visit.
+`route_boundary_timing.hpp:78-105` allows entry+reserve as the lower crossing
+bound; exit+reserve is preferred if it lies within the available search
+horizon, but entry+reserve remains searchable when later splits cannot be
+certified. The optimizer's conservative inscribed boundary corridor and
+the mission's ordered spherical acceptance are different geometries; neither
+proves that the outer-AABB event time is a legal measured sphere crossing.
+Actual sphere entry is separately sampled for BACKUP-crossing prevention,
+but does not define this reserve's temporal basis.
+
+**CONFIRMED instrumentation defect:** the field named
+`boundary_remaining_main_horizon_s` currently computes
+`duration_s - boundary_sample.trajectory_time_s` (node:6458-6461), so it
+includes BACKUP. FAST9-r1 reports about1.552672s under that name although
+actual MAIN after the event is about0.600000004s. Do not use the mislabeled
+field as authority or evidence that handoff has ample MAIN time. The values
+above are independently reconstructed from the exact active PVA start and
+BACKUP switch. Correcting this telemetry and adding a MAIN-versus-BACKUP
+regression belongs in a separate observability change, not silent tuning.
+
+Artifact anchors for this discriminator are FAST9-r1
+`planning_timeline.jsonl:3339-3340` (PVA and active event),
+`:3392`/`:3405` (sampled outside/inside command),
+`perception_timeline.jsonl:16946` (measured source),
+`execution_timeline.jsonl:2643` (receiver update), and
+`logs/external_mode.log:121` (mission gate). File line numbers are not the
+embedded native record sequence; preserve both when correlating artifacts.
+
+The existing deterministic regression
+`ExactPlannedEntryReserveDoesNotAuthorizeLaterMeasuredHandoff` reproduces
+the temporal contract without sleeps. The current frozen Release binary's
+complete certified-continuation/completion target passes **12/12** on the
+postflight rerun. It proves the policy rejects a late handoff, not that the
+integration defect has been repaired. This is a stronger discriminator than
+increasing80ms: FAST9-r1's seven final recorded nominal failures take
+19.069--54.673ms and leave25.425--61.014ms hard budget unused.
+
+Minimum repair direction is to make boundary geometry, role switch and
+handoff timing agree on the same actual acceptance semantics, then include
+only justified measured-phase/dispatch slack or a validated predecessor-to-
+successor continuation transaction. Do not change the mission radius,
+inscribed corridor or600ms gate merely to obtain acceptance. The zeroed
+diagnostic tracking policy supplies no qualified maximum arrival-lag bound.
+Genuine-corner/AFTER-boundary producer composition still needs an exact-input
+real-facade discriminator;907's shallow in-sphere geometry fix intentionally
+does not rewrite true90-degree corners.
+
+#### Independent first-failure attribution, not one generic timeout
+
+- **CONFIRMED state-publication loss:** SAFE2-r1, FAST2-r1/r3 and SAFE9-r2
+  each have an observability rejection followed by a same-epoch native
+  propagated-state gap, then receiver RECEIVE_STALE and FAILED/Hold. Fatal
+  source/steady ages are164/205.291,164/204.949,168/210.010 and
+  160/200.395ms respectively. The last wire command is still within its
+  lease; receiver sequence/source/epoch matches the last native output,
+  trace-drop/publish-error counters are zero and IMU/LiDAR continue advancing.
+  FAST2-r3 additionally has the direct MAIN_ESTIMATOR_INVALID edge; the other
+  three lack that diagnostic edge within the narrow pre-fatal window.
+  Propagation recovers only after Hold, not as a new navigation activation.
+  Normalized information eigenvalues alone cannot distinguish real lost
+  observability from relative-ratio false rejection. That remains an
+  uncertainty/measurement-validity evidence gap, not permission to lower the
+  observability gate, extend receive leases or revive automatic Hold reentry.
+- **CONFIRMED MAIN/retained-command failure:** SAFE5-r1 rejects two nominal
+  solves before WP1; the final29.396ms job has50.670ms budget left. Its path
+  sweep is clear and state age4ms, but retained tracking/suffix disposition
+  fails and authority is withdrawn. Runtime log:18 identifies anchor and
+  projected error0.358/0.407m against0.250m. A planned BACKUP's existence
+  alone is not proof it remains reachable from the measured state.
+- **CONFIRMED publication loss, CONDITIONAL terminal-anchor veto:** SAFE5-r2/r3
+  first producer REJECTED is at48.120/46.444s, before subsequent immutable
+  revalidation InvalidTimeWindow. Prior STOPPED_HOLD diagnostic bypass logs
+  endpoint error0.835/0.867m above0.750m; final publish source still independently
+  enforces that cap. The publish rejection is confirmed; attributing it
+  specifically to the final-anchor predicate remains conditional without
+  the final gate tuple. The bypass warning is not itself a rejection, and
+  stale odometry is not established. Receiver source/steady-receive ages
+  near Hold are fresh8/10.516ms and0/0.592ms respectively.
+- **CONFIRMED current-world tube rejection:** FAST5-r2/r3 first fail exact
+  activegen2 immutable recertification with CertificateTubeBlocked
+  (failure8), MAIN/68samples and BACKUP/25samples respectively. World/execution
+  transaction clears active, then sampling rejects and the receiver reports
+  PVA-command stale. State is fresh and same epoch. Fatal blocked-cell
+  state/position/time is absent; replacement-job BACKUP diagnostics must not
+  be substituted for this active invalidation. UNKNOWN, current OCCUPIED or
+  OUT_OF_MAP as its cause remains **EVIDENCE_GAP**.
+- **CONFIRMED horizon exhaustion after missing successors:** SAFE9-r3,
+  FAST9-r1/r3 retain WP4/request5 and lose command at active bundle end.
+  At expiration, full revalidation failure1/samples0 is InvalidTimeWindow,
+  not a collision sweep result. FAST9-r1's exact bundle end is48.279107703s;
+  last authorized sample48.276s precedes first rejected48.308s. SAFE9-r1
+  instead stops before WP1 after BACKUP-known-free replacement failures
+  with46--53ms solve budget still left. An expired moving trajectory cannot
+  simply be granted extra lease; preserving a genuinely stopped endpoint
+  requires the separate current known-free/anchor/health contract.
+
+SAFE9-r2 is a counterexample to an unconditional final-WP acceptance-bug
+claim: it reaches the last ball, but measured speeds0.619 then0.258m/s are
+still above the unchanged STOP limit0.15 before source loss. Completed2WP
+controls also spend several seconds settling before measured acceptance.
+These facts do not erase the separate confirmed FAST9-r1 handoff-window veto.
+
+The next leverage order is therefore acceptance geometry/continuation-window
+consistency, estimator measurement-versus-state-validity evidence closure,
+and joint MAIN/BACKUP/controller/world viability. For scheduling, first
+measure queue/backend-lock wait, stage elapsed/CPU and complete-bundle
+readiness; then test whether an earlier trigger or adaptive job budget helps
+matched admissible jobs. Adaptive budget must fit a pinned activation and
+remaining certified MAIN, preserve clock/reset semantics and resource
+isolation, and keep SAFE/FAST separate. Giving a job the entire MAIN duration
+while retaining a head only400ms ahead is inconsistent. No adaptive budget,
+coordinator, new retry authority, temporary bypass or hard-gate change is
+introduced by this closure. The whole-suite RED described above remains
+open;12/12 focused tests and5diagnostic completions do not close it or meet
+the stable smooth majority-completion5m/s product target.
