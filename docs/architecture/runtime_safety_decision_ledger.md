@@ -21981,3 +21981,87 @@ release profiles must not use the former allowance.
   attribution. Load the discriminator artifact and verify generation 6 owner
   cycle 150, validation cycle 164 and `resolved_from_export`; then run the full
   runtime tool suite, canonical Release build/test and `git diff --check`.
+
+### 2026-09-16 - Preserve the first fully certified accepted MINCO iterate
+
+- **Owner/status:** Nominal optimizer and optimized-candidate validation
+  boundary; `IMPLEMENTED`, integrated availability `CONDITIONAL`. This is a
+  product behavior change, not a qualification claim.
+- **Scope:** During mandatory feasibility, the L-BFGS progress callback may
+  inspect an accepted iterate after the ordinary refinement/finalization
+  boundary has elapsed. Sampled objective penalties are only a cost guard; a
+  new typed optimized-candidate validator independently checks the continuous
+  corridor, route-boundary junctions, boundary-velocity recovery, finite V/A/J
+  limits and flatness/thrust/body-rate envelope. The first iterate passing the
+  complete certificate is copied with its optimizer identity and terminates
+  that L-BFGS attempt. The same typed validator is run again at final
+  admission. Explicit cancellation or an absolute-deadline race after
+  validation rejects the checkpoint and leaves the existing fail-closed path
+  in force.
+- **Safety impact:** No budget, mission limit, collision tolerance, dynamics
+  limit, flatness limit, freshness rule or downstream proposal/BACKUP/world
+  gate is relaxed. The change prevents a later solver deadline from erasing an
+  already hard-feasible accepted iterate; it does not authorize a command or
+  declare an executable bundle. A system-level call-path review confirms that
+  the checkpoint can only satisfy the nominal solve result: the planner must
+  still compose and validate yaw, produce an executable BACKUP or terminal
+  disposition, pass `authorizeAndStage()` against the latest immutable world,
+  reserve a unique generation and export the complete bundle. Failure at any
+  later boundary leaves the existing execution bundle unchanged. Certificate
+  work occurs only in mandatory
+  feasibility after the existing refinement boundary and its count and
+  elapsed time are recorded. An unexpected validator exception becomes a
+  solver stop without a checkpoint and therefore cannot produce a candidate.
+- **Evidence/removal condition:** Exact-current-source offline replays of
+  discriminator snapshots 13--15 (planner cycles 161--163) with the production
+  40 ms refinement / 80 ms hard budget select checkpoints on solver attempts
+  3, 2 and 2 respectively and return candidates that pass the optimized
+  production hard gates. Across serial repetitions, snapshot 13 reached its
+  attempt-3/iteration-20 checkpoint after 2--25 certificate calls (about
+  0.36--3.1 ms aggregate certificate time), snapshot 14 reached
+  attempt-2/iteration-26 after 86--88 calls (about 7.6--7.9 ms), and snapshot
+  15 reached attempt-2/iteration-17 after 78--82 calls (about 6.5--7.0 ms).
+  All remained below the absolute deadline when replayed serially.
+  A deliberately contended run of all three replay processes at once preserved
+  snapshot 13 but made snapshots 14 and 15 observe the 80 ms hard deadline
+  before a checkpoint, after 75/88 certificate calls and about 8.0/8.7 ms of
+  aggregate certificate work. This is retained as adverse scheduling evidence:
+  functional replay is repeatable, but neither the solver nor certificate path
+  has a timing upper bound under contention. These replays have no complete
+  BACKUP/commit lease and are not flight acceptance. Keep the
+  checkpoint until the solver natively returns a certified incumbent with the
+  same cancellation and deadline semantics; remove it if integrated timing
+  evidence shows certificate overhead starves BACKUP/finalization or changes
+  command containment adversely. A matched ASan build of both
+  `navigation_mapping` and `navigation_planning_backend` also passed the
+  `ProductionPlanUsesMappingSnapshotBodyAdmission` path which crosses
+  `observedOccupiedPoints()` and corridor generation. The earlier heap report
+  seen only when an ASan backend consumed the Release mapping library was a
+  mixed Eigen aligned-allocation ABI artifact, not a reproducible product
+  overflow. This is targeted memory-safety evidence only: the complete ASan
+  CTest run is not a PASS because instrumentation makes deadline-sensitive
+  facade cases fail closed and makes the mapping world-model test exceed its
+  60 s timeout; LeakSanitizer is also unavailable under the sandbox ptrace
+  policy.
+  The 2026-09-17 Release diagnostic matrix completed all nine requested runs
+  (2/5/9 waypoints, three repetitions each, 5 m/s, seed 0). Across the 91
+  producer-declared current diagnostic records, 20 checkpoint selections were
+  recorded; 2,009 certificate calls took 274,121 us in those records, with a
+  maximum per-record aggregate of 19,881 us. These are trace-record totals,
+  not a complete census of every solver invocation. In the completed 2WP run,
+  cycles 1, 73 and 206 selected checkpoints and crossed BACKUP validation into
+  immediate admission or pending activation. Conversely, 9WP cycle 27 in the
+  third repetition selected a nominal checkpoint but correctly rejected the
+  complete proposal at BACKUP dynamics. Mission completion was only 1/9;
+  report verdicts were two FAIL and seven BLOCKED, with zero recorded
+  collisions. The matrix therefore proves integrated reachability and
+  downstream containment, not stable route continuation or qualification.
+  See `docs/reports/feasible_checkpoint_5mps_diagnostic_2026-09-17.md` for the
+  frozen dirty-source/build identities, all nine artifacts and timing tails.
+- **Verification:** Run the mandatory-feasibility, explicit-cancellation and
+  expired-hard-deadline optimizer regressions; replay snapshots 13--15 with
+  the 40/80 ms budget; run the complete planning/backend and repository test
+  suites; verify the planner-trace summary counts only producer-declared
+  current checkpoint diagnostics and reports certificate call/time totals;
+  run the canonical Release build, `git diff --check`, then a fresh diagnostic
+  SITL discriminator before the requested repeated 2/5/9-waypoint matrix.

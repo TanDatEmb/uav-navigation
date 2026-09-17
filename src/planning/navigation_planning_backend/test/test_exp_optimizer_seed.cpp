@@ -12,6 +12,7 @@
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/deterministic_nominal_seed.hpp>
 #include <planner_core/kinematic_state_boundary.hpp>
+#include <planner_core/optimized_nominal_candidate.hpp>
 #include <traj_opt/config.hpp>
 #include <traj_opt/nominal_trajectory_optimizer.hpp>
 
@@ -217,6 +218,104 @@ TEST(DeterministicNominalSeed, RejectsMainCandidateAboveControlEnvelope) {
   EXPECT_GT(rejected.maximum_acceleration_mps2, config.max_acc);
 }
 
+TEST(OptimizedNominalCandidateCertificate, AcceptsCompleteHardFeasibleCandidate) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.max_vel = 5.0;
+  config.max_acc = 5.0;
+  config.max_jerk = 20.0;
+  const auto initial = makePositionState(0.0);
+  const auto terminal = makePositionState(1.0);
+  const auto piece = navigation_planning_backend::minimumSnapStateTransitionPiece(
+      initial, terminal, 5.0);
+  ASSERT_TRUE(piece.has_value());
+  geometry_utils::Trajectory candidate;
+  candidate.emplace_back(*piece);
+
+  navigation_math::PolyhedraH corridors{makeConvexBox().GetPlanes()};
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+  const std::vector<unsigned char> gates(1, 0U);
+  const std::vector<navigation_math::Vec3f> points(
+      1, navigation_math::Vec3f::Zero());
+  const std::vector<double> radii(
+      1, std::numeric_limits<double>::quiet_NaN());
+
+  const auto certificate =
+      navigation_planning_backend::certifyOptimizedNominalCandidate(
+          candidate, corridors, mapping, gates, points, radii, config);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_EQ(certificate.failure_stage,
+            navigation_planning_backend::
+                OptimizedNominalCandidateFailureStage::kNone);
+}
+
+TEST(OptimizedNominalCandidateCertificate, RejectsEachExternalHardBoundary) {
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.max_vel = 5.0;
+  config.max_acc = 5.0;
+  config.max_jerk = 20.0;
+  const auto initial = makePositionState(0.0);
+  const auto terminal = makePositionState(1.0);
+  const auto piece = navigation_planning_backend::minimumSnapStateTransitionPiece(
+      initial, terminal, 5.0);
+  ASSERT_TRUE(piece.has_value());
+  geometry_utils::Trajectory candidate;
+  candidate.emplace_back(*piece);
+  navigation_math::VecDi mapping(1);
+  mapping << 0;
+  const std::vector<unsigned char> no_gates(1, 0U);
+  const std::vector<navigation_math::Vec3f> unused_points(
+      1, navigation_math::Vec3f::Zero());
+  const std::vector<double> unused_radii(
+      1, std::numeric_limits<double>::quiet_NaN());
+
+  const navigation_math::PolyhedraH disjoint_corridor{
+      makeBox(2.0, 3.0, -1.0, 1.0, 0.0, 2.0).GetPlanes()};
+  const auto corridor_reject =
+      navigation_planning_backend::certifyOptimizedNominalCandidate(
+          candidate, disjoint_corridor, mapping, no_gates, unused_points,
+          unused_radii, config);
+  EXPECT_FALSE(corridor_reject.valid);
+  EXPECT_EQ(corridor_reject.failure_stage,
+            navigation_planning_backend::
+                OptimizedNominalCandidateFailureStage::kCorridor);
+
+  const navigation_math::PolyhedraH corridor{makeConvexBox().GetPlanes()};
+  const std::vector<unsigned char> route_gate(1, 1U);
+  const std::vector<navigation_math::Vec3f> unreachable_point{
+      navigation_math::Vec3f(8.0, 0.0, 1.0)};
+  const std::vector<double> route_radius{0.25};
+  const auto route_reject =
+      navigation_planning_backend::certifyOptimizedNominalCandidate(
+          candidate, corridor, mapping, route_gate, unreachable_point,
+          route_radius, config);
+  EXPECT_FALSE(route_reject.valid);
+  EXPECT_EQ(route_reject.failure_stage,
+            navigation_planning_backend::
+                OptimizedNominalCandidateFailureStage::kRouteBoundary);
+
+  config.max_vel = 0.01;
+  const auto dynamics_reject =
+      navigation_planning_backend::certifyOptimizedNominalCandidate(
+          candidate, corridor, mapping, no_gates, unused_points,
+          unused_radii, config);
+  EXPECT_FALSE(dynamics_reject.valid);
+  EXPECT_EQ(dynamics_reject.failure_stage,
+            navigation_planning_backend::
+                OptimizedNominalCandidateFailureStage::kDynamics);
+
+  config.max_vel = 5.0;
+  config.max_acc_thr = 9.0;
+  const auto flatness_reject =
+      navigation_planning_backend::certifyOptimizedNominalCandidate(
+          candidate, corridor, mapping, no_gates, unused_points,
+          unused_radii, config);
+  EXPECT_FALSE(flatness_reject.valid);
+  EXPECT_EQ(flatness_reject.failure_stage,
+            navigation_planning_backend::
+                OptimizedNominalCandidateFailureStage::kFlatness);
+}
+
 TEST(ExpOptimizer, HighSpeedCorridorSolveKeepsContinuousCertificate) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   // This fixture intentionally starts at the exact physical velocity cap;
@@ -383,6 +482,11 @@ TEST(ExpOptimizer, MandatoryFeasibilityUsesHardDeadlineWhenNoCertifiedSeed) {
   EXPECT_FALSE(diagnostics.hard_deadline_observed);
   EXPECT_GT(diagnostics.lbfgs_attempt_count, 0);
   EXPECT_EQ(diagnostics.certified_seed_failure_stage, 5);
+  EXPECT_TRUE(diagnostics.used_feasible_iterate_checkpoint);
+  EXPECT_GT(diagnostics.feasible_iterate_checkpoint_attempt, 0);
+  EXPECT_GT(diagnostics.feasible_iterate_checkpoint_iteration, 0);
+  EXPECT_GT(diagnostics.feasible_iterate_certificate_count, 0);
+  EXPECT_GE(diagnostics.feasible_iterate_certificate_time_us, 0);
 }
 
 TEST(ExpOptimizer, ExplicitCancellationStillStopsMandatoryFeasibility) {
@@ -425,6 +529,7 @@ TEST(ExpOptimizer, ExplicitCancellationStillStopsMandatoryFeasibility) {
   EXPECT_TRUE(trajectory.empty());
   EXPECT_TRUE(optimizer.diagnostics().cancelled);
   EXPECT_FALSE(optimizer.diagnostics().hard_deadline_observed);
+  EXPECT_FALSE(optimizer.diagnostics().used_feasible_iterate_checkpoint);
 }
 
 TEST(ExpOptimizer, MandatoryFeasibilityReportsExpiredHardDeadline) {
@@ -464,6 +569,7 @@ TEST(ExpOptimizer, MandatoryFeasibilityReportsExpiredHardDeadline) {
   EXPECT_FALSE(result.candidateAvailable());
   EXPECT_TRUE(trajectory.empty());
   EXPECT_TRUE(optimizer.diagnostics().hard_deadline_observed);
+  EXPECT_FALSE(optimizer.diagnostics().used_feasible_iterate_checkpoint);
 }
 
 TEST(ExpOptimizer, PassThroughJunctionRemainsInsideAcceptanceBall) {

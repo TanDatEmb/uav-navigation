@@ -29,6 +29,11 @@ struct OptimizationDiagnostics {
   bool hard_deadline_observed{false};
   bool valid{false};
   bool used_certified_seed{false};
+  bool used_feasible_iterate_checkpoint{false};
+  int feasible_iterate_checkpoint_attempt{0};
+  int feasible_iterate_checkpoint_iteration{0};
+  int feasible_iterate_certificate_count{0};
+  std::int64_t feasible_iterate_certificate_time_us{0};
   int certified_seed_failure_stage{0};
   int corridor_seed_build_failure_stage{0};
   int corridor_seed_retry_attempt_count{0};

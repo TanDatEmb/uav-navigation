@@ -222,6 +222,11 @@ class PlannerTraceTest(unittest.TestCase):
                                     "backup_last_seed_endpoint": "[2.0,3.0,3.0]",
                                     "exp_diagnostics_valid": "1",
                                     "exp_used_certified_seed": "1",
+                                    "exp_used_feasible_iterate_checkpoint": "1",
+                                    "exp_feasible_iterate_checkpoint_attempt": "3",
+                                    "exp_feasible_iterate_checkpoint_iteration": "19",
+                                    "exp_feasible_iterate_certificate_count": "2",
+                                    "exp_feasible_iterate_certificate_time_us": "351",
                                     "exp_certified_seed_failure_stage": "0",
                                     "exp_corridor_seed_build_failure_stage": "0",
                                     "exp_corridor_seed_retry_attempt_count": "2",
@@ -361,6 +366,11 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(records[0]["backup_last_seed_max_jerk_mps3"], 4.0)
         self.assertTrue(records[0]["exp_diagnostics_valid"])
         self.assertTrue(records[0]["exp_used_certified_seed"])
+        self.assertTrue(records[0]["exp_used_feasible_iterate_checkpoint"])
+        self.assertEqual(records[0]["exp_feasible_iterate_checkpoint_attempt"], 3)
+        self.assertEqual(records[0]["exp_feasible_iterate_checkpoint_iteration"], 19)
+        self.assertEqual(records[0]["exp_feasible_iterate_certificate_count"], 2)
+        self.assertEqual(records[0]["exp_feasible_iterate_certificate_time_us"], 351)
         self.assertEqual(records[0]["exp_certified_seed_failure_stage"], 0)
         self.assertEqual(records[0]["exp_corridor_seed_build_failure_stage"], 0)
         self.assertEqual(records[0]["exp_corridor_seed_retry_attempt_count"], 2)
@@ -475,6 +485,59 @@ class PlannerTraceTest(unittest.TestCase):
         self.assertEqual(
             summary["exp_corridor_seed_selected_mode_counts"],
             {"0": 3, "2": 1},
+        )
+
+    def test_summary_counts_only_current_feasible_checkpoint_diagnostics(self) -> None:
+        records = [
+            normalize_planner_trace_record(
+                {
+                    "planning_cycle_id": 1,
+                    "bundle_id": 1,
+                    "exp_diagnostics_valid": 1,
+                    "exp_used_feasible_iterate_checkpoint": 1,
+                    "exp_feasible_iterate_certificate_count": 2,
+                    "exp_feasible_iterate_certificate_time_us": 351,
+                },
+                source="fixture.current-checkpoint",
+            ),
+            normalize_planner_trace_record(
+                {
+                    "planning_cycle_id": 2,
+                    "bundle_id": 2,
+                    "exp_diagnostics_valid": 1,
+                    "exp_used_feasible_iterate_checkpoint": 0,
+                    "exp_feasible_iterate_certificate_count": 3,
+                    "exp_feasible_iterate_certificate_time_us": 420,
+                },
+                source="fixture.current-no-checkpoint",
+            ),
+            normalize_planner_trace_record(
+                {
+                    "planning_cycle_id": 3,
+                    "bundle_id": 3,
+                    "exp_diagnostics_valid": 0,
+                    "exp_used_feasible_iterate_checkpoint": 1,
+                    "exp_feasible_iterate_certificate_count": 99,
+                    "exp_feasible_iterate_certificate_time_us": 9999,
+                },
+                source="fixture.carried-stale-values",
+            ),
+        ]
+        summary = planner_trace_summary([record for record in records if record])
+        self.assertEqual(
+            summary["exp_feasible_iterate_checkpoint_record_count"], 2
+        )
+        self.assertEqual(
+            summary["exp_feasible_iterate_checkpoint_used_count"], 1
+        )
+        self.assertEqual(
+            summary["exp_feasible_iterate_certificate_count_total"], 5
+        )
+        self.assertEqual(
+            summary["exp_feasible_iterate_certificate_time_us_total"], 771
+        )
+        self.assertEqual(
+            summary["exp_feasible_iterate_certificate_time_us_max"], 420
         )
 
     def test_transaction_authorities_and_first_causal_failure_are_independent(self) -> None:

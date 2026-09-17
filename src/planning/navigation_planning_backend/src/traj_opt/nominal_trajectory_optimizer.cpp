@@ -18,6 +18,7 @@
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <planner_core/corridor_plane_validation.hpp>
 #include <planner_core/deterministic_nominal_seed.hpp>
+#include <planner_core/optimized_nominal_candidate.hpp>
 #include <planner_core/corridor_bezier_seed.hpp>
 #include <planner_core/boundary_velocity_recovery.hpp>
 #include <utils/optimization/lbfgs.h>
@@ -739,17 +740,110 @@ std::string traj_opt::writeNominalProblemSnapshotJson(
     return output_path.string();
 }
 
+bool ExpTrajOpt::captureFeasibleIterateCheckpoint(
+        const VecDf& x, const double objective, const int iteration) {
+    if (!opt_vars.feasible_checkpoint_enabled ||
+        opt_vars.feasible_checkpoint_available || !x.allFinite() ||
+        !std::isfinite(objective) || opt_vars.penalty_log.size() != 8 ||
+        !opt_vars.penalty_log.allFinite()) {
+        return false;
+    }
+
+    // This is only a cost guard.  The sampled penalties are not authority;
+    // they merely avoid running the continuous certificate for an iterate
+    // that the objective already knows violates a hard envelope.
+    for (const int index : {POS_IDX, ACC_IDX, JER_IDX, OMG_IDX, THR_IDX}) {
+        if (opt_vars.penalty_log(index) > 0.0) return false;
+    }
+
+    geometry_utils::Trajectory candidate;
+    opt_vars.minco.getTrajectory(candidate);
+    if (candidate.empty()) return false;
+
+    const auto certificate_start = std::chrono::steady_clock::now();
+    const auto certificate =
+            navigation_planning_backend::certifyOptimizedNominalCandidate(
+                candidate,
+                opt_vars.hPolytopes,
+                opt_vars.hPolyIdx,
+                opt_vars.route_boundary_gates,
+                opt_vars.route_boundary_points,
+                opt_vars.route_boundary_radii,
+                cfg_);
+    const auto certificate_end = std::chrono::steady_clock::now();
+    ++opt_vars.feasible_checkpoint_certificate_count;
+    opt_vars.feasible_checkpoint_certificate_time_us +=
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                certificate_end - certificate_start).count();
+    diagnostics_.feasible_iterate_certificate_count =
+            opt_vars.feasible_checkpoint_certificate_count;
+    diagnostics_.feasible_iterate_certificate_time_us =
+            opt_vars.feasible_checkpoint_certificate_time_us;
+    if (!certificate.valid) return false;
+
+    // Recheck revocation and the absolute deadline after the potentially
+    // non-trivial certificate.  A certificate completed too late is not
+    // permission to turn an actual cancellation into solver success.
+    if (opt_vars.solve_cancelled != nullptr &&
+        opt_vars.solve_cancelled->load(std::memory_order_relaxed)) {
+        return false;
+    }
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            certificate_end.time_since_epoch()).count();
+    if (opt_vars.hard_deadline_ns > 0 &&
+        now_ns >= opt_vars.hard_deadline_ns) {
+        return false;
+    }
+
+    opt_vars.feasible_checkpoint_trajectory = std::move(candidate);
+    opt_vars.feasible_checkpoint_x = x;
+    opt_vars.feasible_checkpoint_duration_lower_bound =
+            opt_vars.duration_lower_bound;
+    opt_vars.feasible_checkpoint_penalty_weights = opt_vars.penaltyWeights;
+    opt_vars.feasible_checkpoint_penalty_log = opt_vars.penalty_log;
+    opt_vars.feasible_checkpoint_objective = objective;
+    opt_vars.feasible_checkpoint_attempt = opt_vars.solver_attempt;
+    opt_vars.feasible_checkpoint_iteration = iteration;
+    opt_vars.feasible_checkpoint_available = true;
+    return true;
+}
+
 int ExpTrajOpt::monitorProgress(void *instance,
-                               const VecDf &, const VecDf &, double,
-                               double, int, int) {
+                               const VecDf &x, const VecDf &, const double fx,
+                               double, const int k, int) {
     auto *vars = static_cast<OptimizationVariables *>(instance);
     if (!vars) return 1;
     if (vars->solve_cancelled &&
         vars->solve_cancelled->load(std::memory_order_relaxed)) return 1;
+    std::int64_t now_ns = 0;
     if (vars->steady_deadline_ns > 0) {
-        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
         if (now_ns >= vars->steady_deadline_ns) return 1;
+    }
+    if (vars->feasible_checkpoint_enabled && vars->owner != nullptr) {
+        if (now_ns == 0) {
+            now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
+        // Preserve the existing optional-refinement/finalization boundary.
+        // Mandatory feasibility may continue beyond it, but only a complete
+        // certificate can end that tail early.
+        const bool checkpoint_window_open =
+                vars->refinement_deadline_ns <= 0 ||
+                now_ns >= vars->refinement_deadline_ns;
+        if (checkpoint_window_open) {
+            try {
+                if (vars->owner->captureFeasibleIterateCheckpoint(x, fx, k)) {
+                    return 1;
+                }
+            } catch (...) {
+                // The L-BFGS callback is a C boundary.  Convert an unexpected
+                // validator exception into a fail-closed solver stop; without
+                // a stored checkpoint the caller will reject the candidate.
+                return 1;
+            }
+        }
     }
     return 0;
 }
@@ -1677,6 +1771,20 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
     opt_vars.first_nonfinite_cost = std::numeric_limits<double>::quiet_NaN();
     opt_vars.first_nonfinite_gradient_norm =
             std::numeric_limits<double>::quiet_NaN();
+    opt_vars.owner = this;
+    opt_vars.feasible_checkpoint_enabled = false;
+    opt_vars.feasible_checkpoint_available = false;
+    opt_vars.feasible_checkpoint_trajectory.clear();
+    opt_vars.feasible_checkpoint_x.resize(0);
+    opt_vars.feasible_checkpoint_duration_lower_bound.resize(0);
+    opt_vars.feasible_checkpoint_penalty_weights.resize(0);
+    opt_vars.feasible_checkpoint_penalty_log.resize(0);
+    opt_vars.feasible_checkpoint_objective =
+            std::numeric_limits<double>::infinity();
+    opt_vars.feasible_checkpoint_attempt = 0;
+    opt_vars.feasible_checkpoint_iteration = 0;
+    opt_vars.feasible_checkpoint_certificate_count = 0;
+    opt_vars.feasible_checkpoint_certificate_time_us = 0;
 
     /* 2) Check the initial value of the optimization variables. */
     if (!opt_vars.times.allFinite() || opt_vars.times.minCoeff() < 1e-3) {
@@ -2133,13 +2241,51 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
             attempt_params.max_iterations =
                     cfg_.feasibility_retry_max_iterations;
         }
-        const int result = lbfgs::lbfgs_optimize(x,
-                                                  minCostFunctional,
-                                                  &ExpTrajOpt::costFunctional,
-                                                  nullptr,
-                                                  &ExpTrajOpt::monitorProgress,
-                                                  &this->opt_vars,
-                                                  attempt_params);
+        const int raw_result = lbfgs::lbfgs_optimize(x,
+                                                      minCostFunctional,
+                                                      &ExpTrajOpt::costFunctional,
+                                                      nullptr,
+                                                      &ExpTrajOpt::monitorProgress,
+                                                      &this->opt_vars,
+                                                      attempt_params);
+        int result = raw_result;
+        if (raw_result == lbfgs::LBFGS_CANCELED &&
+            opt_vars.feasible_checkpoint_available) {
+            const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            const bool explicit_cancellation =
+                    opt_vars.solve_cancelled != nullptr &&
+                    opt_vars.solve_cancelled->load(std::memory_order_relaxed);
+            const bool hard_deadline_expired =
+                    opt_vars.hard_deadline_ns > 0 &&
+                    now_ns >= opt_vars.hard_deadline_ns;
+            if (!explicit_cancellation && !hard_deadline_expired &&
+                opt_vars.feasible_checkpoint_x.size() == x.size() &&
+                opt_vars.feasible_checkpoint_x.allFinite()) {
+                x = opt_vars.feasible_checkpoint_x;
+                opt_vars.duration_lower_bound =
+                        opt_vars.feasible_checkpoint_duration_lower_bound;
+                opt_vars.penaltyWeights =
+                        opt_vars.feasible_checkpoint_penalty_weights;
+                opt_vars.penalty_log = opt_vars.feasible_checkpoint_penalty_log;
+                minCostFunctional = opt_vars.feasible_checkpoint_objective;
+                traj = opt_vars.feasible_checkpoint_trajectory;
+                result = lbfgs::LBFGS_STOP;
+                diagnostics_.used_feasible_iterate_checkpoint = true;
+                diagnostics_.feasible_iterate_checkpoint_attempt =
+                        opt_vars.feasible_checkpoint_attempt;
+                diagnostics_.feasible_iterate_checkpoint_iteration =
+                        opt_vars.feasible_checkpoint_iteration;
+                planner_context_->info(
+                        " -- [ExpOpt] selected fully certified accepted iterate: "
+                        "attempt={} iteration={} certificate_count={} "
+                        "certificate_time_us={}",
+                        opt_vars.feasible_checkpoint_attempt,
+                        opt_vars.feasible_checkpoint_iteration,
+                        opt_vars.feasible_checkpoint_certificate_count,
+                        opt_vars.feasible_checkpoint_certificate_time_us);
+            }
+        }
         const int attempt_evaluation_count = std::max(0, opt_vars.iter_num);
         diagnostics_.lbfgs_evaluation_count += attempt_evaluation_count;
         if (diagnostics_.lbfgs_attempt_count == 1) {
@@ -2149,9 +2295,9 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
         diagnostics_.lbfgs_last_attempt_evaluation_count =
                 attempt_evaluation_count;
         if (diagnostics_.lbfgs_attempt_count == 1) {
-            diagnostics_.first_lbfgs_return_code = result;
+            diagnostics_.first_lbfgs_return_code = raw_result;
         }
-        diagnostics_.last_lbfgs_return_code = result;
+        diagnostics_.last_lbfgs_return_code = raw_result;
         diagnostics_.cancelled = result == lbfgs::LBFGS_CANCELED;
         return result;
     };
@@ -2210,6 +2356,7 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
     const bool mandatory_feasibility =
             !deterministic_seed_certificate.valid ||
             deterministic_nominal_seed.empty();
+    opt_vars.feasible_checkpoint_enabled = mandatory_feasibility;
     if (mandatory_feasibility && opt_vars.hard_deadline_ns > 0) {
         opt_vars.steady_deadline_ns = opt_vars.hard_deadline_ns;
     }
@@ -3064,50 +3211,50 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
     opt_vars.penaltyWeights = nominal_penalty_weights;
 
     if (ret >= 0) {
-        // Mission V/A/J values are command limits, not soft optimizer
-        // penalties. The hard gate is the physical mission/product envelope.
-        const auto velocity_recovery =
-                navigation_planning_backend::certifyBoundaryVelocityRecovery(
-                    traj, cfg_.max_vel, cfg_.max_acc, cfg_.max_jerk);
-        if (!velocity_recovery.satisfied ||
-            !std::isfinite(maximum_velocity) || !std::isfinite(maximum_acceleration) ||
-            !std::isfinite(maximum_jerk) ||
-            !navigation_planning::withinNumericalDynamicLimit(
-                maximum_acceleration, cfg_.max_acc) ||
-            !navigation_planning::withinNumericalDynamicLimit(
-                maximum_jerk, cfg_.max_jerk)) {
+        // Checkpoint capture and final admission share one typed certificate.
+        // Re-run it here so the mutable optimizer state is never itself the
+        // authority for the returned immutable trajectory.
+        const auto certificate =
+                navigation_planning_backend::certifyOptimizedNominalCandidate(
+                    traj,
+                    opt_vars.hPolytopes,
+                    opt_vars.hPolyIdx,
+                    opt_vars.route_boundary_gates,
+                    opt_vars.route_boundary_points,
+                    opt_vars.route_boundary_radii,
+                    cfg_);
+        if (!certificate.valid) {
+            const auto& recovery = certificate.velocity_recovery;
+            const auto& flatness = certificate.flatness;
             planner_context_->warn(
-                    " -- [ExpOpt] physical hard gate rejected trajectory: "
-                    "vel={}/{} initial_vel={} allowed_peak={} recovery_deadline={} "
-                    "recovery_suffix_max={} acc={}/{} jerk={}/{}",
-                    maximum_velocity, cfg_.max_vel,
-                    velocity_recovery.initial_speed_mps,
-                    velocity_recovery.allowed_peak_speed_mps,
-                    velocity_recovery.recovery_deadline_s,
-                    velocity_recovery.suffix_maximum_speed_mps,
-                    maximum_acceleration, cfg_.max_acc,
-                    maximum_jerk, cfg_.max_jerk);
+                    " -- [ExpOpt] optimized-candidate certificate rejected "
+                    "trajectory: stage={} piece={} corridor={} route={} "
+                    "corridor_violation={}/{} vel={}/{} initial_vel={} "
+                    "allowed_peak={} recovery_deadline={} recovery_suffix_max={} "
+                    "acc={}/{} jerk={}/{} flatness_finite={} body_rate={}/{} "
+                    "thrust=[{},{}]/[{},{}]",
+                    static_cast<int>(certificate.failure_stage),
+                    certificate.failing_piece_index,
+                    certificate.failing_corridor_index,
+                    certificate.failing_route_boundary_index,
+                    certificate.maximum_corridor_violation_m,
+                    cfg_.corridor_plane_tolerance_m,
+                    certificate.maximum_velocity_mps, cfg_.max_vel,
+                    recovery.initial_speed_mps,
+                    recovery.allowed_peak_speed_mps,
+                    recovery.recovery_deadline_s,
+                    recovery.suffix_maximum_speed_mps,
+                    certificate.maximum_acceleration_mps2, cfg_.max_acc,
+                    certificate.maximum_jerk_mps3, cfg_.max_jerk,
+                    flatness.finite,
+                    flatness.maximum_body_rate_rad_s, cfg_.max_omg,
+                    flatness.minimum_thrust_n,
+                    flatness.maximum_thrust_n,
+                    cfg_.min_acc_thr * cfg_.mass,
+                    cfg_.max_acc_thr * cfg_.mass);
             traj.clear();
             ret = -1;
             minCostFunctional = INFINITY;
-        }
-        if (ret >= 0) {
-            TrajectoryDynamicReport dynamic_report;
-            if (!trajectorySatisfiesFlatnessEnvelope(traj, cfg_, &dynamic_report)) {
-                planner_context_->warn(
-                        " -- [ExpOpt] flatness hard gate rejected trajectory: "
-                        "finite={} body_rate={}/{} thrust=[{},{}]/[{},{}]",
-                        dynamic_report.finite,
-                        dynamic_report.maximum_body_rate_rad_s,
-                        cfg_.max_omg,
-                        dynamic_report.minimum_thrust_n,
-                        dynamic_report.maximum_thrust_n,
-                        cfg_.min_acc_thr * cfg_.mass,
-                        cfg_.max_acc_thr * cfg_.mass);
-                traj.clear();
-                ret = -1;
-                minCostFunctional = INFINITY;
-            }
         }
     }
 

@@ -63,6 +63,14 @@ namespace traj_opt {
         bool valid{false};
         bool used_certified_seed{false};
         bool baseline_fallback_to_optimizer{false};
+        // A checkpoint is selected only after an accepted L-BFGS iterate has
+        // passed the complete immutable nominal certificate.  These fields
+        // are evidence; they do not relax or replace any downstream gate.
+        bool used_feasible_iterate_checkpoint{false};
+        int feasible_iterate_checkpoint_attempt{0};
+        int feasible_iterate_checkpoint_iteration{0};
+        int feasible_iterate_certificate_count{0};
+        std::int64_t feasible_iterate_certificate_time_us{0};
         int certified_seed_failure_stage{0};
         int corridor_seed_build_failure_stage{0};
         int corridor_seed_retry_attempt_count{0};
@@ -484,6 +492,26 @@ namespace traj_opt {
             double first_nonfinite_cost{std::numeric_limits<double>::quiet_NaN()};
             double first_nonfinite_gradient_norm{
                 std::numeric_limits<double>::quiet_NaN()};
+
+            // Mandatory-feasibility L-BFGS may encounter a fully certified
+            // iterate before the solver reaches its ordinary termination
+            // condition.  The progress callback owns this immutable copy so
+            // a later deadline cancellation cannot erase that authority
+            // witness.  It is reset for every optimize() invocation.
+            ExpTrajOpt* owner{nullptr};
+            bool feasible_checkpoint_enabled{false};
+            bool feasible_checkpoint_available{false};
+            Trajectory feasible_checkpoint_trajectory;
+            VecDf feasible_checkpoint_x;
+            VecDf feasible_checkpoint_duration_lower_bound;
+            VecDf feasible_checkpoint_penalty_weights;
+            VecDf feasible_checkpoint_penalty_log;
+            double feasible_checkpoint_objective{
+                std::numeric_limits<double>::infinity()};
+            int feasible_checkpoint_attempt{0};
+            int feasible_checkpoint_iteration{0};
+            int feasible_checkpoint_certificate_count{0};
+            std::int64_t feasible_checkpoint_certificate_time_us{0};
         } opt_vars{};
 
         static double costFunctional(void *ptr,
@@ -531,6 +559,10 @@ namespace traj_opt {
                                    double step,
                                    int k,
                                    int ls);
+
+        bool captureFeasibleIterateCheckpoint(const VecDf& x,
+                                              double objective,
+                                              int iteration);
 
         void resetTransientDiagnostics() noexcept {
             diagnostics_ = ExpOptimizationDiagnostics{};

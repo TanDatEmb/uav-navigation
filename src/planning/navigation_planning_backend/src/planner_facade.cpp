@@ -60,6 +60,16 @@ navigation_planning::OptimizationDiagnostics toProductDiagnostics(
   output.hard_deadline_observed = source.hard_deadline_observed;
   output.valid = source.valid;
   output.used_certified_seed = source.used_certified_seed;
+  output.used_feasible_iterate_checkpoint =
+      source.used_feasible_iterate_checkpoint;
+  output.feasible_iterate_checkpoint_attempt =
+      source.feasible_iterate_checkpoint_attempt;
+  output.feasible_iterate_checkpoint_iteration =
+      source.feasible_iterate_checkpoint_iteration;
+  output.feasible_iterate_certificate_count =
+      source.feasible_iterate_certificate_count;
+  output.feasible_iterate_certificate_time_us =
+      source.feasible_iterate_certificate_time_us;
   output.certified_seed_failure_stage = source.certified_seed_failure_stage;
   output.corridor_seed_build_failure_stage =
       source.corridor_seed_build_failure_stage;

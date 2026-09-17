@@ -6999,6 +6999,16 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                     planner_diagnostics.candidate_maximum_jerk_mps3);
     add_trace_value("exp_used_certified_seed",
                     exp_diagnostics.used_certified_seed ? 1 : 0);
+    add_trace_value("exp_used_feasible_iterate_checkpoint",
+                    exp_diagnostics.used_feasible_iterate_checkpoint ? 1 : 0);
+    add_trace_value("exp_feasible_iterate_checkpoint_attempt",
+                    exp_diagnostics.feasible_iterate_checkpoint_attempt);
+    add_trace_value("exp_feasible_iterate_checkpoint_iteration",
+                    exp_diagnostics.feasible_iterate_checkpoint_iteration);
+    add_trace_value("exp_feasible_iterate_certificate_count",
+                    exp_diagnostics.feasible_iterate_certificate_count);
+    add_trace_value("exp_feasible_iterate_certificate_time_us",
+                    exp_diagnostics.feasible_iterate_certificate_time_us);
     add_trace_value("exp_certified_seed_failure_stage",
                     exp_diagnostics.certified_seed_failure_stage);
     add_trace_value("exp_corridor_seed_build_failure_stage",

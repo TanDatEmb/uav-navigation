@@ -83,6 +83,21 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "optimizer_latency_ms": ("optimizer_latency_ms",),
     "exp_diagnostics_valid": ("exp_diagnostics_valid",),
     "exp_used_certified_seed": ("exp_used_certified_seed",),
+    "exp_used_feasible_iterate_checkpoint": (
+        "exp_used_feasible_iterate_checkpoint",
+    ),
+    "exp_feasible_iterate_checkpoint_attempt": (
+        "exp_feasible_iterate_checkpoint_attempt",
+    ),
+    "exp_feasible_iterate_checkpoint_iteration": (
+        "exp_feasible_iterate_checkpoint_iteration",
+    ),
+    "exp_feasible_iterate_certificate_count": (
+        "exp_feasible_iterate_certificate_count",
+    ),
+    "exp_feasible_iterate_certificate_time_us": (
+        "exp_feasible_iterate_certificate_time_us",
+    ),
     "exp_certified_seed_failure_stage": (
         "exp_certified_seed_failure_stage",
     ),
@@ -593,6 +608,21 @@ def normalize_planner_trace_record(
         "optimizer_latency_ms": _float(values["optimizer_latency_ms"]),
         "exp_diagnostics_valid": _bool(values["exp_diagnostics_valid"]),
         "exp_used_certified_seed": _bool(values["exp_used_certified_seed"]),
+        "exp_used_feasible_iterate_checkpoint": _bool(
+            values["exp_used_feasible_iterate_checkpoint"]
+        ),
+        "exp_feasible_iterate_checkpoint_attempt": _int(
+            values["exp_feasible_iterate_checkpoint_attempt"]
+        ),
+        "exp_feasible_iterate_checkpoint_iteration": _int(
+            values["exp_feasible_iterate_checkpoint_iteration"]
+        ),
+        "exp_feasible_iterate_certificate_count": _int(
+            values["exp_feasible_iterate_certificate_count"]
+        ),
+        "exp_feasible_iterate_certificate_time_us": _int(
+            values["exp_feasible_iterate_certificate_time_us"]
+        ),
         "exp_certified_seed_failure_stage": _int(
             values["exp_certified_seed_failure_stage"]
         ),
@@ -998,6 +1028,28 @@ def planner_trace_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     runtime_admission_disposition_counts: dict[str, int] = {}
     execution_disposition_counts: dict[str, int] = {}
     first_causal_failure_scope_counts: dict[str, int] = {}
+    feasible_checkpoint_records = [
+        record
+        for record in records
+        if record.get("exp_diagnostics_valid") is True
+        and record.get("exp_used_feasible_iterate_checkpoint") is not None
+        and isinstance(
+            record.get("exp_feasible_iterate_certificate_count"), int
+        )
+        and not isinstance(
+            record.get("exp_feasible_iterate_certificate_count"), bool
+        )
+        and isinstance(
+            record.get("exp_feasible_iterate_certificate_time_us"), int
+        )
+        and not isinstance(
+            record.get("exp_feasible_iterate_certificate_time_us"), bool
+        )
+    ]
+    feasible_checkpoint_certificate_times_us = [
+        record["exp_feasible_iterate_certificate_time_us"]
+        for record in feasible_checkpoint_records
+    ]
     for record in records:
         for field, counts in (
             (
@@ -1058,6 +1110,35 @@ def planner_trace_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "exp_certified_seed_used_count": sum(
             record.get("exp_used_certified_seed") is True for record in records
+        ),
+        # These counters use only producer-declared current optimizer
+        # diagnostics.  A later cycle can carry old status values while
+        # exp_diagnostics_valid=false; counting those would inflate both the
+        # checkpoint adoption rate and its measured certificate overhead.
+        "exp_feasible_iterate_checkpoint_record_count": len(
+            feasible_checkpoint_records
+        ),
+        "exp_feasible_iterate_checkpoint_used_count": (
+            sum(
+                record.get("exp_used_feasible_iterate_checkpoint") is True
+                for record in feasible_checkpoint_records
+            )
+            if feasible_checkpoint_records else None
+        ),
+        "exp_feasible_iterate_certificate_count_total": (
+            sum(
+                record["exp_feasible_iterate_certificate_count"]
+                for record in feasible_checkpoint_records
+            )
+            if feasible_checkpoint_records else None
+        ),
+        "exp_feasible_iterate_certificate_time_us_total": (
+            sum(feasible_checkpoint_certificate_times_us)
+            if feasible_checkpoint_certificate_times_us else None
+        ),
+        "exp_feasible_iterate_certificate_time_us_max": (
+            max(feasible_checkpoint_certificate_times_us)
+            if feasible_checkpoint_certificate_times_us else None
         ),
         "exp_certified_seed_failure_stage_counts": failure_stage_counts,
         "exp_corridor_seed_build_failure_stage_counts": (
