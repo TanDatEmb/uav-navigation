@@ -44,6 +44,14 @@
 namespace navigation_planning_backend {
 
 struct CiriGeometryTestAccess {
+  static geometry_utils::Ellipsoid findEllipsoid(
+      CIRI& ciri, const Eigen::Matrix3Xd& points,
+      const Eigen::Vector3d& begin, const Eigen::Vector3d& end) {
+    geometry_utils::Ellipsoid result;
+    ciri.findEllipsoid(points, begin, end, result);
+    return result;
+  }
+
   static bool findTangentPlaneOfSphere(
       const Eigen::Vector3d& center, double radius,
       const Eigen::Vector3d& pass_point, const Eigen::Vector3d& seed_point,
@@ -498,6 +506,39 @@ TEST(CiriGeometry, RejectsInvalidConfigurationBeforeNumericalWork) {
   EXPECT_THROW(ciri.setupParams(0.5, 0), std::invalid_argument);
   EXPECT_THROW(ciri.setupParams(std::numeric_limits<double>::quiet_NaN(), 1),
                std::invalid_argument);
+}
+
+TEST(CiriGeometry, ObstacleSelectionPreservesSourceDomainAcrossPermutations) {
+  navigation_planning_backend::CIRI ciri;
+  ciri.setupParams(0.35, 1);
+  // Only the last source point is inside the line-seed ellipsoid. Its source
+  // index 2 cannot index the one-column packed output from pointsInside().
+  Eigen::Matrix3Xd source(3, 3);
+  source.col(0) = Eigen::Vector3d(8.0, 4.0, 3.0);
+  source.col(1) = Eigen::Vector3d(-8.0, 2.0, -4.0);
+  source.col(2) = Eigen::Vector3d(0.0, 0.6, 0.2);
+  const Eigen::Vector3d begin(-1.5, 0.0, 0.0), end(1.5, 0.0, 0.0);
+  Eigen::Matrix3Xd nearest_first(3, 3);
+  nearest_first << source.col(2), source.col(0), source.col(1);
+  const auto reference = navigation_planning_backend::CiriGeometryTestAccess::
+      findEllipsoid(ciri, nearest_first, begin, end);
+  ASSERT_FALSE(reference.empty());
+  ASSERT_TRUE(reference.C().allFinite());
+  for (int shift = 0; shift < 3; ++shift) {
+    Eigen::Matrix3Xd permuted(3, 3);
+    for (int column = 0; column < 3; ++column)
+      permuted.col(column) = source.col((column + shift) % 3);
+    const auto ellipsoid = navigation_planning_backend::CiriGeometryTestAccess::
+        findEllipsoid(ciri, permuted, begin, end);
+    ASSERT_FALSE(ellipsoid.empty()) << "shift=" << shift;
+    ASSERT_TRUE(ellipsoid.C().allFinite()) << "shift=" << shift;
+    EXPECT_NEAR((ellipsoid.C() - reference.C()).norm(), 0.0, 1.0e-10);
+    EXPECT_NEAR(ellipsoid.d().norm(), 0.0, 1.0e-12);
+    // The unique inside obstacle defines a contact boundary, regardless of
+    // input order. A finite but unshrunk seed is not sufficient.
+    EXPECT_NEAR(ellipsoid.dist(navigation_math::Vec3f(source.col(2))),
+                1.0, 1.0e-10);
+  }
 }
 
 TEST(CiriGeometry, AcceptsFinitePointSeedForPointCorridorConstruction) {
@@ -3283,6 +3324,37 @@ TEST(PlannerTrajectory, EllipsoidBoundariesFailClosedAndPreserveSourceIds) {
   ASSERT_TRUE(sphere.pointsInside(points, inside_points, nearest_inside_id));
   EXPECT_EQ(nearest_inside_id, 1);
   EXPECT_EQ(inside_points.cols(), 2);
+}
+
+TEST(PlannerTrajectory, EllipsoidPointFilteringSupportsAliasAndPreservesInputIds) {
+  const geometry_utils::Ellipsoid sphere(
+      navigation_math::Mat3f::Identity(), navigation_math::Vec3f::Ones(),
+      navigation_math::Vec3f::Zero());
+  Eigen::Matrix3Xd source(3, 5);
+  source << 2.0, 0.5, 3.0, 0.1, -4.0,
+            0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0;
+  const Eigen::Matrix3Xd source_before = source;
+  Eigen::Matrix3Xd filtered;
+  int source_id = -1;
+  ASSERT_TRUE(sphere.pointsInside(source, filtered, source_id));
+  ASSERT_EQ(filtered.cols(), 2);
+  EXPECT_EQ(source_id, 3);
+  EXPECT_GE(source_id, filtered.cols());
+  EXPECT_EQ(source, source_before);
+  EXPECT_DOUBLE_EQ(filtered(0, 0), 0.5);
+  EXPECT_DOUBLE_EQ(filtered(0, 1), 0.1);
+
+  int alias_source_id = -1;
+  ASSERT_TRUE(sphere.pointsInside(source, source, alias_source_id));
+  EXPECT_EQ(alias_source_id, source_id);  // Pre-call input identity, not packed ID.
+  EXPECT_EQ(source, filtered);
+
+  Eigen::Matrix3Xd outside(3, 1);
+  outside.col(0) = Eigen::Vector3d(2.0, 0.0, 0.0);
+  EXPECT_FALSE(sphere.pointsInside(outside, outside, alias_source_id));
+  EXPECT_EQ(alias_source_id, -1);
+  EXPECT_EQ(outside.cols(), 0);
 }
 
 TEST(PlannerTrajectory, EllipsoidMatrixPlaneTransformMatchesScalarTransform) {

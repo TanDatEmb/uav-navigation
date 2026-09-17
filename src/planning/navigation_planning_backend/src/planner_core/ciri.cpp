@@ -385,13 +385,14 @@ namespace navigation_planning_backend {
         int min_dis_id;
         Vec3f pw;
         if (E.pointsInside(pc, obs, min_dis_id)) {
-            pw = obs.col(min_dis_id);
+            pw = pc.col(min_dis_id);
         }
         else {
             out_ell = E;
             return;
         }
         Mat3Df obs_inside = obs;
+        Mat3Df next_inside;
         int max_iter = 100;
         while (max_iter--) {
             Vec3f p_e = Ri.transpose() * (pw - E.d());
@@ -402,8 +403,11 @@ namespace navigation_planning_backend {
                 r(1) = std::abs(p_e(1)) / std::sqrt(1 - std::pow(p_e(0) / r(0), 2));
             }
             E = Ellipsoid(Rf, r, center);
-            if (E.pointsInside(obs_inside, obs_inside, min_dis_id)) {
+            if (E.pointsInside(obs_inside, next_inside, min_dis_id)) {
+                // pointsInside returns an ID in this iteration's source
+                // matrix. Consume it before replacing that source.
                 pw = obs_inside.col(min_dis_id);
+                obs_inside.swap(next_inside);
             }
             else {
                 break;
@@ -418,7 +422,7 @@ namespace navigation_planning_backend {
 
 
         if (E.pointsInside(obs, obs_inside, min_dis_id)) {
-            pw = obs_inside.col(min_dis_id);
+            pw = obs.col(min_dis_id);
         }
         else {
             out_ell = E;
@@ -433,8 +437,9 @@ namespace navigation_planning_backend {
                 r(2) = std::abs(p(2)) / std::sqrt(dd);
             }
             E = Ellipsoid(Rf, r, center);
-            if (E.pointsInside(obs_inside, obs_inside, min_dis_id)) {
+            if (E.pointsInside(obs_inside, next_inside, min_dis_id)) {
                 pw = obs_inside.col(min_dis_id);
+                obs_inside.swap(next_inside);
             }
             else {
                 out_ell = E;

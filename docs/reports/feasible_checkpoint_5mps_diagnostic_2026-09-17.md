@@ -913,6 +913,37 @@ PX4 containment before a stable/smooth product claim. No threshold tuning,
 unsafe fallback, secondary publisher or qualification closure is justified.
 
 All nine outcomes, denominators, provenance and aggregate counters were
-independently audited without discrepancy. CIRI implementation remains pending
-coordination with the concurrent safety-ledger migration; no unrelated WIP is
-staged, overwritten or treated as this feature.
+independently audited without discrepancy.
+
+### CIRI source-domain correction: component evidence, not completion evidence
+
+The next bounded correctness change preserves the utility's original-input
+ID contract. Initial CIRI selection reads `pc`, second-phase selection reads
+`obs`, and each iterative selection reads its current input before swapping
+in a separately filtered output. The utility itself postpones output mutation
+until all input reads finish, so aliased calls no longer erase their input.
+Invalid/nonfinite geometry still returns failure with an empty output and
+ID -1. No radius, obstacle-inside predicate, clearance tolerance, loop cap,
+deadline, UNKNOWN policy, certificate, command authority or tracking gate is
+changed; there is no added fallback or test-specific production path.
+
+Two regressions were first run on the pre-fix production implementation and
+both failed: aliased filtering unexpectedly returned false, and permuting the
+same obstacle cloud produced an empty CIRI ellipsoid when the unique inside
+obstacle had source ID 2 but the packed output had one column. After correction,
+all eight selected `CiriGeometry.*` / `PlannerTrajectory.Ellipsoid*` tests pass,
+including the unchanged fail-closed boundary fixtures. Independent read-only
+review found no concrete remaining P1/P2 in this change. Restoring actual
+obstacle-filter iterations can increase CIRI work; unchanged iteration caps
+do not imply unchanged latency, and a new integrated nine-run matrix is still
+required before any completion/performance claim.
+
+The first full Release attempt compiled all 23 packages but **failed build
+provenance** because unrelated safety-document migration changed the workspace
+while it ran. That attempt is not an authoritative runtime build. Its compiled
+components pass full `make test` (exit 0; runtime Python 386 tests with one
+existing missing-artifact skip); rebuild a stable committed snapshot before
+SITL. The migration is not part of this feature: its documents and validator
+are neither overwritten nor staged here. The current working contract was
+read from `docs/safety/runtime_safety_current.md`; ordinary source correctness
+repair adds no temporary bypass requiring a new bypass decision.

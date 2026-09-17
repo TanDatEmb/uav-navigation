@@ -103,6 +103,9 @@ namespace geometry_utils {
         bool noPointsInside(vec_Vec3f& pc, const Eigen::Matrix3d& R,
                             const Vec3f& r, const Vec3f& p) const;
 
+        // min_pt_id identifies the pre-call input, not the packed output.
+        // Filtering may alias pc/out; callers consuming the source ID must
+        // retain the corresponding input matrix until they select the point.
         bool pointsInside(const Eigen::Matrix3Xd& pc,
                           Mat3Df& out,
                           int& min_pt_id) const;

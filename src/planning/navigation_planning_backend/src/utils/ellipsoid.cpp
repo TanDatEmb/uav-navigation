@@ -235,14 +235,18 @@ bool Ellipsoid::noPointsInside(vec_Vec3f &pc, const Eigen::Matrix3d &R, const Ve
 }
 
 bool Ellipsoid::pointsInside(const Eigen::Matrix3Xd &pc, Mat3Df &out, int &min_pt_id) const {
-    out.resize(3, 0);
     min_pt_id = -1;
-    if (empty() || pc.cols() <= 0 || !pc.allFinite()) return false;
+    if (empty() || pc.cols() <= 0 || !pc.allFinite()) {
+        out.resize(3, 0);
+        return false;
+    }
     Eigen::VectorXd vec = (C_inv_ * (pc.colwise() - d_)).colwise().norm();
-    if (!vec.allFinite()) return false;
+    if (!vec.allFinite()) {
+        out.resize(3, 0);
+        return false;
+    }
     vec_E<Vec3f> pts;
     pts.reserve(pc.cols());
-    int cnt = 0;
     double min_dis = std::numeric_limits<double>::max();
     for (long int i = 0; i < vec.size(); i++) {
         if (vec(i) <= 1) {
@@ -251,13 +255,13 @@ bool Ellipsoid::pointsInside(const Eigen::Matrix3Xd &pc, Mat3Df &out, int &min_p
                 min_pt_id = static_cast<int>(i);
                 min_dis = vec(i);
             }
-            cnt++;
         }
     }
     if (!pts.empty()) {
         out = Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>>(pts[0].data(), 3, pts.size());
         return true;
     } else {
+        out.resize(3, 0);
         return false;
     }
 }
