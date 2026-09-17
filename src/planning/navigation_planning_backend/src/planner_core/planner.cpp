@@ -1332,11 +1332,14 @@ double mainGuideSupport(
                 navigation_mission::MissionWaypoint::Behavior::PassThrough;
             // ``connected_goal``/terminal_stop only enables the bounded
             // witness search. The route event itself is emitted from the
-            // first actual trajectory entry into the acceptance volume, even
+            // first planned trajectory entry into the acceptance geometry, even
             // when the executable endpoint continues beyond the waypoint.
-            const double radius = std::max(
-                navigation_world_model::kGoalCompletionToleranceM,
-                waypoint.acceptance_radius_m);
+            // PASS uses the exact mission sphere, not its circumscribed box or
+            // the independent endpoint-connectivity tolerance. STOP retains
+            // its existing bounded box witness in this change.
+            const double radius = is_pass_through ? waypoint.acceptance_radius_m
+                : std::max(navigation_world_model::kGoalCompletionToleranceM,
+                           waypoint.acceptance_radius_m);
             const Eigen::Vector3d boundary_min = waypoint.position_enu -
                 Eigen::Vector3d::Constant(radius);
             const Eigen::Vector3d boundary_max = waypoint.position_enu +
@@ -1349,16 +1352,21 @@ double mainGuideSupport(
                 command.connected_goal || command.terminal_stop ||
                 active_pass_through_with_outgoing_route;
             if (boundary_candidate && (is_pass_through || command.terminal_stop)) {
-                // The route event is the first actual trajectory entry into
-                // the acceptance volume.  Do not manufacture it at the
+                // The route event is the first sampled/refined trajectory entry
+                // into the selected geometry. Do not manufacture it at the
                 // declared endpoint: a long MAIN prefix can cross the
                 // waypoint and then continue toward the next leg before its
                 // BACKUP suffix begins.
                 const double total_duration = command.position.getTotalDuration();
-                const auto boundary_visit =
-                    navigation_planning_backend::firstAcceptanceVolumeVisit(
-                        [&](const double time_s) { return command.position.getPos(time_s); },
-                        boundary_min, boundary_max, total_duration,
+                const auto position_at = [&](const double time_s) {
+                    return command.position.getPos(time_s);
+                };
+                const auto boundary_visit = is_pass_through
+                    ? navigation_planning_backend::firstAcceptanceSphereVisit(
+                        position_at, waypoint.position_enu, radius, total_duration,
+                        [] { return false; }, false)
+                    : navigation_planning_backend::firstAcceptanceVolumeVisit(
+                        position_at, boundary_min, boundary_max, total_duration,
                         [] { return false; }, false);
                 if (!boundary_visit) {
                     return {std::nullopt,
@@ -1424,8 +1432,20 @@ double mainGuideSupport(
                         candidate.route_boundary_constraint = constraint;
                         const auto boundary_entry_position = command.position.getPos(
                             *boundary_entry_tt);
-                        const auto boundary_stamp_ns = navigation_common::secondsSumToNanoseconds(
+                        auto boundary_stamp_ns = navigation_common::secondsSumToNanoseconds(
                             start_wall_time_s, *boundary_entry_tt);
+                        if (is_pass_through) {
+                            // The sphere visit is normalized to an inside native
+                            // elapsed-ns sample. Use that same canonical clock,
+                            // not a separately rounded floating wall-time sum.
+                            const auto offset_ns = navigation_common::secondsToNanoseconds(
+                                *boundary_entry_tt);
+                            boundary_stamp_ns = offset_ns &&
+                                *offset_ns <= std::numeric_limits<std::int64_t>::max() -
+                                    candidate.declared_start_ns
+                                ? std::optional<std::int64_t>{candidate.declared_start_ns + *offset_ns}
+                                : std::nullopt;
+                        }
                         if (!boundary_entry_position.allFinite() || !boundary_stamp_ns) {
                             return {std::nullopt,
                                     CandidateExportFailure::kIncompleteRouteBoundary};
@@ -5162,16 +5182,10 @@ double mainGuideSupport(
                     route_snapshot_->active_waypoint_index + 1U < route_snapshot_->waypoints.size() &&
                     !navigation_mission::passThroughNextWaypointIsCoincidentStop(*route_snapshot_);
                 if (requires_pass_continuation) {
-                    const double export_radius = std::max(
-                        navigation_world_model::kGoalCompletionToleranceM,
-                        active_pass_through_radius_m);
-                    const Eigen::Vector3d boundary_min = *active_pass_through_waypoint -
-                        Eigen::Vector3d::Constant(export_radius);
-                    const Eigen::Vector3d boundary_max = *active_pass_through_waypoint +
-                        Eigen::Vector3d::Constant(export_radius);
-                    const auto visit = navigation_planning_backend::firstAcceptanceVolumeVisit(
+                    const auto visit = navigation_planning_backend::firstAcceptanceSphereVisit(
                         [&](const double time_s) { return ref_exp_traj.getPos(time_s); },
-                        boundary_min, boundary_max, ref_exp_traj.getTotalDuration(),
+                        *active_pass_through_waypoint, active_pass_through_radius_m,
+                        ref_exp_traj.getTotalDuration(),
                         should_abort);
                     if (!visit) return FAILED;
                     if (visit->entry_time_s) {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <vector>
@@ -14,17 +15,15 @@ struct FirstAcceptanceVolumeVisit {
   std::optional<double> exit_time_s;
 };
 
-// Share the exporter's existing 5 ms AABB bracket/refinement with construction.
-// This locates the first sampled visit, not a continuous intersection proof or
-// a measured/ordered sphere crossing. An unfinished visit has no invented exit.
-template <typename PositionAt, typename Point, typename Abort>
-inline std::optional<FirstAcceptanceVolumeVisit> firstAcceptanceVolumeVisit(
-    PositionAt position_at, const Point& minimum, const Point& maximum,
+// One bracket/refinement algorithm for explicitly selected geometry. This
+// locates the first sampled visit, not a continuous intersection proof or a
+// measured/ordered crossing. An unfinished visit has no invented exit.
+template <typename PositionAt, typename Contains, typename Abort>
+inline std::optional<FirstAcceptanceVolumeVisit> firstAcceptanceVisit(
+    PositionAt position_at, Contains contains,
     const double duration_s, Abort abort, const bool find_exit = true) {
   constexpr double kProbeDtS = 0.005;
-  if (!minimum.allFinite() || !maximum.allFinite() ||
-      !(minimum.array() <= maximum.array()).all() ||
-      !std::isfinite(duration_s) || duration_s < 0.0) return std::nullopt;
+  if (!std::isfinite(duration_s) || duration_s < 0.0) return std::nullopt;
   const double count = std::ceil(duration_s / kProbeDtS);
   // Validate before converting: a huge/nonfinite double-to-size_t is unsafe.
   if (!std::isfinite(count) || count > 10000000.0) return std::nullopt;
@@ -33,8 +32,7 @@ inline std::optional<FirstAcceptanceVolumeVisit> firstAcceptanceVolumeVisit(
     if (abort()) return std::nullopt;
     const auto point = position_at(time_s);
     if (!point.allFinite()) return std::nullopt;
-    return (point.array() >= minimum.array()).all() &&
-           (point.array() <= maximum.array()).all();
+    return contains(point);
   };
   FirstAcceptanceVolumeVisit visit;
   auto previous_inside = inside(0.0);
@@ -67,6 +65,53 @@ inline std::optional<FirstAcceptanceVolumeVisit> firstAcceptanceVolumeVisit(
     previous_inside = current_inside;
     if (time_s >= duration_s) break;
   }
+  return visit;
+}
+
+// STOP export keeps its existing box geometry. PASS timing must use the actual
+// mission sphere instead; the outer box is only a metadata envelope there.
+template <typename PositionAt, typename Point, typename Abort>
+inline std::optional<FirstAcceptanceVolumeVisit> firstAcceptanceVolumeVisit(
+    PositionAt position_at, const Point& minimum, const Point& maximum,
+    const double duration_s, Abort abort, const bool find_exit = true) {
+  if (!minimum.allFinite() || !maximum.allFinite() ||
+      !(minimum.array() <= maximum.array()).all()) return std::nullopt;
+  return firstAcceptanceVisit(position_at, [&](const auto& point) {
+    return (point.array() >= minimum.array()).all() &&
+           (point.array() <= maximum.array()).all();
+  }, duration_s, abort, find_exit);
+}
+
+template <typename PositionAt, typename Point, typename Abort>
+inline std::optional<FirstAcceptanceVolumeVisit> firstAcceptanceSphereVisit(
+    PositionAt position_at, const Point& center, const double radius,
+    const double duration_s, Abort abort, const bool find_exit = true) {
+  if (!center.allFinite() || !std::isfinite(radius) || radius <= 0.0)
+    return std::nullopt;
+  auto visit = firstAcceptanceVisit(position_at,
+      [&](const auto& point) -> std::optional<bool> {
+        const double distance = (point - center).norm();
+        if (!std::isfinite(distance)) return std::nullopt;
+        return distance <= radius;
+      }, duration_s, abort, find_exit);
+  if (!visit || !visit->entry_time_s) return visit;
+  // Both command evaluation and exported timestamps use integer elapsed ns.
+  // Never round an inside floating probe back to an outside command sample.
+  const long double entry_ns = std::ceil(
+      static_cast<long double>(*visit->entry_time_s) * 1.0e9L);
+  if (!std::isfinite(entry_ns) || entry_ns < 0.0L ||
+      entry_ns > static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+    return std::nullopt;
+  const double canonical_entry_s =
+      static_cast<double>(static_cast<std::int64_t>(entry_ns)) * 1.0e-9;
+  if (canonical_entry_s > duration_s || abort()) return std::nullopt;
+  const auto point = position_at(canonical_entry_s);
+  if (!point.allFinite()) return std::nullopt;
+  const double distance = (point - center).norm();
+  if (!std::isfinite(distance) || distance > radius ||
+      (visit->exit_time_s && canonical_entry_s >= *visit->exit_time_s))
+    return std::nullopt;
+  visit->entry_time_s = canonical_entry_s;
   return visit;
 }
 

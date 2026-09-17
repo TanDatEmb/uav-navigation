@@ -94,6 +94,12 @@ mission:
   builtin_interfaces::msg::Time stamp(std::int64_t ns) const {
     return rclcpp::Time(ns, RCL_ROS_TIME);
   }
+  static std::int64_t fixtureStampNanoseconds(
+      const builtin_interfaces::msg::Time& value) {
+    // Fixture clocks are small, positive and representable. Use an independent
+    // integral conversion rather than the producer/receiver contract helper.
+    return static_cast<std::int64_t>(value.sec) * 1'000'000'000 + value.nanosec;
+  }
   void health(bool valid = true, std::uint64_t epoch = 7U,
               std::int64_t source_ns = 0) {
     auto message = std::make_shared<Health>();
@@ -167,6 +173,32 @@ mission:
     if (mode_->odometry_) message->position = mode_->odometry_->pose.pose.position;
     message->velocity.x = 3.49;
     return message;
+  }
+  std::shared_ptr<Command> commandFromCanonicalMainReserve(
+      const std::int64_t main_end_ns, const std::int64_t sphere_entry_ns) {
+    // Synthetic arithmetic for the current 600 ms publisher contract. This
+    // package has no navigation_planning dependency; keep the test independent
+    // instead of introducing a runtime/backend dependency or a production gate.
+    constexpr std::int64_t kSyntheticMainReserveNs = 600'000'000;
+    auto message = command(false);
+    const auto command_stamp_ns = fixtureStampNanoseconds(message->header.stamp);
+    message->certified_main_continuation =
+        main_end_ns - command_stamp_ns >= kSyntheticMainReserveNs;
+    message->continuation_boundary_stamp_ns = message->certified_main_continuation
+        ? static_cast<std::uint64_t>(sphere_entry_ns) : 0U;
+    const Eigen::Vector3d velocity =
+        3.49 * Eigen::Vector3d{20.0, 5.0, 0.0}.normalized();
+    message->velocity.x = velocity.x();
+    message->velocity.y = velocity.y();
+    message->velocity.z = velocity.z();
+    return message;
+  }
+  static Eigen::Vector3d syntheticSphereEntryPosition(
+      const std::int64_t sample_ns, const std::int64_t sphere_entry_ns) {
+    const Eigen::Vector3d incoming = Eigen::Vector3d{20.0, 5.0, 0.0}.normalized();
+    const double elapsed_s = static_cast<double>(sample_ns - sphere_entry_ns) / 1.0e9;
+    return Eigen::Vector3d{20.0, 5.0, 3.0} +
+        (3.49 * elapsed_s - 0.9) * incoming;
   }
   void admit(const std::shared_ptr<Command>& message) {
     mode_->onNavigationCommand(message);
@@ -243,6 +275,89 @@ TEST_F(NavigationModeProgressionTest, FalseReplacementDoesNotLatchEarlierPermiss
   setNow(kNextTick);
   timerTick();
   EXPECT_EQ(waypoint(), 1U);
+}
+
+TEST_F(NavigationModeProgressionTest,
+       ExactSphereEntryReserveFalseReplacementBeforeTimerBlocksProgression) {
+  // Map conceptual entry=10.000 s and MAIN end=10.600 s onto fixture clocks.
+  // These callback phases are synthetic schedules, not measured flight bounds.
+  constexpr auto entry_ns = kCrossing;
+  constexpr auto main_end_ns = entry_ns + 600'000'000;
+  const Eigen::Vector3d velocity =
+      3.49 * Eigen::Vector3d{20.0, 5.0, 0.0}.normalized();
+  setNow(entry_ns - 10'000'000);
+  health();
+  odometry(syntheticSphereEntryPosition(now_ns_, entry_ns), 0, velocity);
+  const auto before_entry = commandFromCanonicalMainReserve(main_end_ns, entry_ns);
+  ASSERT_TRUE(before_entry->certified_main_continuation);
+  ASSERT_EQ(before_entry->continuation_boundary_stamp_ns,
+            static_cast<std::uint64_t>(entry_ns));
+  admit(before_entry);
+  ASSERT_EQ(acceptedSample(), before_entry->sample_id);
+  ASSERT_EQ(waypoint(), 1U);
+
+  setNow(entry_ns + 10'000'000);
+  health();
+  odometry(syntheticSphereEntryPosition(now_ns_, entry_ns), 0, velocity);
+  const auto after_entry = commandFromCanonicalMainReserve(main_end_ns, entry_ns);
+  ASSERT_FALSE(after_entry->certified_main_continuation);
+  ASSERT_EQ(after_entry->continuation_boundary_stamp_ns, 0U);
+  admit(after_entry);
+  ASSERT_EQ(acceptedSample(), after_entry->sample_id);
+
+  setNow(entry_ns + 25'000'000);
+  health();
+  odometry(syntheticSphereEntryPosition(now_ns_, entry_ns), 0, velocity);
+  timerTick();
+  EXPECT_EQ(waypoint(), 1U);
+  EXPECT_EQ(request(), 2U);
+  EXPECT_FALSE(failed());
+  EXPECT_EQ(hold_count_, 0U);
+}
+
+TEST_F(NavigationModeProgressionTest,
+       ExactSphereEntryReserveTimerBeforeFalseReplacementConsumesLease) {
+  // Same canonical geometry/reserve as the paired test; only consumption order
+  // changes. The receiver must not invent a 600 ms-at-use gate: its accepted
+  // true witness remains consumable during the existing 100 ms command lease.
+  constexpr auto entry_ns = kCrossing;
+  constexpr auto main_end_ns = entry_ns + 600'000'000;
+  const Eigen::Vector3d velocity =
+      3.49 * Eigen::Vector3d{20.0, 5.0, 0.0}.normalized();
+  setNow(entry_ns - 10'000'000);
+  health();
+  odometry(syntheticSphereEntryPosition(now_ns_, entry_ns), 0, velocity);
+  const auto before_entry = commandFromCanonicalMainReserve(main_end_ns, entry_ns);
+  ASSERT_TRUE(before_entry->certified_main_continuation);
+  admit(before_entry);
+  ASSERT_EQ(acceptedSample(), before_entry->sample_id);
+  ASSERT_EQ(waypoint(), 1U);
+
+  setNow(entry_ns + 10'000'000);
+  health();
+  odometry(syntheticSphereEntryPosition(now_ns_, entry_ns), 0, velocity);
+  const auto command_stamp_ns = fixtureStampNanoseconds(before_entry->header.stamp);
+  const auto valid_until_ns = fixtureStampNanoseconds(before_entry->valid_until);
+  ASSERT_GT(command_stamp_ns, 0);
+  ASSERT_LE(command_stamp_ns, now_ns_);
+  ASSERT_GT(valid_until_ns, command_stamp_ns);
+  ASSERT_LE(now_ns_, valid_until_ns);
+  ASSERT_LT(main_end_ns - now_ns_, 600'000'000);
+  timerTick();
+  ASSERT_EQ(waypoint(), 2U);
+  ASSERT_EQ(request(), 3U);
+
+  setNow(entry_ns + 25'000'000);
+  health();
+  odometry(syntheticSphereEntryPosition(now_ns_, entry_ns), 0, velocity);
+  const auto after_entry = commandFromCanonicalMainReserve(main_end_ns, entry_ns);
+  ASSERT_FALSE(after_entry->certified_main_continuation);
+  admit(after_entry);  // A retained predecessor cannot advance the next goal.
+  timerTick();
+  EXPECT_EQ(waypoint(), 2U);
+  EXPECT_EQ(request(), 3U);
+  EXPECT_FALSE(failed());
+  EXPECT_EQ(hold_count_, 0U);
 }
 
 TEST_F(NavigationModeProgressionTest, FreshTimerWitnessStillAdvancesNormally) {

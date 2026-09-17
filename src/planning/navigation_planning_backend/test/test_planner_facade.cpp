@@ -2083,6 +2083,103 @@ TEST(PlannerFacade, PassThroughLookaheadExportsRouteBoundaryEvent) {
       candidate->route_boundary_event->position_world));
 }
 
+TEST(PlannerFacade, GenuineNinetyDegreePassEventUsesActualMissionSphere) {
+  // This is a semantic geometry regression, not requested-5-m/s qualification
+  // or a proof of a measured handoff window. Rotating a genuine 90-degree
+  // corner makes the circumscribed AABB distinct from the mission sphere.
+  // Keep the real facade, product budget, and complete MAIN+BACKUP gates.
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  const auto limits = semanticFixtureMissionLimits();
+  ASSERT_TRUE(limits.has_value());
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, limits, authorizer, [] { return 10.0; });
+
+  navigation_mission::Mission mission;
+  mission.id = "genuine-ninety-degree-sphere-event";
+  mission.frame = "lio_odom";
+  mission.planning.requested_cruise_speed_mps = limits->intent.requested_cruise_speed_mps;
+  mission.waypoints = {
+      {"previous", Eigen::Vector3d{0.0, 0.0, 3.0}, 0.9, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"current", Eigen::Vector3d{5.0, 5.0, 3.0}, 0.9, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      {"next", Eigen::Vector3d{0.0, 10.0, 3.0}, 0.9, 0.0,
+       navigation_mission::MissionWaypoint::Behavior::Stop}};
+  const auto& active = mission.waypoints[1U];
+  const Eigen::Vector3d measured_position{2.0, 2.0, 3.0};
+  const Eigen::Vector3d incoming =
+      (active.position_enu - mission.waypoints[0U].position_enu).normalized();
+  const Eigen::Vector3d outgoing =
+      (mission.waypoints[2U].position_enu - active.position_enu).normalized();
+  ASSERT_DOUBLE_EQ(incoming.dot(outgoing), 0.0);
+  ASSERT_GT((measured_position - active.position_enu).norm(), active.acceptance_radius_m);
+
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(mission.waypoints[0U].position_enu).valid);
+  ASSERT_TRUE(progress.update(measured_position).valid);
+  auto request = plannerBodySupportRequest(world, nullptr);
+  request.route_snapshot = progress.snapshot(mission.id, mission.frame, 1U, 31U, 1U);
+  request.key.route_revision = request.route_snapshot.route_revision;
+  request.goal.mission_id = mission.id;
+  request.start_state.position_world = measured_position;
+  request.dynamics = *limits;
+  request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+      std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
+          std::chrono::duration<double>(
+              navigation_planning::PlanningTimingContract::kSolveDeadlineS));
+  request.budget.steady_deadline_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      request.budget.deadline.time_since_epoch()).count();
+  facade.setGoalAcceptanceRadius(active.acceptance_radius_m);
+  ASSERT_TRUE(request.valid());
+  ASSERT_EQ(request.route_snapshot.active_waypoint_index, 1U);
+
+  const auto result = facade.plan(request);
+  ASSERT_TRUE(result.candidate.has_value()) << static_cast<int>(result.failure_stage) << ":"
+                                          << static_cast<int>(result.failure_reason);
+  const auto& candidate = *result.candidate;
+  ASSERT_TRUE(candidate.valid());
+  ASSERT_EQ(candidate.kind, navigation_planning::CandidateBundleKind::kMainWithBackup);
+  ASSERT_TRUE(candidate.certificates.completeFor(candidate.kind));
+  ASSERT_TRUE(candidate.backup_available);
+  EXPECT_FALSE(candidate.terminal_stop);
+  EXPECT_EQ(candidate.request_id, request.key.request_id);
+  EXPECT_EQ(candidate.goal_epoch, request.key.goal_epoch);
+  EXPECT_EQ(candidate.localization_epoch, request.key.localization_epoch);
+  ASSERT_TRUE(candidate.route_boundary_constraint.has_value());
+  ASSERT_TRUE(candidate.route_boundary_event.has_value());
+  const auto& event = *candidate.route_boundary_event;
+  ASSERT_EQ(event.kind, navigation_planning::RouteBoundaryEventKind::kPassThrough);
+  EXPECT_EQ(event.junction_index, 1U);
+  EXPECT_EQ(candidate.route_boundary_constraint->junction_index, 1U);
+  EXPECT_LE(event.incoming_tangent.dot(event.outgoing_tangent), 0.7);
+  EXPECT_TRUE(candidate.route_boundary_constraint->contains(event.position_world));
+
+  // Independent Euclidean oracle: do not call the producer's visit helper or
+  // mistake its outer box for the configured mission acceptance sphere.
+  const double event_error_m = (event.position_world - active.position_enu).norm();
+  ::testing::Test::RecordProperty("corner_event_sphere_error_m", std::to_string(event_error_m));
+  EXPECT_LE(event_error_m, active.acceptance_radius_m);
+  const auto event_sample = candidate.sampleAtDeclaredStamp(event.boundary_stamp_ns);
+  ASSERT_TRUE(event_sample.has_value());
+  EXPECT_EQ(event_sample->role, navigation_planning::CandidateRole::kMain);
+  const double sampled_event_error_m =
+      (event_sample->position_world - active.position_enu).norm();
+  ::testing::Test::RecordProperty("corner_stamped_event_sphere_error_m",
+                                  std::to_string(sampled_event_error_m));
+  EXPECT_LE(sampled_event_error_m, active.acceptance_radius_m);
+
+  const auto main_end_ns = candidate.declared_start_ns +
+      static_cast<std::int64_t>(std::llround(candidate.backup_start_time_s * 1.0e9));
+  const auto reserve_ns = static_cast<std::int64_t>(std::llround(
+      navigation_planning::PlanningTimingContract::kMinimumMainReserveS * 1.0e9));
+  EXPECT_GE(main_end_ns - event.boundary_stamp_ns, reserve_ns);
+  // No mission acceptance is granted by this planned event. Requiring a
+  // measured callback to overlap the ready window is a separate liveness test.
+  EXPECT_EQ(request.route_snapshot.active_waypoint_index, 1U);
+  EXPECT_EQ(facade.committedGeneration(), 0U);
+}
+
 void expectFutureAnchorInsideUnacceptedPassBoundaryCanRenew(const double speed_mps) {
   const ScopedSnapshotDirectory directory;
   const ScopedSnapshotEnvironment capture("UAV_NAVIGATION_NOMINAL_SNAPSHOT_DIR",

@@ -2,6 +2,15 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
+Latest component follow-up: PASS event export and BACKUP switch-window timing
+now share the actual mission sphere and a checked native elapsed-ns witness.
+A genuine rotated 90-degree real-facade regression failed on the old producer
+despite a complete certified bundle; the corrected producer passes. One normal
+`make test` execution passes (84 CTest targets plus the Python suites), but
+geometry correction does not close measured handoff timing or prove majority
+5 m/s completion. The new separate-policy 18-run integration matrix is pending.
+See [sphere/time normalization](#pass-spheretime-normalization-and-consumption-order-regressions).
+
 Latest integrated follow-up: the frozen Release on `90716e93` completed all18
 sequential SAFE/FAST cases: **SAFE2/9mission COMPLETE, FAST3/9mission COMPLETE,
 0/18report PASS**. Completion remains below a majority and no run qualifies.
@@ -3596,3 +3605,141 @@ coordinator, new retry authority, temporary bypass or hard-gate change is
 introduced by this closure. The whole-suite RED described above remains
 open;12/12 focused tests and5diagnostic completions do not close it or meet
 the stable smooth majority-completion5m/s product target.
+
+### PASS sphere/time normalization and consumption-order regressions
+
+**Owner/scope:** planning backend PASS boundary export and BACKUP-switch timing;
+implemented and component-verified, integrated completion evidence pending.
+This is an existing mission-geometry/witness correction, not a new execution
+coordinator, adaptive budget, cache, readiness latch or temporary bypass.
+The previous goal turn closed source/test evidence for the temporal budget
+critique; it did not change flight behavior or satisfy the product objective.
+
+#### Claim, counterargument and distinguishing evidence
+
+The planner used the first sampled visit to a circumscribed AABB as the PASS
+event and BACKUP switch-window temporal basis, while measured ordered mission
+acceptance uses the actual sphere. An AABB is a valid metadata envelope, but
+entry into it does not establish entry into the mission sphere. The HG-025
+optimizer cell is a different, inscribed cube with half extent `r/sqrt(3)`;
+that continuous-corridor constraint remains unchanged and is not replaced by
+this sampled event search.
+
+The new `PlannerFacade.GenuineNinetyDegreePassEventUsesActualMissionSphere`
+uses the real facade and unchanged full MAIN+BACKUP/certificate gates, active
+junction1 and route `(0,0,3) -> (5,5,3) -> (0,10,3)`, measured start `(2,2,3)`
+and actual radius0.9m. Rotating the genuine 90-degree turn distinguishes the
+box from the sphere. Its existing semantic speed fixture is about0.5625m/s,
+not requested-5m/s qualification or a corner-speed performance experiment.
+
+On the old production path, a complete candidate succeeds in about3ms and
+retains the MAIN reserve, yet independent Euclidean checks fail:
+
+| Witness | Old error | Actual radius |
+|---|---|---|
+| Stored PASS event position | 1.182016950229m | 0.9m |
+| Native sample at exported timestamp | 1.182016950441m | 0.9m |
+
+This confirms a reachable producer semantics defect rather than a budget
+timeout. After correction, both independent sphere-membership assertions
+pass without radius epsilon. The XML properties print rounded0.900000m;
+the actual test assertions compare unrounded doubles.
+
+A second RED **during the migration** detects a representation mismatch:
+analytic sphere entry `.6000000004s` rounded to600000000ns yields native point
+norm1.0000000004, outside radius1. This is an adversarial timestamp oracle,
+not evidence that a second independently observed flight failure occurred.
+The corrected witness uses an elapsed-ns ceiling, the exact native conversion
+`double(elapsed_ns)*1e-9`, and re-samples membership. Absolute PASS time is a
+checked addition to the candidate's canonical declared start. Overflow,
+nonfinite inputs, cancellation, or a visit with no inside representable sample
+fail closed; no later visit or exit is manufactured.
+
+#### Minimal implementation and unchanged boundaries
+
+- One existing5ms/32-bisection bracket algorithm now accepts explicit geometry.
+  Both PASS exporter and BACKUP switch-window construction use the actual
+  immutable waypoint radius/sphere, not `max(.20,r)` or the outer box.
+- The exported PASS constraint remains an outer metadata envelope; the
+  optimizer's inscribed continuous-corridor cell stays unchanged.
+- Mission waypoint STOP retains its legacy box and wall-time rounding. A
+  coincident PASS-to-STOP command still follows its PASS waypoint geometry;
+  the existing coincident control remains covered.
+- The600ms reserve,80ms backend cap,400ms future head, all dynamics/flatness,
+  latest-world, tracking, identity, role and lease gates are unchanged.
+  SAFE known-free BACKUP and explicit FAST UNKNOWN behavior stay separate.
+- The scanner remains a first **sampled/refined** visit, not continuous
+  intersection proof. Tangent/thin visits can remain undetected. The new
+  witness cannot grant measured mission acceptance or execution authority.
+
+The existing separate sphere+1e-6 BACKUP-crossing prevention guard was not
+silently substituted for this exact sphere witness. Telemetry's incorrectly
+named `boundary_remaining_main_horizon_s` still includes BACKUP; that
+observability defect remains explicitly open rather than being bundled into
+this behavior correction.
+
+#### Consumption-order discriminator and remaining leverage
+
+Two real NavigationMode callback-fixture tests derive the wire continuation
+boolean independently from `MAIN_end - command_header_time >=600ms`, not
+an arbitrary true flag. Ideal measured positions cross the actual sphere on
+a synthetic3.49m/s incoming ray. With `MAIN_end = sphere_entry +600ms`:
+
+- A true command10ms before entry is admitted while outside; native state10ms
+  after entry is inside. False replacement before the mission timer prevents
+  progress, without triggering Hold.
+- Timer consumption before that false replacement advances exactly one
+  waypoint using the accepted true witness's existing100ms lease; a subsequent
+  predecessor command cannot advance the next waypoint.
+
+Both outcomes pass under current production semantics. They disprove a
+guaranteed100ms receiver window and show that geometry normalization alone
+does not close online liveness. These are controlled schedules, not measured
+flight delay bounds; no600ms-at-use gate was added at the receiver.
+
+The next protocol discriminator is the planned sphere/MAIN-role/permission
+window from the **same canonical candidate**, followed by measured callback
+overlap and an on-time complete successor. Exit+600ms remains a preference,
+not an unconditional lower bound: an infeasible later braking hull must not
+erase a legitimate safe approach. No arbitrary lag margin, reduced reserve,
+false-permission latch, fabricated past event or pending-candidate authority
+is introduced here. AFTER/outside unaccepted anchors, estimator publication
+loss, current-world invalidation and joint tracking/braking viability remain
+independent system-level work; this patch is not a claim they are resolved.
+
+#### Verification and corrected-baseline preparation
+
+Generated evidence is consolidated in the single ignored directory
+`.artifacts/diagnostics/sphere-boundary-normalization-20260917/`; old RED and
+intermediate failed assertions are retained, not overwritten by GREEN.
+
+| Verification | Result |
+|---|---|
+| Real-facade genuine90 old geometry | RED: complete bundle but two sphere assertions fail |
+| Sub-ns native-clock oracle before normalization | RED:600000000ns outside sphere |
+| Full configuration target, fresh final binary | 89/89 PASS;8 visit cases include endpoint/cancellation negatives |
+| Full facade, three quiet sequential executions | 36/36 PASS each |
+| Full receiver callback fixture | 23/23 PASS |
+| Full continuation/completion target | 12/12 PASS |
+| Normal `make test`,21:16 local execution | PASS; independent check84 CTest targets,0 errors/failures/skips |
+| Python tools/runtime suites in that normal execution | 7/7 and387 tests PASS;1 historical missing-GUI-artifact skip |
+| Safety-ledger validator and `git diff --check` | PASS |
+
+The first configuration binary omitted the newly added negative test; its
+88-test result is retained as intermediate evidence, not used as final
+coverage. An include-path issue in the receiver test was removed using an
+independent positive-fixture timestamp oracle, without adding dependencies.
+Earlier normal-suite RED remains historical evidence; this one full-suite
+PASS does not establish a latency distribution or durable timing closure.
+Independent source reviews checked geometry scope, nonfinite/overflow,
+cancellation, native clock consistency and the still-open handoff window.
+
+After this feature/report commit, create a new full authoritative Release
+manifest: the source fingerprint includes report bytes and Git HEAD, so the
+90716e93 manifest must not be reused. Then run18 sequential positive nominal
+three-column cases, SAFE/FAST separately,2/5/9WP each repeated three times at
+requested5m/s, seed0, visibility40m/4096, domain42/XRCE8892, RViz/captureOFF,
+unchanged tracking0/0/0. Freeze all nonignored source and do not build, test,
+replay or commit while simulations are active. Keep failures, cleanup and
+eligibility in the denominator. The matrix remains diagnostic; the stable
+smooth majority-completion5m/s objective is still unmet.
