@@ -110,7 +110,8 @@ mission:
     message->last_propagated_state_stamp = message->header.stamp;
     mode_->onEstimatorHealth(message);
   }
-  void odometry(const Eigen::Vector3d& position, std::int64_t source_ns = 0) {
+  void odometry(const Eigen::Vector3d& position, std::int64_t source_ns = 0,
+                const Eigen::Vector3d& velocity = Eigen::Vector3d{3.49, 0.0, 0.0}) {
     auto message = std::make_shared<navigation_contracts::msg::PropagatedOdometry>();
     message->localization_epoch = 7U;
     message->sequence = ++sequence_;
@@ -122,8 +123,22 @@ mission:
     odom.pose.pose.position.y = position.y();
     odom.pose.pose.position.z = position.z();
     odom.pose.pose.orientation.w = 1.0;
-    odom.twist.twist.linear.x = 3.49;
+    odom.twist.twist.linear.x = velocity.x();
+    odom.twist.twist.linear.y = velocity.y();
+    odom.twist.twist.linear.z = velocity.z();
     mode_->onOdometry(message);
+  }
+  std::shared_ptr<Command> completedStopCommand() {
+    auto message = command(false);
+    message->goal_epoch = 3U;
+    message->waypoint_index = static_cast<std::uint32_t>(waypoint());
+    message->request_id = request();
+    message->bundle_generation = 9U;
+    message->status = Command::STATUS_COMPLETED;
+    message->certified_main_continuation = false;
+    message->velocity = geometry_msgs::msg::Vector3{};
+    message->valid_until = stamp(now_ns_ + 100'000'000);
+    return message;
   }
   static Eigen::Vector3d inBall() {
     return {19.149405286591282, 4.816194674794652, 2.961046013093615};
@@ -163,6 +178,8 @@ mission:
     return mode_->navigation_command_ ? mode_->navigation_command_->sample_id : 0U;
   }
   bool failed() const { return mode_->failure_reported_; }
+  bool missionCompleted() const { return mode_->mission_complete_published_; }
+  bool holding() const { return mode_->mission_controller_->holding(); }
   void requestHold() { mode_->safetyStopNavigation("progression fixture handover"); }
   void expectSerializedCallbacks() const {
     const auto group = node_->get_node_base_interface()->get_default_callback_group();
@@ -384,6 +401,141 @@ TEST_F(NavigationModeProgressionTest, HandoverCannotBeReversedByContinuationArri
   EXPECT_EQ(waypoint(), 1U);
   EXPECT_EQ(acceptedSample(), 0U);
   EXPECT_EQ(hold_count_, 1U);
+}
+
+TEST_F(NavigationModeProgressionTest, CharacterizeTerminalStopSpeedAcrossCallbacks) {
+  startOutside();
+  setNow(kCrossing);
+  health();
+  odometry(inBall());
+  admit(command());
+  ASSERT_EQ(waypoint(), 2U);
+  ASSERT_EQ(request(), 3U);
+  const auto start = kCrossing + 20'000'000;
+  // Characterization, not approval of this timer policy: alternating speed
+  // samples clear/re-arm recovery but cannot satisfy continuous STOP arrival.
+  for (int step = 0; step <= 1200; ++step) {
+    setNow(start + static_cast<std::int64_t>(step) * 10'000'000);
+    if (step % 2 == 0) {
+      health();
+      const double speed = (step / 20) % 2 == 0 ? 0.16 : 0.14;
+      odometry({50.0, 5.0, 3.0}, 0, {speed, 0.0, 0.0});
+      admit(completedStopCommand());
+    }
+    if (step % 5 == 0) timerTick();
+    EXPECT_FALSE(failed());
+    EXPECT_EQ(hold_count_, 0U);
+    EXPECT_FALSE(missionCompleted());
+    EXPECT_EQ(waypoint(), 2U);
+  }
+}
+
+TEST_F(NavigationModeProgressionTest, CompletedBackupHoldAcceptsLateMeasuredSuffixStop) {
+  startOutside();
+  setNow(kCrossing);
+  health();
+  odometry({20.99, 5.24, 3.0}, 0, {0.8, 0.0, 0.0});
+  auto endpoint = command(false);
+  endpoint->position.x = 20.863;
+  endpoint->position.y = 5.096;
+  endpoint->position.z = 3.0;
+  endpoint->velocity = geometry_msgs::msg::Vector3{};
+  endpoint->role = Command::ROLE_BACKUP;
+  endpoint->status = Command::STATUS_COMPLETED;
+  admit(endpoint);
+  timerTick();
+  ASSERT_EQ(waypoint(), 1U);
+
+  setNow(kCrossing + 1'000'000'000);
+  health();
+  odometry({20.80, 5.08, 3.0}, 0, {0.1, 0.0, 0.0});
+  auto hold = command(false);
+  hold->position = endpoint->position;
+  hold->velocity = geometry_msgs::msg::Vector3{};
+  hold->role = Command::ROLE_BACKUP;
+  hold->status = Command::STATUS_COMPLETED;
+  admit(hold);
+  EXPECT_EQ(acceptedSample(), hold->sample_id);
+  timerTick();
+  EXPECT_EQ(acceptedSample(), 0U);
+  EXPECT_EQ(waypoint(), 2U);
+  EXPECT_EQ(request(), 3U);
+  EXPECT_FALSE(failed());
+  EXPECT_EQ(hold_count_, 0U);
+  // A fresh sample ID does not renew permission for the next waypoint.
+  setNow(kCrossing + 1'020'000'000);
+  health();
+  odometry({20.80, 5.08, 3.0}, 0, {0.1, 0.0, 0.0});
+  auto predecessor = command(false);
+  predecessor->position = endpoint->position;
+  predecessor->velocity = geometry_msgs::msg::Vector3{};
+  predecessor->role = Command::ROLE_BACKUP;
+  predecessor->status = Command::STATUS_COMPLETED;
+  admit(predecessor);
+  timerTick();
+  EXPECT_NE(acceptedSample(), predecessor->sample_id);
+  EXPECT_EQ(waypoint(), 2U);
+  EXPECT_EQ(request(), 3U);
+}
+
+TEST_F(NavigationModeProgressionTest, CompletedMainHoldDoesNotInventSuffixPermission) {
+  startOutside();
+  setNow(kCrossing);
+  health();
+  odometry({20.80, 5.08, 3.0}, 0, {0.1, 0.0, 0.0});
+  auto hold = command(false);
+  hold->velocity = geometry_msgs::msg::Vector3{};
+  hold->status = Command::STATUS_COMPLETED;
+  admit(hold);
+  timerTick();
+  EXPECT_EQ(acceptedSample(), hold->sample_id);
+  EXPECT_EQ(waypoint(), 1U);
+  EXPECT_EQ(request(), 2U);
+  EXPECT_FALSE(failed());
+  EXPECT_EQ(hold_count_, 0U);
+}
+
+TEST_F(NavigationModeProgressionTest, CompletedBackupHoldDoesNotAcceptMovingMeasuredState) {
+  startOutside();
+  setNow(kCrossing);
+  health();
+  odometry({20.80, 5.08, 3.0}, 0, {0.16, 0.0, 0.0});
+  auto hold = command(false);
+  hold->velocity = geometry_msgs::msg::Vector3{};
+  hold->role = Command::ROLE_BACKUP;
+  hold->status = Command::STATUS_COMPLETED;
+  admit(hold);
+  timerTick();
+  EXPECT_EQ(acceptedSample(), hold->sample_id);
+  EXPECT_EQ(waypoint(), 1U);
+  EXPECT_EQ(request(), 2U);
+  EXPECT_FALSE(failed());
+}
+
+TEST_F(NavigationModeProgressionTest, TerminalStopStillRequiresContinuousConfirmation) {
+  startOutside();
+  setNow(kCrossing);
+  health();
+  odometry(inBall());
+  admit(command());
+  ASSERT_EQ(waypoint(), 2U);
+  const auto start = kCrossing + 20'000'000;
+  for (int step = 0; step <= 60; ++step) {
+    setNow(start + static_cast<std::int64_t>(step) * 10'000'000);
+    if (step % 2 == 0) {
+      health();
+      odometry({50.0, 5.0, 3.0}, 0, {0.14, 0.0, 0.0});
+      admit(completedStopCommand());
+    }
+    if (step % 5 == 0) timerTick();
+    if (step < 50) {
+      EXPECT_FALSE(holding());
+      EXPECT_FALSE(missionCompleted());
+    }
+  }
+  EXPECT_TRUE(holding() || missionCompleted());
+  EXPECT_FALSE(failed());
+  EXPECT_EQ(hold_count_, 0U);
 }
 
 }  // namespace px4_navigation_external_mode

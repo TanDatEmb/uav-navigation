@@ -151,6 +151,22 @@ inline bool watchdogTimeoutMayRetainStoppedRecoveryHold(
          command_available && restart_from_rest;
 }
 
+// Projection of an expired analytic endpoint into the existing COMPLETED
+// hold command contract. Endpoint validation is owned by the publisher;
+// this projection never extends the trajectory lease or authorizes a hold.
+inline navigation_planning::CandidateRole stoppedHoldCommandRole(
+    navigation_planning::CandidateRole endpoint_role,
+    bool endpoint_valid) noexcept {
+  // Retain the certified BACKUP stop witness for measured mission progress.
+  // Invalid holds must keep the legacy MAIN -> REJECTED failure projection.
+  // EMERGENCY also keeps its existing MAIN hold projection: the wire contract
+  // has no COMPLETED/EMERGENCY variant, so changing it is a separate decision.
+  return endpoint_valid &&
+                 endpoint_role == navigation_planning::CandidateRole::kBackup
+      ? navigation_planning::CandidateRole::kBackup
+      : navigation_planning::CandidateRole::kMain;
+}
+
 inline bool pendingGoalTerminalStatusMayClear(
     bool matches_pending, bool safety_suffix_active) noexcept {
   // A queued request can report PAUSED/COMPLETED while the preceding

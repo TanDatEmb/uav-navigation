@@ -7664,7 +7664,7 @@ void NavigationRuntimeNode::publishCommand() {
       command_world_identity = sample.bundle->world_identity;
       sampled_bundle = sample.bundle;
       sampled_role = sample.planned_stop_hold
-          ? navigation_planning::CandidateRole::kMain : point.role;
+          ? stoppedHoldCommandRole(point.role, planned_hold_valid) : point.role;
       on_backup_traj = sampled_role != navigation_planning::CandidateRole::kMain;
       if (sample.planned_stop_hold) {
         if (planned_hold_valid) {

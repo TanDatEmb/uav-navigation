@@ -2806,3 +2806,99 @@ effective source/config rather than silently editing that user-owned contract.
 The stable/smooth majority-completion product objective remains active and
 unmet. Future behavior changes require a new frozen build and repeated separate
 SAFE/FAST integrated evidence, including failures and assurance blockers.
+
+## Correct expired BACKUP witness loss — 2026-09-17
+
+This subsequent cycle introduces one bounded behavior correction; it does not
+retroactively change the 18-run results above. Budget, waypoint radius/speed,
+recovery deadlines, validation and SAFE/FAST world predicates are unchanged.
+
+### Finding and minimum repair
+
+**CONFIRMED, high completion priority:** runtime erased a valid BACKUP endpoint
+role when projecting an expired bundle into an existing STOPPED_HOLD. This
+violated the end-to-end invariant that measured waypoint progress must use the
+role witness of the exact accepted command, not just proximity or a planned path.
+
+Reachable production evidence is SAFE 9WP-r3,
+`.artifacts/runtime/external-mode-check-20260917T102114-272325`: generation 6
+emitted 64 BACKUP/READY samples, followed by 588 MAIN/COMPLETED holds at the same
+endpoint `(20.863,5.096,3)`, near waypoint 1 `(20,5,3)`. The first completed
+callback was correctly not accepted: measured state was outside the ball and
+still moving. Later receiver logs show error 0.804 m/speed 0.103 m/s, then error
+0.858 m/speed 0.062 m/s, without advancement. MAIN hold cannot supply certified
+MAIN continuation, nor the receiver's COMPLETED/BACKUP measured suffix-stop
+witness. Recovery kept targeting the old waypoint center; 35 later renewal jobs
+were correctly rejected for reverse route regression, with about 55–69 ms of
+solve budget still available. This case does not justify relaxing route gates
+or increasing the solve budget.
+
+Strongest counterargument: expired role alone must never grant permission to
+advance. The repair therefore preserves BACKUP only after the publisher's
+existing hold validation succeeds. The sampler already checks that the endpoint
+role matches its declared immutable schedule. The receiver still requires fresh
+command/state/health, exact identity, measured and commanded positions inside
+the active acceptance ball, measured speed <=0.15 m/s and anchor <=0.75 m.
+Mission progression remains ordered and mission-owned, not planner-owned.
+
+`stoppedHoldCommandRole()` now preserves this validated BACKUP witness; invalid
+holds retain the old MAIN failure projection. The publisher's final transaction
+still rechecks identity, world, freshness, lease and measured proximity. No
+analytic evaluator is extended beyond its declared end. No coordinator, shadow
+state, second command path or new fallback was added.
+
+An unconditional preservation of every endpoint role was rejected during
+independent review: it would change legacy emergency-hold wire behavior and
+could misclassify an invalid BACKUP hold as COMPLETED. Expired EMERGENCY retains
+its existing MAIN hold compatibility; active EMERGENCY remains BRAKING. A typed
+emergency-hold contract is separate unresolved debt, not silently introduced.
+The existing known-free hold predicate remains unchanged even for FAST; this
+does not convert FAST BACKUP UNKNOWN permission into SAFE BACKUP behavior.
+
+### Before/after verification and remaining scope
+
+- Before repair, `PlannerFsm.ValidatedStoppedHoldPreservesBackupWitnessOnly`
+  failed: a valid BACKUP endpoint was projected to MAIN. After repair it passes,
+  including MAIN, invalid BACKUP and emergency compatibility controls.
+- Sampler tests retain BACKUP after expiry and reject an evaluator that forges
+  BACKUP against a MAIN endpoint schedule. All four CommandSampler tests pass.
+- Actual receiver callback replay accepts the late measured stop at waypoint 1
+  and advances to waypoint 2/request 3. It rejects a freshly restamped command
+  for the old identity after handoff. MAIN hold and moving BACKUP hold controls
+  do not advance. All 21 progression tests pass.
+- A separate 12 s terminal characterization alternating speed 0.14/0.16 m/s
+  confirms repeated recovery timer rearming without a continuously confirmed
+  STOP. The continuous low-speed control still requires the configured 0.5 s
+  confirmation. This characterizes an unresolved behavior; it is not a fix or
+  permission to change deadlines/thresholds.
+- Sourced-overlay CTest passes execution 2/2, runtime 12/12 and External Mode
+  8/8 targets. An intermediate fixture assertion incorrectly checked the
+  accepted command after successful handoff cleared it; this was corrected and
+  the rebuilt 21-test binary rerun. An earlier compile failure followed by an
+  old binary run is not counted as verification of the new tests.
+
+These are component results. The invalid-hold role helper matrix is not a
+full producer wire-payload containment test. Updated runtime-node compilation,
+whole Release provenance and a new separate SAFE/FAST 18-case matrix remain
+pending at this checkpoint. No completion-rate improvement is claimed yet.
+
+### System-level alternatives still open
+
+Synchronized terminal windows for the two late SAFE 5WP failures show constant
+endpoint positions and zero commanded velocity, while independent ground-truth
+speed decays slowly. The captured PX4 input update calls are short and regularly
+spaced; missing optional acceleration is transmitted as NaN, not evidence of a
+stale acceleration feed-forward. Body-frame LIO/ground-truth velocity components
+must be rotated before axis comparisons; their norms remain comparable. This
+does not establish a controller/estimator cause, and no control tuning is made.
+
+Other early-leg bundle feasibility failures and terminal physical stopping
+remain separate completion bottlenecks. Candidate-rejection taxonomy currently
+mislabels some route rejection as `world_changed`; trace causal IDs can refer to
+old execution, and worker `backend_finished_steady_ns` can describe a previous
+job. Those evidence defects must not be used as solver-failure attribution.
+They are not mixed into this behavioral patch. The stable/smooth majority
+completion objective remains unmet; corrected provenance and repeated flight
+results are the next discriminator. User-owned safety-document migration is
+preserved; this repair restores an existing validated role witness and adds no
+temporary bypass or relaxed safety contract.

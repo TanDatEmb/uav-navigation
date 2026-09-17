@@ -13,6 +13,18 @@
 namespace navigation_runtime {
 namespace {
 
+TEST(PlannerFsm, ValidatedStoppedHoldPreservesBackupWitnessOnly) {
+  using Role = navigation_planning::CandidateRole;
+  EXPECT_EQ(stoppedHoldCommandRole(Role::kBackup, true), Role::kBackup);
+  EXPECT_EQ(stoppedHoldCommandRole(Role::kBackup, false), Role::kMain);
+  EXPECT_EQ(stoppedHoldCommandRole(Role::kMain, true), Role::kMain);
+  EXPECT_EQ(stoppedHoldCommandRole(Role::kMain, false), Role::kMain);
+  // Active EMERGENCY remains BRAKING; an expired emergency endpoint retains
+  // the legacy MAIN hold projection, not unsupported COMPLETED/EMERGENCY.
+  EXPECT_EQ(stoppedHoldCommandRole(Role::kEmergency, true), Role::kMain);
+  EXPECT_EQ(stoppedHoldCommandRole(Role::kEmergency, false), Role::kMain);
+}
+
 navigation_contracts::msg::NavigationGoal goal(
     const char* mission_id, std::uint32_t waypoint_index,
     std::uint64_t request_id, std::uint64_t route_revision) {

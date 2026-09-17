@@ -624,6 +624,37 @@ TEST(CommandSampler, SamplesDeclaredMainToBackupBundleAcrossRoleBoundary) {
   const auto backup = sampler.sample(50, 7);
   ASSERT_TRUE(static_cast<bool>(backup));
   EXPECT_EQ(backup.point->role, navigation_planning::CandidateRole::kBackup);
+
+  const auto hold = sampler.sample(candidate.declared_end_ns + 1, 7);
+  ASSERT_TRUE(hold);
+  EXPECT_TRUE(hold.planned_stop_hold);
+  EXPECT_TRUE(hold.point->finished);
+  EXPECT_EQ(hold.point->role, navigation_planning::CandidateRole::kBackup);
+}
+
+TEST(CommandSampler, ExpiredEndpointCannotForgeBackupRoleAgainstSchedule) {
+  navigation_execution::CommittedBundleStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  auto candidate = candidateFor(7, 1);
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.backup_start_time_s = candidate.duration_s;
+  // Construction permits MAIN up to the end; evaluator cannot invent BACKUP.
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.trajectory_time_s = static_cast<double>(stamp - 1) * 1.0e-9;
+    point.role = navigation_planning::CandidateRole::kBackup;
+    return true;
+  };
+  ASSERT_EQ(store.tryCommit({world, 7, 1},
+      std::make_shared<const navigation_planning::CandidateBundle>(candidate)),
+      navigation_execution::CommitDecision::kCommitted);
+  const navigation_execution::CommandSampler sampler(store);
+  const auto hold = sampler.sample(candidate.declared_end_ns + 1, 7);
+  EXPECT_FALSE(hold);
+  EXPECT_FALSE(hold.planned_stop_hold);
 }
 
 TEST(ExecutionTimelineStore, StagesSuccessorUntilFutureAnchorActivation) {
