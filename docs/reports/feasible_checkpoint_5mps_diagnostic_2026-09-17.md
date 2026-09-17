@@ -2902,3 +2902,122 @@ completion objective remains unmet; corrected provenance and repeated flight
 results are the next discriminator. User-owned safety-document migration is
 preserved; this repair restores an existing validated role witness and adds no
 temporary bypass or relaxed safety contract.
+
+### Postflight closure of the BACKUP-witness cycle
+
+The checkpoint above was committed as `8a775d128cb3ca72c09246354896ddc6d45e72d0`.
+Its subsequent whole Release build completed all 23 packages; sourced-overlay
+runtime CTest passed 12/12 targets and backend CTest passed 9/9. The sequential
+18-case integration campaign is now terminal, not a pending/live process. Every
+slot has exactly one session, VALID build provenance and successful cleanup.
+
+Frozen manifest SHA-256 is
+`0fdd40bf92dcc6dfdc58a9595b06371b1d086b4152407288bcbda9cb1a8c4cb4`;
+source SHA-256 is
+`cc7f9ccee8ea7fea9645a26f80594d57f1cf63b4d9816ba2be46714a376403bf`
+(1,924 files). HEAD is `8a775d128...` plus the separately captured, preserved
+user-owned safety/documentation WIP. PX4 HEAD remains
+`deaff86ee335dd697677bcfc2415a23878e1b895`; PX4's dirty provenance is captured,
+not hidden. Requested speed is 5 m/s, seed 0, visibility 40 m/4,096, ROS domain
+42, XRCE UDP 8892, visualization and nominal-snapshot capture OFF. Profiles,
+routes, SAFE/FAST predicates and relaxed diagnostic tracking match the preceding
+campaign; no planner or controller tuning changed inside this matrix.
+
+Sessions are under `.artifacts/runtime/external-mode-check-20260917T`:
+
+| Policy | WP | Repeat | Session suffix | Accepted indices | Mission COMPLETE | Report |
+|---|---:|---:|---|---|---|---|
+| SAFE | 2 | 1 | `111258-323846` | 0 | no | FAIL |
+| SAFE | 2 | 2 | `111446-327271` | 0 | no | FAIL |
+| SAFE | 2 | 3 | `111714-330768` | 0,1 | yes | FAIL |
+| SAFE | 5 | 1 | `111906-334097` | 0,1,2,3 | no | BLOCKED |
+| SAFE | 5 | 2 | `112139-337620` | 0 | no | BLOCKED |
+| SAFE | 5 | 3 | `112339-340999` | 0 | no | BLOCKED |
+| SAFE | 9 | 1 | `112444-344190` | 0 | no | BLOCKED |
+| SAFE | 9 | 2 | `112552-347390` | 0 | no | BLOCKED |
+| SAFE | 9 | 3 | `112700-350723` | 0 | no | BLOCKED |
+| FAST | 2 | 1 | `112805-353930` | 0,1 | yes | FAIL |
+| FAST | 2 | 2 | `113007-357304` | 0,1 | yes | FAIL |
+| FAST | 2 | 3 | `113159-360605` | 0 | no | FAIL |
+| FAST | 5 | 1 | `113354-364009` | 0..4 | yes | FAIL |
+| FAST | 5 | 2 | `113606-367334` | 0 | no | BLOCKED |
+| FAST | 5 | 3 | `113711-370715` | 0..4 | yes | FAIL |
+| FAST | 9 | 1 | `113850-373933` | 0 | no | BLOCKED |
+| FAST | 9 | 2 | `114006-377200` | 0 | no | BLOCKED |
+| FAST | 9 | 3 | `114117-380342` | 0 | no | BLOCKED |
+
+SAFE completion is 1/9 (2/5/9WP: 1/3, 0/3, 0/3); FAST is 4/9 (2/3, 2/3,
+0/3). Report PASS is 0/18 and every run is qualification-ineligible. COMPLETE
+cases still fail the versioned assessment/eligibility gates; BLOCKED cases
+retain incomplete acceptance and safety-stop evidence. Three repeats do not
+establish causal improvement/regression against the previous source snapshot.
+The product objective is contradicted by this matrix, not narrowed to the
+component correction. Distinct positive solve-generation counts are a trace
+census only: inherited causal IDs and repeated retained records must not be
+counted as fresh optimizer calls or a complete backend-job denominator.
+
+### Independent first-failure review and next architecture seam
+
+The following are discriminators, not a claim that all 18 failures share one
+cause. A fail-closed stop can be correct containment even when liveness is poor.
+
+- SAFE9-r1 solve 5--7 has certified MAIN but no acceptable BACKUP. Each tries
+  the minimum 0.6 s split; the swept BACKUP tube encounters UNKNOWN at
+  `(12.5,2.9,2.9)`. The jobs finish in about 67.36/32.00/23.11 ms, with positive
+  hard-budget slack. `CellState=1` means UNKNOWN in the typed world enum, not
+  OCCUPIED in a different legacy grid enum. Do not relax SAFE to FAST. The
+  existence of another fully certified MAIN/BACKUP pair is not yet proven.
+- FAST9-r1 solve 4--9 loses MAIN before BACKUP/admission while retaining roughly
+  39--61 ms of budget. The corridor-contained Bezier factory first fails its
+  boundary-control construction; the fallback pre-LBFGS MINCO seed then fails
+  the componentwise boundary certificate. This is not evidence that the
+  already normalized Hermite conversion alone needs repairing. Corridor
+  violation and numerical seed rejection remain separate, unchanged gates.
+  FAST9-r2/r3 show the same initial construction/certificate failure chain.
+- SAFE5-r3 and FAST5-r2 first commit a complete generation 1, then lose it on
+  immutable world revalidation (`CertificateTubeBlocked`, respectively MAIN
+  and BACKUP). Logs omit the typed blocked-cell/position witness, so neither
+  UNKNOWN versus obstacle nor a validator defect is established from that
+  generic failure number.
+- SAFE5-r1 confirms BACKUP endpoint role survives both publisher and PX4 input;
+  that endpoint is about 7.68 m from waypoint 1 and does not itself qualify
+  acceptance. The run later accepts waypoint 3, then loses final STOP exposure:
+  measured endpoint error 0.961 m exceeds the unchanged 0.75 m anchor limit.
+  There is no COMPLETED command for that final generation before rejection.
+  Thus the first failure here is not the old stopped-recovery timeout. Control
+  or estimator causality is still unproven.
+- The hypothesis that continuation must wait until planned junction time is
+  REJECTED: `certifiedMainContinuationHandoffReady()` requires remaining MAIN
+  reserve, not `now >= boundary`. Do not fix a nonexistent timing veto.
+
+The expert budget review confirms 80 ms originated from one development Q1
+dataset, not universal qualification. It is an elapsed-time backend deadline,
+not guaranteed CPU service or a proven WCET. The 400 ms value is a future splice
+lead, and 600 ms/1 s are accounting formulas, not physical proofs. The runtime
+additionally requires solve budget to fit the scheduler period; this is a
+development policy, not a necessity of one asynchronous worker. Dynamic
+stopping/governor logic already exists. Any future budget policy must preserve
+resource isolation, exact activation, complete-bundle readiness, clock-domain
+semantics and the distinct SAFE/FAST contract; `distance / speed` alone is not
+an admissible deadline. Current user-owned HG-001 still records stale 180/200 ms
+values and remains untouched.
+
+The next minimal boundary candidate is request-owned guide time. Source review
+finds `max(configured_forward, activation - backend_start)` can place retained
+guide sampling after the immutable activation anchor when backend entry is
+delayed. PVAJ and declared candidate start still use the original activation,
+but guide elapsed times are subtracted from the later origin. Existing helper
+tests use consistent handcrafted origins and miss this composition. This is a
+reachable producer-consistency defect, not a proven unsafe accepted trajectory
+or a measured cause of the matrix. Snapshot capture was OFF; steady timestamps
+must not be subtracted from ROS activation stamps to invent that evidence.
+
+Implementation selection requires a delayed-clock regression first: keep the
+request anchor and activation fixed, advance backend entry, and require every
+retained point to use `sample_time - activation`. A late request must reject,
+not slide its head. Preserve legacy no-request behavior and all certificates.
+This restores one existing owner of the splice clock without adding a
+coordinator, retry FSM, threshold or fallback path. Separately investigate
+boundary-control duration feasibility and BACKUP viability feedback; only
+then consider earlier renewal/adaptive budgets if complete-bundle evidence
+shows a benefit. No behavioral change is introduced by this postflight closure.
