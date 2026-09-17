@@ -143,13 +143,23 @@ namespace geometry_utils {
 
     inline bool SimplifySFC(const Vec3f& head_p, const Vec3f& tail_p,
                                  geometry_utils::PolytopeVec& sfcs) {
-        // A generic simplification may remove an intermediate corridor when
-        // the first and a later corridor overlap. That would allow MINCO to
-        // cut a genuine pass-through corner while remaining collision-free.
-        if (std::any_of(sfcs.begin(), sfcs.end(),
-                        [](const Polytope& polytope) {
-                            return polytope.IsRouteBoundaryGate();
-                        })) {
+        // Never shortcut an interior mission gate or change either of its
+        // adjacent cells. Only trim a redundant terminal suffix: the retained
+        // corridors are an unchanged prefix, ending in a cell which already
+        // contains the fixed tail. This creates no new corridor adjacency.
+        std::size_t last_gate_end = 0U;
+        for (std::size_t i = 0; i < sfcs.size(); ++i) {
+            if (sfcs[i].IsRouteBoundaryGate()) last_gate_end = i + 1U;
+        }
+        if (last_gate_end != 0U) {
+            // last_gate_end is the outgoing neighbour's index. Keep it
+            // even if an earlier cell or the gate itself contains tail.
+            for (std::size_t i = last_gate_end; i + 1U < sfcs.size(); ++i) {
+                if (sfcs[i].PointIsInside(tail_p)) {
+                    sfcs.resize(i + 1U);
+                    break;
+                }
+            }
             return true;
         }
         vec_Vec3f path{head_p, tail_p};

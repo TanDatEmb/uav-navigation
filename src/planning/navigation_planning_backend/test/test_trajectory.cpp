@@ -2851,6 +2851,101 @@ TEST(PlannerTrajectory, SimplifySfcPreservesRouteBoundaryGate) {
   EXPECT_DOUBLE_EQ(sfcs[1].GetRouteBoundaryRadius(), 0.9);
 }
 
+TEST(PlannerTrajectory, SimplifySfcTrimsRedundantTailWithoutCrossingRouteGate) {
+  auto gate = makeTransitionTestBox(4.8, 5.2);
+  gate.SetRouteBoundaryContract(navigation_math::Vec3f{5.0, 0.5, 0.5}, 0.9);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), gate,
+      makeTransitionTestBox(4.0, 10.0),
+      makeTransitionTestBox(9.0, 14.0),
+      makeTransitionTestBox(11.0, 16.0),
+      makeTransitionTestBox(12.0, 17.0)};
+  const auto original = sfcs;
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {13.0, 0.5, 0.5}, sfcs));
+  ASSERT_EQ(sfcs.size(), 4U);
+  for (std::size_t index = 0; index < sfcs.size(); ++index) {
+    EXPECT_TRUE(sfcs[index].GetPlanes().isApprox(original[index].GetPlanes(), 0.0));
+  }
+  EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
+  EXPECT_TRUE(sfcs[1].GetRouteBoundaryPoint().isApprox(
+      navigation_math::Vec3f{5.0, 0.5, 0.5}, 0.0));
+  EXPECT_DOUBLE_EQ(sfcs[1].GetRouteBoundaryRadius(), 0.9);
+  EXPECT_TRUE(sfcs.back().PointIsInside({13.0, 0.5, 0.5}));
+  expectAllTransitionsRepresentable(sfcs);
+}
+
+TEST(PlannerTrajectory, SimplifySfcKeepsOutgoingGateNeighbourAndInteriorCells) {
+  auto gate = makeTransitionTestBox(4.8, 5.2);
+  gate.SetRouteBoundaryContract(navigation_math::Vec3f{5.0, 0.5, 0.5}, 0.9);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), gate,
+      makeTransitionTestBox(4.0, 10.0),
+      makeTransitionTestBox(4.0, 12.0)};
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {5.1, 0.5, 0.5}, sfcs));
+  // Even when the gate contains the tail, its outgoing neighbour remains:
+  // the boundary's incoming/outgoing junction contracts must not disappear.
+  ASSERT_EQ(sfcs.size(), 3U);
+  EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
+  EXPECT_DOUBLE_EQ(sfcs.back().GetPlanes()(0, 3), -10.0);
+}
+
+TEST(PlannerTrajectory, SimplifySfcRetainsTailNeededForEndpointOrMarkedGate) {
+  auto gate = makeTransitionTestBox(4.8, 5.2);
+  gate.SetRouteBoundaryContract(navigation_math::Vec3f{5.0, 0.5, 0.5}, 0.9);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), gate,
+      makeTransitionTestBox(4.0, 10.0),
+      makeTransitionTestBox(9.0, 14.0)};
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {13.0, 0.5, 0.5}, sfcs));
+  EXPECT_EQ(sfcs.size(), 4U);
+  sfcs.back().SetRouteBoundaryContract(
+      navigation_math::Vec3f{9.5, 0.5, 0.5}, 0.9);
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {9.5, 0.5, 0.5}, sfcs));
+  ASSERT_EQ(sfcs.size(), 4U);
+  EXPECT_TRUE(sfcs.back().IsRouteBoundaryGate());
+}
+
+TEST(PlannerTrajectory, SimplifySfcProtectsEveryGateAndItsOutgoingNeighbour) {
+  auto first_gate = makeTransitionTestBox(4.8, 5.2);
+  first_gate.SetRouteBoundaryContract({5.0, 0.5, 0.5}, 0.9);
+  auto last_gate = makeTransitionTestBox(8.8, 9.2);
+  last_gate.SetRouteBoundaryContract({9.0, 0.5, 0.5}, 0.8);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), first_gate,
+      makeTransitionTestBox(4.0, 10.0), last_gate,
+      makeTransitionTestBox(8.0, 14.0),
+      makeTransitionTestBox(11.0, 16.0)};
+  const auto original = sfcs;
+  // The tail is also inside cell2, but truncating there would lose gate3.
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {9.1, 0.5, 0.5}, sfcs));
+  ASSERT_EQ(sfcs.size(), 5U);
+  for (std::size_t index = 0; index < sfcs.size(); ++index) {
+    EXPECT_TRUE(sfcs[index].GetPlanes().isApprox(original[index].GetPlanes(), 0.0));
+    EXPECT_EQ(sfcs[index].IsRouteBoundaryGate(), original[index].IsRouteBoundaryGate());
+  }
+  EXPECT_DOUBLE_EQ(sfcs[1].GetRouteBoundaryRadius(), 0.9);
+  EXPECT_DOUBLE_EQ(sfcs[3].GetRouteBoundaryRadius(), 0.8);
+  expectAllTransitionsRepresentable(sfcs);
+}
+
+TEST(PlannerTrajectory, SimplifySfcDoesNotTrimMarkedChainForInvalidTail) {
+  auto gate = makeTransitionTestBox(4.8, 5.2);
+  gate.SetRouteBoundaryContract({5.0, 0.5, 0.5}, 0.9);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), gate,
+      makeTransitionTestBox(4.0, 10.0), makeTransitionTestBox(9.0, 14.0)};
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5},
+      navigation_math::Vec3f::Constant(std::numeric_limits<double>::quiet_NaN()), sfcs));
+  EXPECT_EQ(sfcs.size(), 4U);
+  EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
+}
+
 TEST(PlannerTrajectory, GoalPoliciesRemainNamedAndShareProvisionalValue) {
   EXPECT_DOUBLE_EQ(navigation_world_model::kGoalConnectionToleranceM,
                    navigation_world_model::kGoalCompletionToleranceM);

@@ -1420,3 +1420,68 @@ Priority now is the explicit boundary-obligation/future-anchor reproducer and
 closed-loop clearance/trackability, followed by the smallest justified change
 and a fresh sequential 2/5/9WP three-repetition matrix. The broader complete-
 MAIN+BACKUP readiness failures remain independent completion blockers.
+
+### Boundary renewal discriminator and gate-preserving terminal normalization
+
+The next cycle first tested the unaccepted-boundary seam, then returned to
+complete-bundle readiness rather than changing measured mission semantics.
+`FutureAnchorInsideUnacceptedPassBoundaryCanRenew` builds a real predecessor,
+samples both measured state and its 0.4 s future anchor, keeps the same active
+PASS waypoint/request, and proves measured position is outside the 0.8 m ball
+while the anchor is inside it. The existing planner can return a valid
+successor with its boundary event at activation and forward motion afterward.
+This is counterevidence to a general claim that this condition necessarily
+blocks renewal. It does not prove every post-boundary corner/expired-witness
+interleaving works. This semantic fixture uses the existing 0.562498875 m/s
+fixture envelope, not a 5 m/s performance assertion. An initial 5 m/s probe
+failed before producing its predecessor and never exercised renewal; do not
+count it as evidence about the boundary seam or hide that failure.
+
+The independent readiness finding is confirmed at the representation boundary:
+the route-gate branch of `SimplifySFC` skipped all normalization, retaining
+terminal cells beyond the first eligible cell containing the fixed endpoint.
+In the ten retained world-enabled snapshots from
+`.artifacts/diagnostics/complete-bundle-06e59cd0-9wp-20260917`, eight have a final
+initialized junction identical to the tail despite nonzero tail speed. These
+are cycles21/22/23/24/26/27/28/100, with nine captured cells and an eligible
+eight-cell prefix. Cycles1/2 do not have this signature and are not generalized
+away. The earlier capture has one accounted drop; the ten snapshots are not
+a lossless or matched SITL denominator.
+
+The minimal implementation changes only the existing gate branch:
+
+- Preserve the entire ordered prefix, including every gate and the last
+  gate's immediate outgoing neighbour. Do not shortcut an interior corridor,
+  move a boundary, or create a new adjacency.
+- End at the first eligible existing cell containing the fixed tail with the
+  unchanged `PointIsInside` contract; remove only cells after that cell.
+- Leave unmarked-chain simplification, immutable PVAJ, guide times, corridor
+  planes, gate point/radius, route/dynamics/world/BACKUP validators, deadlines,
+  and measured mission/lease/identity authority unchanged.
+
+This is formulation normalization, not permission to execute an uncertified
+proposal and not a fix for physical corner tracking. Lineage:
+`2026-08-28 - Preserve a hard route-boundary gate at pass-through corners`
+in the safety archive establishes the anti-corner-cutting invariant; this
+change narrows only its all-chain preservation implementation to an unchanged
+prefix retaining both gate neighbours. HG-024/025 remain authoritative. No
+temporary bypass, threshold relaxation, alternate execution path, or new
+coordinator is introduced. The safety-document migration WIP is preserved.
+
+Before the change, two terminal-normalization tests and the moving-tail
+optimizer regression fail; the required-endpoint/marked-tail control passes.
+The initial patched four focused suites pass, including the semantic renewal
+fixture. Added adversarial controls cover multiple gates and nonfinite tail
+without changing containment semantics. Canonical Release completes 23
+packages in 2 min46 s; full `make test` exits zero. Selected CTest XML records
+81 passing entries; trajectory/optimizer/facade/SFC-contract XML records
+142/25/21/4 cases with zero failures/errors. Runtime Python contracts pass
+386 cases with one existing missing-artifact skip. Safety-ledger structural
+validation and `git diff --check` pass. Independent source review finds no
+gate index shift or authority/threshold changes. The explicit-init legacy
+optimizer API can reject a seed whose dimensions describe a longer corridor;
+do not claim unchanged compatibility or reuse those vectors after trimming.
+The production `solve()` path rebuilds its seed after normalization.
+
+The required retained sequential 2/5/9WP three-repetition 5 m/s matrix remains
+pending for this cycle; no completion or performance improvement is claimed.

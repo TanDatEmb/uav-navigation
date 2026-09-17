@@ -73,6 +73,40 @@ class ScopedEnvironmentVariable {
   std::string previous_value_;
 };
 
+TEST(ExpOptimizer, RouteGateDoesNotKeepZeroDisplacementMovingTailSeed) {
+  const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  const auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, context);
+  const auto head = makePositionState(0.0);
+  const auto tail = makeMovingPositionState(13.0, 2.0);
+  auto gate = makeBox(4.8, 5.2, -1.0, 1.0, 0.0, 2.0);
+  gate.SetRouteBoundaryContract({5.0, 0.0, 1.0}, 0.9);
+  geometry_utils::PolytopeVec corridors{
+      makeBox(-1.0, 6.0, -1.0, 1.0, 0.0, 2.0), gate,
+      makeBox(4.0, 10.0, -1.0, 1.0, 0.0, 2.0),
+      makeBox(9.0, 14.0, -1.0, 1.0, 0.0, 2.0),
+      makeBox(11.0, 16.0, -1.0, 1.0, 0.0, 2.0)};
+  const navigation_math::vec_Vec3f guide{
+      head.col(0), {5.0, 0.0, 1.0}, {10.0, 0.0, 1.0}, tail.col(0)};
+  const std::vector<double> times{0.0, 5.0, 10.0, 13.0};
+  geometry_utils::Trajectory trajectory;
+  const auto result = optimizer.solve(
+      head, tail, guide, times, corridors, trajectory, false, true, false);
+  ASSERT_TRUE(result.candidateAvailable());
+  navigation_math::VecDf initial_times;
+  navigation_math::vec_Vec3f initial_points;
+  optimizer.getInitValue(initial_times, initial_points);
+  ASSERT_EQ(initial_times.size(), 4);
+  ASSERT_EQ(initial_points.size(), 3U);
+  EXPECT_GT((initial_points.back() - tail.col(0)).norm(), 1.0);
+  EXPECT_TRUE(corridors[1].IsRouteBoundaryGate());
+  EXPECT_TRUE(initial_points.front().isApprox(gate.GetRouteBoundaryPoint(), 0.0));
+  EXPECT_NEAR(initial_times.sum(), times.back(), 1.0e-12);
+  EXPECT_GT(initial_times.minCoeff(), 0.0);
+}
+
 TEST(ExpOptimizer, GuideTimeIsTheInitialDurationSeed) {
   const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   const auto planner_context =

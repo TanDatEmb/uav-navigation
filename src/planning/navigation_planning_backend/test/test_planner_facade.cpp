@@ -1213,6 +1213,100 @@ TEST(PlannerFacade, PassThroughLookaheadExportsRouteBoundaryEvent) {
       candidate->route_boundary_event->position_world));
 }
 
+TEST(PlannerFacade, FutureAnchorInsideUnacceptedPassBoundaryCanRenew) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, semanticFixtureMissionLimits(), authorizer,
+      [&ros_time_s] { return ros_time_s; });
+
+  // Keep the measured mission boundary active while a bounded future sample
+  // has already entered its ball. This is a same-identity renewal, not a
+  // measured mission handoff or permission to relabel the predecessor.
+  navigation_mission::Mission mission;
+  mission.id = "future-anchor-unaccepted-boundary";
+  mission.frame = "lio_odom";
+  mission.planning.requested_cruise_speed_mps = 0.5624988750005627;
+  mission.waypoints = {
+      navigation_mission::MissionWaypoint{
+          "previous", Eigen::Vector3d{-10.0, 0.0, 3.0}, 0.8, 0.0,
+          navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      navigation_mission::MissionWaypoint{
+          "current", Eigen::Vector3d{0.0, 0.0, 3.0}, 0.8, 0.0,
+          navigation_mission::MissionWaypoint::Behavior::PassThrough},
+      navigation_mission::MissionWaypoint{
+          "next", Eigen::Vector3d{10.0, 0.0, 3.0}, 0.8, 0.0,
+          navigation_mission::MissionWaypoint::Behavior::Stop}};
+  navigation_mission::RouteProgress progress(mission);
+  ASSERT_TRUE(progress.update(mission.waypoints.front().position_enu).valid);
+  auto request = plannerBodySupportRequest(world, nullptr);
+  request.route_snapshot = progress.snapshot(mission.id, mission.frame, 1U, 31U, 1U);
+  request.key.route_revision = request.route_snapshot.route_revision;
+  request.goal.mission_id = mission.id;
+  request.start_state.position_world = mission.waypoints.front().position_enu;
+  request.dynamics.intent.requested_cruise_speed_mps = 0.5624988750005627;
+  facade.setGoalAcceptanceRadius(mission.waypoints[1].acceptance_radius_m);
+  ASSERT_TRUE(request.valid());
+  const auto initial = facade.plan(request);
+  ASSERT_TRUE(initial.candidate.has_value())
+      << static_cast<int>(initial.failure_stage) << ":"
+      << static_cast<int>(initial.failure_reason);
+  const auto& committed = *initial.candidate;
+  ASSERT_TRUE(committed.valid());
+  ASSERT_TRUE(committed.route_boundary_event.has_value());
+  facade.onExecutionTimelineActivated(committed.bundle_generation);
+
+  const auto main_end_ns = committed.declared_start_ns +
+      static_cast<std::int64_t>(std::llround(
+          (committed.backup_available ? committed.backup_start_time_s
+                                      : committed.duration_s) * 1.0e9));
+  const auto activation_ns = committed.route_boundary_event->boundary_stamp_ns + 50'000'000LL;
+  ASSERT_LT(activation_ns + 600'000'000LL, main_end_ns);
+  const auto measured_ns = activation_ns - 400'000'000LL;
+  const auto measured = committed.sampleAtDeclaredStamp(measured_ns);
+  const auto future = committed.sampleAtDeclaredStamp(activation_ns);
+  ASSERT_TRUE(measured.has_value());
+  ASSERT_TRUE(future.has_value());
+  ASSERT_GT((measured->position_world - mission.waypoints[1].position_enu).norm(), 0.8);
+  ASSERT_LT((future->position_world - mission.waypoints[1].position_enu).norm(), 0.8);
+  ASSERT_GT(future->velocity_world.x(), 0.0);
+
+  request.key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
+  request.key.committed_bundle_generation = committed.bundle_generation;
+  request.key.anchor_stamp_ns = measured_ns;
+  request.start_state.source_stamp_ns = measured_ns;
+  request.start_state.receive_stamp_ns = measured_ns;
+  request.start_state.position_world = measured->position_world;
+  request.start_state.velocity_world = measured->velocity_world;
+  request.start_state.acceleration_world = measured->acceleration_world;
+  request.start_state.jerk_world = measured->jerk_world;
+  request.activation_stamp_ns = activation_ns;
+  request.history.previous_bundle_generation = committed.bundle_generation;
+  request.history.previous_velocity_world = future->velocity_world;
+  request.anchor = navigation_planning::ExecutionAnchor{
+      committed.bundle_generation, 1U, 1U, 1U, 31U, measured_ns, activation_ns,
+      *future, future->role, main_end_ns, committed.declared_end_ns,
+      committed.world_identity};
+  request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+      std::chrono::seconds(10);
+  ASSERT_TRUE(request.valid());
+  ros_time_s = static_cast<double>(measured_ns) * 1.0e-9;
+
+  const auto successor = facade.plan(request);
+  ASSERT_TRUE(successor.candidate.has_value())
+      << static_cast<int>(successor.failure_stage) << ":"
+      << static_cast<int>(successor.failure_reason);
+  const auto& candidate = *successor.candidate;
+  ASSERT_TRUE(candidate.valid());
+  EXPECT_EQ(candidate.request_id, committed.request_id);
+  ASSERT_TRUE(candidate.route_boundary_event.has_value());
+  EXPECT_EQ(candidate.route_boundary_event->boundary_stamp_ns, activation_ns);
+  const auto next_sample = candidate.sampleAtDeclaredStamp(activation_ns + 200'000'000LL);
+  ASSERT_TRUE(next_sample.has_value());
+  EXPECT_GT(next_sample->position_world.x(), future->position_world.x());
+}
+
 TEST(PlannerFacade, PassThroughLookaheadPrefixWithoutBoundaryEntryStaysValid) {
   auto world = std::make_shared<IdentityOnlyWorld>();
   TestCommitAuthorizer authorizer(world);
