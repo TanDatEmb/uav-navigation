@@ -474,6 +474,9 @@ namespace traj_opt {
             int temporalDim, spatialDim;
 
             VecDf penalty_log;
+            // Cost weights may disable shaping, never the feasibility screen.
+            double sampled_maximum_acceleration_squared{0.0};
+            double sampled_maximum_jerk_squared{0.0};
 
             std::atomic_bool* solve_cancelled{nullptr};
             std::int64_t steady_deadline_ns{0};
@@ -541,7 +544,9 @@ namespace traj_opt {
                                           double &cost,
                                           VecDf &gradT,
                                           MatD3f &gradC,
-                                          VecDf &penalty_log);
+                                          VecDf &penalty_log,
+                                          double &sampled_maximum_acceleration_squared,
+                                          double &sampled_maximum_jerk_squared);
 
         bool processCorridorWithGuideTraj();
 

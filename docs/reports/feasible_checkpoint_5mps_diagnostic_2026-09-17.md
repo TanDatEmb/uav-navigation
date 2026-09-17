@@ -291,3 +291,125 @@ The temporary terminal-overlap source copies and binaries were removed after
 canonical regression and integrated evidence were available. The committed
 regression can reproduce the case; all runtime artifacts are retained. No new
 parallel execution path or cleanup of user files was introduced.
+
+## Completion-focused discriminator and architecture choice
+
+The post-STOP denominator remains 2/9 complete, with report PASS 0/9.
+Rechecking each terminal chain classifies six of the seven non-completions as
+loss of a complete successor before the active execution ends, and one as an
+odometry lease rejection. This is a terminal-mechanism census, not proof that
+all six share one numerical root cause. The low clearance in 5WP-3 is a
+separate safety failure, not the causal reason for its mission stop. The
+completed 5WP-2 itself contains eight deadline-failure trace records, so a
+single failed solve or sparse failure frequency cannot explain completion.
+
+For 9WP, eleven trace records have an observed hard deadline, ten before
+BACKUP begins. Durations below are differences of the same transaction's
+steady stage stamps, not the cached `time_consuming_` fields:
+
+| 9WP repetition | MAIN n / median / max ms | A* n / median / max ms | BACKUP n / median / max ms | Deadline records / before BACKUP |
+|---|---|---|---|---|
+| 1 | 7 / 43.930 / 77.740 | 7 / 2.360 / 12.360 | 4 / 2.340 / 4.270 | 3 / 3 |
+| 2 | 8 / 61.870 / 77.840 | 8 / 2.290 / 16.140 | 4 / 3.760 / 7.390 | 4 / 4 |
+| 3 | 22 / 36.020 / 76.580 | 22 / 2.670 / 22.760 | 11 / 8.700 / 14.300 | 4 / 3 |
+
+This supports prioritizing complete-bundle readiness and the problem sent to
+MAIN. It does not justify an executor/process rewrite, making BACKUP optional,
+raising budgets, or treating A* as universally negligible: 2/5WP A* tails reach
+about 66 ms. BACKUP also fails strict known-free swept tubes even when its
+V/A/J is within its separate physical limits.
+
+### Exact-current 9WP capture
+
+Clean observational commit `ab5b4c58b9a6061a73c802ce84e68cc7bcebcdb3`, Release
+manifest `7b950aba1b595f1b064b3f4afb336ba6ee43ad7bbf49bf7fa9ca248545e88514`,
+source fingerprint
+`dd7a9c37a716dd161510e946db2fa3f2d0a288fd6edcea52f277ba6832259eb6`
+ran `completion-readiness-9wp-discriminator-20260917` under the same nominal
+5 m/s/seed-0 scenario. World capture was ON, unlike the nine-run baseline;
+therefore this is not a matched performance/completion comparison. Session
+`external-mode-check-20260917T022857-134431` was BLOCKED /
+PAUSED_SAFETY_STOP, accepted only WP0 and stopped near [8.71,1.35,3] before
+WP1 [20,5,3]. It does not demonstrate improved progress or completion.
+
+The snapshot directory
+`.artifacts/runtime/completion-readiness-9wp-discriminator-20260917`
+contains ten written snapshots from eleven submissions, one dropped, zero
+pending/write errors. The sidecar's accounting COMPLETE / capture_complete
+means accounting was finalized; its writer_capture_complete_at_process_stop
+is false. **The capture is not lossless.** Replay findings apply to identified
+written problems, not a complete solve census.
+
+The source-to-use observation is integrated: 534/534 PX4-update records are
+usable, 427 distinct states, zero missing/invalid records or epoch mismatch.
+Observed receiver-mutex wait max is 0.000916 ms and receive-to-snapshot max
+25.387104 ms. This rejects a receiver-mutex bottleneck **in this run only**;
+it does not explain the older 512 ms odometry interval or prove DDS/producer
+latency/PX4 acceptance. Instrumentation overhead has no paired OFF/ON bound.
+
+### Selected change: ready-first mandatory feasibility
+
+Claim: when no certified seed exists, waiting until the optional-refinement
+cutoff before preserving a fully certified accepted iterate can exhaust the
+budget needed for BACKUP/world finalization. Strong counterargument: checking
+every iterate early can itself consume the deadline. The old frozen 5WP
+snapshots 13--15 distinguish these conditions:
+
+| Frozen problem | Old 40/80 result / cert calls / aggregate us | Naive 0/80 result / calls / us | Weight-independent screen, 40/80 result / calls / us |
+|---|---|---|---|
+| 13, cycle 161 | candidate / 2 / 344 | candidate / 197 / 17322 | candidate / 9 / 984 |
+| 14, cycle 162 | candidate / 78 / 6409 | deadline / 241 / 19774 | deadline / 0 / 0 |
+| 15, cycle 163 | candidate / 68 / 5674 | deadline / 281 / 21407 | candidate / 1 / 257 |
+
+These are serial individual probes, not statistical timing bounds. Preserve
+the unfavorable problem 14: the new screen removes wasted certification but
+the first search attempt can still exhaust 80 ms before reaching its retry.
+
+In current 9WP snapshot 1 / cycle 21, the existing 40/80 path fails after
+about 1,880 evaluations and 118 certificates (11,175 us aggregate). The new
+40/80 path selects attempt 1 / iteration 8 after eleven evaluations, one
+certificate (681 us). Snapshot 6 / cycle 27 likewise selects iteration 9
+after eleven evaluations and one certificate (754 us). Both pass optimized
+nominal corridor/route/V/A/J/flatness and offline world checks, with unchanged
+boundaries/limits. Their MAIN durations are about 16.09 and 17.74 s: readiness
+does not establish smooth sustained 5 m/s. Recovery snapshot 7 / cycle 83
+still exhausts 80 ms, zero certificate calls, no candidate. Every replay has
+`complete_executable_bundle=0`; no BACKUP/admission/lease is invented.
+
+The implementation keeps objective cost/gradient/weights unchanged. It
+records raw acceleration/jerk maxima from the already computed samples and
+uses product limits plus the existing numerical boundary policy to reject
+definitely invalid iterates cheaply. Only the independent full nominal
+certificate can select a checkpoint; all downstream gates remain mandatory.
+The future-cutoff regression fails on old source and passes after this change,
+along with mandatory-feasibility, cancellation and expired-hard-deadline cases.
+Canonical Release build passed (23 packages); `make test` exited zero with
+selected component suites, 386 Python tests (one explicit artifact-dependent
+skip) and seven runtime auxiliary tests. Adversarial diff review found no
+concrete P1/P2 bypass or checkpoint identity incoherence. An earlier build
+compiled all packages but provenance rejected a concurrent report edit; it
+was rerun on fixed source. Integrated completion verification remains pending.
+
+### Remaining structural work, kept separate
+
+- **CONFIRMED input defects / conditional completion impact:** current capture
+  guide lengths reach 25.341 m against a 20 m local-window contract. Some
+  guide suffixes fold; some initialized junctions repeat a position with
+  nonzero durations. Seed jerk ranges about 7,058--125,434 m/s³. Correct
+  ordered guide geometry and coherent point/time allocation before tuning
+  solver throughput; do not infer every deadline was caused by the fold.
+- **DESIGN_DEBT:** `SimplifySFC` bypasses compaction for the entire chain if any
+  route gate exists. Gate-aware compaction must preserve marker order,
+  metadata, the incoming boundary-point overlap and representable transitions,
+  not merely pairwise overlap. Exploratory regression tests confirmed the
+  blanket behavior but were removed when this separate implementation was
+  deferred; no new dead tests, coordinator, fallback or command path remains.
+- **EVIDENCE_GAP:** complete successor readiness must be evaluated jointly
+  with strict known-free BACKUP reachability, active remaining horizon,
+  state/truth tracking and clearance. Completion is the primary operational
+  denominator; faster MAIN or a diagnostic PASS cannot substitute for it.
+
+The selected behavior change must finish with a clean Release repeated
+2/5/9WP matrix, three runs each at 5 m/s, snapshots OFF, unchanged gates and
+configuration. Recorded-data/hardware validation and qualification eligibility
+remain outstanding; no small successful replay closes the product goal.

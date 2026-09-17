@@ -752,8 +752,20 @@ bool ExpTrajOpt::captureFeasibleIterateCheckpoint(
     // This is only a cost guard.  The sampled penalties are not authority;
     // they merely avoid running the continuous certificate for an iterate
     // that the objective already knows violates a hard envelope.
-    for (const int index : {POS_IDX, ACC_IDX, JER_IDX, OMG_IDX, THR_IDX}) {
+    for (const int index : {POS_IDX, OMG_IDX, THR_IDX}) {
         if (opt_vars.penalty_log(index) > 0.0) return false;
+    }
+    // A disabled objective term does not establish physical feasibility.
+    // Reuse the raw samples already evaluated for this accepted iterate,
+    // against product limits (not the optimizer's interior reserve). Passing
+    // this cheap necessary screen is never a continuous certificate.
+    if (!std::isfinite(opt_vars.sampled_maximum_acceleration_squared) ||
+        !std::isfinite(opt_vars.sampled_maximum_jerk_squared) ||
+        !navigation_planning::withinNumericalDynamicLimit(
+            std::sqrt(opt_vars.sampled_maximum_acceleration_squared), cfg_.max_acc) ||
+        !navigation_planning::withinNumericalDynamicLimit(
+            std::sqrt(opt_vars.sampled_maximum_jerk_squared), cfg_.max_jerk)) {
+        return false;
     }
 
     geometry_utils::Trajectory candidate;
@@ -822,27 +834,18 @@ int ExpTrajOpt::monitorProgress(void *instance,
         if (now_ns >= vars->steady_deadline_ns) return 1;
     }
     if (vars->feasible_checkpoint_enabled && vars->owner != nullptr) {
-        if (now_ns == 0) {
-            now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-        }
-        // Preserve the existing optional-refinement/finalization boundary.
-        // Mandatory feasibility may continue beyond it, but only a complete
-        // certificate can end that tail early.
-        const bool checkpoint_window_open =
-                vars->refinement_deadline_ns <= 0 ||
-                now_ns >= vars->refinement_deadline_ns;
-        if (checkpoint_window_open) {
-            try {
-                if (vars->owner->captureFeasibleIterateCheckpoint(x, fx, k)) {
-                    return 1;
-                }
-            } catch (...) {
-                // The L-BFGS callback is a C boundary.  Convert an unexpected
-                // validator exception into a fail-closed solver stop; without
-                // a stored checkpoint the caller will reject the candidate.
+        // With no certified seed, readiness takes precedence over optional
+        // quality refinement: leave the remaining budget for BACKUP and
+        // finalization as soon as a full nominal certificate is available.
+        try {
+            if (vars->owner->captureFeasibleIterateCheckpoint(x, fx, k)) {
                 return 1;
             }
+        } catch (...) {
+            // The L-BFGS callback is a C boundary.  Convert an unexpected
+            // validator exception into a fail-closed solver stop; without
+            // a stored checkpoint the caller will reject the candidate.
+            return 1;
         }
     }
     return 0;
@@ -872,7 +875,9 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
                                        double &cost,
                                        VecDf &gradT,
                                        MatD3f &gradC,
-                                       VecDf &pena_log) {
+                                       VecDf &pena_log,
+                                       double &sampled_maximum_acceleration_squared,
+                                       double &sampled_maximum_jerk_squared) {
     /* 1) define some varible alias*/
     const auto &vmax = magnitudeBounds[0];
     const auto &amax = magnitudeBounds[1];
@@ -903,6 +908,8 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
     const double integralFrac = 1.0 / integralResolution;
     VecDf max_pena(8);
     max_pena.setZero();
+    sampled_maximum_acceleration_squared = 0.0;
+    sampled_maximum_jerk_squared = 0.0;
 
     /* 2) add integral cost */
 
@@ -1057,7 +1064,12 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
             }
 
             /* 2.4 For acc cost  */
-            const auto &violaAcc = acc.squaredNorm() - amaxSqr;
+            const double acceleration_squared = acc.squaredNorm();
+            sampled_maximum_acceleration_squared = std::max(
+                sampled_maximum_acceleration_squared,
+                std::isfinite(acceleration_squared) ? acceleration_squared
+                    : std::numeric_limits<double>::infinity());
+            const auto &violaAcc = acceleration_squared - amaxSqr;
             double violaAccPena, violaAccPenaD;
             if (weightAcc > 0 && gcopter::smoothedL1(violaAcc, smoothFactor, violaAccPena, violaAccPenaD)) {
                 gradAcc += weightAcc * violaAccPenaD * 2.0 * acc;
@@ -1066,7 +1078,12 @@ void ExpTrajOpt::constraintsFunctional(const VecDf &T,
             }
 
             /* 2.5 For acc cost  */
-            const auto &violaJer = jer.squaredNorm() - jmaxSqr;
+            const double jerk_squared = jer.squaredNorm();
+            sampled_maximum_jerk_squared = std::max(
+                sampled_maximum_jerk_squared,
+                std::isfinite(jerk_squared) ? jerk_squared
+                    : std::numeric_limits<double>::infinity());
+            const auto &violaJer = jerk_squared - jmaxSqr;
             double violaJerPena, violaJerPenaD;
             if (weightJer > 0 && gcopter::smoothedL1(violaJer, smoothFactor, violaJerPena, violaJerPenaD)) {
                 gradJer += weightJer * violaJerPenaD * 2.0 * jer;
@@ -1278,7 +1295,9 @@ double ExpTrajOpt::costFunctional(void *ptr,
                           smooth_eps, integral_res,
                           magnitudeBounds, penaltyWeights,
                           quadrotor_flatness,
-                          cost, partialGradByTimes, partialGradByCoeffs, obj.penalty_log);
+                          cost, partialGradByTimes, partialGradByCoeffs, obj.penalty_log,
+                          obj.sampled_maximum_acceleration_squared,
+                          obj.sampled_maximum_jerk_squared);
     const int objective_value_mask =
             (!std::isfinite(cost) ? 1 : 0) |
             (!partialGradByCoeffs.allFinite() ? 2 : 0) |

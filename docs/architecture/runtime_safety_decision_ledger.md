@@ -22216,3 +22216,60 @@ release profiles must not use the former allowance.
   immutable-record regression. Source-to-use capture is deferred into the
   completion-focused experiment rather than starting a separate timing-tuning
   cycle.
+
+### 2026-09-17 - Separate mandatory nominal readiness from objective shaping
+
+- **Owner/status:** Nominal optimizer and complete-bundle planner boundary;
+  `IMPLEMENTED`, canonical Release build/test passed; integrated availability
+  pending. Adversarial diff review found no concrete P1/P2 bypass.
+- **Scope:** When no independently certified nominal seed exists, inspect
+  accepted L-BFGS iterates from the beginning rather than waiting for the
+  optional-refinement cutoff. Reuse raw acceleration/jerk samples from the
+  current objective evaluation for a weight-independent necessary screen;
+  non-finite samples reject that screen. Its bounds are the unchanged product
+  limits, not the optimizer's interior reserve. Existing position/flatness
+  cost guards remain an overhead heuristic. Every selected iterate still
+  requires the full continuous optimized-candidate certificate, immutable
+  optimizer identity and post-certificate cancellation/absolute-deadline
+  recheck. Optional refinement when a certified seed already exists is
+  unchanged. Sampled feasibility is not authority or continuous proof.
+- **Safety impact:** No objective weight/cost/gradient, solve budget,
+  refinement cutoff, finalization reserve, MAIN 5/5/8, BACKUP 12/12/30,
+  corridor/route/world, UNKNOWN, freshness, recovery or mission gate changes.
+  A nominal checkpoint is not an executable bundle: BACKUP/yaw/world and
+  admission/activation must still complete before the same absolute deadline.
+  The purpose is to leave budget for those required downstream stages, not
+  to optimize an isolated solver metric or add another authority path.
+- **Evidence:** The clean `ab5b4c58` 9WP discriminator
+  `external-mode-check-20260917T022857-134431` stopped before WP1. Of 11
+  submitted snapshots, ten were written and one dropped; accounting closure
+  is not a lossless capture claim. Exact frozen cycle 21 times out under the
+  existing 40/80 ms path after approximately 1,880 evaluations, while the
+  no-wait probe finds a full nominal certificate at iteration 8 after 11
+  evaluations and one certificate call. Earlier snapshots 13--15 reject the
+  naive no-wait proposal: opening certification without a physical sample
+  screen adds 197--281 certificate calls and roughly 17--21 ms work, making
+  two of three replay problems miss the same 80 ms deadline. The source
+  explains this difference: weighted jerk diagnostics remain zero when its
+  objective weight is zero, even for physically invalid accepted iterates.
+  The new future-cutoff regression fails before the change because no
+  checkpoint is selected. These are formulation/discriminator results, not
+  a complete MAIN/BACKUP proposal, performance distribution or qualification.
+- **Removal/review condition:** Revert if early certified incumbents regress
+  complete-bundle availability, tracking/clearance, route progression or
+  timing tails; retain failures and denominator. Gate-aware corridor
+  compaction, guide folding and local-window overrun remain separate review
+  findings, not bundled speculative fixes. No threshold tuning is authorized.
+- **Verification:** future-refinement-cutoff, explicit-cancellation and
+  expired-hard-deadline regressions passed; serial frozen replays of old snapshots
+  13--15 and current 9WP snapshots; canonical Release build/test; fresh
+  completion discriminator followed by sequential 2/5/9WP at 5 m/s, three
+  repetitions per case with snapshots OFF and all failed runs retained.
+  Release build completed 23 packages and `make test` exited zero (386 Python
+  tests, one explicit artifact-dependent skip, plus selected component suites
+  and seven runtime auxiliary tests). Old snapshot 14 remains a hard deadline
+  failure with zero certificates, whereas its earlier individual baseline
+  probe returned a candidate; removing certificate overhead is not sufficient
+  to fix formulation/seed behavior. No source edits occurred during the
+  successful canonical build; an earlier source-changing build was rejected
+  by provenance and is not used as the authoritative build.
