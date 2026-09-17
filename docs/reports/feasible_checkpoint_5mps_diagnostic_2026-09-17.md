@@ -1138,3 +1138,113 @@ This is a request-budget correctness fix, not yet a demonstrated completion
 lever. The next nine-run matrix must retain all failed runs, compare complete
 MAIN+BACKUP readiness and terminal cause, and preserve the existing 2/9
 baseline. No new bypass or qualification claim is introduced.
+
+### Request-budget matrix closure and completion-first reassessment
+
+The sequential `backup-budget-06e59cd0-5mps-{2,5,9}wp-r{1,2,3}-20260917`
+matrix ran to all nine terminal reports, 06:22:42--06:36:19 UTC. Snapshots were
+OFF; no concurrent build, replay, tests or source edits occurred. Parameters
+remain nominal/positive, requested 5 m/s, seed 0, visibility 40 m/4096,
+DDS 42/XRCE 8892. The 2WP/5WP/9WP profiles are respectively
+`long_three_pillars_speed`, `long_three_pillars`, and
+`long_three_pillars_multiwaypoint`; the last profile resolves its declared
+`long_three_pillars_speed` world alias. Do not pool these scene identities.
+
+All runs bind navigation HEAD `06e59cd0678538cbae16dabf52bc4a5a55dc303b`,
+source fingerprint `e12d7b390200f157157592117a259dccc07be218b3264ecc969dcd088bb02df4`,
+Release manifest `b3721585fcc3ebb862634506ea76308fcba29a0a21ba669fa0e6df427e275b30`,
+and planner YAML `6480ff9679e20c3d5f9f5a38efbe7702d9ca98e66c454299019b423d5d298356`.
+The unrelated safety-document migration is dirty and included in the source
+fingerprint, not silently claimed to be clean-commit evidence. PX4 binds
+`deaff86ee335dd697677bcfc2415a23878e1b895`, customized dirty source fingerprint
+`25341a3df3acb2e557ef386affdf7a67f070603e924eb8107e8d291d22e2081f`.
+Per-run scenario/configuration, mission and map hashes remain in each
+`metadata.json`; run-specific configuration hashes are not interchangeable.
+
+Artifact paths below share `.artifacts/runtime/external-mode-check-20260917T`.
+Accepted waypoint indices are zero-based, not the next active waypoint.
+
+| Case | Artifact suffix | Mission outcome | Report | Accepted | Planning p99/max ms (n) | Timeline invariant count |
+|---|---|---|---|---|---|---|
+| 2WP-1 | 062242-9956 | FAILED_COMPONENT | FAIL | 0 | 80.292 / 80.292 (24) | 0 |
+| 2WP-2 | 062435-14033 | PAUSED_SAFETY_STOP | BLOCKED | 0 | 80.366 / 80.366 (9) | 0 |
+| 2WP-3 | 062551-17619 | COMPLETE | FAIL | 0,1 | 71.303 / 71.303 (32) | MISSING |
+| 5WP-1 | 062754-21339 | PAUSED_SAFETY_STOP | BLOCKED | 0 | 66.928 / 66.928 (7) | 0 |
+| 5WP-2 | 062905-24766 | PAUSED_SAFETY_STOP | BLOCKED | 0 | 80.241 / 80.241 (10) | 0 |
+| 5WP-3 | 063036-28118 | PAUSED_SAFETY_STOP | BLOCKED | 0,1,2 | 80.301 / 80.301 (31) | MISSING |
+| 9WP-1 | 063254-31658 | PAUSED_SAFETY_STOP | BLOCKED | 0 | 80.350 / 80.350 (11) | 0 |
+| 9WP-2 | 063358-34886 | PAUSED_SAFETY_STOP | BLOCKED | 0 | 80.497 / 80.497 (13) | 0 |
+| 9WP-3 | 063506-39302 | PAUSED_SAFETY_STOP | BLOCKED | 0 | 80.286 / 80.286 (8) | 0 |
+
+Completion is **1/9**: 2WP 1/3, 5WP 0/3, 9WP 0/3. Report PASS is 0/9
+(FAIL 2, BLOCKED 7). All provenance checks are VALID, final evidence writers
+are closed with zero drops/serialization/write errors, and observed mapping
+cloud drops/exceptions and PX4 failsafe/collision event counters are zero.
+These counters do not prove physical safety or complete lifecycle coverage.
+Every versioned assessment remains NOT_EVALUABLE with qualification false;
+the existing relaxed tracking configuration is unchanged. The COMPLETE run's
+FAIL verdict is specifically versioned assessment/eligibility, not failure
+to complete its mission. Its missing invariant counter is not treated as zero.
+
+The previous corrected CIRI matrix is separately 2/9. Neither this small,
+unpaired distribution nor the lower observed maximum establishes causal
+completion regression/improvement or a hard deadline upper bound. The budget
+fix is justified by the controlled cancellation/expiry tests, not by this
+matrix's mission outcome. More microsecond optimization alone is not a
+supported completion strategy.
+
+Root-owned causal checks distinguish the following chains:
+
+- 2WP-1 loses odometry receive freshness (206.537 ms at the rejection versus
+  164 ms source age), after a valid admitted generation 20 successor. LiDAR,
+  registered, propagated and external odometry streams share a roughly
+  0.5 s source gap while IMU/clock advance. The coarse bridge accounting is
+  loss-free; it cannot identify the upstream producer/transport/executor
+  stall. Attribution to FAST-LIO or PX4 remains INCONCLUSIVE.
+- 2WP-2 has MAIN and BACKUP deadline failures followed by MAIN dynamics
+  failures before its finite bundle ends far short of the remote waypoint.
+  Measured-stop recovery does not observe the required <=0.15 m/s in time.
+  Same-source-time, same-child `base_link` speed norms at 36.12--36.30 s
+  agree with independent simulation ground truth (0.3503/0.3544 down to
+  0.2501/0.2555 m/s). This supports real residual motion, not an estimator-only
+  speed error; it is not a full vector/frame or braking qualification proof.
+- 5WP-1/2 lose complete successor readiness at production BACKUP known-free
+  checks despite nominal-feasible MAIN. 5WP-1's maximum is only 66.928 ms.
+  Terminal hold anchor/lease loss and zero-sample invalid-time-window
+  recertification follow; they are not evidence of initial new-world tube
+  failure. 5WP-3 demonstrates a successful measured-stop restart and progress
+  through index 2, then a later handoff/tracking containment rejection.
+- 9WP-1/2 lack a usable successor before BACKUP ends, eventually observe a
+  measured stop, attempt ordinary REST planning, and meet MAIN deadlines
+  before External Mode's recovery handover. Recovery is not simply absent.
+  9WP-3 has repeated current BACKUP known-free failures (cycles 28/29/31)
+  interleaved with MAIN deadlines, followed by terminal anchor/lease loss.
+
+The 145 recorded transactions contain 137 observed MAIN entries: 131 seed
+diagnostics fail at dynamics, five use a certified seed, and one fails at
+boundary. There are 29 MAIN deadline outcomes and 20 current-stage BACKUP
+known-free failures. These are sparse transaction counts, not mission-level
+failure rates. Forty-four records carry BACKUP-attempted fields without a
+current observed BACKUP entry: phase diagnostics persist when MAIN skips
+BACKUP. Do not attribute those sticky fields to the current request. Likewise
+failure 8 plus UNKNOWN does not distinguish a real tube cell from the
+curve-bound/subdivision fallback's classified endpoint.
+
+The separate world-enabled 9WP discriminator `064057-44569`, label
+`complete-bundle-discriminator-06e59cd0-9wp-20260917`, also pauses before WP1.
+Its directory `.artifacts/diagnostics/complete-bundle-06e59cd0-9wp-20260917`
+has 10 written of 11 submitted snapshots, one accounted drop, zero pending/
+write errors. Runner-finalized accounting is complete, **not lossless capture**.
+It is excluded from the snapshot-OFF matrix and its performance denominator.
+Eight of its ten frozen initializations have a zero-displacement terminal
+piece despite nonzero terminal velocity. Source inspection identifies the
+all-or-nothing `SimplifySFC()` route-gate bailout as retaining redundant
+terminal cells; timestamp-only spreading cannot repair that geometry.
+
+Next priority is geometry/time normalization that preserves the hard mission
+gate and its neighboring cells, then selecting from world-supported complete
+MAIN+BACKUP proposals before optional objective shaping. Measured-state
+handoff and actual braking/settling are the next coupled layer; state-ingress
+freshness is an independent containment lever. No UNKNOWN, tracking, mission,
+recovery timeout or deadline relaxation, MAIN-only early return, unbounded
+retry, large coordinator or parallel command authority is justified.
