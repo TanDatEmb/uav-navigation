@@ -22,10 +22,10 @@ despite a complete certified bundle; the corrected producer passes. One normal
 `make test` execution passes (84 CTest targets plus the Python suites), but
 geometry correction does not close measured handoff timing or prove majority
 5 m/s completion. The frozen Release on `470b208f` completed the new sequential
-18-run matrix: **SAFE1/9mission COMPLETE, FAST4/9mission COMPLETE,0/18report
-PASS**. All runs retain their separate policies, seed0, valid provenance and
-successful cleanup; none qualifies. The total5/18 is unchanged from the previous
-matrix, not evidence of a causal completion-rate improvement.
+18-run matrix: **SAFE1/9mission COMPLETE, FAST1/9mission COMPLETE,0/18report
+PASS**. All 18 runs are terminal with valid provenance, stopped state and
+successful cleanup; none qualifies. This supersedes the pending label for that
+trial only; it is not evidence of a causal completion-rate improvement.
 See [sphere/time normalization](#pass-spheretime-normalization-and-consumption-order-regressions).
 See [the terminal matrix and system-level attribution](#sphere-boundary-matrix-closure-and-system-level-attribution).
 
@@ -4135,3 +4135,244 @@ log, so causality is not assigned from gtest wall duration alone. Build-only
 PARALLEL_WORKERS=1 does not make colcon tests sequential, but the isolated
 8/10 failure refutes dismissing this as solely parallel-package load. Keep
 the failure open; no assertion is disabled and no budget/gate is increased.
+
+## Retain-and-continue incumbent trial
+
+Owner: nominal optimizer and complete-bundle planner. Status: worktree
+EXPERIMENT, not qualification or hardware deployment. This is a behavior
+trial, separate from cff07913's offline/evidence-only closure above. The
+immutable legacy ledger is not rewritten; the current safety contract records
+the new provisional scope and links this targeted history.
+
+The selected minimal design uses the existing solver-local checkpoint, not a
+new coordinator, cache, parallel optimizer or command path. Capture a
+continuously certified accepted iterate before the existing refinement
+cutoff but continue quality work. Prefer a valid naturally terminating final
+candidate; at the existing cutoff inspect the current accepted iterate before
+falling back to the retained one. If final optimization rejects, revalidate
+the immutable incumbent and recheck cancellation/absolute hard expiry before
+returning a nominal result. A validator exception cannot grant a candidate.
+
+The80ms backend budget,400ms activation lead, objective weights, all limits,
+SAFE known-free/FAST diagnostic UNKNOWN distinction and full-bundle admission
+remain unchanged. Copy/certification overhead and a MAIN with no viable SAFE
+BACKUP are adverse cases, not reasons to bypass validation. Withdraw the trial
+if integrated completeness, route progression, clearance or timing tails
+regress; nominal-only PASS is insufficient. Required verification is RED/GREEN
+regression, final-valid preference, post-capture revocation, serial frozen
+40/80ms replays, real-facade SAFE/FAST, normal repository test/build and the
+requested sequential18-run normal5m/s matrix. Results are pending; the latest
+completed matrix remains the frozen470b208f baseline, not this experiment.
+
+### Reproducer closure before production changes
+
+The first RED log (`incumbent-regression-red.log`) is retained but is **not**
+evidence of a lost incumbent: it used POST4 corridors and shared-YAML physical
+12/12/30 limits, whereas the snapshot/replay uses PRE6 and effective MAIN5/5/8.
+It returned an available certified seed and only failed the checkpoint
+expectations. This was a fixture defect, not a production failure.
+
+Root corrected the fixture to exact captured PRE6 (face counts12/11/8/9/10/12,
+all six route gates unset) and explicit effective5/5/8. Independent scalar
+comparison passed all352 inputs: head12,tail12,guide60,clock20,planes248.
+The corrected OLD-implementation RED log (`incumbent-regression-pre-red.log`,
+SHA256`054259b27a0e0c2cbf640406be14702932a0afcfe3acb7992b816b12ac66f227`)
+exits1: nominal candidate unavailable, deterministic seed failure stage5,
+final optimized-candidate dynamics rejected at jerk8.268993799073835>8.
+The test uses refinement/hard deadlines one/two hours in the future; its16ms
+observed runtime is not a deadline proof but removes ordinary80ms expiry as
+the reason for this nominal rejection. Solve-mode flags deliberately match
+the D-budget diagnostic probe, not the snapshot's suppressed-refinement mode;
+this is not full online request/complete-bundle parity.
+
+The worktree patch retains the existing checkpoint but continues optimization,
+inspects current accepted geometry at cutoff and keeps valid-final preference.
+Selection revalidates the exact frozen value; it does not restore retry
+weights into the next job or reconstruct a different polynomial after its
+certificate. Cancellation/hard expiry are rechecked after copy/certificate
+and final mandatory-feasibility bookkeeping. Pure revocation-helper tests
+exercise an exact fake timestamp boundary, not integrated post-capture
+interleavings. GREEN, real-facade/full-suite and normal-matrix outcomes remain
+pending; no completion-rate claim is made from this RED.
+
+### Initial GREEN and independent source review
+
+The current worktree optimizer test binary SHA256 is
+`41798b8a5435f7fc6da8f1844f4d7dc5079b903caf3742500fc5802d8be4395a`;
+replay binary SHA256 is
+`ccb0f903dc1474d10aaec94121094243a2f80fc34a62e85191b1e2322c7592a6`.
+Header/productionCPP SHA256 respectively are
+`1595f645bb7ed300098c17a2da5fca4942508e81ded6bd04a841003d913694f8` /
+`23d16e4146433ce621a13e812a1f3e7c47ca73b8703e1e8ab9a0173dbb441c4a`.
+All artifacts below share the existing ignored nominal-renewal capture folder.
+
+- `incumbent-optimizer-green.log/.xml`:31/31 tests, zero errors/failures,
+  rc0 at23:04:31. The corrected RED fixture now selects exact frozen
+  attempt1/iteration9 after its later attempts reject; it also asserts later
+  attempts ran, so this is not the withdrawn first-nominal-return policy.
+  The future-cutoff valid-final test keeps checkpoint-selection=false while
+  expecting a retained certificate; initial cancellation/hard-expiry and the
+  fake-timestamp revocation predicates pass. Integrated post-storage
+  interleavings remain a coverage gap, not proven by the pure predicate.
+- `incumbent-facade-full.log/.xml`:36/36 tests, rc0 at23:04:39. SAFE renewal
+  records6successful/3failed successors,4crossing and4ideal measured-window
+  proposals, minimum post-PASS MAIN reserve1.475840290s. Its later three
+  failures remain recorded; an ideal measured-state probe is not flight.
+- `incumbent-facade-repeat10.log`:each of four SAFE/FAST renewal/ideal-window
+  cases ran10times,40/40 PASS, rc0 at23:08:45. The earlier isolated old-SAFE
+  result2PASS/8FAIL is retained separately; no assertion/budget is relaxed.
+- `incumbent-replay-pre-{0..20}.log`:all21 serial replay processes terminal
+  rc0. In40/80mode, cycle332 retains attempt1/iteration9 through3attempts/
+  969evaluations, one certificate206us; cycle333 retains attempt1/iteration8
+  through3attempts/1131evaluations, one certificate207us. Both have no hard
+  expiry. Replay-process rc0 does not mean every candidate passed.
+
+Independent read-only diff review found no concrete P1/P2 authority bypass.
+It confirmed accepted-x/MINCO coherence, exact frozen output selection and
+no final-fallback retry-weight leak. The frozen-output shortcut leaves
+MINCO-derived mutable times/points distinct from the output until next setup;
+current certificates/extrema read output, but optional `Optimized Time` debug
+logging is not a reliable output-duration witness. MAIN may still have no
+SAFE BACKUP. Full canonical Release/test and the18normalSITL cases are pending;
+the latest mission-completion denominator remains the470b208f matrix.
+
+### Whole-input aggregation and normal test closure
+
+Root independently parsed exactly two anchored D-budget records in each of
+the21terminal old/new replay logs (42records per implementation); an initial
+agent aggregation was incorrect and is not used. OLD40/80 success18/21,
+used-checkpoint0, certificate calls0; NEW40/80 success20/21, used-checkpoint2,
+certificate calls6,total1333us,max per-job308us. OLD0/80 success20/21,
+used-checkpoint6,calls6,total1489us,max355us; NEW0/80 success20/21,
+used-checkpoint6,calls6,total1421us,max312us. Only40/80 indices16/17 change
+success0→1; index15 remains unavailable in both modes. No hard expiry is
+observed in either42-record set. This does not establish a latency upper
+bound or a statistical A/B timing improvement. Setup parity remains18/21;
+indices0/1/2 are still geometry-nonparity/clock-parity and stay in the table.
+Certificate work is present in NEW40/80 indices14/16/17/18/19/20, but the
+valid final candidate wins in14/18/19/20. Seed-import and post-hoc world
+certificates remain distinct; no offline record is a complete executable
+bundle or mission-completion result.
+
+Canonical Release `incumbent-release-build.log` terminates rc0 at23:09:57,
+23packages/35.8s, authoritative manifest emitted with source unchanged during
+build. Normal `incumbent-make-test.log` terminates rc0 at23:10:39:84CTests,
+zero errors/failures/skips, seven auxiliary tests and387runtime Python tests
+with one explicit artifact-dependent skip. This replaces neither the retained
+old failure nor its denominator; it is fresh evidence for the worktree trial.
+Safety-ledger validation and `git diff --check` pass. The source HEAD remains
+cff07913 plus this behavior patch and the user's separate safety migration;
+do not call it a clean commit or silently commit the user's migration.
+
+Next frozen normal matrix: SAFE/FAST2/5/9WP×3 at5m/s, same seed0,
+positive/nominal maps and40m/4096 visibility, DDS42/XRCE8892, RViz/snapshots
+OFF, no concurrent build/test/replay, all failures retained. A final canonical
+build after this documentation closure pins the exact dirty source. Unique
+experiment labels are `incumbent-v1-5mps-{safe|fast}-{2|5|9}wp-r{1|2|3}-20260917`.
+These normal runs remain diagnostic/ineligible; outcomes are pending, not
+assumed improved from the nominal/facade results.
+
+## Latest incumbent normal-matrix closure
+
+The `incumbent-v1-5mps-{safe|fast}-{2|5|9}wp-r{1|2|3}` trial is terminal for
+all 18 cases. Frozen provenance is manifest
+`9726f16174640e2873266ed4307e043a60b279ed60e57087e35b4368fecf6321`, source
+fingerprint `ebdfc669a959b5d2a2404f69bd9a11fc839b01d4bd644ad5a9b5feba95453301`,
+HEAD `cff07913` (dirty). Every case has valid infrastructure/provenance,
+`stopped=true`, `cleanup=PASS`, and `qualification_eligible=false`.
+
+Experiment prefix is `incumbent-v1-5mps-{safe|fast}-{2|5|9}wp-r{1|2|3}-20260917`.
+
+| policy/WP/rep | session | outcome | accepted | complete |
+|---|---|---|---|---|
+| SAFE/2/r1 | 161231-698494 | PAUSED_SAFETY_STOP | [0] | false |
+| SAFE/2/r2 | 161439-702114 | FAILED_COMPONENT | [0] | false |
+| SAFE/2/r3 | 161626-705557 | PAUSED_SAFETY_STOP | [0] | false |
+| SAFE/5/r1 | 161813-709035 | PAUSED_SAFETY_STOP | [0] | false |
+| SAFE/5/r2 | 161933-712106 | COMPLETE | [0,1,2,3,4] | true |
+| SAFE/5/r3 | 162131-715747 | PAUSED_SAFETY_STOP | [0] | false |
+| SAFE/9/r1 | 162240-719685 | PAUSED_SAFETY_STOP | [0,1] | false |
+| SAFE/9/r2 | 162411-722793 | PAUSED_SAFETY_STOP | [0] | false |
+| SAFE/9/r3 | 162521-725854 | PAUSED_SAFETY_STOP | [0] | false |
+| FAST/2/r1 | 162630-729054 | FAILED_COMPONENT | [0] | false |
+| FAST/2/r2 | 162821-732223 | FAILED_COMPONENT | [0] | false |
+| FAST/2/r3 | 163009-735337 | FAILED_COMPONENT | [0] | false |
+| FAST/5/r1 | 163200-738534 | COMPLETE | [0,1,2,3,4] | true |
+| FAST/5/r2 | 163448-741654 | PAUSED_SAFETY_STOP | [0] | false |
+| FAST/5/r3 | 163555-744783 | PAUSED_SAFETY_STOP | [0,1,2,3] | false |
+| FAST/9/r1 | 163751-747939 | PAUSED_SAFETY_STOP | [0,1] | false |
+| FAST/9/r2 | 163907-751018 | PAUSED_SAFETY_STOP | [0,1,2,3,4,5,6,7] | false |
+| FAST/9/r3 | 164206-754257 | PAUSED_SAFETY_STOP | [0,1,2,3,4,5,6,7] | false |
+
+Scenario identity is map profiles 2/5/9 (`long_three_pillars_speed`,
+`long_three_pillars`, `long_three_pillars_multiwaypoint`), seed 0, requested
+5 m/s, visibility 40 m/4096, DDS domain 42, XRCE 8892, RViz and snapshot
+capture OFF, tracking gates 0/0/0.
+
+| policy/WP | planning samples n | per-report p95 ms range | per-report max ms range |
+|---|---:|---:|---:|
+| SAFE/2 | 73 | 61.562–80.377 | 63.974–80.423 |
+| SAFE/5 | 32 | 30.155–80.368 | 30.155–80.368 |
+| SAFE/9 | 53 | 59.265–80.226 | 64.835–80.234 |
+| FAST/2 | 58 | 44.120–49.658 | 46.258–52.411 |
+| FAST/5 | 21 | 48.701–48.814 | 48.701–48.814 |
+| FAST/9 | 61 | 51.317–80.212 | 51.317–80.345 |
+
+SAFE is 1/9 and FAST is 1/9 mission completion; report PASS is 0/18. The
+planning-total sample counts sum to 298. Per-report p50/p95/p99/max and
+cross-track p95 are diagnostic fields only: no pooled percentile, WCET, or
+tracking qualification claim is made. The earlier `470b208f` result
+(SAFE1/9, FAST4/9) remains separate. Replay moved captured nominal records
+from 18 to 20 passing candidate checks but did not improve mission completion;
+no gate/config tuning is inferred. Driver rc2 BLOCKED before handle41007
+continued the remaining 17 cases; no rerun was hidden.
+
+Primary counterevidence in FAST2-r1 (`162630-729054`) records estimator
+`DEGRADED/nav_invalid` with translation observability ratio `0.006293 < 0.01`
+at source 56.000 s, before the receiver stale event. The last prop-odometry
+sample is source 56.012 s (seq2605); the next is source 56.420 s (seq2606), a
+recorded 408 ms source gap and 509.934 ms observer gap. The external node then
+reports fatal receive latency 210.150 ms at
+`external-mode-check-20260917T162630-729054/logs/px4_navigation_external_mode_node_731804_1789662407092.log:144-145`, inside that gap. Recovery LIDAR is
+converged at source 56.224 s but state remains DEGRADED/nav-invalid; tracking
+returns at 56.400 s. This is bounded evidence of invalid producer state and a
+recorded publisher-stream gap preceding stale; it does not establish an LIO,
+feature, DDS, receiver, or physical-cause diagnosis.
+
+### Scoped staged-to-committed witness finding
+
+The staged-to-committed witness check records an off-centre occupied-cell
+assignment being erased during commit; this remains a diagnostics finding,
+not a verdict or authority change. The finding is
+`PlannerFacade.WorldRevalidationPreservesOffCentreBlockingCellAfterActivation`.
+RED2 assertions cover that witness; focused GREEN covers one facade and four
+trajectory cases, followed by full suites of 37 facade and 146 trajectory tests.
+These component results do not replace full-test or Release
+evidence, and no timing budget or SAFE/FAST policy was changed.
+
+The scoped witness logs are in `.artifacts/diagnostics/nominal-renewal-capture-nod2nN/`,
+named `world-witness-{red,facade-green,trajectory-green,release-frozen-build,full-test}.log`.
+The relevant checks are the world-witness staged/committed
+assignment test and the trajectory/full-test suites; the historic sphere test
+is separate. The recorded failure value `8` remains a family
+classification, not a single-cell causal claim. Tube status enum values are
+`0=None`, `1=Geometry`, `2=CellCap`, `3=BodyPrefix`, `4=NonTraversable`;
+`flag=false` means the reported sample was not an actual occupied cell.
+The fresh Release/build/test evidence is tied to its own manifest and dirty
+worktree; the report includes an unpromoted nominal trial, so it is not a clean
+commit or a mission-improvement claim. The fresh `make test` closed 84 CTests
+with zero errors/failures/skips, plus 7 auxiliary PASS and 387 runtime-Python
+tests with one explicit skip; these are test results, not flight qualification.
+
+Additional bounded counterexamples: FAST5-r3 records WP3 accepted at 3033.936
+and issues the final WP4 goal, then fails 0.148 s later; the raw heading-rebind
+anchor error is `0.925 m > 0.75 m`, so this is not WP3-unaccepted. Cropping after
+heading rebind removes retrospective source-time sampling support, but does not prove a safe-retention bug
+because the cap was exceeded. FAST9-r2 records a 0.15 m/s stop configuration
+with 0.5 s confirmation and 0.5 s hold; sparse low-speed spans (source
+96.796–97.176, n=20, and 97.836–98.416, n=30) are interspersed with samples
+above threshold, so the 1 Hz log cannot prove a continuous settled second.
+The observer stream is not receiver-use proof. Finally, at source 55.796,
+`q*twist=(-1.7496,-2.6295,-.3126)` versus the 40 ms position secant
+`(-1.7552,-2.6148,-.3097)`; runtime line 1964 rotates body to world, so no
+estimator frame bug is inferred.

@@ -2796,6 +2796,7 @@ double mainGuideSupport(
         const auto& candidate = staged->command;
         output.pinned_world = staged->certificate.pinned_world;
         output.validated_world = world->identity();
+        output.evaluated_generation = staged->generation;
         if (candidate.position.empty() || candidate.yaw.empty() ||
             !std::isfinite(candidate.start_wall_time)) {
             return output;
@@ -2811,28 +2812,7 @@ double mainGuideSupport(
         const auto validation = validateExecutableCandidate(
             *world, candidate, authorization_wall_time_s, certificate_policy,
             {}, false, backup_policy);
-        output.valid = validation.valid;
-        output.begin_time_s = validation.begin_tt;
-        output.first_blocked_time_s = validation.first_blocked_tt;
-        output.failure_code = static_cast<int>(validation.failure);
-        output.blocked_role = static_cast<int>(validation.blocked_role);
-        output.sample_count = validation.sample_count;
-        output.segment_count = validation.segment_count;
-        if (!validation.valid) {
-            output.first_blocked_position = validation.blocked_position;
-            if (!output.first_blocked_position.allFinite()) {
-                const double duration = candidate.position.getTotalDuration();
-                const double sample_time = std::clamp(
-                    validation.first_blocked_tt, 0.0, duration);
-                output.first_blocked_position = candidate.position.getPos(
-                    sample_time).template cast<double>();
-            }
-            if (output.first_blocked_position.allFinite()) {
-                output.first_blocked_cell_state = static_cast<int>(world->classify(
-                    output.first_blocked_position,
-                    navigation_world_model::GridLayer::kInflated));
-            }
-        }
+        copySweptValidationDiagnostics(validation, output);
         return output;
     }
 

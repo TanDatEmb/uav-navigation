@@ -8,9 +8,18 @@
 #include <optional>
 
 #include <data_structure/cmd_traj.h>
+#include <navigation_planning/planner_diagnostics.hpp>
 #include <navigation_world_model/world_model_view.hpp>
 
 namespace navigation_planning_backend {
+
+enum class CertificateTubeFailure : std::uint8_t {
+  kNone,
+  kInvalidGeometry,
+  kEnumerationLimit,
+  kInvalidBodyPrefix,
+  kNonTraversableCell,
+};
 
 struct SweptValidationResult {
   bool valid{false};
@@ -38,7 +47,37 @@ struct SweptValidationResult {
   navigation_world_model::Point3 blocked_position{
       navigation_world_model::Point3::Constant(
           std::numeric_limits<double>::quiet_NaN())};
+  bool blocking_cell_observed{false};
+  CertificateTubeFailure tube_failure{CertificateTubeFailure::kNone};
+  int evaluated_unknown_policy{-1};
+  double unsafe_interval_end_tt{std::numeric_limits<double>::quiet_NaN()};
+  double curve_deviation_bound_m{std::numeric_limits<double>::quiet_NaN()};
+  double curve_deviation_tolerance_m{std::numeric_limits<double>::quiet_NaN()};
 };
+
+// Use the same witness transport for staged and committed recertification.
+// This does not sample/reclassify a substitute point or change the verdict.
+inline void copySweptValidationDiagnostics(
+        const SweptValidationResult& validation,
+        navigation_planning::TrajectoryValidationResult& output) noexcept {
+    output.valid = validation.valid;
+    output.begin_time_s = validation.begin_tt;
+    output.first_blocked_time_s = validation.first_blocked_tt;
+    output.failure_code = static_cast<int>(validation.failure);
+    output.blocked_role = static_cast<int>(validation.blocked_role);
+    output.sample_count = validation.sample_count;
+    output.segment_count = validation.segment_count;
+    output.blocking_cell_observed = validation.blocking_cell_observed;
+    output.tube_failure_code = static_cast<int>(validation.tube_failure);
+    output.evaluated_unknown_policy = validation.evaluated_unknown_policy;
+    output.unsafe_interval_end_time_s = validation.unsafe_interval_end_tt;
+    output.curve_deviation_bound_m = validation.curve_deviation_bound_m;
+    output.curve_deviation_tolerance_m = validation.curve_deviation_tolerance_m;
+    if (!validation.valid) {
+        output.first_blocked_position = validation.blocked_position;
+        output.first_blocked_cell_state = static_cast<int>(validation.blocked_cell_state);
+    }
+}
 
 inline const char* sweptValidationFailureName(
         const SweptValidationResult::Failure failure) noexcept {
@@ -276,7 +315,13 @@ inline bool certificateTubeIsSafe(
         navigation_world_model::CellState* blocked_cell_state = nullptr,
         navigation_world_model::Point3* blocked_position = nullptr,
         const navigation_world_model::CurrentBodySupportPtr& body_support = {},
-        bool* body_prefix_remains = nullptr) noexcept {
+        bool* body_prefix_remains = nullptr,
+        CertificateTubeFailure* failure_detail = nullptr) noexcept {
+    if (failure_detail != nullptr) *failure_detail = CertificateTubeFailure::kNone;
+    const auto reject = [failure_detail](const CertificateTubeFailure reason) {
+        if (failure_detail != nullptr) *failure_detail = reason;
+        return false;
+    };
     if (blocked_cell_state != nullptr) {
         *blocked_cell_state = navigation_world_model::CellState::kUndefined;
     }
@@ -288,7 +333,7 @@ inline bool certificateTubeIsSafe(
     if (!start.allFinite() || !end.allFinite() ||
         !std::isfinite(curve_deviation_m) || curve_deviation_m < 0.0 ||
         !std::isfinite(resolution_m) || resolution_m <= 0.0) {
-        return false;
+        return reject(CertificateTubeFailure::kInvalidGeometry);
     }
 
     // The polynomial arc is within curve_deviation_m of its chord. Expand the
@@ -301,7 +346,9 @@ inline bool certificateTubeIsSafe(
         cell_half_diagonal;
     const double tube_radius_squared = curve_deviation_m * curve_deviation_m;
     if (!std::isfinite(cell_half_diagonal) || !std::isfinite(expansion) ||
-        !std::isfinite(tube_radius_squared)) return false;
+        !std::isfinite(tube_radius_squared)) {
+        return reject(CertificateTubeFailure::kInvalidGeometry);
+    }
     const auto minimum = start.cwiseMin(end).array() - expansion;
     const auto maximum = start.cwiseMax(end).array() + expansion;
     const auto minimum_index = world.positionToIndex(
@@ -320,7 +367,7 @@ inline bool certificateTubeIsSafe(
         const auto span = static_cast<std::uint64_t>(upper[axis] - lower[axis]) + 1U;
         if (span == 0U || cell_count >
                 kMaximumCertificateCellsPerSegment / span) {
-            return false;
+            return reject(CertificateTubeFailure::kEnumerationLimit);
         }
         cell_count *= span;
     }
@@ -328,11 +375,15 @@ inline bool certificateTubeIsSafe(
     const bool body_prefix_open = body_support &&
         body_support->matchesWorldSnapshot(world.identity(), body_support->source_stamp_ns) &&
         body_support->contains(start, world.identity(), body_support->source_stamp_ns);
-    if (body_support && !body_prefix_open) return false;
+    if (body_support && !body_prefix_open) {
+        return reject(CertificateTubeFailure::kInvalidBodyPrefix);
+    }
     const double body_prefix_fraction = body_support
         ? body_support->contiguousBodyPrefixFraction(
             start, end, curve_deviation_m) : 0.0;
-    if (body_support && !std::isfinite(body_prefix_fraction)) return false;
+    if (body_support && !std::isfinite(body_prefix_fraction)) {
+        return reject(CertificateTubeFailure::kInvalidBodyPrefix);
+    }
     for (std::int64_t x = lower[0]; x <= upper[0]; ++x) {
         for (std::int64_t y = lower[1]; y <= upper[1]; ++y) {
             for (std::int64_t z = lower[2]; z <= upper[2]; ++z) {
@@ -382,7 +433,7 @@ inline bool certificateTubeIsSafe(
                      !body_supported) || unknown_outside_body) {
                     if (blocked_cell_state != nullptr) *blocked_cell_state = state;
                     if (blocked_position != nullptr) *blocked_position = cell_center;
-                    return false;
+                    return reject(CertificateTubeFailure::kNonTraversableCell);
                 }
                 if (z == upper[2]) break;
             }
@@ -619,6 +670,8 @@ inline SweptValidationResult validateExecutableCandidate(
         result.blocked_position = previous;
         result.blocked_cell_state = world.classify(
             previous, navigation_world_model::GridLayer::kInflated);
+        result.blocking_cell_observed = true;
+        result.evaluated_unknown_policy = static_cast<int>(policy_for_role(*initial_role));
         return result;
     }
     ++result.sample_count;
@@ -631,6 +684,7 @@ inline SweptValidationResult validateExecutableCandidate(
         }
         result.blocked_role = *role;
         const auto segment_policy = policy_for_role(*role);
+        result.evaluated_unknown_policy = static_cast<int>(segment_policy);
         const auto piece_location = locatePieceForSweep(candidate.position, t);
         if (!piece_location) {
             result.failure = SweptValidationResult::Failure::kPieceLookupFailed;
@@ -706,23 +760,26 @@ inline SweptValidationResult validateExecutableCandidate(
         const auto segment_body_support = body_bootstrap_active &&
             *role == CandidateTrajectoryRole::MAIN ? body_support
                                                    : navigation_world_model::CurrentBodySupportPtr{};
+        CertificateTubeFailure tube_failure{CertificateTubeFailure::kNone};
         const bool tube_safe = certificateTubeIsSafe(
             world, previous, next, curve_deviation_bound, segment_policy,
             geometry.inflated_resolution_m, &tube_blocked_cell_state,
-            &tube_blocked_position, segment_body_support, &body_prefix_remains);
+            &tube_blocked_position, segment_body_support, &body_prefix_remains, &tube_failure);
         if (!std::isfinite(curve_deviation_bound) ||
                curve_deviation_bound > curve_deviation_tolerance || !tube_safe) {
             result.failure = SweptValidationResult::Failure::kCertificateTubeBlocked;
+            result.tube_failure = tube_failure;
+            result.unsafe_interval_end_tt = next_t;
+            result.curve_deviation_bound_m = curve_deviation_bound;
+            result.curve_deviation_tolerance_m = curve_deviation_tolerance;
+            result.blocking_cell_observed = tube_blocked_position.allFinite();
             if (tube_blocked_position.allFinite()) {
                 result.blocked_position = tube_blocked_position;
                 result.blocked_cell_state = tube_blocked_cell_state;
             } else {
+                // Retain the legacy non-cell location only as a geometric
+                // diagnostic, never fabricate a queried blocking-cell state.
                 result.blocked_position = next;
-            }
-            if (result.blocked_cell_state ==
-                    navigation_world_model::CellState::kUndefined && next.allFinite()) {
-                result.blocked_cell_state = world.classify(
-                    next, navigation_world_model::GridLayer::kInflated);
             }
             return result;
         }
@@ -753,6 +810,7 @@ inline SweptValidationResult validateExecutableCandidate(
                 result.blocked_cell_state = world.classify(
                     next, navigation_world_model::GridLayer::kInflated);
             }
+            result.blocking_cell_observed = next.allFinite() && !endpoint_safe;
             return result;
         }
         ++result.sample_count;

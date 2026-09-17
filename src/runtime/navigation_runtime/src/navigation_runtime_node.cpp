@@ -41,6 +41,43 @@
 namespace navigation_runtime {
 namespace {
 
+void warnWorldRevalidationFailure(
+    const rclcpp::Logger& logger, const char* phase, std::uint64_t expected_generation,
+    const navigation_planning::TrajectoryValidationResult& validation,
+    const navigation_world_model::WorldSnapshotIdentity& requested_world) {
+  RCLCPP_WARN(
+      logger,
+      "%s generation=%lu failed full immutable candidate revalidation "
+      "failure=%d blocked_role=%d samples=%lu evaluated_generation=%lu "
+      "tube_failure=%d unknown_policy=%d cell_witness=%d cell_state=%d "
+      "cell_or_geometric_position=(%.9g,%.9g,%.9g) blocked_t=%.9g interval_end_t=%.9g "
+      "curve_bound_m=%.9g curve_tolerance_m=%.9g "
+      "pinned_world=(%lu,%lu,%lu,%lld) validated_world=(%lu,%lu,%lu,%lld) "
+      "requested_world=(%lu,%lu,%lu,%lld)",
+      phase, static_cast<unsigned long>(expected_generation),
+      validation.failure_code, validation.blocked_role,
+      static_cast<unsigned long>(validation.sample_count),
+      static_cast<unsigned long>(validation.evaluated_generation),
+      validation.tube_failure_code, validation.evaluated_unknown_policy,
+      validation.blocking_cell_observed ? 1 : 0, validation.first_blocked_cell_state,
+      validation.first_blocked_position.x(), validation.first_blocked_position.y(),
+      validation.first_blocked_position.z(), validation.first_blocked_time_s,
+      validation.unsafe_interval_end_time_s, validation.curve_deviation_bound_m,
+      validation.curve_deviation_tolerance_m,
+      static_cast<unsigned long>(validation.pinned_world.localization_epoch),
+      static_cast<unsigned long>(validation.pinned_world.generation),
+      static_cast<unsigned long>(validation.pinned_world.revision),
+      static_cast<long long>(validation.pinned_world.observation_stamp_ns),
+      static_cast<unsigned long>(validation.validated_world.localization_epoch),
+      static_cast<unsigned long>(validation.validated_world.generation),
+      static_cast<unsigned long>(validation.validated_world.revision),
+      static_cast<long long>(validation.validated_world.observation_stamp_ns),
+      static_cast<unsigned long>(requested_world.localization_epoch),
+      static_cast<unsigned long>(requested_world.generation),
+      static_cast<unsigned long>(requested_world.revision),
+      static_cast<long long>(requested_world.observation_stamp_ns));
+}
+
 bool goalIdentityNewer(const navigation_contracts::msg::NavigationGoal& candidate,
                        const navigation_contracts::msg::NavigationGoal& current) {
   if (candidate.mission_id != current.mission_id) return false;
@@ -877,14 +914,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                   static_cast<unsigned long>(expected_pending->bundle_generation),
                   static_cast<unsigned long>(validation.sample_count));
             } else {
-              RCLCPP_WARN(
-                  this->get_logger(),
-                  "pending generation=%lu failed immutable candidate revalidation "
-                  "failure=%d blocked_role=%d samples=%lu; dropping on world revision=%lu",
-                  static_cast<unsigned long>(expected_pending->bundle_generation),
-                  validation.failure_code, validation.blocked_role,
-                  static_cast<unsigned long>(validation.sample_count),
-                  static_cast<unsigned long>(result.snapshot->identity().revision));
+              warnWorldRevalidationFailure(
+                  this->get_logger(), "pending", expected_pending->bundle_generation,
+                  validation, result.snapshot->identity());
             }
           } else {
             RCLCPP_WARN(
@@ -1061,13 +1093,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                 staged_validation.valid ? 1 : 2,
                 static_cast<unsigned long>(validation.sample_count));
           } else {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "active generation=%lu failed full immutable candidate revalidation "
-                "failure=%d blocked_role=%d samples=%lu",
-                static_cast<unsigned long>(expected_bundle->bundle_generation),
-                validation.failure_code, validation.blocked_role,
-                static_cast<unsigned long>(validation.sample_count));
+            warnWorldRevalidationFailure(
+                this->get_logger(), "active", expected_bundle->bundle_generation,
+                validation, result.snapshot->identity());
           }
         }
         next.active_revalidation_us =
@@ -5384,12 +5412,14 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         std::numeric_limits<double>::quiet_NaN());
     navigation_world_model::CellState first_blocked_grid =
         navigation_world_model::CellState::kUnknown;
+    bool first_blocked_cell_observed = false;
     if (sampled_path_clear) {
       const auto validation = latest_world
           ? planner_->validateCommittedTrajectory(latest_world.view, now().seconds())
           : navigation_planning::TrajectoryValidationResult{};
       sampled_path_clear = validation.valid;
       if (!sampled_path_clear) {
+        first_blocked_cell_observed = validation.blocking_cell_observed;
         first_blocked_sample_s = std::isfinite(validation.first_blocked_time_s)
             ? validation.first_blocked_time_s : clamped_elapsed_s;
         first_blocked_sample = validation.first_blocked_position;
@@ -5400,12 +5430,9 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             first_blocked_sample = blocked_sample.position_world;
           }
         }
-        const auto state = latest_world
-            ? latest_world.view->classify(
-                  first_blocked_sample,
-                  navigation_world_model::GridLayer::kInflated)
-            : navigation_world_model::CellState::kOutOfMap;
-        first_blocked_grid = state;
+        first_blocked_grid = first_blocked_cell_observed
+            ? static_cast<navigation_world_model::CellState>(validation.first_blocked_cell_state)
+            : navigation_world_model::CellState::kUndefined;
       }
     }
     const auto phase_execution_certificate = committed
@@ -5983,7 +6010,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                    "projected_anchor_error=%.3f relative_anchor_speed=%.3f "
                    "tracking_limit=%.3f "
                    "state_age=%.3f clear=%d blocked_t=%.3f blocked_grid=%d "
-                   "blocked=(%.2f,%.2f,%.2f)",
+                   "blocked=(%.2f,%.2f,%.2f) blocking_cell_observed=%d",
                    backup_available, elapsed_s,
                    safety_transition_s, total_duration_s,
                    anchor_error_m, projected_anchor_error_m,
@@ -5991,7 +6018,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
                    latest_vehicle_state_age_s, sampled_path_clear,
                    first_blocked_sample_s, static_cast<int>(first_blocked_grid),
                    first_blocked_sample.x(), first_blocked_sample.y(),
-                   first_blocked_sample.z());
+                   first_blocked_sample.z(), first_blocked_cell_observed ? 1 : 0);
     }
     // The trace store linearizes publication against localization invalidation
     // and rejects an older epoch. Keep the evaluated identity even when a

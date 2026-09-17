@@ -2417,13 +2417,97 @@ TEST(PlannerTrajectory, ContinuousTubeReportsActualBlockingCell) {
   navigation_world_model::Point3 blocked_position =
       navigation_world_model::Point3::Constant(
           std::numeric_limits<double>::quiet_NaN());
+  navigation_planning_backend::CertificateTubeFailure detail{};
 
   EXPECT_FALSE(navigation_planning_backend::certificateTubeIsSafe(
       world, start, end, 0.0,
       navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2,
-      &blocked_state, &blocked_position));
+      &blocked_state, &blocked_position, {}, nullptr, &detail));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kNonTraversableCell);
   EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUnknown);
   EXPECT_TRUE(blocked_position.isApprox(expected_blocker, 1.0e-12));
+}
+
+TEST(PlannerTrajectory, ContinuousTubeNonCellFailuresDoNotFabricateBlocker) {
+  DiagonalNeighborWorld world({0.1, 0.1, 0.1});
+  navigation_world_model::CellState blocked_state{};
+  navigation_world_model::Point3 blocked_position = Eigen::Vector3d::Zero();
+  navigation_planning_backend::CertificateTubeFailure detail{};
+  const Eigen::Vector3d start{0.1, 0.21, 0.21};
+  const auto query = [&](const Eigen::Vector3d& end, double resolution,
+                         const navigation_world_model::CurrentBodySupportPtr& support = {}) {
+    return navigation_planning_backend::certificateTubeIsSafe(
+        world, start, end, 0.0,
+        navigation_world_model::UnknownPolicy::kRequireKnownFree, resolution,
+        &blocked_state, &blocked_position, support, nullptr, &detail);
+  };
+  EXPECT_FALSE(query(Eigen::Vector3d{1.1, 0.21, 0.21}, 0.0));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kInvalidGeometry);
+  EXPECT_FALSE(blocked_position.allFinite());
+  EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUndefined);
+
+  EXPECT_FALSE(query(Eigen::Vector3d{10000.0, 0.21, 0.21}, 0.2));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kEnumerationLimit);
+  EXPECT_FALSE(blocked_position.allFinite());
+  EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUndefined);
+
+  const auto invalid_support = std::make_shared<const navigation_world_model::CurrentBodySupport>();
+  EXPECT_FALSE(query(Eigen::Vector3d{1.1, 0.21, 0.21}, 0.2, invalid_support));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kInvalidBodyPrefix);
+  EXPECT_FALSE(blocked_position.allFinite());
+  EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUndefined);
+
+  EXPECT_TRUE(query(Eigen::Vector3d{1.1, 0.21, 0.21}, 0.2));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kNone);
+  EXPECT_FALSE(blocked_position.allFinite());
+}
+
+TEST(PlannerTrajectory, CurveBoundRejectionIsNotAQueriedBlockingCell) {
+  class AllFreeWorld final : public SweepWorld {
+   public:
+    bool block_other_points{false};
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& point,
+        navigation_world_model::GridLayer) const noexcept override {
+      return !block_other_points || (point - Eigen::Vector3d{0.1, 0.21, 2.0}).norm() < 1.0e-12
+          ? navigation_world_model::CellState::kKnownFree
+          : navigation_world_model::CellState::kOccupied;
+    }
+  } world;
+  Eigen::Matrix<double, 3, 8> coefficients = Eigen::Matrix<double, 3, 8>::Zero();
+  coefficients(0, 7) = 0.1;
+  coefficients(1, 7) = 0.21;
+  coefficients(2, 7) = 2.0;
+  coefficients(1, 5) = 500000.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto result = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0, navigation_world_model::UnknownPolicy::kAllowUnknown);
+  ASSERT_FALSE(result.valid);
+  EXPECT_EQ(result.failure,
+            navigation_planning_backend::SweptValidationResult::Failure::kCertificateTubeBlocked);
+  EXPECT_GT(result.curve_deviation_bound_m, result.curve_deviation_tolerance_m);
+  EXPECT_EQ(result.tube_failure, navigation_planning_backend::CertificateTubeFailure::kNone);
+  EXPECT_FALSE(result.blocking_cell_observed);
+  EXPECT_EQ(result.blocked_cell_state, navigation_world_model::CellState::kUndefined);
+  EXPECT_TRUE(result.blocked_position.allFinite());  // Geometric location only.
+
+  // Numeric and cell rejection can coexist; do not replace one with an
+  // exclusive inferred cause or hide a real cell witness behind the bound.
+  world.block_other_points = true;
+  const auto both = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0, navigation_world_model::UnknownPolicy::kAllowUnknown);
+  ASSERT_FALSE(both.valid);
+  EXPECT_GT(both.curve_deviation_bound_m, both.curve_deviation_tolerance_m);
+  EXPECT_EQ(both.tube_failure,
+            navigation_planning_backend::CertificateTubeFailure::kNonTraversableCell);
+  EXPECT_TRUE(both.blocking_cell_observed);
+  EXPECT_EQ(both.blocked_cell_state, navigation_world_model::CellState::kOccupied);
 }
 
 TEST(PlannerTrajectory, CandidateValidationReportsActualTubeBlocker) {
@@ -2449,6 +2533,13 @@ TEST(PlannerTrajectory, CandidateValidationReportsActualTubeBlocker) {
   EXPECT_EQ(result.blocked_cell_state,
             navigation_world_model::CellState::kUnknown);
   EXPECT_TRUE(result.blocked_position.allFinite());
+  EXPECT_TRUE(result.blocking_cell_observed);
+  EXPECT_EQ(result.tube_failure,
+            navigation_planning_backend::CertificateTubeFailure::kNonTraversableCell);
+  EXPECT_EQ(result.evaluated_unknown_policy,
+            static_cast<int>(navigation_world_model::UnknownPolicy::kRequireKnownFree));
+  EXPECT_TRUE(std::isfinite(result.unsafe_interval_end_tt));
+  EXPECT_LE(result.curve_deviation_bound_m, result.curve_deviation_tolerance_m);
   EXPECT_NEAR(result.blocked_position.x(), 0.5, 1.0e-12);
 }
 

@@ -168,6 +168,15 @@ struct TrajectoryValidationResult {
   int blocked_role{0};
   std::size_t sample_count{0};
   std::size_t segment_count{0};
+  // Attribution only; these fields never grant or extend execution authority.
+  // A fallback centreline position is not evidence of a blocking cell.
+  bool blocking_cell_observed{false};
+  int tube_failure_code{0};
+  int evaluated_unknown_policy{-1};
+  std::uint64_t evaluated_generation{0};
+  double unsafe_interval_end_time_s{std::numeric_limits<double>::quiet_NaN()};
+  double curve_deviation_bound_m{std::numeric_limits<double>::quiet_NaN()};
+  double curve_deviation_tolerance_m{std::numeric_limits<double>::quiet_NaN()};
 };
 
 // Diagnostics for the planner-owned BACKUP certificate search.  These fields

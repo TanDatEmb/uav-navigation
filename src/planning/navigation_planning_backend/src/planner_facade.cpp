@@ -442,6 +442,7 @@ navigation_planning::TrajectoryValidationResult PlannerFacade::validateCommitted
   if (snapshot.empty || snapshot.position.empty() || snapshot.yaw.empty()) return output;
   output.pinned_world = snapshot.certificate.pinned_world;
   output.validated_world = world->identity();
+  output.evaluated_generation = snapshot.generation;
   const double duration = snapshot.position.getTotalDuration();
   const double end_wall_time = snapshot.position.start_WT + duration;
   const double begin_time = authorization_wall_time_s - snapshot.position.start_WT;
@@ -478,21 +479,7 @@ navigation_planning::TrajectoryValidationResult PlannerFacade::validateCommitted
   const auto validation = validateExecutableCandidate(
       *world, candidate, authorization_wall_time_s, certificate_policy,
       {}, false, backup_policy);
-  output.valid = validation.valid;
-  output.begin_time_s = validation.begin_tt;
-  output.first_blocked_time_s = validation.first_blocked_tt;
-  output.failure_code = static_cast<int>(validation.failure);
-  output.blocked_role = static_cast<int>(validation.blocked_role);
-  output.sample_count = validation.sample_count;
-  output.segment_count = validation.segment_count;
-  if (!validation.valid) {
-    const double candidate_duration = candidate.position.getTotalDuration();
-    const double sample_time = std::clamp(validation.first_blocked_tt, 0.0, candidate_duration);
-    output.first_blocked_position = toVector3d(candidate.position.getPos(sample_time));
-    const auto state = world->classify(
-        candidate.position.getPos(sample_time), navigation_world_model::GridLayer::kInflated);
-    output.first_blocked_cell_state = static_cast<int>(state);
-  }
+  copySweptValidationDiagnostics(validation, output);
   return output;
 }
 

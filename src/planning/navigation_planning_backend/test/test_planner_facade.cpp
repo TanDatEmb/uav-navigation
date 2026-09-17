@@ -584,6 +584,78 @@ TEST(PlannerFacade, ExposesOnlyProductStateBeforeFirstCommit) {
   EXPECT_DOUBLE_EQ(diagnostics.yaw_acceleration_limit_rad_s2, 2.0);
 }
 
+TEST(PlannerFacade, WorldRevalidationPreservesOffCentreBlockingCellAfterActivation) {
+  class OffCentreBlockedWorld final : public IdentityOnlyWorld {
+   public:
+    const Eigen::Vector3d blocker{0.1, -0.1, 2.1};
+
+    navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
+      return {1U, 1U, 2U, 200};
+    }
+
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& point,
+        navigation_world_model::GridLayer layer) const noexcept override {
+      return positionToIndex(point, layer) == positionToIndex(blocker, layer)
+          ? navigation_world_model::CellState::kOccupied
+          : navigation_world_model::CellState::kKnownFree;
+    }
+  };
+
+  auto original_world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(original_world);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, original_world, semanticFixtureMissionLimits(),
+      authorizer, [] { return 10.0; });
+  const auto outcome = facade.plan(plannerBodySupportRequest(original_world, {}));
+  ASSERT_TRUE(outcome.candidate.has_value());
+  ASSERT_TRUE(outcome.candidate->valid());
+  const auto generation = outcome.candidate->bundle_generation;
+  const auto blocked_world = std::make_shared<OffCentreBlockedWorld>();
+
+  // The initial centreline is known-free, but its certificate tube touches
+  // an off-centre occupied voxel. Recertification must report that voxel,
+  // not a known-free polynomial sample substituted by the facade.
+  EXPECT_EQ(blocked_world->classify(Eigen::Vector3d{0.0, 0.0, 2.0},
+                                  navigation_world_model::GridLayer::kInflated),
+            navigation_world_model::CellState::kKnownFree);
+  const auto staged = facade.validateStagedCommandCandidate(blocked_world, 10.0, generation);
+  ASSERT_FALSE(staged.valid);
+  ASSERT_EQ(staged.failure_code,
+            static_cast<int>(navigation_planning_backend::SweptValidationResult::Failure::
+                                 kCertificateTubeBlocked));
+  EXPECT_TRUE(staged.first_blocked_position.isApprox(blocked_world->blocker, 1.0e-12));
+  EXPECT_TRUE(staged.blocking_cell_observed);
+  EXPECT_EQ(staged.tube_failure_code,
+            static_cast<int>(navigation_planning_backend::CertificateTubeFailure::
+                                 kNonTraversableCell));
+  EXPECT_EQ(staged.evaluated_generation, generation);
+  EXPECT_EQ(staged.first_blocked_cell_state,
+            static_cast<int>(navigation_world_model::CellState::kOccupied));
+
+  facade.onExecutionTimelineActivated(generation);
+  ASSERT_EQ(facade.committedSnapshot().generation, generation);
+  const auto committed = facade.validateCommittedTrajectory(blocked_world, 10.0, generation);
+  ASSERT_FALSE(committed.valid);
+  EXPECT_EQ(committed.failure_code, staged.failure_code);
+  EXPECT_TRUE(committed.first_blocked_position.isApprox(blocked_world->blocker, 1.0e-12));
+  EXPECT_TRUE(committed.blocking_cell_observed);
+  EXPECT_EQ(committed.tube_failure_code, staged.tube_failure_code);
+  EXPECT_EQ(committed.evaluated_generation, generation);
+  EXPECT_EQ(committed.evaluated_unknown_policy, staged.evaluated_unknown_policy);
+  EXPECT_DOUBLE_EQ(committed.unsafe_interval_end_time_s, staged.unsafe_interval_end_time_s);
+  EXPECT_DOUBLE_EQ(committed.curve_deviation_bound_m, staged.curve_deviation_bound_m);
+  EXPECT_DOUBLE_EQ(committed.curve_deviation_tolerance_m, staged.curve_deviation_tolerance_m);
+  EXPECT_EQ(committed.first_blocked_cell_state, staged.first_blocked_cell_state);
+  EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+      committed.validated_world, blocked_world->identity()));
+  const auto wrong_generation = facade.validateCommittedTrajectory(
+      blocked_world, 10.0, generation + 1U);
+  EXPECT_FALSE(wrong_generation.valid);
+  EXPECT_EQ(wrong_generation.evaluated_generation, 0U);
+  EXPECT_FALSE(wrong_generation.blocking_cell_observed);
+}
+
 TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {
   auto fixture = actualMappingWorldSnapshot();
   ASSERT_TRUE(fixture.snapshot);
