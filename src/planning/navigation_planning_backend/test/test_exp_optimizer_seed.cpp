@@ -489,7 +489,7 @@ TEST(ExpOptimizer, MandatoryFeasibilityUsesHardDeadlineWhenNoCertifiedSeed) {
   EXPECT_GE(diagnostics.feasible_iterate_certificate_time_us, 0);
 }
 
-TEST(ExpOptimizer, MandatoryFeasibilityReturnsBeforeOptionalRefinementCutoff) {
+TEST(ExpOptimizer, MandatoryFeasibilityDoesNotPreemptOptionalRefinementWindow) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.optimization_dynamic_reserve_ratio = 1.0;
   config.max_vel = 8.0;
@@ -511,8 +511,8 @@ TEST(ExpOptimizer, MandatoryFeasibilityReturnsBeforeOptionalRefinementCutoff) {
       makeBox(18.0, 31.0, -2.0, 2.0, 0.0, 3.0)};
   geometry_utils::Trajectory trajectory;
   // Keep the optional cutoff far in the future without sleeping or asserting
-  // a machine-dependent runtime. Mandatory feasibility must select a fully
-  // certified accepted iterate, not wait for this quality-refinement cutoff.
+  // a machine-dependent runtime. A nominal-only checkpoint must not preempt
+  // the reserved refinement window without complete-bundle readiness evidence.
   const auto now = std::chrono::steady_clock::now();
   const auto cutoff_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
       (now + std::chrono::hours(1)).time_since_epoch()).count();
@@ -527,9 +527,9 @@ TEST(ExpOptimizer, MandatoryFeasibilityReturnsBeforeOptionalRefinementCutoff) {
   const auto diagnostics = optimizer.diagnostics();
   EXPECT_EQ(diagnostics.certified_seed_failure_stage, 5);
   EXPECT_GT(diagnostics.refinement_budget_at_entry_us, 0);
-  EXPECT_TRUE(diagnostics.used_feasible_iterate_checkpoint);
+  EXPECT_FALSE(diagnostics.used_feasible_iterate_checkpoint);
   EXPECT_FALSE(diagnostics.hard_deadline_observed);
-  EXPECT_GT(diagnostics.feasible_iterate_certificate_count, 0);
+  EXPECT_EQ(diagnostics.feasible_iterate_certificate_count, 0);
   EXPECT_LE(trajectory.getMaxAccRate(), config.max_acc);
   EXPECT_LE(trajectory.getMaxJerRate(), config.max_jerk);
 }

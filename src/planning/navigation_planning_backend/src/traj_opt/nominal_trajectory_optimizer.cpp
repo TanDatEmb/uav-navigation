@@ -834,18 +834,27 @@ int ExpTrajOpt::monitorProgress(void *instance,
         if (now_ns >= vars->steady_deadline_ns) return 1;
     }
     if (vars->feasible_checkpoint_enabled && vars->owner != nullptr) {
-        // With no certified seed, readiness takes precedence over optional
-        // quality refinement: leave the remaining budget for BACKUP and
-        // finalization as soon as a full nominal certificate is available.
-        try {
-            if (vars->owner->captureFeasibleIterateCheckpoint(x, fx, k)) {
+        if (now_ns == 0) {
+            now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
+        // A nominal certificate alone is not complete-bundle readiness.
+        // Preserve the refinement window: the integrated ready-first trial
+        // reduced certification work but did not improve mission completion.
+        const bool checkpoint_window_open =
+                vars->refinement_deadline_ns <= 0 ||
+                now_ns >= vars->refinement_deadline_ns;
+        if (checkpoint_window_open) {
+            try {
+                if (vars->owner->captureFeasibleIterateCheckpoint(x, fx, k)) {
+                    return 1;
+                }
+            } catch (...) {
+                // The L-BFGS callback is a C boundary. Convert an unexpected
+                // validator exception into a fail-closed solver stop; without
+                // a stored checkpoint the caller will reject the candidate.
                 return 1;
             }
-        } catch (...) {
-            // The L-BFGS callback is a C boundary.  Convert an unexpected
-            // validator exception into a fail-closed solver stop; without
-            // a stored checkpoint the caller will reject the candidate.
-            return 1;
         }
     }
     return 0;

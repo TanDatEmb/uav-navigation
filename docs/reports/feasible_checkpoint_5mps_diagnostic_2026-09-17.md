@@ -2,10 +2,12 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest follow-up: clean commit `14e7d367` completed a second nine-run matrix
-after the terminal STOP correction. Mission completion was 2/9 and report
-PASS 0/9. The product target remains unmet. The original frozen round below
-is preserved separately; current evidence is in the post-fix section.
+Latest follow-up: clean commit `c3d7c841` completed the ready-first nine-run
+matrix. Mission completion was 0/9 and report PASS 0/9. The earlier post-STOP
+round was 2/9 complete; these are separate rounds, not a pooled denominator
+or statistically established causal regression. The early-return proposal is
+rejected for promotion; its independent raw A/J screen is retained separately.
+The product target remains unmet. Historical rounds below are preserved.
 
 ## Original checkpoint-round verdict
 
@@ -347,7 +349,7 @@ Observed receiver-mutex wait max is 0.000916 ms and receive-to-snapshot max
 it does not explain the older 512 ms odometry interval or prove DDS/producer
 latency/PX4 acceptance. Instrumentation overhead has no paired OFF/ON bound.
 
-### Selected change: ready-first mandatory feasibility
+### Historical proposal: ready-first mandatory feasibility (now withdrawn)
 
 Claim: when no certified seed exists, waiting until the optional-refinement
 cutoff before preserving a fully certified accepted iterate can exhaust the
@@ -388,7 +390,8 @@ selected component suites, 386 Python tests (one explicit artifact-dependent
 skip) and seven runtime auxiliary tests. Adversarial diff review found no
 concrete P1/P2 bypass or checkpoint identity incoherence. An earlier build
 compiled all packages but provenance rejected a concurrent report edit; it
-was rerun on fixed source. Integrated completion verification remains pending.
+was rerun on fixed source. At this stage integrated verification was pending;
+the completed matrix below rejects promotion of the early-return proposal.
 
 ### Remaining structural work, kept separate
 
@@ -413,3 +416,113 @@ The selected behavior change must finish with a clean Release repeated
 2/5/9WP matrix, three runs each at 5 m/s, snapshots OFF, unchanged gates and
 configuration. Recorded-data/hardware validation and qualification eligibility
 remain outstanding; no small successful replay closes the product goal.
+
+## Ready-first integrated matrix: proposal rejected
+
+All nine sequential runs completed on clean
+`c3d7c841f598a67411cb090df394cdbfe33e383f`, authoritative Release manifest
+`a1d3d25412f9e7e44cc822b344c653898ec5247f118624aadec3c38d1a4cd7cc`,
+source fingerprint
+`2eb082a5419b1b4d42c6735d18e695ab43a419a0b1d6261dd18c2c4b6fab1968`.
+All nine provenance statuses are VALID. PX4 source/dirty checkout and binary
+identity are unchanged from the prior round; its binary remains
+`e440bd77fbacdc422eaafdb168fec01554298d545f11e2b004a640b04e324ff9`.
+Every captured planner config has SHA-256
+`6480ff9679e20c3d5f9f5a38efbe7702d9ca98e66c454299019b423d5d298356`.
+Positive/nominal profiles, seed 0, requested 5 m/s, 40 m / 4,096 visibility,
+DDS 42 / XRCE 8892, MAIN 5/5/8 and BACKUP 12/12/30 are unchanged. Snapshots
+were OFF, no concurrent build/test/replay or gate tuning occurred. The order
+was 9WP-1 as the integrated discriminator, 2WP-1--3, 5WP-1--3, then 9WP-2--3.
+
+| Case | Session | Report / outcome | Accepted | Planning p99/max ms (n) | Checkpoints / trace records | Certificate calls / total us / max aggregate us |
+|---|---|---|---|---|---|---|
+| 2WP-1 | `external-mode-check-20260917T024743-158989` | FAIL / FAILED_COMPONENT | 0 | 54.073 (32) | 31/32 | 34 / 7030 / 421 |
+| 2WP-2 | `external-mode-check-20260917T024928-163383` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 31.506 (5) | 5/5 | 6 / 1360 / 438 |
+| 2WP-3 | `external-mode-check-20260917T025037-167222` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 22.399 (9) | 9/9 | 10 / 2219 / 426 |
+| 5WP-1 | `external-mode-check-20260917T025156-170962` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 73.122 (11) | 2/11 | 3 / 694 / 390 |
+| 5WP-2 | `external-mode-check-20260917T025336-174950` | BLOCKED / PAUSED_SAFETY_STOP | 0,1,2 | 68.152 (11) | 4/11 | 5 / 1972 / 1073 |
+| 5WP-3 | `external-mode-check-20260917T025623-179594` | BLOCKED / PAUSED_SAFETY_STOP | 0,1,2,3 | 102.563 (19) | 11/19 | 17 / 5050 / 836 |
+| 9WP-1 | `external-mode-check-20260917T024625-154562` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 80.338 (51) | 9/51 | 12 / 4352 / 1086 |
+| 9WP-2 | `external-mode-check-20260917T025849-184062` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 80.197 (17) | 13/17 | 13 / 5207 / 837 |
+| 9WP-3 | `external-mode-check-20260917T030006-187886` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 64.171 (9) | 4/9 | 4 / 1419 / 481 |
+
+Completion is 0/3 for each route, 0/9 overall; report PASS 0/9, FAIL 1,
+BLOCKED 8. Sparse trace totals are 164 records, 88 checkpoint selections,
+104 certificate calls and 29,303 us certificate work. They do not represent
+every solve or an all-job timing distribution. Much less certification work
+and faster individual planning records did not improve mission completion.
+The 102.563 ms observed planning maximum is retained, not hidden by a nominal
+80 ms configured solve budget or a p99-only claim.
+
+All nine scenario captures are complete with zero writer drops, mapping cloud
+drops, recorded collisions and PX4 failsafes. Observed minimum clearances
+range 0.447258--5.307079 m; this is not a stopping/physical safety proof.
+The execution-timeline invariant counter is missing in three reports
+(9WP-1, 5WP-2, 5WP-3), not zero by inference. All runs are ineligible with the
+six existing qualification blockers; some additionally have incomplete
+tracking position/velocity sources. Diagnostic tracking 0/0/0 remains active.
+
+### Low-level causes and counterarguments
+
+- **2WP-1:** explicit receiver odometry lease rejection: source age 164 ms,
+  receive age 205.229 ms (`external_mode.log:128`). The prior post-STOP 2WP-1
+  had the same receiver-side mechanism. Producer/IMU, FAST-LIO, transport and
+  callback starvation remain indistinguishable from the captured witnesses;
+  do not attribute this to the receiver mutex or LIO algorithm.
+- **2WP-2/3 and 9WP-2/3:** complete successor loss includes strict known-free
+  BACKUP rejection. In 9WP-3, four feasible braking seeds are within BACKUP
+  12/12/30 (last V/A/J 4.682/8.526/26.274) but all four fail known-free tube
+  checks, last blocked cell UNKNOWN (`mapping.log:324`). The coarse
+  `backup_dynamics` reason is not a physical-dynamics diagnosis. Five
+  `input/invalid_input` trace records there also require producer-contract
+  discrimination; stale cached stage timings are not fresh solve durations.
+- **5WP-1:** MAIN dynamics/corridor failures persist before the first outbound
+  goal. A shorter solve duration is not proof of feasibility.
+- **9WP-1:** 41 final trace records are fresh recovery attempts (stage MAIN
+  stamps are present) rejected by final MAIN route-regression certificates,
+  approximately 0.9--1.0 m against unchanged 0.5 m tolerance. They are not a
+  proven world-identity race: `PLANNER_CANDIDATE_REJECTED` maps generically to
+  `world_changed/commit_recertification`. Local nominal seed certificates
+  succeed, often by stretching MAIN to about 28 s, but final command route
+  authorization fails. There is no route-rejection feedback that repairs the
+  next seed; repeatedly returning a nominal-only baseline is not bundle-ready.
+- **5WP-2:** stopped recovery plus MAIN route/corridor rejection and world
+  occupancy rejection, not a reproduced geometric STOP predicate bug.
+- **5WP-3:** terminal capture exists inside the goal radius, followed by
+  execution/publish rejection before measured STOP confirmation. An initial
+  `TRACKING_EXPERIMENT_BYPASS` reports anchor error 0.815 > 0.750 m, but the
+  final publication boundary independently enforces the hard 0.750 m support
+  limit. That is a reachable policy/containment distinction, not permission
+  to suppress the final check. The exact final state/transition witness is
+  still needed before claiming one unique causal latch. PVA stale is the
+  receiver containment response, not itself the upstream cause.
+
+The suspected sampler gap after declared end but before bundle lease expiry
+is **not confirmed in production**: runtime candidate admission and store
+renewal clamp the bundle lease to the declared endpoint. PVA `valid_until`
+is a separate egress deadline, not that bundle lease. No sampler behavior
+change is justified by that timestamp comparison.
+
+### Decision and next leverage
+
+Withdraw early checkpoint return before the refinement window. Retain the
+weight-independent raw A/J necessary screen, with unchanged full certificates
+and all hard gates. A single favorable nominal replay is insufficient to
+promote early return after 0/9 integrated completion. The prior 2/9 round and
+this 0/9 round are not a paired OFF/ON statistical causality proof.
+
+After withdrawal, canonical Release build passed all 23 packages (33.6 s)
+and `make test` exited zero: all selected CTest entries passed, 386 Python
+tests included one explicit artifact-dependent skip, and seven runtime
+auxiliary tests passed. Independent read-only artifact audit matched all nine
+rows and denominators. These are component/build results, not a new integrated
+completion measurement of the withdrawn source.
+
+Next change should normalize the existing guide boundary rather than add a
+coordinator or more conditions: one execution-anchor time origin; ordered
+collision-checked geometry without folds or duplicate-position/nonzero-time
+junctions; bounded route-window accounting; and seed/readiness semantics that
+include the actual route contract needed by the complete MAIN/BACKUP bundle.
+Keep the terminal measured-state/hold authority case separately reproduced.
+Do not increase solve budget, allow UNKNOWN BACKUP, tune jerk weights, widen
+anchor/acceptance tolerances, or treat telemetry/partial progress as success.

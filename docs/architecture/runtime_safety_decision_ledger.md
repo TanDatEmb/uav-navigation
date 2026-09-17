@@ -22220,8 +22220,10 @@ release profiles must not use the former allowance.
 ### 2026-09-17 - Separate mandatory nominal readiness from objective shaping
 
 - **Owner/status:** Nominal optimizer and complete-bundle planner boundary;
-  `IMPLEMENTED`, canonical Release build/test passed; integrated availability
-  pending. Adversarial diff review found no concrete P1/P2 bypass.
+  early checkpoint return **WITHDRAWN** after the integrated matrix below;
+  weight-independent raw A/J screen retained. The tested early-return commit
+  passed canonical Release build/test but did not improve completion.
+  Adversarial diff review found no concrete P1/P2 bypass.
 - **Scope:** When no independently certified nominal seed exists, inspect
   accepted L-BFGS iterates from the beginning rather than waiting for the
   optional-refinement cutoff. Reuse raw acceleration/jerk samples from the
@@ -22229,7 +22231,8 @@ release profiles must not use the former allowance.
   non-finite samples reject that screen. Its bounds are the unchanged product
   limits, not the optimizer's interior reserve. Existing position/flatness
   cost guards remain an overhead heuristic. Every selected iterate still
-  requires the full continuous optimized-candidate certificate, immutable
+  requires the unchanged optimized-candidate certificate (continuous
+  corridor/route/V/A/J and existing sampled flatness), immutable
   optimizer identity and post-certificate cancellation/absolute-deadline
   recheck. Optional refinement when a certified seed already exists is
   unchanged. Sampled feasibility is not authority or continuous proof.
@@ -22273,3 +22276,51 @@ release profiles must not use the former allowance.
   to fix formulation/seed behavior. No source edits occurred during the
   successful canonical build; an earlier source-changing build was rejected
   by provenance and is not used as the authoritative build.
+
+### 2026-09-17 - Reject nominal-only early return after completion-focused SITL
+
+- **Owner/status:** Complete-bundle planner and execution boundary;
+  **EARLY-RETURN WITHDRAWN**, raw physical sample screen retained. This is a
+  partial rollback of `c3d7c841`, not a second runtime implementation path.
+- **Scope/evidence:** Clean Release `c3d7c841` ran sequential 9WP-1,
+  2WP-1--3, 5WP-1--3, 9WP-2--3 at nominal/positive requested 5 m/s, seed 0,
+  40 m/4096 visibility, DDS 42/XRCE 8892, snapshots OFF, no concurrent
+  builds/tests/replay or configuration tuning. Completion **0/9**, report
+  PASS 0/9 (FAIL 1, BLOCKED 8). Source/manifest/denominator and every session
+  are retained in `docs/reports/feasible_checkpoint_5mps_diagnostic_2026-09-17.md`.
+  Sparse trace totals: 164 records, 88 checkpoint selections, 104 certificate
+  calls/29,303 us. Less certification work is not mission acceptance. The
+  previous post-STOP 2/9 round is separate, not a pooled denominator or
+  statistical proof of causality. All runs remain diagnostic/ineligible.
+- **Failure separation:** one explicit odometry receive-lease loss;
+  MAIN failures before the first 5WP goal; strict known-free BACKUP rejection
+  despite physical V/A/J feasibility; repeated recovery route-regression
+  rejection after local nominal seed certification; and a final 5WP STOP
+  execution/publication loss after partial progression. Coarse
+  `world_changed` and `backup_dynamics` enums do not replace low-level
+  rejection witnesses. Exact terminal latch/state causality remains conditional.
+- **Safety impact:** Restore the existing refinement-window checkpoint
+  boundary. Keep raw A/J screening independent of cost weights and keep full
+  validators/cancellation/absolute deadlines. No solve budget, cost weight,
+  MAIN/BACKUP, route, freshness, UNKNOWN, anchor, stopped-hold or mission gate
+  is relaxed. The terminal diagnostic bypass log does not authorize dropping
+  the final hard stopped-hold support check. No fallback/coordinator is added.
+- **Rejected alternative:** the presumed sampler gap is not established on
+  the production path: candidate admission and world renewal clamp bundle
+  lease to declared end. NavigationCommand egress validity is a different
+  timestamp. Do not change sampler semantics from that comparison.
+- **Next review/removal condition:** normalize anchor-relative ordered guide
+  geometry/time/window and seed readiness against actual complete-bundle route
+  semantics; separately reproduce terminal hold authority transitions. Reopen
+  early return only with complete-bundle/integrated evidence. Retain failed
+  seeds, partial progression and unmeasured odometry causes; never tune gates
+  from these single-seed runs.
+- **Verification:** `MandatoryFeasibilityDoesNotPreemptOptionalRefinementWindow`,
+  mandatory feasibility after cutoff, cancellation/expired-hard-deadline tests,
+  canonical Release build/test all PASS after withdrawal: 23 Release packages
+  in 33.6 s; `make test` exited zero with all selected CTest entries passing,
+  386 Python tests (one explicit artifact-dependent skip) and seven runtime
+  auxiliary tests. Read-only artifact audit independently matched the nine
+  table rows, denominators and missing invariant fields. The nine-run result above belongs to the
+  pre-withdrawal commit, not the source after this partial rollback; the
+  retained-screen/normalized-guide round requires its own matrix.
