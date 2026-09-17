@@ -22114,8 +22114,11 @@ release profiles must not use the former allowance.
 ### 2026-09-17 - Keep terminal STOP acceptance independent of pass-through projection
 
 - **Owner/status:** External Mode mission controller; `IMPLEMENTED`, component
-  verification PASS; fresh integrated evidence pending. Mission authority stays
-  at its existing owner, not in the planner or execution coordinator.
+  verification PASS; integrated availability `CONDITIONAL`. The fresh matched
+  nine-run matrix completed, including one complete five-waypoint mission,
+  but report PASS remains 0/9 and overall mission completion 2/9. Mission
+  authority stays at its existing owner, not in the planner or execution
+  coordinator.
 - **Scope:** Only `ExecutingWaypoint`'s STOP position predicate changes from
   route-ordered pass-through crossing to current measured position inside the
   active waypoint acceptance ball. PASS_THROUGH retains its ordered projection
@@ -22144,6 +22147,20 @@ release profiles must not use the former allowance.
   out of 380 discovered tests), with seven auxiliary tests also passing. The
   raw colcon total of 83 includes two retained legacy entries and is not the
   current-run denominator. `git diff --check` passed.
+  Clean Release commit `14e7d367552004ca161420531824b4e6a49f1711` then ran
+  2/5/9-waypoint three-pillar routes three times each at requested 5 m/s,
+  unchanged nominal preset, seed 0 and visibility 40 m / 4,096 endpoints.
+  Five-waypoint session `external-mode-check-20260917T015251-86803` accepted
+  WP0--WP4 and completed STOP at 0.182 m error and 0.050 m/s. Its terminal
+  hold persisted through above-limit speed samples before measured
+  confirmation. The other two five-waypoint runs stopped before WP1 and do
+  not exercise terminal STOP. Two-waypoint completion was 1/3; nine-waypoint
+  completion 0/3. All report assessments remain NOT_EVALUABLE/INCOMPLETE under
+  the unchanged relaxed diagnostic policy. Zero recorded collisions/failsafes
+  does not close safety: five-waypoint repetition 3 had 0.078 m ground-truth
+  clearance below its 0.1 m gate; two-waypoint repetition 1 revoked commands
+  for stale odometry. Details and complete denominator are in
+  `docs/reports/feasible_checkpoint_5mps_diagnostic_2026-09-17.md`.
 - **Removal/review condition:** Revert if route-ordered PASS_THROUGH regresses,
   STOP can complete without continuous measured confirmation, or integrated
   wiring fails to retain its certified endpoint hold. Do not adjust radii,
@@ -22151,4 +22168,5 @@ release profiles must not use the former allowance.
 - **Verification:** canonical Release build, `test_mission` (including
   `TerminalStopNearEarlierRouteKeepsMeasuredConfirmation`), complete `make
   test`, `git diff --check`, then fresh 5 m/s five-waypoint SITL and a matched
-  repeated matrix. Missing integrated evidence remains pending, not PASS.
+  repeated matrix. All nine simulations and reports are terminal; integrated
+  reachability is observed, not qualification or stable/smooth 5 m/s acceptance.

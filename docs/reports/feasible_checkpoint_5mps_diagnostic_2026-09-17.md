@@ -1,8 +1,13 @@
-# Certified-iterate checkpoint: 5 m/s diagnostic matrix
+# Certified-iterate checkpoint and terminal STOP: 5 m/s diagnostic matrices
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-## Verdict
+Latest follow-up: clean commit `14e7d367` completed a second nine-run matrix
+after the terminal STOP correction. Mission completion was 2/9 and report
+PASS 0/9. The product target remains unmet. The original frozen round below
+is preserved separately; current evidence is in the post-fix section.
+
+## Original checkpoint-round verdict
 
 All nine requested simulations and their reports completed. Mission completion
 was 1/9; report PASS was 0/9 (two FAIL, seven BLOCKED). Recorded collisions,
@@ -144,3 +149,145 @@ timeline store and the existing execution episode. Fix the mission predicate
 at its current External Mode owner and close complete-bundle availability and
 evidence lineage with focused tests/replay. A new large coordinator or process
 split is not justified by this matrix.
+
+## Post-fix terminal STOP round
+
+All nine fresh simulations **and** reports are terminal. Completion by route
+is 2WP 1/3, 5WP 1/3 and 9WP 0/3. Non-completion is 2/3, 2/3 and 3/3,
+respectively (66.7%, 66.7%, 100%; three repetitions are a small sample).
+Report PASS is 0/9: three FAIL, six BLOCKED. There were two COMPLETE outcomes,
+six PAUSED_SAFETY_STOP outcomes and one FAILED_COMPONENT outcome. The latter
+is an odometry-lease rejection, not a permission failure. No failed run was
+removed or replaced. This is not qualification or proof of stable/smooth
+5 m/s operation.
+
+### Frozen follow-up inputs
+
+- Navigation: clean `14e7d367552004ca161420531824b4e6a49f1711`, source
+  fingerprint `18e02b423b7ea8728aecd8a36902245201bfe9e1dadd85ef61d9cc3c64b08333`.
+- Authoritative full Release manifest SHA-256:
+  `74edfb7bcce8c97bcb9f7b4d7a44d975b28e79c97febd03c21efdc631769b7d3`.
+  Each report's `provenance.manifest.source` and manifest digest match these
+  values. Canonical build passed all 23 packages; mission tests passed 44/44,
+  selected CTest entries 81/81, Python 379 executed passes plus one explicit
+  artifact-dependent skip, and seven auxiliary tests passed.
+- External PX4 remains the separately captured dirty source/binary described
+  above: HEAD `deaff86ee335dd697677bcfc2415a23878e1b895`, source fingerprint
+  `25341a3df3acb2e557ef386affdf7a67f070603e924eb8107e8d291d22e2081f`, binary
+  `e440bd77fbacdc422eaafdb168fec01554298d545f11e2b004a640b04e324ff9`.
+  Mutable parameter/dataman snapshots remain session-specific.
+- Same profiles, positive case, `nominal` preset, seed 0, requested cruise
+  5 m/s, MAIN V/A/J 5/5/8, visibility 40 m / 4,096 endpoints, DDS domain 42,
+  XRCE 8892, no injected fault, nominal-problem capture OFF. BACKUP physical
+  limits remain separate (12/12/30), not the MAIN control envelope.
+- Sequential order: three 5WP, three 2WP, three 9WP. No concurrent build/test
+  or behavior/configuration change. Small read-only artifact/source inspections
+  occurred; this is not a claim of an otherwise workload-free machine.
+- Tracking remains the existing relaxed diagnostic policy, including its
+  documented suppressed gates. Every report assessment is NOT_EVALUABLE,
+  evidence INCOMPLETE and qualification ineligible, with the same six blocking
+  codes listed in the original round. Provenance VALID is not qualification.
+
+The command template above applies with explicit `--test-case positive
+--motion-preset nominal` and experiment IDs
+`terminal-stop-matrix-{2wp,5wp,9wp}-r{1,2,3}-20260917`.
+
+### Full follow-up denominator
+
+Accepted indices below come from
+`scenario.json.waypoint_acceptance_events[].accepted_waypoint_index`.
+The event's `waypoint_index` is the **next** index; the ephemeral batch wrapper
+used that field in its printed `accepted_waypoints`, so that printed list is
+not the acceptance witness. No product recorder/reducer data was changed.
+
+| Case | Session under `.artifacts/runtime/` | Report / outcome | Accepted | Planning p99/max ms (n) | Checkpoint selections / current records | Certificate aggregate max ms |
+|---|---|---|---|---|---|---|
+| 2WP-1 | `external-mode-check-20260917T015652-94541` | FAIL / FAILED_COMPONENT | 0 | 84.242/84.242 (33) | 5/29 | 18.507 |
+| 2WP-2 | `external-mode-check-20260917T015841-98513` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 81.768/81.768 (17) | 1/16 | 23.219 |
+| 2WP-3 | `external-mode-check-20260917T020007-102032` | FAIL / COMPLETE | 0,1 | 80.195/80.195 (31) | 2/29 | 13.227 |
+| 5WP-1 | `external-mode-check-20260917T015138-83125` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 73.719/73.719 (11) | 0/10 | 2.921 |
+| 5WP-2 | `external-mode-check-20260917T015251-86803` | FAIL / COMPLETE | 0,1,2,3,4 | 80.764/80.764 (24) | 2/24 | 16.963 |
+| 5WP-3 | `external-mode-check-20260917T015438-90782` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 80.351/80.351 (9) | 0/9 | 21.217 |
+| 9WP-1 | `external-mode-check-20260917T020158-105668` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 80.306/80.306 (7) | 3/7 | 23.265 |
+| 9WP-2 | `external-mode-check-20260917T020304-108922` | BLOCKED / PAUSED_SAFETY_STOP | 0 | 80.479/80.479 (8) | 2/8 | 22.082 |
+| 9WP-3 | `external-mode-check-20260917T020411-112209` | BLOCKED / PAUSED_SAFETY_STOP | 0,1,2 | 80.598/80.598 (22) | 6/22 | 18.907 |
+
+The 162 decision-trace records include 154 current checkpoint-diagnostic
+records, 21 checkpoint selections, 3,207 certificate calls and 408,806 us of
+summed certificate work. These remain sparse captured records, not a census
+of all solver jobs. Max certificate time is a per-record aggregate, not one
+call. The nine separate `navigation_mapping.timing_distributions` report:
+
+| Metric | Per-run p99 range | Largest observed max |
+|---|---|---|
+| Mapping callback | 61.332--108.986 ms | 144.086 ms |
+| Planning worker | 37.467--82.683 ms | 87.199 ms |
+| World snapshot export | 14.432--20.762 ms | 24.405 ms |
+
+These maxima are not upper bounds. No paired ON/OFF overhead or causal
+performance improvement is established by comparing the two rounds.
+
+### Adversarial findings and next direction
+
+1. **CONFIRMED, integrated STOP reachability:** 5WP-2 accepted WP0--WP4.
+   Its final measured STOP acceptance was 0.182362 m error and 0.049766 m/s.
+   `logs/external_mode.log:159`--`:171` show terminal hold, above-limit speed
+   samples and eventual measured acceptance. The deterministic regression
+   isolates the predicate change; this one integrated completion does not
+   establish 3/3 availability or attribute all round differences to that fix.
+2. **CONFIRMED, clearance rejection:** 5WP-3 reports minimum ground-truth
+   collision clearance 0.078432 m at `long_three_pillar_03`, below its frozen
+   `scenario.minimum_collision_clearance_m=0.1`. Recorded collisions, PX4
+   failsafes, scenario-writer drops and mapping cloud drops are zero in all
+   nine runs; zero collision does not erase this clearance failure. Root
+   cause/which layer violated its assumptions remains INCONCLUSIVE without
+   synchronized state/command/truth/world residuals. The relaxed policy's
+   known suppression of tracking/health responses is not a qualified envelope.
+3. **CONFIRMED, receive-age containment:** 2WP-1
+   `logs/external_mode.log:131`--`:132` rejects generation 22 with
+   `RECEIVE_STALE`, source age 164 ms and receive age 207.942 ms, then hands
+   over to PX4 Hold. The report also records one active propagated-odometry
+   source gap of 512 ms and wall-arrival gap of 637.962446 ms around the same
+   interval (source 52.116 to 52.628 s; arrival wall
+   1789610287480217380 to 1789610288118179826 ns). The external-odometry bridge
+   separately records `DT_TOO_LARGE`. This supports a missing-update interval,
+   not a proven LIO/DDS/PX4 root cause. PX4 setpoint source-gap max remains
+   28 ms for this run, showing why output continuity alone is insufficient.
+   External Mode already has a separate state-input thread; adding threads
+   without dispatch/lock/resource attribution is not the selected fix.
+4. **CONFIRMED, mixed availability failures:** In 9WP-1, accepted nominal
+   candidates are followed by BACKUP swept-tube failures and MAIN deadline
+   failures. `logs/mapping.log:306` records seed V/A/J approximately
+   4.890/9.176/28.771, feasible under BACKUP 12/12/30, followed by
+   `last_reject_stage=known_free`, failure 8 (`kCertificateTubeBlocked`), cell
+   1 (`kUnknown`), role 1 (`BACKUP`). The coarse outcome `backup_dynamics`
+   is not causal proof of a dynamics violation. Likewise optimized MAIN
+   certificate stage 4 is `kDynamics`, not continuity/corridor failure merely
+   because a finite corridor residual is logged. In 9WP-3, progress reaches
+   WP2 before an actual later corner corridor rejection (0.01977 > 0.01),
+   then invalid-window revalidation (failure 1, zero samples). The code alone
+   does not establish the expiry cause; do not classify every stop as the same
+   first-waypoint error.
+5. **CONFIRMED, limited legacy freshness metric:**
+   `NavigationMode::last_state_age_s_` is reset to -1 and read by periodic
+   logging, but has no producer assignment in the current source. It is not
+   measured decision-age evidence. The explicit freshness rejection and
+   source/arrival witnesses above remain distinct authoritative observations.
+   9WP-2 also has raw stream stale-event counts despite small source gaps;
+   source-stale counts are zero there. Phase/observer-dispatch attribution is
+   required before calling those sensor interruptions or dropping the events.
+
+Architecture remains A plus bounded B. The next experiment must close the
+complete MAIN/BACKUP/world readiness contract and measured corner/stop
+tracking, alongside a source-to-use discriminator for the odometry interval.
+Replay must separate geometric/numerical dynamics, UNKNOWN swept tube,
+deadline and invalid-window admission. Preserve the 0.1 m clearance gate, the
+5/5/8 MAIN and 12/12/30 BACKUP limits, stop gates and all failed runs. No large
+coordinator, process split, budget increase, or additional fallback is
+justified by this round. Evidence lineage/eligibility and representative
+recorded-data/hardware validation remain open.
+
+The temporary terminal-overlap source copies and binaries were removed after
+canonical regression and integrated evidence were available. The committed
+regression can reproduce the case; all runtime artifacts are retained. No new
+parallel execution path or cleanup of user files was introduced.
