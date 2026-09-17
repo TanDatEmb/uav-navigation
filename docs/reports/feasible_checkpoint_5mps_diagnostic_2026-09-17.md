@@ -2,16 +2,21 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest component follow-up: PASS event export and BACKUP switch-window timing
+Latest follow-up: PASS event export and BACKUP switch-window timing
 now share the actual mission sphere and a checked native elapsed-ns witness.
 A genuine rotated 90-degree real-facade regression failed on the old producer
 despite a complete certified bundle; the corrected producer passes. One normal
 `make test` execution passes (84 CTest targets plus the Python suites), but
 geometry correction does not close measured handoff timing or prove majority
-5 m/s completion. The new separate-policy 18-run integration matrix is pending.
+5 m/s completion. The frozen Release on `470b208f` completed the new sequential
+18-run matrix: **SAFE1/9mission COMPLETE, FAST4/9mission COMPLETE,0/18report
+PASS**. All runs retain their separate policies, seed0, valid provenance and
+successful cleanup; none qualifies. The total5/18 is unchanged from the previous
+matrix, not evidence of a causal completion-rate improvement.
 See [sphere/time normalization](#pass-spheretime-normalization-and-consumption-order-regressions).
+See [the terminal matrix and system-level attribution](#sphere-boundary-matrix-closure-and-system-level-attribution).
 
-Latest integrated follow-up: the frozen Release on `90716e93` completed all18
+Previous integrated follow-up: the frozen Release on `90716e93` completed all18
 sequential SAFE/FAST cases: **SAFE2/9mission COMPLETE, FAST3/9mission COMPLETE,
 0/18report PASS**. Completion remains below a majority and no run qualifies.
 This closes integration of the scoped unaccepted-MAIN guide repair; it does
@@ -3609,7 +3614,8 @@ the stable smooth majority-completion5m/s product target.
 ### PASS sphere/time normalization and consumption-order regressions
 
 **Owner/scope:** planning backend PASS boundary export and BACKUP-switch timing;
-implemented and component-verified, integrated completion evidence pending.
+implemented and component-verified; the integrated diagnostic matrix is closed
+below, without majority completion or qualification.
 This is an existing mission-geometry/witness correction, not a new execution
 coordinator, adaptive budget, cache, readiness latch or temporary bypass.
 The previous goal turn closed source/test evidence for the temporal budget
@@ -3734,12 +3740,225 @@ PASS does not establish a latency distribution or durable timing closure.
 Independent source reviews checked geometry scope, nonfinite/overflow,
 cancellation, native clock consistency and the still-open handoff window.
 
-After this feature/report commit, create a new full authoritative Release
+The prescribed integration preparation was: after the feature/report commit,
+create a new full authoritative Release
 manifest: the source fingerprint includes report bytes and Git HEAD, so the
 90716e93 manifest must not be reused. Then run18 sequential positive nominal
 three-column cases, SAFE/FAST separately,2/5/9WP each repeated three times at
 requested5m/s, seed0, visibility40m/4096, domain42/XRCE8892, RViz/captureOFF,
 unchanged tracking0/0/0. Freeze all nonignored source and do not build, test,
 replay or commit while simulations are active. Keep failures, cleanup and
-eligibility in the denominator. The matrix remains diagnostic; the stable
-smooth majority-completion5m/s objective is still unmet.
+eligibility in the denominator. That matrix is now terminal below. It remains
+diagnostic; the stable smooth majority-completion5m/s objective is still unmet.
+
+### Sphere-boundary matrix closure and system-level attribution
+
+**Verdict:**18/18 sequential normal runner cases terminated, with SAFE1/9 and
+FAST4/9mission COMPLETE,0/18report PASS. The corrected geometry is supported by
+independent RED/GREEN regressions, not by a majority-completion result. The
+previous `90716e93` matrix also had5/18completions with a different policy mix;
+this is not a controlled causal A/B estimate. Failed runs remain in the
+denominator. No budget, tracking gate, mission radius, UNKNOWN policy, control
+gain or recovery timeout was changed during this closure.
+
+#### Frozen build, scenarios and eligibility
+
+- Source HEAD:`470b208f657fe5c2f9dfd1f1133d7db481c68882`; full authoritative
+  Release `make build` passed23 packages. Source is dirty because the user's
+  unrelated tracked/untracked safety-document migration is captured, not
+  silently attributed to a clean commit. No source changed during the matrix.
+- Manifest SHA256:`25f627e7f02e102f9b720d21cd928d5e4f6e83f5497fdb721664995b782f06aa`;
+  source fingerprint:`4ba0b2350b350839e91b184ce30e426c0449fb83aa0e16e78fdbcef7e1991958`.
+  All18 metadata/report provenance statuses are VALID; post-matrix manifest
+  validation also passed before this closure edits report bytes.
+- PX4 metadata HEAD:`deaff86ee335dd697677bcfc2415a23878e1b895`. Each session
+  retains its external-PX4 provenance rather than asserting a clean dependency.
+- Positive/nominal profiles:2WP=`long_three_pillars_speed`,
+  5WP=`long_three_pillars`,9WP=`long_three_pillars_multiwaypoint`;
+  requested5.0m/s, map seed0, visibility40m/4096, ROS domain42/XRCE8892.
+- SAFE=`raycasting_on_backup_strict` requires known-free BACKUP;
+  FAST=`raycasting_on_backup_unknown` explicitly permits UNKNOWN BACKUP.
+  Both still block occupied/inflated/out-of-map cells. Tracking0/0/0,
+  RVizOFF and nominal captureOFF are unchanged. Both profiles remain
+  diagnostic-only; the user's two flight behaviors are not conflated.
+- Every unique experiment ID is `470b208f-5mps-{safe|fast}-{2|5|9}wp-r{1|2|3}-20260917`.
+  Root independently checked all18 identities, effective policy, seed,
+  requested speed, provenance and `stopped=true/cleanup=PASS`.
+  All18 have `qualification_eligible=false`.
+
+All session leaves below have prefix
+`.artifacts/runtime/external-mode-check-20260917T`. Indices are zero-based;
+COMPLETE is the observed mission event, not report PASS or smooth-flight
+qualification. Loop exit0 means the loop finished, not that its failed cases
+passed. Per-run FAIL/BLOCKED results and logs are preserved.
+
+| Policy/route/repetition | Session leaf | Accepted indices | COMPLETE | Report |
+|---|---|---|---|---|
+| SAFE2r1 |142147-594571|0|no|BLOCKED|
+| SAFE2r2 |142316-597912|0,1|yes|FAIL|
+| SAFE2r3 |142511-601208|0|no|BLOCKED|
+| SAFE5r1 |142646-604940|0|no|BLOCKED|
+| SAFE5r2 |142819-608358|0|no|BLOCKED|
+| SAFE5r3 |142928-611531|0,1,2,3|no|BLOCKED|
+| SAFE9r1 |143150-615076|0|no|BLOCKED|
+| SAFE9r2 |143304-618249|0|no|BLOCKED|
+| SAFE9r3 |143412-621415|0|no|BLOCKED|
+| FAST2r1 |143521-624572|0,1|yes|FAIL|
+| FAST2r2 |143709-627833|0,1|yes|FAIL|
+| FAST2r3 |143901-631221|0,1|yes|FAIL|
+| FAST5r1 |144058-634401|0|no|BLOCKED|
+| FAST5r2 |144207-637633|0,1,2,3|no|BLOCKED|
+| FAST5r3 |144350-640832|0,1,2,3,4|yes|FAIL|
+| FAST9r1 |144618-644335|0,1|no|BLOCKED|
+| FAST9r2 |144726-647681|0,1,2,3,4,5,6,7|no|FAIL|
+| FAST9r3 |144946-651038|0,1,2,3,4,5,6,7|no|BLOCKED|
+
+#### Timing and containment are not root-cause attribution
+
+The reports contain300 recorded `planning.planning_total_us` samples. These
+are not all scheduler triggers or end-to-end PX4 receipt measurements. The
+p95 ranges below are the min/max of three separate per-report p95 values,
+not pooled or averaged percentiles. An observed maximum is not WCET.
+
+| Group | Timing samples | Per-report p95 range,ms | Largest observed planning time,ms |
+|---|---|---|---|
+| SAFE2 |63|53.794–66.470|80.136|
+| SAFE5 |45|58.798–80.056|80.193|
+| SAFE9 |31|73.130–81.964|81.964|
+| FAST2 |59|47.222–75.824|80.126|
+| FAST5 |39|74.467–80.418|80.563|
+| FAST9 |63|65.882–80.522|82.452|
+
+The80ms backend deadline is cooperative, not preemptive; post-solve admission
+is additional work. Neither its literal nor these backend percentiles proves
+readiness by a future activation. Root checked the fatal messages in all13
+non-COMPLETE receiver logs:8command-stream stale,2invalid/stale command
+timestamps,2completed-hold recovery deadline,1odometry receive-age expiry.
+These are terminal containment classes, not13 planner root causes. In
+particular, the generic completed-"BACKUP" message also occurs for MAIN.
+
+#### Independent causal discriminators
+
+**SAFE5r1:**first unrecovered renewal cycle220/solve9/activegen3 fails nominal
+dynamics after38.070ms while42,013us remain; BACKUP did not execute in that
+transaction (`planning_timeline.jsonl:2515`, matched `logs/mapping.log:355`).
+Corridor violation0.001784m and V/A pass, but jerk9.494686 exceeds8. Two
+feasibility retries do not repair it; greater duration stretching leaves the
+compatible corridor interval. The seed's boundary representation check passes
+but its V/A/J10.876/36.068/410.277 is not dynamically feasible. Later deadline
+exhaustion is a separate event, not the first cause. Cached BACKUP timing and
+default flatness fields cannot be assigned to a stage that did not run.
+
+**SAFE5r2:**renewal45/solve9 fails nominal dynamics after59.908ms with20,197us
+remaining; A/J5.187398/8.957995 exceed5/8 (`planning_timeline.jsonl:706`).
+The next renewal46/solve10 completes MAIN but fails BACKUP known-free
+construction after42.646ms with37,440us left (`planning_timeline.jsonl:718`).
+This distinguishes local nominal repair from complete MAIN/braking viability;
+it does not prove a physical scenario impossible or justify relaxing SAFE.
+
+**FAST5r1:**initial full MAIN+BACKUP succeeds in74.467ms with5,932us left.
+It later loses current-world authority after full revalidation of gen1:
+failure8, MAIN36samples, then no command sample/publication and receiver Hold.
+The last authorized candidate still has1.018360806s actual MAIN remaining
+(`planning_timeline.jsonl:466`; runtime log ending
+`636839_1789656070579.log:7`). `kCertificateTubeBlocked` currently covers
+nonfinite curve bounds, excessive curve bounds and a failed swept-tube query
+(`validator.hpp:709–727`). The warning does not expose the actual subreason
+or blocked cell state. Collision, UNKNOWN-policy loss, out-of-map and LIO
+causality are therefore NOT_EVALUABLE, not inferred from failure8 alone.
+
+**The reported5WP pattern has two different terminal chains:**SAFE5r3 and
+FAST5r2 both really accept WP3 and issue WP4, the final STOP request. It is
+not correct to classify either as "WP3 never accepted although near it."
+SAFE5r3 reaches error0.769m inside radius0.8m but measured speed1.060m/s,
+above the unchanged0.15 STOP gate. A preceding terminal-bypass warning reports
+anchor error0.818m>0.750m, then invalid publication/rejected commands/stream
+expiry. That warning alone does not prove the exact later publication veto;
+the complete causal tuple remains missing.
+
+FAST5r2 retains completed MAIN position hold at `(41,0,3)` inside the STOP
+sphere, while shared5s ROS recovery timing also constrains measured settling
+(`navigation_mode_node.cpp:1031–1040,1231,1340–1353`). Fatal wording calls it
+BACKUP although the candidate role is MAIN. Source/host-aligned GT/LIO speed
+is1.1768/1.2148m/s near source48.160s and0.2891/0.3036m/s at failure53.160s;
+the vehicle is genuinely not yet stopped. Comparing53–58s GT with earlier
+host-time logs was rejected as a phase mismatch, not a localization bias.
+An independent review finds312 adapter-output position+zeroV traces, not312
+PX4 receipt/acceptance witnesses, and241 exact-source internal state/setpoint
+pairs matching position feedback with
+max velocity residual3.24217e-8m/s. Acceleration is omitted in the adapter,
+not injected zero. Position feedback disabled is REJECTED. Recorded250 motor
+samples have saturation-count0;249 internal outputs have thrust-vector tilt
+peak16.0792degrees. This does not exclude between-sample or uncaptured
+control-allocation saturation. Controller/plant damping cause and an
+appropriate settling-time bound remain unproven. Do not change
+5s,0.15m/s, gain or confirmation duration from this one case.
+
+**FAST9r2:**WP7 is accepted at source69.284s. Correction rejects for
+translational observability at73.900s, native state stops advancing at73.916s,
+last MAIN-ready command is74.064s, and odometry receive lease expires74.080s
+(source age164ms, steady receive age205.019ms; `logs/external_mode.log:213`).
+Closest native error to final STOP is9.875601m, not inside radius0.9m. This
+confirms state-health/publication-gap/receiver-containment ordering, not
+mathematical correctness of the ratio gate or attribution to PX4. Absolute
+information, weak eigen-directions and synchronized covariance witnesses are
+still needed; extending leases would conceal the failed boundary.
+
+Independent source review also rejects an implicit FAST-to-SAFE recertification
+switch: initial, stage and committed facade paths propagate `backupPolicy()`.
+The known-free check for a post-expiry stopped hold is a separate historical
+endpoint capability, not policy for a moving FAST BACKUP. Effective policy
+identity is still absent from the certificate witness: design/evidence debt,
+not a demonstrated policy flip in this matrix.
+
+#### Why400ms, and what a replacement must own
+
+`PlanningTimingContract` fixes period100ms, backend80ms, future lead400ms,
+guard20ms and derived MAIN reserve600ms. In the moving-request path,
+`navigation_runtime_node.cpp:4708–4744` chooses `activation=now+400ms`,
+reserves exact predecessor PVAJ and pins it in the immutable request. Backend
+delay consumes that same lead; `planner.cpp:3029–3043` rejects an expired
+activation instead of shifting the successor start. The store accepts an
+arbitrary valid activation timestamp;400ms is runtime policy, not its algebra.
+
+Targeted history shows August31 alignment of200ms deployment to an existing
+400ms typed stitch contract:180ms solve had left approximately20ms for later
+work. September6's10Hz/80ms development change retained400ms unchanged and
+was explicitly based on one Q1 latency dataset, not product qualification.
+Neither record derives400ms from trajectory geometry or proves it optimal.
+The migrated HG-001 still says180/200ms; this user-owned ledger inconsistency
+is not silently edited here. Historical p99 review language is also not a
+hard deadline guarantee.
+
+Current renewal already uses canonical MAIN time before the BACKUP switch,
+not path length divided by speed: its trigger is80+2*400+100+20=1000ms.
+However, resource-budget validation also requires solve<timer period even
+though `PlanningWorker` already enforces one active/latest pending job.
+That coupling is scheduler policy requiring evidence, not a necessary
+condition for serial solver ownership.
+
+A replacement should select one feasible future activation from the committed
+predecessor's MAIN/role/certificate window, with measured queue/compute/
+finalization/egress timing and resource isolation. Choose and pin before
+solving; do not move an already solved PVAJ boundary. Job CPU budget and
+activation lead are different contracts. Missed activation requires a new
+anchor/request or certified recovery; no timer, atomic pointer or dynamic
+number can bypass latest identity/world/lease checks. A longer certified MAIN
+can enable earlier planning and more resource time, but cannot be borrowed
+past an activation pinned only400ms ahead. New world, measured tracking and
+terminal STOP viability can still end authority before the nominal horizon.
+Dynamic activation also does not establish overlap between measured ordered
+waypoint eligibility and the receiver's valid continuation capability; it is
+not, by itself, a repair of the600ms handoff window.
+
+The next highest-leverage discriminator is feasibility-by-construction of the
+exact canonical prefix/PVAJ and complete MAIN+BACKUP, rather than repeated
+whole-prefix refits or a larger literal timeout. First obtain matched native
+polynomial, fixed-time boundary and corridor inputs to compare preserved
+prefix/suffix-only versus current formulation without weakening gates. In
+parallel, use existing world-query witnesses to distinguish curve-bound from
+cell-policy failure and measure terminal physical settling/source-validity
+contracts. No new coordinator, cache, adaptive timing, retry authority or
+safety bypass is implemented in this report closure. This documentation
+commit changes the source fingerprint for future runs; it does not retroactively
+change the frozen470b208f manifest or make the18diagnostic outcomes qualified.
