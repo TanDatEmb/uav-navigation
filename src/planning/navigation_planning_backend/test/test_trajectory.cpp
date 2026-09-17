@@ -21,6 +21,7 @@
 #include <navigation_common/time.hpp>
 #include "planner_core/ciri.h"
 #include "planner_core/corridor_generator.h"
+#include "planner_core/corridor_plane_validation.hpp"
 #include "planner_core/guide_endpoint.hpp"
 #include "planner_core/guide_vertical_envelope.hpp"
 #include "planner_core/kinematic_state_boundary.hpp"
@@ -1859,6 +1860,173 @@ TEST(PlannerTrajectory, CandidateBuilderDoesNotCutRequiredMainPrefix) {
   ASSERT_TRUE(candidate);
   EXPECT_DOUBLE_EQ(candidate->backup_start_tt, 0.4);
   EXPECT_DOUBLE_EQ(candidate->position.getTotalDuration(), 0.9);
+}
+
+TEST(PlannerTrajectory, BackupFeasibilityDependsOnMainPrefixNotOnlyCruiseSpeed) {
+  // Constructive counterexample, not a PlannerFacade/mission acceptance test:
+  // the production braking seed for a cruise prefix is not admitted, while a
+  // C3 decelerating MAIN prefix does. Both keep the product MAIN reserve and
+  // exactly the same initial PVAJ, nominal/physical limits and world policy.
+  class FrontierWorld final : public SweepWorld {
+   public:
+    navigation_world_model::WorldGeometry geometry() const noexcept override {
+      auto value = SweepWorld::geometry();
+      value.evidence_resolution_m = value.inflated_resolution_m;
+      value.occupied_inflation_radius_m = 1.0;
+      value.local_size_m = Eigen::Vector3d{50.0, 50.0, 8.0};
+      return value;
+    }
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& point,
+        navigation_world_model::GridLayer) const noexcept override {
+      return point.x() < 4.0 ? navigation_world_model::CellState::kKnownFree
+                            : navigation_world_model::CellState::kUnknown;
+    }
+    bool isSegmentTraversable(
+        const navigation_world_model::Point3& begin,
+        const navigation_world_model::Point3& end,
+        navigation_world_model::GridLayer,
+        navigation_world_model::UnknownPolicy policy) const noexcept override {
+      return policy == navigation_world_model::UnknownPolicy::kAllowUnknown ||
+             std::max(begin.x(), end.x()) < 4.0;
+    }
+  } world;
+  navigation_planning_backend::Config config(PLANNER_PRODUCT_CONFIG_PATH);
+  config.bindWorldGeometry(world.geometry());
+  constexpr double kInitialSpeedMps = 4.5;
+  constexpr double kJerkRampDurationS = 0.1;
+  const double main_duration_s =
+      navigation_planning::PlanningTimingContract::kMinimumMainReserveS;
+  ASSERT_GT(main_duration_s, kJerkRampDurationS);
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(0) << 0.0, 0.0, 3.0;
+  initial(0, 1) = kInitialSpeedMps;
+  Eigen::MatrixXd cruise_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  cruise_coefficients.col(7) = initial.col(0);
+  cruise_coefficients.col(6) = initial.col(1);
+  geometry_utils::Trajectory cruise({main_duration_s}, {cruise_coefficients});
+
+  auto ramp_coefficients = cruise_coefficients;
+  ramp_coefficients(0, 3) = -config.exp_traj_cfg.max_jerk /
+                          (24.0 * kJerkRampDurationS);
+  geometry_utils::Trajectory decelerating(
+      {kJerkRampDurationS}, {ramp_coefficients});
+  const auto ramp_end = decelerating.getState(kJerkRampDurationS);
+  Eigen::MatrixXd hold_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  hold_coefficients.col(7) = ramp_end.col(0);
+  hold_coefficients.col(6) = ramp_end.col(1);
+  hold_coefficients.col(5) = ramp_end.col(2) / 2.0;
+  hold_coefficients.col(4) = ramp_end.col(3) / 6.0;
+  decelerating.emplace_back(main_duration_s - kJerkRampDurationS,
+                            hold_coefficients);
+  ASSERT_TRUE(cruise.getState(0.0).isApprox(initial, 1.0e-12));
+  ASSERT_TRUE(decelerating.getState(0.0).isApprox(initial, 1.0e-12));
+  ASSERT_TRUE(decelerating[1].getState(0.0).isApprox(ramp_end, 1.0e-12));
+  // Independent scalar integration of the jerk ramp and hold, rather than
+  // another call to the production stopping-envelope estimator.
+  const double jerk = config.exp_traj_cfg.max_jerk;
+  const double hold_s = main_duration_s - kJerkRampDurationS;
+  const double ramp_x = kInitialSpeedMps * kJerkRampDurationS -
+      jerk * std::pow(kJerkRampDurationS, 3) / 24.0;
+  const double ramp_v = kInitialSpeedMps -
+      jerk * std::pow(kJerkRampDurationS, 2) / 6.0;
+  const double ramp_a = -jerk * kJerkRampDurationS / 2.0;
+  const auto decelerating_switch = decelerating.getState(main_duration_s);
+  EXPECT_NEAR(decelerating_switch(0, 0),
+              ramp_x + ramp_v * hold_s + ramp_a * hold_s * hold_s / 2.0 -
+                  jerk * hold_s * hold_s * hold_s / 6.0, 1.0e-12);
+  EXPECT_NEAR(decelerating_switch(0, 1),
+              ramp_v + ramp_a * hold_s - jerk * hold_s * hold_s / 2.0, 1.0e-12);
+  EXPECT_NEAR(decelerating_switch(0, 2), ramp_a - jerk * hold_s, 1.0e-12);
+  EXPECT_NEAR(decelerating_switch(0, 3), -jerk, 1.0e-12);
+
+  for (const auto* main : {&cruise, &decelerating}) {
+    ASSERT_LE(main->getMaxVelRate(), config.exp_traj_cfg.max_vel);
+    ASSERT_LE(main->getMaxAccRate(), config.exp_traj_cfg.max_acc);
+    ASSERT_LE(main->getMaxJerRate(), config.exp_traj_cfg.max_jerk);
+  }
+  const auto build_bundle = [&](const geometry_utils::Trajectory& main) {
+    const auto switch_state = main.getState(main_duration_s);
+    const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+        main_duration_s, switch_state, config.back_traj_cfg.max_vel,
+        config.back_traj_cfg.max_acc, config.back_traj_cfg.max_jerk,
+        config.sample_traj_dt_s, 0.0);
+    EXPECT_TRUE(seed.feasible);
+    if (!seed.feasible) {
+      return std::optional<navigation_planning_backend::CandidateCommandBundle>{};
+    }
+    const auto stop = navigation_planning_backend::minimumSnapStopPiece(
+        switch_state, seed.duration_s);
+    EXPECT_TRUE(stop.getState(0.0).isApprox(switch_state, 1.0e-12));
+    EXPECT_LE(stop.getMaxVelRate(), config.back_traj_cfg.max_vel);
+    EXPECT_LE(stop.getMaxAccRate(), config.back_traj_cfg.max_acc);
+    EXPECT_LE(stop.getMaxJerRate(), config.back_traj_cfg.max_jerk);
+    EXPECT_NEAR(stop.getVel(seed.duration_s).norm(), 0.0, 1.0e-9);
+    EXPECT_NEAR(stop.getAcc(seed.duration_s).norm(), 0.0, 1.0e-9);
+    EXPECT_NEAR(stop.getJer(seed.duration_s).norm(), 0.0, 1.0e-9);
+    geometry_utils::Trajectory backup_position;
+    backup_position.emplace_back(stop);
+    geometry_utils::Trajectory main_yaw(
+        {main_duration_s}, {Eigen::MatrixXd::Zero(3, 8)});
+    geometry_utils::Trajectory backup_yaw(
+        {seed.duration_s}, {Eigen::MatrixXd::Zero(3, 8)});
+    EXPECT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+        main, config.exp_traj_cfg, nullptr, 0.01, &main_yaw));
+    EXPECT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+        backup_position, config.back_traj_cfg, nullptr, 0.01, &backup_yaw));
+    navigation_planning_backend::ExpTraj exp;
+    exp.setTrajectory(10.0, main, main_yaw);
+    EXPECT_TRUE(exp.setRequiredMainPrefixDuration(main_duration_s));
+    navigation_planning_backend::BackupTraj backup;
+    backup.setTrajectory(10.0 + main_duration_s, main_duration_s,
+                         backup_position, backup_yaw);
+    return navigation_planning_backend::CmdTraj::buildCandidate(
+        exp, &backup, navigation_planning_backend::BackupDisposition::SUCCESS);
+  };
+  const auto cruise_bundle = build_bundle(cruise);
+  const auto decelerating_bundle = build_bundle(decelerating);
+  ASSERT_TRUE(cruise_bundle);
+  ASSERT_TRUE(decelerating_bundle);
+  RecordProperty("cruise_backup_duration_s", std::to_string(
+      cruise_bundle->position.getTotalDuration() - main_duration_s));
+  RecordProperty("decelerating_backup_duration_s", std::to_string(
+      decelerating_bundle->position.getTotalDuration() - main_duration_s));
+  RecordProperty("cruise_stop_x_m", std::to_string(cruise_bundle->position.getPos(
+      cruise_bundle->position.getTotalDuration()).x()));
+  RecordProperty("decelerating_stop_x_m", std::to_string(
+      decelerating_bundle->position.getPos(
+          decelerating_bundle->position.getTotalDuration()).x()));
+  EXPECT_DOUBLE_EQ(cruise_bundle->backup_start_tt, main_duration_s);
+  EXPECT_DOUBLE_EQ(decelerating_bundle->backup_start_tt, main_duration_s);
+  const auto validate = [&](const auto& bundle) {
+    return navigation_planning_backend::validateExecutableCandidate(
+        world, bundle, 10.0,
+        navigation_world_model::UnknownPolicy::kAllowUnknown, {}, false,
+        navigation_world_model::UnknownPolicy::kRequireKnownFree);
+  };
+  const auto cruise_validation = validate(*cruise_bundle);
+  EXPECT_FALSE(cruise_validation.valid);
+  EXPECT_EQ(cruise_validation.blocked_role,
+            navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+  EXPECT_EQ(cruise_validation.blocked_cell_state,
+            navigation_world_model::CellState::kUnknown);
+  // Independently supplied known-free convex corridor, not a claim that CIRI
+  // or the frontend can construct/select this corridor on a runtime map.
+  navigation_math::MatD4f corridor(6, 4);
+  corridor << 1.0, 0.0, 0.0, -3.8,
+             -1.0, 0.0, 0.0, -0.2,
+              0.0, 1.0, 0.0, -1.0,
+              0.0,-1.0, 0.0, -1.0,
+              0.0, 0.0, 1.0, -4.0,
+              0.0, 0.0,-1.0,  2.0;
+  for (int piece = 0; piece < decelerating_bundle->position.getPieceNum(); ++piece) {
+    EXPECT_LE(navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+                  decelerating_bundle->position[piece], corridor),
+              config.exp_traj_cfg.corridor_plane_tolerance_m);
+  }
+  EXPECT_TRUE(validate(*decelerating_bundle).valid);
+  EXPECT_LT(decelerating_bundle->position.getPos(
+                decelerating_bundle->position.getTotalDuration()).x(), 4.0);
 }
 
 TEST(PlannerTrajectory, CandidateBuilderDoesNotAdvertiseZeroLengthBackupSuffix) {

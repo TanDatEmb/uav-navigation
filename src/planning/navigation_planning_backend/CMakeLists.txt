@@ -112,7 +112,8 @@ if(BUILD_TESTING)
   target_compile_definitions(test_trajectory PRIVATE
     USE_ROS2
     ORIGIN_AT_CORNER
-    NAVIGATION_PLANNING_BACKEND_TESTING)
+    NAVIGATION_PLANNING_BACKEND_TESTING
+    PLANNER_PRODUCT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../runtime/navigation_runtime/config/planner.yaml")
   target_link_libraries(test_trajectory ${PROJECT_NAME})
   configure_backend_test(test_trajectory)
 

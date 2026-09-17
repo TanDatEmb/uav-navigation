@@ -1861,3 +1861,126 @@ and timing seam are useful verified progress, but smooth stable majority
 completion, hardware safety and qualification remain unachieved. No parallel
 coordinator, permission latch, threshold relaxation or backend rewrite was
 added to obtain these observations.
+
+##### MAIN–BACKUP formulation review after the admission matrix
+
+This review uses the nine `admission-progress-aedb4b96` artifacts above, not a
+new SITL campaign. Product behavior remains unchanged in this review patch.
+The existing measured progression fix remains necessary, but it is not a
+complete explanation for the five safety stops and one component failure.
+
+The current decision path is:
+
+```mermaid
+flowchart TD
+    R[Immutable route, world, state and execution anchor] --> M[Construct and certify one MAIN profile]
+    M -->|MAIN ready| B[Search BACKUP switch times on that fixed MAIN]
+    B -->|Complete suffix certified| C[Build and authorize complete candidate]
+    B -->|No admitted suffix| F[No complete bundle; MAIN cannot be exposed]
+    C --> A[Runtime admission, activation and final command checks]
+    A --> P{Waypoint behavior?}
+    P -->|PASS| W{Fresh measured state inside ordered ball and continuation permitted?}
+    P -->|STOP| S{Fresh measured in-ball rest and stop confirmation?}
+    W -->|Yes| N[Mission owner accepts waypoint; next leg or final COMPLETE]
+    W -->|No| K[Keep current waypoint; planned path is not acceptance]
+    S -->|Yes| N
+    S -->|No| K
+    F --> V{Existing execution still valid?}
+    V -->|Yes| D[Retain or drain certified active command]
+    V -->|No valid brake or command| H[Reject command and request PX4 Hold]
+    H --> K
+```
+
+`generateBackupTrajectory()` walks switch times backward, including the exact
+required MAIN lower bound. At each switch it checks a dynamically feasible
+full-PVAJ minimum-snap seed, aligned SFC/Bezier containment and role-specific
+swept-world validity. Thus BACKUP is not merely an unchecked boolean, and a
+failed successor does not itself overwrite the canonical active command.
+However, those alternatives all belong to **one already chosen MAIN profile**.
+`planInitialFromStoppedState()` and `planSuccessorFromExecutionAnchor()` return
+failure after an unexecutable BACKUP result; this stage does not construct a
+different MAIN velocity profile to make a complete bundle feasible.
+
+Discriminating checks against convenient but overly strong explanations:
+
+- A direct census found 16 `MINCO and immutable seed unavailable` log records:
+  15 reached seed dynamics stage5; one, in5WP-r3, stopped at boundary stage3.
+  That exceptional junction residual was6.19e-15 versus a2.59e-15 computed
+  bound. Its infinite V/A/J diagnostics are **unevaluated**, not infinite
+  physical dynamics. It must not be merged into the other15 records or used
+  to justify globally relaxing continuity. These are log-record counts, not
+  independent mission outcomes or the complete denominator of failures.
+- The5WP-r1 and9WP-r1 examples above have aligned hulls and finite feasible
+  seed dynamics but zero known-free passes. Calling them optimizer or
+  dynamics failures from the coarse failure-stage label is incorrect.
+- The hypothesis that the product future-state request's governor uses only
+  measured velocity is not supported: `Planner::plan()` binds the immutable
+  anchor's PVAJ before successor planning copies `robot_state_` into
+  `solve_state_`. Legacy calls without that request must be distinguished.
+- The visibility loop appends the first invisible sample before breaking;
+  later assignments overwrite the retreated seed time with `eval_ps.back()`.
+  This is a reachable selection inconsistency/design debt, but downstream
+  independent certificates still reject unsafe seeds. No reproducer yet
+  establishes it as the dominant cause of mission failures; a cosmetic
+  correction is not a completion-rate solution.
+- The computed evidence-aware speed is consumed by the connected
+  pass-through terminal cap, while the frontier branch derives its cap again
+  from nominal `max_vel`. More importantly, exploratory MAIN uses MAIN-policy
+  support, not strict BACKUP known-free support. A nonzero MAIN speed result
+  therefore is not evidence of a complete executable bundle. Correcting one
+  cap consumer alone would not establish that the observed UNKNOWN suffixes
+  become feasible.
+
+**Constructive discriminator:**
+`PlannerTrajectory.BackupFeasibilityDependsOnMainPrefixNotOnlyCruiseSpeed`
+loads the product configuration and keeps identical initial PVAJ
+(`p=(0,0,3)`, `v=(4.5,0,0)`, `a=j=0`),0.6s MAIN reserve, MAIN5/5/8,
+BACKUP12/12/30 and strict BACKUP UNKNOWN policy. Its explicitly declared
+inflated world is known-free for `x<4m`, UNKNOWN beyond it.
+
+| Constructed MAIN prefix | Product BACKUP seed duration | Stop x | Swept-world disposition |
+|---|---:|---:|---|
+| Constant cruise |1.030221s|5.017998m|Reject BACKUP on UNKNOWN|
+| Jerk ramp0→−8 over0.1s, then hold−8 until0.6s |0.734919s|3.419941m|Accept|
+
+Independent scalar integration checks the decelerating switch state
+(`x=2.476333m`, `v=3.286667m/s`, `a=−4.4m/s²`, `j=−8m/s³`). The test also checks
+initial/junction/backup PVAJ, analytic V/A/J extrema, terminal rest, production
+flatness, continuous containment in an independently supplied convex corridor,
+candidate construction preserving the full MAIN reserve, and the production
+role-specific swept-world validator. JUnit properties retain the product seed
+durations/endpoints rather than replacing them with an offline shortest-stop
+estimate.
+
+This proves a **bundle-level counterexample to equating an unbrakeable cruise
+profile with absence of another feasible prefix**. It does not prove that the
+current frontend/CIRI or PlannerFacade finds that prefix, that such a prefix
+exists in a particular failed recorded world, or that mission/receiver
+admission and tracking will accept it. No actual failed run has been repaired
+by this fixture. The formerly rejected curved-prefix experiment(HG-026)
+remains rejected; this review does not reapply it.
+
+The next implementation discriminator is therefore complete-bundle profile
+selection within the **same immutable request and existing deadline**:
+construct an alternative nominal velocity profile when the strict suffix is
+unavailable, then repeat all certificates before exposing a candidate. First
+reproduce it through the real planner with unchanged MAIN physical limits;
+lowering a search reference must not rewrite the hard envelope or fabricate
+an execution anchor. Compare bounded reuse of request-owned geometry against
+re-running frontend/optimization: an unbounded nested retry would trade this
+failure for deadline misses. Keep the single authority path and preservation
+of valid active/pending state. Do not add another coordinator/FSM, shorten
+reserve, permit UNKNOWN, accept a post-Hold waypoint, or attribute tracking to
+LIO/PX4 without synchronized typed state/health and independent truth.
+This points to architecture optionA first: a planner construction/validation
+boundary correction with existing execution ownership, rather than a large
+coordinator extraction to address a search-formulation failure. If later
+authority or scheduling evidence independently requires optionB, keep that
+migration separate from the planner behavior comparison.
+
+Component verification: all9backend CTest executables pass; the trajectory
+executable contains143GoogleTests with0failures. This is a test/evidence
+closure, not the next product behavior/A/B cycle. The matrix remains3/9mission
+COMPLETE,0report PASS and qualification-ineligible. A new sequential
+2/5/9WP×3at requested5m/s matrix is still required after the justified product
+change, not repeated unchanged to imply improvement.
