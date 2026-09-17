@@ -1717,3 +1717,147 @@ future-anchor obligation, complete-bundle/BACKUP readiness and estimator-validit
 blockers remain open. The unchanged 2/5/9WP three-repetition5 m/s diagnostic
 matrix must measure whether this seam changes integrated completion; callback
 unit PASS is not mission or flight acceptance.
+
+#### Completed admission-progression diagnostic matrix
+
+The sequential matrix ran from07:50:05 to08:05:09 UTC on September17,
+labels `admission-progress-aedb4b96-5mps-{2,5,9}wp-r{1,2,3}-20260917`.
+All nine terminal artifacts are retained, including every unsuccessful run.
+No source/config edit, build, replay, second simulation or heavy evidence
+analysis ran during the matrix. Root source and evidence analysis followed
+terminal completion; the bounded mechanical agent census was independently
+checked against the canonical `report.json`, not benchmark helper counters.
+
+The independently pushed mechanical seam is `eaf6ba55`; behavior/test/report
+commit is `aedb4b96781c655ab6f07cb9d87905288567654f`. Pre-launch canonical
+post-commit Release build passed23 packages. Full `make test` passed82 selected
+CTests, the backend focused suites and Python tests (runtime386, one skipped).
+Ledger validation and `git diff --check` passed. Runtime source fingerprint is
+`9f050190f8bec0def6141f2996144ad5ab2db3db33c16f08b1d14110e035adb1`,
+authoritative manifest SHA256
+`a20922347f3433b4a5bb3e5042f567aa85e87f9bc837f4192831371ec697fdfe`.
+The unrelated documentation migration remains dirty and explicitly captured;
+it was not staged into these commits.
+
+Configuration matches the preceding gate-tail matrix: positive/nominal, seed0,
+requested5 m/s, DDS42/XRCE8892, visibility40 m/4096, strict raycasting BACKUP,
+nominal snapshots and RViz OFF. Profiles are the same2/5/9WP three-pillar
+variants. Every planner snapshot has SHA256
+`6480ff9679e20c3d5f9f5a38efbe7702d9ca98e66c454299019b423d5d298356`.
+Mission/resolved configuration hashes are preserved separately per run, not
+misrepresented as one identical mission. All provenance statuses are `VALID`.
+PX4 HEAD, tracked diff and dirty-status identities are unchanged from the
+gate-tail matrix. All nine writer captures completed with pending0, dropped0,
+queue-drop0, serialization-error0 and write-error0. This does not imply every
+required topic, lifecycle or reference witness was recorded.
+
+Artifact suffixes belong to `.artifacts/runtime/external-mode-check-20260917T`.
+Accepted indices below use `accepted_waypoint_index`, **not** the next active
+`waypoint_index`. Small-sample planning p99 equals observed max, not an upper
+deadline bound.
+
+| Case | Artifact suffix | Mission outcome | Report | Accepted indices | Planning samples | p99/max (ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2WP-r1 | `075005-126933` | COMPLETE | FAIL | [0,1] | 27 | 62.370 |
+| 2WP-r2 | `075157-130729` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 15 | 49.129 |
+| 2WP-r3 | `075321-134141` | FAILED_COMPONENT / ODOMETRY_STALE | FAIL | [0] | 33 | 80.245 |
+| 5WP-r1 | `075507-137779` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 5 | 44.158 |
+| 5WP-r2 | `075614-141177` | COMPLETE | FAIL | [0,1,2,3,4] | 33 | 80.318 |
+| 5WP-r3 | `075809-144832` | PAUSED_SAFETY_STOP | BLOCKED | [0,1,2] | 14 | 80.740 |
+| 9WP-r1 | `080009-148413` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 8 | 37.001 |
+| 9WP-r2 | `080118-151602` | COMPLETE | FAIL | [0,1,2,3,4,5,6,7,8] | 40 | 80.588 |
+| 9WP-r3 | `080403-155222` | PAUSED_SAFETY_STOP | BLOCKED | [0] | 6 | 80.152 |
+
+Mission completion is **3/9**, each profile1/3; verdicts are **4 FAIL,5 BLOCKED,
+0 PASS**. All evaluations remain `NOT_EVALUABLE`/`INCOMPLETE` and qualification
+false. Experimental tracking suppression, lifecycle/reference mismatch and
+missing acceptance/coverage policies remain explicit blockers. Compared with
+the preceding1/9 matrix, the5WP and9WP groups each gained one completed run.
+These are descriptive observations from three repetitions, not proof of
+statistical improvement, timer-phase attribution or stable majority completion.
+
+The181 complete backend/admission transaction records include107 successful
+admissions (11 immediate,96 staged) and74 not attempted after backend failure:
+18 nominal-seed/dynamics,19 BACKUP-refinement/dynamics labels,25 complete-bundle
+deadline misses and12 world-change recertification failures. Restricting to the
+six unfinished runs gives32 such failures:10 nominal,13 BACKUP,5 deadline and4
+world-change. Transaction counts are not independent mission trials; even
+completed runs retain unsuccessful transactions. Pending stage is not proof
+of activation, and a failed replacement does not alone establish why the
+active command became unusable.
+
+The coarse BACKUP label is not a reliable numerical cause. In5WP-r1 cycles42,
+43 and44, known-free checks total6/4/3 with zero passes, last blocked cells are
+UNKNOWN at approximately(16.5,-1.5,3.1), (16.9,-1.5,3.1), (17.1,-1.5,2.9).
+In9WP-r1 cycles29--32 the four labelled failures also end at known-free/UNKNOWN.
+They must not be reported as four optimizer/dynamic-envelope failures simply
+because the top-level reason says `backup_dynamics`. UNKNOWN remains blocked;
+this evidence supports investigating certified braking visibility/reachability,
+not relaxing its policy. In2WP-r2 malformed/stale command containment occurs
+well before terminal acceptance;2WP-r3 loses the odometry lease near settling.
+No synchronized typed-health/independent-truth evidence closes their underlying
+estimator or frame cause.
+
+##### Exact current5WP-r3: near WP3 only after execution revocation
+
+Read-only SQLite/CDR inspection of the actual command, goal and propagated
+odometry topics provides the following source-time chain:
+
+| Source time | Evidence |
+| --- | --- |
+| 59.428 s | Publish WP3/request4, target(41,5,3), radius0.8 m, lookahead WP4(41,0,3). No WP4 goal is subsequently published. |
+| 59.504 s | Cycle441 produces a complete proposal in35.005 ms, stages generation11. |
+| 59.876 s | Actual activated MAIN command generation11/request4 begins, authorization granted, continuation=true. Planned boundary62.825613971 s. |
+| 62.596 s | Last actual granted MAIN sample remains continuation=true. |
+| 62.608 s | Closest measured state **before rejection**: error1.440971 m, speed2.604918 m/s, position(42.172542,5.836686,3.038757). Still outside0.8 m. |
+| 62.612 s | Cycle476 fails nominal seed/dynamics in16.790 ms; no replacement admitted. Actual command is REJECTED/emergency with authorization rejected. |
+| 62.948 s | First measured in-ball sample: error0.788787 m, speed1.789210 m/s. It arrives after rejection and the External Mode Hold request. |
+| 63.348 s | Run-wide minimum after WP3 goal: error0.200255 m. This is post-revocation motion, not a live execution witness. |
+
+Runtime log independently reports retained anchor0.375 m and projected0.433 m
+against0.250 m, although its sampled path is clear and a BACKUP exists.
+`backup=1` is therefore not a certificate that the measured vehicle can still
+reach that suffix. The measured-state emergency attempt is rejected by the
+latest world at its initial position (42.172542,5.836686,3.038757), classified
+`CellState::kOccupied` (3). The sample used by the final decision is fresher
+than the earlier planning-state snapshot; those positions must not be silently
+treated as interchangeable. `/lio/health` is absent from this bag, and no
+independent ground-truth/frame comparison establishes whether the occupied
+classification or localization is physically correct.
+
+This is **CONFIRMED execution loss before measured acceptance**, not the
+short-window timer bug:171 admitted true MAIN samples existed, but no measured
+entry occurred before their authority was revoked. A solved outgoing lookahead
+is not a published/accepted WP4 request. Accepting the post-Hold near-position
+would manufacture authority, rather than repair the underlying tracking/world
+problem. The completed5WP-r2 instead accepts WP3 at measured0.787482 m with
+speed2.027251 m/s and stops at the final point at0.013430 m/s, without a radius
+or speed-gate change.
+
+##### System-level leverage and remaining scope
+
+1. **Complete-bundle braking feasibility:** close the MAIN-to-BACKUP reachable
+   tube against actual known-free evidence, distinguish UNKNOWN from numerical
+   rejection, and choose feasible search/continuation geometry before optional
+   objective work. A37 ms solve in a failed9WP run shows solver latency alone
+   is not the dominant completion contract. Do not enlarge map/gates or allow
+   unknown space from these few runs.
+2. **Handoff tracking and recovery timing:** reproduce the WP3 measured PVA,
+   command phase and future-anchor obligations, including a planned anchor past
+   an unaccepted boundary. Correct identity/geometry or handoff formulation
+   only after an independent reproducer; neither remove the current mission
+   gate nor extend an over-error command to obtain completion. Preserve active
+   execution across failed successors only while its certificates remain valid.
+3. **Settling state validity and evidence:** capture advancing typed health,
+   source/receive/frame/epoch plus independent truth through terminal braking.
+   An odometry stale report is containment evidence, not an identified LIO or
+   PX4 algorithm cause. Repair lifecycle/reference evidence separately from
+   tuning so a completed diagnostic run never becomes a default PASS.
+
+Run-wide measured speed p50/p95/max is0.683/4.970/5.754 m/s for completed5WP-r2
+and1.385/5.129/5.977 m/s for completed9WP-r2; hover/braking samples are retained.
+Requested5 m/s must not be renamed sustained5 m/s. The ownership extraction
+and timing seam are useful verified progress, but smooth stable majority
+completion, hardware safety and qualification remain unachieved. No parallel
+coordinator, permission latch, threshold relaxation or backend rewrite was
+added to obtain these observations.
