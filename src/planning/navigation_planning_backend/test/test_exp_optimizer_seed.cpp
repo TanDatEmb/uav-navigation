@@ -132,6 +132,48 @@ TEST(ExpOptimizer, GuideTimeIsTheInitialDurationSeed) {
   EXPECT_FALSE(trajectory.empty());
 }
 
+TEST(ExpOptimizer, WarmStartRejectsSeedDimensionsAfterCorridorSimplification) {
+  const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  const auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, context);
+  const auto head = makePositionState(0.0);
+  const auto tail = makePositionState(4.0);
+  geometry_utils::PolytopeVec corridors{
+      makeConvexBox(), makeConvexBox(), makeConvexBox()};
+  const navigation_math::vec_Vec3f initial_points{
+      {1.0, 0.0, 1.0}, {3.0, 0.0, 1.0}};
+  const navigation_math::VecDf initial_times =
+      navigation_math::VecDf::Constant(3, 1.0);
+  geometry_utils::Trajectory trajectory;
+
+  EXPECT_FALSE(optimizer.optimize(
+      head, tail, corridors, initial_points, initial_times, trajectory));
+  ASSERT_EQ(corridors.size(), 1U);
+  EXPECT_TRUE(trajectory.empty());
+  EXPECT_EQ(optimizer.diagnostics().lbfgs_evaluation_count, 0U);
+}
+
+TEST(ExpOptimizer, WarmStartRetainsMatchingPostSimplificationSeed) {
+  const traj_opt::Config config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  const auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
+          [] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, context);
+  geometry_utils::PolytopeVec corridors{makeConvexBox()};
+  const navigation_math::vec_Vec3f initial_points;
+  const navigation_math::VecDf initial_times =
+      navigation_math::VecDf::Constant(1, 4.0);
+  geometry_utils::Trajectory trajectory;
+
+  ASSERT_TRUE(optimizer.optimize(
+      makePositionState(0.0), makePositionState(4.0), corridors,
+      initial_points, initial_times, trajectory));
+  EXPECT_FALSE(trajectory.empty());
+  EXPECT_EQ(trajectory.getPieceNum(), 1);
+}
+
 TEST(ExpOptimizer,
      SnapshotDoesNotReusePostSetupGeometryAfterSimplifyReject) {
   ScopedEnvironmentVariable capture(

@@ -1857,6 +1857,22 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
     }
 
     if (opt_vars.given_init_ts_and_ps) {
+        // SimplifySFC may have changed the number of pieces since the caller
+        // constructed this seed. Never resize durations or write junctions
+        // against the resulting problem with the old seed dimensions.
+        if (opt_vars.init_ts.size() != opt_vars.times.size() ||
+            opt_vars.init_ps.size() !=
+                    static_cast<std::size_t>(opt_vars.points.cols()) ||
+            !opt_vars.init_ts.allFinite() ||
+            opt_vars.init_ts.minCoeff() < 1e-3 ||
+            !std::all_of(opt_vars.init_ps.begin(), opt_vars.init_ps.end(),
+                         [](const Vec3f& point) { return point.allFinite(); })) {
+            planner_context_->warn(
+                    " -- [ExpOpt] supplied seed does not match the current "
+                    "post-simplification problem or contains invalid values");
+            traj.clear();
+            return INFINITY;
+        }
         opt_vars.times = opt_vars.init_ts;
         for (std::size_t i = 0; i < opt_vars.init_ps.size(); ++i) {
             opt_vars.points.col(static_cast<Eigen::Index>(i)) = opt_vars.init_ps[i];
