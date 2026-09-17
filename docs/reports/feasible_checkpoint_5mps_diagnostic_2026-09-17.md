@@ -947,3 +947,137 @@ SITL. The migration is not part of this feature: its documents and validator
 are neither overwritten nor staged here. The current working contract was
 read from `docs/safety/runtime_safety_current.md`; ordinary source correctness
 repair adds no temporary bypass requiring a new bypass decision.
+
+### CIRI corrected baseline: all nine integrated outcomes
+
+Feature commit `478855eeb3370e592216f9f54f02f3b3314f6d18` was pushed before
+these runs. Full `make test` passed all 81 selected CTest entries, including
+137 trajectory, 24 optimizer-seed and 17 facade tests, plus the runtime Python
+suite noted above. The stable rebuild completed 23 Release packages in
+10.5 s with a valid authoritative manifest. Its source snapshot deliberately
+includes unrelated safety-document migration WIP; it is **not a clean-HEAD
+build**. That WIP was preserved, not committed as this feature.
+
+Shared manifest SHA256:
+`21b67946289e4d81e26609d2b7925eda565274885b086f45c848ea87d323aa5d`;
+source fingerprint:
+`540376d84008446531d15c5b98e20db32e106247997f3197de66b5fe92cd1f08`;
+tracked WIP diff SHA256:
+`2f9a593e5d93cf737c50eb9df0aa67bb57bb8fb70356e4d4262787166f627e6b`.
+The untracked inputs were separately hashed: archived ledger
+`8842b9f986b057fb2443b2e6874a82fdce2d6cb23ed8139f850a0d0d6f903290`,
+current contract
+`93408125d602346aa2113d501de8f369508b9a26991f02a96a2408ea0cb04a21`,
+decision index
+`c740cf62500365ed2b5ece86a9ce47999e51391e8ea6db3e111be7357783848e`,
+and safety-ledger validator
+`6d5b84ab07db77e0f652ae84fe9432e9272d1cdd0548a9421b5bbaf8c62d5828`.
+Runtime provenance binds the full tracked/untracked
+source fingerprint rather than silently attributing that WIP to the commit.
+All nine captured planner YAMLs have unchanged SHA256
+`6480ff9679e20c3d5f9f5a38efbe7702d9ca98e66c454299019b423d5d298356`.
+PX4 HEAD/source/runtime binary identities are unchanged from the preceding
+continuous-guide matrix; mutable PX4 rootfs inputs remain separate captures.
+
+Runs were sequential, with no concurrent build, test, replay or source edits,
+from 04:29:20 to 04:44:44 UTC on 2026-09-17. Labels are
+`ciri-source-domain-478855-5mps-{2|5|9}wp-r{1|2|3}-20260917`;
+profile, seed, speed cap, visibility, domain and XRCE settings match the
+preceding matrix. Nominal/world snapshot capture is OFF. Session suffixes
+below identify `.artifacts/runtime/external-mode-check-20260917T...`.
+Accepted indices are zero-based `accepted_waypoint_index`, not the next active
+one-based `waypoint_index`. PAUSED means `PAUSED_SAFETY_STOP`.
+
+| Route/run | Session suffix | Mission / report | Accepted indices | Planner p99=max ms (n) | Checkpoints used / trace records | Cert calls / total us / max us |
+|---|---|---|---|---|---|---|
+| 2WP-1 | 042921-337624 | COMPLETE / FAIL | 0,1 | 80.186 (34) | 4/34 | 4/1273/342 |
+| 2WP-2 | 043118-342222 | PAUSED / BLOCKED | 0 | 83.041 (9) | 2/9 | 2/652/334 |
+| 2WP-3 | 043237-345845 | COMPLETE / FAIL | 0,1 | 69.180 (32) | 6/32 | 6/2091/468 |
+| 5WP-1 | 043439-349790 | PAUSED / BLOCKED | 0 | 139.511 (17) | 0/17 | 0/0/0 |
+| 5WP-2 | 043622-353500 | PAUSED / BLOCKED | 0,1,2 | 80.478 (23) | 6/23 | 6/2075/467 |
+| 5WP-3 | 043835-357420 | PAUSED / BLOCKED | 0 | 82.942 (16) | 1/16 | 1/234/234 |
+| 9WP-1 | 044005-361036 | PAUSED / BLOCKED | 0 | 80.509 (5) | 1/5 | 2/809/501 |
+| 9WP-2 | 044117-364596 | PAUSED / BLOCKED | 0,1 | 80.900 (24) | 3/24 | 3/1152/413 |
+| 9WP-3 | 044244-368261 | PAUSED / BLOCKED | 0,1,2,3 | 86.325 (31) | 6/31 | 7/2699/453 |
+
+**Completion remains 2/9**: 2WP 2/3, 5WP 0/3, 9WP 0/3. The preceding
+continuous-guide matrix was also 2/9 (1/3, 1/3, 0/3); route-level changes are
+descriptive, not causal/statistical gains. Current verdicts are two FAIL and
+seven BLOCKED, zero PASS. Independent review checked all nine exact reports
+and accepted-index lists. A mistaken intermediate census of 3/9 mixed in a
+prior 5WP COMPLETE; it was rejected against these artifacts and withdrawn.
+Do not reuse it. Totals are 191 trace records, 29 selected checkpoints,
+31 certificate calls and 10,985 us; largest per-record certificate-work total
+is 0.501 ms, not a per-call upper bound. Certificate calls and selected
+checkpoints need not be equal.
+
+All nine provenance statuses are VALID; capture/writer completion is true,
+writer/cloud drops and processing exceptions are observed zero, and no PX4
+failsafe or collision-envelope event is recorded. Those observations do not
+prove continuous physical safety. All assessments remain
+NOT_EVALUABLE/INCOMPLETE and qualification is false. In addition to the six
+common baseline blockers, 2WP-1 has CAPTURE_NOT_FINALIZED and PX4 trace
+sequence/prefix gaps despite the final writer-complete flag; 5WP-2 has
+incomplete position/velocity tracking sources. Those are evidence-contract
+failures, not rescued by final counter completeness. Timeline invariant
+counters must be read from `navigation_mapping`: missing in 2WP-1/5WP-2,
+observed zero in the other seven, not inferred from unrelated
+`planning.execution` fields or missing values.
+
+Run-wide speed retains hover/braking. In the two COMPLETE 2WP runs, setpoint
+max/p95/count is 4.900185/4.900006/2564 and 4.901507/4.900011/2596 m/s;
+measured max/p95/count is 5.894468/5.165514/2726 and
+5.698435/5.349545/2766 m/s. These show motion near the requested cap, not
+qualified smooth sustained 5 m/s tracking.
+
+### Whole-system reassessment: CIRI repair is not the completion solution
+
+The inspected failed runs no longer show the pre-fix CIRI INIT_ERROR witness,
+but this small population cannot close all numerical robustness questions.
+The remaining terminal chains are materially different:
+
+- **2WP-2:** late cycles 54/55/56 exceed the 80 ms budget, cycle 57 rejects
+  BACKUP known-free (code 8/cell UNKNOWN), then two A*/nominal-seed failures
+  leave generation 3 ending at x=24.68 before WP x=140. Lease/hold failure
+  follows. Revalidation code 1 with zero samples is invalid time window,
+  downstream, not a second world-tube finding. Startup epoch reset and the
+  initial terminal-endpoint warning are not the late cause.
+- **5WP-1:** active generation 3 fails new-world BACKUP revalidation, code 8,
+  73 samples. This is a real certificate/authority loss; the exact tube
+  witness, numerical deviation and sensor/free-space lineage remain open.
+- **5WP-2:** generation 15 activates at 62.272 s. The subsequent hot-replan
+  finalization cannot retain a safe suffix: elapsed 0.036 s, raw/projected
+  anchor error 0.864/0.877 m against tracking budget 0.250 m, state age
+  0.016 s, sweep clear. Commit decision 6 is finalization failure, not proof
+  of a world-update race; the generic `world_changed` trace label is too
+  coarse. Emergency `initial_point_blocked` appears after cancellation.
+  Endpoint error 5.361 m alone does not explain the authority loss.
+- **5WP-3 and 9WP-1/3:** prolonged MAIN deadline failures leave the retained
+  certified command stopped outside the next waypoint; anchor/lease expiry
+  follows. Valid earlier BACKUP commits refute a blanket "BACKUP always
+  unavailable" claim. 9WP-3 reaches four accepted waypoints but never finishes.
+- **9WP-2:** after valid earlier commits, late BACKUP known-free rejects
+  dominate, then retained anchor/lease fails. Code 8/cell UNKNOWN alone still
+  cannot distinguish a real blocked inflated voxel from curve-bound/fallback
+  diagnostic classification. No direct state-freshness rejection is established.
+
+A second **CONFIRMED** source/runtime lever is budget propagation in complete
+proposal construction. The backward BACKUP switch search has no outer
+cancellation/deadline check: passing a deadline only to its corridor subcall
+does not stop repeated seed/hull enumeration. 5WP-1 records 803 feasible seed
+attempts, zero aligned-SFC/known-free checks, and startup BACKUP overruns of
+126.126/139.511 ms. Failure-path frontend timing remains zero because it is
+assigned only after successful selection. This is not the terminal cause of
+that run, but demonstrates wasted worker work and a timing-evidence gap.
+
+The next bounded cycle should stop enumeration once its existing deadline or
+cancellation expires (FAILED, never a MAIN-only NO_NEED), account for every
+failure-path duration, and preserve current committed authority. Beyond that,
+choose progress from **complete MAIN+BACKUP proposals**, not from nominal-only
+feasible iterates: world-supported braking and measured-state handoff must
+participate before optional refinement consumes the budget. First capture
+the exact production tube/witness and tracking/handoff state to distinguish
+false rejection from a genuinely unsafe/untrackable proposal. No relaxed
+UNKNOWN/tracking/corridor gate, large coordinator, unbounded linked retry or
+new parallel command path is justified by this matrix. Correctness is repaired
+locally; product completion and stable/smooth 5 m/s flight remain unclosed.
