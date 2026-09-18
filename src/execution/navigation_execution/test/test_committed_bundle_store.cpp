@@ -1,3 +1,4 @@
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -115,6 +116,259 @@ TEST(CommittedBundleStore, RejectsOutOfOrderTransactionIdentity) {
   EXPECT_EQ(store.tryCommit({world, 7, 1}, stale),
             navigation_execution::CommitDecision::kCancelled);
   EXPECT_EQ(store.load(), first);
+}
+
+class ConditionalCommit : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+    ASSERT_TRUE(store.setActiveGoalEpoch(7));
+    active = makeCandidate(27);
+    ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+              navigation_execution::CommitDecision::kCommitted);
+  }
+
+  std::shared_ptr<const navigation_planning::CandidateBundle> makeCandidate(
+      std::uint64_t generation) const {
+    auto data = candidateFor(7, 1);
+    data.bundle_generation = generation;
+    return std::make_shared<const navigation_planning::CandidateBundle>(data);
+  }
+
+  void expectUnchanged(
+      const navigation_execution::ExecutionTimelineSnapshot& before) const {
+    const auto after = store.snapshot();
+    EXPECT_EQ(after.version, before.version);
+    EXPECT_EQ(after.active, before.active);
+    EXPECT_EQ(after.pending, before.pending);
+    EXPECT_EQ(after.pending_activation_ns, before.pending_activation_ns);
+    ASSERT_EQ(after.world_identity.has_value(), before.world_identity.has_value());
+    if (before.world_identity) {
+      EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+          *after.world_identity, *before.world_identity));
+    }
+  }
+
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  std::shared_ptr<const navigation_planning::CandidateBundle> active;
+};
+
+TEST_F(ConditionalCommit, CurrentOwnerBeforeEndAdmitsExactlyOneReplacement) {
+  const auto before = store.snapshot();
+  const auto replacement = makeCandidate(28);
+  std::int64_t fake_now_ns = active->declared_end_ns - 1;
+  int predicate_calls = 0;
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 2}, before, replacement, [&] {
+              ++predicate_calls;
+              return fake_now_ns < active->declared_end_ns;
+            }), navigation_execution::CommitDecision::kCommitted);
+  const auto after = store.snapshot();
+  EXPECT_EQ(after.active, replacement);
+  EXPECT_EQ(after.version, before.version + 1U);
+  EXPECT_FALSE(after.pending);
+  EXPECT_EQ(after.pending_activation_ns, 0);
+  EXPECT_EQ(predicate_calls, 1);
+}
+
+TEST_F(ConditionalCommit, ExactEndAndAfterEndRejectWithoutMutationOrConsumedToken) {
+  const auto before = store.snapshot();
+  const auto anchor_before = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor_before);
+  const auto replacement = makeCandidate(28);
+  std::int64_t fake_now_ns = active->declared_end_ns;
+  for (const auto now_ns : {active->declared_end_ns, active->declared_end_ns + 1}) {
+    fake_now_ns = now_ns;
+    EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 2}, before, replacement, [&] {
+                return fake_now_ns < active->declared_end_ns;
+              }), navigation_execution::CommitDecision::kAdmissionRejected);
+    expectUnchanged(before);
+    const auto anchor_after = store.reserveAnchor(50, 50);
+    ASSERT_TRUE(anchor_after);
+    EXPECT_EQ(anchor_after->execution_lineage_version,
+              anchor_before->execution_lineage_version);
+  }
+  // Same token is still available: rejection must not consume the watermark.
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 2}, before, replacement,
+                                    [] { return true; }),
+            navigation_execution::CommitDecision::kCommitted);
+}
+
+TEST_F(ConditionalCommit, AdmissionIsRecheckedAfterWaitingForStoreLock) {
+  const auto before = store.snapshot();
+  const auto replacement = makeCandidate(28);
+  std::atomic<std::int64_t> fake_now_ns{active->declared_end_ns - 1};
+  std::atomic<int> predicate_calls{0};
+  std::promise<void> holder_entered;
+  std::promise<void> release_holder;
+  auto release = release_holder.get_future().share();
+  auto holder = std::async(std::launch::async, [&] {
+    return store.publishIfCurrent(active, 7, [&] {
+      holder_entered.set_value();
+      release.wait();
+      return true;
+    });
+  });
+  holder_entered.get_future().wait();
+  std::promise<void> request_started;
+  auto started = request_started.get_future();
+  auto waiter = std::async(std::launch::async, [&] {
+    // Signals request invocation, not positive acquisition/waiting inside
+    // the API. Source-order review supplies the under-lock placement proof;
+    // this case controls END advancement while the store lock is held.
+    request_started.set_value();
+    return store.tryCommitIfCurrent({world, 7, 2}, before, replacement, [&] {
+      ++predicate_calls;
+      return fake_now_ns.load() < active->declared_end_ns;
+    });
+  });
+  started.wait();
+  fake_now_ns.store(active->declared_end_ns);
+  release_holder.set_value();
+  EXPECT_TRUE(holder.get());
+  EXPECT_EQ(waiter.get(), navigation_execution::CommitDecision::kAdmissionRejected);
+  EXPECT_EQ(predicate_calls.load(), 1);
+  expectUnchanged(before);
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 2}, before, replacement,
+                                    [] { return true; }),
+            navigation_execution::CommitDecision::kCommitted);
+}
+
+TEST_F(ConditionalCommit, PredicateExceptionIsRejectedWithoutMutation) {
+  const auto before = store.snapshot();
+  const auto replacement = makeCandidate(28);
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 2}, before, replacement,
+                                    []() -> bool {
+                                      throw std::runtime_error("clock failure");
+                                    }),
+            navigation_execution::CommitDecision::kAdmissionRejected);
+  expectUnchanged(before);
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 2}, before, replacement,
+                                    [] { return true; }),
+            navigation_execution::CommitDecision::kCommitted);
+}
+
+TEST_F(ConditionalCommit, SameGoalNewerActiveOwnerRejectsBeforePredicate) {
+  const auto observed = store.snapshot();
+  const auto newer = makeCandidate(28);
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, newer),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto before = store.snapshot();
+  bool predicate_called = false;
+  // This token is NEWER than the winning commit: cancellation is not the
+  // discriminator. The exact predecessor itself must be checked.
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 3}, observed, makeCandidate(29), [&] {
+              predicate_called = true;
+              return true;
+            }), navigation_execution::CommitDecision::kPredecessorAdvanced);
+  EXPECT_FALSE(predicate_called);
+  expectUnchanged(before);
+}
+
+TEST_F(ConditionalCommit, PendingOnlyMutationRejectsBeforePredicate) {
+  const auto observed = store.snapshot();
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  const auto pending = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, pending),
+            navigation_execution::StageDecision::kStaged);
+  const auto before = store.snapshot();
+  bool predicate_called = false;
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 3}, observed, makeCandidate(29), [&] {
+              predicate_called = true;
+              return true;
+            }), navigation_execution::CommitDecision::kPredecessorAdvanced);
+  EXPECT_FALSE(predicate_called);
+  expectUnchanged(before);
+}
+
+TEST_F(ConditionalCommit, CurrentPendingCanBeReplacedOnlyWithExplicitAdmission) {
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successorFor(*anchor, 7)),
+            navigation_execution::StageDecision::kStaged);
+  const auto before = store.snapshot();
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 3}, before, makeCandidate(29),
+                                    [] { return false; }),
+            navigation_execution::CommitDecision::kAdmissionRejected);
+  expectUnchanged(before);
+  const auto replacement = makeCandidate(29);
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 3}, before, replacement,
+                                    [] { return true; }),
+            navigation_execution::CommitDecision::kCommitted);
+  EXPECT_EQ(store.load(), replacement);
+  EXPECT_FALSE(store.snapshot().pending);
+}
+
+TEST_F(ConditionalCommit, WorldGoalAndTokenGatesDoNotInvokePredicate) {
+  const auto observed = store.snapshot();
+  bool predicate_called = false;
+  auto predicate = [&] {
+    predicate_called = true;
+    return true;
+  };
+  auto wrong_world = world;
+  ++wrong_world.revision;
+  ++wrong_world.observation_stamp_ns;
+  EXPECT_EQ(store.tryCommitIfCurrent({wrong_world, 7, 2}, observed,
+                                    makeCandidate(28), predicate),
+            navigation_execution::CommitDecision::kWorldAdvanced);
+  EXPECT_FALSE(predicate_called);
+  expectUnchanged(observed);
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 8, 2}, observed,
+                                    makeCandidate(28), predicate),
+            navigation_execution::CommitDecision::kGoalAdvanced);
+  EXPECT_FALSE(predicate_called);
+  expectUnchanged(observed);
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 1}, observed,
+                                    makeCandidate(28), predicate),
+            navigation_execution::CommitDecision::kCancelled);
+  EXPECT_FALSE(predicate_called);
+  expectUnchanged(observed);
+}
+
+TEST_F(ConditionalCommit, ActualWorldAdvanceRejectsBeforeStalePredecessor) {
+  const auto observed = store.snapshot();
+  auto advanced = world;
+  ++advanced.revision;
+  ++advanced.observation_stamp_ns;
+  ASSERT_TRUE(publishWorldIdentityForTest(store, advanced, active, true));
+  const auto before = store.snapshot();
+  bool predicate_called = false;
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 2}, observed, makeCandidate(28), [&] {
+              predicate_called = true;
+              return true;
+            }), navigation_execution::CommitDecision::kWorldAdvanced);
+  EXPECT_FALSE(predicate_called);
+  expectUnchanged(before);
+}
+
+TEST_F(ConditionalCommit, ActualGoalAdvanceRejectsBeforeStalePredecessor) {
+  const auto observed = store.snapshot();
+  ASSERT_TRUE(store.setActiveGoalEpoch(8, true));
+  const auto before = store.snapshot();
+  bool predicate_called = false;
+  EXPECT_EQ(store.tryCommitIfCurrent({world, 7, 2}, observed, makeCandidate(28), [&] {
+              predicate_called = true;
+              return true;
+            }), navigation_execution::CommitDecision::kGoalAdvanced);
+  EXPECT_FALSE(predicate_called);
+  expectUnchanged(before);
+}
+
+TEST_F(ConditionalCommit, LegacyImmediateCommitHasNoPredecessorOrDeadlineFence) {
+  // Control demonstrating why callers that prepare a phase-bound replacement
+  // cannot use tryCommit(): it intentionally has no expected timeline/clock.
+  const auto originally_observed = store.snapshot();
+  const auto newer = makeCandidate(28);
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, newer),
+            navigation_execution::CommitDecision::kCommitted);
+  const std::int64_t fake_now_ns = active->declared_end_ns;
+  ASSERT_GE(fake_now_ns, originally_observed.active->declared_end_ns);
+  const auto late = makeCandidate(29);
+  EXPECT_EQ(store.tryCommit({world, 7, 3}, late),
+            navigation_execution::CommitDecision::kCommitted);
+  EXPECT_EQ(store.load(), late);
 }
 
 TEST(CommittedBundleStore, FinalizerFailureRestoresPreviousExecutionPointer) {

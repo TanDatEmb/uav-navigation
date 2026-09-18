@@ -45,6 +45,12 @@ enum class CommitDecision : std::uint8_t {
   // callers can account for an internal transaction fault without treating
   // the previous command as lost.
   kFinalizationFailed,
+  // Exact predecessor/pending ownership changed before conditional admission.
+  // Append decisions to preserve existing diagnostic ordinals.
+  kPredecessorAdvanced,
+  // The bounded admission predicate returned false or threw. No timeline or
+  // transaction-watermark mutation occurred.
+  kAdmissionRejected,
 };
 
 enum class StageDecision : std::uint8_t {
@@ -473,6 +479,64 @@ class ExecutionTimelineStore final {
     }
     if (expected.transaction_id <= last_transaction_id_) {
       return CommitDecision::kCancelled;
+    }
+    committed_ = std::move(candidate);
+    ++active_lineage_version_;
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
+    return CommitDecision::kCommitted;
+  }
+
+  // An immediate replacement prepared outside the store lock may depend on
+  // both an exact predecessor and a phase/deadline that can expire while it
+  // waits. Check both at the cutover, before any mutation. Unlike a rollback
+  // finalizer, rejected admission neither advances the timeline/lineage nor
+  // consumes the transaction watermark.
+  //
+  // admit MUST be bounded: only read a clock/captured metadata; no allocation,
+  // I/O, owner/backend/world locks, clock updates, or store re-entry. A clock
+  // exception is an explicit rejection, not termination. Validation and
+  // candidate construction still happen outside this critical section.
+  template <typename AdmissionFn>
+  CommitDecision tryCommitIfCurrent(
+      const CommitToken& expected,
+      const ExecutionTimelineSnapshot& predecessor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
+      AdmissionFn&& admit) noexcept {
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0U ||
+        expected.transaction_id == 0U) {
+      return CommitDecision::kInvalidCandidate;
+    }
+    std::lock_guard lock(mutex_);
+    if (active_goal_epoch_ == 0U) return CommitDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) {
+      return CommitDecision::kGoalAdvanced;
+    }
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity) ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, candidate->world_identity)) {
+      return CommitDecision::kWorldAdvanced;
+    }
+    if (expected.transaction_id <= last_transaction_id_) {
+      return CommitDecision::kCancelled;
+    }
+    if (timeline_version_ != predecessor.version ||
+        committed_.get() != predecessor.active.get() ||
+        pending_.get() != predecessor.pending.get() ||
+        pending_activation_ns_ != predecessor.pending_activation_ns) {
+      return CommitDecision::kPredecessorAdvanced;
+    }
+    try {
+      if (!static_cast<bool>(std::forward<AdmissionFn>(admit)())) {
+        return CommitDecision::kAdmissionRejected;
+      }
+    } catch (...) {
+      return CommitDecision::kAdmissionRejected;
     }
     committed_ = std::move(candidate);
     ++active_lineage_version_;

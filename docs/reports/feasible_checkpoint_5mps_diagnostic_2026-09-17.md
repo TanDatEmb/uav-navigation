@@ -4945,3 +4945,46 @@ pre-end ticks must preserve generation/END and make zero optimizer calls;
 monitor scope must not freeze ordinary MAIN-with-BACKUP renewal. Keep the
 existing one-shot and experimental phase-bridge policies, not fabricated
 NO_NEED or an unconditional permission to brake.
+
+### W2 prerequisite: conditional immediate admission without rollback
+
+`ExecutionTimelineStore::tryCommitIfCurrent()` adds an opt-in immediate
+replacement boundary. Existing callers and product behavior remain unchanged.
+It preserves the existing candidate/goal/world/transaction gates, then checks
+the exact observed timeline version, active/pending pointers and pending
+activation under the store mutex. Only a bounded admission predicate is
+permitted there: clock/captured-metadata reads, no owner/backend/world locks,
+store re-entry, clock updates, allocation or I/O. False or an exception returns
+`kAdmissionRejected` before any pointer, version, lineage or watermark change;
+an advanced predecessor returns `kPredecessorAdvanced`. Both decisions are
+appended to preserve previous diagnostic ordinals. This is not a new authority
+owner or a replacement for candidate validation.
+
+Eleven focused controls cover pre-END acceptance, exact-END/after-END
+rejection, retained transaction watermark and lineage, predicate exceptions,
+same-goal newer active ownership, pending-only mutation, explicit pending
+replacement, wrong tokens and actual world/goal advancement. A legacy
+`tryCommit()` control demonstrates its intentionally absent predecessor/time
+fence; it is not labelled a flight reproducer. The barrier case controls END
+advancement while the store lock is held, but its request-start promise does
+not positively witness a waiter already inside the API. Under-lock predicate
+placement is established by source-order review, not that test alone.
+
+Actual Luna validation: Release `colcon build --packages-select
+navigation_execution --cmake-args -DCMAKE_BUILD_TYPE=Release`, rc0/one package;
+`ConditionalCommit.*`11/11PASS and full `test_committed_bundle_store`58/58PASS.
+Fresh pre/post source fingerprints match
+`f0d51e75106085ab7b25ef4bbf5e15a42f21a0004a8f3b7bb78eb93879016ef4`, dirty HEAD
+`8f3693220d5f8b9fbb0485c6048e377b02000c1c`; test binary SHA256
+`199657e78a2c6511b46609e5f0c79e682c65ab844bff0fbeb2fe8286cd2b489c`.
+Logs/XML are `conditional-commit-v2-*` in the existing ignored artifact folder.
+The earlier `conditional-commit-*` run passed9/56 tests but its prebuild
+fingerprint was NOT_CAPTURED; the W1 full-runtime manifest does not authorize
+either package-only build. This report append subsequently changes the source
+fingerprint. No downstream rebuild, full regression, runtime monitor caller,
+late-failure fence, SITL result or completion improvement is claimed.
+
+The runtime integration must still guard both successful admission and failed
+preparation delivery against original-G phase expiry and supersession. The
+two explicit scheduler reproducer tests remain known RED; making only key
+availability GREEN would not close the recovery/endpoint-hold transaction.
