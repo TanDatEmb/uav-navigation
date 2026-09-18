@@ -42,6 +42,48 @@
 namespace navigation_runtime {
 namespace {
 
+bool executionEpisodeSnapshotsEqual(
+    const ExecutionEpisodeSnapshot& lhs,
+    const ExecutionEpisodeSnapshot& rhs) noexcept {
+  return lhs.localization_epoch == rhs.localization_epoch &&
+         lhs.goal_epoch == rhs.goal_epoch && lhs.request_id == rhs.request_id &&
+         lhs.active_generation == rhs.active_generation && lhs.phase == rhs.phase &&
+         lhs.command_available == rhs.command_available &&
+         lhs.failure_latched == rhs.failure_latched &&
+         lhs.safety_suffix_active == rhs.safety_suffix_active &&
+         lhs.restart_from_rest == rhs.restart_from_rest &&
+         lhs.recovery_state == rhs.recovery_state;
+}
+
+bool executionTimelineSnapshotsEqual(
+    const navigation_execution::ExecutionTimelineSnapshot& lhs,
+    const navigation_execution::ExecutionTimelineSnapshot& rhs) noexcept {
+  return lhs.version == rhs.version && lhs.active.get() == rhs.active.get() &&
+         lhs.pending.get() == rhs.pending.get() &&
+         lhs.pending_activation_ns == rhs.pending_activation_ns;
+}
+
+// Terminal intent describes END, not HEAD or measured stopping. This phase
+// predicate schedules validation only; it grants neither exposure nor brake
+// authority. Ordinary MAIN-with-BACKUP renewal is deliberately not included.
+bool terminalMainMonitorPhaseIsOpen(
+    const navigation_planning::CandidateBundle& bundle,
+    const ExecutionEpisodeSnapshot& episode,
+    const std::int64_t now_ns) noexcept {
+  return bundle.kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+         bundle.terminal_stop && !bundle.backup_available &&
+         bundle.role == navigation_planning::CandidateRole::kMain &&
+         bundle.hasDeclaredEndpointMetadata() &&
+         bundle.declared_start_ns <= now_ns && now_ns < bundle.declared_end_ns &&
+         episode.command_available && !episode.failure_latched &&
+         !episode.restart_from_rest && !episode.safety_suffix_active &&
+         episode.phase == ExecutionEpisodePhase::kTrackingMain &&
+         episode.recovery_state == ExecutionRecoveryState::kTrackMain &&
+         episode.localization_epoch == bundle.localization_epoch &&
+         episode.goal_epoch == bundle.goal_epoch && episode.request_id == bundle.request_id &&
+         episode.active_generation == bundle.bundle_generation;
+}
+
 void warnWorldRevalidationFailure(
     const rclcpp::Logger& logger, const char* phase, std::uint64_t expected_generation,
     const navigation_planning::TrajectoryValidationResult& validation,
@@ -2395,7 +2437,8 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     const std::int64_t now_ns,
     const PlanningKey& scheduled_key,
     const std::optional<navigation_planning::CandidateBundle>& planned_candidate,
-    bool* const candidate_admitted) {
+    bool* const candidate_admitted,
+    const std::optional<TerminalMonitorBoundary>& terminal_monitor) {
   if (candidate_admitted) *candidate_admitted = false;
   // Keep rejection evidence in the same structured cycle record as planner
   // evidence. These codes are diagnostics only: every non-success path below
@@ -2505,6 +2548,10 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   }
   const bool emergency_candidate = candidate->kind ==
       navigation_planning::CandidateBundleKind::kEmergencyBrake;
+  if (terminal_monitor && !emergency_candidate) {
+    planner_->discardCommandCandidate();
+    return reject(kInvalidArguments);
+  }
   const auto execution_recovery_state =
       execution_episode_.snapshot().recovery_state;
   // An expired recovery endpoint is a bounded STOPPED_HOLD, not a future
@@ -2784,9 +2831,51 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   }
   const navigation_execution::CommitToken token{
       candidate_ptr->world_identity, goal_epoch, *transaction_id};
-  const auto stage_decision = anchor
-      ? static_cast<int>(command_bundle_store_.stagePending(token, *anchor, candidate_ptr))
-      : static_cast<int>(command_bundle_store_.tryCommit(token, candidate_ptr));
+  int stage_decision;
+  if (terminal_monitor) {
+    // Protect the runtime identity/episode as well as the store predecessor.
+    // The predicate inside the store reads only clocks and captured metadata;
+    // no owner/episode/world/backend lock is taken from that callback.
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    std::lock_guard<std::mutex> command_lock(
+        command_execution_lease_failure_latch_.transitionMutex());
+    const auto current_episode = execution_episode_.snapshot();
+    const auto predecessor = terminal_monitor->timeline.active;
+    const bool owner_current = predecessor && !anchor && !new_goal_ &&
+        !hot_goal_transition_ &&
+        desiredGoalIdentityMatchesLocked(goal, goal_epoch, localization_epoch) &&
+        executingCommandIdentityMatchesLocked(
+            goal, goal_epoch, localization_epoch, predecessor->bundle_generation) &&
+        executionEpisodeSnapshotsEqual(current_episode, terminal_monitor->episode) &&
+        command_execution_lease_failure_latch_.allowsCommandExposure() &&
+        !terminalHoldIsPending(
+            current_episode.command_available,
+            trajectory_reaches_goal_.load(std::memory_order_acquire), true,
+            terminal_bundle_generation_.load(std::memory_order_acquire));
+    stage_decision = static_cast<int>(owner_current
+        ? command_bundle_store_.tryCommitIfCurrent(
+              token, terminal_monitor->timeline, candidate_ptr, [&] {
+                const auto admission_now_ns = now().nanoseconds();
+                return terminalMainMonitorPhaseIsOpen(
+                           *predecessor, current_episode, admission_now_ns) &&
+                    measured_state &&
+                    navigation_contracts::evaluateExecutionStateFreshness(
+                        admission_now_ns, measured_state->state.source_stamp_ns,
+                        navigation_common::steadyClockNowNanoseconds(),
+                        measured_state->state.receive_stamp_ns,
+                        data_freshness_window_s_).valid() &&
+                    navigation_execution::classifyTimestampFreshness(
+                        admission_now_ns,
+                        candidate_ptr->world_identity.observation_stamp_ns,
+                        maximum_age_ns) == navigation_execution::TimestampFreshness::VALID;
+              })
+        : navigation_execution::CommitDecision::kPredecessorAdvanced);
+  } else {
+    stage_decision = anchor
+        ? static_cast<int>(command_bundle_store_.stagePending(token, *anchor, candidate_ptr))
+        : static_cast<int>(command_bundle_store_.tryCommit(token, candidate_ptr));
+  }
   const bool staged = stage_decision == 0;
   if (!staged) {
     planner_->discardCommandCandidate();
@@ -2926,6 +3015,8 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
   ExecutionRecoveryState recovery_state = ExecutionRecoveryState::kPx4Hold;
   std::shared_ptr<const navigation_planning::CandidateBundle> bundle;
   bool pending_bundle = false;
+  bool new_goal = false;
+  bool hot_goal_transition = false;
   std::uint64_t goal_epoch = 0U;
   std::uint64_t localization_epoch = 0U;
   std::uint64_t command_goal_epoch = 0U;
@@ -2941,6 +3032,8 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
     goal_epoch = active_goal_epoch_.load(std::memory_order_acquire);
     localization_epoch = active_localization_epoch_.load(std::memory_order_acquire);
     command_goal_epoch = command_goal_epoch_.load(std::memory_order_acquire);
+    new_goal = new_goal_;
+    hot_goal_transition = hot_goal_transition_;
     const auto timeline = command_bundle_store_.snapshot();
     bundle = timeline.active;
     pending_bundle = static_cast<bool>(timeline.pending);
@@ -2992,12 +3085,16 @@ std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
           bundle->role == navigation_planning::CandidateRole::kMain,
           bundle->request_id == goal->request_id && bundle->goal_epoch == goal_epoch,
           bundle->bundle_generation);
+  const bool terminal_monitor_open = bundle && !new_goal && !hot_goal_transition &&
+      effective_terminal_stop && command_identity_current &&
+      sameGoalIdentity(goal, executing_goal) && command_goal_epoch == goal_epoch &&
+      terminalMainMonitorPhaseIsOpen(*bundle, episode, now().nanoseconds());
   if (terminalHoldIsPending(
           episode.command_available,
           trajectory_reaches_goal_.load(std::memory_order_acquire),
           effective_terminal_stop,
           terminal_bundle_generation_.load(std::memory_order_acquire)) ||
-      committed_terminal_hold) {
+      (committed_terminal_hold && !terminal_monitor_open)) {
     // A certified terminal endpoint is the execution timeline's final
     // command for this request. Do not let the periodic timer create a
     // replacement solve while PX4 is settling or acknowledging the hold.
@@ -4380,6 +4477,50 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   const auto& active_route_waypoint =
       route_snapshot->waypoints[route_snapshot->active_waypoint_index];
   const Eigen::Vector3d target = active_route_waypoint.position_enu;
+  const auto monitor_bundle = expected_timeline_at_cycle.active;
+  const bool terminal_monitor_request = monitor_bundle &&
+      monitor_bundle->kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+      monitor_bundle->terminal_stop && !monitor_bundle->backup_available &&
+      monitor_bundle->role == navigation_planning::CandidateRole::kMain &&
+      effective_terminal_stop && !new_goal && !hot_goal_transition &&
+      !restart_from_rest && !expected_timeline_at_cycle.pending &&
+      sameGoalIdentity(goal, executing_goal_at_cycle) &&
+      command_goal_epoch_at_cycle == goal_epoch &&
+      monitor_bundle->localization_epoch == localization_epoch_at_cycle &&
+      monitor_bundle->goal_epoch == goal_epoch &&
+      monitor_bundle->request_id == goal->request_id &&
+      monitor_bundle->bundle_generation == effective_scheduled_key.committed_bundle_generation &&
+      episode_at_cycle.command_available && !episode_at_cycle.failure_latched &&
+      !episode_at_cycle.safety_suffix_active &&
+      episode_at_cycle.phase == ExecutionEpisodePhase::kTrackingMain &&
+      episode_at_cycle.recovery_state == ExecutionRecoveryState::kTrackMain;
+  if (terminal_monitor_request) {
+    // A queued pre-END tick can arrive after END without a publisher callback.
+    // It is discard-only, not permission to fall through to nominal renewal.
+    if (!terminalMainMonitorPhaseIsOpen(
+            *monitor_bundle, episode_at_cycle, now().nanoseconds())) return;
+    planner_->setWorldModelView(latest_world.view);
+    planner_->setGoalAcceptanceRadius(active_route_waypoint.acceptance_radius_m);
+    planner_->setMissionStartPosition(mission_start_position_at_cycle);
+    if (!planner_->setRouteSnapshot(*route_snapshot)) return;
+    planner_->setCommandIdentity(
+        localization_epoch_at_cycle, goal_epoch, goal->request_id);
+    planner_->resetOptimizationDiagnostics();
+    planner_->resetSolveCancellation();
+    const RetainedValidationContext monitor_context{
+        RetainedValidationPurpose::kTerminalMainMonitor, false, true,
+        0U, std::nullopt,
+        retainedCommandTrackingLimit(
+            planner_->trackingErrorBudgetMeters(),
+            navigation_contracts::kCommandAnchorErrorLimitM),
+        TerminalMonitorBoundary{expected_timeline_at_cycle, episode_at_cycle}};
+    validateRetainedCommand(
+        goal, goal_epoch, localization_epoch_at_cycle,
+        effective_scheduled_key, monitor_context);
+    // No optimizer, future anchor, nominal solve generation/watchdog or
+    // common result tail. Monitoring must not masquerade as NO_NEED/failure.
+    return;
+  }
   const auto planner_started = std::chrono::steady_clock::now();
   std::int64_t runtime_request_created_steady_ns = 0;
   std::int64_t runtime_result_received_steady_ns = 0;
@@ -6497,6 +6638,8 @@ void NavigationRuntimeNode::validateRetainedCommand(
   const bool plan_from_rest_with_transition = context.plan_from_rest_with_transition;
   const auto solve_generation = context.solve_generation;
   const auto result = context.planner_result;
+  const bool terminal_monitor =
+      context.purpose == RetainedValidationPurpose::kTerminalMainMonitor;
   const double retained_tracking_limit_m = context.tracking_limit_m;
   const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;
   ExecutionTraceSnapshot causal_snapshot;
@@ -6510,6 +6653,8 @@ void NavigationRuntimeNode::validateRetainedCommand(
   std::uint64_t retained_active_goal_epoch = 0U;
   std::uint64_t retained_command_goal_epoch = 0U;
   std::uint64_t retained_localization_epoch = 0U;
+  bool retained_new_goal = false;
+  bool retained_hot_goal_transition = false;
   {
     // Retained-command validation is a transaction over the desired goal,
     // executing identity, epochs, timeline and lifecycle episode. Capture
@@ -6529,6 +6674,8 @@ void NavigationRuntimeNode::validateRetainedCommand(
     retained_timeline = command_bundle_store_.snapshot();
     retained_episode = execution_episode_.snapshot();
     retained_recovery_state = retained_episode.recovery_state;
+    retained_new_goal = new_goal_;
+    retained_hot_goal_transition = hot_goal_transition_;
   }
   const auto committed_bundle = retained_timeline.active;
   const bool retained_goal_matches_callback = goal && retained_active_goal &&
@@ -6548,6 +6695,19 @@ void NavigationRuntimeNode::validateRetainedCommand(
       retained_executing_goal ? retained_executing_goal->request_id : 0U,
       retained_executing_goal && retained_active_goal &&
           retained_executing_goal->mission_id == retained_active_goal->mission_id);
+  if (terminal_monitor &&
+      (!context.terminal_monitor || !committed || retained_new_goal ||
+       retained_hot_goal_transition || retained_timeline.pending ||
+       retained_command_goal_epoch != goal_epoch ||
+       !sameGoalIdentity(retained_active_goal, retained_executing_goal) ||
+       !executionTimelineSnapshotsEqual(
+           retained_timeline, context.terminal_monitor->timeline) ||
+       !executionEpisodeSnapshotsEqual(
+           retained_episode, context.terminal_monitor->episode) ||
+       !terminalMainMonitorPhaseIsOpen(
+           *committed_bundle, retained_episode, now().nanoseconds()))) {
+    return;
+  }
   const bool backup_available = committed && committed_bundle->backup_available;
   const double backup_start_s = committed
       ? committed_bundle->backup_start_time_s : 0.0;
@@ -6843,6 +7003,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
   bool emergency_brake_committed = false;
   bool emergency_certification_failed = false;
   bool emergency_boundary_failed = false;
+  bool retained_result_discarded = false;
   // This is a bounded MAIN-continuity disposition only. It does not mark a
   // BACKUP suffix usable and does not transfer recovery ownership. The
   // ordinary command publisher still enforces the existing lease and the
@@ -6969,26 +7130,15 @@ void NavigationRuntimeNode::validateRetainedCommand(
   }
   if (emergency_brake_committed &&
       !commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
-                              now().nanoseconds(), effective_scheduled_key)) {
+                              now().nanoseconds(), effective_scheduled_key,
+                              std::nullopt, nullptr, context.terminal_monitor)) {
     emergency_brake_committed = false;
     use_safety_suffix = false;
     emergency_boundary_failed = true;
     RCLCPP_ERROR(get_logger(),
                  "execution boundary rejected the one-shot measured emergency candidate; "
-                 "clearing command exposure");
+                 "rechecking original execution owner before failure delivery");
   }
-  const auto executionEpisodeSnapshotsEqual = [](
-      const ExecutionEpisodeSnapshot& lhs,
-      const ExecutionEpisodeSnapshot& rhs) noexcept {
-    return lhs.localization_epoch == rhs.localization_epoch &&
-           lhs.goal_epoch == rhs.goal_epoch && lhs.request_id == rhs.request_id &&
-           lhs.active_generation == rhs.active_generation && lhs.phase == rhs.phase &&
-           lhs.command_available == rhs.command_available &&
-           lhs.failure_latched == rhs.failure_latched &&
-           lhs.safety_suffix_active == rhs.safety_suffix_active &&
-           lhs.restart_from_rest == rhs.restart_from_rest &&
-           lhs.recovery_state == rhs.recovery_state;
-  };
   // Prepare the expensive analytic witnesses before taking the owner
   // transaction locks.  The lock section below only rechecks freshness,
   // ownership and lease metadata, so projection cannot block command or
@@ -7180,7 +7330,23 @@ void NavigationRuntimeNode::validateRetainedCommand(
         current_localization_epoch == localization_epoch_at_solve &&
         current_active_goal_epoch == goal_epoch &&
         sameGoalIdentity(active_goal_, goal);
-    if (!callback_request_current ||
+    const bool monitor_window_current = !terminal_monitor ||
+        (context.terminal_monitor && committed_bundle &&
+         execution_owner_snapshot_current && !new_goal_ && !hot_goal_transition_ &&
+         current_command_goal_epoch == goal_epoch &&
+         sameGoalIdentity(active_goal_, executing_goal_) &&
+         !terminalHoldIsPending(
+             current_episode.command_available,
+             trajectory_reaches_goal_.load(std::memory_order_acquire), true,
+             terminal_bundle_generation_.load(std::memory_order_acquire)) &&
+         terminalMainMonitorPhaseIsOpen(
+             *committed_bundle, current_episode, now().nanoseconds()));
+    if (terminal_monitor && !emergency_brake_committed && !monitor_window_current) {
+      // Successful admission has its own pre-END store cutover. A failed or
+      // superseded preparation has no such receipt: after END (even without a
+      // publisher callback), it is discard-only, never revocation of G's hold.
+      retained_result_discarded = true;
+    } else if (!callback_request_current ||
         (!execution_owner_snapshot_current && !emergency_brake_committed)) {
       // A newer request or execution owner owns command state now. This old
       // solve is discard-only: never invalidate a deliberately transferred
@@ -7189,6 +7355,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
       // The emergency candidate is the sole exception: commitPlannerCandidate
       // intentionally changed the timeline, so its own identity check below
       // is the revalidation boundary for that one-way safety transition.
+      retained_result_discarded = terminal_monitor;
     } else if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
       failClosedLocked();
     } else if (emergency_certification_failed) {
@@ -7280,7 +7447,16 @@ void NavigationRuntimeNode::validateRetainedCommand(
                 "planner backend replaced the exceeded-anchor command with one "
                 "measured-state emergency brake");
   }
-  if (use_safety_suffix && validate_without_new_commit) {
+  if (terminal_monitor) {
+    RCLCPP_DEBUG(
+        get_logger(),
+        "terminal MAIN monitor generation=%lu discarded=%d emergency_admitted=%d "
+        "fresh=%d clear=%d anchor=%.3f projected=%.3f limit=%.3f",
+        static_cast<unsigned long>(committed_bundle ? committed_bundle->bundle_generation : 0U),
+        retained_result_discarded ? 1 : 0, emergency_brake_committed ? 1 : 0,
+        fresh_vehicle_state ? 1 : 0, sampled_path_clear ? 1 : 0,
+        anchor_error_m, projected_anchor_error_m, retained_tracking_limit_m);
+  } else if (use_safety_suffix && validate_without_new_commit) {
     RCLCPP_DEBUG(get_logger(),
                  "planner backend reported NO_NEED; retained committed command remains "
                  "latest-world valid without a new commit");
@@ -7301,7 +7477,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
                 "backup=%d elapsed=%.3f backup_start=%.3f end=%.3f "
                 "anchor_error=%.3f projected_anchor_error=%.3f "
                 "relative_anchor_speed=%.3f tracking_limit=%.3f",
-                static_cast<int>(result), backup_available, elapsed_s, safety_transition_s,
+                result ? static_cast<int>(*result) : -1, backup_available, elapsed_s, safety_transition_s,
                 total_duration_s, anchor_error_m, projected_anchor_error_m,
                 relative_anchor_speed_mps, retained_tracking_limit_m);
   } else {

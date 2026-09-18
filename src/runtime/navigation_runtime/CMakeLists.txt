@@ -151,6 +151,10 @@ if(BUILD_TESTING)
       "LD_LIBRARY_PATH=${NAVIGATION_CONTRACTS_PREFIX}/lib:$ENV{LD_LIBRARY_PATH}")
   ament_add_gtest(test_navigation_runtime_terminal_monitor
     test/test_navigation_runtime_terminal_monitor.cpp)
+  # rosidl exports its generated-header prefix; this test also reads a
+  # hand-written navigation_contracts header installed at the include root.
+  target_include_directories(test_navigation_runtime_terminal_monitor PRIVATE
+    ${navigation_contracts_INCLUDE_DIRS})
   target_compile_definitions(test_navigation_runtime_terminal_monitor PRIVATE
     NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml")
   target_link_libraries(test_navigation_runtime_terminal_monitor navigation_runtime_core)

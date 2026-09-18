@@ -1,13 +1,19 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
 
 #include <rcl/time.h>
 #include <navigation_common/time.hpp>
+#include <navigation_contracts/command_safety_contract.hpp>
+#include <navigation_planning_backend/planner_facade.hpp>
 
 #include "navigation_runtime/navigation_runtime_node.hpp"
 
@@ -24,7 +30,11 @@ class NavigationRuntimeTerminalMonitorTestPeer {
       const navigation_contracts::msg::NavigationGoal& goal,
       navigation_world_model::WorldModelViewPtr world,
       navigation_planning::CandidateBundle candidate) {
-    node.world_snapshot_store_.publish(std::move(world));
+    // The real facade fixture already pinned this exact immutable world to
+    // authorize its candidate. Do not republish the same identity as new data.
+    if (node.world_snapshot_store_.load().view.get() != world.get()) {
+      node.world_snapshot_store_.publish(std::move(world));
+    }
     const auto identity = node.world_snapshot_store_.load().identity;
     const auto before = node.command_bundle_store_.snapshot();
     if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
@@ -48,6 +58,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     node.command_goal_epoch_.store(command->goal_epoch);
     node.new_goal_ = false;
     node.hot_goal_transition_ = false;
+    node.execution_transaction_id_.store(1U);
     node.execution_episode_.beginGoal(command->localization_epoch, command->goal_epoch,
                                       command->request_id, false);
     node.execution_episode_.commandCommitted(*command);
@@ -57,13 +68,21 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     return true;
   }
 
-  static bool publishState(NavigationRuntimeNode& node, std::int64_t stamp_ns) {
+  static bool publishState(
+      NavigationRuntimeNode& node, std::int64_t stamp_ns,
+      const Eigen::Vector3d& offset = Eigen::Vector3d::Zero(),
+      const Eigen::Vector3d& velocity_residual = Eigen::Vector3d::Zero(),
+      const std::optional<Eigen::Vector3d>& measured_acceleration = std::nullopt) {
     const auto bundle = node.command_bundle_store_.load();
     const auto sample = bundle ? bundle->sampleAtDeclaredStamp(stamp_ns) : std::nullopt;
     if (!sample) return false;
     navigation_planning::KinematicState state;
-    state.position_world = sample->position_world;
-    state.velocity_world = sample->velocity_world;
+    state.position_world = sample->position_world + offset;
+    state.velocity_world = sample->velocity_world + velocity_residual;
+    state.acceleration_world = measured_acceleration.value_or(sample->acceleration_world);
+    state.jerk_world = sample->jerk_world;
+    state.acceleration_estimated = !measured_acceleration.has_value();
+    state.jerk_estimated = true;
     state.source_stamp_ns = stamp_ns;
     state.receive_stamp_ns = navigation_common::steadyClockNowNanoseconds();
     state.localization_epoch = bundle->localization_epoch;
@@ -79,6 +98,126 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static auto reserveFutureAnchor(NavigationRuntimeNode& node, std::int64_t stamp_ns) {
     return node.command_bundle_store_.reserveAnchor(stamp_ns, stamp_ns + 400'000'000LL);
   }
+  static auto episode(NavigationRuntimeNode& node) { return node.execution_episode_.snapshot(); }
+  static auto trace(NavigationRuntimeNode& node) { return node.execution_trace_store_.load(); }
+  static auto solveGeneration(NavigationRuntimeNode& node) {
+    return node.planner_solve_generation_.load();
+  }
+  static auto backendGeneration(NavigationRuntimeNode& node) {
+    return node.planner_->committedGeneration();
+  }
+  static auto optimization(NavigationRuntimeNode& node) {
+    return node.planner_->diagnostics().optimization;
+  }
+  static double trackingBudget(NavigationRuntimeNode& node) {
+    return node.planner_->trackingErrorBudgetMeters();
+  }
+  static bool seedPriorNominalTrace(NavigationRuntimeNode& node) {
+    const auto active = node.command_bundle_store_.load();
+    if (!active) return false;
+    ExecutionTraceSnapshot trace;
+    trace.planning_cycle_id = node.cycle_count_;
+    trace.solve_generation = 1U;
+    trace.timestamp_ns = node.now().nanoseconds();
+    trace.execution_localization_epoch = active->localization_epoch;
+    trace.execution_goal_epoch = active->goal_epoch;
+    trace.execution_request_id = active->request_id;
+    trace.execution_bundle_generation = active->bundle_generation;
+    return node.execution_trace_store_.publish(std::move(trace));
+  }
+  static auto boundaryRejection(NavigationRuntimeNode& node) {
+    return node.last_execution_boundary_rejection_.load();
+  }
+  static void cycle(NavigationRuntimeNode& node, const PlanningKey& key) { node.runCycle(key); }
+  static void transitionFlags(NavigationRuntimeNode& node, bool new_goal, bool hot_goal) {
+    std::lock_guard localization_lock(node.localization_transition_mutex_);
+    std::lock_guard input_lock(node.input_mutex_);
+    node.new_goal_ = new_goal;
+    node.hot_goal_transition_ = hot_goal;
+  }
+  static bool stagePending(NavigationRuntimeNode& node) {
+    const auto active = node.command_bundle_store_.load();
+    const auto anchor = node.command_bundle_store_.reserveAnchor(
+        active->declared_start_ns, active->declared_start_ns + 400'000'000LL);
+    if (!anchor) return false;
+    auto successor = *active;
+    ++successor.bundle_generation;
+    successor.valid_from_ns = anchor->activation_stamp_ns;
+    successor.activation_stamp_ns = anchor->activation_stamp_ns;
+    return node.command_bundle_store_.stagePending(
+               {active->world_identity, active->goal_epoch, 2U}, *anchor,
+               std::make_shared<const navigation_planning::CandidateBundle>(successor)) ==
+        navigation_execution::StageDecision::kStaged;
+  }
+  static void monitor(NavigationRuntimeNode& node, const PlanningKey& key) {
+    const auto timeline = node.command_bundle_store_.snapshot();
+    const auto episode = node.execution_episode_.snapshot();
+    const NavigationRuntimeNode::RetainedValidationContext context{
+        NavigationRuntimeNode::RetainedValidationPurpose::kTerminalMainMonitor,
+        false, true, 0U, std::nullopt,
+        retainedCommandTrackingLimit(node.planner_->trackingErrorBudgetMeters(),
+                                    navigation_contracts::kCommandAnchorErrorLimitM),
+        NavigationRuntimeNode::TerminalMonitorBoundary{timeline, episode}};
+    node.validateRetainedCommand(node.active_goal_, key.goal_epoch,
+                                 key.localization_epoch, key, context);
+  }
+  static auto planRealTerminal(
+      NavigationRuntimeNode& node, const navigation_contracts::msg::NavigationGoal& goal,
+      const navigation_world_model::WorldModelViewPtr& world, std::int64_t stamp_ns) {
+    node.world_snapshot_store_.publish(world);
+    navigation_mission::Mission mission;
+    mission.id = goal.mission_id;
+    mission.frame = goal.header.frame_id;
+    mission.waypoints = {
+        {"origin", Eigen::Vector3d{0.0, 0.0, 3.0}, 0.8, 0.0,
+         navigation_mission::MissionWaypoint::Behavior::PassThrough},
+        {"terminal", Eigen::Vector3d{3.5, 0.0, 3.0}, 0.8, 0.0,
+         navigation_mission::MissionWaypoint::Behavior::Stop}};
+    navigation_mission::RouteProgress progress(mission);
+    const Eigen::Vector3d measured_start{2.9, 0.0, 3.0};
+    (void)progress.update(measured_start);
+    navigation_planning::PlanningRequest request;
+    request.key = {1U, 1U, goal.request_id, goal.route.route_revision, 0U,
+                   world->identity().generation, world->identity().revision,
+                   navigation_planning::PlanningStartMode::kStoppedMeasuredState,
+                   stamp_ns, node.dynamics_hash_};
+    request.goal = {1U, 1U, goal.mission_id, goal.waypoint_index, goal.request_id};
+    request.start_state.position_world = measured_start;
+    request.start_state.source_stamp_ns = stamp_ns;
+    request.start_state.receive_stamp_ns = navigation_common::steadyClockNowNanoseconds();
+    request.start_state.localization_epoch = 1U;
+    request.start_state.world_frame_id = "lio_odom";
+    request.start_state.body_frame_id = "base_link";
+    request.route_snapshot = progress.snapshot(mission.id, mission.frame,
+                                              goal.route.route_revision, goal.request_id, 1U);
+    request.world = world;
+    request.dynamics.intent.requested_cruise_speed_mps = 5.0;
+    request.dynamics.unknown_space_policy = navigation_world_model::UnknownPolicy::kRequireKnownFree;
+    request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+        std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
+            std::chrono::duration<double>(navigation_planning::PlanningTimingContract::kSolveDeadlineS));
+    return node.planner_->plan(request);
+  }
+  static void acknowledge(NavigationRuntimeNode& node) {
+    const auto active = node.command_bundle_store_.load();
+    node.planner_->onExecutionTimelineActivated(active->bundle_generation);
+  }
+  static bool refreshWorld(NavigationRuntimeNode& node,
+                          const navigation_world_model::WorldModelViewPtr& world,
+                          std::int64_t stamp_ns) {
+    const auto timeline = node.command_bundle_store_.snapshot();
+    if (!timeline.active ||
+        !node.planner_->validateCommittedTrajectory(
+            world, static_cast<double>(stamp_ns) * 1.0e-9,
+            timeline.active->bundle_generation).valid) return false;
+    if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
+            world->identity(), timeline.version, timeline.active, true,
+            stamp_ns + node.data_freshness_window_ns_) !=
+        navigation_world_model::WorldCommitDecision::kCommitted) return false;
+    node.world_snapshot_store_.publish(world);
+    node.planner_->setWorldModelView(world);
+    return true;
+  }
 };
 
 namespace {
@@ -87,25 +226,69 @@ constexpr std::int64_t kStartNs = 10'000'000'000LL;
 constexpr std::int64_t kEndNs = 11'000'000'000LL;
 constexpr std::uint64_t kGeneration = 16U;
 
+// Test observation only: it never changes classification/geometry/identity.
+// The test thread advances the external ROS clock while validation is paused.
+class ClassificationBarrier {
+ public:
+  void arm() { armed_.store(true); }
+  void visit() noexcept {
+    if (!armed_.exchange(false)) return;
+    std::unique_lock lock(mutex_);
+    entered_ = true;
+    condition_.notify_all();
+    condition_.wait(lock, [this] { return released_; });
+  }
+  bool waitUntilEntered() {
+    std::unique_lock lock(mutex_);
+    return condition_.wait_for(lock, std::chrono::seconds(5), [this] { return entered_; });
+  }
+  void release() {
+    std::lock_guard lock(mutex_);
+    released_ = true;
+    condition_.notify_all();
+  }
+ private:
+  std::atomic_bool armed_{false};
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  bool entered_{false};
+  bool released_{false};
+};
+
 class SchedulerIdentityWorld final : public navigation_world_model::WorldModelView {
  public:
-  explicit SchedulerIdentityWorld(std::int64_t stamp_ns = kStartNs) : stamp_ns_(stamp_ns) {}
+  explicit SchedulerIdentityWorld(
+      std::int64_t stamp_ns = kStartNs, std::uint64_t revision = 1U,
+      std::shared_ptr<ClassificationBarrier> barrier = {})
+      : stamp_ns_(stamp_ns), revision_(revision), barrier_(std::move(barrier)) {}
   navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
-    return {1U, 2U, 1U, stamp_ns_};
+    return {1U, 2U, revision_, stamp_ns_};
   }
-  navigation_world_model::WorldGeometry geometry() const noexcept override { return {}; }
+  navigation_world_model::WorldGeometry geometry() const noexcept override {
+    navigation_world_model::WorldGeometry result;
+    result.evidence_resolution_m = 0.2;
+    result.inflated_resolution_m = 0.2;
+    result.occupied_inflation_radius_m = 1.0;
+    result.effective_virtual_ground_m = -1.0;
+    result.effective_virtual_ceiling_m = 5.0;
+    result.local_size_m = Eigen::Vector3d{50.0, 50.0, 8.0};
+    result.evidence_bounds = {Eigen::Vector3i{-125, -125, -20}, Eigen::Vector3i{250, 250, 40}};
+    result.inflated_bounds = result.evidence_bounds;
+    return result;
+  }
   navigation_world_model::CellState classify(
       const navigation_world_model::Point3&, navigation_world_model::GridLayer) const noexcept override {
+    if (barrier_) barrier_->visit();
     return navigation_world_model::CellState::kKnownFree;
   }
   bool contains(const navigation_world_model::Point3&) const noexcept override { return true; }
   navigation_world_model::GridIndex3 positionToIndex(
-      const navigation_world_model::Point3&, navigation_world_model::GridLayer) const noexcept override {
-    return navigation_world_model::GridIndex3::Zero();
+      const navigation_world_model::Point3& point, navigation_world_model::GridLayer) const noexcept override {
+    return (point.array() / 0.2).floor().cast<int>();
   }
   navigation_world_model::Point3 indexToPosition(
-      const navigation_world_model::GridIndex3&, navigation_world_model::GridLayer) const noexcept override {
-    return navigation_world_model::Point3::Zero();
+      const navigation_world_model::GridIndex3& index, navigation_world_model::GridLayer) const noexcept override {
+    return (index.cast<double>().array() + 0.5).matrix() * 0.2;
   }
   std::optional<navigation_world_model::Point3> nearestNotOccupied(
       const navigation_world_model::Point3& point,
@@ -120,6 +303,8 @@ class SchedulerIdentityWorld final : public navigation_world_model::WorldModelVi
       const navigation_world_model::AxisAlignedBox&) const override { return {}; }
  private:
   const std::int64_t stamp_ns_;
+  const std::uint64_t revision_;
+  const std::shared_ptr<ClassificationBarrier> barrier_;
 };
 
 navigation_contracts::msg::NavigationGoal schedulerGoal() {
@@ -191,6 +376,7 @@ navigation_planning::CandidateBundle schedulerMain(const bool semantic_terminal_
 
 class NavigationRuntimeTerminalMonitor : public testing::Test {
  protected:
+  virtual double trackingBaseMeters() const { return 0.0; }
   void SetUp() override {
     context_ = std::make_shared<rclcpp::Context>();
     context_->init(0, nullptr);
@@ -198,6 +384,7 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     options.context(context_);
     options.parameter_overrides({
         rclcpp::Parameter("use_sim_time", true),
+        rclcpp::Parameter("tracking_experiment.base_m", trackingBaseMeters()),
         rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
         rclcpp::Parameter("navigation_runtime.body_frame_id", "base_link"),
         rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
@@ -227,8 +414,47 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     ASSERT_EQ(node_->now().nanoseconds(), stamp_ns);
     ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishState(*node_, stamp_ns));
   }
+  void installReal(const std::shared_ptr<ClassificationBarrier>& barrier = {},
+                   const Eigen::Vector3d& velocity_residual = Eigen::Vector3d::Zero(),
+                   const std::optional<Eigen::Vector3d>& measured_acceleration = {}) {
+    const auto world = std::make_shared<SchedulerIdentityWorld>(kStartNs);
+    const auto outcome = NavigationRuntimeTerminalMonitorTestPeer::planRealTerminal(
+        *node_, schedulerGoal(), world, kStartNs);
+    ASSERT_TRUE(outcome.candidate) << static_cast<int>(outcome.failure_stage) << ":"
+                                   << static_cast<int>(outcome.failure_reason);
+    ASSERT_EQ(outcome.candidate->kind, navigation_planning::CandidateBundleKind::kTerminalStop);
+    ASSERT_TRUE(outcome.candidate->terminal_stop);
+    ASSERT_FALSE(outcome.candidate->backup_available);
+    ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::install(
+        *node_, schedulerGoal(), world, *outcome.candidate));
+    NavigationRuntimeTerminalMonitorTestPeer::acknowledge(*node_);
+    const auto end_ns = outcome.candidate->declared_end_ns;
+    ASSERT_GT(end_ns, kStartNs + 200'000'000LL);
+    real_stamp_ns_ = end_ns - 200'000'000LL;
+    setTime(real_stamp_ns_);
+    ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::refreshWorld(
+        *node_, std::make_shared<SchedulerIdentityWorld>(real_stamp_ns_, 2U, barrier),
+        real_stamp_ns_));
+    ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishState(
+        *node_, real_stamp_ns_, Eigen::Vector3d::Zero(), velocity_residual,
+        measured_acceleration));
+  }
   std::shared_ptr<rclcpp::Context> context_;
   std::shared_ptr<NavigationRuntimeNode> node_;
+  std::int64_t real_stamp_ns_{0};
+};
+
+// Separate strict test profile. Its explicit radius is the current planner
+// YAML's clearance-reserved tracking budget, not a production gate change.
+// Keep the default fixture at the actual diagnostic relaxed 0/0/0 profile.
+class NavigationRuntimeTerminalMonitorStrict : public NavigationRuntimeTerminalMonitor {
+ protected:
+  double trackingBaseMeters() const override { return 0.25; }
+  void SetUp() override {
+    NavigationRuntimeTerminalMonitor::SetUp();
+    ASSERT_DOUBLE_EQ(trackingBaseMeters(),
+                     NavigationRuntimeTerminalMonitorTestPeer::trackingBudget(*node_));
+  }
 };
 
 TEST_F(NavigationRuntimeTerminalMonitor, NonTerminalMainHasKeyAtMovingActivation) {
@@ -256,12 +482,36 @@ TEST_F(NavigationRuntimeTerminalMonitor, TerminalEndpointSuppressesKeyWithoutDer
   EXPECT_EQ(timeline.active->declared_end_ns, kEndNs);
 }
 
-// Known RED reproducer, opt-in until the monitor/recovery seam and cross-END
-// admission fence are implemented together. Do not enable a phase-only fix
-// just to make these assertions pass: key availability is not recovery or
-// completion evidence. Run explicitly with --gtest_also_run_disabled_tests.
+TEST_F(NavigationRuntimeTerminalMonitor, PendingAndGoalTransitionDoNotOpenTerminalMonitor) {
+  install(true, kStartNs);
+  NavigationRuntimeTerminalMonitorTestPeer::transitionFlags(*node_, true, false);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::key(*node_));
+  NavigationRuntimeTerminalMonitorTestPeer::transitionFlags(*node_, false, true);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::key(*node_));
+  NavigationRuntimeTerminalMonitorTestPeer::transitionFlags(*node_, false, false);
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::stagePending(*node_));
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::key(*node_));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor, MainWithBackupKeepsOrdinaryRenewalKey) {
+  auto candidate = schedulerMain(true);
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.backup_available = true;
+  candidate.backup_start_time_s = 0.6;
+  candidate.role_schedule = {
+      {0.0, 0.6, navigation_planning::CandidateRole::kMain},
+      {0.6, 1.0, navigation_planning::CandidateRole::kBackup}};
+  ASSERT_TRUE(candidate.valid());
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::install(
+      *node_, schedulerGoal(), std::make_shared<SchedulerIdentityWorld>(), candidate));
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishState(*node_, kStartNs));
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  EXPECT_EQ(key->start_mode, navigation_planning::PlanningStartMode::kCommittedFutureState);
+}
+
 TEST_F(NavigationRuntimeTerminalMonitor,
-       DISABLED_MovingTerminalMainMustRemainMonitorableBeforeDeclaredEnd) {
+       MovingTerminalMainMustRemainMonitorableBeforeDeclaredEnd) {
   install(true, kStartNs);
   const auto command = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active;
   ASSERT_TRUE(command);
@@ -273,11 +523,191 @@ TEST_F(NavigationRuntimeTerminalMonitor,
 }
 
 TEST_F(NavigationRuntimeTerminalMonitor,
-       DISABLED_TerminalMonitorMustRemainReachableInsideFutureAnchorLead) {
+       TerminalMonitorMustRemainReachableInsideFutureAnchorLead) {
   const auto stamp_ns = kEndNs - 200'000'000LL;
   install(true, stamp_ns);
   ASSERT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::reserveFutureAnchor(*node_, stamp_ns));
   EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::key(*node_));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor, RealBackendHealthyTailMonitorsWithoutNominalSolve) {
+  ASSERT_NO_FATAL_FAILURE(installReal());
+  const auto before = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  ASSERT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::reserveFutureAnchor(*node_, real_stamp_ns_));
+  const auto solve_generation = NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_);
+  NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+  const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  EXPECT_EQ(after.version, before.version);
+  EXPECT_EQ(after.active, before.active);
+  EXPECT_EQ(after.active->declared_end_ns, before.active->declared_end_ns);
+  const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
+  EXPECT_EQ(episode.recovery_state, ExecutionRecoveryState::kTrackMain);
+  EXPECT_FALSE(episode.safety_suffix_active);
+  EXPECT_FALSE(episode.failure_latched);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count, 0);
+  const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+  ASSERT_TRUE(trace);
+  EXPECT_EQ(trace->solve_generation, 0U);
+  EXPECT_TRUE(trace->sampled_path_clear);
+  EXPECT_EQ(trace->execution_bundle_generation, before.active->bundle_generation);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor, MonitorTraceMustReplacePriorNominalTrace) {
+  ASSERT_NO_FATAL_FAILURE(installReal());
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::seedPriorNominalTrace(*node_));
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+  const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+  ASSERT_TRUE(trace);
+  EXPECT_EQ(trace->solve_generation, 0U);  // monitor is not a nominal solve
+  EXPECT_GT(trace->planning_cycle_id, 0U);
+  EXPECT_TRUE(trace->sampled_path_clear);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor, QueuedMonitorAtEndCannotFallThroughToNominalSolve) {
+  ASSERT_NO_FATAL_FAILURE(installReal());
+  const auto before = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  const auto solve_generation = NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_);
+  setTime(before.active->declared_end_ns);
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishState(
+      *node_, before.active->declared_end_ns));
+  NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).version, before.version);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor, RelaxedProfileSuppressesPressureBeforeFinalLeaseWindow) {
+  ASSERT_NO_FATAL_FAILURE(installReal({}, Eigen::Vector3d{3.0, 0.0, 0.0}));
+  const auto before = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+  const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+  ASSERT_TRUE(trace);
+  EXPECT_GT(trace->projected_anchor_error_m, trace->retained_tracking_limit_m);
+  EXPECT_TRUE(trace->phase_execution_bridge_usable);
+  EXPECT_FALSE(trace->tracking_certificate_exceeded);
+  EXPECT_FALSE(trace->projected_tracking_certificate_exceeded);
+  EXPECT_EQ(trace->emergency_candidate_commit_result, 0);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).version, before.version);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active, before.active);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor, RelaxedProfileStillAllowsPressureInsideFinalLeaseWindow) {
+  ASSERT_NO_FATAL_FAILURE(installReal());
+  const auto before = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  // Cross the existing 100 ms bridge lease condition, without changing it.
+  const auto stamp_ns = before.active->declared_end_ns - 50'000'000LL;
+  setTime(stamp_ns);
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::refreshWorld(
+      *node_, std::make_shared<SchedulerIdentityWorld>(stamp_ns, 3U), stamp_ns));
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishState(
+      *node_, stamp_ns, Eigen::Vector3d::Zero(), Eigen::Vector3d{3.0, 0.0, 0.0}));
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+  const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+  ASSERT_TRUE(trace);
+  EXPECT_TRUE(trace->projected_tracking_certificate_exceeded);
+  EXPECT_EQ(trace->emergency_candidate_commit_result, 1);  // preparation only
+  const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  ASSERT_TRUE(after.active);
+  EXPECT_EQ(after.active->kind, navigation_planning::CandidateBundleKind::kEmergencyBrake);
+  EXPECT_NE(after.active->bundle_generation, before.active->bundle_generation);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
+            after.active->bundle_generation);  // actual activated store receipt
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict, ProjectedPressureCanAdmitRealBrakeWithoutFutureAnchor) {
+  ASSERT_NO_FATAL_FAILURE(installReal({}, Eigen::Vector3d{3.0, 0.0, 0.0}));
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  ASSERT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::reserveFutureAnchor(*node_, real_stamp_ns_));
+  NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+  const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  ASSERT_TRUE(after.active);
+  EXPECT_EQ(after.active->kind, navigation_planning::CandidateBundleKind::kEmergencyBrake);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
+            after.active->bundle_generation);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).recovery_state,
+            ExecutionRecoveryState::kEmergencyBrake);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict, StartedBeforeEndBrakePreparedLateIsDiscardOnlyWithoutPublisher) {
+  const auto barrier = std::make_shared<ClassificationBarrier>();
+  ASSERT_NO_FATAL_FAILURE(installReal(barrier, Eigen::Vector3d{3.0, 0.0, 0.0}));
+  const auto before = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  // Pause current-body classification BEFORE brake construction. This proves
+  // late preparation after a pre-END entry, not a post-certificate lock race.
+  barrier->arm();
+  auto monitor = std::async(std::launch::async, [&] {
+    NavigationRuntimeTerminalMonitorTestPeer::monitor(*node_, *key);
+  });
+  const bool entered = barrier->waitUntilEntered();
+  if (entered) setTime(before.active->declared_end_ns);
+  barrier->release();
+  monitor.get();
+  ASSERT_TRUE(entered);
+  const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  EXPECT_EQ(after.version, before.version);
+  EXPECT_EQ(after.active, before.active);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
+            before.active->bundle_generation);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+  ASSERT_TRUE(trace);
+  EXPECT_TRUE(trace->projected_tracking_certificate_exceeded);
+  EXPECT_EQ(trace->emergency_candidate_commit_result, 1);  // backend certificate, NOT store receipt
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::boundaryRejection(*node_),
+            1600 + static_cast<int>(navigation_execution::CommitDecision::kAdmissionRejected));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict, FailedBrakePreparationAcrossEndCannotFailCloseOwner) {
+  const auto barrier = std::make_shared<ClassificationBarrier>();
+  ASSERT_NO_FATAL_FAILURE(installReal(barrier, Eigen::Vector3d{3.0, 0.0, 0.0},
+                                    Eigen::Vector3d{1000.0, 0.0, 0.0}));
+  const auto before = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  barrier->arm();
+  auto monitor = std::async(std::launch::async, [&] {
+    NavigationRuntimeTerminalMonitorTestPeer::monitor(*node_, *key);
+  });
+  const bool entered = barrier->waitUntilEntered();
+  if (entered) setTime(before.active->declared_end_ns);
+  barrier->release();
+  monitor.get();
+  ASSERT_TRUE(entered);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).version, before.version);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+  ASSERT_TRUE(trace);
+  EXPECT_EQ(trace->emergency_candidate_commit_result, 2);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict, FailedBrakePreparationBeforeEndStillFailsClosed) {
+  ASSERT_NO_FATAL_FAILURE(installReal({}, Eigen::Vector3d{3.0, 0.0, 0.0},
+                                    Eigen::Vector3d{1000.0, 0.0, 0.0}));
+  const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+  ASSERT_TRUE(key);
+  NavigationRuntimeTerminalMonitorTestPeer::monitor(*node_, *key);
+  const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+  ASSERT_TRUE(trace);
+  EXPECT_EQ(trace->emergency_candidate_commit_result, 2);
+  EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).command_available);
 }
 
 }  // namespace

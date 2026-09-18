@@ -126,9 +126,12 @@ struct ExecutionTraceSnapshot final {
          trace.execution_bundle_generation == bundle_generation;
 }
 
-// Mutex-protected publication of immutable records.  The planner callback is
-// the writer; command and diagnostic callbacks each load one shared pointer.
-// Older solve completions cannot overwrite a newer trace record.
+// Mutex-protected publication of immutable records. One serial PlanningWorker
+// is the writer; command and diagnostic callbacks each load one shared pointer.
+// The worker cycle is the ordering key, independent of ROS time. A monitor
+// cycle has solve_generation=0 because it does not run the optimizer; it must
+// still replace an older nominal trace. Within one cycle the solve watermark
+// retains its existing stale-result guard. Neither key grants command authority.
 class ExecutionTraceStore final {
  public:
   ExecutionTraceStore() = default;
@@ -138,7 +141,10 @@ class ExecutionTraceStore final {
   bool publish(ExecutionTraceSnapshot next) noexcept {
     std::lock_guard lock(mutex_);
     if (next.execution_localization_epoch < minimum_localization_epoch_) return false;
-    if (state_ && next.solve_generation < state_->solve_generation) return false;
+    if (state_ &&
+        (next.planning_cycle_id < state_->planning_cycle_id ||
+         (next.planning_cycle_id == state_->planning_cycle_id &&
+          next.solve_generation < state_->solve_generation))) return false;
     try {
       state_ = std::make_shared<const ExecutionTraceSnapshot>(std::move(next));
     } catch (...) {

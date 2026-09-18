@@ -292,6 +292,14 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   enum class RetainedValidationPurpose {
     kAfterFailedReplacement,
     kPlannerValidationOnly,
+    kTerminalMainMonitor,
+  };
+  // Callback-local compare token, not a second active/pending owner. Both the
+  // store cutover and late-failure delivery must still belong to this exact
+  // pre-END execution episode.
+  struct TerminalMonitorBoundary {
+    navigation_execution::ExecutionTimelineSnapshot timeline;
+    ExecutionEpisodeSnapshot episode;
   };
   // Callback-local facts only, never another execution owner. The worker
   // prepares its backend identity/world/cancellation before this transaction;
@@ -301,8 +309,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
     bool plan_from_rest_with_transition;
     bool transition_terminal_stop;
     std::uint64_t solve_generation;
-    navigation_planning::PlannerStatus planner_result;
+    std::optional<navigation_planning::PlannerStatus> planner_result;
     double tracking_limit_m;
+    std::optional<TerminalMonitorBoundary> terminal_monitor = std::nullopt;
   };
   void validateRetainedCommand(
       const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
@@ -322,7 +331,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                              const PlanningKey& scheduled_key,
                              const std::optional<navigation_planning::CandidateBundle>&
                                  planned_candidate = std::nullopt,
-                             bool* candidate_admitted = nullptr);
+                             bool* candidate_admitted = nullptr,
+                             const std::optional<TerminalMonitorBoundary>&
+                                 terminal_monitor = std::nullopt);
   void suspendCommandForWorldFreshness();
   // Ingress serialization remains held while this temporarily releases the
   // lifecycle owner lock to drain old mapping work.

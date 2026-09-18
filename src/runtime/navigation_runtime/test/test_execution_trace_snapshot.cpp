@@ -67,6 +67,43 @@ TEST(ExecutionTraceStore, DoesNotMatchAReplacementExecutionOwner) {
   EXPECT_FALSE(executionTraceMatchesCommand(*snapshot, 7U, 8U, 0U, 1008U));
 }
 
+TEST(ExecutionTraceStore, NewerMonitorCycleDoesNotPretendToBeANominalSolve) {
+  ExecutionTraceStore store;
+  ASSERT_TRUE(store.publish(record(4U)));
+  const auto nominal = store.load();
+  auto monitor = record(5U);
+  monitor.solve_generation = 0U;  // no optimizer was run in this cycle
+  monitor.timestamp_ns = nominal->timestamp_ns - 10;  // ROS time may jump back
+  ASSERT_TRUE(store.publish(monitor));
+  EXPECT_EQ(store.load()->planning_cycle_id, 5U);
+  EXPECT_EQ(store.load()->solve_generation, 0U);
+  EXPECT_EQ(store.load()->timestamp_ns, monitor.timestamp_ns);
+  EXPECT_EQ(nominal->solve_generation, 4U);  // previously shared record is immutable
+
+  auto next_solve = record(6U);
+  next_solve.solve_generation = 5U;
+  EXPECT_TRUE(store.publish(next_solve));
+}
+
+TEST(ExecutionTraceStore, DelayedSolveCannotOverwriteANewerDecisionCycle) {
+  ExecutionTraceStore store;
+  auto current = record(5U);
+  current.solve_generation = 2U;
+  ASSERT_TRUE(store.publish(current));
+  auto delayed = record(4U);
+  delayed.solve_generation = 3U;
+  EXPECT_FALSE(store.publish(delayed));
+  EXPECT_EQ(store.load()->planning_cycle_id, 5U);
+
+  auto same_cycle_older_solve = current;
+  same_cycle_older_solve.solve_generation = 1U;
+  EXPECT_FALSE(store.publish(same_cycle_older_solve));
+  store.advanceLocalizationEpoch(8U);
+  auto old_epoch_new_cycle = record(6U);
+  EXPECT_FALSE(store.publish(old_epoch_new_cycle));
+  EXPECT_FALSE(store.load());
+}
+
 TEST(ExecutionTraceStore, RejectsAStaleLocalizationEpochAfterReset) {
   ExecutionTraceStore store;
   auto initial = record(8U);

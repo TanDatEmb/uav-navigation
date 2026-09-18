@@ -4988,3 +4988,204 @@ The runtime integration must still guard both successful admission and failed
 preparation delivery against original-G phase expiry and supersession. The
 two explicit scheduler reproducer tests remain known RED; making only key
 availability GREEN would not close the recovery/endpoint-hold transaction.
+
+### W3 runtime terminal monitoring: phase-correct admission and delivery
+
+The runtime now distinguishes terminal END intent from a validated endpoint
+hold. For the exact current same-goal MAIN-only `kTerminalStop` episode in
+`TrackingMain/TrackMain`, with no pending/new/hot goal or recovery ownership,
+pre-END ticks remain schedulable. They run the existing retained-command
+validator and authorized measured-state one-shot brake, not nominal renewal.
+This branch returns before future-anchor reservation, optimizer, nominal solve
+generation/watchdog and the ordinary solve-result tail. MAIN-with-BACKUP,
+validated holds, post-END ticks and recovery keep their existing paths.
+
+The callback carries an immutable timeline/episode compare token, not a second
+active/pending owner. Brake preparation remains outside the owner locks.
+Immediate admission holds the existing localization/input/command owner locks
+and uses W2's exact-store-predecessor check plus a fresh pre-END clock/state/world
+predicate under the store mutex. A failed or superseded preparation has no
+admission receipt: after END, even without a command-publisher callback, its
+delivery is discard-only, never authority to revoke the original hold. A
+genuine preparation failure while its original episode is still current and
+pre-END retains fail-closed behavior. Existing mission acceptance, settling,
+freshness, world, certificate, dynamic and final exposure gates are unchanged.
+
+#### Scope and controlled validation before the evidence-order correction
+
+Actual Luna W3-v5 canonical Full Release build completed 23 packages, rc0;
+pre/post source hashes match
+`ad8b51668e3d968b7c6c380cc68af7634cb94201ef4ad6153f849eeedb6dce16`, dirty HEAD
+`c14e93b27fbdaa9f87e52b3e6db2024cf72d9f5e`. Manifest SHA256 is
+`395e24e5e0c13fc6a7b3334da70cf71bb7c384aa4247de8f55212e5aee59ab8a`.
+The snapshot includes the unchanged separate optimizer trial and user-owned
+documentation WIP; it is not a clean-commit qualification claim.
+
+All 16 runtime monitor tests are enabled: 15 PASS/one deliberately exposed
+trace-order RED. Store tests remain 58/58 PASS. The runtime controls include
+the two former scheduler REDs; pending/new/hot-goal exclusion; unchanged
+MAIN-with-BACKUP renewal; healthy genuine backend MAIN preservation with zero
+nominal optimization attempts; queued-at-END no-renewal; actual pre-END brake
+admission/activation; late certified preparation discard; late failed
+preparation discard; and an in-window failed-preparation fail-closed control.
+
+The real facade fixture creates and validates a genuine terminal proposal from
+a stopped measured-state request. Injected measured velocity/acceleration
+pressure is controlled test input, not reproduction of native moving-head G16.
+The classification barrier pauses current-body validation BEFORE brake
+construction. It proves pre-END entry with late preparation/delivery; it does
+not alone prove an interleaving after completed certification immediately
+before the store lock. W2's store-boundary controls and source-order review
+cover that separate fence. Manufactured analytic candidates used by scheduler
+controls do not prove factory/validator correctness or flight safety.
+
+Earlier W3 runs are preserved, not removed from the test history: initial/v2
+compile failures were test include wiring/header errors; v3 was 7/13 PASS with
+six fixture exceptions from republishing the same immutable world identity;
+v4 was 10/15 PASS with five setup failures from republishing an execution state
+at an unchanged source timestamp. Fixes changed fixture setup, not product
+world/state monotonicity. No production gate, test assertion or budget was
+relaxed to make these setup controls run. Logs/XML/manifests are
+`terminal-monitor-w3-*` in the existing ignored task artifact folder.
+
+#### Diagnostic relaxed profile is not the strict brake test profile
+
+Native SAFE5-r1 `015941-939280` and FAST5-r3 `022233-981388` effective configs
+both show simulated relaxed tracking 0/0/0, `enabled=true`,
+`suppress_braking=true`, `suppress_estimator_health_response=true`,
+`qualification_eligible=false`. The stopped-hold proximity precheck is
+suppressed, but the final exposure proximity gate remains active. This
+tracking experiment is independent of the SAFE/FAST BACKUP UNKNOWN policy.
+
+W3 retains this actual diagnostic profile. The paired real-node relaxed
+controls prove that injected projected pressure at END-minus 200 ms is
+suppressed while the experimental bridge is eligible, preserving generation;
+at END-minus 50 ms the existing full-planning-period lease condition no longer
+permits that bridge, and an actual certified one-shot can be admitted. These
+are two controlled phases, not a measured worker-window distribution or
+completion improvement. Separate strict controls explicitly use 0.25 m and
+assert equality with the current YAML's clearance-reserved tracking budget;
+they do not change the runtime default or silently enable product gates.
+
+Thus monitor reachability is a confirmed boundary repair, not sufficient proof
+that native G16's final hold veto or SAFE5-r1's measured settling failure is
+resolved. Candidate END-rest, actual hold exposure and measured mission
+settling remain three different conditions. Solver availability alone cannot
+explain a fresh final-hold rejection when the complete candidate already exists.
+
+#### Confirmed trace-order defect and minimal correction pending rerun
+
+A real monitor must use `solve_generation=0` because it runs no optimizer.
+The original trace store's solve-only watermark rejects that record after a
+nominal trace with generation 1 or greater. A fixture with an empty trace store
+misses this reachable production condition. W3-v5's prior-nominal real-node
+control is RED (expected monitor 0, observed retained nominal 1); trace-unit
+controls are 4/6 PASS with two REDs proving monitor loss and lower-cycle delayed
+overwrite. Missing monitor evidence is not a zero-error observation.
+
+The correction orders immutable diagnostic records lexicographically by the
+existing worker cycle then solve watermark. There is one serial production
+PlanningWorker writer, and cycle IDs advance before either branch without
+reset on goal/localization changes. ROS timestamps do not define this order.
+The localization epoch floor and existing localization/goal/request/G command
+attachment remain unchanged. New controls cover newer-cycle monitor 0 despite a backward ROS
+timestamp, lower-cycle/higher-solve rejection, same-cycle/lower-solve rejection
+and old-epoch/higher-cycle rejection. This diagnostic key grants no command
+authority and creates no extra execution owner or wire schema. GREEN rerun,
+full regression and current-snapshot SITL are still pending at this append.
+
+`emergency_candidate_commit_result=1` continues to mean backend preparation,
+NOT a store admission/activation receipt. The monitor returns before the
+ordinary planner-result telemetry tail. A replacement command has a new G;
+the original-G trace must not be relabelled onto it. Use exact store/episode
+and backend activation receipts for component admission evidence; missing
+native cross-G receipt attribution remains `NOT_EVALUABLE`, not COMPLETE.
+The causal trace does not carry the world identity, timeline version or discard
+disposition. Same-G world recertification can replace the active pointer and
+certificate; existing G-only attachment cannot prove that an older validator
+record assessed that newer world. Canonical command world/certificate authority
+and causal validation evidence are distinct. This attribution limitation is
+not repaired by cycle ordering and must not become a cross-world PASS claim.
+
+#### Next complete-bundle discriminator, not an optimizer promotion
+
+Independent source review confirms that emergency preparation returns only a
+boolean across facade/backend input, seed, dynamics, construction and latest-
+world authorization. Early facade rejection can leave ambient diagnostics from
+an earlier attempt; runtime nominal diagnostics are captured before emergency
+preparation. BACKUP diagnostics also omit parts of the existing rich swept-
+validation result. Missing native emergency leaf remains an `EVIDENCE_GAP`:
+neither a nominal numerical failure with positive remaining budget nor a raw
+cell/code value establishes the cause of the complete-bundle failure.
+
+The smallest proposed closure is optional per-call diagnostic output, reset
+at facade entry and filled from the validators' existing results without a
+second query or changed admission. Separate actual emergency calls, BACKUP
+preparation jobs, latest-world authorization and canonical store receipts.
+Emergency preparation does not receive the nominal80ms deadline through its
+current API; its failure cannot automatically be labelled an80ms timeout.
+Required controls include invalid input without inherited leaf, observed-cell
+versus no-cell rejection, explicit SAFE/FAST UNKNOWN distinction with OCCUPIED
+rejected by both, and prepared-but-not-admitted receipt separation. This is a
+reviewed next discriminator, not an implemented diagnostic or approved tuning.
+The separate nominal-incumbent trial stays unpromoted: nominal checkpoint
+availability is not a complete executable MAIN+BACKUP result or completion win.
+
+#### Recoverable rosbag retention before the new frozen matrix
+
+Only the18 task-owned previous `export-owner-matrix-v1` rosbag DB3 files were
+removed from their runtime directories after lossless per-session archival.
+All36 original members (DB3 and metadata) have captured byte sizes and SHA256;
+all18 archives passed gzip integrity, GNU tar comparison and both member-stream
+hashes. Root independently checked all54 original/archive checksums again and
+found no open DB3 handles immediately before the explicit18-file removal.
+Original payload10,095,919,902bytes is retained in1,641,915,810bytes of archives;
+the remaining filesystem space is approximately14GB. This changes storage,
+not run outcomes, denominators, source or capture-loss accounting. Reports,
+configuration, native logs, timelines and the branch-recovery bundle remain.
+
+Inventory in the ignored task folder is
+`export-owner-matrix-v1-rosbag-archive-inventory.json`, SHA256
+`818ee1c0f55a6dc6446ba3a0a58d5591eda1059f4eba2968dedf1e9a69576eda`.
+It names every exact archive/member path, size, hash and verification result.
+Use that inventory to restore the selected old session before rosbag replay;
+an archived DB3 is not available at its original path until restored.
+
+```sh
+# Resolve and verify the selected archive from the inventory first.
+gzip -t <archive>
+tar --extract --gzip --file <archive> --directory /home/letandat/Dev/uav-navigation
+# Verify the restored members against the captured inventory checksums.
+```
+
+#### W3-v6 corrected component/regression checkpoint
+
+Actual Luna canonical Full Release rerun completed 23 packages, rc0. Fresh
+pre/post source fingerprints match
+`67182242dd61aff6a0e0a86e1cecfaa0dfbdfae608fca77c1620cebfa6f0562c`, dirty HEAD
+`c14e93b27fbdaa9f87e52b3e6db2024cf72d9f5e`; authoritative manifest SHA256 is
+`f71d2f35b8205f4c3c3fdfcef26b195aaa8faf7a8b87cef914993ea048621dee`.
+Terminal-monitor tests are16/16PASS, trace tests6/6PASS and store tests58/58PASS,
+including the three controlled evidence-order RED-to-GREEN cases. Runtime test
+binary SHA256 is
+`88caada37ea1125fa7b21b4550f3203f595a12fcc602d054f5377c994b6b561b`;
+trace test binary SHA256 is
+`740f28c119c7a4a0fedc49b24dcebb470fc25d95ebb4737e07780ae9c93e2340`.
+
+Both normal product `build.py --mode release test` and `make test` completed
+86 CTest tests with zero failures/errors/skips. The latter also passed7
+auxiliary tests and389 Python runtime tests with one explicit skip. Mock
+runtime-runner output `Runtime report: FAIL (cleanup succeeded)` is an expected
+failure-path test artifact, not an excluded real flight or a test-suite failure.
+Logs/XML are `terminal-monitor-w3-v6-*` in the same ignored task folder.
+Independent adversarial review found no new authority/policy blocker in the
+completed diff; its approval is source review, not timing or flight acceptance.
+Safety-ledger structural validation passed706 decisions/36 gates/34 active
+gates/5 bypasses/one active bypass; `git diff --check` passed. These structural
+checks do not qualify the safety-document migration or the flight envelope.
+
+This append changes the source fingerprint. The next frozen18-run SAFE/FAST
+matrix requires a fresh canonical Full Release manifest after the reviewed
+runtime checkpoint/report is committed. Keep the separate optimizer/user WIP
+explicit in that manifest; neither is promoted by this runtime commit. No W3
+SITL,5WP majority completion or deadline upper-bound claim is made here.
