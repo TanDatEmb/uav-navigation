@@ -5189,3 +5189,250 @@ matrix requires a fresh canonical Full Release manifest after the reviewed
 runtime checkpoint/report is committed. Keep the separate optimizer/user WIP
 explicit in that manifest; neither is promoted by this runtime commit. No W3
 SITL,5WP majority completion or deadline upper-bound claim is made here.
+
+### W3-v1 frozen 18-run diagnostic matrix — 2026-09-18
+
+Actual `gpt-5.6-luna` completed all18 serial SAFE/FAST ×2/5/9WP ×3 cases.
+Driver terminal state is `COMPLETE overall_rc=1 abort_reason=NONE`; no failure
+was retried, removed or excluded. The driver run is
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/terminal-monitor-w3-matrix-v1/run-20260918T115502898117457/`.
+Fresh canonical Full Release completed23 packages before flight. Frozen HEAD
+`b3c014a09e05653c57e99867000631029716e45a`, source fingerprint
+`1b96273b22c425222dc2b64c60732ddcb295c341b88eddb85af049ee268793b2`
+and manifest SHA256
+`96cc96b584ec7e6e6442cdef39423e757bd55490fa77d3f83891f23aace80e1b`
+remained unchanged through the matrix. The manifest explicitly includes the
+unpromoted optimizer incumbent trial and unrelated dirty documentation
+migration. These are not silently incorporated into the runtime commit.
+
+All cases use speed cap5m/s, seed0, nominal motion, visibility4096 endpoints/
+40m and noRViz/no nominal snapshot capture. The three route profiles remain
+`long_three_pillars_speed`, `long_three_pillars` and
+`long_three_pillars_multiwaypoint`. SAFE uses
+`raycasting_on_backup_strict`; FAST uses the explicit experimental
+`raycasting_on_backup_unknown`. FAST UNKNOWN is not permission for OCCUPIED
+or OUT_OF_MAP. Tracking gates remain the diagnostic0/0/0 configuration;
+every case has `qualification_eligible=false`.
+
+| Policy | Route | Native COMPLETE | Native PAUSED | Native FAILED_COMPONENT |
+|---|---|---:|---:|---:|
+| SAFE |2WP|0/3|2/3|1/3|
+| SAFE |5WP|2/3|1/3|0/3|
+| SAFE |9WP|0/3|3/3|0/3|
+| FAST |2WP|0/3|3/3|0/3|
+| FAST |5WP|1/3|2/3|0/3|
+| FAST |9WP|0/3|3/3|0/3|
+
+The18-run denominator is3 COMPLETE,14 PAUSED and1 FAILED_COMPONENT. Native
+COMPLETE is not report PASS: all three COMPLETE reports are FAIL; the whole
+matrix has4 FAIL and14 BLOCKED reports, zero qualification PASS. The initial
+5WP≥2/3-per-policy milestone is **not met** because FAST is1/3. The earlier
+unpaired18-run diagnostic baseline had7 COMPLETE and5WP0/6; this round has
+5WP3/6 but2WP0/6. Different source/build identities and unpaired schedules
+prevent a causal A/B claim. Overall improvement, stable5m/s cruise and
+qualification remain unproven. This regression is retained, not explained
+away by the improved local5WP count.
+
+The authoritative per-session aggregate is the ignored
+`terminal-monitor-w3-matrix-v1-aggregate.json`, SHA256
+`50158491cf33667db7e8d810e50366806d39e00b5e44e25352e3943d8b4677a6`.
+Its18 ATTEMPTED rows name every session, experiment ID, native accepted
+waypoint set, report verdict and original log anchor. No IN_PROGRESS,
+PLANNED or NOT_ATTEMPTED rows remain. Whole-observed-window measured/setpoint
+speed statistics include hover/braking; they are not steady-cruise or an
+upper-bound certificate. Authoritative terminal tracking, source-clock
+ground-truth attribution and settling-tail metrics remain NOT_EVALUABLE
+where the native artifacts do not close their contracts.
+
+#### Failure groups and strongest counterarguments
+
+1. **Pending-splice revocation, not yet a proved universal cause.** SAFE2-r2
+   session`045702-1073804` activates G21 at ROS52.528s in original
+   `mapping.log:460`, then emits a rejected command at`:461` about20ms
+   later. FAST2-r1/r2/r3 repeat the one-command-period pattern at
+   `051130-1106792:467–468`, `051329-1111731:453–454` and
+   `051521-1116484:452–453`. Rejected-command leaves report no sampled bundle,
+   unavailable/failed episode and generation0. They are consequence evidence,
+   not the missing earlier owner's revocation decision. The first captured
+   FAST2-r2/r3 G inputs already have source time after declared START, while
+   SAFE2-r2/FAST2-r1 have a pre-START source. Therefore pre-START support is
+   **not** demonstrated as the universal cause. Native pending activation
+   updates the episode coherently; the separate immediate-admission race
+   below is not a demonstrated explanation for these cases.
+2. **Incomplete SAFE bundle plus stopping containment.** SAFE9-r1
+   `050732-1095499`, original `mapping.log:351`, records MAIN expiry80.298ms;
+   BACKUP rejection at`:352/:376/:377` takes43.812/44.275/43.841ms without
+   deadline expiry. The last warning has6 aligned-hull passes but zero
+   known-free passes. Missing tube/cell-observed attribution prevents turning
+   its reported UNKNOWN into a complete observed-cell oracle finding. The
+   final hold veto`:379` is factual:1.15601925m>.75m with fresh state/world
+   and valid leases. This is PASS_THROUGH waypoint1 recovery, not the final
+   terminal monitor. More nominal budget cannot certify an UNKNOWN SAFE
+   BACKUP, and increasing the hold gate would hide stopping divergence.
+3. **Last STOP reached near its ball, but measured settling not proved.**
+   FAST5-r2`051945-1125251` accepts0..3 and actually admits one-shot emergency
+   G14 (`mapping.log:476`). External Mode subsequently samples measured speed
+   .246/.254/.226m/s above unchanged.15m/s near the.8m ball, then hands over
+   after the bounded recovery interval. Coarse samples do not prove the
+   complete confirmation-window minimum or distinguish physical motion from
+   estimator residual. Emergency END/Hold is not mission completion.
+4. **New OCCUPIED world correctly invalidates FAST MAIN.** FAST5-r3
+   `052148-1129828`, `mapping.log:268`, reports a full world revalidation
+   witness for G1: failure8, MAIN role0, tube failure4, observed OCCUPIED
+   cell3 at(11.9,-1.9,3.1), blocked trajectory time3.95160625s, interval end
+   3.99361765s and curve bound.00122169175m≤.05m. Revision186→190 precedes
+   rejection`:270`. This cannot be repaired by treating FAST as permission
+   for OCCUPIED. Whether an independent measured-state brake was feasible
+   is not established by the existing leaf.
+5. **Late9WP failures remain distinct.** FAST9-r1`052251-1133542` accepts0..7;
+   original `mapping.log:749` vetoes G32 STOPPED_HOLD at
+   .750003332m>.75m with fresh state/world and valid leases. Later External
+   Mode samples fall below.15m/s but are outside the.9m acceptance radius.
+   Do not tune the gate from the3µm boundary excess: subsequent spatial
+   drift and source/ground-truth attribution still require explanation.
+   FAST9-r2`052546-1138046` accepts0..7; first bounded rejection is`:522`
+   and cancel`:523`, with no prior final-exposure veto found in that bounded
+   search. Its preceding owner decision remains NOT_EVALUABLE. FAST9-r3
+   `052805-1142301` accepts only0; first veto`:325` is.968719781m>.75m,
+   followed by rejection`:326` and world failure`:327`. That later world
+   failure is not substituted for the first exposure veto.
+
+**Rejected hypotheses:** `WorldSnapshotStore::latest()` exposing an unpublished
+world (`latest()` delegates to `load()` and dependent timeline finalization
+precedes immutable pointer publication); relaxed tracking base0 meaning the
+backend tracking budget is0 (native planner.yaml retains.25m); raw
+`replan_code=2` meaning mathematical NO_NEED (the facade uses a different
+PlannerResultCode enum); and a universal missing activation ACK. Regular
+worker ACK processing precedes `runCycle`; the latter hypothesis needs actual
+expected/evaluated backend generation evidence, not a watermark inference.
+
+**Separate source finding:** immediate canonical admission G can release
+runtime owner locks before episode delivery; mapping can recertify G→G′ at
+the same generation/new world; the legacy pointer-only delivery then skips
+the episode. Derived identity inconsistency/pre-END scheduling interruption
+is source-reachable; uncertified command exposure, permanent stranding and
+occurrence in these18 native runs are not proved. A controlled RED over the
+actual admission/delivery seams is still required before its minimal atomic
+delivery fix. No generation-only pointer shortcut or second command authority
+is justified.
+
+#### Next discriminating work, not a budget/gate adjustment
+
+An actual-facade future-anchor handoff fixture and a worker per-call
+`retained_command_decision` observer are being prepared. The fixture uses
+certified predecessor A, actual400ms reservation, factory-certified terminal
+MAIN-only G, real pending admission/activation/queued ACK and measured state
+from A before START or G after START. It must report FIXTURE_BLOCKED instead
+of manufacturing a certificate. Independent within-.25m raw-tube preconditions
+must preserve G in both relaxed and positive-strict profiles; missing adaptive
+source support alone is not a sufficient failure claim.
+
+The diagnostic event must survive revoke/discard independently of command
+attachment and optimizer jobs (monitor solve_generation0 remains no solve).
+It separates backend preparation, factual canonical admission receipt and
+derived identity delivery, carries expected/evaluated generation, evaluated
+world/tube/cell witness, both clock domains and final preserve/revoke/discard
+disposition, and reuses the existing validator result without a second query.
+Formatting/ROS publication happens only on the worker after owner locks;
+observer exceptions cannot change execution. Disabled/failed publisher
+accounting is not receiver capture receipt; source/capture gaps remain
+NOT_EVALUABLE. New tests/build/adversarial review, capture completeness and
+OFF/ON timing tails are still pending at this documentation checkpoint.
+
+The goal remains ACTIVE with the original broad success criteria. The next
+round prioritizes this correspondence/decision witness and controlled
+boundary tests, not another solver-local optimization or a600ms budget.
+
+#### W4 corrected observation/component checkpoint
+
+The worker-side per-call observer is implemented without a recovery/gate/budget
+change. `navigation_runtime/retained_command_decision` is emitted after owner
+locks and after the existing trace publication, even if its evaluated command
+was revoked or discarded. It retains expected vs captured vs evaluated owners
+and worlds, separate captured/expected END/lease bounds, unchanged-certificate
+reuse, exact freshness ROS/steady clocks and final delivery disposition. The
+emergency preparation Boolean, factual canonical store receipt and derived
+identity-delivery Boolean are separate. Missing source/cell/result evidence
+is NOT_EVALUABLE rather than a default0 success. The diagnostic enable switch
+affects emission only; disabled/throwing sink controls do not change execution.
+Publisher attempts/failures/suppression are accounted, but successful ROS
+publication is not receiver capture receipt or a timing upper bound.
+
+Actual Luna Full Release completed23 packages. Frozen component HEAD is
+`b3c014a09e05653c57e99867000631029716e45a`, dirty source fingerprint
+`d19220a906f9d8a5f22ae6fe622dc382906b475bbdbb245cab849cf9e364bf5a`
+and authoritative manifest SHA256
+`848a280832983ba5b55a263f24463bdd5a13b2e1c24e0f43f40a594431ddecc7`.
+Terminal-monitor gtests22/22 and observer gtests6/6 passed with zero disabled
+tests. The six real-facade future-handoff controls cover relaxed/strict ON
+before/after START and relaxed observer-OFF before/after START; they do not
+claim a strict OFF pair. All independent within-.25m healthy controls keep G,
+without a new solve or END slide. These are real callback/API integration
+controls, not proof of DDS dispatch or physical tracking.
+
+Canonical runtime package tests15/15, full Release87 CTest tests and `make test`
+87 CTest/7 auxiliary/389 Python tests pass. CTest has zero errors/failures/skips;
+the Python runtime suite has one explicitly documented skip. Raw CTest v1
+failed to import `ament_cmake_test` because the ROS environment was not loaded;
+retain its logs as ENV_NOT_EXECUTED, not a product RED. Canonical v2 loads the
+ROS/workspace environment and actually executes the gtests. Logs are
+`.artifacts/diagnostics/retained-decision-w4-v{1,2}-*`; test binary SHA256 values
+are `cd895baf99ce26d568e751d0f73b2ccc465e64e73697470ddaeeb102d5db4a40`
+(observer) and `1fe89e9eec1957eda23d63400c5161b63f6680112a797d474d76e4cbe3501451`
+(monitor). Existing trace6/6 and store58/58 also pass. Independent source
+adversarial review finds no new authority blocker; capture completeness,
+OFF/ON flight timing tails and native completion remain unverified.
+
+**New native discriminator, not the missing worker pin:** root independently
+joins SAFE2-r2's first published G21 PVA (`planning_timeline.jsonl:4350`) to
+the exact `state_source_stamp_ns=52.520s` propagated observation
+(`perception_timeline.jsonl:19258`). Both use `lio_odom`, localization epoch
+81539215880449. Command position(139.6038879788534,-.018725923270595538,
+2.9999972162486084) vs measured position(140.10591825115415,.12077729866568077,
+3.0128416736562693) gives raw error **.5212106323964023m**, above the backend
+.25m tracking budget but below the .75m admission guard. Source is8ms before
+G21's declared START52.528s. Command header rounds to52.527999999s; no1ns
+rounding first-cause claim follows. A published/source witness does not identify
+the monitor's later initial/final state or its first revoking writer. It does
+refute treating this native splice as the healthy within-raw-tube fixture.
+The ignored exact pair has SHA256
+`1c75b1885ae9695e26759d7ab1dd8f9ede8a2cc4bd44b75d8c1c2c1d5844d71b`.
+
+The next behavioral hypothesis must separate tracking-pressure/correspondence
+from solver budget. Missing new-G source-time support currently cannot prove
+actual/projected certificate violation, and therefore may skip an emergency
+attempt before fail-close. A new independently certified measured-state brake
+trigger is only a proposal: its feasibility, current owner/world/lease/END,
+one-way recovery and exact SAFE/FAST role policy require controlled RED and
+contract review. In particular EMERGENCY currently follows MAIN mission UNKNOWN
+policy in the source, not automatically SAFE BACKUP known-free. No new trigger,
+policy reinterpretation or unsafe MAIN continuation is implemented here.
+
+#### Compact diagnostic retention, saved before further cleanup
+
+The ignored task folder contains `session-diagnostic-retention-summary-20260918.md`
+and `session-diagnostic-retention-manifest-20260918.json`. They name every exact
+session/outcome/hash, source/build boundary, original first-failure path/line,
+rejected hypothesis, evidence gap and mandatory keep/delete boundary. This is
+a small retention aid, not a second canonical report. Source/WIP, this report,
+safety docs, branch recovery bundle, driver/plan/state, original failure logs,
+configs/provenance, native reports and planning/perception timelines must remain.
+
+Only the exact18 W3-v1 raw DB3 originals were removed after full lossless archive
+verification/no-writer checks. They total8,472,686,592bytes; the ~1.3GB compressed
+`terminal-monitor-w3-matrix-v1-db3-metadata.tar.gz` remains recoverable, SHA256
+`c62b680bf28a696b41c39280bed63c6b48d041c4dd232331803a6d3475b24932`.
+Inventory SHA256 is
+`d96b9d7ed480b1a33ef0a3455e7627e1bef2d1def33dfd01bf005d1b9b33ed31`;
+exact deletion/restore receipt SHA256 is
+`a2426d69cca940dcab779a2c20ed913de92700e57303c6dbf54a8db5fae1d01c`.
+Root independently checked36 original hashes, gzip and tar comparison; archive
+membership agrees with all18 native experiment IDs/roots. No report, log,
+timeline, config or metadata was deleted. Deleting the archive would forfeit
+full sensor replay and is not performed here. Further flight-data retention
+must be exact-target, verified and outside live flight/build/timing work.
+
+This append changes the source fingerprint. Commit the reviewed observer/test
+boundary, then produce a fresh canonical Release manifest before the next
+frozen18-run matrix. The broad goal remains ACTIVE, 5WP-per-policy milestone
+not met, and qualification blocked. A component GREEN is not its completion.

@@ -39,6 +39,7 @@
 #include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/heading_rebind_worker.hpp"
 #include "navigation_runtime/execution_trace_snapshot.hpp"
+#include "navigation_runtime/retained_decision_observation.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
 #include <navigation_execution/committed_bundle_store.hpp>
@@ -318,6 +319,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       std::uint64_t goal_epoch, std::uint64_t localization_epoch_at_solve,
       const PlanningKey& effective_scheduled_key,
       const RetainedValidationContext& context);
+  void observeRetainedDecision(
+      const ExecutionTraceSnapshot& trace,
+      const RetainedDecisionObservation& decision) noexcept;
   void publishCommand();
   [[nodiscard]] bool clearCommandForCurrentIdentity(
       const navigation_contracts::msg::NavigationGoal& command_goal,
@@ -507,6 +511,10 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // immutable record. It is copied into the command stream and never
   // consumed by admission or recovery predicates.
   ExecutionTraceStore execution_trace_store_;
+  // Observation only; serial PlanningWorker owns these counters. Neither
+  // command sampling nor recovery reads them or the enable switch.
+  bool retained_decision_diagnostics_enabled_{true};
+  RetainedObservationAccounting retained_decision_accounting_;
   std::atomic_uint64_t planner_solve_generation_{0U};
   std::uint64_t active_planner_solve_generation_{0U};
   std::atomic_uint64_t timed_out_planner_solve_generation_{0U};

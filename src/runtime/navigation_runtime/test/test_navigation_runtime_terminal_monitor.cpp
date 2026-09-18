@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <future>
@@ -19,9 +20,10 @@
 
 namespace navigation_runtime {
 
-// Access-only peer: no executor is spun and no command is published. The
-// controlled immutable command models scheduler inputs, not a planner or
-// world certificate proof. The actual moving-capture production witness is
+// Access-only peer: no executor is spun. The scheduler-only fixtures model
+// inputs, not a certificate proof. The real-facade handoff fixtures also invoke
+// the production command callback and queued backend ACK, without DDS dispatch
+// or a flight controller. The actual moving-capture production witness is
 // FAST5-r3 / generation 16 in the diagnostic matrix report.
 class NavigationRuntimeTerminalMonitorTestPeer {
  public:
@@ -91,6 +93,30 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     return node.execution_state_store_.publish(std::move(state));
   }
 
+  static bool publishPredecessorState(
+      NavigationRuntimeNode& node,
+      const navigation_planning::CandidateBundle& predecessor,
+      std::int64_t source_stamp_ns) {
+    // A delayed measured observation belongs to A at its original source
+    // timestamp, even after G becomes the current command. Never clamp or
+    // extrapolate G before its declared start to manufacture temporal support.
+    const auto sample = predecessor.sampleAtDeclaredStamp(source_stamp_ns);
+    if (!sample) return false;
+    navigation_planning::KinematicState state;
+    state.position_world = sample->position_world;
+    state.velocity_world = sample->velocity_world;
+    state.acceleration_world = sample->acceleration_world;
+    state.jerk_world = sample->jerk_world;
+    state.acceleration_estimated = true;
+    state.jerk_estimated = true;
+    state.source_stamp_ns = source_stamp_ns;
+    state.receive_stamp_ns = navigation_common::steadyClockNowNanoseconds();
+    state.localization_epoch = predecessor.localization_epoch;
+    state.world_frame_id = "lio_odom";
+    state.body_frame_id = "base_link";
+    return node.execution_state_store_.publish(std::move(state));
+  }
+
   static auto key(NavigationRuntimeNode& node) { return node.currentPlanningKey(); }
   static auto timeline(const NavigationRuntimeNode& node) {
     return node.command_bundle_store_.snapshot();
@@ -100,6 +126,9 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   }
   static auto episode(NavigationRuntimeNode& node) { return node.execution_episode_.snapshot(); }
   static auto trace(NavigationRuntimeNode& node) { return node.execution_trace_store_.load(); }
+  static auto observationAccounting(NavigationRuntimeNode& node) {
+    return node.retained_decision_accounting_;
+  }
   static auto solveGeneration(NavigationRuntimeNode& node) {
     return node.planner_solve_generation_.load();
   }
@@ -161,10 +190,9 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     node.validateRetainedCommand(node.active_goal_, key.goal_epoch,
                                  key.localization_epoch, key, context);
   }
-  static auto planRealTerminal(
+  static navigation_planning::PlanningRequest realTerminalRequest(
       NavigationRuntimeNode& node, const navigation_contracts::msg::NavigationGoal& goal,
       const navigation_world_model::WorldModelViewPtr& world, std::int64_t stamp_ns) {
-    node.world_snapshot_store_.publish(world);
     navigation_mission::Mission mission;
     mission.id = goal.mission_id;
     mission.frame = goal.header.frame_id;
@@ -196,7 +224,44 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     request.budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
         std::chrono::duration_cast<navigation_planning::PlanningBudget::Clock::duration>(
             std::chrono::duration<double>(navigation_planning::PlanningTimingContract::kSolveDeadlineS));
+    return request;
+  }
+  static auto planRealTerminal(
+      NavigationRuntimeNode& node, const navigation_contracts::msg::NavigationGoal& goal,
+      const navigation_world_model::WorldModelViewPtr& world, std::int64_t stamp_ns) {
+    node.world_snapshot_store_.publish(world);
+    return node.planner_->plan(realTerminalRequest(node, goal, world, stamp_ns));
+  }
+  static std::optional<navigation_planning::PlanningRequest> futureTerminalRequest(
+      NavigationRuntimeNode& node, const navigation_contracts::msg::NavigationGoal& goal,
+      const navigation_world_model::WorldModelViewPtr& world, const PlanningKey& key,
+      const navigation_planning::ExecutionAnchor& anchor) {
+    const auto measured = node.execution_state_store_.load();
+    if (!measured) return std::nullopt;
+    auto request = realTerminalRequest(node, goal, world, key.anchor_stamp_ns);
+    request.key = key;
+    request.start_state = measured->state;
+    request.anchor = anchor;
+    request.activation_stamp_ns = anchor.activation_stamp_ns;
+    request.history.previous_bundle_generation = anchor.active_bundle_generation;
+    request.history.previous_velocity_world = anchor.state.velocity_world;
+    return request;
+  }
+  static auto planRequest(NavigationRuntimeNode& node,
+                          const navigation_planning::PlanningRequest& request) {
     return node.planner_->plan(request);
+  }
+  static bool commitRealSuccessor(
+      NavigationRuntimeNode& node, const navigation_contracts::msg::NavigationGoal& goal,
+      const PlanningKey& key, const navigation_planning::CandidateBundle& candidate,
+      bool& admitted) {
+    return node.commitPlannerCandidate(goal, key.goal_epoch, key.localization_epoch,
+                                       node.now().nanoseconds(), key, candidate, &admitted);
+  }
+  static void publishCommandAndApplyQueuedActivations(NavigationRuntimeNode& node) {
+    node.publishCommand();
+    // This is the ordering used by the serial planning worker before runCycle.
+    node.applyQueuedExecutionTimelineActivations(*node.planner_);
   }
   static void acknowledge(NavigationRuntimeNode& node) {
     const auto active = node.command_bundle_store_.load();
@@ -377,6 +442,7 @@ navigation_planning::CandidateBundle schedulerMain(const bool semantic_terminal_
 class NavigationRuntimeTerminalMonitor : public testing::Test {
  protected:
   virtual double trackingBaseMeters() const { return 0.0; }
+  virtual bool retainedDiagnosticsEnabled() const { return true; }
   void SetUp() override {
     context_ = std::make_shared<rclcpp::Context>();
     context_->init(0, nullptr);
@@ -384,6 +450,8 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     options.context(context_);
     options.parameter_overrides({
         rclcpp::Parameter("use_sim_time", true),
+        rclcpp::Parameter("navigation_runtime.retained_decision_diagnostics_enabled",
+                          retainedDiagnosticsEnabled()),
         rclcpp::Parameter("tracking_experiment.base_m", trackingBaseMeters()),
         rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
         rclcpp::Parameter("navigation_runtime.body_frame_id", "base_link"),
@@ -439,6 +507,151 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
         *node_, real_stamp_ns_, Eigen::Vector3d::Zero(), velocity_residual,
         measured_acceleration));
   }
+  void checkRealFutureHandoff(const bool source_before_start) {
+    // Synthetic controlled schedule, not a measured flight-delay bound:
+    // actual certified A -> reserved A(now + 400 ms) -> factory-certified G.
+    // The +20 ms monitor observation discriminates the source-time seam from
+    // failure to create/admit/activate a complete candidate in the first place.
+    const auto goal = schedulerGoal();
+    const auto world = std::make_shared<SchedulerIdentityWorld>(kStartNs);
+    const auto initial = NavigationRuntimeTerminalMonitorTestPeer::planRealTerminal(
+        *node_, goal, world, kStartNs);
+    ASSERT_TRUE(initial.candidate)
+        << "FIXTURE_BLOCKED: factory did not create predecessor A: "
+        << static_cast<int>(initial.failure_stage) << ":"
+        << static_cast<int>(initial.failure_reason);
+    ASSERT_TRUE(initial.candidate->valid());
+    ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::install(
+        *node_, goal, world, *initial.candidate));
+    NavigationRuntimeTerminalMonitorTestPeer::acknowledge(*node_);
+    const auto predecessor = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active;
+    ASSERT_TRUE(predecessor);
+    ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishPredecessorState(
+        *node_, *predecessor, kStartNs));
+    const auto predecessor_key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+    ASSERT_TRUE(predecessor_key);
+    ASSERT_EQ(predecessor_key->committed_bundle_generation, predecessor->bundle_generation);
+    ASSERT_EQ(predecessor_key->start_mode,
+              navigation_planning::PlanningStartMode::kCommittedFutureState);
+    const auto anchor = NavigationRuntimeTerminalMonitorTestPeer::reserveFutureAnchor(
+        *node_, kStartNs);
+    ASSERT_TRUE(anchor) << "FIXTURE_BLOCKED: A cannot reserve the existing future head";
+    ASSERT_TRUE(anchor->valid());
+    ASSERT_EQ(anchor->activation_stamp_ns, kStartNs + 400'000'000LL);
+    ASSERT_EQ(anchor->active_bundle_generation, predecessor->bundle_generation);
+    ASSERT_GT(anchor->state.velocity_world.norm(),
+              navigation_planning::PlanningTimingContract::kStationarySpeedMps);
+    const auto request = NavigationRuntimeTerminalMonitorTestPeer::futureTerminalRequest(
+        *node_, goal, world, *predecessor_key, *anchor);
+    ASSERT_TRUE(request);
+    ASSERT_TRUE(request->valid());
+    ASSERT_EQ(request->start_state.source_stamp_ns, kStartNs);
+    ASSERT_EQ(request->activation_stamp_ns, anchor->activation_stamp_ns);
+    ASSERT_EQ(request->history.previous_bundle_generation, predecessor->bundle_generation);
+    const auto successor = NavigationRuntimeTerminalMonitorTestPeer::planRequest(*node_, *request);
+    ASSERT_TRUE(successor.candidate)
+        << "FIXTURE_BLOCKED: factory did not certify future terminal G: "
+        << static_cast<int>(successor.failure_stage) << ":"
+        << static_cast<int>(successor.failure_reason);
+    ASSERT_TRUE(successor.candidate->valid());
+    ASSERT_EQ(successor.candidate->kind, navigation_planning::CandidateBundleKind::kTerminalStop)
+        << "FIXTURE_BLOCKED: factory produced a different bundle kind";
+    ASSERT_TRUE(successor.candidate->terminal_stop);
+    ASSERT_FALSE(successor.candidate->backup_available)
+        << "FIXTURE_BLOCKED: this control requires a factory-certified MAIN-only capture";
+    ASSERT_EQ(successor.candidate->role, navigation_planning::CandidateRole::kMain);
+    ASSERT_EQ(successor.candidate->declared_start_ns, anchor->activation_stamp_ns);
+    ASSERT_EQ(successor.candidate->activation_stamp_ns, anchor->activation_stamp_ns);
+    ASSERT_GT(successor.candidate->bundle_generation, predecessor->bundle_generation);
+    const auto head = successor.candidate->sampleAtDeclaredStamp(anchor->activation_stamp_ns);
+    ASSERT_TRUE(head);
+    ASSERT_GT(head->velocity_world.norm(),
+              navigation_planning::PlanningTimingContract::kStationarySpeedMps);
+    bool admitted = false;
+    ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::commitRealSuccessor(
+        *node_, goal, *predecessor_key, *successor.candidate, admitted))
+        << "FIXTURE_BLOCKED: runtime rejected G: "
+        << NavigationRuntimeTerminalMonitorTestPeer::boundaryRejection(*node_);
+    ASSERT_TRUE(admitted);
+    const auto pending = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+    ASSERT_EQ(pending.active, predecessor);
+    ASSERT_TRUE(pending.pending);
+    ASSERT_EQ(pending.pending->bundle_generation, successor.candidate->bundle_generation);
+    ASSERT_EQ(pending.pending_activation_ns, anchor->activation_stamp_ns);
+
+    const auto pre_start_source_ns = anchor->activation_stamp_ns - 8'000'000LL;
+    setTime(anchor->activation_stamp_ns);
+    ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishPredecessorState(
+        *node_, *predecessor, pre_start_source_ns));
+    ASSERT_FALSE(pending.pending->sampleAtDeclaredStamp(pre_start_source_ns));
+    NavigationRuntimeTerminalMonitorTestPeer::publishCommandAndApplyQueuedActivations(*node_);
+    const auto activated = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+    ASSERT_TRUE(activated.active);
+    ASSERT_FALSE(activated.pending);
+    ASSERT_EQ(activated.active->bundle_generation, successor.candidate->bundle_generation);
+    ASSERT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
+              activated.active->bundle_generation);
+    ASSERT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).active_generation,
+              activated.active->bundle_generation);
+
+    const auto monitor_stamp_ns = anchor->activation_stamp_ns + 20'000'000LL;
+    const auto measured_source_ns = source_before_start
+        ? pre_start_source_ns : anchor->activation_stamp_ns + 12'000'000LL;
+    setTime(monitor_stamp_ns);
+    if (!source_before_start) {
+      ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishState(
+          *node_, measured_source_ns));
+    }
+    const auto measured_sample = source_before_start
+        ? predecessor->sampleAtDeclaredStamp(measured_source_ns)
+        : activated.active->sampleAtDeclaredStamp(measured_source_ns);
+    const auto command_now = activated.active->sampleAtDeclaredStamp(monitor_stamp_ns);
+    ASSERT_TRUE(measured_sample);
+    ASSERT_TRUE(command_now);
+    const double independently_sampled_raw_error_m =
+        (command_now->position_world - measured_sample->position_world).norm();
+    ASSERT_DOUBLE_EQ(NavigationRuntimeTerminalMonitorTestPeer::trackingBudget(*node_), 0.25);
+    ASSERT_LE(independently_sampled_raw_error_m,
+              NavigationRuntimeTerminalMonitorTestPeer::trackingBudget(*node_));
+    const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
+    ASSERT_TRUE(key);
+    ASSERT_EQ(key->committed_bundle_generation, activated.active->bundle_generation);
+    ASSERT_EQ(key->anchor_stamp_ns, measured_source_ns);
+    const auto solve_generation = NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_);
+    NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
+    const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+    ASSERT_TRUE(after.active);
+    EXPECT_EQ(after.version, activated.version);
+    EXPECT_EQ(after.active, activated.active);
+    EXPECT_FALSE(after.pending);
+    EXPECT_EQ(after.active->declared_end_ns, activated.active->declared_end_ns);
+    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
+              activated.active->bundle_generation);
+    const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
+    EXPECT_EQ(episode.active_generation, activated.active->bundle_generation);
+    EXPECT_EQ(episode.recovery_state, ExecutionRecoveryState::kTrackMain);
+    EXPECT_FALSE(episode.failure_latched);
+    EXPECT_FALSE(episode.safety_suffix_active);
+    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
+    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count, 0);
+    const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+    ASSERT_TRUE(trace) << "the monitor must execute, not silently skip this control";
+    EXPECT_EQ(trace->execution_bundle_generation, activated.active->bundle_generation);
+    EXPECT_EQ(trace->solve_generation, 0U);
+    EXPECT_EQ(trace->execution_state_source_stamp_ns, measured_source_ns);
+    EXPECT_EQ(trace->committed_bundle_start_stamp_ns, anchor->activation_stamp_ns);
+    EXPECT_TRUE(trace->retained_fresh_vehicle_state);
+    EXPECT_TRUE(trace->current_vehicle_state_known_free);
+    EXPECT_TRUE(trace->sampled_path_clear);
+    EXPECT_DOUBLE_EQ(trace->anchor_error_raw_m, independently_sampled_raw_error_m);
+    EXPECT_TRUE(trace->committed_suffix_usable);
+    EXPECT_EQ(trace->emergency_candidate_commit_result, 0);
+    if (source_before_start) {
+      EXPECT_TRUE(std::isnan(trace->anchor_error_time_aligned_m));
+    } else {
+      EXPECT_DOUBLE_EQ(trace->anchor_error_time_aligned_m, 0.0);
+    }
+  }
   std::shared_ptr<rclcpp::Context> context_;
   std::shared_ptr<NavigationRuntimeNode> node_;
   std::int64_t real_stamp_ns_{0};
@@ -456,6 +669,49 @@ class NavigationRuntimeTerminalMonitorStrict : public NavigationRuntimeTerminalM
                      NavigationRuntimeTerminalMonitorTestPeer::trackingBudget(*node_));
   }
 };
+
+class NavigationRuntimeTerminalMonitorObserverOff : public NavigationRuntimeTerminalMonitor {
+ protected:
+  bool retainedDiagnosticsEnabled() const override { return false; }
+};
+
+TEST_F(NavigationRuntimeTerminalMonitorObserverOff,
+       RealFutureMainOnlyHandoffWithFreshPreStartStatePreservesOwner) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(true));
+  const auto accounting = NavigationRuntimeTerminalMonitorTestPeer::observationAccounting(*node_);
+  EXPECT_EQ(accounting.attempted, 1U);
+  EXPECT_EQ(accounting.suppressed, 1U);
+  EXPECT_EQ(accounting.published, 0U);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorObserverOff,
+       RealFutureMainOnlyHandoffWithFreshPostStartStatePreservesOwner) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(false));
+  const auto accounting = NavigationRuntimeTerminalMonitorTestPeer::observationAccounting(*node_);
+  EXPECT_EQ(accounting.attempted, 1U);
+  EXPECT_EQ(accounting.suppressed, 1U);
+  EXPECT_EQ(accounting.published, 0U);
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor,
+       RealFutureMainOnlyHandoffWithFreshPreStartStatePreservesOwner) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(true));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor,
+       RealFutureMainOnlyHandoffWithFreshPostStartStatePreservesOwner) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(false));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict,
+       RealFutureMainOnlyHandoffWithFreshPreStartStatePreservesOwner) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(true));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict,
+       RealFutureMainOnlyHandoffWithFreshPostStartStatePreservesOwner) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(false));
+}
 
 TEST_F(NavigationRuntimeTerminalMonitor, NonTerminalMainHasKeyAtMovingActivation) {
   install(false, kStartNs);
@@ -708,6 +964,10 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, FailedBrakePreparationBeforeEndSt
   EXPECT_EQ(trace->emergency_candidate_commit_result, 2);
   EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
   EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).command_available);
+  const auto accounting = NavigationRuntimeTerminalMonitorTestPeer::observationAccounting(*node_);
+  EXPECT_EQ(accounting.attempted, 1U);  // record survives actual fail-closed delivery
+  EXPECT_EQ(accounting.published, 1U);  // ROS call receipt, not evidence capture
+  EXPECT_EQ(accounting.failed, 0U);
 }
 
 }  // namespace

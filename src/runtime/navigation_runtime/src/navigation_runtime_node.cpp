@@ -653,6 +653,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.registered_scan_topic", std::string("/lio/mapping_observation"));
   propagated_odometry_topic_ = declare_parameter(
       "navigation_runtime.propagated_odometry_topic", std::string("/lio/odometry_propagated"));
+  retained_decision_diagnostics_enabled_ = declare_parameter(
+      "navigation_runtime.retained_decision_diagnostics_enabled", true);
   goal_topic_ = declare_parameter("navigation_runtime.goal_topic", std::string("/navigation/goal"));
   status_topic_ = declare_parameter(
       "navigation_runtime.status_topic", std::string("/navigation/mode_status"));
@@ -6629,6 +6631,20 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   }
 }
 
+void NavigationRuntimeNode::observeRetainedDecision(
+    const ExecutionTraceSnapshot& trace,
+    const RetainedDecisionObservation& decision) noexcept {
+  (void)tryEmitRetainedDecision(
+      trace, decision, retained_decision_diagnostics_enabled_,
+      retained_decision_accounting_, [&](auto status) {
+        diagnostic_msgs::msg::DiagnosticArray event;
+        event.header.stamp = navigation_common::nanosecondsToRosTime(
+            trace.timestamp_ns).value_or(builtin_interfaces::msg::Time{});
+        event.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(event);
+      });
+}
+
 void NavigationRuntimeNode::validateRetainedCommand(
     const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
     const std::uint64_t goal_epoch,
@@ -6643,6 +6659,8 @@ void NavigationRuntimeNode::validateRetainedCommand(
   const double retained_tracking_limit_m = context.tracking_limit_m;
   const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;
   ExecutionTraceSnapshot causal_snapshot;
+  RetainedDecisionObservation observation;
+  observation.purpose = static_cast<std::uint8_t>(context.purpose);
   const bool validate_without_new_commit =
       context.purpose == RetainedValidationPurpose::kPlannerValidationOnly;
   navigation_execution::ExecutionTimelineSnapshot retained_timeline;
@@ -6678,6 +6696,19 @@ void NavigationRuntimeNode::validateRetainedCommand(
     retained_hot_goal_transition = hot_goal_transition_;
   }
   const auto committed_bundle = retained_timeline.active;
+  observation.captured_timeline_version = retained_timeline.version;
+  observation.captured_bundle_generation = committed_bundle
+      ? committed_bundle->bundle_generation : 0U;
+  const auto expected_bundle = context.terminal_monitor
+      ? context.terminal_monitor->timeline.active : committed_bundle;
+  observation.expected_world = expected_bundle ? expected_bundle->world_identity
+      : navigation_world_model::WorldSnapshotIdentity{};
+  observation.expected_end_ns = expected_bundle ? expected_bundle->declared_end_ns : 0;
+  observation.expected_valid_until_ns = expected_bundle ? expected_bundle->valid_until_ns : 0;
+  observation.captured_world = retained_timeline.world_identity.value_or(
+      navigation_world_model::WorldSnapshotIdentity{});
+  observation.declared_end_ns = committed_bundle ? committed_bundle->declared_end_ns : 0;
+  observation.valid_until_ns = committed_bundle ? committed_bundle->valid_until_ns : 0;
   const bool retained_goal_matches_callback = goal && retained_active_goal &&
       sameGoalIdentity(goal, retained_active_goal) &&
       goal_epoch == retained_active_goal_epoch &&
@@ -6706,6 +6737,21 @@ void NavigationRuntimeNode::validateRetainedCommand(
            retained_episode, context.terminal_monitor->episode) ||
        !terminalMainMonitorPhaseIsOpen(
            *committed_bundle, retained_episode, now().nanoseconds()))) {
+    causal_snapshot.planning_cycle_id = cycle_count_;
+    causal_snapshot.solve_generation = solve_generation;
+    causal_snapshot.timestamp_ns = now().nanoseconds();
+    // Preserve the callback's expected G even when the current owner is H.
+    // Captured owner/version/world remain separately observable above.
+    causal_snapshot.execution_localization_epoch = expected_bundle
+        ? expected_bundle->localization_epoch : effective_scheduled_key.localization_epoch;
+    causal_snapshot.execution_goal_epoch = expected_bundle
+        ? expected_bundle->goal_epoch : effective_scheduled_key.goal_epoch;
+    causal_snapshot.execution_request_id = expected_bundle
+        ? expected_bundle->request_id : effective_scheduled_key.request_id;
+    causal_snapshot.execution_bundle_generation = expected_bundle
+        ? expected_bundle->bundle_generation : effective_scheduled_key.committed_bundle_generation;
+    observation.disposition = RetainedDecisionDisposition::kEntryRejected;
+    observeRetainedDecision(causal_snapshot, observation);
     return;
   }
   const bool backup_available = committed && committed_bundle->backup_available;
@@ -6744,13 +6790,19 @@ void NavigationRuntimeNode::validateRetainedCommand(
   // or emergency command.
   const auto retained_execution_state = execution_state_store_.load();
   const auto retained_validation_now_ns = now().nanoseconds();
+  const auto retained_freshness_now_ns = now().nanoseconds();
+  const auto retained_freshness_steady_ns = navigation_common::steadyClockNowNanoseconds();
   const auto retained_state_freshness = retained_execution_state
       ? navigation_contracts::evaluateExecutionStateFreshness(
-            now().nanoseconds(), retained_execution_state->state.source_stamp_ns,
-            navigation_common::steadyClockNowNanoseconds(),
+            retained_freshness_now_ns, retained_execution_state->state.source_stamp_ns,
+            retained_freshness_steady_ns,
             retained_execution_state->state.receive_stamp_ns,
             data_freshness_window_s_)
       : navigation_contracts::ExecutionStateFreshness{};
+  observation.initial_freshness_ros_ns = retained_freshness_now_ns;
+  observation.initial_freshness_steady_ns = retained_freshness_steady_ns;
+  observation.initial_freshness_reason = retained_execution_state
+      ? static_cast<int>(retained_state_freshness.reason) : -1;
   Eigen::Vector3d current_vehicle_position = Eigen::Vector3d::Zero();
   Eigen::Vector3d current_vehicle_velocity = Eigen::Vector3d::Zero();
   const bool fresh_vehicle_state = retained_execution_state &&
@@ -6777,6 +6829,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
       sampleCommittedBundleAtDeclaredStamp(
           retained_execution_state->state.source_stamp_ns,
           command_sample_at_state_source);
+  observation.source_sample_valid = temporal_command_source_valid;
   const bool temporal_state_valid = retained_execution_state &&
       retained_execution_state->state.position_world.allFinite() &&
       retained_execution_state->state.velocity_world.allFinite();
@@ -6878,6 +6931,8 @@ void NavigationRuntimeNode::validateRetainedCommand(
     const auto validation = latest_world
         ? planner_->validateCommittedTrajectory(latest_world.view, now().seconds())
         : navigation_planning::TrajectoryValidationResult{};
+    observation.world_validation_attempted = static_cast<bool>(latest_world);
+    observation.world_validation = validation;
     sampled_path_clear = validation.valid;
     if (!sampled_path_clear) {
       first_blocked_cell_observed = validation.blocking_cell_observed;
@@ -7019,6 +7074,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
       retained_episode.failure_latched, retained_validation_now_ns,
       committed_bundle ? committed_bundle->valid_until_ns : 0,
       static_cast<std::int64_t>(planning_period_us_) * 1000);
+  observation.initial_bridge_usable = phase_execution_bridge_usable;
   causal_snapshot.phase_execution_bridge_usable = phase_execution_bridge_usable;
   causal_snapshot.path_relative_bridge_usable = phase_execution_bridge_usable;
   // Only a fully eligible MAIN bridge may replace the raw retained-command
@@ -7114,12 +7170,14 @@ void NavigationRuntimeNode::validateRetainedCommand(
           "one-shot emergency altitude anchor measured=%.3f command=%.3f terminal=%.3f limit=%.3f",
           measured_altitude_m, command_anchor_altitude_m,
           terminal_altitude_m, retained_tracking_limit_m);
+    observation.emergency_preparation_attempted = true;
     emergency_brake_committed = planner_->commitEmergencyBrake(
         emergency_command, now().seconds(), terminal_altitude_m);
     }
     use_safety_suffix = emergency_brake_committed;
     emergency_certification_failed = !emergency_brake_committed;
     causal_snapshot.emergency_candidate_commit_result = emergency_brake_committed ? 1 : 2;
+    observation.emergency_prepared = emergency_brake_committed;
     if (projected_tracking_certificate_exceeded && !tracking_certificate_exceeded) {
       RCLCPP_WARN(get_logger(),
                   "planner backend projected retained-command anchor beyond the "
@@ -7128,10 +7186,12 @@ void NavigationRuntimeNode::validateRetainedCommand(
                   anchor_error_m, projected_anchor_error_m, retained_tracking_limit_m);
     }
   }
+  if (emergency_brake_committed) observation.emergency_admission_attempted = true;
   if (emergency_brake_committed &&
       !commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
                               now().nanoseconds(), effective_scheduled_key,
-                              std::nullopt, nullptr, context.terminal_monitor)) {
+                              std::nullopt, &observation.emergency_store_admitted,
+                              context.terminal_monitor)) {
     emergency_brake_committed = false;
     use_safety_suffix = false;
     emergency_boundary_failed = true;
@@ -7139,6 +7199,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
                  "execution boundary rejected the one-shot measured emergency candidate; "
                  "rechecking original execution owner before failure delivery");
   }
+  observation.emergency_identity_delivered = emergency_brake_committed;
   // Prepare the expensive analytic witnesses before taking the owner
   // transaction locks.  The lock section below only rechecks freshness,
   // ownership and lease metadata, so projection cannot block command or
@@ -7267,10 +7328,11 @@ void NavigationRuntimeNode::validateRetainedCommand(
         final_path_relative_tracking.accepted();
     const bool final_command_anchor_valid = prepared_final_command_anchor_valid;
     const auto lock_recheck_now_ns = now().nanoseconds();
+    const auto lock_recheck_steady_ns = navigation_common::steadyClockNowNanoseconds();
     const auto lock_recheck_state_freshness = final_execution_state
         ? navigation_contracts::evaluateExecutionStateFreshness(
               lock_recheck_now_ns, final_execution_state->state.source_stamp_ns,
-              navigation_common::steadyClockNowNanoseconds(),
+              lock_recheck_steady_ns,
               final_execution_state->state.receive_stamp_ns, data_freshness_window_s_)
         : navigation_contracts::ExecutionStateFreshness{};
     const bool final_witness_age_bounded = final_execution_state &&
@@ -7279,6 +7341,20 @@ void NavigationRuntimeNode::validateRetainedCommand(
         lock_recheck_now_ns - prepared_final_retained_now_ns <=
             static_cast<std::int64_t>(
                 navigation_planning::PlanningTimingContract::kCommandPeriodS * 1.0e9);
+    observation.delivery_evaluated = true;
+    observation.lock_recheck_ros_ns = lock_recheck_now_ns;
+    observation.lock_recheck_steady_ns = lock_recheck_steady_ns;
+    observation.final_state_receive_ns = final_execution_state
+        ? final_execution_state->state.receive_stamp_ns : 0;
+    observation.final_source_age_ms = lock_recheck_state_freshness.source_age_ms;
+    observation.final_receive_age_ms = lock_recheck_state_freshness.receive_age_ms;
+    observation.final_freshness_reason = static_cast<int>(lock_recheck_state_freshness.reason);
+    observation.final_witness_age_bounded = final_witness_age_bounded;
+    observation.final_phase_status = static_cast<int>(final_phase_execution_certificate.status);
+    observation.final_path_status = static_cast<int>(final_path_relative_tracking.status);
+    observation.final_experimental_support_valid = prepared_final_experimental_tracking.support_valid;
+    observation.final_body_known_free = prepared_final_vehicle_state_known_free;
+    observation.final_command_anchor_valid = final_command_anchor_valid;
     const bool phase_execution_bridge_current = phaseExecutionBridgeMayPreserveMain(
         tracking_experiment_.enabled
             ? prepared_final_experimental_tracking.accepted && !retained_episode.safety_suffix_active
@@ -7341,11 +7417,15 @@ void NavigationRuntimeNode::validateRetainedCommand(
              terminal_bundle_generation_.load(std::memory_order_acquire)) &&
          terminalMainMonitorPhaseIsOpen(
              *committed_bundle, current_episode, now().nanoseconds()));
+    observation.owner_snapshot_current = execution_owner_snapshot_current;
+    observation.callback_request_current = callback_request_current;
+    observation.monitor_window_current = monitor_window_current;
     if (terminal_monitor && !emergency_brake_committed && !monitor_window_current) {
       // Successful admission has its own pre-END store cutover. A failed or
       // superseded preparation has no such receipt: after END (even without a
       // publisher callback), it is discard-only, never revocation of G's hold.
       retained_result_discarded = true;
+      observation.disposition = RetainedDecisionDisposition::kDiscarded;
     } else if (!callback_request_current ||
         (!execution_owner_snapshot_current && !emergency_brake_committed)) {
       // A newer request or execution owner owns command state now. This old
@@ -7356,19 +7436,25 @@ void NavigationRuntimeNode::validateRetainedCommand(
       // intentionally changed the timeline, so its own identity check below
       // is the revalidation boundary for that one-way safety transition.
       retained_result_discarded = terminal_monitor;
+      observation.disposition = RetainedDecisionDisposition::kSuperseded;
     } else if (!command_execution_lease_failure_latch_.allowsCommandExposure()) {
+      observation.disposition = RetainedDecisionDisposition::kFailClosed;
       failClosedLocked();
     } else if (emergency_certification_failed) {
+      observation.disposition = RetainedDecisionDisposition::kFailClosed;
       applyExecutionRecoveryEventLocked(
           ExecutionRecoveryEvent::kEmergencyCertificationFailed);
       failClosedLocked();
     } else if (emergency_boundary_failed) {
+      observation.disposition = RetainedDecisionDisposition::kFailClosed;
       failClosedLocked();
     } else if (emergency_brake_committed) {
+      observation.disposition = RetainedDecisionDisposition::kEmergencyDelivered;
       // commitPlannerCandidate() changed timeline identity and recovery in
       // one ExecutionEpisode mutation. Do not replay that transition here:
       // a newer callback may already own the episode.
     } else if (recovery_bridge_usable) {
+      observation.disposition = RetainedDecisionDisposition::kRecoveryBridgePreserved;
       // A hot-retarget recovery bridge may still be the previous physical
       // bundle.  Its execution epoch is immutable until the staged
       // successor activation boundary; never relabel it with the desired
@@ -7393,6 +7479,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
       }
       trajectory_completion_witness_.reset();
     } else if (phase_execution_bridge_current && !use_safety_suffix) {
+      observation.disposition = RetainedDecisionDisposition::kMainBridgePreserved;
       causal_snapshot.experimental_tracking_bridge_usable = tracking_experiment_.enabled;
       causal_snapshot.experimental_tracking_override_used = tracking_experiment_.enabled &&
           !final_path_relative_tracking.accepted();
@@ -7405,6 +7492,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
       // BACKUP from this branch.
       trajectory_completion_witness_.reset();
     } else if (use_safety_suffix && validate_without_new_commit) {
+      observation.disposition = RetainedDecisionDisposition::kCertifiedCommandPreserved;
       const auto retained_execution_goal = executing_goal_;
       const auto retained_command_epoch =
           command_goal_epoch_.load(std::memory_order_acquire);
@@ -7419,6 +7507,9 @@ void NavigationRuntimeNode::validateRetainedCommand(
       }
     } else if (!validate_without_new_commit ||
                retained_transition == RetainedValidationTransition::FailClosed) {
+      observation.disposition = use_safety_suffix
+          ? RetainedDecisionDisposition::kCertifiedCommandPreserved
+          : RetainedDecisionDisposition::kFailClosed;
       const auto retained_execution_goal = executing_goal_;
       const auto retained_command_epoch =
           command_goal_epoch_.load(std::memory_order_acquire);
@@ -7440,6 +7531,14 @@ void NavigationRuntimeNode::validateRetainedCommand(
         failClosedLocked();
       }
     }
+    const auto after_timeline = command_bundle_store_.snapshot();
+    const auto after_episode = execution_episode_.snapshot();
+    observation.after_timeline_version = after_timeline.version;
+    observation.after_bundle_generation = after_timeline.active
+        ? after_timeline.active->bundle_generation : 0U;
+    observation.after_episode_generation = after_episode.active_generation;
+    observation.after_command_available = after_episode.command_available;
+    observation.after_failure_latched = after_episode.failure_latched;
   }
   if (emergency_brake_committed &&
       command_execution_lease_failure_latch_.allowsCommandExposure()) {
@@ -7501,7 +7600,11 @@ void NavigationRuntimeNode::validateRetainedCommand(
   // and rejects an older epoch. Keep the evaluated identity even when a
   // later goal or activation changes before publication; command attachment
   // performs the separate full-identity match at its own boundary.
-  (void)execution_trace_store_.publish(std::move(causal_snapshot));
+  (void)execution_trace_store_.publish(causal_snapshot);
+  // Per-call worker event survives revocation/discard. No command attachment
+  // or successful optimizer job is required, and no validator is queried twice.
+  // Preserve the existing trace publication before doing observer transport.
+  observeRetainedDecision(causal_snapshot, observation);
 }
 
 

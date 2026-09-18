@@ -177,6 +177,11 @@ if(BUILD_TESTING)
   target_include_directories(test_execution_trace_snapshot PRIVATE include)
   ament_target_dependencies(test_execution_trace_snapshot
     navigation_planning builtin_interfaces)
+  ament_add_gtest(test_retained_decision_observation
+    test/test_retained_decision_observation.cpp)
+  target_include_directories(test_retained_decision_observation PRIVATE include)
+  ament_target_dependencies(test_retained_decision_observation
+    diagnostic_msgs navigation_planning builtin_interfaces)
   ament_add_gtest(test_certified_continuation
     test/test_certified_continuation.cpp)
   target_include_directories(test_certified_continuation PRIVATE include)
