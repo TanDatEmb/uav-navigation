@@ -149,6 +149,14 @@ if(BUILD_TESTING)
   set_tests_properties(test_navigation_runtime_shutdown PROPERTIES
     ENVIRONMENT
       "LD_LIBRARY_PATH=${NAVIGATION_CONTRACTS_PREFIX}/lib:$ENV{LD_LIBRARY_PATH}")
+  ament_add_gtest(test_navigation_runtime_terminal_monitor
+    test/test_navigation_runtime_terminal_monitor.cpp)
+  target_compile_definitions(test_navigation_runtime_terminal_monitor PRIVATE
+    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml")
+  target_link_libraries(test_navigation_runtime_terminal_monitor navigation_runtime_core)
+  set_tests_properties(test_navigation_runtime_terminal_monitor PROPERTIES
+    ENVIRONMENT
+      "LD_LIBRARY_PATH=${NAVIGATION_CONTRACTS_PREFIX}/lib:$ENV{LD_LIBRARY_PATH}")
   ament_add_gtest(test_mapping_fail_stop test/test_mapping_fail_stop.cpp)
   target_link_libraries(test_mapping_fail_stop navigation_runtime_core)
   ament_add_gtest(test_kinematic_derivative_estimator

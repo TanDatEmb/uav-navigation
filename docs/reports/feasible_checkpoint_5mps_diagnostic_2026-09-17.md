@@ -4853,3 +4853,95 @@ be reserved; validated post-end completion still suppresses replacement.
 The existing experimental phase bridge remains authoritative to its declared
 diagnostic scope. No phase-only source patch, new recovery bypass, budget
 retune, plant-gain change, or additional SITL round is claimed here.
+
+## Completion-focused goal restart and corrected analysis baseline
+
+The completion-focused goal is now active on `main`, initially at
+`4c76560b31d7dac0bdc3d53d24a281c42fbe2aba`. Promotion of the Git branch did not
+qualify the code or commit the outstanding worktree experiments. Preserve the
+pre-existing safety-document migration and provisional nominal-incumbent trial
+as separate WIP; the following runtime seam does not promote either of them.
+
+The three workstreams are terminal lifecycle, complete executable bundle
+readiness, and estimator-validity/propagation/receiver continuity. The first
+diagnostic discriminator is improved 5WP completion under each independently
+selected SAFE/FAST policy, not a pooled nominal-feasibility result. Repeated
+2/5/9WP evidence, actual cruise/tracking/settling and timing tails remain
+required; no diagnostic completion threshold replaces C0 qualification.
+
+### Additional source-health leaf closure from existing FAST9 artifacts
+
+No new flight was run for this closure. Root and the independent reviewer
+checked the two previously unresolved FAST9 source leaves directly:
+
+| Existing session | Raw diagnostic witness | Consecutive propagated records | Recorded source gap | Native receiver boundary |
+|---|---|---|---|---|
+| `external-mode-check-20260918T022729-989244` | `samples.jsonl:70172`, source82.400s, DEGRADED/navigation_invalid, INSUFFICIENT_TRANSLATIONAL_OBSERVABILITY, ratio0.009626, one observability rejection | seq3919/source82.400s to seq3920/source82.820s, same epoch/frame | 420ms | native log receive204.350ms, after health-invalid witness |
+| `external-mode-check-20260918T023014-993575` | `samples.jsonl:69899`, source82.000s, DEGRADED/navigation_invalid, same reason, ratio0.009245, one observability rejection | seq3904/source82.000s to seq3905/source82.628s, same epoch/frame | 628ms | native log receive200.703ms, after health-invalid witness |
+
+Observed wall-arrival gaps are approximately525.773/784.805ms; they are
+observer evidence, not receiver or producer WCET measurements. Native receiver
+ages are independent evidence. All four component-failure sessions now have
+source invalidation evidence preceding the stale boundary. Worker publication
+intentionally requires TRACKING/navigation_valid; recovery confirmation is
+scan-count based. This does not prove a false observability rejection,
+collision-free stopping, safe continued IMU-only propagation, or transport
+failure. Normalized observability ratios alone cannot justify relaxing the
+health/freshness gates. Recorded-data/covariance and lifecycle discriminators
+remain open.
+
+### Terminal construction semantics and the phase mismatch
+
+FAST5-r3 `mapping.log:513` records main-only terminal rest capture at endpoint
+distance0.4589928898993478m with planning radius0.8m. Its MAIN duration is
+1.1011349136176896s and generation16 begins moving. The producer predicate
+checks END rest and geometry; it does not establish that the vehicle or HEAD
+is already stopped. The scheduler must not interpret that semantic terminal
+intent as a validated endpoint hold.
+
+The full HG-035 record permits main-only trajectories with terminal V/A/J
+rest within the coefficient-derived bound. Thus the moving HEAD is not, by
+itself, a proven HG-035 violation; forcing BACKUP from the abbreviated current
+summary would be an unjustified contract change. What is confirmed is the
+construction/scheduling/exposure phase mismatch. Its effect on completion and
+whether a replacement brake would certify remain conditional.
+
+### W1 runtime retained-validation seam: behavior-preserving checkpoint
+
+The runtime's existing retained-validation transaction is extracted into
+`validateRetainedCommand()` with callback-local context for its two original
+dispositions. Store ownership, clock/state/world sampling, lock order,
+emergency authorization, admission, final identity rechecks and common
+`runCycle()` result tail remain unchanged. Independent source review found no
+blocking behavior difference. No terminal monitor caller, new FSM, shadow
+timeline, optimizer policy, gate change or alternate command path is added.
+
+The access-only real-node test peer uses controlled immutable analytic MAIN
+commands and a fake ROS clock. Its test certificates are manufactured fixture
+inputs, not validator/factory or flight evidence. Three enabled controls pass;
+two explicit DISABLED reproducer tests remain known RED until the monitor and
+cross-END fences are implemented together. They are not hidden as a correctness
+PASS and do not disable any production validation.
+
+Pre-documentation-append validation uses authoritative Release manifest
+`f1ba0ae8955cccfb74c0de16cacb678f35108e6adc83cb747f2560c873a1e566`, source
+`db21e2096c5197ac8b7c69e0fa050379d93c5d268d3764be07998d42dbdebce0`, dirty HEAD
+`4c76560b`. The snapshot includes the separate WIP named above. Full canonical
+Release build completed23packages; normal regression completed86CTest tests
+with zero failures/errors, auxiliary tests and389Python tests with one explicit
+skip. Focused controls are3PASS/two disabled; explicit RED run is2/2FAIL,
+errors0. A fresh Luna rerun of the built binary confirmed the same focused
+outcomes without a rebuild. Logs/manifests remain in the existing ignored
+`nominal-renewal-capture-nod2nN` folder as `terminal-monitor-seam-*` and
+`terminal-monitor-baseline-*`. Documentation changes do not retroactively alter
+this source/build identity. No current-seam SITL or completion improvement is
+claimed.
+
+The next boundary patch must reject a monitor result at its store cutover and
+final owner mutation when original G/goal/epoch/world is superseded or time has
+reached END, even without a publisher callback. Both successful and failed
+brake preparation must be discard-only after that phase boundary. Healthy
+pre-end ticks must preserve generation/END and make zero optimizer calls;
+monitor scope must not freeze ordinary MAIN-with-BACKUP renewal. Keep the
+existing one-shot and experimental phase-bridge policies, not fabricated
+NO_NEED or an unconditional permission to brake.

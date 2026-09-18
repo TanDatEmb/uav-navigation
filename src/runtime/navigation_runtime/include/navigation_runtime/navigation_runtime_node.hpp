@@ -259,6 +259,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // Access-only test peer exercises the real callbacks/worker with barriers;
   // it adds no alternate runtime behavior or command-authority path.
   friend class NavigationRuntimeEpochResetTestPeer;
+  friend class NavigationRuntimeTerminalMonitorTestPeer;
   void onRegisteredScan(
       const navigation_contracts::msg::RegisteredScan::ConstSharedPtr& message);
   void onEstimatorHealth(
@@ -288,6 +289,26 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       navigation_planning_backend::PlannerFacade& planner) noexcept;
   void runCycle(const PlanningKey& scheduled_key);
   [[nodiscard]] std::optional<PlanningKey> currentPlanningKey();
+  enum class RetainedValidationPurpose {
+    kAfterFailedReplacement,
+    kPlannerValidationOnly,
+  };
+  // Callback-local facts only, never another execution owner. The worker
+  // prepares its backend identity/world/cancellation before this transaction;
+  // the transaction captures and rechecks the canonical runtime owners itself.
+  struct RetainedValidationContext {
+    RetainedValidationPurpose purpose;
+    bool plan_from_rest_with_transition;
+    bool transition_terminal_stop;
+    std::uint64_t solve_generation;
+    navigation_planning::PlannerStatus planner_result;
+    double tracking_limit_m;
+  };
+  void validateRetainedCommand(
+      const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
+      std::uint64_t goal_epoch, std::uint64_t localization_epoch_at_solve,
+      const PlanningKey& effective_scheduled_key,
+      const RetainedValidationContext& context);
   void publishCommand();
   [[nodiscard]] bool clearCommandForCurrentIdentity(
       const navigation_contracts::msg::NavigationGoal& command_goal,
