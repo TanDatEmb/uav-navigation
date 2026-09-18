@@ -300,7 +300,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                              std::int64_t now_ns,
                              const PlanningKey& scheduled_key,
                              const std::optional<navigation_planning::CandidateBundle>&
-                                 planned_candidate = std::nullopt);
+                                 planned_candidate = std::nullopt,
+                             bool* candidate_admitted = nullptr);
   void suspendCommandForWorldFreshness();
   // Ingress serialization remains held while this temporarily releases the
   // lifecycle owner lock to drain old mapping work.

@@ -120,6 +120,11 @@ namespace navigation_planning_backend {
             bool clear_new_goal_on_activation{false};
         };
         std::optional<StagedCommandCandidate> staged_planner_candidate_;
+        // Independent, bounded export owner for the out-of-band heading
+        // worker. Neither slot is execution active/pending state. A canceled
+        // heading successor must not block a new nominal/emergency proposal;
+        // exact activation ACKs alone promote either owner into warm history.
+        std::optional<StagedCommandCandidate> retained_heading_candidate_;
         // Monotonic proposal identity, including proposals superseded before
         // activation. Protected by solve_commit_mutex_. Execution may skip a
         // reserved value, but no later staged proposal may reuse it.
@@ -445,17 +450,20 @@ namespace navigation_planning_backend {
 
         void discardCommandCandidate() noexcept;
 
-        // A nominal solve may lose a race after an out-of-band retained
-        // position/heading candidate has reserved the activation slot.  Keep
-        // that exact owner alive in that case; callers rejecting the retained
-        // candidate itself must use the explicit clearing operation.
-        void discardRetainedPositionHeadingCandidate() noexcept;
+        // A nominal solve may overlap an exported retained position/heading
+        // candidate. Keep its independent owner alive. The producer/consumer of
+        // an unadmitted retained candidate may retire its exact generation;
+        // a late rejection must not erase a newer registered owner.
+        [[nodiscard]] bool discardRetainedPositionHeadingCandidate(
+                std::uint64_t expected_generation) noexcept;
         // Synchronize the planner's warm-start cache after the execution
         // timeline has already activated the immutable bundle. This is a
         // one-way observation; it cannot veto or roll back execution.
         void onExecutionTimelineActivated(std::uint64_t generation) noexcept;
         [[nodiscard]] bool hasStagedCommandCandidate() const {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+            // This is the position worker's readiness probe, not an exported
+            // heading candidate's readiness or execution admission.
             return staged_planner_candidate_.has_value();
         }
         // Revalidate the complete staged MAIN+BACKUP command against the
@@ -475,10 +483,10 @@ namespace navigation_planning_backend {
             if (!identity.valid()) {
                 throw std::invalid_argument("command identity must be non-zero");
             }
-            {
-                std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-                staged_planner_candidate_.reset();
-            }
+            // Desired-request setup is not retirement authority for an
+            // exported heading candidate. A job already past its ACK fence
+            // may overlap registration, including a subsequent goal change.
+            discardCommandCandidate();
             std::lock_guard<std::mutex> guard(command_identity_mutex_);
             command_identity_ = identity;
         }

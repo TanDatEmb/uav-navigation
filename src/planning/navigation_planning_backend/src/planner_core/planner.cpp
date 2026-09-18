@@ -1027,11 +1027,10 @@ double mainGuideSupport(
                 std::lock_guard<std::mutex> commit_guard(solve_commit_mutex_);
                 if (solve_cancelled_.load()) return false;
                 if (!planner_warm_start_.canCommitCandidate(candidate)) return false;
-                // An out-of-band retained-position heading candidate owns the
-                // next activation slot once registered. A late nominal
-                // position solve must not replace that exact warm-start
-                // owner with a different candidate carrying the same
-                // arithmetic generation.
+                // Preserve the synchronous compatibility rebind owner. The
+                // independent heading worker has its own bounded export slot;
+                // it cannot be overwritten here or block a nominal/emergency
+                // proposal. Shared reservation gives both unique generations.
                 if (staged_planner_candidate_.has_value() &&
                     staged_planner_candidate_->command
                         .retained_position_heading_rebind) {
@@ -1081,11 +1080,14 @@ double mainGuideSupport(
     void Planner::onExecutionTimelineActivated(
             const std::uint64_t generation) noexcept {
         std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-        if (!staged_planner_candidate_ ||
-            staged_planner_candidate_->generation != generation) {
-            return;
-        }
-        auto staged = std::move(*staged_planner_candidate_);
+        auto* owner = staged_planner_candidate_ &&
+                staged_planner_candidate_->generation == generation
+            ? &staged_planner_candidate_
+            : retained_heading_candidate_ &&
+                    retained_heading_candidate_->generation == generation
+                ? &retained_heading_candidate_ : nullptr;
+        if (!owner) return;
+        auto staged = std::move(**owner);
         if (!planner_warm_start_.commitCandidate(
                 std::move(staged.command), staged.certificate,
                 staged.generation)) {
@@ -1093,14 +1095,20 @@ double mainGuideSupport(
                 " -- [planner] execution activated generation={} but warm-start "
                 "cache synchronization failed; execution remains authoritative",
                 generation);
-            staged_planner_candidate_.reset();
+            owner->reset();
             return;
         }
         if (staged.pending_exp_history.has_value()) {
             planner_previous_exp_ = std::move(*staged.pending_exp_history);
         }
         if (staged.clear_new_goal_on_activation) gi_.new_goal = false;
-        staged_planner_candidate_.reset();
+        owner->reset();
+        // Only successful promotion of a newer canonical activation makes
+        // older export owners obsolete. Never collect from a void/missing ACK.
+        if (retained_heading_candidate_ &&
+            retained_heading_candidate_->generation < generation) {
+            retained_heading_candidate_.reset();
+        }
     }
 
     void Planner::discardCommandCandidate() noexcept {
@@ -1111,12 +1119,22 @@ double mainGuideSupport(
         }
     }
 
-    void Planner::discardRetainedPositionHeadingCandidate() noexcept {
+    bool Planner::discardRetainedPositionHeadingCandidate(
+            const std::uint64_t expected_generation) noexcept {
+        if (expected_generation == 0U) return false;
         std::lock_guard<std::mutex> guard(solve_commit_mutex_);
+        if (retained_heading_candidate_ &&
+            retained_heading_candidate_->generation == expected_generation) {
+            retained_heading_candidate_.reset();
+            return true;
+        }
         if (staged_planner_candidate_ &&
+            staged_planner_candidate_->generation == expected_generation &&
             staged_planner_candidate_->command.retained_position_heading_rebind) {
             staged_planner_candidate_.reset();
+            return true;
         }
+        return false;
     }
 
     const char* Planner::candidateExportFailureName(
@@ -1836,21 +1854,22 @@ double mainGuideSupport(
         const auto current = planner_warm_start_.snapshot();
         if (current.generation != committed.generation ||
             current.identity.localization_epoch != localization_epoch ||
-            staged_planner_candidate_.has_value() ||
+            retained_heading_candidate_.has_value() ||
             !planner_warm_start_.canCommitCandidate(candidate)) {
             return std::nullopt;
         }
         const auto generation = reserveCandidateGenerationLocked();
         if (!generation.has_value()) return std::nullopt;
-        staged_planner_candidate_ = StagedCommandCandidate{
-            candidate, certificate, *generation, std::nullopt, false};
-        const auto exported = exportStagedCommandCandidate(
+        // Construct the immutable export before registering its owner. A
+        // failed/throwing export must not strand a slot with no consumer.
+        auto exported = exportStagedCommandCandidate(
             candidate, certificate, *generation, localization_epoch,
             goal_epoch, request_id, valid_from_ns, valid_until_ns);
         if (!exported.candidate.has_value()) {
-            staged_planner_candidate_.reset();
             return std::nullopt;
         }
+        retained_heading_candidate_ = StagedCommandCandidate{
+            std::move(candidate), certificate, *generation, std::nullopt, false};
         return std::move(exported.candidate);
     }
 
@@ -2786,11 +2805,15 @@ double mainGuideSupport(
         std::optional<StagedCommandCandidate> staged;
         {
             std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-            if (!staged_planner_candidate_ ||
-                staged_planner_candidate_->generation != expected_generation) {
+            if (staged_planner_candidate_ &&
+                staged_planner_candidate_->generation == expected_generation) {
+                staged = staged_planner_candidate_;
+            } else if (retained_heading_candidate_ &&
+                retained_heading_candidate_->generation == expected_generation) {
+                staged = retained_heading_candidate_;
+            } else {
                 return output;
             }
-            staged = staged_planner_candidate_;
         }
 
         const auto& candidate = staged->command;

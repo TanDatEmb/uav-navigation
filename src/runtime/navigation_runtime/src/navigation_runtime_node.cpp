@@ -2394,7 +2394,9 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     const std::uint64_t localization_epoch,
     const std::int64_t now_ns,
     const PlanningKey& scheduled_key,
-    const std::optional<navigation_planning::CandidateBundle>& planned_candidate) {
+    const std::optional<navigation_planning::CandidateBundle>& planned_candidate,
+    bool* const candidate_admitted) {
+  if (candidate_admitted) *candidate_admitted = false;
   // Keep rejection evidence in the same structured cycle record as planner
   // evidence. These codes are diagnostics only: every non-success path below
   // remains fail-closed and leaves the execution-owned active timeline in
@@ -2796,6 +2798,10 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
                 static_cast<unsigned long>(candidate_ptr->bundle_generation), stage_decision);
     return false;
   }
+  // Factual admission receipt, not another active/pending authority. Later
+  // identity/ACK checks can still return false after this store cutover; the
+  // exported backend owner must survive those paths until its activation ACK.
+  if (candidate_admitted) *candidate_admitted = true;
   world_freshness_suspended_bundle_generation_.store(0U, std::memory_order_release);
   world_freshness_suspended_safety_suffix_active_.store(
       false, std::memory_order_release);
@@ -2817,8 +2823,14 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     }
     if (!planner_activation_queued) {
       if (committed_timeline.active.get() == candidate_ptr.get()) {
-        (void)clearCommandForCurrentIdentity(
-            goal, goal_epoch, localization_epoch, committed_timeline);
+        if (clearCommandForCurrentIdentity(
+                goal, goal_epoch, localization_epoch, committed_timeline)) {
+          // This exact candidate was positively revoked, and its ACK was
+          // never queued. Do not strand its retained registry owner when a
+          // subsequent goal arrives; snapshot absence alone cannot prove this.
+          (void)planner_->discardRetainedPositionHeadingCandidate(
+              candidate_ptr->bundle_generation);
+        }
       }
       planner_->discardCommandCandidate();
       return false;
@@ -3133,15 +3145,26 @@ void NavigationRuntimeNode::scheduleHeadingRebind(const PlanningKey& key) {
        activation_wall_time_s, activation_ns, now_ns,
        valid_until_ns = now_ns + data_freshness_window_ns_](std::stop_token stop) {
         if (stop.stop_requested()) return;
-        const auto candidate = planner->buildImmediateHeadingRebindCandidate(
+        auto candidate = planner->buildImmediateHeadingRebindCandidate(
             world_view, route, execution_state.position_world,
             execution_state.velocity_world, execution_state.yaw_rad,
             mission_start, activation_wall_time_s, key.localization_epoch,
             key.goal_epoch, key.request_id, activation_ns,
             valid_until_ns);
-        if (stop.stop_requested() || !candidate || !candidate->valid()) return;
-        std::lock_guard<std::mutex> lock(heading_rebind_mutex_);
-        pending_heading_rebind_ = PendingHeadingRebind{key, *candidate};
+        if (!candidate) return;
+        const auto generation = candidate->bundle_generation;
+        if (stop.stop_requested() || !candidate->valid()) {
+          (void)planner->discardRetainedPositionHeadingCandidate(generation);
+          return;
+        }
+        try {
+          std::lock_guard<std::mutex> lock(heading_rebind_mutex_);
+          pending_heading_rebind_ = PendingHeadingRebind{key, std::move(*candidate)};
+        } catch (...) {
+          // This export never reached the consumer/admission boundary.
+          (void)planner->discardRetainedPositionHeadingCandidate(generation);
+          throw;
+        }
       });
 }
 
@@ -3153,25 +3176,34 @@ void NavigationRuntimeNode::consumeHeadingRebind(const std::int64_t now_ns) {
     pending.swap(pending_heading_rebind_);
   }
   if (!pending) return;
-  std::optional<navigation_contracts::msg::NavigationGoal> goal;
-  {
-    std::lock_guard<std::mutex> lock(input_mutex_);
-    goal = active_goal_;
-  }
-  if (!goal || goal->request_id != pending->key.request_id) return;
-  if (commitPlannerCandidate(
-          *goal, pending->key.goal_epoch, pending->key.localization_epoch,
-          now_ns, pending->key, pending->candidate)) {
-    RCLCPP_INFO(
-        get_logger(),
-        "accepted out-of-band waypoint heading rebind generation=%lu activation_ns=%lld",
-        static_cast<unsigned long>(pending->candidate.bundle_generation),
-        static_cast<long long>(pending->candidate.activation_stamp_ns));
-  } else {
-    // This candidate owns the exact planner activation slot.  Nominal solve
-    // rejection paths preserve retained candidates, so clear this owner only
-    // when the heading candidate itself failed the execution boundary.
-    planner_->discardRetainedPositionHeadingCandidate();
+  const auto generation = pending->candidate.bundle_generation;
+  bool admitted = false;
+  try {
+    std::optional<navigation_contracts::msg::NavigationGoal> goal;
+    {
+      std::lock_guard<std::mutex> lock(input_mutex_);
+      goal = active_goal_;
+    }
+    if (!goal || goal->request_id != pending->key.request_id) {
+      (void)planner_->discardRetainedPositionHeadingCandidate(generation);
+      return;
+    }
+    if (commitPlannerCandidate(
+            *goal, pending->key.goal_epoch, pending->key.localization_epoch,
+            now_ns, pending->key, pending->candidate, &admitted)) {
+      RCLCPP_INFO(
+          get_logger(),
+          "accepted out-of-band waypoint heading rebind generation=%lu activation_ns=%lld",
+          static_cast<unsigned long>(generation),
+          static_cast<long long>(pending->candidate.activation_stamp_ns));
+    } else if (!admitted) {
+      (void)planner_->discardRetainedPositionHeadingCandidate(generation);
+    }
+  } catch (...) {
+    if (!admitted) {
+      (void)planner_->discardRetainedPositionHeadingCandidate(generation);
+    }
+    throw;
   }
 }
 

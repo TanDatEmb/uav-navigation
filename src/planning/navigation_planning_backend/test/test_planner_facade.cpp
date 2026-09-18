@@ -1481,6 +1481,9 @@ void expectMovingFrontierBehavior(const bool backup_allow_unknown) {
     EXPECT_GT(successor.candidate->bundle_generation, predecessor.bundle_generation);
     EXPECT_TRUE(diagnostics.backup_certificate.selected);
     EXPECT_TRUE(facade.hasStagedCommandCandidate());
+    EXPECT_FALSE(facade.discardRetainedPositionHeadingCandidate(
+        successor.candidate->bundle_generation));
+    EXPECT_TRUE(facade.hasStagedCommandCandidate());
     EXPECT_TRUE(facade.validateStagedCommandCandidate(
         world, ros_time_s, successor.candidate->bundle_generation).valid);
     EXPECT_EQ(facade.committedGeneration(), predecessor.bundle_generation);
@@ -1707,9 +1710,10 @@ TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {
 TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   auto world = std::make_shared<IdentityOnlyWorld>();
   TestCommitAuthorizer authorizer(world);
+  double ros_time_s = 10.0;
   navigation_planning_backend::PlannerFacade facade(
       PLANNER_FACADE_CONFIG_PATH, world, semanticFixtureMissionLimits(), authorizer,
-      [] { return 10.0; });
+      [&] { return ros_time_s; });
 
   navigation_mission::Mission mission;
   mission.id = "immediate-heading-rebind";
@@ -1782,13 +1786,69 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   EXPECT_TRUE(out_of_band->protected_region.valid());
   EXPECT_EQ(out_of_band->world_identity.generation, world->identity().generation);
 
+  // A position job may already have passed its activation-ACK boundary when
+  // the independent heading worker exports this exact generation. Neither
+  // reapplying the same request nor starting a newer desired request retires
+  // that exported owner: the timeline can still activate it and ACK it later.
+  facade.setCommandIdentity(1U, 2U, 2U);
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
+  facade.setCommandIdentity(1U, 3U, 3U);
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
+  facade.onExecutionTimelineActivated(initial->bundle_generation);
+  EXPECT_EQ(facade.committedGeneration(), initial->bundle_generation);
+  EXPECT_FALSE(facade.discardRetainedPositionHeadingCandidate(0U));
+  EXPECT_FALSE(facade.discardRetainedPositionHeadingCandidate(
+      out_of_band->bundle_generation + 1U));
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 10.5, out_of_band->bundle_generation).valid);
+  // The independent export must not make a failed nominal job look ready or
+  // get exported as that job's result. Its immutable original identity stays.
+  EXPECT_EQ(out_of_band->goal_epoch, 2U);
+  EXPECT_EQ(out_of_band->request_id, 2U);
+  EXPECT_FALSE(facade.exportCommandCandidate(
+      1U, 2U, 2U, 10500000000LL, 30000000000LL));
+  EXPECT_FALSE(facade.exportCommandCandidate(
+      1U, 3U, 3U, 10500000000LL, 30000000000LL));
+
+  // A retired canonical pending heading must not block a fresh measured
+  // emergency proposal. This is backend ownership, not an assertion that
+  // runtime dispatches/adopts a brake or that a waypoint was accepted.
+  navigation_planning::TrajectoryPoint measured_brake;
+  measured_brake.position_world = state.position_world;
+  measured_brake.velocity_world = Eigen::Vector3d{0.5, 0.0, 0.0};
+  measured_brake.yaw = state.yaw_rad;
+  ASSERT_TRUE(facade.commitEmergencyBrake(measured_brake, 10.6));
+  const auto emergency = facade.exportCommandCandidate(
+      1U, 3U, 3U, 10600000000LL, 30000000000LL);
+  ASSERT_TRUE(emergency);
+  ASSERT_GT(emergency->bundle_generation, out_of_band->bundle_generation);
+  EXPECT_TRUE(facade.hasStagedCommandCandidate());
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 10.6, emergency->bundle_generation).valid);
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 10.5, out_of_band->bundle_generation).valid);
+
   // The out-of-band builder also registers the exact internal candidate
   // generation. Activation must promote that same retained position/yaw
   // bundle; a later nominal solve cannot substitute another candidate. The
   // generic nominal discard path must not erase this reserved owner.
-  facade.discardCommandCandidate();
-  EXPECT_TRUE(facade.hasStagedCommandCandidate());
   facade.onExecutionTimelineActivated(out_of_band->bundle_generation);
+  EXPECT_TRUE(facade.hasStagedCommandCandidate());
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 10.6, emergency->bundle_generation).valid);
+  facade.discardCommandCandidate();
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
+  // The nominal discard cannot erase a heading export still waiting for ACK.
+  const auto waiting = facade.buildImmediateHeadingRebindCandidate(
+      world, second_route, state.position_world, state.velocity_world,
+      state.yaw_rad, start.position_enu, 20.0, 1U, 3U, 3U,
+      20000000000LL, 30000000000LL);
+  ASSERT_TRUE(waiting);
+  facade.discardCommandCandidate();
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 20.0, waiting->bundle_generation).valid);
+  EXPECT_TRUE(facade.discardRetainedPositionHeadingCandidate(
+      waiting->bundle_generation));
   EXPECT_EQ(facade.committedGeneration(), out_of_band->bundle_generation);
   const auto& rebound = *out_of_band;
   EXPECT_FALSE(rebound.route_boundary_event.has_value());
@@ -1808,6 +1868,81 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   EXPECT_NEAR(after_turn.position_world.y(), retained_after_turn.position_world.y(), 1.0e-9);
   EXPECT_GT(after_turn.yaw, before_turn.yaw + 1.0e-3);
   EXPECT_LE(std::abs(after_turn.yaw_rate), facade.yawRateLimitRadS() + 1.0e-6);
+
+  // Use the already-settled yaw plateau of the long fixture trajectory, so
+  // owner retirement is tested independently of a second turning transient.
+  const auto unadmitted = facade.buildImmediateHeadingRebindCandidate(
+      world, second_route, state.position_world, state.velocity_world,
+      state.yaw_rad, start.position_enu, 20.0, 1U, 3U, 3U,
+      20000000000LL, 30000000000LL);
+  ASSERT_TRUE(unadmitted);
+  ASSERT_GT(unadmitted->bundle_generation, rebound.bundle_generation);
+  // A delayed retirement/ACK for the previous owner cannot clear this one.
+  EXPECT_FALSE(facade.discardRetainedPositionHeadingCandidate(
+      rebound.bundle_generation));
+  facade.onExecutionTimelineActivated(rebound.bundle_generation);
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 20.0, unadmitted->bundle_generation).valid);
+  EXPECT_TRUE(facade.discardRetainedPositionHeadingCandidate(
+      unadmitted->bundle_generation));
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
+  EXPECT_EQ(facade.committedGeneration(), rebound.bundle_generation);
+  // No ghost retained slot blocks a subsequent desired heading export.
+  const auto replacement = facade.buildImmediateHeadingRebindCandidate(
+      world, second_route, state.position_world, state.velocity_world,
+      state.yaw_rad, start.position_enu, 20.1, 1U, 4U, 4U,
+      20100000000LL, 30000000000LL);
+  ASSERT_TRUE(replacement);
+  EXPECT_GT(replacement->bundle_generation, unadmitted->bundle_generation);
+  facade.setCommandIdentity(1U, 4U, 4U);
+  // Model goal C canceling pending G before activation: no ACK G arrives.
+  // Nominal C remains able to solve/export, and only its successful newer
+  // activation collects the obsolete heading owner. No timeout/retry gate.
+  ros_time_s = 20.2;
+  facade.setCommandIdentity(1U, 5U, 5U);
+  ASSERT_TRUE(facade.setRouteSnapshot(
+      progress.snapshot(mission.id, mission.frame, 1U, 5U, 1U)));
+  ASSERT_EQ(facade.planInitialFromStoppedState(second.position_enu, 0.0, true),
+            navigation_planning::PlannerStatus::kSuccess);
+  const auto nominal = facade.exportCommandCandidate(
+      1U, 5U, 5U, 20200000000LL, 80000000000LL);
+  ASSERT_TRUE(nominal);
+  ASSERT_GT(nominal->bundle_generation, replacement->bundle_generation);
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 20.1, replacement->bundle_generation).valid);
+  facade.onExecutionTimelineActivated(nominal->bundle_generation + 1U);
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 20.1, replacement->bundle_generation).valid);
+  facade.onExecutionTimelineActivated(nominal->bundle_generation);
+  EXPECT_EQ(facade.committedGeneration(), nominal->bundle_generation);
+  EXPECT_FALSE(facade.validateStagedCommandCandidate(
+      world, 20.1, replacement->bundle_generation).valid);
+  EXPECT_FALSE(facade.discardRetainedPositionHeadingCandidate(
+      replacement->bundle_generation));
+  facade.onExecutionTimelineActivated(replacement->bundle_generation);
+  EXPECT_EQ(facade.committedGeneration(), nominal->bundle_generation);
+  ASSERT_GT(nominal->duration_s, 10.1);
+  ASSERT_TRUE(facade.commitEmergencyBrake(measured_brake, 30.3));
+  const auto older_position = facade.exportCommandCandidate(
+      1U, 5U, 5U, 30300000000LL, 80000000000LL);
+  ASSERT_TRUE(older_position);
+  const auto next_heading = facade.buildImmediateHeadingRebindCandidate(
+      world, second_route, state.position_world, state.velocity_world,
+      state.yaw_rad, start.position_enu, 30.2, 1U, 6U, 6U,
+      30200000000LL, 80000000000LL);
+  ASSERT_TRUE(next_heading);
+  ASSERT_GT(next_heading->bundle_generation, older_position->bundle_generation);
+  facade.onExecutionTimelineActivated(next_heading->bundle_generation);
+  EXPECT_EQ(facade.committedGeneration(), next_heading->bundle_generation);
+  // Reservation order need not match worker completion order. Do not destroy
+  // an older position proposal before its job reaches export/admission gates.
+  EXPECT_TRUE(facade.hasStagedCommandCandidate());
+  EXPECT_TRUE(facade.validateStagedCommandCandidate(
+      world, 30.3, older_position->bundle_generation).valid);
+  const auto surviving_position = facade.exportCommandCandidate(
+      1U, 5U, 5U, 30300000000LL, 80000000000LL);
+  ASSERT_TRUE(surviving_position);
+  EXPECT_EQ(surviving_position->bundle_generation, older_position->bundle_generation);
 }
 
 void probeProductPassRenewal(const bool backup_allow_unknown,

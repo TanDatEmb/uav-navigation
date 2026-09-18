@@ -47,7 +47,10 @@ class PlannerFacade final {
       std::uint64_t solve_generation,
       std::uint64_t planner_cycle) noexcept;
   void discardCommandCandidate() noexcept;
-  void discardRetainedPositionHeadingCandidate() noexcept;
+  // Caller owns an unadmitted retained candidate; zero/wrong/retired
+  // generations cannot clear the currently registered heading owner.
+  [[nodiscard]] bool discardRetainedPositionHeadingCandidate(
+      std::uint64_t expected_generation) noexcept;
   void onExecutionTimelineActivated(std::uint64_t generation) noexcept;
   [[nodiscard]] bool hasStagedCommandCandidate() const;
   [[nodiscard]] navigation_planning::TrajectoryValidationResult

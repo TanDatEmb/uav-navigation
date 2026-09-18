@@ -254,10 +254,10 @@ void PlannerFacade::discardCommandCandidate() noexcept {
   if (impl_ && impl_->planner) impl_->planner->discardCommandCandidate();
 }
 
-void PlannerFacade::discardRetainedPositionHeadingCandidate() noexcept {
-  if (impl_ && impl_->planner) {
-    impl_->planner->discardRetainedPositionHeadingCandidate();
-  }
+bool PlannerFacade::discardRetainedPositionHeadingCandidate(
+    const std::uint64_t expected_generation) noexcept {
+  return impl_ && impl_->planner &&
+      impl_->planner->discardRetainedPositionHeadingCandidate(expected_generation);
 }
 
 void PlannerFacade::onExecutionTimelineActivated(
