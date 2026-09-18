@@ -664,9 +664,16 @@ def _tracking_experiment_payload(
                 "backup_px4_anchor_reject",
                 "emergency_px4_anchor_reject",
                 "fresh_typed_fast_lio_health_reject",
-                "stopped_hold_near_execution_reject",
+                "stopped_hold_precheck_near_execution_reject",
             ] if suppress_tracking_response else []
         ),
+        # The diagnostic precheck is not the final exposure decision. This
+        # metadata describes scope; it does not configure or relax the gate.
+        "stopped_hold_admissibility": {
+            "precheck_near_execution_suppressed": suppress_tracking_response,
+            "final_exposure_near_execution_gate": "active",
+            "anchor_limit_owner": "navigation_contracts::kCommandAnchorErrorLimitM",
+        },
     }
     if mode == "velocity-only":
         velocity_values = {

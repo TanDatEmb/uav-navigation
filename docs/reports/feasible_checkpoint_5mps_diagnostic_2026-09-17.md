@@ -4595,3 +4595,91 @@ STOP did not meet speed, so it is not “WP3 never accepted.” A terminal `.75`
 precheck does not prove the final-veto predicate. Zero-evaluation warnings
 after a newer activation are superseded, not current failure attribution.
 Missing witnesses remain `NOT_EVALUABLE`; no additional native leaf is inferred.
+
+## Export-owner separation and completion bottlenecks (2026-09-18)
+
+The post-matrix controlled RED in the real facade confirms an exported
+retained heading generation can lose its backend registration at an identity
+setter before activation ACK. One test fails five assertions in
+`retained-heading-identity-red.log/.xml` under the existing ignored diagnostic
+folder. The immutable export remains usable, but staged revalidation fails
+and warm-cache ACK remains at generation 1 instead of 2. This is a confirmed
+API/protocol defect, not attribution of a native zero-evaluation warning or
+proof of a completion-rate fix.
+
+Keeping the shared slot forever is rejected: `setActiveGoalEpoch()` can drop
+canonical pending before activation; no ACK then arrives, and a preserved
+backend slot can block the next nominal or emergency proposal. The bounded
+seam instead separates position-worker proposal ownership from independent
+heading export ownership, with one shared monotonic generation reservation.
+Generic readiness/export remain position-only. Exact-generation validation
+and activation ACK can find either owner. A successfully promoted newer
+activation collects an older heading owner; receiving a missing ACK does not.
+An older position proposal survives a heading ACK until its worker reaches
+the ordinary admission/rejection gates. There is still only one canonical
+execution store and one command publication path.
+
+Producer/consumer rejection retires only the exact unadmitted heading export.
+Admission uses a factual transaction receipt: a later boolean false is not
+proof that the store never admitted the candidate. Export construction occurs
+before backend registration, avoiding an orphan on failed/throwing export.
+Component GREEN covers same/changed identity, both reservation orders,
+independent recertification/export, exact retirement, delayed/missing ACK,
+new nominal/emergency proposal despite an obsolete heading owner, and later
+heading reuse. It does not guarantee immediate heading-only recovery while
+the old heading owner awaits a valid replacement, or resolve the separate
+void-ACK watermark debt. The combined dirty worktree passed canonical Release
+and regression below; a fresh frozen diagnostic matrix remains pending.
+
+```mermaid
+flowchart TD
+  A["Goal + measured state + immutable world"] --> B["Planner: complete certified proposal"]
+  B --> C["Admission: identity, anchor, world, time"]
+  C --> D["Canonical timeline: pending → active"]
+  D --> E["Final exposure: state/world freshness, lease, STOPPED_HOLD proximity"]
+  E --> F["PX4 receives command"]
+  F --> G{"Measured waypoint acceptance?"}
+  G -->|"yes: ordered PASS or settled STOP"| A
+  G -->|"no"| E
+  W["New immutable world"] --> V{"Exact full bundle still valid?"}
+  V -->|"yes"| D
+  V -->|"no"| R["Revoke old authority; terminal failure latch"]
+  R --> H["No new planning key; receiver lease expires → PX4 Hold"]
+  R -. "new brake proposal is a conditional design option, not implemented dispatch" .-> N["Must certify anew from measured P/V/A and meet remaining deadline"]
+```
+
+The broad leverage hypothesis is not merely a faster optimizer: world
+revocation currently prevents dispatch of a new measured-state brake even
+though the backend has that typed proposal seam. A body-free or MAIN-free
+witness does not prove a certifiable stopping tube or sufficient remaining
+queue/cancel/certify/admit/publish time. No old authority is extended and no
+terminal latch or PX4 Hold is reset. Native FAST5-r2 is not an exact new-brake
+replay because its immutable failed world/state bundle was not captured.
+
+STOPPED_HOLD diagnostic metadata now names **precheck** suppression; the final
+exposure proximity gate remains active. A new native veto witness copies the
+actual in-transaction state/world/clock/lease predicates and logs outside the
+owner/timeline locks. This is observability only, not a new bypass. Historical
+SAFE5-r3/SAFE9-r2 final-veto attribution remains conditional until that exact
+witness exists; proximity to a waypoint is not measured settled STOP.
+
+### Export-owner validation closure
+
+Canonical `make build` and `make test` both terminated with rc0: 23 Release
+packages, 85 CTest targets with zero errors/failures/skips, seven auxiliary
+tests, and 389 Python tests with one explicit skip. The focused facade suite
+passed all 37 tests; the focused runtime-contract suite passed 231 tests with
+one explicit skip. The safety-ledger validator and `git diff --check` passed.
+Logs remain in the existing ignored diagnostic folder:
+`export-owner-release-build.log`, `export-owner-regression-test.log`,
+`retained-heading-two-owner-final.log/.xml`, and
+`stopped-hold-scope-python-final.log`.
+
+Before committing, `validate_manifest()` returned `VALID` for manifest
+`b405cd74656103d3247ebfce80ab65801a9b77ccae7c1b61845b303ae6982a32`,
+source fingerprint
+`bfda9ef09dc827a86dd2076d9204cd2e5a93f217f4377f5879d0a3cb303c96a2`,
+at dirty HEAD `77c2d4a0814b1ab1553cd325e64bf66c62d908e6`. Its immutable copy
+is `export-owner-regression-build-manifest.json` in that diagnostic folder.
+This validates the combined worktree, not either isolated commit or the old
+18-run matrix. Commits/report edits require a fresh manifest before new SITL.

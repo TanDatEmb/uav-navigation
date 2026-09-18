@@ -180,7 +180,7 @@ class RuntimeContractTest(unittest.TestCase):
             "backup_px4_anchor_reject",
             "emergency_px4_anchor_reject",
             "fresh_typed_fast_lio_health_reject",
-            "stopped_hold_near_execution_reject",
+            "stopped_hold_precheck_near_execution_reject",
         ])
 
         experiment = runner._tracking_experiment_payload(
@@ -197,8 +197,41 @@ class RuntimeContractTest(unittest.TestCase):
             "backup_px4_anchor_reject",
             "emergency_px4_anchor_reject",
             "fresh_typed_fast_lio_health_reject",
-            "stopped_hold_near_execution_reject",
+            "stopped_hold_precheck_near_execution_reject",
         ])
+
+    def test_stopped_hold_metadata_distinguishes_precheck_from_final_gate(self) -> None:
+        for mode in ("off", "adaptive", "relaxed"):
+            with self.subTest(mode=mode):
+                contract = runner._tracking_experiment_payload(mode, 0.25, 0.06, 0.17)
+                scope = contract["stopped_hold_admissibility"]
+                self.assertEqual(scope["precheck_near_execution_suppressed"],
+                                 contract["suppress_braking"])
+                self.assertEqual(scope["final_exposure_near_execution_gate"], "active")
+                self.assertEqual(scope["anchor_limit_owner"],
+                                 "navigation_contracts::kCommandAnchorErrorLimitM")
+                self.assertNotIn("stopped_hold_near_execution_reject",
+                                 contract["suppressed_gates"])
+
+    def test_tracking_report_preserves_captured_hold_scope_without_inventing_history(self) -> None:
+        contract = runner._tracking_experiment_payload("relaxed", 0.25, 0.06, 0.17)
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary)
+            metadata = session / "metadata.json"
+            metadata.write_text(json.dumps({"tracking_experiment": contract}),
+                                encoding="utf-8")
+            marker = report._tracking_experiment(session)
+            self.assertEqual(marker["status"], "OK")
+            self.assertEqual(marker["stopped_hold_admissibility"],
+                             contract["stopped_hold_admissibility"])
+            del contract["stopped_hold_admissibility"]
+            contract["suppressed_gates"][-1] = "stopped_hold_near_execution_reject"
+            metadata.write_text(json.dumps({"tracking_experiment": contract}),
+                                encoding="utf-8")
+            historical = report._tracking_experiment(session)
+            self.assertIsNone(historical["stopped_hold_admissibility"])
+            self.assertIn("stopped_hold_near_execution_reject",
+                          historical["suppressed_gates"])
 
     def test_tracking_experiment_rejects_invalid_values(self) -> None:
         with self.assertRaises(ValueError):

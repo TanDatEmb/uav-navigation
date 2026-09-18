@@ -7722,9 +7722,10 @@ void NavigationRuntimeNode::publishCommand() {
           RCLCPP_WARN_THROTTLE(
               get_logger(), *get_clock(), 1000,
               "TRACKING_EXPERIMENT_BYPASS role=STOPPED_HOLD "
-              "gate=stopped_hold_near_execution_reject "
+              "gate=stopped_hold_precheck_near_execution_reject "
               "known_free=1 execution_support_valid=1 "
               "anchor_error_m=%.3f anchor_limit_m=%.3f; "
+              "precheck-only, final exposure proximity gate remains active; "
               "diagnostic-only, not qualification evidence",
               endpoint_anchor_error_m,
               navigation_contracts::kCommandAnchorErrorLimitM);
@@ -8178,6 +8179,10 @@ void NavigationRuntimeNode::publishCommand() {
     bool final_command_lease_valid = false;
     bool final_bundle_lease_valid = false;
     bool final_stopped_hold_support_valid = false;
+    double final_stopped_hold_anchor_error_m =
+        std::numeric_limits<double>::quiet_NaN();
+    std::int64_t final_authorization_ros_ns = 0;
+    std::int64_t final_authorization_steady_ns = 0;
     navigation_execution::TimestampFreshness final_world_freshness =
         navigation_execution::TimestampFreshness::INVALID;
     navigation_contracts::ExecutionStateFreshness final_execution_freshness;
@@ -8222,6 +8227,8 @@ void NavigationRuntimeNode::publishCommand() {
               const auto authorization_ros_ns = now().nanoseconds();
               const auto authorization_steady_ns =
                   navigation_common::steadyClockNowNanoseconds();
+              final_authorization_ros_ns = authorization_ros_ns;
+              final_authorization_steady_ns = authorization_steady_ns;
               final_execution_freshness =
                   navigation_contracts::evaluateExecutionStateFreshness(
                       authorization_ros_ns,
@@ -8239,9 +8246,13 @@ void NavigationRuntimeNode::publishCommand() {
               final_bundle_lease_valid = sampled_planned_stop_hold ||
                   (authorization_ros_ns >= sampled_bundle->valid_from_ns &&
                    authorization_ros_ns <= sampled_bundle->valid_until_ns);
+              if (sampled_planned_stop_hold) {
+                final_stopped_hold_anchor_error_m =
+                    (pvaj.col(0) - final_execution_state->state.position_world).norm();
+              }
               final_stopped_hold_support_valid = !sampled_planned_stop_hold ||
                   (final_execution_state->state.position_world.allFinite() &&
-                   (pvaj.col(0) - final_execution_state->state.position_world).norm() <=
+                   final_stopped_hold_anchor_error_m <=
                        navigation_contracts::kCommandAnchorErrorLimitM);
               command_execution_lease_reason_.store(
                   static_cast<int>(final_execution_freshness.reason),
@@ -8288,6 +8299,46 @@ void NavigationRuntimeNode::publishCommand() {
             std::chrono::steady_clock::now() - store_publish_started).count(),
         std::memory_order_release);
     if (!exposed) {
+      if (publication_boundary_evaluated && sampled_planned_stop_hold &&
+          !final_stopped_hold_support_valid) {
+        // Exact in-transaction facts, logged only after releasing all owner
+        // and timeline locks. Precheck bypass telemetry is not a final veto
+        // witness. No authority, limits or recovery disposition changes here.
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 1000,
+            "STOPPED_HOLD final exposure veto generation=%lu request=%lu "
+            "goal_epoch=%lu localization_epoch=%lu "
+            "world=(%lu,%lu,%lu,%lld) state_ingress=%lu "
+            "state_source_ns=%lld state_receive_steady_ns=%lld "
+            "authorization_ros_ns=%lld authorization_steady_ns=%lld "
+            "anchor_error_m=%.9g anchor_limit_m=%.9g "
+            "execution_freshness=%s world_freshness=%d "
+            "command_lease_valid=%d bundle_lease_valid=%d hold_support_valid=0 "
+            "endpoint=(%.9g,%.9g,%.9g) measured=(%.9g,%.9g,%.9g)",
+            static_cast<unsigned long>(sampled_bundle->bundle_generation),
+            static_cast<unsigned long>(sampled_bundle->request_id),
+            static_cast<unsigned long>(sampled_bundle->goal_epoch),
+            static_cast<unsigned long>(sampled_bundle->localization_epoch),
+            static_cast<unsigned long>(sampled_bundle->world_identity.localization_epoch),
+            static_cast<unsigned long>(sampled_bundle->world_identity.generation),
+            static_cast<unsigned long>(sampled_bundle->world_identity.revision),
+            static_cast<long long>(sampled_bundle->world_identity.observation_stamp_ns),
+            static_cast<unsigned long>(final_execution_state->ingress_sequence),
+            static_cast<long long>(final_execution_state->state.source_stamp_ns),
+            static_cast<long long>(final_execution_state->state.receive_stamp_ns),
+            static_cast<long long>(final_authorization_ros_ns),
+            static_cast<long long>(final_authorization_steady_ns),
+            final_stopped_hold_anchor_error_m,
+            navigation_contracts::kCommandAnchorErrorLimitM,
+            navigation_contracts::executionStateFreshnessReasonName(
+                final_execution_freshness.reason),
+            static_cast<int>(final_world_freshness),
+            final_command_lease_valid ? 1 : 0, final_bundle_lease_valid ? 1 : 0,
+            pvaj(0, 0), pvaj(1, 0), pvaj(2, 0),
+            final_execution_state->state.position_world.x(),
+            final_execution_state->state.position_world.y(),
+            final_execution_state->state.position_world.z());
+      }
       if (publication_boundary_evaluated &&
           final_world_freshness !=
               navigation_execution::TimestampFreshness::VALID) {

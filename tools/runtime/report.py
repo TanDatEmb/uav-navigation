@@ -430,6 +430,7 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
         "velocity_only_output_transport_bound_s": 0.0,
         "velocity_only_px4_consume_bound_s": 0.0,
         "suppressed_gates": [],
+        "stopped_hold_admissibility": None,
         "qualification_eligible": False,
         "risk_warning": None,
         "source": "default_missing_marker",
@@ -493,6 +494,13 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
                     "fresh_typed_fast_lio_health_reject",
                     "stopped_hold_near_execution_reject",
                 ] if suppress_braking else []
+            ),
+            # Preserve captured scope, never infer a historical final gate
+            # from the older ambiguous suppression label or today's source.
+            "stopped_hold_admissibility": (
+                dict(value["stopped_hold_admissibility"])
+                if isinstance(value.get("stopped_hold_admissibility"), dict)
+                else None
             ),
             "qualification_eligible": False if mode != "off" else None,
             "risk_warning": (
@@ -3433,6 +3441,7 @@ def _sim_report(session: Path, config: dict[str, Any], snapshot: dict[str, Any],
                 )
             },
             "suppressed_gates": tracking_experiment["suppressed_gates"],
+            "stopped_hold_admissibility": tracking_experiment["stopped_hold_admissibility"],
             "qualification_eligible": False,
             "risk_warning": tracking_experiment["risk_warning"],
         }
