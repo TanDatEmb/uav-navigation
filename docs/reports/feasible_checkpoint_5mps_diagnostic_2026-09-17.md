@@ -4683,3 +4683,173 @@ at dirty HEAD `77c2d4a0814b1ab1553cd325e64bf66c62d908e6`. Its immutable copy
 is `export-owner-regression-build-manifest.json` in that diagnostic folder.
 This validates the combined worktree, not either isolated commit or the old
 18-run matrix. Commits/report edits require a fresh manifest before new SITL.
+
+### Frozen export-owner matrix closure (2026-09-18)
+
+The fresh canonical Release build completed all 23 packages with rc0 before
+the serial matrix. All 18 sessions have terminal reports, infrastructure and
+provenance `VALID`, `stopped=true`, and cleanup `PASS`. The runner confirmed
+there is no remaining matrix process. No retry, replacement, replay, or
+mid-matrix source/configuration edit is substituted.
+
+The immutable build manifest is
+`8c4c172e4418d84aaa597fbc2ccf5d6f60bb9c8a30e03c34e3304226155651e4`,
+source fingerprint
+`063235d3ef2c07c6efde30947c0ce140c3ab04b6188b36e3adfe26b3965ed646`,
+at dirty HEAD `bd37a1c0bf91e02fd85acde8da7ebbcad3949736`. Every session reports
+that same identity. The dirty snapshot includes the provisional nominal
+incumbent trial and pre-existing documentation migration; this is evidence
+for the combined worktree, not isolated commit qualification. The manifest
+copy, build log and serial driver remain under the existing ignored folder
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/` as
+`export-owner-matrix-build-manifest.json`,
+`export-owner-matrix-release-build.log`, and
+`export-owner-matrix-sitl-driver.log`.
+
+The command keeps the previous matrix's nominal motion preset, 5 m/s cap,
+seed 0, ROS domain 42, XRCE port 8892, 4096 visibility endpoints and 40 m
+visibility range. Snapshot capture and RViz are off. SAFE uses
+`raycasting_on_backup_strict`; FAST uses
+`raycasting_on_backup_unknown`. The policy difference concerns BACKUP
+evidence, not speed-based policy selection: FAST does not make OCCUPIED or
+OUT_OF_MAP legal. MAIN's existing unknown policy is common to both.
+
+| Completed missions / attempted sessions | 2WP | 5WP | 9WP | total |
+|---|---|---|---|---|
+| SAFE | 2/3 | 0/3 | 1/3 | 3/9 |
+| FAST | 3/3 | 0/3 | 1/3 | 4/9 |
+| Combined | 5/6 | 0/6 | 2/6 | **7/18 (38.9%)** |
+
+The other outcomes are seven `PAUSED_SAFETY_STOP` and four
+`FAILED_COMPONENT`. The evaluation verdicts are eleven `FAIL`, seven
+`BLOCKED`, and **zero PASS**. Every session is qualification-ineligible;
+the relaxed tracking experiment remains diagnostic. `COMPLETE` is a mission
+outcome, not a flight acceptance verdict. The previous round also had 7/18
+COMPLETE, but these are not a controlled paired causal A/B: neither an
+export-owner benefit nor absence of benefit is proven by the aggregate.
+The product completion goal remains unmet, especially 5WP (0/6).
+
+All session names below share prefix `external-mode-check-20260918T` under
+`.artifacts/runtime/`. Accepted indices are zero-based measured mission
+progress, not optimizer endpoint success.
+
+| Case | session | outcome | accepted indices | verdict |
+|---|---|---|---|---|
+| SAFE2-r1 | 015335-927397 | COMPLETE | 0–1 | FAIL |
+| SAFE2-r2 | 015536-931967 | COMPLETE | 0–1 | FAIL |
+| SAFE2-r3 | 015742-935543 | FAILED_COMPONENT | 0 | FAIL |
+| SAFE5-r1 | 015941-939280 | PAUSED_SAFETY_STOP | 0–3 | BLOCKED |
+| SAFE5-r2 | 020215-942981 | PAUSED_SAFETY_STOP | 0–2 | BLOCKED |
+| SAFE5-r3 | 020431-946890 | PAUSED_SAFETY_STOP | 0 | BLOCKED |
+| SAFE9-r1 | 020611-950480 | FAILED_COMPONENT | 0–7 | FAIL |
+| SAFE9-r2 | 020908-954146 | PAUSED_SAFETY_STOP | 0 | BLOCKED |
+| SAFE9-r3 | 021018-957910 | COMPLETE | 0–8 | FAIL |
+| FAST2-r1 | 021307-961788 | COMPLETE | 0–1 | FAIL |
+| FAST2-r2 | 021526-965628 | COMPLETE | 0–1 | FAIL |
+| FAST2-r3 | 021731-970058 | COMPLETE | 0–1 | FAIL |
+| FAST5-r1 | 021934-974050 | PAUSED_SAFETY_STOP | 0–2 | BLOCKED |
+| FAST5-r2 | 022123-977825 | PAUSED_SAFETY_STOP | 0 | BLOCKED |
+| FAST5-r3 | 022233-981388 | PAUSED_SAFETY_STOP | 0–3 | BLOCKED |
+| FAST9-r1 | 022440-985162 | COMPLETE | 0–8 | FAIL |
+| FAST9-r2 | 022729-989244 | FAILED_COMPONENT | 0–7 | FAIL |
+| FAST9-r3 | 023014-993575 | FAILED_COMPONENT | 0–7 | FAIL |
+
+#### First refusal, not the last containment message
+
+The eleven incomplete missions do not have one demonstrated common cause.
+Native first-boundary attribution separates the following groups; missing
+certificate leaves remain `NOT_EVALUABLE` rather than an inferred collision
+or optimizer timeout.
+
+- **Four receiver freshness failures:** SAFE2-r3, SAFE9-r1, FAST9-r2 and
+  FAST9-r3 have native `RECEIVE_STALE`, with receive ages respectively
+  206.042, 210.579, 204.350 and 200.703 ms. Source health/propagation
+  invalidation is independently witnessed for the first two. SAFE2-r3 has
+  navigation-invalid correction/observability diagnostics before a 600 ms
+  propagated source-time gap; the observer gap is not receiver-time evidence.
+  SAFE9-r1 has DEGRADED / insufficient translational observability, invalid
+  propagation and a reanchor requirement before the stale handover. The
+  underlying source leaf for the two FAST9 sessions is not established by
+  the receive-age message alone. Raising freshness or calling this a UDP
+  permission failure is not justified.
+- **Two exact final STOPPED_HOLD exposure vetoes:** SAFE5-r3 and FAST5-r3.
+  Both have valid state and world freshness and live command/bundle leases
+  in the actual veto transaction. Endpoint distances are
+  `0.792860272 m` and `0.824542736 m`, respectively, above the unchanged
+  `0.75 m` exposure limit. The subsequent stale-PVA handovers are containment
+  after the first refusal, not its cause. SAFE5-r3's later invalid-time-window
+  world check is also not the initial veto.
+- **One genuine terminal settling failure:** SAFE5-r1 accepted WP3 and
+  published WP4. The final MAIN endpoint then emits fresh zero-velocity
+  hold commands, but the last native acceptance sample still has speed
+  `0.250 m/s > 0.15 m/s` after the existing bounded window, despite position
+  error `0.363 m < 0.8 m`. Source-bracketed ground-truth velocity likewise
+  remains nonzero. This is not “WP3 was never accepted”; the final vehicle
+  has not yet satisfied measured STOP acceptance. The native generic
+  “backup completed” fatal label does not identify the actual MAIN role.
+- **Three replacement/recovery certificate failures:** SAFE5-r2,
+  FAST5-r1 and FAST5-r2. SAFE5-r2's MAIN failure takes 12.898 ms, not an
+  80 ms timeout, but the emergency certificate leaf is missing. FAST5-r1
+  and FAST5-r2 have native emergency latest-world rejection at time zero:
+  `initial_point_blocked`, role BACKUP, cell state 3 (`kOccupied`) in the
+  inflated grid. FAST's explicit UNKNOWN permission cannot legalize that
+  state. This does not prove a physical collision. FAST5-r1's MAIN failure
+  takes 13.519 ms; FAST5-r2 does have a preceding 80.289 ms nominal timeout,
+  but extending its solve budget does not certify an occupied initial brake
+  point. Neither session has the final-hold veto witness.
+- **One BACKUP endpoint/recovery-window failure:** SAFE9-r2 reaches BACKUP
+  completion with endpoint error about 8.66 m and no usable trajectory,
+  then exhausts the existing bounded recovery window. An exact emergency
+  failure certificate leaf is not available; a nominal solver miss and
+  the native terminal message alone do not supply it.
+
+#### Confirmed scheduler phase defect; a phase-only patch is rejected
+
+FAST5-r3 is an actual moving terminal capture, not a fabricated evaluator
+case. Native WP3 acceptance precedes the final WP4 request. Generation 16
+activates at ROS 59.652 s with no BACKUP, a MAIN duration of 1.101134914 s,
+and first command speed about 1.505 m/s. The backend labels this semantic
+terminal STOP; it is not already endpoint hold at activation.
+
+`currentPlanningKey()` nevertheless suppresses dispatch on matching
+terminal MAIN kind/semantic identity alone, without checking execution
+phase. That prevents the runCycle projected terminal-MAIN recovery contract
+from being evaluated throughout this moving capture. The historical
+contract explicitly allows the existing one-shot measured brake for
+projected tracking loss outside measured acceptance
+([DEC-20260901-033](../safety/archive/runtime_safety_legacy_full.md#2026-09-01---recover-projected-tracking-loss-for-terminal-main-commands));
+post-end suppression is intended after a validated endpoint witness
+([DEC-20260902-027](../safety/archive/runtime_safety_legacy_full.md#2026-09-02---suppress-replacement-solves-after-terminal-execution-witness)).
+Production reachability of the phase mismatch is **CONFIRMED**. Whether
+a new brake would have certified and completed this flight is **CONDITIONAL**.
+
+The final transaction refuses generation 16 at ROS 60.756 s with fresh
+state source 60.748 s, world revision 550/source 60.600 s, and distance
+0.824542736 m. The measured speed is about 1.080 m/s; nearby ground-truth
+speed is also about 1.054 m/s. Ground-truth body-frame velocity must not be
+compared componentwise with External Mode NED velocity without the frame
+transform. Runtime native witness:
+`logs/navigation_runtime_node_983898_1789698167884.log`; buffered mapping
+stdout contains the same exact final-veto tuple at `logs/mapping.log:504`.
+Native PVA stale at wall 1789698241.412623083 follows the veto at
+1789698241.287794937 by about 125 ms.
+
+Contrarian source review rejects just reopening the key before declared
+end. Healthy terminal tracking is not a recovery event: the existing
+`terminalStopMayDeferAnchorRecovery()` requires recovery pressure, and the
+ordinary renewal lead can then repeatedly run optimization and move the STOP
+end. Moreover, existing recovery follows future-anchor reservation and the
+nominal planner call; a remaining MAIN shorter than the fixed 400 ms lead
+can return before recovery. A fabricated `NoNeed` is also wrong:
+`ValidateRetainedCommand` deliberately excludes measured emergency
+replacement. These are distinct control-flow conditions, not grounds to
+weaken final proximity, measured speed, UNKNOWN policy or certificate gates.
+
+The next discriminator must exercise a genuine moving terminal MAIN through
+the real-node peer: healthy **monitor-only** ticks preserve endpoint/generation
+and make no optimizer call; projected/actual loss can reach the existing
+retained-validation/recovery fences even when no nominal future anchor can
+be reserved; validated post-end completion still suppresses replacement.
+The existing experimental phase bridge remains authoritative to its declared
+diagnostic scope. No phase-only source patch, new recovery bypass, budget
+retune, plant-gain change, or additional SITL round is claimed here.
