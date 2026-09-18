@@ -256,6 +256,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   ~NavigationRuntimeNode() override;
 
  private:
+  // Access-only test peer exercises the real callbacks/worker with barriers;
+  // it adds no alternate runtime behavior or command-authority path.
+  friend class NavigationRuntimeEpochResetTestPeer;
   void onRegisteredScan(
       const navigation_contracts::msg::RegisteredScan::ConstSharedPtr& message);
   void onEstimatorHealth(
@@ -299,7 +302,11 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                              const std::optional<navigation_planning::CandidateBundle>&
                                  planned_candidate = std::nullopt);
   void suspendCommandForWorldFreshness();
-  void resetForLocalizationEpochLocked(std::uint64_t localization_epoch);
+  // Ingress serialization remains held while this temporarily releases the
+  // lifecycle owner lock to drain old mapping work.
+  void resetForLocalizationEpochLocked(
+      std::uint64_t localization_epoch,
+      std::unique_lock<std::mutex>& localization_lock);
   // Caller holds command_execution_lease_failure_latch_.transitionMutex().
   void applyExecutionRecoveryEventLocked(ExecutionRecoveryEvent event) noexcept;
   // Caller holds command_execution_lease_failure_latch_.transitionMutex().
@@ -368,6 +375,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   rclcpp::CallbackGroup::SharedPtr propagated_state_callback_group_;
 
   std::mutex input_mutex_;
+  // Lock order: ingress -> localization -> input -> command transition.
+  // Mapping never takes ingress: it must finish while an epoch reset drains.
+  std::mutex localization_epoch_ingress_mutex_;
   std::mutex localization_transition_mutex_;
   navigation_execution::ExecutionStateStore execution_state_store_;
   ExecutionEpisode execution_episode_;

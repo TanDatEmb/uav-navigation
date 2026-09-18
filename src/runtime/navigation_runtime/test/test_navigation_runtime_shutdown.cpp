@@ -31,6 +31,55 @@
 #include "navigation_runtime/mapping_observation_contract.hpp"
 
 namespace navigation_runtime {
+
+class NavigationRuntimeEpochResetTestPeer {
+ public:
+  static void scan(NavigationRuntimeNode& node,
+                   const navigation_contracts::msg::RegisteredScan& message) {
+    node.onRegisteredScan(std::make_shared<const
+        navigation_contracts::msg::RegisteredScan>(message));
+  }
+  static void health(NavigationRuntimeNode& node, std::uint64_t epoch) {
+    auto message = std::make_shared<navigation_contracts::msg::EstimatorHealth>();
+    message->localization_epoch = epoch;
+    node.onEstimatorHealth(message);
+  }
+  static void goal(NavigationRuntimeNode& node,
+                   const navigation_contracts::msg::NavigationGoal& message) {
+    node.onGoal(std::make_shared<const
+        navigation_contracts::msg::NavigationGoal>(message));
+  }
+  static void terminal(NavigationRuntimeNode& node,
+                       const navigation_contracts::msg::NavigationGoal& goal) {
+    auto message = std::make_shared<navigation_contracts::msg::NavigationModeStatus>();
+    message->mission_id = goal.mission_id;
+    message->waypoint_index = goal.waypoint_index;
+    message->request_id = goal.request_id;
+    message->state = navigation_contracts::msg::NavigationModeStatus::COMPLETE;
+    node.onModeStatus(message);
+  }
+  static bool draining(const NavigationRuntimeNode& node) {
+    return node.mapping_worker_->resetting();
+  }
+  static bool ready(const NavigationRuntimeNode& node) {
+    return node.localization_epoch_ready_.load(std::memory_order_acquire);
+  }
+  static auto world(const NavigationRuntimeNode& node) {
+    return node.world_snapshot_store_.load();
+  }
+  static bool ownerMatches(NavigationRuntimeNode& node, std::uint64_t request,
+                           bool expect_goal) {
+    std::lock_guard localization_lock(node.localization_transition_mutex_);
+    std::lock_guard input_lock(node.input_mutex_);
+    return node.active_localization_epoch_.load() == 2U &&
+        (expect_goal ? node.active_goal_ && node.active_goal_->request_id == request
+                     : !node.active_goal_) &&
+        !node.command_bundle_store_.load() &&
+        !node.execution_episode_.snapshot().command_available &&
+        node.command_goal_epoch_.load() == 0U;
+  }
+};
+
 namespace {
 
 using namespace std::chrono_literals;
@@ -321,6 +370,77 @@ navigation_contracts::msg::NavigationGoal makeHandoverGoal(
   route.measured_projection_arc_m = 0.0;
   route.measured_lateral_error_m = 0.0;
   return goal;
+}
+
+// No ROS transport timing assumptions: invoke the actual ingress callbacks,
+// pause the actual map owner, and observe its reset barrier before releasing it.
+// The separate transport/executor tests below retain their existing scope.
+void exerciseEpochDrainWithConcurrentGoal(const bool send_terminal) {
+  alarm(15);
+  auto context = std::make_shared<rclcpp::Context>();
+  context->init(0, nullptr);
+  rclcpp::NodeOptions options;
+  options.context(context);
+  options.parameter_overrides({
+      rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
+      rclcpp::Parameter("navigation_runtime.body_frame_id", "base_link"),
+      rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
+      rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
+  });
+  auto observer = std::make_shared<BlockingLifecycleObserver>();
+  auto node = std::make_shared<NavigationRuntimeNode>(
+      options, NavigationRuntimeDependencies{observer});
+  const auto old_world = NavigationRuntimeEpochResetTestPeer::world(*node);
+  NavigationRuntimeEpochResetTestPeer::scan(*node, makeRegisteredScan(node->now()));
+  if (!observer->waitForMapUpdate(5s)) _exit(20);
+  auto reset = std::async(std::launch::async, [&] {
+    NavigationRuntimeEpochResetTestPeer::health(*node, 2U);
+  });
+  const auto deadline = std::chrono::steady_clock::now() + 5s;
+  while (!NavigationRuntimeEpochResetTestPeer::draining(*node)) {
+    if (std::chrono::steady_clock::now() >= deadline) _exit(21);
+    std::this_thread::yield();
+  }
+  if (NavigationRuntimeEpochResetTestPeer::ready(*node)) _exit(22);
+  const auto goal = makeHandoverGoal(node->now(), 10U, 1U, 1U,
+      navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP);
+  NavigationRuntimeEpochResetTestPeer::goal(*node, goal);
+  if (!NavigationRuntimeEpochResetTestPeer::ownerMatches(*node, 10U, true)) _exit(23);
+  if (send_terminal) NavigationRuntimeEpochResetTestPeer::terminal(*node, goal);
+  observer->release();
+  if (reset.wait_for(5s) != std::future_status::ready) _exit(24);
+  reset.get();
+  if (NavigationRuntimeEpochResetTestPeer::ready(*node) ||
+      NavigationRuntimeEpochResetTestPeer::world(*node).view != old_world.view ||
+      !NavigationRuntimeEpochResetTestPeer::ownerMatches(*node, 10U, !send_terminal)) {
+    _exit(25);
+  }
+  auto scan = makeRegisteredScan(node->now());
+  scan.localization_epoch = 2U;
+  NavigationRuntimeEpochResetTestPeer::scan(*node, scan);
+  const auto new_world_deadline = std::chrono::steady_clock::now() + 5s;
+  while (NavigationRuntimeEpochResetTestPeer::world(*node).identity.localization_epoch != 2U) {
+    if (std::chrono::steady_clock::now() >= new_world_deadline) _exit(26);
+    std::this_thread::yield();
+  }
+  // Acquiring the same owner lock orders this observation after publication's
+  // readiness write, even if the immutable world pointer was observed first.
+  if (!NavigationRuntimeEpochResetTestPeer::ownerMatches(*node, 10U, !send_terminal) ||
+      !NavigationRuntimeEpochResetTestPeer::ready(*node)) _exit(27);
+  node.reset();
+  const auto accounting = observer->shutdownSnapshot();
+  if (!accounting || !accounting->allInvariantsHold() ||
+      accounting->mapping_failed != 0U || accounting->pending != 0U) _exit(28);
+  alarm(0);
+  _exit(0);
+}
+
+TEST(NavigationRuntimeEpochReset, GoalAcceptedDuringDrainSurvivesOldMappingCallback) {
+  ASSERT_EXIT(exerciseEpochDrainWithConcurrentGoal(false), testing::ExitedWithCode(0), "");
+}
+
+TEST(NavigationRuntimeEpochReset, TerminalDuringDrainCannotBeResurrectedByNewWorld) {
+  ASSERT_EXIT(exerciseEpochDrainWithConcurrentGoal(true), testing::ExitedWithCode(0), "");
 }
 
 TEST(NavigationRuntimeShutdown, JoinsAnInflightRealMapUpdateBeforeDestruction) {

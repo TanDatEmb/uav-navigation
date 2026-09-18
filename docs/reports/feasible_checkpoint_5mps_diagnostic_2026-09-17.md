@@ -22,10 +22,11 @@ despite a complete certified bundle; the corrected producer passes. One normal
 `make test` execution passes (84 CTest targets plus the Python suites), but
 geometry correction does not close measured handoff timing or prove majority
 5 m/s completion. The frozen Release on `470b208f` completed the new sequential
-18-run matrix: **SAFE1/9mission COMPLETE, FAST1/9mission COMPLETE,0/18report
+18-run matrix: **SAFE1/9mission COMPLETE, FAST4/9mission COMPLETE,0/18report
 PASS**. All 18 runs are terminal with valid provenance, stopped state and
-successful cleanup; none qualifies. This supersedes the pending label for that
-trial only; it is not evidence of a causal completion-rate improvement.
+successful cleanup; none qualifies. The later incumbent closure below is a
+separate trial (SAFE1/9, FAST1/9), not a rewrite of this 470b208f result.
+Neither result is evidence of a causal completion-rate improvement.
 See [sphere/time normalization](#pass-spheretime-normalization-and-consumption-order-regressions).
 See [the terminal matrix and system-level attribution](#sphere-boundary-matrix-closure-and-system-level-attribution).
 
@@ -4376,3 +4377,221 @@ The observer stream is not receiver-use proof. Finally, at source 55.796,
 `q*twist=(-1.7496,-2.6295,-.3126)` versus the 40 ms position secant
 `(-1.7552,-2.6148,-.3097)`; runtime line 1964 rotates body to world, so no
 estimator frame bug is inferred.
+
+## Two post-commit diagnostic witnesses (2026-09-18)
+
+After feature commit `4b51bfc4fba6c6d9a1d406c8acd4b6ee5f8b8684`, two serial
+diagnostic runs were executed with the canonical Release manifest
+`cd6c66d7a4af047f38bd7fa0bc06f5bfc72efc618e908612dbd63812feec77e2`.
+The worktree remained dirty because of the unpromoted nominal trial and user
+safety migration; these are not clean-commit or full-matrix qualification
+evidence. Metadata records source fingerprint
+`486d7ced900d2141193c228b6107f7a01956ae676f6a331b913c6d4cde692969` and source
+HEAD `4b51bfc4fba6c6d9a1d406c8acd4b6ee5f8b8684`.
+
+| case | session | runner rc | report/outcome | accepted | complete | lifecycle |
+|---|---|---:|---|---|---|---|
+| SAFE2-r1 | `external-mode-check-20260917T234725-798369` | 1 | FAIL / COMPLETE | [0,1] | true | stopped=true, cleanup=PASS |
+| FAST5-r1 | `external-mode-check-20260917T234945-802029` | 1 | FAIL / COMPLETE | [0,1,2,3,4] | true | stopped=true, cleanup=PASS |
+
+Both remain diagnostic and `qualification_eligible=false`; report reasons are
+versioned evaluation not PASS and not qualification eligible. They are two
+additional witnesses only, not a controlled A/B result, not a full 18-case
+replacement, and not evidence of causal completion improvement. A new-run
+driver log was not captured (`NOT_CAPTURED`); the existing incumbent driver
+log belongs to the older 18-case campaign and is not evidence for these runs.
+The per-run session artifacts above are retained. No recovery-5 s reset claim
+is made here.
+
+## Planned post-GREEN 18-case matrix
+
+After a fresh GREEN/Release-valid source freeze, the planned diagnostic matrix
+is `world-revocation-matrix-v1-5mps-{safe|fast}-{2|5|9}wp-r{1|2|3}-20260918`,
+with denominator 18 and serial execution. Profile mapping remains 2WP
+`long_three_pillars_speed`, 5WP `long_three_pillars`, and 9WP
+`long_three_pillars_multiwaypoint`. SAFE uses
+`raycasting_on_backup_strict`; FAST explicitly opts into
+`raycasting_on_backup_unknown`. Common inputs are nominal preset, seed 0,
+requested 5 m/s, visibility 40 m/4096, DDS 42/XRCE 8892, tracking 0/0/0,
+RViz OFF and snapshot capture OFF. The planned driver output basename is
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/world-revocation-matrix-sitl-driver.log`.
+Every terminal result, including rc1/2 and failures, remains in the
+denominator; malformed/missing provenance or cleanup stops the matrix rather
+than defaulting to PASS. No manifest or outcome is asserted by this plan.
+
+## Bounded epoch-reset and observability findings
+
+Adversarial review found a real epoch-reset lock cycle: reset holds the
+localization mutex while `MappingWorker.reset()` waits for in-flight drain,
+and an in-flight mapping callback needs that mutex to finalize. Artifact
+`epoch-reset-red.log/.xml` records 3 failed tests of 4, including a real
+MappingWorker child SIGALRM test and two owner-unlock assertion failures. Helper artifact
+`epoch-reset-green.log/.xml` records all 4 checks passing. The node fix and two
+controlled real-callback/actor/worker tests remain under review; friend access
+adds no alternate runtime behavior and is not a flight claim.
+
+`observability-model-oracle.json` preserves ResidualBuilder rows 112→413 and
+the unchanged 0.01 gate. Modeled ratio changes 0.020→0.0075, weak absolute
+information 2222→3333, and marginalized pose-prior covariance trace
+0.03993→0.009322 m²; the mathematical gate flip is confirmed. Physical FAST2
+false rejection remains `NOT_EVALUABLE` because no real scan rows/prior are
+present. Published count is pre-commit snapshot telemetry, not proof of
+committed world state after Superseded; actual world identity/postconditions
+remain required. No threshold changed.
+
+Follow-up controlled GREEN evidence is now recorded: real node
+callback/actor/MappingWorker barrier tests `2/2` in
+`epoch-reset-callback-green.log/.xml`, standalone drain `4/4`, and the full
+same-identity/world-revocation set `18/18` in
+`world-revocation-and-epoch-green.log/.xml`. The friend peer observes the real
+worker reset before old-observer release, without establishing DDS dispatch
+behavior. A goal accepted during drain survives; a terminal goal during drain
+remains cleared when epoch-2 world publishes; an old snapshot leaves the world
+pointer unchanged/unready and no command available. Fresh Release build/test
+validation remains pending; these are bounded controlled tests, not flight
+qualification or a causal 5 m/s result.
+
+## Post-patch SAFE2 diagnostic witness
+
+The post-world-revocation SAFE2-r2 run used session
+`external-mode-check-20260918T000855-821005` and exited runner rc1. Its report
+is `FAIL`/diagnostic but mission outcome `COMPLETE`, with accepted indices
+`[0,1]`, `mission_complete_observed=true`, `stopped=true`, `cleanup=PASS`, and
+`qualification_eligible=false`. Metadata records HEAD
+`4b51bfc4fba6c6d9a1d406c8acd4b6ee5f8b8684` dirty, manifest
+`35d0120b61d261b4c1985dc99cf9cf1a478c76920d234ffd190510d55973417f`, source
+`a08f3f07c80444c3f9838180a9c485be8177d4e9938d0d2bb8a7ff7a2e7f4eed`, and
+infra/provenance `VALID`. The planning record contains 34 samples with
+p50/p95/p99/max `27850/66499/78405/78405` µs. The new world-revocation warning
+(`invalidated active ... entering PX4 Hold`) is `NOT_EXERCISED` per native
+runtime/lifecycle evidence: gen6 activation at `1789690186.773802813` precedes
+the gen5 revalidation warning by about 1.55 ms, while gen6/7 continue and the
+mission completes. This is superseded counterevidence, not active revocation;
+no causal patch claim is made.
+Execution output is retained in
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/world-revocation-sitl-driver.log`.
+
+## Post-world-revocation validation closure
+
+Fresh component validation after the boundary-behavior patch completed with
+Release build rc0 (23 packages) and authoritative manifest
+`35cbfa25f101c4fe1cee5425f2f784d8e361f53fb018b78f7f4fe503f7f388a5`, source
+fingerprint `4ae1673838688dd6da4effececa395d09bded0e77fe646ce0082fbfa78336c76`,
+HEAD `4b51bfc4fba6c6d9a1d406c8acd4b6ee5f8b8684` (dirty). Full `make test`
+also completed rc0: 84 CTests with zero errors/failures/skips, 7 auxiliary
+PASS, and 387 runtime-Python tests with one explicit skip. Evidence is retained
+in the repo-relative folder `.artifacts/diagnostics/nominal-renewal-capture-nod2nN`:
+`world-revocation-release-build.log` and `world-revocation-full-test.log`.
+Safety-ledger
+validation and diff-check passed. This validates the component boundary
+behavior only; the patch is not a committed clean source identity, the
+integrated current-revocation branch and full 18-case matrix were pending at
+that earlier closure,
+and the existing SAFE2/FAST5 diagnostic witnesses are not attributed to this
+validation.
+
+## Bounded world-revocation delivery finding
+
+The successful world revoke clears the active entry, but the pre-patch HEAD
+`4b51bfc4` runtime lines 1219–1250 compare against the retired pointer; this exposes a mapping-lifecycle
+finalization gap. The 20 ms command timer usually contains the resulting
+fallback. This is not proof of an uncertified PX4 publication or a causal
+completion fix. The legacy API extraction is retained as
+`world-revocation-red.log/.xml` (1 test, 4 assertions failing); the corrected
+atomic no-throw finalizer has owner locks before the world-publication gate and
+keeps heavy validation outside the finalizer. It preserves Superseded,
+new-candidate and pending-only-active semantics. The focused GREEN set has six
+`WorldRevocation*` tests; same-identity target coverage is 18 tests, recorded
+in `world-revocation-green.log/.xml` and `world-revocation-runtime-full.log/.xml`
+under the repo-relative ignored folder
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN`. An independent review
+found no blocking issue: the callback does not perform backend/store/ROS work,
+and retired pending-goal plus completion witnesses are pinned outside the
+store/publication locks, avoiding destruction of large messages in the
+callback. Canonical Release/full-test closure above has completed; integrated
+current-revocation coverage and full 18-case matrix were pending at that
+historical point. The two SAFE2/FAST5 witnesses above
+precede this patch and must not be attributed to it; no additional 5 s claim
+is made.
+
+## Final post-patch 18-case diagnostic closure
+
+The corrected world-revocation/epoch-drain component baseline completed
+canonical `make build` (Release, 23 packages, rc0) and `make test` (85 CTest
+targets, zero errors/failures/skips; 7 auxiliary Python checks; 387 runtime
+Python tests, one explicit skip). The exact logs are
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/epoch-boundary-release-build.log`
+and `epoch-boundary-regression-test.log` in the same folder. Safety-ledger
+validation and `git diff --check` passed. This supersedes the earlier pending
+component-build label, not qualification. The dirty source includes the
+unpromoted nominal incumbent trial and user documentation migration; these
+tests are not evidence for an isolated clean-checkout patch or a causal A/B.
+
+The serial post-GREEN matrix is terminal: all 18 sessions have
+`stopped=true`, `cleanup=PASS`, and `build_provenance.status=VALID`, with no
+retry or replacement. The frozen manifest remains
+`b0e83962fad7488b9da8caa716b5d7f3604390fa9285b6901b82cc182be0b884`, source
+fingerprint `49f94c153b6b66e81abbaadd059241babb8a29a7e9279d3d91bee4d1fcf66422`,
+HEAD `4b51bfc4fba6c6d9a1d406c8acd4b6ee5f8b8684` dirty. The preserved manifest
+copy is `.artifacts/diagnostics/nominal-renewal-capture-nod2nN/world-revocation-matrix-build-manifest.json`.
+
+| policy/WP | r1 | r2 | r3 | COMPLETE |
+|---|---|---|---|---|
+| SAFE/2 | FAILED_COMPONENT [0] | COMPLETE [0,1] | COMPLETE [0,1] | 2/3 |
+| SAFE/5 | COMPLETE [0,1,2,3,4] | PAUSED_SAFETY_STOP [0] | PAUSED_SAFETY_STOP [0,1,2,3] | 1/3 |
+| SAFE/9 | PAUSED_SAFETY_STOP [0] | PAUSED_SAFETY_STOP [0,1,2,3,4,5,6,7] | PAUSED_SAFETY_STOP [0] | 0/3 |
+| FAST/2 | COMPLETE [0,1] | COMPLETE [0,1] | COMPLETE [0,1] | 3/3 |
+| FAST/5 | COMPLETE [0,1,2,3,4] | PAUSED_SAFETY_STOP [0] | PAUSED_SAFETY_STOP [0] | 1/3 |
+| FAST/9 | PAUSED_SAFETY_STOP [0,1] | PAUSED_SAFETY_STOP [0] | PAUSED_SAFETY_STOP [0,1,2,3,4,5,6] | 0/3 |
+
+Post-patch mission completion is SAFE `3/9`, FAST `4/9`; all reports remain
+diagnostic/ineligible. FAST5-r2 exercised the current-world-revocation branch:
+active generation 3 recertification failed with `kCertificateTubeBlocked`,
+tube failure 4, occupied-cell witness at `(35.7,0.1,3.1)`, world tuple
+`(68434027876760,2,288,33100000000)`, then PX4 PVA stale. Generic zero-evaluation
+warnings following a newer activation are superseded evidence, not current
+revocation attribution. Epoch controlled RED/GREEN and Release/85-test
+validation remain separate component evidence; this matrix is not a causal A/B
+or flight-qualification result.
+
+### Exact terminal session closure
+
+All 18 IDs are terminal under the preserved matrix driver; verdict counts are
+8 `FAIL`, 10 `BLOCKED`, 0 `PASS`, and all 18 are ineligible.
+
+Session names below share prefix `external-mode-check-20260918T` under
+`.artifacts/runtime/`; no retry or replacement is substituted. The first
+SAFE2-r1 session is retained even though it precedes the common driver's
+START/END markers. Counting END markers alone would incorrectly drop it.
+
+| ID suffix | session | outcome | verdict | eligible |
+|---|---|---|---|---|
+| SAFE2-r1 | 005135-841018 | FAILED_COMPONENT | FAIL | false |
+| SAFE2-r2 | 005411-844922 | COMPLETE | FAIL | false |
+| SAFE2-r3 | 005616-848623 | COMPLETE | FAIL | false |
+| SAFE5-r1 | 005807-852265 | COMPLETE | FAIL | false |
+| SAFE5-r2 | 010031-855802 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| SAFE5-r3 | 010209-859304 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| SAFE9-r1 | 010449-863082 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| SAFE9-r2 | 010603-866266 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| SAFE9-r3 | 010914-870573 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| FAST2-r1 | 011021-874193 | COMPLETE | FAIL | false |
+| FAST2-r2 | 011215-877746 | COMPLETE | FAIL | false |
+| FAST2-r3 | 011413-881587 | COMPLETE | FAIL | false |
+| FAST5-r1 | 011618-885166 | COMPLETE | FAIL | false |
+| FAST5-r2 | 011840-889088 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| FAST5-r3 | 011959-892459 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| FAST9-r1 | 012158-895931 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| FAST9-r2 | 012308-899271 | PAUSED_SAFETY_STOP | BLOCKED | false |
+| FAST9-r3 | 012418-902744 | PAUSED_SAFETY_STOP | BLOCKED | false |
+
+Native attribution remains evidence-scoped. **CONFIRMED:** SAFE2-r1 has
+odometry `RECEIVE_STALE` (source age 168 ms, receive age 211.261 ms);
+FAST5-r2 exercised current occupied-cell revocation with the exact witness
+above. **Conditional:** SAFE5-r2 and SAFE9-r1 show current invalid-time-window
+recertification after repeated BACKUP failures, but no complete leaf tuple is
+available. SAFE5-r3 accepted WP3 and received the final WP4 request; its later
+STOP did not meet speed, so it is not “WP3 never accepted.” A terminal `.75`
+precheck does not prove the final-veto predicate. Zero-evaluation warnings
+after a newer activation are superseded, not current failure attribution.
+Missing witnesses remain `NOT_EVALUABLE`; no additional native leaf is inferred.

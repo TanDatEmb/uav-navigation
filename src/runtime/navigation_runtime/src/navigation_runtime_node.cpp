@@ -2,6 +2,7 @@
 #include "navigation_runtime/mission_dynamics.hpp"
 #include "navigation_runtime/mapping_fail_stop.hpp"
 #include "navigation_runtime/commit_trace.hpp"
+#include "navigation_runtime/localization_epoch_reset.hpp"
 
 #include <navigation_mapping/mapping_actor.hpp>
 #include <navigation_mapping/current_body_support.hpp>
@@ -1106,25 +1107,75 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         // with the new identity only when the exact pointer was validated on
         // this snapshot; otherwise it is cleared fail-closed.
         const auto publication_finalize_started = std::chrono::steady_clock::now();
-        const auto publication_decision = store->publishAndFinalizeDecision(
-            result.snapshot,
-            [command_store, expected_bundle, expected_pending,
-             execution_timeline_version = execution_timeline.version,
-             retain_validated_bundle, retain_validated_pending,
-             identity = result.snapshot->identity(),
-             refreshed_valid_until_ns = [&] {
-               const auto now_ns = ros_clock->now().nanoseconds();
-               return now_ns > std::numeric_limits<std::int64_t>::max() -
-                          data_freshness_window_ns_
-                          ? std::numeric_limits<std::int64_t>::max()
-                          : now_ns + data_freshness_window_ns_;
-             }()] {
-              return command_store->publishWorldIdentityIfCurrent(
-                  identity, execution_timeline_version,
-                  expected_bundle, retain_validated_bundle,
-              refreshed_valid_until_ns,
-                  expected_pending, retain_validated_pending);
-            });
+        bool invalidated_current = false;
+        // Retired messages/witnesses are pins, never execution authority.
+        // Release their storage after leaving the publication/owner locks.
+        navigation_contracts::msg::NavigationGoal::ConstSharedPtr retired_pending_goal;
+        std::optional<TrajectoryCompletionWitness> retired_completion_witness;
+        navigation_world_model::WorldCommitDecision publication_decision;
+        {
+          // Lock order: lifecycle owners -> world publication -> timeline ->
+          // episode. Validation above stays outside these locks. Finalizing
+          // revocation after publication by comparing the retired pointer is
+          // too late: the committed transaction has already cleared it.
+          std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+          std::lock_guard<std::mutex> input_lock(input_mutex_);
+          std::lock_guard<std::mutex> command_lock(
+              command_execution_lease_failure_latch_.transitionMutex());
+          const bool exact_owner = expected_bundle && expected_goal && executing_goal_ &&
+              executing_goal_->mission_id == expected_goal->mission_id &&
+              executing_goal_->waypoint_index == expected_goal->waypoint_index &&
+              executing_goal_->request_id == expected_goal->request_id &&
+              expected_bundle->localization_epoch ==
+                  active_localization_epoch_.load(std::memory_order_acquire) &&
+              expected_bundle->goal_epoch ==
+                  command_goal_epoch_.load(std::memory_order_acquire);
+          // An old IN_FLIGHT callback may finish during the reset drain, but
+          // must neither publish its world nor reopen new-epoch readiness.
+          if (result.snapshot->identity().localization_epoch !=
+              active_localization_epoch_.load(std::memory_order_acquire)) {
+            publication_decision = navigation_world_model::WorldCommitDecision::kSuperseded;
+          } else {
+            publication_decision = store->publishAndFinalizeDecision(
+                result.snapshot,
+                [this, command_store, expected_bundle, expected_pending, exact_owner,
+                 &invalidated_current, &retired_completion_witness,
+                 execution_timeline_version = execution_timeline.version, retain_validated_bundle,
+                 retain_validated_pending, identity = result.snapshot->identity(),
+                 refreshed_valid_until_ns = [&] {
+                   const auto now_ns = ros_clock->now().nanoseconds();
+                   return now_ns > std::numeric_limits<std::int64_t>::max() -
+                                       data_freshness_window_ns_
+                              ? std::numeric_limits<std::int64_t>::max()
+                              : now_ns + data_freshness_window_ns_;
+                 }()] {
+                  return command_store->publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                      identity, execution_timeline_version, expected_bundle,
+                      retain_validated_bundle,
+                      [this, exact_owner, &invalidated_current,
+                       &retired_completion_witness]() noexcept {
+                        if (!exact_owner) return;
+                        execution_episode_.clearRestartFromRest();
+                        hot_goal_transition_ = false;
+                        skip_replan_once_.store(false, std::memory_order_release);
+                        retired_completion_witness = std::move(trajectory_completion_witness_);
+                        failClosedLocked();
+                        command_goal_epoch_.store(0U, std::memory_order_release);
+                        invalidated_current = true;
+                      },
+                      refreshed_valid_until_ns, expected_pending, retain_validated_pending);
+                });
+            if (publication_decision == navigation_world_model::WorldCommitDecision::kCommitted) {
+              // Same owner lock as reset: no delayed old callback can re-enable
+              // readiness after a newer epoch has closed it.
+              epoch_ready->store(true, std::memory_order_release);
+            }
+          }
+          if (invalidated_current) {
+            retired_pending_goal = pending_goal_owner_.goalSnapshot();
+            pending_goal_owner_.clearGoal();
+          }
+        }
         next.world_publication_finalize_us =
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - publication_finalize_started).count();
@@ -1217,41 +1268,6 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           }
         }
         if (expected_bundle && !retain_validated_bundle) {
-          // The latest immutable map invalidated the currently exposed
-          // command. This is recoverable only through a new measured-state
-          // PlanFromRest solve; allowing the next timer tick to enter
-          // ReplanOnce with no committed bundle turns a map change into an
-          // unconditional emergency result and prevents recovery.
-          bool invalidated_current = false;
-          {
-            std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
-            std::lock_guard<std::mutex> input_lock(input_mutex_);
-            std::lock_guard<std::mutex> command_lock(
-                command_execution_lease_failure_latch_.transitionMutex());
-            const auto current_bundle = command_store->load();
-            const bool exact_goal = expected_goal && executing_goal_ &&
-                executing_goal_->mission_id == expected_goal->mission_id &&
-                executing_goal_->waypoint_index == expected_goal->waypoint_index &&
-                executing_goal_->request_id == expected_goal->request_id;
-            const bool exact_epoch =
-                expected_bundle->localization_epoch ==
-                    active_localization_epoch_.load(std::memory_order_acquire) &&
-                expected_bundle->goal_epoch ==
-                    command_goal_epoch_.load(std::memory_order_acquire);
-            const bool exact_bundle = current_bundle &&
-                current_bundle.get() == expected_bundle.get() &&
-                current_bundle->bundle_generation == expected_bundle->bundle_generation;
-            if (exact_goal && exact_epoch && exact_bundle) {
-              execution_episode_.clearRestartFromRest();
-              hot_goal_transition_ = false;
-              skip_replan_once_.store(false, std::memory_order_release);
-              pending_goal_owner_.clearGoal();
-              (void)command_store->invalidateIfCurrent(execution_timeline);
-              failClosedLocked();
-              command_goal_epoch_.store(0U);
-              invalidated_current = true;
-            }
-          }
           if (invalidated_current) {
             RCLCPP_WARN(
                 this->get_logger(),
@@ -1265,7 +1281,6 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                 "world invalidation became stale before lifecycle transition; preserving newer goal");
           }
         }
-        epoch_ready->store(true, std::memory_order_release);
         next.world_generation = result.world_generation;
         next.world_revision = result.world_revision;
         next.observation_stamp_ns = result.observation_stamp_ns;
@@ -1724,17 +1739,17 @@ bool NavigationRuntimeNode::executingCommandIdentityMatchesLocked(
 }
 
 void NavigationRuntimeNode::resetForLocalizationEpochLocked(
-    const std::uint64_t localization_epoch) {
+    const std::uint64_t localization_epoch,
+    std::unique_lock<std::mutex>& localization_lock) {
   if (localization_epoch == 0U) return;
   const auto current = active_localization_epoch_.load(std::memory_order_acquire);
   if (localization_epoch <= current) return;
 
   localization_epoch_ready_.store(false, std::memory_order_release);
-  // Match the goal transition ordering: cancel the solve before changing the
-  // epoch exposed to the planning callback, drain the mapping barrier, then
-  // clear command exposure under the execution transition lock.
+  // Complete canonical reset before releasing the owner lock for mapping's
+  // drain. New goal/status transitions during that gap must not be erased by
+  // late cleanup; serialized sensor ingress cannot admit new-epoch work yet.
   if (planning_worker_) planning_worker_->cancelActive();
-  if (mapping_worker_) mapping_worker_->reset();
   active_localization_epoch_.store(localization_epoch, std::memory_order_release);
   execution_trace_store_.advanceLocalizationEpoch(localization_epoch);
   last_propagated_state_stamp_ns_.store(0, std::memory_order_release);
@@ -1794,6 +1809,11 @@ void NavigationRuntimeNode::resetForLocalizationEpochLocked(
       failClosedLocked();
     }
     command_goal_epoch_.store(0U);
+  }
+  if (mapping_worker_) {
+    drainMappingForLocalizationReset(localization_lock, [this] {
+      mapping_worker_->reset();
+    });
   }
   RCLCPP_WARN(get_logger(),
               "Localization epoch changed to %lu; old mapping and command state invalidated",
@@ -1873,14 +1893,15 @@ void NavigationRuntimeNode::onRegisteredScan(
     observation_accounting_.recordRejectedBeforeInbox();
     return;
   }
-  std::lock_guard<std::mutex> transition_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> ingress_lock(localization_epoch_ingress_mutex_);
+  std::unique_lock<std::mutex> transition_lock(localization_transition_mutex_);
   const auto active_epoch = active_localization_epoch_.load(std::memory_order_acquire);
   if (message->localization_epoch < active_epoch) {
     observation_accounting_.recordRejectedBeforeInbox();
     return;
   }
   if (message->localization_epoch > active_epoch) {
-    resetForLocalizationEpochLocked(message->localization_epoch);
+    resetForLocalizationEpochLocked(message->localization_epoch, transition_lock);
   }
   const auto sequence_epoch = last_registered_scan_epoch_.load(std::memory_order_acquire);
   const auto previous_scan_sequence =
@@ -1901,12 +1922,13 @@ void NavigationRuntimeNode::onRegisteredScan(
 void NavigationRuntimeNode::onEstimatorHealth(
     const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message) {
   if (!message || message->localization_epoch == 0U) return;
-  std::lock_guard<std::mutex> transition_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> ingress_lock(localization_epoch_ingress_mutex_);
+  std::unique_lock<std::mutex> transition_lock(localization_transition_mutex_);
   const auto active_epoch = active_localization_epoch_.load(std::memory_order_acquire);
   if (message->localization_epoch <= active_epoch) return;
   // Health announces the public-frame transition early; command exposure stays
   // disabled until a RegisteredScan of this epoch is accepted and mapped.
-  resetForLocalizationEpochLocked(message->localization_epoch);
+  resetForLocalizationEpochLocked(message->localization_epoch, transition_lock);
 }
 
 void NavigationRuntimeNode::onPropagatedOdometry(
@@ -1922,10 +1944,11 @@ void NavigationRuntimeNode::onPropagatedOdometry(
                          odometry.header.frame_id.c_str(), planning_frame_.c_str());
     return;
   }
-  std::lock_guard<std::mutex> transition_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> ingress_lock(localization_epoch_ingress_mutex_);
+  std::unique_lock<std::mutex> transition_lock(localization_transition_mutex_);
   const auto active_epoch = active_localization_epoch_.load(std::memory_order_acquire);
   if (message->localization_epoch > active_epoch) {
-    resetForLocalizationEpochLocked(message->localization_epoch);
+    resetForLocalizationEpochLocked(message->localization_epoch, transition_lock);
   }
   if (message->localization_epoch !=
           active_localization_epoch_.load(std::memory_order_acquire) ||

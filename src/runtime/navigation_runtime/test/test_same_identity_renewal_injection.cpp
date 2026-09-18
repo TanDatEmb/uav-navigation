@@ -1,6 +1,9 @@
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
 
 #include <memory>
+#include <atomic>
+#include <future>
+#include <latch>
 
 #include <gtest/gtest.h>
 
@@ -92,6 +95,170 @@ SameIdentityRenewalFacts eligibleFacts() {
   facts.valid_future_anchor = true;
   facts.fresh_renewal_due_window = true;
   return facts;
+}
+
+TEST(WorldRevocationDelivery, FinalizesLifecycleBeforePublicationReturns) {
+  navigation_execution::ExecutionTimelineStore store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setActiveGoalEpoch(7));
+  const auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+  ExecutionEpisode episode;
+  episode.beginGoal(3, 7, candidate->request_id, false);
+  episode.commandCommitted(*candidate);
+  const auto before = store.snapshot();
+  const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
+  unsigned int finalized = 0;
+  ASSERT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                next_world, before.version, before.active, false,
+                [&]() noexcept { ++finalized; episode.failClosed(); }),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+
+  // The production callback used to require the old pointer AFTER the store
+  // had revoked it. That condition is false, without any concurrent event.
+  EXPECT_FALSE(store.load());
+  EXPECT_FALSE(store.invalidateIfCurrent(before));
+  EXPECT_EQ(finalized, 1U);
+  const auto after = episode.snapshot();
+  EXPECT_TRUE(after.failure_latched);
+  EXPECT_FALSE(after.command_available);
+  EXPECT_EQ(after.phase, ExecutionEpisodePhase::kPx4Hold);
+}
+
+class WorldRevocationFixture : public testing::Test {
+ protected:
+  void SetUp() override {
+    ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+    ASSERT_TRUE(store.setActiveGoalEpoch(7));
+    predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
+        candidateFor(7, 1));
+    ASSERT_EQ(store.tryCommit({world, 7, 1}, predecessor),
+              navigation_execution::CommitDecision::kCommitted);
+    episode.beginGoal(3, 7, predecessor->request_id, false);
+    episode.commandCommitted(*predecessor);
+  }
+
+  navigation_execution::ExecutionTimelineStore store;
+  ExecutionEpisode episode;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
+  std::shared_ptr<const navigation_planning::CandidateBundle> predecessor;
+};
+
+TEST_F(WorldRevocationFixture, SupersededRevocationPreservesNewerExecution) {
+  const auto before = store.snapshot();
+  auto replacement = candidateFor(7, 1);
+  ++replacement.bundle_generation;
+  const auto newer = std::make_shared<const navigation_planning::CandidateBundle>(replacement);
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, newer),
+            navigation_execution::CommitDecision::kCommitted);
+  episode.commandCommitted(*newer);
+  unsigned int finalized = 0;
+  EXPECT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                next_world, before.version, before.active, false,
+                [&]() noexcept { ++finalized; episode.failClosed(); }),
+            navigation_world_model::WorldCommitDecision::kSuperseded);
+  EXPECT_EQ(finalized, 0U);
+  EXPECT_EQ(store.load(), newer);
+  EXPECT_FALSE(episode.snapshot().failure_latched);
+  EXPECT_EQ(episode.snapshot().active_generation, newer->bundle_generation);
+}
+
+TEST_F(WorldRevocationFixture, PendingOnlyRejectionKeepsActiveLifecycle) {
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  const auto successor = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successor),
+            navigation_execution::StageDecision::kStaged);
+  const auto before = store.snapshot();
+  ASSERT_TRUE(before.pending);
+  unsigned int finalized = 0;
+  EXPECT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                next_world, before.version, before.active, true,
+                [&]() noexcept { ++finalized; episode.failClosed(); },
+                0, before.pending, false),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+  EXPECT_EQ(finalized, 0U);
+  ASSERT_TRUE(store.load());
+  EXPECT_EQ(store.load()->bundle_generation, predecessor->bundle_generation);
+  EXPECT_FALSE(store.snapshot().pending);
+  EXPECT_TRUE(episode.snapshot().command_available);
+  EXPECT_FALSE(episode.snapshot().failure_latched);
+}
+
+TEST_F(WorldRevocationFixture, RejectedIdentityCannotFinalizeCurrentExecution) {
+  const auto before = store.snapshot();
+  auto invalid_world = next_world;
+  invalid_world.localization_epoch = 0;
+  unsigned int finalized = 0;
+  EXPECT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                invalid_world, before.version, before.active, false,
+                [&]() noexcept { ++finalized; episode.failClosed(); }),
+            navigation_world_model::WorldCommitDecision::kCandidateRejected);
+  EXPECT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                world, before.version, before.active, false,
+                [&]() noexcept { ++finalized; episode.failClosed(); }),
+            navigation_world_model::WorldCommitDecision::kWorldAdvanced);
+  EXPECT_EQ(finalized, 0U);
+  EXPECT_EQ(store.load(), predecessor);
+  EXPECT_FALSE(episode.snapshot().failure_latched);
+}
+
+TEST_F(WorldRevocationFixture, RepeatedPublicationDoesNotRedeliverRevocation) {
+  const auto before = store.snapshot();
+  unsigned int finalized = 0;
+  const auto finalize = [&]() noexcept { ++finalized; episode.failClosed(); };
+  EXPECT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                next_world, before.version, before.active, false, finalize),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+  EXPECT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
+                next_world, before.version, before.active, false, finalize),
+            navigation_world_model::WorldCommitDecision::kSuperseded);
+  EXPECT_EQ(finalized, 1U);
+  EXPECT_TRUE(episode.snapshot().failure_latched);
+}
+
+TEST_F(WorldRevocationFixture, ConcurrentCommitCannotSplitRevocationAndLifecycle) {
+  const auto before = store.snapshot();
+  auto replacement = candidateFor(7, 2);
+  ++replacement.bundle_generation;
+  const auto newer = std::make_shared<const navigation_planning::CandidateBundle>(replacement);
+  std::latch finalizer_entered{1};
+  std::latch commit_attempted{1};
+  std::atomic_bool finalized{false};
+  std::atomic_bool committed{false};
+  bool commit_seen_inside_finalizer = true;
+  auto publication = std::async(std::launch::async, [&] {
+    return store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
+        next_world, before.version, before.active, false,
+        [&]() noexcept {
+          finalizer_entered.count_down();
+          commit_attempted.wait();
+          commit_seen_inside_finalizer = committed.load();
+          episode.failClosed();
+          finalized.store(true);
+        });
+  });
+  finalizer_entered.wait();
+  auto commit = std::async(std::launch::async, [&] {
+    commit_attempted.count_down();
+    const auto result = store.tryCommit({next_world, 7, 2}, newer);
+    committed.store(true);
+    const bool finalized_before_commit = finalized.load();
+    episode.commandCommitted(*newer);
+    return std::make_pair(result, finalized_before_commit);
+  });
+  EXPECT_EQ(publication.get(), navigation_world_model::WorldCommitDecision::kCommitted);
+  const auto commit_result = commit.get();
+  EXPECT_EQ(commit_result.first, navigation_execution::CommitDecision::kCommitted);
+  EXPECT_TRUE(commit_result.second);
+  EXPECT_FALSE(commit_seen_inside_finalizer);
+  // A later bare store write cannot resurrect a failed runtime episode.
+  EXPECT_FALSE(episode.snapshot().command_available);
+  EXPECT_TRUE(episode.snapshot().failure_latched);
 }
 
 TEST(SameIdentityRenewalInjection, H1EligibleOrdinaryRenewal) {

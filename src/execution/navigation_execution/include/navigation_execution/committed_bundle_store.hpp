@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <limits>
+#include <type_traits>
 #include <utility>
 
 #include <navigation_common/time.hpp>
@@ -102,6 +103,28 @@ class ExecutionTimelineStore final {
       std::int64_t refreshed_valid_until_ns = 0,
       const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending = {},
       bool retain_validated_pending = false) noexcept {
+    return publishWorldIdentityIfCurrentAndFinalizeRevocation(
+        identity, expected_timeline_version, expected_bundle,
+        retain_validated_bundle, []() noexcept {}, refreshed_valid_until_ns,
+        expected_pending, retain_validated_pending);
+  }
+
+  // The owner holds its lifecycle locks before entering the world publication
+  // gate. This callback must be noexcept, bounded and must not re-enter the
+  // store or a planner backend. It finalizes only this exact active revocation,
+  // not a superseded publication or a rejected pending successor.
+  template <typename FinalizeRevocation>
+  navigation_world_model::WorldCommitDecision
+  publishWorldIdentityIfCurrentAndFinalizeRevocation(
+      const navigation_world_model::WorldSnapshotIdentity& identity,
+      std::uint64_t expected_timeline_version,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_bundle,
+      bool retain_validated_bundle,
+      FinalizeRevocation&& finalize_revocation,
+      std::int64_t refreshed_valid_until_ns = 0,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending = {},
+      bool retain_validated_pending = false) noexcept {
+    static_assert(std::is_nothrow_invocable_v<FinalizeRevocation&>);
     if (identity.localization_epoch == 0U || identity.generation == 0U ||
         identity.revision == 0U || identity.observation_stamp_ns <= 0) {
       return navigation_world_model::WorldCommitDecision::kCandidateRejected;
@@ -115,6 +138,10 @@ class ExecutionTimelineStore final {
     }
 
     const bool active_matches = retain_validated_bundle && expected_bundle && committed_ &&
+        committed_.get() == expected_bundle.get() && world_identity_ &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected_bundle->world_identity);
+    const bool exact_active_revoked = !active_matches && expected_bundle && committed_ &&
         committed_.get() == expected_bundle.get() && world_identity_ &&
         navigation_world_model::sameWorldSnapshotIdentity(
             *world_identity_, expected_bundle->world_identity);
@@ -176,6 +203,9 @@ class ExecutionTimelineStore final {
     enforceInvariantLocked();
     world_identity_ = identity;
     ++timeline_version_;
+    if (exact_active_revoked) {
+      std::invoke(finalize_revocation);
+    }
     return navigation_world_model::WorldCommitDecision::kCommitted;
   }
 

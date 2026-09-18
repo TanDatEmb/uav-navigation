@@ -174,6 +174,10 @@ if(BUILD_TESTING)
   target_include_directories(test_same_identity_renewal_injection PRIVATE include)
   ament_target_dependencies(test_same_identity_renewal_injection
     navigation_execution navigation_planning navigation_contracts builtin_interfaces)
+  ament_add_gtest(test_localization_epoch_reset
+    test/test_localization_epoch_reset.cpp)
+  target_include_directories(test_localization_epoch_reset PRIVATE include)
+  ament_target_dependencies(test_localization_epoch_reset navigation_mapping)
 endif()
 
 ament_package()
