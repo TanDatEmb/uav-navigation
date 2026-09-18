@@ -96,14 +96,15 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static bool publishPredecessorState(
       NavigationRuntimeNode& node,
       const navigation_planning::CandidateBundle& predecessor,
-      std::int64_t source_stamp_ns) {
+      std::int64_t source_stamp_ns,
+      const Eigen::Vector3d& measured_offset = Eigen::Vector3d::Zero()) {
     // A delayed measured observation belongs to A at its original source
     // timestamp, even after G becomes the current command. Never clamp or
     // extrapolate G before its declared start to manufacture temporal support.
     const auto sample = predecessor.sampleAtDeclaredStamp(source_stamp_ns);
     if (!sample) return false;
     navigation_planning::KinematicState state;
-    state.position_world = sample->position_world;
+    state.position_world = sample->position_world + measured_offset;
     state.velocity_world = sample->velocity_world;
     state.acceleration_world = sample->acceleration_world;
     state.jerk_world = sample->jerk_world;
@@ -507,7 +508,8 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
         *node_, real_stamp_ns_, Eigen::Vector3d::Zero(), velocity_residual,
         measured_acceleration));
   }
-  void checkRealFutureHandoff(const bool source_before_start) {
+  void checkRealFutureHandoff(const bool source_before_start,
+                              const bool tracking_pressure = false) {
     // Synthetic controlled schedule, not a measured flight-delay bound:
     // actual certified A -> reserved A(now + 400 ms) -> factory-certified G.
     // The +20 ms monitor observation discriminates the source-time seam from
@@ -580,9 +582,16 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     ASSERT_EQ(pending.pending_activation_ns, anchor->activation_stamp_ns);
 
     const auto pre_start_source_ns = anchor->activation_stamp_ns - 8'000'000LL;
+    // Controlled synthetic plant residual, not replay of the native worker
+    // pin. Its size comes from the independently paired SAFE2 G21 published
+    // command/source positions. Never alter SOURCE, command head or certificate.
+    const Eigen::Vector3d measured_offset = tracking_pressure
+        ? Eigen::Vector3d{0.5020302723007433, 0.1395032219362763,
+                          0.012844457407660936}
+        : Eigen::Vector3d::Zero();
     setTime(anchor->activation_stamp_ns);
     ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishPredecessorState(
-        *node_, *predecessor, pre_start_source_ns));
+        *node_, *predecessor, pre_start_source_ns, measured_offset));
     ASSERT_FALSE(pending.pending->sampleAtDeclaredStamp(pre_start_source_ns));
     NavigationRuntimeTerminalMonitorTestPeer::publishCommandAndApplyQueuedActivations(*node_);
     const auto activated = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
@@ -600,7 +609,7 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     setTime(monitor_stamp_ns);
     if (!source_before_start) {
       ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishState(
-          *node_, measured_source_ns));
+          *node_, measured_source_ns, measured_offset));
     }
     const auto measured_sample = source_before_start
         ? predecessor->sampleAtDeclaredStamp(measured_source_ns)
@@ -609,10 +618,18 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     ASSERT_TRUE(measured_sample);
     ASSERT_TRUE(command_now);
     const double independently_sampled_raw_error_m =
-        (command_now->position_world - measured_sample->position_world).norm();
+        (command_now->position_world -
+         (measured_sample->position_world + measured_offset)).norm();
     ASSERT_DOUBLE_EQ(NavigationRuntimeTerminalMonitorTestPeer::trackingBudget(*node_), 0.25);
-    ASSERT_LE(independently_sampled_raw_error_m,
-              NavigationRuntimeTerminalMonitorTestPeer::trackingBudget(*node_));
+    if (tracking_pressure) {
+      ASSERT_GT(independently_sampled_raw_error_m,
+                NavigationRuntimeTerminalMonitorTestPeer::trackingBudget(*node_));
+      ASSERT_LT(independently_sampled_raw_error_m,
+                navigation_contracts::kCommandAnchorErrorLimitM);
+    } else {
+      ASSERT_LE(independently_sampled_raw_error_m,
+                NavigationRuntimeTerminalMonitorTestPeer::trackingBudget(*node_));
+    }
     const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
     ASSERT_TRUE(key);
     ASSERT_EQ(key->committed_bundle_generation, activated.active->bundle_generation);
@@ -620,6 +637,62 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     const auto solve_generation = NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_);
     NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
     const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
+    const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
+    ASSERT_TRUE(trace) << "the monitor must execute, not silently skip this control";
+    EXPECT_EQ(trace->execution_bundle_generation, activated.active->bundle_generation);
+    EXPECT_EQ(trace->solve_generation, 0U);
+    EXPECT_EQ(trace->execution_state_source_stamp_ns, measured_source_ns);
+    EXPECT_EQ(trace->committed_bundle_start_stamp_ns, anchor->activation_stamp_ns);
+    EXPECT_TRUE(trace->retained_fresh_vehicle_state);
+    EXPECT_TRUE(trace->current_vehicle_state_known_free);
+    EXPECT_TRUE(trace->sampled_path_clear);
+    EXPECT_DOUBLE_EQ(trace->anchor_error_raw_m, independently_sampled_raw_error_m);
+    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
+    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count, 0);
+    if (tracking_pressure) {
+      // These tests document the CURRENT distinction, not a new recovery
+      // trigger. Positive tracking has a viable independently certified brake;
+      // the explicit relaxed experiment intentionally suppresses that brake.
+      if (source_before_start) {
+        EXPECT_TRUE(std::isnan(trace->anchor_error_time_aligned_m));
+        EXPECT_FALSE(trace->tracking_certificate_exceeded);
+        EXPECT_FALSE(trace->projected_tracking_certificate_exceeded);
+        EXPECT_EQ(trace->emergency_candidate_commit_result, 0);
+        // Revocation removes authority in the episode first; it does not
+        // destruct the canonical candidate here. The next command callback
+        // handles store cleanup. A pointer is not execution permission.
+        EXPECT_EQ(after.active, activated.active);
+        const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
+        EXPECT_TRUE(episode.failure_latched);
+        EXPECT_FALSE(episode.command_available);
+      } else if (trackingBaseMeters() > 0.0) {
+        EXPECT_NEAR(trace->anchor_error_time_aligned_m, measured_offset.norm(), 1.0e-12);
+        EXPECT_TRUE(trace->tracking_certificate_exceeded);
+        ASSERT_EQ(trace->emergency_candidate_commit_result, 1)
+            << "FIXTURE_BLOCKED: matched post-START brake did not certify";
+        ASSERT_TRUE(after.active)
+            << "FIXTURE_BLOCKED: matched brake had no canonical admission/delivery";
+        EXPECT_EQ(after.active->kind, navigation_planning::CandidateBundleKind::kEmergencyBrake);
+        EXPECT_NE(after.active->bundle_generation, activated.active->bundle_generation);
+        EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
+                  after.active->bundle_generation);
+        EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).recovery_state,
+                  ExecutionRecoveryState::kEmergencyBrake);
+        EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+      } else {
+        EXPECT_NEAR(trace->anchor_error_time_aligned_m, measured_offset.norm(), 1.0e-12);
+        EXPECT_TRUE(trace->experimental_tracking_bridge_usable);
+        EXPECT_FALSE(trace->tracking_certificate_exceeded);
+        EXPECT_FALSE(trace->projected_tracking_certificate_exceeded);
+        EXPECT_EQ(trace->emergency_candidate_commit_result, 0);
+        EXPECT_EQ(after.active, activated.active);
+        const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
+        EXPECT_EQ(episode.recovery_state, ExecutionRecoveryState::kTrackMain);
+        EXPECT_TRUE(episode.command_available);
+        EXPECT_FALSE(episode.failure_latched);
+      }
+      return;
+    }
     ASSERT_TRUE(after.active);
     EXPECT_EQ(after.version, activated.version);
     EXPECT_EQ(after.active, activated.active);
@@ -632,18 +705,6 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     EXPECT_EQ(episode.recovery_state, ExecutionRecoveryState::kTrackMain);
     EXPECT_FALSE(episode.failure_latched);
     EXPECT_FALSE(episode.safety_suffix_active);
-    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
-    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count, 0);
-    const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
-    ASSERT_TRUE(trace) << "the monitor must execute, not silently skip this control";
-    EXPECT_EQ(trace->execution_bundle_generation, activated.active->bundle_generation);
-    EXPECT_EQ(trace->solve_generation, 0U);
-    EXPECT_EQ(trace->execution_state_source_stamp_ns, measured_source_ns);
-    EXPECT_EQ(trace->committed_bundle_start_stamp_ns, anchor->activation_stamp_ns);
-    EXPECT_TRUE(trace->retained_fresh_vehicle_state);
-    EXPECT_TRUE(trace->current_vehicle_state_known_free);
-    EXPECT_TRUE(trace->sampled_path_clear);
-    EXPECT_DOUBLE_EQ(trace->anchor_error_raw_m, independently_sampled_raw_error_m);
     EXPECT_TRUE(trace->committed_suffix_usable);
     EXPECT_EQ(trace->emergency_candidate_commit_result, 0);
     if (source_before_start) {
@@ -711,6 +772,36 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict,
 TEST_F(NavigationRuntimeTerminalMonitorStrict,
        RealFutureMainOnlyHandoffWithFreshPostStartStatePreservesOwner) {
   ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(false));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor,
+       PreStartPressureLacksSourceWitnessAndSkipsBrake) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(true, true));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor,
+       MatchedPostStartPressureUsesConfiguredRelaxedBridge) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(false, true));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict,
+       PreStartPressureLacksSourceWitnessAndSkipsBrake) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(true, true));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorStrict,
+       MatchedPostStartPressureAdmitsCertifiedBrake) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(false, true));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorObserverOff,
+       PreStartPressureLacksSourceWitnessAndSkipsBrake) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(true, true));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitorObserverOff,
+       MatchedPostStartPressureUsesConfiguredRelaxedBridge) {
+  ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(false, true));
 }
 
 TEST_F(NavigationRuntimeTerminalMonitor, NonTerminalMainHasKeyAtMovingActivation) {

@@ -5436,3 +5436,120 @@ This append changes the source fingerprint. Commit the reviewed observer/test
 boundary, then produce a fresh canonical Release manifest before the next
 frozen18-run matrix. The broad goal remains ACTIVE, 5WP-per-policy milestone
 not met, and qualification blocked. A component GREEN is not its completion.
+
+### Pressure correspondence and observation-cost discriminator — 2026-09-18
+
+The user correctly challenged treating correctness commits as performance
+progress. The last matrix is a serious regression signal: overall native
+COMPLETE7/18 ->3/18, despite5WP0/6 ->3/6. These are unpaired builds/runs, so the
+signal does not identify a causal patch. The full goal remains ACTIVE; no new
+coordinator, gate, solve budget, lease, anchor retiming or UNKNOWN permission
+is introduced in this checkpoint.
+
+#### Actual-factory source-domain controls, not a manufactured flight RED
+
+Six additional controls retain the actual predecessor A, exact400ms reserve,
+factory-certified moving terminal G, production pending admission/activation
+and backend ACK. Their synthetic measured position residual is
+(0.5020302723007433,0.1395032219362763,0.012844457407660936)m, taken from the
+size of the independently paired SAFE2 G21 command/source positions. It is
+not replay of the native worker pin. Position alone is offset; trajectory,
+SOURCE, frame, epoch, derivatives, kind and certificates are not retagged or
+fabricated. Independently computed current raw error must be >.25m and <.75m.
+The known-free synthetic world is a controlled input, not a sensor/world
+oracle or proof of campaign SAFE emergency policy.
+
+The first proposed expectations were too strong. V1's pressure filter runs
+9 tests with4PASS/5FAIL. Preserve its logs/XML as EXPECTATION_REJECTED, not a
+product RED: `failClosedLocked()` removes episode command authority but does
+not destroy the canonical candidate there; relaxed0/0/0 post-START intentionally
+suppresses MAIN tracking braking. Neither error justifies changing production.
+The corrected V2 expectations are grounded in source and actual dispositions:
+
+| Source/support | Positive tracking .25m | Explicit relaxed0/0/0 |
+|---|---|---|
+| A(a-8ms), before G START | No G source witness; no actual/projected exceeded flag or brake attempt; episode command unavailable/failure latched; canonical G remains until command cleanup. | Same loss of episode authority; observer ON/OFF unchanged. |
+| G(a+12ms), after START | Source error is the synthetic residual; actual exceeded flag; actual certified Emergency H, backend H and episode Emergency, without failure. | Configured experimental bridge retains G; no exceeded flag/brake; observer ON/OFF unchanged. |
+
+The backend preparation flag1 alone is not an admission receipt. The positive
+post-START control independently requires canonical Emergency H plus backend
+and episode H. These controls prove a real component source-domain/policy
+distinction and viable matched brake, not that it caused every native2WP
+failure. Healthy within-.25m pre/post-START controls remain unchanged and pass.
+The entire terminal monitor binary passes28/28; pressure filter9/9 includes
+six new controls plus three existing pressure cases. No disabled tests.
+
+Actual Luna component Release build selects one package; it invalidates the
+canonical flight manifest (ABSENT_PACKAGE_SELECT), so it authorizes no SITL.
+HEAD pre/post is `d35869cf33b38553cb35f67d1c1902262793fe76`. V2 binary SHA256
+`dc1e32558cc8213bd0379e1b41740f098302859174f2518013e7e9dff1332801`, test source
+SHA256 `7f05a25698ea2b1b0c0454d87f636a7c4e87e73f6e4242d279f20aca737c79c4`.
+The source fingerprint captured after V2 and before this append is
+`28f3f3e516ae3fb9ddf91fac61fc794d43f4e3a60669aafe465466b37453cc7f`;
+the component prebuild full fingerprint was NOT_CAPTURED in its small log,
+not silently inferred from that postbuild value. Logs are
+`.artifacts/diagnostics/retained-pressure-seam-v{1,2}-*`; V2 full XML has tests28,
+failures0/errors0/disabled0 and SHA256
+`bd068177c1e013709dae9d6c33e9fba1f0f2221b61d38935365158fd72080a5c`.
+
+#### Terminal settling must end at the authority cutoff
+
+FAST5-r2 `external-mode-check-20260918T051945-1125251` native
+`scenario.jsonl:9156/:9158` records external exit/PX4 Hold handover at source
+62.952s. In [59,62.952)s,198 propagated observations have minimum speed
+.2052010136m/s, with zero samples jointly satisfying .15m/s and distance<=.8m
+to (41,0,3). Independent Gazebo truth in that source window has198 observations,
+minimum speed .1985583654m/s. Velocity norms are rotation invariant; this is
+unpaired sampled evidence, not continuous proof or an estimator-error metric.
+The first apparently eligible propagated state (`perception_timeline.jsonl:23789`)
+is source63.268s, after navigation authority ended. The later1.72s eligible
+tail cannot be used to call the active waypoint gate a false reject. This
+counterexample rejects simply raising the acceptance speed from one run.
+
+#### Observation cost and hidden failure coupling
+
+The same FAST5-r2 captures511 runtime/planner statuses with147-354 fields,
+628 mapping statuses with104 fields and2643 PX4-input statuses with47-48 fields.
+No writer drop in this session proves capture conservation only, not zero
+overhead. Runtime/planning diagnostics format/publish outside execution-owner
+locks, but synchronously occupy PlanningWorker; mapping diagnostics likewise
+occupy MappingWorker after core publication. Reliable DDS, allocation/string
+formatting, the Python pre-enqueue snapshot, DDS subscribers and rosbag SQLite
+recording consume shared resources. PX4 per-command trace is already isolated
+by its bounded queue/worker; do not falsely attribute its string formatting to
+the command lock. Three validation calls near runtime5112/5128/5141 are
+short-circuited fault-injection paths, not three ordinary extra sweeps. The
+facade already supports immutable disjoint-region certificate reuse.
+
+W4's new exporter did not exist in the earlier7 ->3 comparison and therefore
+cannot cause that older decline. OFF/ON native timing distributions remain
+unverified. A separate source-confirmed coupling is more concerning than
+field count: the sole repository production MappingWorker PublishedHandler
+is ROS telemetry; if it throws after `process_`/mappingPublished, the generic
+worker invokes mappingFailStop/abort. Core world/store finalization is in
+process_mapping, not this observer. Existing notification-failure tests
+intentionally expect fatal while preserving PUBLISHED accounting. No native
+occurrence is proved. A future minimal correction belongs at the explicitly
+observational ROS boundary, with loss accounting, not blanket suppression of
+generic mandatory-handler or map/validation failures. It is not patched here.
+
+#### Bounded resource controls before more product changes
+
+Do not blanket-disable navigation diagnostics: runner mapping readiness reads
+their accepted-observation/processing/visualization fields. That would change
+mission startup, not isolate overhead. Separately ablate only (a) the existing
+W4 export enable switch before generated-config hashing, or (b) the optional
+rosbag start. Keep all decision gates, typed health, readiness diagnostics,
+Python monitor and Scenario/native mission outputs unchanged. The recorder
+is non-authoritative; bagOFF also removes a DDS subscriber and disk workload,
+so it measures the total recorder effect, not isolated formatting cost.
+
+The preliminary bag comparison plan is SAFE2 ON->OFF, FAST2 OFF->ON and SAFE5
+ON->OFF, identical seed0/cap5m/s/profile/policy with W4 ON in both arms. Keep
+every failure; explicit arm/absence/config provenance is mandatory. Missing
+bag coverage is NOT_EVALUABLE, never empty complete evidence or qualification.
+These six preliminary cases do not replace the required18-case goal matrix,
+prove distributions or authorize tuning any gate. Independently test W4 OFF/ON
+later rather than confounding both switches. No native ablation has run at
+this checkpoint. Next: reviewed test/report commit, fresh Full Release and
+regression, then actual Luna serial controls and the full frozen matrix.
