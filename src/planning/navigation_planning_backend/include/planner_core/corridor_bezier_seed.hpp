@@ -428,7 +428,19 @@ inline CorridorBezierSeedResult buildCorridorContainedBezierSeed(
         (states[static_cast<std::size_t>(junction + 1)].col(0) -
          states[static_cast<std::size_t>(junction)].col(0)) /
         durations_s(junction);
-    Eigen::Vector3d velocity = 0.5 * (incoming_secant + outgoing_secant);
+    // Opposite-duration weights cancel the acceleration term at the junction.
+    // An arithmetic mean only does so when adjacent durations are equal.
+    // Normalize before weighting to avoid multiplying a secant by a large T.
+    const double duration_scale =
+        std::max(durations_s(junction - 1), durations_s(junction));
+    const double scaled_previous_duration =
+        durations_s(junction - 1) / duration_scale;
+    const double scaled_next_duration = durations_s(junction) / duration_scale;
+    const double scaled_duration_sum =
+        scaled_previous_duration + scaled_next_duration;
+    Eigen::Vector3d velocity =
+        (scaled_next_duration / scaled_duration_sum) * incoming_secant +
+        (scaled_previous_duration / scaled_duration_sum) * outgoing_secant;
     const double velocity_norm = velocity.norm();
     if (velocity_norm > desired_internal_speed_mps && velocity_norm > 1.0e-9) {
       velocity *= desired_internal_speed_mps / velocity_norm;

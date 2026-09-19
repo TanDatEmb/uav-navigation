@@ -15,6 +15,7 @@
 #include <planner_core/optimized_nominal_candidate.hpp>
 #include <traj_opt/config.hpp>
 #include <traj_opt/nominal_trajectory_optimizer.hpp>
+#include <utils/optimization/lbfgs.h>
 
 namespace {
 
@@ -47,6 +48,141 @@ geometry_utils::Polytope makeBox(const double min_x, const double max_x,
 
 geometry_utils::Polytope makeConvexBox() {
   return makeBox(-10.0, 10.0, -10.0, 10.0, 0.0, 10.0);
+}
+
+struct CapturedRenewal332Fixture {
+  navigation_math::StatePVAJ head;
+  navigation_math::StatePVAJ tail;
+  navigation_math::vec_E<navigation_math::Vec3f> guide;
+  std::vector<double> guide_t;
+  geometry_utils::PolytopeVec corridors;
+};
+
+CapturedRenewal332Fixture makeCapturedRenewal332Fixture() {
+  // Captured nominal-renewal-capture-nod2nN snapshot_2_2_16.json
+  // (planner cycle 332, solve generation 54; source d3a801ce,
+  // fingerprint 6e256...e092, manifest ba7a29...2e64). Setup-only diagnostic fixture;
+  // it is not a complete executable bundle or flight-acceptance evidence.
+  // The six PRE polytopes preserve ordinary optimize() setup input; passing
+  // only four POST polytopes through SimplifySFC again is not setup parity.
+  CapturedRenewal332Fixture out;
+  out.head << 10.280708849609464, 1.9718184267288366, 3.460698148896486, 0.36018004354153277,
+      2.2193448933127655, 0.29192781474471785, -0.9638361143636404, -0.2734847362885524,
+      2.9507361208561975, 0.08378820616910174, 0.06933849624112493, -0.45554295333524086;
+  out.tail << 26.1, 2.6119729524869952, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 2.9000000000000004, 0.0, 0.0,
+      0.0;
+  out.guide = {{10.280708849609464, 2.2193448933127655, 2.9507361208561975},
+               {10.449536131355035, 2.2395958462093768, 2.9576207179992955},
+               {10.640377084874761, 2.2535977380861576, 2.9646974914659334},
+               {10.852622821361608, 2.2613570914219778, 2.9716964699920609},
+               {11.085200157373865, 2.2629637091775967, 2.978343974057533},
+               {11.336643236151694, 2.2585757935827346, 2.9843808675700565},
+               {11.605175464348974, 2.248403788662847, 2.9895801959617807},
+               {11.888127323230881, 2.2327907530654736, 2.9937709333514384},
+               {12.178342899642788, 2.2127366168803153, 2.9968931457641586},
+               {12.464099413947309, 2.1899368256036773, 2.9990061013864349},
+               {12.73215181428073, 2.1663707164253481, 3.0002532002639017},
+               {12.970292234540088, 2.143950305728338, 3.0008266676254549},
+               {13.169242430211037, 2.1242554176688326, 3.0009354024122028},
+               {13.100000000000001, 2.1, 3.1},
+               {16.1, 2.1, 3.1},
+               {19.1, 2.1, 3.1},
+               {21.900000000000002, 1.1, 3.1},
+               {23.3, -0.1, 3.1},
+               {24.1, -0.1, 2.9000000000000004},
+               {26.1, -0.1, 2.9000000000000004}};
+  out.guide_t = {0,
+                 0.080000000000000071,
+                 0.16000000000000014,
+                 0.24000000000000021,
+                 0.32000000000000028,
+                 0.40000000000000036,
+                 0.48000000000000043,
+                 0.5600000000000005,
+                 0.64000000000000057,
+                 0.72000000000000064,
+                 0.80000000000000071,
+                 0.88000000000000078,
+                 0.96000000000000085,
+                 1.0288469835890202,
+                 2.1411870105019872,
+                 2.7444123228236168,
+                 3.3390550727163566,
+                 3.7078368510080724,
+                 3.8727610760327789,
+                 4.2727610760327792};
+  // Exact captured PRE input; ordinary optimize() performs SimplifySFC.
+  // All six PRE route-boundary gates are unset in this snapshot.
+  const std::vector<std::vector<std::vector<double>>> raw = {
+      {{-0.025459949605120526, -0.9971797570900652, -0.07059973807248704, 2.398783774188673},
+       {0.11035703100197086, -0.9913410272676435, -0.07116384871803576, 0.7834514946722171},
+       {-0.02622878251298125, -0.9930196313383998, 0.11499592490360507, 1.8429651543454864},
+       {0.10860813008200541, -0.9875623791635054, 0.11368738426495488, 0.24084693216827222},
+       {0, 2.7105054312137617e-20, -1, 1.4507361208561973},
+       {0, -2.7105054312137617e-20, 1, -4.500935402412204},
+       {-7.682588831596504e-19, 1, 0, -3.7193448933127655},
+       {7.682588831596504e-19, -1, 0, 0.6242554176688326},
+       {1, -2.504252908557339e-18, -1.734723475976807e-18, -14.669242430211037},
+       {-1, 2.504252908557339e-18, 1.734723475976807e-18, 8.780708849609464},
+       {0, 0, 1, -3.200935402412203},
+       {0, 0, -1, 2.7507361208561973}},
+      {{0, 0, 1, -4.6},
+       {0, 1, 0, -3.5999999999999996},
+       {0, -1, 0, 0.6000000000000004},
+       {0, 0, -1, 1.6000000000000005},
+       {-0.8029930424328082, -0.5959884007298317, 0, 11.332195418018667},
+       {-0.796765826160455, -0.5925533230329181, 0.11851066460658351, 10.86109415046839},
+       {-0.7785870217792048, -0.5826531539942719, -0.2330612615977085, 11.646969392331178},
+       {1, 0, 0, -17.6},
+       {-1, 0, 0, 11.600000000000001},
+       {0, 0, 1, -3.3000000000000003},
+       {0, 0, -1, 2.9}},
+      {{1, 0, 0, -20.6},
+       {0, 1, 0, -3.6},
+       {0, 0, 1, -4.6},
+       {-1, 0, 0, 14.600000000000001},
+       {0, -1, 0, 0.6000000000000001},
+       {0, 0, -1, 1.6},
+       {0, 0, 1, -3.3000000000000003},
+       {0, 0, -1, 2.9}},
+      {{0, 0, 1, -4.6},
+       {0, 0, -1, 1.6},
+       {0.9676334875999666, 0.2523597306923695, 0, -21.787756358950602},
+       {-1.3877787807814454e-17, 1, 0, -3.5999999999999996},
+       {1.3877787807814454e-17, -1, 0, -0.3999999999999996},
+       {-1, 2.7755575615628914e-17, 0, 17.6},
+       {1, -2.7755575615628914e-17, 0, -23.400000000000002},
+       {0, 0, 1, -3.3000000000000003},
+       {0, 0, -1, 2.9}},
+      {{0.7349748627481386, 0.678094352673988, 0, -17.070183878735513},
+       {0.5633700667291068, 0.8262046767681975, 0, -13.287674317896293},
+       {1, 0, 0, -24.8},
+       {-1, 0, 0, 20.400000000000002},
+       {0, 1, 0, -2.6},
+       {0, -1, 0, -1.6},
+       {0, 0, 1, -4.6},
+       {0, 0, -1, 1.6000000000000005},
+       {0, 0, 1, -3.3000000000000003},
+       {0, 0, -1, 2.9}},
+      {{-0.546163994158071, 0.8126672954922194, 0.20316682387305451, 12.65463519952688},
+       {-0.5632942866920952, 0.8262563443508579, 0, 13.518645613140784},
+       {-0.5221188934898598, 0.7918724323970695, -0.3167489729588283, 13.358382826705451},
+       {-0.4213538031047716, 0.7776571964264097, -0.46659431785584576, 11.32837433728659},
+       {1, 0, 0, -27.6},
+       {-1, 0, 0, 22.6},
+       {0, 1, 0, -1.4},
+       {0, -1, 0, -1.6},
+       {0, 0, 1, -4.4},
+       {0, 0, -1, 1.4000000000000004},
+       {0, 0, 1, -3.1000000000000005},
+       {0, 0, -1, 2.7}}};
+  for (const auto& rows : raw) {
+    navigation_math::MatD4f planes(rows.size(), 4);
+    for (std::size_t r = 0; r < rows.size(); ++r)
+      for (std::size_t c = 0; c < 4; ++c) planes(r, c) = rows[r][c];
+    out.corridors.emplace_back(std::move(planes));
+  }
+  return out;
 }
 
 class ScopedEnvironmentVariable {
@@ -565,6 +701,62 @@ TEST(ExpOptimizer, MandatoryFeasibilityUsesHardDeadlineWhenNoCertifiedSeed) {
   EXPECT_GE(diagnostics.feasible_iterate_certificate_time_us, 0);
 }
 
+TEST(NominalSolveRevocation, CancellationOverridesRemainingHardBudget) {
+  std::atomic_bool cancelled{false};
+  EXPECT_FALSE(traj_opt::nominalSolveRevoked(&cancelled, 100, 10));
+  cancelled.store(true, std::memory_order_relaxed);
+  EXPECT_TRUE(traj_opt::nominalSolveRevoked(&cancelled, 100, 11));
+  EXPECT_TRUE(traj_opt::nominalSolveRevoked(&cancelled, 0, 11));
+}
+
+TEST(NominalSolveRevocation, HardExpiryIncludesExactBoundary) {
+  EXPECT_FALSE(traj_opt::nominalSolveRevoked(nullptr, 100, 99));
+  EXPECT_TRUE(traj_opt::nominalSolveRevoked(nullptr, 100, 100));
+  EXPECT_TRUE(traj_opt::nominalSolveRevoked(nullptr, 100, 101));
+  // Preserve the explicitly unbudgeted offline diagnostic contract.
+  EXPECT_FALSE(traj_opt::nominalSolveRevoked(nullptr, 0, 101));
+}
+
+TEST(ExpOptimizer, CertifiedIncumbentSurvivesLaterOptimizerRejection) {
+  auto fixture = makeCapturedRenewal332Fixture();
+  auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
+  config.max_vel = 5.0;
+  config.max_acc = 5.0;
+  config.max_jerk = 8.0;
+  config.validate();
+  const auto planner_context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>([] { return 12.0; });
+  traj_opt::ExpTrajOpt optimizer(config, planner_context);
+  geometry_utils::Trajectory trajectory;
+
+  // Keep both deadlines well clear of wall-clock expiry; this characterizes
+  // checkpoint retention, not deadline scheduling.
+  const auto now = std::chrono::steady_clock::now();
+  const auto refinement_deadline = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                       (now + std::chrono::hours(1)).time_since_epoch())
+                                       .count();
+  const auto hard_deadline = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 (now + std::chrono::hours(2)).time_since_epoch())
+                                 .count();
+  optimizer.setSolveBudget(nullptr, refinement_deadline, hard_deadline);
+
+  const auto result = optimizer.solve(fixture.head, fixture.tail, fixture.guide, fixture.guide_t,
+                                      fixture.corridors, trajectory, false, false, false);
+
+  ASSERT_TRUE(result.candidateAvailable());
+  ASSERT_FALSE(trajectory.empty());
+  const auto diagnostics = optimizer.diagnostics();
+  EXPECT_EQ(diagnostics.certified_seed_failure_stage, 5);
+  EXPECT_TRUE(diagnostics.used_feasible_iterate_checkpoint);
+  EXPECT_GT(diagnostics.feasible_iterate_certificate_count, 0);
+  // Capturing an incumbent must not implement the withdrawn early-return
+  // policy: this frozen job continues into later optimizer attempts.
+  EXPECT_GT(diagnostics.lbfgs_attempt_count, diagnostics.feasible_iterate_checkpoint_attempt);
+  EXPECT_LE(trajectory.getMaxVelRate(), config.max_vel);
+  EXPECT_LE(trajectory.getMaxAccRate(), config.max_acc);
+  EXPECT_LE(trajectory.getMaxJerRate(), config.max_jerk);
+}
+
 TEST(ExpOptimizer, MandatoryFeasibilityDoesNotPreemptOptionalRefinementWindow) {
   auto config = traj_opt::Config(PLANNER_EXP_CONFIG_PATH, "exp_traj");
   config.optimization_dynamic_reserve_ratio = 1.0;
@@ -573,39 +765,55 @@ TEST(ExpOptimizer, MandatoryFeasibilityDoesNotPreemptOptionalRefinementWindow) {
   config.max_jerk = 4.0;
   config.jerk_penalty_weight = 0.0;
   const auto context =
-      std::make_shared<navigation_planner_context::PlannerRuntimeContext>(
-          [] { return 12.0; });
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>([] { return 12.0; });
   traj_opt::ExpTrajOpt optimizer(config, context);
   const auto head = makeMovingPositionState(0.0, 8.0);
   const auto tail = makePositionState(30.0);
   const navigation_math::vec_E<navigation_math::Vec3f> guide{
       head.col(0), {10.0, 0.0, 1.0}, {20.0, 0.0, 1.0}, tail.col(0)};
   const std::vector<double> times{0.0, 1.8, 3.6, 5.6};
-  geometry_utils::PolytopeVec corridors{
-      makeBox(-1.0, 12.0, -2.0, 2.0, 0.0, 3.0),
-      makeBox(8.0, 22.0, -2.0, 2.0, 0.0, 3.0),
-      makeBox(18.0, 31.0, -2.0, 2.0, 0.0, 3.0)};
+  geometry_utils::PolytopeVec corridors{makeBox(-1.0, 12.0, -2.0, 2.0, 0.0, 3.0),
+                                        makeBox(8.0, 22.0, -2.0, 2.0, 0.0, 3.0),
+                                        makeBox(18.0, 31.0, -2.0, 2.0, 0.0, 3.0)};
   geometry_utils::Trajectory trajectory;
   // Keep the optional cutoff far in the future without sleeping or asserting
   // a machine-dependent runtime. A nominal-only checkpoint must not preempt
   // the reserved refinement window without complete-bundle readiness evidence.
   const auto now = std::chrono::steady_clock::now();
   const auto cutoff_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      (now + std::chrono::hours(1)).time_since_epoch()).count();
+                             (now + std::chrono::hours(1)).time_since_epoch())
+                             .count();
   const auto hard_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      (now + std::chrono::hours(2)).time_since_epoch()).count();
+                           (now + std::chrono::hours(2)).time_since_epoch())
+                           .count();
   optimizer.setSolveBudget(nullptr, cutoff_ns, hard_ns);
-  const auto result = optimizer.solve(
-      head, tail, guide, times, corridors, trajectory, false, false, false);
+  const auto result =
+      optimizer.solve(head, tail, guide, times, corridors, trajectory, false, false, false);
 
   ASSERT_TRUE(result.candidateAvailable());
   ASSERT_FALSE(trajectory.empty());
   const auto diagnostics = optimizer.diagnostics();
   EXPECT_EQ(diagnostics.certified_seed_failure_stage, 5);
   EXPECT_GT(diagnostics.refinement_budget_at_entry_us, 0);
-  EXPECT_FALSE(diagnostics.used_feasible_iterate_checkpoint);
+  // Final rejection may legitimately select a certified incumbent after
+  // refinement. Check raw solver stops instead of conflating that selection
+  // with preemption; a canceled stop may otherwise be converted to STOP.
+  EXPECT_FALSE(diagnostics.cancelled);
+  EXPECT_NE(diagnostics.first_lbfgs_return_code, math_utils::lbfgs::LBFGS_CANCELED);
+  EXPECT_NE(diagnostics.last_lbfgs_return_code, math_utils::lbfgs::LBFGS_CANCELED);
+  if (diagnostics.used_feasible_iterate_checkpoint) {
+    EXPECT_GT(diagnostics.feasible_iterate_checkpoint_attempt, 0);
+    // This fixture continues into later attempts; this is not a universal
+    // requirement for same-attempt refinement followed by final fallback.
+    EXPECT_GT(diagnostics.lbfgs_attempt_count,
+              diagnostics.feasible_iterate_checkpoint_attempt);
+  }
+  EXPECT_LT(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count(),
+            cutoff_ns);
   EXPECT_FALSE(diagnostics.hard_deadline_observed);
-  EXPECT_EQ(diagnostics.feasible_iterate_certificate_count, 0);
+  EXPECT_GT(diagnostics.feasible_iterate_certificate_count, 0);
+  EXPECT_LE(trajectory.getMaxVelRate(), config.max_vel);
   EXPECT_LE(trajectory.getMaxAccRate(), config.max_acc);
   EXPECT_LE(trajectory.getMaxJerRate(), config.max_jerk);
 }

@@ -366,6 +366,18 @@ namespace traj_opt {
         }
     };
 
+    // An immutable nominal certificate cannot override revocation. Callers
+    // supply a fresh steady timestamp after certificate/copy work; zero hard
+    // deadline is permitted only by the existing unbudgeted diagnostic mode.
+    [[nodiscard]] inline bool nominalSolveRevoked(
+            const std::atomic_bool* cancelled,
+            const std::int64_t hard_deadline_ns,
+            const std::int64_t now_ns) noexcept {
+        return (cancelled != nullptr &&
+                cancelled->load(std::memory_order_relaxed)) ||
+               (hard_deadline_ns > 0 && now_ns >= hard_deadline_ns);
+    }
+
     [[nodiscard]] inline NominalSolveResult classifyNominalSolveResult(
             bool optimizer_success,
             const ExpOptimizationDiagnostics& diagnostics,
@@ -567,7 +579,8 @@ namespace traj_opt {
 
         bool captureFeasibleIterateCheckpoint(const VecDf& x,
                                               double objective,
-                                              int iteration);
+                                              int iteration,
+                                              bool replace_existing = false);
 
         void resetTransientDiagnostics() noexcept {
             diagnostics_ = ExpOptimizationDiagnostics{};

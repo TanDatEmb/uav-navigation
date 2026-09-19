@@ -741,9 +741,11 @@ std::string traj_opt::writeNominalProblemSnapshotJson(
 }
 
 bool ExpTrajOpt::captureFeasibleIterateCheckpoint(
-        const VecDf& x, const double objective, const int iteration) {
+        const VecDf& x, const double objective, const int iteration,
+        const bool replace_existing) {
     if (!opt_vars.feasible_checkpoint_enabled ||
-        opt_vars.feasible_checkpoint_available || !x.allFinite() ||
+        (opt_vars.feasible_checkpoint_available && !replace_existing) ||
+        !x.allFinite() ||
         !std::isfinite(objective) || opt_vars.penalty_log.size() != 8 ||
         !opt_vars.penalty_log.allFinite()) {
         return false;
@@ -796,14 +798,10 @@ bool ExpTrajOpt::captureFeasibleIterateCheckpoint(
     // Recheck revocation and the absolute deadline after the potentially
     // non-trivial certificate.  A certificate completed too late is not
     // permission to turn an actual cancellation into solver success.
-    if (opt_vars.solve_cancelled != nullptr &&
-        opt_vars.solve_cancelled->load(std::memory_order_relaxed)) {
-        return false;
-    }
     const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
             certificate_end.time_since_epoch()).count();
-    if (opt_vars.hard_deadline_ns > 0 &&
-        now_ns >= opt_vars.hard_deadline_ns) {
+    if (nominalSolveRevoked(opt_vars.solve_cancelled,
+                            opt_vars.hard_deadline_ns, now_ns)) {
         return false;
     }
 
@@ -816,8 +814,11 @@ bool ExpTrajOpt::captureFeasibleIterateCheckpoint(
     opt_vars.feasible_checkpoint_objective = objective;
     opt_vars.feasible_checkpoint_attempt = opt_vars.solver_attempt;
     opt_vars.feasible_checkpoint_iteration = iteration;
-    opt_vars.feasible_checkpoint_available = true;
-    return true;
+    const auto copied_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    opt_vars.feasible_checkpoint_available = !nominalSolveRevoked(
+            opt_vars.solve_cancelled, opt_vars.hard_deadline_ns, copied_ns);
+    return opt_vars.feasible_checkpoint_available;
 }
 
 int ExpTrajOpt::monitorProgress(void *instance,
@@ -838,23 +839,35 @@ int ExpTrajOpt::monitorProgress(void *instance,
             now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
         }
-        // A nominal certificate alone is not complete-bundle readiness.
-        // Preserve the refinement window: the integrated ready-first trial
-        // reduced certification work but did not improve mission completion.
+        // Retain a nominal incumbent without preempting refinement. Once one
+        // exists, avoid repeated certificates until the existing cutoff;
+        // there, prefer the current accepted iterate if it is also valid.
         const bool checkpoint_window_open =
                 vars->refinement_deadline_ns <= 0 ||
                 now_ns >= vars->refinement_deadline_ns;
-        if (checkpoint_window_open) {
-            try {
-                if (vars->owner->captureFeasibleIterateCheckpoint(x, fx, k)) {
-                    return 1;
+        try {
+            const bool inspect_current =
+                    !vars->feasible_checkpoint_available || checkpoint_window_open;
+            if (inspect_current) {
+                vars->owner->captureFeasibleIterateCheckpoint(
+                        x, fx, k, checkpoint_window_open);
+            }
+            now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (vars->feasible_checkpoint_available &&
+                (vars->refinement_deadline_ns <= 0 ||
+                 now_ns >= vars->refinement_deadline_ns)) {
+                // The cutoff may have elapsed since the initial clock read.
+                if (!inspect_current) {
+                    vars->owner->captureFeasibleIterateCheckpoint(x, fx, k, true);
                 }
-            } catch (...) {
-                // The L-BFGS callback is a C boundary. Convert an unexpected
-                // validator exception into a fail-closed solver stop; without
-                // a stored checkpoint the caller will reject the candidate.
                 return 1;
             }
+        } catch (...) {
+            // Never revive an older incumbent after an unexpected exception
+            // at the C callback boundary.
+            vars->feasible_checkpoint_available = false;
+            return 1;
         }
     }
     return 0;
@@ -2327,13 +2340,8 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
             opt_vars.feasible_checkpoint_available) {
             const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
-            const bool explicit_cancellation =
-                    opt_vars.solve_cancelled != nullptr &&
-                    opt_vars.solve_cancelled->load(std::memory_order_relaxed);
-            const bool hard_deadline_expired =
-                    opt_vars.hard_deadline_ns > 0 &&
-                    now_ns >= opt_vars.hard_deadline_ns;
-            if (!explicit_cancellation && !hard_deadline_expired &&
+            if (!nominalSolveRevoked(opt_vars.solve_cancelled,
+                                     opt_vars.hard_deadline_ns, now_ns) &&
                 opt_vars.feasible_checkpoint_x.size() == x.size() &&
                 opt_vars.feasible_checkpoint_x.allFinite()) {
                 x = opt_vars.feasible_checkpoint_x;
@@ -2344,20 +2352,27 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
                 opt_vars.penalty_log = opt_vars.feasible_checkpoint_penalty_log;
                 minCostFunctional = opt_vars.feasible_checkpoint_objective;
                 traj = opt_vars.feasible_checkpoint_trajectory;
-                result = lbfgs::LBFGS_STOP;
-                diagnostics_.used_feasible_iterate_checkpoint = true;
-                diagnostics_.feasible_iterate_checkpoint_attempt =
-                        opt_vars.feasible_checkpoint_attempt;
-                diagnostics_.feasible_iterate_checkpoint_iteration =
-                        opt_vars.feasible_checkpoint_iteration;
-                planner_context_->info(
-                        " -- [ExpOpt] selected fully certified accepted iterate: "
-                        "attempt={} iteration={} certificate_count={} "
-                        "certificate_time_us={}",
-                        opt_vars.feasible_checkpoint_attempt,
-                        opt_vars.feasible_checkpoint_iteration,
-                        opt_vars.feasible_checkpoint_certificate_count,
-                        opt_vars.feasible_checkpoint_certificate_time_us);
+                const auto copied_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (nominalSolveRevoked(opt_vars.solve_cancelled,
+                                        opt_vars.hard_deadline_ns, copied_ns)) {
+                    traj.clear();
+                } else {
+                    result = lbfgs::LBFGS_STOP;
+                    diagnostics_.used_feasible_iterate_checkpoint = true;
+                    diagnostics_.feasible_iterate_checkpoint_attempt =
+                            opt_vars.feasible_checkpoint_attempt;
+                    diagnostics_.feasible_iterate_checkpoint_iteration =
+                            opt_vars.feasible_checkpoint_iteration;
+                    planner_context_->info(
+                            " -- [ExpOpt] selected fully certified accepted iterate: "
+                            "attempt={} iteration={} certificate_count={} "
+                            "certificate_time_us={}",
+                            opt_vars.feasible_checkpoint_attempt,
+                            opt_vars.feasible_checkpoint_iteration,
+                            opt_vars.feasible_checkpoint_certificate_count,
+                            opt_vars.feasible_checkpoint_certificate_time_us);
+                }
             }
         }
         const int attempt_evaluation_count = std::max(0, opt_vars.iter_num);
@@ -2482,6 +2497,12 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
     }
     // double dt = ttt.stop();
     const auto rebuild_candidate = [&]() {
+        if (diagnostics_.used_feasible_iterate_checkpoint) {
+            // Return the certified value, not a second MINCO reconstruction
+            // which is merely mathematically equivalent to it.
+            traj = opt_vars.feasible_checkpoint_trajectory;
+            return;
+        }
         gcopter::forwardMapTauToT(tau, opt_vars.times);
         if (opt_vars.duration_lower_bound.size() != 0 &&
             opt_vars.duration_lower_bound.size() != opt_vars.times.size()) {
@@ -3332,6 +3353,43 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
         }
     }
 
+    if (ret < 0 && opt_vars.feasible_checkpoint_available) {
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (!nominalSolveRevoked(opt_vars.solve_cancelled,
+                                 opt_vars.hard_deadline_ns, now_ns)) {
+            auto candidate = opt_vars.feasible_checkpoint_trajectory;
+            const auto certificate =
+                    navigation_planning_backend::certifyOptimizedNominalCandidate(
+                        candidate, opt_vars.hPolytopes, opt_vars.hPolyIdx,
+                        opt_vars.route_boundary_gates, opt_vars.route_boundary_points,
+                        opt_vars.route_boundary_radii, cfg_);
+            const auto certified_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (certificate.valid && !nominalSolveRevoked(
+                    opt_vars.solve_cancelled, opt_vars.hard_deadline_ns, certified_ns)) {
+                traj = std::move(candidate);
+                // Do not restore retry weights into the next solve. Only the
+                // frozen output and its evidence are selected here.
+                update_dynamic_extrema();
+                diagnostics_.used_feasible_iterate_checkpoint = true;
+                diagnostics_.feasible_iterate_checkpoint_attempt =
+                        opt_vars.feasible_checkpoint_attempt;
+                diagnostics_.feasible_iterate_checkpoint_iteration =
+                        opt_vars.feasible_checkpoint_iteration;
+                diagnostics_.final_normalized_dynamic_violation =
+                        normalized_dynamic_violation();
+                minCostFunctional = opt_vars.feasible_checkpoint_objective;
+                ret = lbfgs::LBFGS_STOP;
+                planner_context_->info(
+                        " -- [ExpOpt] final refinement rejected; selected frozen "
+                        "certified incumbent: attempt={} iteration={}",
+                        opt_vars.feasible_checkpoint_attempt,
+                        opt_vars.feasible_checkpoint_iteration);
+            }
+        }
+    }
+
     // MINCO is a quality refinement, not the sole owner of nominal command
     // availability. If it terminates numerically or its final hard gates
     // reject the optimized iterate, copy only the immutable pre-LBFGS seed
@@ -3368,6 +3426,21 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol,
         }
     }
 
+    // Mandatory-feasibility results, including retained incumbents, must not
+    // survive revocation during the final certificate or output bookkeeping.
+    if (opt_vars.feasible_checkpoint_enabled) {
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (nominalSolveRevoked(opt_vars.solve_cancelled,
+                                opt_vars.hard_deadline_ns, now_ns)) {
+            diagnostics_.cancelled = opt_vars.solve_cancelled != nullptr &&
+                    opt_vars.solve_cancelled->load(std::memory_order_relaxed);
+            diagnostics_.hard_deadline_observed = opt_vars.hard_deadline_ns > 0 &&
+                    now_ns >= opt_vars.hard_deadline_ns;
+            diagnostics_.used_feasible_iterate_checkpoint = false;
+            ret = lbfgs::LBFGS_CANCELED;
+        }
+    }
     if (ret >= 0 && !traj.empty()) {
         diagnostics_.final_duration_s = traj.getTotalDuration();
     } else {
