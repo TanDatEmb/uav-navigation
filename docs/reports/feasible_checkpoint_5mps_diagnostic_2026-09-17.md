@@ -2,7 +2,90 @@
 
 Date: 2026-09-17, Asia/Ho_Chi_Minh.
 
-Latest offline follow-up: replay now feeds captured PRE corridors to the
+Current numerical closure (2026-09-19): commit `7d69a04e` fixes retained
+certified incumbents and unequal-duration corridor junction derivatives. The
+clean HEAD+five-file overlay passes a Release backend build and 348/348 backend
+test cases. The subsequent serial native matrix completed all 18 attempts:
+**5 COMPLETE, 8 PAUSED_SAFETY_STOP, 4 FAILED_COMPONENT and 1 WALL_TIMEOUT**;
+SAFE is 3/9 COMPLETE and FAST is 2/9 COMPLETE. This equals the previous total
+of 5/18 while redistributing successes from FAST to SAFE. SAFE/FAST 5WP falls
+from 1/3 and 2/3 to 0/3 and 1/3; both policies newly complete 1/3 9WP. All
+18 reports retain valid provenance and cleanup, but 0/18 report PASS and all
+are qualification-ineligible. Therefore this is a correctness fix, not a
+demonstrated completion-rate or performance improvement; no performance tag
+is justified. See [post-correction native closure](#post-correction-native-closure--2026-09-19).
+
+Current integrated snapshot (2026-09-18): shared immediate-cutover/CIRI2-v1 closes
+all18 attempts:5 native COMPLETE,9 PAUSED_SAFETY_STOP,4 FAILED_COMPONENT;
+SAFE5WP1/3, FAST5WP2/3, SAFE/FAST9WP0/3 each. Cleanup/provenance is valid;
+0 report PASS, all qualification-ineligible. Full Release23 packages and85 fresh
+CTest targets PASS for the frozen source, not subsequent edits. This combined,
+unpaired trial does not isolate CIRI2 benefit or establish a performance gain.
+
+Current implementation queue, retained explicitly rather than buried in history:
+
+| Priority | Finding / evidence boundary | Action / status |
+|---|---|---|
+| 1 | CONFIRMED: arithmetic secant mean breaks quadratic motion at unequal T; actual production-header fixture fails dynamics certificate. | Opposite-duration normalized weights and retained incumbent IMPLEMENTED; fixture/component/full regression PASS. Native 18-run total remains 5/18 COMPLETE, so correctness is closed but completion improvement is REJECTED for this matrix. No budget/gate change. |
+| 2 | Native SAFE2-r1: DEGRADED producer publication gap precedes receiver stale while IMU continues. | State-bound nominal vs brake-only capability required; NOT_IMPLEMENTED. Do not publish degraded state as healthy nominal. |
+| 3 | Native SAFE5-r1: latest-world OCCUPIED MAIN sweep revokes execution; source never independently prepares measured-state brake on this path. | One-shot world-invalid recovery opportunity; NOT_IMPLEMENTED. Actual new brake feasibility NOT_EVALUATED; no invalid MAIN continuation/future-BACKUP jump. |
+| 4 | FAST9-r2/r3 accept0..7 but not final8; earlier frame/endpoint discriminator remains conditional. | Keep frame/state ownership and measured terminal completion open; no forced waypoint acceptance or .75m relaxation. |
+
+MINCO deadline failures, state starvation and world invalidation are different
+mechanisms. Monitoring total CPU/DDS/recorder cost remains unmeasured; a local
+emit-cost bound does not exonerate all observability overhead. No new production
+telemetry, coordinator or FSM is introduced by the numerical correction.
+See [latest closure and selected correction](#nonuniform-corridor-junction-correction--2026-09-18).
+All snapshots below retain their own denominators, pins and historical scope.
+
+## Post-correction native closure — 2026-09-19
+
+Frozen authority: HEAD `7d69a04ef01366f2e04023d154ab53b1943b935b`,
+source fingerprint `346e0f3d920e9cd96d2f0bf4f2ac827c9f2c64520991ba6d8f0e5480f8f0faa3`,
+and authoritative manifest SHA-256
+`f0780d6c30e903882d5a33596b489c481fcba159e206a1548f99b73e7b678d90`.
+The frozen source includes previously disclosed WIP; outcomes must not be
+attributed to the five-file commit alone. SAFE and FAST retain their separate
+BACKUP UNKNOWN policies; both run with CIRI reference two, unchanged 80 ms
+planner deadline, unchanged execution gates and diagnostic relaxed tracking.
+
+| Policy / route | COMPLETE | PAUSED | component / timeout | Previous COMPLETE |
+|---|---:|---:|---:|---:|
+| SAFE 2WP | 2/3 | 1/3 | 0/3 | 0/3 |
+| SAFE 5WP | 0/3 | 2/3 | 1/3 | 1/3 |
+| SAFE 9WP | 1/3 | 1/3 | 1/3 | 0/3 |
+| FAST 2WP | 0/3 | 1/3 | 2/3 | 2/3 |
+| FAST 5WP | 1/3 | 2/3 | 0/3 | 2/3 |
+| FAST 9WP | 1/3 | 1/3 | 1/3 | 0/3 |
+
+The 407 complete planning records include 105 retained-checkpoint selections,
+50 certified-seed selections and 340 feasible-iterate certificate calls.
+Fourteen records exceeded the solve deadline; seven observed the hard deadline
+and five were cancelled. Planning p99/max was 80.390/83.613 ms; MAIN optimizer
+p99/max was 77.394/78.213 ms. Failure attribution across records is dominated
+by 55 world-change recertification failures, followed by 26 nominal-dynamics,
+11 BACKUP-known-free, 11 no-complete-bundle-at-deadline and 7
+MAIN-known-free failures. These are distinct mechanisms.
+
+The system boundary remains the larger risk: maximum measured speed was
+25.215 m/s against a maximum setpoint of 4.994 m/s, two sessions recorded
+collision events, and one FAST2 run combined odometry freshness violations,
+localization divergence and wall timeout. Conversely, one SAFE9 and one FAST9
+run accepted `[0..8]`, while two other 9WP runs stopped after `[0..7]`. This
+preserves the final-waypoint/frame/terminal discriminator instead of blaming
+all non-completion on MINCO. There were no dropped evidence records and every
+capture was complete. The next work must close state capability/continuity,
+world-revoke-to-certified-brake, and final endpoint ownership before more
+local planner tuning.
+
+Historical component follow-up: the backend ACK START guard now shares export's
+checked nanosecond clock. Exact-START H preparation is controlled RED->GREEN
+after verifying install/relink provenance; final trajectory152/152 and monitor41/41
+pass, including relaxed/observer-OFF controls. Full Release and the serial native
+matrix are closed below. Component correctness is not a native causal attribution.
+See [planner ACK START correction](#planner-ack-start-correction--2026-09-18).
+
+Historical offline follow-up: replay now feeds captured PRE corridors to the
 ordinary optimizer and checks exact setup against capture. The21 captured
 jobs produced672 terminal factor records;18 setup witnesses match exactly,
 while initial cycles1/2/3 do not. Increasing retry cap64to256 adds no nominal
@@ -15,7 +98,7 @@ failures are retained, not superseded by historical green tests.
 See [factorized replay and incumbent discriminator](#factorized-replay-and-incumbent-discriminator).
 No runtime timing, optimizer policy, gate or command authority changed here.
 
-Latest integrated follow-up: PASS event export and BACKUP switch-window timing
+Historical integrated follow-up (470b208f): PASS event export and BACKUP switch-window timing
 now share the actual mission sphere and a checked native elapsed-ns witness.
 A genuine rotated 90-degree real-facade regression failed on the old producer
 despite a complete certified bundle; the corrected producer passes. One normal
@@ -5404,9 +5487,13 @@ actual/projected certificate violation, and therefore may skip an emergency
 attempt before fail-close. A new independently certified measured-state brake
 trigger is only a proposal: its feasibility, current owner/world/lease/END,
 one-way recovery and exact SAFE/FAST role policy require controlled RED and
-contract review. In particular EMERGENCY currently follows MAIN mission UNKNOWN
-policy in the source, not automatically SAFE BACKUP known-free. No new trigger,
-policy reinterpretation or unsafe MAIN continuation is implemented here.
+contract review. **Correction after producer-to-validator review:** the earlier
+claim that EMERGENCY follows MAIN UNKNOWN policy was incorrect. The emergency
+factory creates a native BACKUP interval; the world validator selects
+`backupPolicy()` for that interval. SAFE therefore requires known-free and FAST
+allows explicitly configured UNKNOWN; neither allows OCCUPIED/OUT_OF_MAP.
+The wire ROLE_EMERGENCY label does not change the native validation role. No new
+trigger, policy reinterpretation or unsafe MAIN continuation is implemented here.
 
 #### Compact diagnostic retention, saved before further cleanup
 
@@ -5553,3 +5640,2250 @@ prove distributions or authorize tuning any gate. Independently test W4 OFF/ON
 later rather than confounding both switches. No native ablation has run at
 this checkpoint. Next: reviewed test/report commit, fresh Full Release and
 regression, then actual Luna serial controls and the full frozen matrix.
+
+#### Bag-only resource controls completed — 2026-09-18
+
+Actual `gpt-5.6-luna` completed all six serial cases with no retry, deletion or
+archive. Driver terminal state is `COMPLETE overall_rc=1 abort_reason=NONE`.
+Run root is `.artifacts/diagnostics/nominal-renewal-capture-nod2nN/observation-bag-ablation-v1/run-20260918T131941270100895/`;
+`plan.tsv` SHA256 is
+`6c3414a2f1326c233cb8866c2c09296e1b7ddb8b3648fd8d7035f7686648df22`.
+Frozen HEAD is `fff6a6ada6230411af13bc990ab8fce11d850f0d`, source fingerprint
+`aa0dd002bea96c5ec6635093e910a323ccd55929589437833ad364de65e0c8f0`,
+manifest SHA256
+`458ed4a569615f917231b571bb4bf217d9acf7ff971bfc777d242bc776866f2a`.
+Pre/post source pins match. Full Release completed 23 packages and regression
+passed 87 CTest targets, seven auxiliary checks and 389 Python tests with one
+explicit skip. This pins the combined dirty worktree, not HEAD-only source.
+W4 remains ON in both arms; only optional rosbag startup changes. These controls
+do not isolate observer formatting, monitoring or safety-validator overhead.
+
+| Policy/route | Bag ON native outcome | Bag OFF native outcome |
+|---|---|---|
+| SAFE 2WP | COMPLETE, accepted [0,1] | FAILED_COMPONENT, accepted [0] |
+| FAST 2WP | FAILED_COMPONENT, accepted [0] | WALL_TIMEOUT, accepted [0] |
+| SAFE 5WP | PAUSED_SAFETY_STOP, accepted [0,1,2,3] | PAUSED_SAFETY_STOP, accepted [0,1,2,3] |
+
+All six cleanup receipts are PASS and provenance is VALID; qualification is
+false. Native COMPLETE is not report PASS: reports contain four FAIL and two
+BLOCKED verdicts. One run per arm is insufficient for a distribution or a
+causal recorder-effect conclusion. Disabling rosbag did not rescue either
+SAFE5 case; this does not establish that all telemetry is cheap.
+
+Both SAFE5 cases now identify the first terminal MAIN revocation, rather than
+only its rejected-command consequence:
+
+- Bag ON session `external-mode-check-20260918T063401-1211424`, original
+  `samples.jsonl:47784`: G16 START/evaluation 58.172s, SOURCE 58.168s; raw
+  error .3404926943m, tracking limit .25m, source-time sample unavailable.
+- Bag OFF session `external-mode-check-20260918T063606-1215750`, original
+  `samples.jsonl:63208`: G14 START 74.784s, SOURCE 74.768s; raw error
+  .4701775222m, same .25m tracking limit, source-time sample unavailable.
+
+Both states are fresh, latest-world validation passes, and neither event
+attempts emergency preparation before removing episode command authority and
+latching failure. The raw errors are below the distinct .75m admission guard;
+raw mismatch alone is not a time-aligned tracking certificate. This confirms
+an admission/monitoring/recovery correspondence gap in these native cases,
+not a solver timeout, a universal waypoint-acceptance bug or permission to
+keep executing an unsupported MAIN. Independently certified measured-state
+braking is a proposed new recovery policy, still unimplemented.
+
+Observed previous W4 emission durations of 44us (ON) and 67us (OFF) at these
+leaves measure a prior event's formatting/publish call only, not total
+instrumentation cost, CPU contention, receiver delay or timing-tail bounds.
+Reporting after native STOPPED is also distinct from flight-path latency.
+Nested tracking audit finds `.tracking.coverage` and descriptive
+`.tracking.lio_vs_ground_truth` metrics, but both reference comparisons are
+NOT_AVAILABLE and planner-reference/PX4 comparison is unavailable in all six
+cases. Coverage alone does not repair reference lineage; reference tracking
+and qualification remain NOT_EVALUABLE, not absent-record zero errors.
+Remaining priorities are this handoff/recovery boundary, estimator-health
+propagation continuity, and latest-world stopping containment. Do not add a
+coordinator/process or retune solver budgets on the basis of these six cases.
+
+#### Indeterminate pre-START recovery trial
+
+Owner: existing runtime execution transaction and planner brake validators.
+This is a new provisional recovery policy in the worktree, not permission
+implied by OTHER_INVALID and not flight qualification. The current safety
+working set records its scope, impact, removal condition and verification;
+the unrelated safety-document migration remains uncommitted WIP.
+
+Actual Luna first built the tests-only target successfully and ran three
+real A -> reserved/factory-certified G -> pending activation controls under
+strict, relaxed and observer-OFF. All three are controlled RED: authorization
+reason remained NONE and emergency preparation result remained zero. Original
+logs are `.artifacts/diagnostics/indeterminate-source-brake-v1-{build,tests}.log`;
+RED test log SHA256 is
+`3056d374d12b10c6ba2e9db1932f5c30a348fca910c1273831a861bc73aefa28`.
+
+The narrow trial classifies a fresh original SOURCE before G START with finite
+raw pressure above the unchanged tracking budget and within the separate
+execution-anchor cap. Only PVA terminal MAIN monitoring with same epoch/frame,
+known-free measured body, valid latest-world sweep and current owner/lease/END
+may attempt H. H must independently pass existing dynamics/flatness/yaw/native
+BACKUP-world checks and factual conditional admission/delivery. No G sample is
+invented, no exceeded flag is retagged, no MAIN lease/head/end is extended and
+no solver or mission gate changes. Strict/relaxed PVA share missing-support
+recovery; the existing finite-supported relaxed bypass and velocity-only
+ACTUAL-reason requirement remain unchanged. Failed H fails closed; late or
+superseded work discards; emergency cannot re-arm. Measured stop resumes the
+same waypoint rather than completing it from an emergency endpoint.
+
+Targeted lineage is DEC-20260909-008 (finite-supported relaxed scope),
+DEC-20260901-007 (terminal projected error) and DEC-20260901-009 (measured-stop
+resume). Source adversarial review accepts the narrow policy conditionally;
+stale measured P/V at H START and unmeasured A/J remain closed-loop risks.
+GREEN, Full Release/regression and the frozen 18-run native matrix are pending;
+no completion or stopping improvement is claimed by this implementation.
+
+Component v1 Full Release subsequently completed 23 packages, manifest VALID
+with 319 artifacts, source fingerprint
+`d47e7c588318928220f08522dd1dfd4872f7597e78f4f20d1d6d420b8befbdf3`.
+Terminal tests are GREEN 28/28 and PlannerFSM 72/72. PlannerFacade is 38/39:
+the new FAST UNKNOWN positive control was FIXTURE_BLOCKED because no mission
+command identity was set. The matching negative controls had rejected for
+that same wrong reason and cannot establish world-policy coverage. Preserve
+`.artifacts/diagnostics/indeterminate-source-brake-v1-planner-facade.log`;
+the fixture is corrected before rerun, without changing product policy.
+
+Adversarial review identified a P1 authority-delivery race on this path:
+conditional store admission released the existing owner locks before backend
+ACK and Episode cutover. Mapping could certify and publish a same-generation
+world copy H -> H', making the later exact-pointer identity check fail and
+stranding a valid H' with Episode G. This is a reachable source schedule, not
+a proved native first cause. A private production admission seam is extracted
+without a behavior change to test the exact cutover, not a new owner/framework.
+The real factory/core schedule test positively admits H, validates staged H
+on a newer world, publishes H' before the actual backend ACK, and demonstrates
+controlled RED: store generations 2/2 versus Episode generation 1 and TrackMain.
+RED log `.artifacts/diagnostics/indeterminate-source-admission-race-v1-red.log`
+SHA256 is
+`367bbc17193c53717ba2cb7c4f052979f189275615089c5bf66ffa25be7238c6`.
+This covers the production admission seam/core world-publication ordering, not
+the full MappingWorker/DDS schedule.
+
+The terminal-monitor fix updates executing goal and Episode immediately after
+positive conditional store admission while those same owner locks are held.
+Goal copying is prepared outside the critical section; backend ACK remains
+outside. No late Episode mutation/revocation is replayed for this branch, and
+no pointer comparison is widened to generation equality. Generic immediate
+admission outside terminal monitoring is not repaired by this narrow change.
+The corrected policy controls and final GREEN/regression/native matrix remain
+pending at this checkpoint.
+
+V2 component closure subsequently completed on the same dirty HEAD
+`fff6a6ada6230411af13bc990ab8fce11d850f0d`, source fingerprint
+`51b861b7b8b51afec7abdaf0cde23bf05b9d5f16846b4bf95a87898dd9a56487`,
+manifest SHA256
+`07ec7081053d135a1b5a35d6c8ba5e20bc2f1d9835cc685709d946a00741cdc9`.
+Actual Luna: Full Release 23 packages PASS; terminal monitor 31/31, PlannerFSM
+72/72 and PlannerFacade 40/40 PASS. Canonical full Release test covers 14
+packages / 87 test targets with zero errors, failures or skips. `make test`
+returns rc0: seven auxiliary targets and 389 Python tests, one explicit
+missing-GUI-artifact skip. The fixture console `Runtime report: FAIL (cleanup
+succeeded)` is retained, not mistaken for either a native flight result or a
+failed test command. Absolute-path manifest validation is VALID, 319 artifacts.
+
+The controlled authority race is GREEN; actual-factory negative admission
+controls reject original-MAIN END, wrong state epoch/world/body frame and stale
+steady receive time without changing the store or Episode. The corrected
+PlannerFacade fixtures set factual mission/state identity and first certify a
+known-free emergency. Full sweeps on distinct immutable world revisions test
+staged and committed emergency: SAFE rejects UNKNOWN, explicit FAST accepts
+UNKNOWN, and both reject OCCUPIED/OUT_OF_MAP. The production world policy did
+not need changing. Independent adversarial review found no blocking P1 in this
+terminal-monitor scope; the generic immediate-admission finding remains open.
+
+Preserved v2 artifacts are
+`.artifacts/diagnostics/indeterminate-source-brake-v2-{release,full-test,make-test,terminal,planner-fsm,planner-facade}.log`,
+plus `-manifest.json`, `-source-pins.txt`, `-tracked.diff` and `-untracked.txt`.
+Make-test log SHA256 is
+`39264cecb56ffaf167113989247ef06357f7c25f2146c442f2e4d7d732aaa296`;
+terminal GREEN log SHA256 is
+`48ec1034dfdc8f7225764f58486be3864cb2901ccee1d10a24b1e0bbf4f6f624`.
+
+Native acceptance is locked before launch: all 18 serial SAFE/FAST x 2/5/9WP
+x three repetitions remain in the denominator, including failed, blocked and
+not-evaluable attempts. Scene seed 0, nominal motion, 5 m/s cap, visibility
+4096 / 40 m, bag ON and retained-decision export ON are unchanged. Native
+COMPLETE is reported separately from report PASS and actual cruise, reference
+tracking eligibility, measured settling, collision/hold tails and timing gaps.
+The initial 5WP milestone is at least 2/3 native COMPLETE for each policy,
+not sustained-5-m/s or safety qualification. Diagnostic tracking gates remain
+0/0/0 and qualification_eligible=false; C0 and hardware evidence are separate.
+
+The trial remains unpromoted worktree behavior pending this matrix. Do not
+commit a provisional runtime policy without its current-contract record in
+the same reviewed change, and do not absorb the unrelated safety migration or
+optimizer trial into a commit implicitly. Preserve the exact dirty-source
+snapshot for reproducibility. User-requested performance/quality tags require
+verified native improvement at an attributable commit; component PASS alone
+does not earn a tag. No native improvement or collision-free stopping is yet
+claimed here.
+
+### Terminal seam matrix closure and exact-START discriminator — 2026-09-18
+
+The preceding trial's frozen driver is terminal, not merely unobserved:
+`terminal-seam-recovery-v1/run-20260918T140655050130736/driver.log` records
+COMPLETE at 14:43:57 Vietnam time, overall rc1, abort reason NONE; driver
+PID1246969 is absent. All18 attempted sessions are STOPPED with cleanup PASS,
+infrastructure/provenance VALID and qualification_eligible=false. There are
+no retries or discarded failed runs.
+
+| Policy / route | Native COMPLETE | PAUSED_SAFETY_STOP | FAILED_COMPONENT |
+|---|---:|---:|---:|
+| SAFE2WP |2/3|0/3|1/3|
+| SAFE5WP |0/3|3/3|0/3|
+| SAFE9WP |0/3|3/3|0/3|
+| FAST2WP |2/3|1/3|0/3|
+| FAST5WP |0/3|3/3|0/3|
+| FAST9WP |0/3|2/3|1/3|
+
+Total:4 COMPLETE,12 PAUSED and2 FAILED_COMPONENT. The report verdicts are
+6 FAIL,12 BLOCKED and zero PASS. The5WP milestone fails for both policies,
+0/3 each. Older7/18 -> W3 3/18 -> this4/18 are unpaired snapshots, not a causal
+patch comparison or demonstrated performance improvement. In particular,
+W3's5WP3/6 -> current0/6 must not be hidden by recovered2WP outcomes.
+
+The authoritative ignored aggregate is
+`.artifacts/diagnostics/terminal-seam-recovery-v1-aggregate.json`, SHA256
+`34bcda7662f5474c9b600ad66ec0339d16d6cefd2eff2173136cc5ffd6cb12e2`.
+It names all18 sessions, factual acceptance indices, native outcome, report
+verdict, cleanup and provenance. Acceptance comes from scenario acceptance
+events, not `goal_indices` (published intent), planner endpoint or runner rc.
+Driver log SHA256 is
+`4cdaa22dee2b5a8b3acc2890350617e741b26962c357317a24e794b7daf77f51`;
+plan SHA256 is
+`15195b01761516e266d4994c6eb855c62f58f1ea1ed3b916e7d2dbf55a3f5866`.
+
+The freeze holds dirty HEAD `fff6a6ada6230411af13bc990ab8fce11d850f0d`, source
+`bf2a0d317089e268a9ce9f98c5385878351f75df8d7ee387701e646b191857cb`,
+manifest `fc8e620d123e86746f695628202cc414a96e4972ff1d36838ca986a3c0f2820a`,
+wrapper `84ad501a5b36f1f25a7e122c7367db3848dafaa216de1946138ab29226c047d9`
+and driver `1f1056c404787d3d8bdbb15bc8de16304b77ac9e4f74650ac2ca7458592b9c03`.
+Scene seed0, nominal motion, cap5m/s, visibility4096/40m, bagON, W4ON,
+noRViz/domain42/XRCE8892 and SAFE/FAST policies are unchanged. This evaluates
+the combined dirty snapshot, including provisional optimizer/recovery WIP;
+it is not isolated commit qualification.
+
+Speed metrics in that aggregate are descriptive whole-window norms, including
+hover/braking, not a steady-cruise qualification. Legacy tracking.coverage1.0
+does not establish executable reference lineage: reference comparisons remain
+NOT_AVAILABLE, eligible reference counts are zero and planner-reference/PX4
+comparison is unavailable. Settling and timing tails remain NOT_EVALUABLE.
+Retain their missingness rather than converting it to zero/PASS. The capture
+does not establish collision-free hardware stopping or sustained5m/s.
+
+#### Confirmed false-negative at exact MAIN START
+
+SAFE5r2 `external-mode-check-20260918T071408-1264496/samples.jsonl:46031` is
+the first W4 fail-closed disposition. G13 evaluation and declared START are
+both56092000000ns; original SOURCE is56088000000ns. The legacy subtraction
+`now().seconds() - start_wall_time_s` produces elapsed
+`-7.105427357601002e-15s`. Raw error .1483747853495214m is below the unchanged
+.25m budget; state/freshness/current anchor/world/owner/window pass. The
+MAIN-only common contract rejects negative elapsed and subsequently removes
+episode command authority. SOURCE before G prevents an independent phase
+bridge, but missing SOURCE alone is not a healthy raw-within-budget
+MAIN-only rejection. No brake is authorized because raw pressure is below
+its unchanged threshold. This identifies the first revoking boundary, not
+only a later rejected-command symptom.
+
+The arithmetic/native witness is
+`.artifacts/diagnostics/exact-start-terminal-monitor-witness-v1.json`, SHA256
+`34b861ab392011180f2bce2e32ee4ebdb1b258cf4969e24d459327e50f8b5cff`.
+The mixed absolute-seconds subtraction existed before extraction8f369322;
+no causal claim that telemetry or that refactor introduced this old defect
+is supported. The old10.4s fixture did not expose this rounding boundary.
+
+After matrix freeze ended, actual Luna built and ran five real-factory
+A55.692s -> reserved400ms -> certified/admitted/activated G56.092s controls:
+strict, relaxed and observer-OFF exact START are3 controlled RED; +1ns and
++20ms are2 healthy PASS controls. Identity, original SOURCE, trajectory head
+and certificates are not retagged. RED log
+`.artifacts/diagnostics/exact-start-terminal-monitor-v1-red-test.log` SHA256
+`9a332133e0e00667ffa518f93d3d04fdd1e1785b8eeecbe1142601c7d3f92499`.
+
+The narrow worktree correction loads immutable measured state before one
+evaluation instant, computes checked signed integer evaluation-minus-declared
+START, then converts only that duration to seconds. Invalid/overflowing delta
+is unusable, not zero. Sampling, raw tracking, phase and projection share the
+evaluation; independent later ROS/steady freshness and actual final
+owner/world/lease/END fences remain. There is no epsilon, elapsed clamp,
+grace, fallback state, anchor retiming, extra lock, gate or budget change.
+The existing clamped anchor helper is not a grant for negative elapsed.
+
+Actual Luna v2 component GREEN: terminal monitor37/37, PlannerFSM73/73 and
+FSM focused6/6, all rc0. Full monitor log SHA256 is
+`862185347caadcb1082abd46be7fa0df93901993177a765182beb927f9ffae12`;
+FSM log SHA256 is
+`a62bb29ae6f17f88dfe56204a3fd6b56e84da1428b1f3eb7145e7ef101a83851`.
+Controls cover real pending activation/ACK, signed -1/0/+1ns and END/overflow,
+plus a queued monitor after backward clock whose stale callback cannot mutate
+the owner. Scope is monitor/contract correctness, not full receiver reset or
+egress ordering. Source adversarial review found no clock-hunk blocker.
+Its P2 recommendation is now applied: assert canonical elapsed for all fixture
+offsets, not only zero, to reject accidental clamp-to-zero. That strengthening
+postdates v2 GREEN; final regression/full Release and native evidence are
+pending. Component selection invalidates canonical flight provenance; a fresh
+complete Release manifest is required after these final source/doc edits.
+
+#### Other first causes and scope corrections
+
+- SAFE5r1 has a full BACKUP sweep blocked by OCCUPIED, not merely a slow solve.
+  SAFE known-free and explicit FAST UNKNOWN remain distinct; both forbid
+  OCCUPIED/OUT_OF_MAP. No policy relaxation follows from this failure.
+- SAFE5r3 and FAST5r2 have supported post-START SOURCE, fresh state and valid
+  world, but raw errors .5653813/.6786432m and attempted, unprepared H. A zero
+  final_body_known_free does not identify UNKNOWN or prove H's first rejection.
+  That flag classifies the measured position point, not X500 OBB support; H
+  preparation happens before the final query. The typed preparation leaf is
+  not sufficiently attributed to conclude numerical vs world vs identity.
+- FAST9r1 accepts indices0..7 but not8. Its first captured STOPPED_HOLD final
+  veto at `logs/mapping.log:799`, G40/request9/source116.28s, is
+  anchor_error .75260221m > unchanged .75m cap, with fresh known-free state and
+  valid leases. A later5s PlanFromRest route-certificate failure is a separate
+  downstream liveness issue. Near-position or settling after authority ends
+  cannot be used as proof of a false measured acceptance rejection.
+- FAST9r2 fails at source89.86s with ODOMETRY_STALE, native accepted0..7 and
+  watchdog.failure=false. Producer propagation vs transport/receiver cause
+  remains NOT_EVALUABLE without an authoritative source/receive/use pair.
+  Bounded ignored triage SHA256 is
+  `3f95e1f0f45c532937fb00209c5eb76d1a0edd5c182026e9cab9868e78d34230`.
+- Scope correction to the earlier generic admission sentence about
+  "stranding a valid H' with Episode G": a reachable same-generation world
+  copy can defeat late exact-pointer delivery, mismatch Episode/store and
+  block scheduling. Permanent stranding is not proved; valid stopped-hold
+  adoption, newer work or epoch changes can recover/invalidate it. The
+  controlled terminal seam is corrected; generic admission remains open.
+
+Independent overhead review confirms optional mapping ROS telemetry can throw
+through generic PublishedHandler into mappingFailStop/abort after a valid
+world publication; no native occurrence is proved. Isolate only the observer
+adapter if changed, not mandatory process/world-finalization failures. Bulk
+diagnostics and reliable DDS occupy serial workers outside owner locks; ROS
+command publish itself remains under localization/input/command/timeline
+locks for authority linearization. Source risk is not measured causal cost.
+W4 did not exist in the earlier7->3 decline. BagOFF did not rescue the two
+SAFE5 ablation cases, but does not prove all instrumentation cheap. Existing
+changed-region certificate reuse and fault-injection-only sweep branches must
+not be misreported as ordinary repeated full validation.
+
+The next discriminator is this exact-START correction, not another framework,
+new observer stream or gate tuning. Preserve the old18 failures, run final
+Release/regression/adversarial review, then a separately pinned serial18-case
+matrix with the same acceptance/policy/config. Classify first-failure families
+as well as completion. Recovery/optimizer trials remain unpromoted; do not
+silently stage unrelated safety migration/WIP or grant a performance tag.
+
+### Exact-START v3 matrix closure and system reassessment — 2026-09-18
+
+Actual `gpt-5.6-luna` completed the separately frozen v3 matrix, not a retry of
+the previous driver. Exec session24066 / driver PID1341475 is terminal:
+`COMPLETE overall_rc=1 abort_reason=NONE` at15:35:19 Vietnam time, and the PID
+is absent. Plan has18 ATTEMPTED, zero STARTED/PLANNED. Root independently
+checked all18 `state.json` records: STOPPED, stopped=true, cleanup=PASS.
+No failure was deleted, archived out of the denominator, or retried.
+
+| Policy / route | Native COMPLETE | PAUSED_SAFETY_STOP | FAILED_COMPONENT |
+|---|---:|---:|---:|
+| SAFE2WP |0/3|1/3|2/3|
+| SAFE5WP |0/3|3/3|0/3|
+| SAFE9WP |0/3|3/3|0/3|
+| FAST2WP |0/3|2/3|1/3|
+| FAST5WP |1/3|2/3|0/3|
+| FAST9WP |0/3|3/3|0/3|
+
+Total is1 COMPLETE,14 PAUSED and3 FAILED_COMPONENT. Reports are4 FAIL,
+14 BLOCKED, zero PASS. All18 infrastructure/provenance checks are VALID and
+qualification_eligible=false. The5WP milestone fails: SAFE0/3, FAST1/3,
+combined1/6. FAST5r2 alone has native accepted indices0..4 and mission complete;
+its report is FAIL, not qualification. All three FAST9 cases accept0..7 but
+not the final index8; do not substitute published goal indices for acceptance.
+
+The ignored aggregate is
+`.artifacts/diagnostics/exact-start-terminal-monitor-v3-aggregate.json`, SHA256
+`07fd936535cc2c4cf158e183c021e1d25b885b162bf1e9156e95944266c75be9`.
+Its v3 field is `accepted_indices`, unlike the previous aggregate's
+`accepted_indices_scenario_events`; projection against the old schema yields
+null and is not evidence of missing acceptance. Driver log SHA256 is
+`c5fbeddb110ef6a17286d798e19fa5c4512479dd2329d96fcf73605ad2024476`,
+plan SHA256
+`1c8da9c8deb25dfd2d3642413c6948cb5af993d9650227327badec16676fa859`.
+Run root remains `exact-start-terminal-monitor-v3/run-20260918T145901858377630`
+inside the existing `nominal-renewal-capture-nod2nN` diagnostic folder.
+
+#### Exact frozen source and completed prerequisite gates
+
+Dirty HEAD is `fff6a6ada6230411af13bc990ab8fce11d850f0d`; source fingerprint
+`bd96d81fff26ea49028059549959fe62968d6efca7f8ce29eb8a6ea25205f316`,
+authoritative Release manifest SHA256
+`1edbcbe9050955f395f5e5897e53ee5d78be0a445853673a9e053fe74a70e74c`,
+wrapper SHA256
+`84ad501a5b36f1f25a7e122c7367db3848dafaa216de1946138ab29226c047d9`,
+driver SHA256
+`9cfec260fd7f32886b6a92083c4d1cd0fdf422db285da419840bc31106834301`.
+The driver checked pins before/after cases. After matrix termination, before
+this documentation append, root independently ran `validate_manifest()`:
+VALID, authoritative=true, build_mode=release, same source/manifest and319
+artifact identities. Source/config/docs were unchanged during the matrix;
+bounded ignored source-review artifacts do not change the product fingerprint.
+
+Actual Luna final v3 prerequisite commands all return rc0: canonical Release
+build23 packages, canonical full test14 packages, `make test`87 CTest targets
+with0 errors/failures/skips, auxiliary checks and389 Python tests with one
+explicit missing-GUI-artifacts skip. Final terminal monitor37/37,
+PlannerFSM73/73 and real facade40/40 pass, including the strengthened elapsed
+assertion for all offsets. Independent adversarial review found no blocker in
+the narrow signed-clock correction; this is not approval of provisional
+recovery/optimizer policy or proof of native performance.
+
+Full build/test/make-test logs are `exact-start-terminal-monitor-v3-*` in the
+ignored diagnostic directory, respectively SHA256
+`39412a243f9eb6832fdd1839fead19cdeb90b35aded456530ebc56d7b89717b4`,
+`858201e44c2c96a6619e6d3e81fc39c037a1a368133fd7bc846ba71f5ce47ed9`,
+`2390f68b67541beabcff15a9018904bb9742be26e197e8c4531d4a7a447a1677`.
+The optional prebuild snapshot file is empty because validation of the old
+manifest raised before capture; it is NOT_CAPTURED, not prebuild proof. The
+canonical builder's source-before/source-after equality guard and preserved
+postbuild manifest provide the actual build boundary.
+
+#### Performance verdict and evidence limits
+
+Older7/18 -> W3 3/18 -> provisional recovery4/18 -> clock-corrected v3 1/18
+does not demonstrate increasing system performance. These are unpaired native
+snapshots, not a causal proof that any one patch or telemetry exporter caused
+the decline. The controlled exact-START RED->GREEN remains a correctness
+result; it is not sufficient to explain the other failures or meet completion.
+Do not grant a performance tag or promote the recovery/optimizer trials.
+
+FAST5r2 COMPLETE has measured speed p50 .638670m/s, p95 3.377093m/s and command
+speed p95 3.809887m/s over the whole captured window, including hover/braking.
+Those values are descriptive, not sustained5m/s evidence. Across18 rows,
+executable-reference comparisons remain NOT_AVAILABLE and eligible planner
+commit reference counts are zero; legacy tracking coverage is not lineage.
+Settling and timing-tail metrics remain NOT_EVALUABLE for all18. Missing
+quality evidence must not become zero/PASS or be hidden by native COMPLETE.
+
+#### Source/native counterclaims closed during the freeze
+
+- Old SAFE5r3 and FAST5r2 logs each contain an emergency atomic rejection
+  preceded by latest-world `initial_point_blocked`, role1/BACKUP,
+  cell3/OCCUPIED. This narrows the preparation failure beyond a generic boolean;
+  the logged leaf is a world initial-point rejection, not a budget leaf.
+  Untimestamped buffered planner output
+  lacks candidate/world identity, so exact attribution to the original H call
+  remains CONDITIONAL. Inflated occupancy does not prove physical collision
+  or a mapping false-positive. Witness
+  `supported-tracking-emergency-world-leaf-v1.json` SHA256
+  `3bf881357be0b906f26fa07f015adbe6f1c66aac53f7c2d80d3882d8d6e2cbac`.
+- The claim that world certification forgot tracking reserve is REJECTED:
+  `config.hpp:256` derives radius .35+.25+.05+.10+.05=.80m, actual v3 SAFE5r3
+  planner config has inflation .2x4=.80m and `planner.cpp:770` checks inflation
+  covers the derived radius. Extra chord-tube radius is curve approximation,
+  not the only tracking reserve. Old raw .565/.679m exceed the reserved .25m;
+  valid commanded MAIN does not imply a viable measured-state brake. HG-005
+  component distributions remain provisional, not verified closed-loop bounds.
+- Old FAST9r2's precise native receiver leaf is RECEIVE_STALE,206.799ms
+  receive age. Same-epoch consecutive producer IDs4274/4275 bracket624ms source
+  and781.437477ms observer-arrival gaps. Observer arrival is not receiver receipt
+  and publication ID advances before ROS publish. Producer suppression/backlog,
+  adapter rejection, blocked publish, simulator/CPU/DDS cause remain distinct
+  unresolved hypotheses. Witness `fast9r2-propagation-gap-witness-v2.json`
+  SHA256 `d3007922beeb1a9bbd7d9c08d1ae45df4b18fa7f1a436139bc4f3c32eed629cb`.
+- LIO diagnostics maintain `propagation_valid` and source-stamp caches used by
+  mandatory typed health before bulk DiagnosticArray construction. Disabling
+  the entire call is not pure observer ablation. Preserve maintenance/ordering;
+  separately suppress only optional formatting/transport. No native telemetry
+  cause is proved. Witness `propagation-observer-health-boundary-v1.json`
+  SHA256 `bae968ef0890c0ec8924ad76d1ce54ed0df6f16027247646694436b0fd8b30d1`.
+- Planner flatness screening checks finite/body-rate/thrust, not achievable
+  PX4 tilt or feedback reserve. Local PX4 PositionControl adds feedback before
+  limitTilt; the old SAFE5r3 parameter artifact records45deg. BACKUP acceleration
+  ceiling12 does not mean every factory polynomial exceeds45deg; an actual
+  complete-H counterexample at goalcap5 has not been run. Model gap is confirmed,
+  native causal attribution conditional. Witness
+  `planner-px4-control-envelope-gap-v1.json` SHA256
+  `1964f895157555f1aabcb0aa770214c973d7e8a6821f8f871b57dbf5dd50e440`.
+
+The next action is a denominator-preserving first-authority-loss census of
+this v3, then select a discriminating complete-bundle/terminal/odometry boundary.
+Do not run another identical matrix or add a framework/observer stream to
+substitute for causal discrimination. SAFE requires known-free BACKUP, explicit
+FAST allows UNKNOWN; both reject OCCUPIED/OUT_OF_MAP. No budgets, gates, anchors,
+leases, mission acceptance or PX4 limits changed in this closure. This append
+changes the source fingerprint; the frozen manifest remains historical evidence,
+not permission to fly the newly documented worktree without a fresh Release.
+
+### Terminal first-loss and observer-cost discrimination — 2026-09-18
+
+This follow-up adds no production gate, observer stream, runtime policy,
+budget, anchor retiming or flight run. Actual Luna reads the retained v3
+artifacts; root checks native samples/source and rejects unsupported causal
+claims before choosing another behavior patch. The18-case result above is
+unchanged and the goal remains unachieved.
+
+#### Terminal loss is not the first transient rejection
+
+The corrected ignored census is
+`exact-start-terminal-monitor-v3-first-failure-census.json`, SHA256
+`d5fc0524b1c3d3a28f71482c597bf3df24cbe8d172087518226291b9a4c2f1a9`.
+It separates first logged rejection from sustained terminal loss. The only
+COMPLETE, FAST5r2, has NO_TERMINAL_LOSS; its earlier route rejection must not
+be counted as a completion root cause. The17 unsuccessful cases have terminal
+event witnesses, not17 proven algorithmic root causes. Missing causal identity
+or chronology remains NOT_EVALUABLE.
+
+All three FAST9 cases accepted0..7. They do not share one demonstrated leaf:
+
+- FAST9r1 `samples.jsonl:83957` evaluates G27 exactly at its97344000000ns START:
+  elapsed0, SOURCE12ms earlier, raw .989621456m, known-free body and valid world,
+  no G SOURCE sample, no emergency authorization/preparation, and a current owner
+  delivered command-unavailable/failure-latched. Raw exceeds the existing .75m
+  outer cap; absence of the new bounded pre-START recovery is expected there.
+  `external_mode.log:276-279` subsequently records invalid command/PVA stale/Hold.
+- FAST9r2 `mapping.log:614-624` records measured stop and real same-request
+  PlanFromRest retries; this native case is not a scheduler-suppression proof.
+  Recovery endpoint is(141.002,.422,3),1.087m from goal(140,0,3), while logged
+  measured starts remain roughly1.277-1.556m away. Twelve terminal-window
+  decision records at lines619,625,641,673,678,693,714,719,723,763,769,774
+  report1.509-3.512ms solves and deadline_exceeded=0. Buffered planner leaves
+  repeatedly reject MAIN route regression. Existing bounded correction in
+  `planner.cpp:892-963` requires start<=acceptance.9+tracking.25=1.15m;
+  the observed starts are outside that domain. The exact proposal-to-buffered
+  leaf tuple is not captured, so attribution of each individual retry remains
+  CONDITIONAL. Receiver timeout at `external_mode.log:269` is final containment,
+  not evidence that optimization consumed its budget. Do not widen either gate.
+- FAST9r3 `samples.jsonl:71397` evaluates G27 at83716000000ns START:
+  elapsed0, SOURCE8ms earlier, raw .365448727m, known-free body, valid world,
+  current owner/request/window, independent H preparation attempted but false,
+  no H admission, then command-unavailable/failure-latched. This is preparation,
+  not an H store/Episode cutover failure. The H factory's exact failure leaf
+  is not identified by the retained payload; the later buffered rejection
+  after cancellation must not be assigned as the original cause.
+
+The bounded FAST9 witness is
+`exact-start-terminal-monitor-v3-fast9-retained-terminal-witness.json`, SHA256
+`4cc727bf808c5982af51773c07036f078c2a666000d83b88dc16b03385d9174c`.
+Root rejected an initial projection that replaced observed reason0 with4;
+the corrected artifact preserves authorization reason0 for FAST9r1 and4 for
+FAST9r3, without replacing valid zero-valued fields. It pins all three raw
+input streams/logs. Arrival time is chronology only, never decision source time.
+
+#### Existing local observer measurements, not a total overhead verdict
+
+The corrected ignored cost census is
+`exact-start-terminal-monitor-v3-observer-cost-census.json`, SHA256
+`9dde8d5ca69e9b808bc47aa5a02789579f9f8468a8b0bd1871a37d2b568cdd9a`.
+Denominator remains18 sessions. There are187 retained-decision records:
+15 first-event initialized durations are INITIAL_NOT_CAPTURED, not measured0;
+172 eligible previous-emit durations have p50 64us, p95 115.9us, p99 180.38us,
+max196us, with no missing duration field among eligible records. Three sessions
+have no retained-decision record and no observer-duration evidence.
+
+`tryEmitRetainedDecision()` measures formatting and sink call only after
+execution-owner mutation/unlock. Event n contains event n-1's duration, so the
+last emit duration in each observed session remains uncaptured. This does not
+measure preceding analytic projection/world validation, mapping/LIO diagnostics,
+recorder, DDS background resource cost, or WCET. It weakens the specific claim
+that observed W4 synchronous emit calls alone routinely consume tens/hundreds
+of milliseconds; it does not dismiss cumulative observation overhead.
+
+#### Source-age-only hypothesis rejected in the existing fixture
+
+Root tried two test-only controls using actual A->reserve400ms->factory G,
+zero P/V residual at A SOURCE200ms before G, and strict/relaxed profiles.
+Actual Luna Release target build returns0;39 monitor tests run, old37 pass,
+both draft controls fail the independent raw-pressure precondition:
+.034373174561233899m is below.25m. They never reach their proposed emergency
+expectation. This is a rejected fixture hypothesis, not product RED->GREEN,
+not a native replay and not evidence that large source age is universally safe.
+The short terminal fixture's speed is not sustained5m/s merely because the
+request cap is5. No larger delay, synthetic residual or weaker threshold is
+chosen to make the hypothesis fit. Root withdraws only its two draft controls
+and helper delta; existing clock/recovery WIP and all failure artifacts remain.
+
+Retained logs are `source-age-terminal-discriminator-v1-{release,terminal}.log`
+and `-terminal.xml` in the diagnostic directory. SHA256 respectively
+`9c25f7d76abc2f1c0e7bd351f7cca068705450f845e9a56c439be962e13fc736`,
+`c10302201caf46e82e2ad7a83e765b6106bedc3cc6d8b404a26f9aaeb3da8d90`,
+`161002a9d649612deb81acc7b2a85622ff1f7a2c711aa3340fd02424352e807f`.
+The rejected draft source file SHA256 is
+`d8b3a9437dcb476adb37b5ed66399248d672f7c66823396f0489bf76052d5793`.
+This is a Release CMake target build, not a new canonical Full Release manifest.
+
+The next useful discriminator must establish actual capture/recovery geometry
+and the original H failure leaf, or a control-envelope/propagation cause; another
+identical matrix, more generic telemetry or a new coordinator is not substituted.
+Admission's .75m guard, command continuity and a world-valid polynomial do not
+alone establish the measured .25m tracking tube at activation. Independent
+review confirms that scope gap, not a proof that blindly tightening admission
+or retaining unsupported G improves completion. SAFE/FAST remain independent.
+
+### Planner ACK START correction — 2026-09-18
+
+This is a bounded backend clock correction, not a new recovery policy,
+observer stream, coordinator or performance claim. The frozen v3 result
+remains1/18 COMPLETE; original native H failure attribution remains CONDITIONAL.
+
+- Claim/invariant: `CmdTraj` precheck and history commit compare absolute
+  doubles. G uses `double(activation_ns)*1e-9`, whereas an immediate measured
+  H receives ROS `now().seconds()`. At83716000000ns those represent the same
+  exported clock tick but differ by1.421e-14s; H can be rejected as older.
+  Equality must be allowed on the existing checked nanosecond START lattice;
+  a genuinely older positional origin must still be rejected transactionally.
+- Reachability/discriminator: actual A->reserve400ms->factory-certified
+  moving terminal G->production stage/activate/backend ACK; fresh SOURCE is
+  G.START-8ms and a controlled synthetic plant residual independently proves
+  raw error>.25m and<.75m. Same known-free world, identities, measured PVAJ and
+  policy; exact START fails H preparation, matched+20ms succeeds. This is not
+  replay of native FAST9r3, not sustained5m/s evidence and not a world oracle.
+- Strongest counterargument: native `kCancelled(5)` also represents other
+  callback/cancellation failures. The native observer does not identify its
+  precise original branch, so one buffered reason cannot close native causality.
+  This matched component and direct guard tests discriminate the source defect.
+- RED evidence: actual Luna `backend-start-guard-discriminator-v1-terminal`
+  filter11 tests has10PASS/1RED at exact START. Direct unit-v2 filter8 has
+ 4PASS/4RED: same-clock equality, invalid START with empty/populated history,
+  metadata masking a1ns older polynomial, and differently rounded metadata
+  for the same canonical origin. Unit-v1 was NOT_RUN because root's test-only
+  world-identity equality assertion did not compile; it is retained, not
+  classified as a product failure. Unit-v2 log/XML SHA256 are
+  `09caf87d9ed6ba2f1c49db67cd7c96094598d1f1063128e234d6cb74e1cee3d8` /
+  `36e40a2db793ac692ac9085cc5a1e131307e33c78c9bc0b741bdc095d632ecf9`.
+- Minimal correction: both guards use the existing checked
+  `navigation_common::secondsToNanoseconds` conversion already used by export.
+  Candidate metadata must match the positional polynomial's canonical START.
+  Invalid/negative/overflowing START is rejected before mutation, even with
+  empty history. Legacy unit API START0 remains representable. Genuine-1ns
+  and+1ns are checked as distinct representable ns. Generation monotonicity,
+  identity/world/role/dynamics/admission fences remain independent. Original
+  polynomial/yaw origins are unchanged: no epsilon, clamp, rebase, retiming,
+  grace, budget, gate or SAFE/FAST UNKNOWN change. Yaw's existing structural
+  tolerance remains; converting doubles does not recover precision already
+  lost at very large absolute epochs.
+- GREEN/provenance: component-v1 trajectory152/152 passes, but monitor38/39
+  still links the old installed static library. Root checks `link.txt`; that
+  RED is STALE_LINKED for this correction, not evidence against new backend.
+  After Luna installs the rebuilt backend and relinks, component-v2 trajectory
+ 152/152 and monitor39/39 pass, including actual canonical/backend/Episode H
+  receipt. Build and installed backend archives both hash
+  `fdc4ff6cdec408a32558ea584febc290d812b805fb6ae2388f72ba23e12d57fe`.
+  Root verifies v2 monitor binary SHA256
+  `b4b910906b95c7bfd78f012d7a22083499d88a8c1b35869609d6343a1b5e9f1a`;
+  terminal log/XML SHA256 are
+  `76f38c40971250ce72f12f37770eb3f57b0e72e8d631b7888cf1ae31eb77b12c` /
+  `fd47abf37ef49de66ee98b0dae7d8810f60de9b7a0aefb924536b2b56f7bfbd1`.
+  Root corrects an agent binary/XML label mixup by hashing the real paths,
+  without substituting those values for another artifact.
+- Independent three-level source review finds no blocker: this remains ACK
+  history, not a second command authority; the extra scalar conversions add
+  no allocation/I/O/new mutex/world sweep on command hot path. Additional
+  exact-START relaxed and observer-OFF controls are added after v2. Full
+  Release/regression, their results and the next frozen18-run SAFE/FAST matrix
+  are pending. Component GREEN is not mission acceptance or permission to fly
+  a partial-install manifest. Do not tag or promote optimizer/recovery trials.
+
+All diagnostic logs/XML above remain in `.artifacts/diagnostics/`; no failed
+run is deleted, retried out of its denominator or superseded by a GREEN claim.
+Targeted lineage: DEC-20260825-021 monotonic START with equality allowed,
+DEC-20260829-061 checked conversion, DEC-20260831-021 ACK-only history promotion,
+DEC-20260916-005 independent unique proposal generation. The user safety-document
+migration and other worktree experiments are preserved unchanged by this patch.
+
+### Backend START guard v1 closure and fix-versus-performance review — 2026-09-18
+
+Actual `gpt-5.6-luna` completed the same serial driver PID1457371 at16:52:58
+Vietnam time:18 ATTEMPTED, no retry/skip/infrastructure abort,
+`COMPLETE overall_rc=1 abort_reason=NONE`. Root independently checked all18
+scenario acceptance events and STOPPED/stopped=true/cleanup=PASS records;
+published next-goal index is not used as acceptance. This round is not a retry
+or replacement of exact-START v3. All failed runs remain in the denominator.
+
+| Policy / route | Native COMPLETE | PAUSED_SAFETY_STOP | FAILED_COMPONENT | Accepted indices by repetition |
+|---|---:|---:|---:|---|
+| SAFE2WP |1/3|2/3|0/3|[0]; [0]; [0,1]|
+| SAFE5WP |0/3|3/3|0/3|[0]; [0]; [0,1,2]|
+| SAFE9WP |0/3|3/3|0/3|[0]; [0]; [0]|
+| FAST2WP |2/3|0/3|1/3|[0,1]; [0,1]; [0]|
+| FAST5WP |2/3|1/3|0/3|[0,1,2]; [0,1,2,3,4]; [0,1,2,3,4]|
+| FAST9WP |0/3|3/3|0/3|[0,1,2,3]; [0,1,2,3,4,5,6,7]; [0,1,2,3,4,5,6,7]|
+
+Total5 COMPLETE/12 PAUSED/1 FAILED_COMPONENT; SAFE1/9 and FAST4/9. Reports
+are6 FAIL/12 BLOCKED/0 PASS; every case is qualification ineligible. FAST5WP
+reaches the preliminary2/3 milestone, SAFE5WP does not. Neither sustained5m/s,
+qualified tracking/settling nor a causal performance improvement is established.
+Earlier7/18 ->3/18 ->4/18 ->1/18 ->this5/18 are separate unpaired snapshots,
+not evidence that each fix improves performance or introduces a regression.
+
+#### Frozen provenance and completed prerequisite gates
+
+HEAD `fff6a6ada6230411af13bc990ab8fce11d850f0d`, dirty source
+`483a21faeb2d99c690014c1e52dcd55fb8a84feb9003cd54049972f0de751c2a`,
+authoritative Release manifest
+`c7dc4d222367dd08ea5f0d6a1fd1781166a36a0cd2e734d172cbc454c2b909d3`.
+Wrapper remains `84ad501a5b36f1f25a7e122c7367db3848dafaa216de1946138ab29226c047d9`;
+executed driver is `d9c9d515a87b85bc8acd0d178a7933e3b5aee91e6160daeb5f3df3f5da8b356d`.
+Before/after every case, the driver verifies all pins, authoritative manifest,
+session config/policy identity, required bag, terminal cleanup and disk budget.
+After termination, before this documentation change, root revalidates the same
+source/manifest: VALID, authoritative=true. No source/config/docs/build/test
+mutation occurred during the matrix. This documentation update changes the
+worktree fingerprint; the captured manifest is historical, not a fresh flight permit.
+
+Run root: `.artifacts/diagnostics/nominal-renewal-capture-nod2nN/backend-start-guard-v1/run-20260918T161606060606492/`.
+Plan SHA256 `28be19bb8ef610b9444d4e86e3300b4b2ccb79b9dade5862baf76371edbe5c30`;
+driver log `28df6d8c362ebf89dd750e7958fa427db0b836e9f29057a9e5264fb42344c382`.
+Bounded18-row aggregate `.artifacts/diagnostics/backend-start-guard-v1-aggregate.json`
+SHA256 `d382ad998135926413767978c20d5ba8e2cdf3d96cfaa23fa973b66f9a3f1f6e`.
+The unused `.artifacts/diagnostics/backend-start-guard-v1-driver.sh` is not the
+executed driver and must not be substituted in provenance.
+
+Actual Luna prerequisites all rc0: canonical Release23 packages, full test14
+packages, `make test`87 CTest targets with0 errors/failures/skips, seven auxiliary
+checks,389 Python tests with one explicit artifact-dependent skip. Final XML
+counts are trajectory152, terminal monitor41, PlannerFSM73, real facade40,
+all0 failures/errors/disabled, including relaxed/observer-OFF exact-START controls.
+Logs `.artifacts/diagnostics/backend-start-guard-full-v1-{release,full-test,make-test}.log`
+hash respectively `00fe1c9feac37ea7cf0f4a87b375419eeb13e3fa26c652d6b0ea457f07f0b22b`,
+`ce842086c6ec0e51ac915af60f09efa8854de40b872933eacaeee37e1802786a`,
+`a8cf50b8845c2541e8ba44c95727782649e37c9e9443be38577c4896c1ae8ef2`.
+
+#### What has been fixed, and why that is not yet system performance
+
+Integrated fixes cover STOP's erroneous ordered-PASS predicate; continuation
+evaluation when a certified successor is admitted; unaccepted-MAIN guide return
+fold; PASS sphere/split-clock normalization; retained heading export ownership;
+world revocation/reset finalization; immediate-admission identity fencing; and
+moving terminal MAIN monitoring before endpoint hold. Some are containment or
+observability changes, not faster planning. Exact-START retained elapsed and
+backend ACK clock corrections are verified worktree changes, not newly committed
+main changes. Optimizer incumbent/recovery trials remain unpromoted WIP.
+
+Unit/integration RED->GREEN establishes those scoped contracts. A monitor can
+correctly reveal an unsafe tracked state that old code continued exposing;
+lower completion alone does not prove a newly introduced bug. Conversely,
+green components do not prove the pipeline can renew a complete executable
+MAIN+BACKUP or physically capture its endpoint. Both must be tested together.
+
+First-loss census of13 finalized cases in this round, NOT all18: seven5/9WP
+cases paused, five with fresh/valid leases but STOPPED_HOLD endpoint residual
+above the unchanged.75m exposure limit, two with fresh clear retained MAIN
+but tracking residual above.25m and no usable recovery. SAFE5r3 cycle458 takes
+9.903ms, deadline_exceeded=0, remaining hard budget70127us, checkpoint certificate
+count/time0. Its nominal seed boundary/corridor failures do not become timeout
+or checkpoint-overhead failures. Some SAFE backups fail known-free on UNKNOWN
+even when a nominal iterate certifies; FAST permits UNKNOWN but not OCCUPIED
+or OUT_OF_MAP. Successful MAIN optimization is therefore not executable readiness.
+Native plant/controller/estimator/numerical root attribution remains conditional.
+
+#### Telemetry, gates and overdesign: confirmed coupling versus hypotheses
+
+- CONFIRMED source: optional mapping ROS diagnostics execute synchronously on
+  MappingWorker after canonical processing (`node.cpp:1405`). A throw propagates
+  through generic PublishedHandler fatal policy (`mapping_worker.hpp:242`) to
+  mapping fail-stop. No native occurrence is proved. The minimal isolation seam
+  is the specific ROS observer, not suppression of mandatory process/notification
+  failures or a new coordinator. Generic notification-fatal tests remain valid.
+- CONFIRMED source scope, CONDITIONAL native performance: ROS command publish
+  runs under localization/input/command and timeline locks (`node.cpp:8553-8647`).
+  Existing publish/lock-wait/state-gap fields should discriminate blocked transport
+  before extraction. Moving publish outside locks without a replacement invalidation
+  linearization can create stale-command exposure; an egress queue is not itself proof.
+- REJECTED blanket claim: calls near5138/5154/5167 are fault-injection branches,
+  not three ordinary world sweeps. Mapping has disjoint-region fast paths and
+  facade validation reuses certificates. Necessary final freshness/identity/world
+  boundaries must not be removed merely because a count of gates looks large.
+- Local W4 observer emit p50=64us/max196us in the earlier v3 census excludes
+  total DDS/monitor/bag/LIO/map resource cost. Six bag-only controls did not rescue
+  SAFE5, but are too small to dismiss cumulative overhead. Existing W4 OFF/ON is
+  a bounded next resource discriminator with other observers/bag unchanged;
+  blanket FAST-LIO diagnostics OFF also disables health-cache maintenance, and
+  mapping diagnostics OFF changes harness readiness. Neither is a pure ablation.
+
+The highest shared lever remains constructive complete-bundle renewal plus
+closed-loop braking/capture; another boundary gate or coordinator is not evidence
+of progress. Do not run another identical matrix without a discriminating hypothesis.
+
+#### Quality evidence exists, but its scope is not qualification
+
+FAST5r2 session `external-mode-check-20260918T094013-1513075` has canonical raw
+NAV-reference/truth position3955 matched samples, p95=.507367m, p99=.615886m,
+max=.661423m. Status AVAILABLE is diagnostic-only: lineage=false and required
+coverage policy absent. Legacy planner-reference count0 does not erase these
+raw samples;3955/3955 does not establish qualified coverage. Raw motion completion
+time76.412s is AVAILABLE. Observer interarrival n3954/p99=65.946351ms/max85.122048ms
+is not PX4 receipt/deadline WCET; PX4 setpoint-update duration n3919/p99=.102444ms/
+max.265431ms is a different local span. Cruise-only speed/end-to-end timing/settling
+acceptance remain NOT_EVALUABLE without eligible windows/contracts.
+
+Source review finds separate evaluator limitations: activation/reference-lineage
+construction, LIO-to-LIO comparison using an unrelated cross-frame truth witness,
+and body-twist velocity not rotated by pose before world-vector comparison.
+Runtime does rotate LIO body velocity correctly; mission speed uses rotation-
+invariant norms. These are not demonstrated production velocity/WP3 bugs. Adapter
+metric's unconditional NOT_EVALUABLE branch is not proof that producer clock mapping
+is absent. No invalid lineage, identity mapping or coverage is inferred to obtain PASS.
+STOP/Holding measurement-health eligibility has a source-reachable gap; no executed
+RED or native attribution yet. Fixing false COMPLETE would improve correctness,
+not automatically increase completion. Supporting source audit is the ignored
+`.artifacts/diagnostics/planner-px4-acceleration-oracle-audit-v1.md`.
+
+#### Bounded MINCO centering countertest: no production change selected
+
+After matrix termination actual Luna compiles an ignored standalone input-transform
+probe linked to unchanged installed backend `fdc4ff6cdec408a32558ea584febc290d812b805fb6ae2388f72ba23e12d57fe`.
+Twelve paired cases are finite. Origins0 and(13,3,3) yield0 component roundoff
+failures in both arms; only synthetic origin(10000,-20000,30000), mixed short
+durations and nonzero inherited A/J changes1 failed component to0. Maximum PVAJ
+delta6.83e-9 and gradient differences are retained, not declared bitwise invariant.
+No world/corridor/complete-bundle certificate or native SAFE5r3 reproduction occurs.
+This does not support choosing MINCO centering as the current completion lever.
+No tolerance, solver, budget, gate, backup policy or runtime source changes here.
+
+Probe `.artifacts/diagnostics/minco-origin-paired-probe-v1.cpp` SHA256
+`76c11d7d89df4ff60831c7f0d291e870daefae8ac08c7b5d54bc49a5a3c90549`;
+run log `minco-origin-paired-probe-v1-run.log` SHA256
+`5d5547fcc1b62cf5e15bc9a9fded0db3adb8c4eb9ddee24c759d401799aa0afe`;
+executable `88ba2e99bd2795f2e9c799c5751d3adb29c2cab56e0fb39fb109299d1c313f12`.
+Exit0 is finiteness only. No performance tag, qualification or experiment promotion.
+
+#### FAST9 attribution correction: START monitor is not endpoint HOLD
+
+Root rechecks the three completed FAST9 sessions against the actual W4 purpose,
+timestamps and command state, rather than assigning every late failure to HOLD.
+The bounded ignored triage artifact is
+`.artifacts/diagnostics/backend-start-guard-v1-fast9-authority-loss.json`,
+SHA256 `3d756f5405181e02cd991fa2ff407a95625b05b912520b40fd057efe95fda537`.
+This correction changes attribution only, not any run outcome or denominator.
+
+- FAST9r1: the earlier disposition7 preserves MAIN, not authority loss. Later
+  STOPPED_HOLD exposure is vetoed at raw error.809917205m, above the unchanged
+  .75m boundary despite fresh state/leases. The earlier planner timeout and
+  eventual exposure veto are separate events, not a single solver-cause proof.
+- FAST9r2, `external-mode-check-20260918T094716-1526696/samples.jsonl:75598`:
+  purpose2 is `kTerminalMainMonitor`; newly activated G22 START equals
+  evaluation88404000000ns, elapsed0, duration1.314035304252205s and declared
+  END89718035304ns. Fresh SOURCE88388000000ns predates G22 START, source sample
+  is invalid, raw error.9532623691705197m, world/freshness valid. Disposition4
+  leaves command unavailable/failure latched; no H preparation is attempted.
+  This is a moving terminal MAIN START monitor loss, **not expired endpoint
+  STOPPED_HOLD**. Missing aligned support is not itself a numerical tracking
+  exceedance. The raw residual also exceeds the unchanged.75m scope of the
+  pre-START emergency-pressure helper, so absence of H is not automatically
+  a new guard defect. Plant/anchor/admission attribution remains open.
+- FAST9r3: disposition5 delivers H/G27; it is not authority loss. Its endpoint
+  (141.094,.730,3) is1.316m from WP8(140,0,3). Later endpoint hold and bounded
+  recovery fail to obtain measured acceptance: goal error1.669–1.692m and
+  speed.228/.167m/s exceed radius.9m/speed.15m/s. Recovery MAIN route regression
+ 1.05–1.22m exceeds.5m. The later tightened safety contract explicitly bounds
+  both old endpoint and new start by acceptance radius plus tracking reserve;
+  the earlier far-endpoint emergency exception must not be silently restored.
+
+Consequently there is no evidence that every terminal failure is a waypoint
+predicate bug or that H delivery is failure. The system-level open problem is
+constructing a complete executable continuation and reaching a recoverable
+physical stopping/capture state, with correct activation support. Another
+local gate patch or a new coordinator is not a demonstrated completion lever.
+
+#### Actual exported 5m/s H versus independent controller model
+
+After matrix termination, actual Luna compiles/runs the ignored offline probe
+against unchanged installed backend. All six factory cases (three PVAJ inputs
+times SAFE/FAST) accept and export a structurally valid final H; sampled initial
+PVAJ residual is zero. The known-free fixture makes both policies equivalent
+here, not generally interchangeable. Sampling is1ms over declared trajectory
+support, not an enlarged executable lease or continuous proof.
+
+Straight and horizontal-curved cases have maximum modeled tilt41.352deg and
+39.492deg, with no assumed tilt/thrust exceedance. Vertical input preserves
+V=(sqrt24,0,1), A=(0,5,0), J=(-8,0,0), speed5. Its accepted final H lasts
+1.1774121813910585s; sampled maxima V/A/J=5/8.13454/29.96482. Under the independent
+coupled model, demanded tilt peaks49.51558deg, exceeding assumed45deg in236
+of1179 samples. The decoupled model has38.56762deg and no tilt exceedance but
+horizontal feedforward mismatch peaks2.77018m/s². No case exceeds assumed
+normalized thrust1. Thus a tilt-only explanation is also insufficient.
+
+Assumptions are effective hover.6, tilt45deg, thrust max1, zero feedback/integrator.
+This is **MODEL_ONLY**, not native saturation/root-cause proof: retained changed-
+parameter BSON does not witness MPC_ACC_DECOUPLE, MPC_USE_HTE or synchronized
+effective hover. Feedback/plant/HTE can change closed-loop results. The probe
+does establish that an accepted numerical/flatness H is not automatically a
+certificate for those controller assumptions. No additional rejection-only
+product gate, tuning, runtime source/config change or performance claim follows.
+
+Probe source SHA256 `29e80b5ee3f1ee60e0ec98129ee2fcfb5a7f49e5a79566bc91e80108ee9812ec`;
+binary `bbc072607d0836c3beae5b1bf22e80f87e3365e774e242a0e687a8728cd4bf2c`;
+run log `c346b64d99de123f88f16726f502e0afaf67250952b5cfdf2a4985c90705c482`.
+Installed backend remains `fdc4ff6cdec408a32558ea584febc290d812b805fb6ae2388f72ba23e12d57fe`.
+The first compile is FIXTURE_BLOCKED by int64_t/std::min type deduction; root
+corrects only that ignored fixture expression. Retry rc0 means finite accepted
+factory outputs, not flight, complete-execution, qualification or performance PASS.
+
+### Complete-bundle discriminator and retained-observer A/B closure — 2026-09-18
+
+This round separates scoped correctness, constructive planner feasibility and
+native completion. It does not promote optimizer/recovery experiments, introduce
+an execution coordinator or alter a gate, deadline, anchor, lease or SAFE/FAST
+policy. The goal remains unmet; no performance tag is justified.
+
+#### Scoped diagnostic initialization, not a completion fix
+
+`LogOneReplan` scalar/Eigen fields without a writer now default to NaN. The
+existing public `Planner::getLatestReplanLog()` copies the log even after BACKUP
+failure; copying an incomplete log must not expose indeterminate facts or
+fabricate zero measurements. Two trajectory tests cover copy/archive and preserve
+the exact final MAIN without fabricating BACKUP facts. There is no executed
+production-failure RED for indeterminate data; source reachability and controlled
+default/copy tests establish this narrower initialization contract. Independent
+review finds no new authority, solver input, gate, scheduler, observer or command
+hot-path allocation. This is worktree initialization/copy hygiene, not a speedup.
+`reset()` retaining prior-cycle scalar metadata remains pre-existing diagnostic
+debt; this patch does not close it.
+
+Actual Luna full Release23 packages, canonical tests14 packages,87 CTest targets
+with0 failures/errors/skips, seven auxiliary checks,389 Python tests with one
+explicit artifact-dependent skip all return0. XML counts: trajectory154,
+terminal monitor41, PlannerFSM73, real facade40, all GREEN. Full build/test/make
+test log SHA256 respectively:
+`5fe72ef23236d415b0f99c7da6e64633ca8d8bb2780bcf53e447d17bd24cb2fe`,
+`06f01df4c99dd1a263f82148abd4d8cbdbb2594373f01e10871e0d1964a9ca0c`,
+`d36f4c161458fa2ff49ede788308f407052286f204b72b34b750c83a06adf34f`.
+
+#### Same selected MAIN: more later-switch search does not rescue this fixture
+
+The ignored probe uses the existing core typed planner request forwarded by the
+facade, actual selected final MAIN/yaw/SFC from the public log, the immutable
+predecessor and its activation receipt. It does not reconstruct an unrelated
+optimizer problem or invent a new online capture channel. Synthetic world:
+KNOWN_FREE before x15, UNKNOWN beyond that frontier inside the local map;
+OCCUPIED/OUT_OF_MAP remain forbidden. Initial PVAJ is identical, residual0;
+anchor speed4.89825512453m/s. Selected MAIN START13.541005951s, duration
+2.80234658158s, four pieces. The existing80ms absolute planner budget is unchanged.
+
+The visibility scanner and grid reproduce online limit/end/descending-grid
+semantics, include both exact endpoints, and reconstruct the one online candidate.
+The full union grid has eight switches in[.6,.88]s. This is finite-grid evidence,
+not proof over every time or braking profile.
+
+| Policy on the same exact MAIN | Feasible brakes | Corridor hull | World pass | Final bundle checks |
+|---|---:|---:|---:|---:|
+| SAFE BACKUP KNOWN_FREE |8/8|8/8|0/8|0/8|
+| FAST BACKUP explicit UNKNOWN |8/8|8/8|8/8|8/8|
+
+The smallest selected-MAIN stop is x16.3236721443, outside the known-free frontier.
+Online SAFE returns failure stage/reason8/8 and no candidate. The FAST successes
+remain `BUNDLE_CERTS_PASS_NOT_AUTHORIZED`, not admission/activation or flight PASS.
+Adding the omitted later switches therefore does not solve this fixture's SAFE
+failure; it does not establish that every native failure has this cause.
+
+A constructive alternative preserves that exact head PVAJ, world, limits and
+required MAIN prefix. Actual CIRI for MAIN and BACKUP, vertical envelope,
+continuous MAIN corridor, nominal dynamics, current flatness checks, BACKUP hull,
+candidate factory and SAFE world certificate all pass; stop x14.6117551274.
+It remains `ALTERNATIVE_NOT_AUTHORIZED`: guide/tail are changed, production
+selection, route/identity admission, latest-world validation and online latency
+are not proved. The existing test-only.1s jerk ramp is not an online tuning
+parameter. This supplies a bounded complete-bundle counterexample to unavoidable
+failure, not a migrated implementation. Independent adversarial review finds no
+hidden UNKNOWN/body/FOV/world/limit privilege invalidating this comparison.
+
+Retained artifacts: v2 source `same-main-backup-switch-probe-v1-source-cba430f8.cpp`
+SHA256 `cba430f8f8fa767d25e4fde6cccd78bd018b7f00c8c1425540a0d48608d71216`;
+v3 source `same-main-backup-switch-probe-v1.cpp`
+`b8cc41142606fece30f98aadf9830683b85f402845e045994c81f8f1af6b2f93`;
+v3 run log `8ca00d655a517058d3ecd405eef45f6863877cb3636f3e4133a8bb597959824b`.
+The first v3 link fails on a nonexistent assumed ROS library path; the corrected
+fixture-only link succeeds. The failed compile log is retained, not a product RED.
+Run rc0 denotes completed finite-grid/constructive checks only.
+
+#### Native W4 retained-decision export ON/OFF: no completion rescue
+
+Actual Luna executes six serial SAFE5 runs, balanced ON1/OFF1/OFF2/ON2/ON3/OFF3,
+same `long_three_pillars`, seed0, cap5m/s,4096 endpoints/40m, ROS42/XRCE8892,
+RViz OFF, strict KNOWN_FREE BACKUP and bag ON in both arms. Only the existing
+retained-decision diagnostic export parameter changes before generated YAML and
+config hashing. Both wrapper mock controls pass; external/planner settings are
+unchanged. This does not disable gate decisions, trace computation, health-cache
+maintenance, mapping diagnostics, other DDS traffic or the evidence bag.
+
+Root confirms live driver PID1562151, then terminal COMPLETE17:40:36 Vietnam
+time, overall_rc1/abort_reasonNONE. All six ATTEMPTED; no retry, skip or concurrent
+source/config/docs/build/test mutation. Root independently reads all six
+`scenario.json` acceptance events and STOPPED/cleanup=PASS records.
+
+| Existing retained-decision export | Native COMPLETE | PAUSED_SAFETY_STOP | Accepted indices |
+|---|---:|---:|---|
+| ON |0/3|3/3|[0];[0];[0]|
+| OFF |0/3|3/3|[0];[0];[0]|
+
+All reports BLOCKED and qualification=false. Completion time is NOT_EVALUABLE,
+never0. Thus disabling this export did not rescue this native group. It neither
+quantifies all instrumentation overhead nor proves its absence. Session windows
+are unequal: raw NAV/truth samples ON87/900/NOT_EVALUABLE versus OFF535/597/656.
+Available position metrics remain diagnostic-only with lineage/coverage gaps;
+do not pool those windows to claim ON improves tracking or OFF worsens it.
+Observer interarrival is not PX4 receipt latency or a deadline upper bound.
+Generic diagnostic duration fields are sampled latest-value gauges, including
+startup zeros and repeated old values, not an all-command latency distribution.
+
+ON3 has no valid planner command. Its native mapping log shows repeated MAIN
+success followed by590/591 dynamically feasible BACKUP seeds but0 visibility/
+aligned hull passes and0 known-free checks, ending at PlanFromRest recovery
+timeout5.011s (`logs/mapping.log:766`). This is pre-egress bundle failure, not
+proof of command-publisher overhead. The log's `last_seed_j` is a BACKUP maximum,
+not MAIN head jerk; generic external-mode exits may include intentional preflight
+transitions and must not be called first navigation authority loss.
+
+Frozen HEAD `fff6a6ada6230411af13bc990ab8fce11d850f0d`, dirty source
+`2bba9ae066b0d3e810879c8c3db7252f5367ee60a640c44375636c3f87d638ea`,
+authoritative manifest
+`eb63ec7e284c86d2694d8484a62a6cb6fde5537b48cbde4fccf9ec589a70bd6e`.
+Driver SHA256 `26533161295a4652d024f7c89afcde4e66df50a26b4a8e96e4ba462135e3b09c`;
+wrapper remains `84ad501a5b36f1f25a7e122c7367db3848dafaa216de1946138ab29226c047d9`.
+Run root under `nominal-renewal-capture-nod2nN/retained-decision-safe5-onoff-v1/`
+is `run-20260918T173249623801386`; plan/log SHA256 respectively
+`8b82eb4ee361f9c6a3ab104c2ec4922283aed421e1de723bf5c0a5a8dddfc042` /
+`f9d034588e15159ebc7626faf8d82d48e43c4ae1ee525b00b6ea48c109bbc3f0`.
+Each run verifies all five pins before/after, effective YAML observer bool,
+profile/policy, required bag and cleanup. Root revalidates VALID authoritative
+manifest after termination before this report edit. This documentation change
+makes that manifest historical, not permission for another flight.
+The bounded ignored aggregate is
+`nominal-renewal-capture-nod2nN/retained-decision-safe5-onoff-v1-aggregate.json`,
+SHA256 `a2abc9ba3377e17b9fb7a0414c624f526c4c8a78d4685d9185976eb1846f352a`.
+Its latest generic gauge snapshots are not timing percentiles; its scenario
+handover summaries are explicitly not first-authority-loss evidence. This
+six-case resource ablation does not replace the goal's frozen eighteen-case
+SAFE/FAST regression/acceptance matrix after a selected behavior change.
+
+#### Decision after the discriminators
+
+Prioritize constructive MAIN/BACKUP viability and physical tracking/stopping/
+capture, not another reject-only gate or a larger coordinator. A selected nominal
+trajectory can be valid yet deny the required SAFE BACKUP; do not conflate MAIN
+optimization with executable readiness or SAFE with explicit FAST UNKNOWN.
+More budget does not repair the selected-MAIN geometry tested here. Native
+numerical/corridor failures, activation support and controller/estimator causes
+remain separate hypotheses; this oracle is not attribution for all eighteen
+earlier runs or all six ablations. Mapping observer failure propagation and
+command publish under transition locks remain source-grounded isolation risks
+with native cost/causality unclosed. Preserve the corrected baseline and WIP;
+completion, actual cruise, tracking, settling and tails must improve together
+before claiming system performance or promoting a change.
+
+### Chained BACKUP construction false-rejections — 2026-09-18
+
+This is a controlled worktree behavior correction, not a native performance
+claim. No new coordinator, gate, observer, queue, transport or authority is
+introduced. The goal remains active; no performance tag or promotion is justified
+by these component results. No flight runs occur during these edits/builds.
+
+#### Discrimination before implementation
+
+Actual Luna links an ignored typed-core probe to the unchanged installed backend
+`d2c09d45e738a6dece45c23d53f7303973444bfefb70d9ac4ee12f25d3d95b6b`.
+It obtains the actual selected MAIN/yaw through the existing public replan log,
+not an unrelated optimization replay. The first compile loses macro quoting;
+the first executable has a quoted YAML filename and fails before planning. Both
+failed attempts remain fixture-blocked artifacts, not production REDs.
+
+Six requested-speed controls .1/.3/.5/.8/1/5m/s all produce an online complete
+candidate in the fully known-free bounded world. The .6s short-stop witness has
+CG/interior/full hull/flatness/candidate-factory/SAFE world PASS, but its chord
+falls below .2m. This alone does NOT reproduce online failure: the unchanged
+planner succeeds using a later switch. MAIN and BACKUP limits remain separately
+owned; test intent controls do not tune the product profile.
+
+The frontier variant fixes requested speed5m/s, MAIN AllowUnknown, SAFE BACKUP
+KnownFree, the same 80ms request deadline and minimum MAIN reserve. World bounds
+are finite; UNKNOWN beyond the chosen frontier remains inside that world, not
+OUT_OF_MAP. At frontier .4m, the exact selected MAIN admits a positive stop at
+.6s: switch x=.062032639832220, endpoint x=.192972926633581, chord
+.130940286851093, duration .471001439960525. Existing CG, full hull, flatness,
+factory and full SAFE swept-world checks pass offline. This witness remains
+NOT_AUTHORIZED, not activation, physical stopping or measured acceptance.
+
+Old online construction instead returns before enumeration: the legacy
+visibility-SFC seed is retreated by robot radius and rejected for length0.
+After that gate the seed would have been overwritten by `eval_ps.back()`;
+the actual corridor is constructed later from each braking hull. Frontier .8
+likewise rejects for retreat length .078756. The .82/.84/.86/.88 controls fail
+at this same EARLIER branch; .90/.92/.94/.96/1.0 succeed. These controls do not
+by themselves prove the separate actual-braking chord guard caused failure.
+
+Ignored frontier-probe source SHA256
+`0f22bc2b481a32d39976066173e4abb8d5e1d211f87a6847260f6821edeec15b`;
+frontier .4 run `ac37ffbf3e31d76a0cba8788d966a8fb8c022f9d0b41ba01492ea24aaa6ef6bc`.
+The original speed-control source is retained as
+`subvoxel-backup-corridor-probe-v1-source-e52190cb.cpp`.
+
+#### Two sequential real-facade REDs, then GREEN
+
+Two tracked facade tests use a nonterminal remote PASS route, requested5m/s,
+finite world and original absolute budget. They require moving MAIN plus positive
+BACKUP, mandatory staged-world validation, and assert staging is not activation.
+They never infer measured waypoint acceptance from the planned endpoint.
+
+| Stage | SAFE short frontier | Explicit FAST | Distinguishing witness |
+|---|---|---|---|
+| Original product construction | RED | GREEN | Visibility-length rejection before any switch. |
+| Remove only unused retreat/length filter | RED | GREEN | Ten feasible seeds; seven longer seeds reach world checks, all fail; final short seed rejects at aligned-SFC construction. |
+| Also allow existing finite short/point corridor inputs | GREEN | GREEN | Actual SAFE aligned corridor selected at .6669129328442476s; positive certified stop ends x=.2905698634867232. |
+
+Stage1's `last_known_free_*` belongs to an earlier longer seed. Its LAST reject
+at .6s is `aligned_sfc`; do not attach the retained earlier UNKNOWN cell to
+that untested short seed. This distinguishes the second false construction
+precondition from a required world-certificate failure.
+
+The production change removes only those two input filters and unused retreat
+work. Finite actual visibility data, sample-count/window, required MAIN prefix,
+deadline/cancellation, CG/interior/FOV/sensing, full braking hull, continuous
+corridor, dynamics/flatness, route disposition, role-policy swept world and atomic
+authorization remain mandatory. SAFE does not acquire UNKNOWN permission; FAST
+does not acquire OCCUPIED/OUT_OF_MAP permission. No radius/inflation, threshold,
+budget, lease, anchor, role, epoch or waypoint criterion changes. Independent
+adversarial review finds no authority/policy blocker; additional short-seed CIRI
+cost remains bounded by the same deadline and needs native distribution evidence.
+
+Actual Luna focused2/2 and full facade42/42 GREEN. Original RED log/XML SHA256:
+`882d703d2e58e61d6adfe1d6ee23a74ff14e3600d7443ff8670f5b2b17aeec18` /
+`dcd7a643ee3415c7e3ba665332b9edc8a2b273f591d242ac595c80c32676264`.
+Stage1 RED log/XML:
+`978d23af8a5f0062a8f59ebf1a92435f42a70ff62b3ea11f17933409aca4508e` /
+`e50bb9682783cd673e6a99398e75ef232732fb769144db9f99588ce74cebe66f`.
+Focused GREEN log/XML:
+`c7971648f40cbe1414a80c1afe6b31fb8368f41aec11a4a8ec4f17b288756d83` /
+`a5cbf93340ecb8d0069f31c199f0c971b22ea38acf44c8c76df9c366ab4b1a3e`.
+Full facade GREEN log/XML:
+`e5ab902a4ff7a4b8cf4c6c14667ce7b6a395e8925264971c0d875a4008df79be` /
+`74d82fbf74f67e378320b09e9fe3527dcc6e47eb97eb59fb8c5436053e814eb2`.
+Strengthened same-candidate adversarial controls also pass: forced full changed-
+world recertification does not reuse certificates. The actual BACKUP endpoint
+intersects the changed cells. SAFE UNKNOWN rejects specifically in BACKUP;
+explicit FAST UNKNOWN passes; OCCUPIED/OUT_OF_MAP reject with actual finite cell
+witness in both profiles, not a freshness failure. Original-world revalidation
+and staging-not-activation assertions remain GREEN; no new owner is installed.
+Actual Luna focused2/full42 pass again. V4-negative focused log/XML SHA256:
+`b737195a97f290d0d126cc2a9efb7bbf2a541b5b309a8c2f40e31b0d87007b43` /
+`10ffd7c935f314c91ea4967f29d99ca6b5f8635fb04667fe5d463c8470010797`;
+full facade log/XML:
+`10d352c7b74213fd5e847b6e3a8adf0a3878115c2900a078261fddf51019abc4` /
+`0535544c2e0634e8545b64ed145e028ab82fc7e547c8e1754c681276c7266fbc`.
+Full Release/regression and the frozen18-run native matrix were subsequently
+closed; the results and remaining system acceptance limits are recorded below.
+
+#### Native slowdown discriminator: duration dilation, not demonstrated debug cost
+
+Existing ONr3 planner-status evidence now supplies cycle/solve/world identities,
+not just anonymous latest gauges. There are51 matching records and0 startup-zero
+records. Cycle1 has initial duration3.821360s, selected mode3/global retry scale
+7.176025, final duration27.422178s. Cycle51 has initial3.831587s, mode3/scale
+7.406836, final28.379941s, world2/revision211. The rounded initial/scale product
+is28.379936528732s, within the rounding precision of the logged final value;
+do not claim bitwise equality. Named first/cycle3/cycle22/cycle51 witnesses have
+LBFGS attempt/evaluation counts0. No candidate or command is admitted.
+
+Source confirms `PlanFromRest` asks for baseline-only construction; the first
+certified deterministic seed returns before optional L-BFGS even when
+`suppress_optional_refinement=false`. Thus this native MAIN starts from roughly
+3.8s guide timing and selects roughly7.2–7.4x duration retry, rather than spending
+600ms optimizing or being slowed by command egress. This explains selected
+trajectory timing in this bounded native case, not the cause of every failed
+mission. The5m/s value is an upper envelope, not a minimum progress/cruise witness.
+The construction correction above does NOT repair overly conservative seed
+timing or prove physical5m/s flight. It can unblock the necessary complete
+baseline that permits later successor refinement; do not change nominal timing
+simultaneously before measuring that end-to-end effect.
+
+Bounded ignored native triage artifact
+`nominal-renewal-capture-nod2nN/safe5-onr3-backup-sfc-bounded-triage.json`
+The earlier draft was recorded as SHA256
+`1c8a1d591a1f4199d2e9107c84d60634b97594bafe77602f22ba7c5ad5bb7f39`.
+The retained current receipt is SHA256
+`74ef57dff38ed630feb1bde9bda3d74684dd9164a3c725839fd994a23c963cbd`;
+these are different artifact versions, not interchangeable provenance.
+Its stamps are nanoseconds:23196000000ns is23.196s, not milliseconds. The
+artifact's rounded-product text is superseded by the arithmetic above.
+Short-chord attribution for that native run remains CONDITIONAL because exact
+per-candidate MAIN/braking chords are absent; this component RED does not invent
+that missing native witness. The next shared lever remains complete-bundle
+viability with useful progress plus physical tracking/stopping/capture, not
+another observer or reject-only gate.
+
+### Short-BACKUP native closure and planner failure discrimination — 2026-09-18
+
+This closes the attempted matrix, not the active system goal. Actual Luna ran
+all18 planned serial cases without abort or retry; all cleanup receipts pass.
+No planner tuning, budget, anchor, lease, tracking limit, waypoint criterion,
+SAFE/FAST permission or instrumentation was changed during this matrix.
+
+#### Frozen source, build and regression
+
+- HEAD and origin/main: `fff6a6ada6230411af13bc990ab8fce11d850f0d`.
+- Dirty-source fingerprint:
+  `826f197b37c5c3749c72f5d6c0dfb022ead37afd7feed838086dde836030bd4d`.
+- Authoritative VALID installed manifest:
+  `a7cd869c1c050b9e68ca8f647ae5a3360000945cb8d3bae622c41c6cbf23170f`.
+- Built and installed backend static library, both:
+  `d70992b5006a5d5e29cdce87ceba5dd7cd594c09c5524a705c005cab43d39b3b`.
+- Full Release23 packages / full Release test14 packages: both exit0.
+  `make test`:87 colcon tests,0 errors/failures/skips; Python389 tests,
+  `OK (skipped=1)`. These are structural/regression gates, not flight acceptance.
+- Build/test/make-test log hashes, respectively:
+  `0990f55cf0d9ff133e67d47fac50155e905902fb22173e378b854bdd85d295f9`,
+  `f197acc4c23238807c124616353833d19aa7f39ab40b3c43fe1a0f9d1ed61c62`,
+  `494332b3dd0292ca86d523b5510b9753e17f53e573079fa361ab5f69cd580a8a`.
+
+The run root is
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/short-backup-construction-v1/run-20260918T181914119256874`.
+Its `frozen-source.diff` hash is
+`938c266d4095ddd9a253b02bc9b448349d0b327df827ec7f8e6a6d2fc5a7645e`;
+`frozen-worktree-overlay.tar` hash is
+`c948aabf79fbabcf0774b0a8c52745ea7a151c6e5e200f00401ce6a54268dec4`.
+The overlay retains modified tracked and nonignored untracked bytes plus the
+installed manifest, including unrelated WIP; retention is not staging authority.
+Original runtime logs/bags remain retained separately. This documentation
+closure changes the worktree fingerprint; it must not retroactively rebind the
+matrix to the post-report source or claim current installed-source eligibility.
+
+#### All18 native outcomes, denominator retained
+
+| Policy | Waypoints | COMPLETE | FAILED_COMPONENT | PAUSED_SAFETY_STOP |
+|---|---:|---:|---:|---:|
+| SAFE | 2 | 1 | 2 | 0 |
+| SAFE | 5 | 2 | 0 | 1 |
+| SAFE | 9 | 0 | 1 | 2 |
+| Explicit FAST | 2 | 0 | 2 | 1 |
+| Explicit FAST | 5 | 1 | 0 | 2 |
+| Explicit FAST | 9 | 1 | 1 | 1 |
+| Total | — | 5 | 6 | 7 |
+
+The proposed5WP milestone remains NOT_MET: SAFE2/3, FAST1/3, not at least2/3
+in each policy. All18 reports remain non-PASS (11 FAIL /7 BLOCKED), and all18
+have `qualification_eligible=false`. A native COMPLETE is not a report PASS.
+The previous18-run snapshot also completed5/18, but the snapshots are unpaired:
+neither improvement nor regression is causally established. Requested5m/s is a
+cap, not evidence of sustained5m/s cruise. No performance tag or promotion.
+
+#### Distinct failure mechanisms; not one MINCO/CIRI failure rate
+
+1. **MAIN dynamic infeasibility, CONFIRMED in a bounded native burst.**
+   SAFE5r2 `external-mode-check-20260918T112754-1629881/logs/mapping.log`,
+   cycles117–121, solve generations8–12: actual solve times27.359–50.623ms,
+   all `solve_deadline_exceeded=0`. Cycle117's feasibility retries leave
+   J12.848705 and then13.450101m/s³ against MAIN limit8; the stronger second
+   retry does not repair that candidate. The final certificate rejects MAIN
+   before fresh BACKUP construction. Retained earlier BACKUP timing gauges do
+   not prove five new CIRI/BACKUP failures. This burst is not the denominator
+   of every online solve; periodic planner-status rows are not solve attempts.
+2. **Bundle selection/admission seam, CONDITIONAL avoidable rejection.**
+   Existing BACKUP search selects a hull/world/disposition-valid switch before
+   `authorizeAndStage` checks continuous route regression over the cropped
+   MAIN role. SAFE9r2 witnesses selected switch12.329356s and a reported first
+   MAIN fold2.321494s, maximum regression2.487571m against.5m. A different
+   earlier switch might avoid the fold, but no earlier complete certified
+   split for this exact native MAIN/world/route is retained. The ordering is
+   confirmed; an avoidable rejection and its completion benefit are not.
+3. **Latest-world occupied MAIN, correct containment.** FAST2r2's retained
+   world update intersects MAIN with OCCUPIED at4.043532s before the existing
+   BACKUP switch4.994963s; revocation is not mistaken UNKNOWN rejection.
+   SAFE BACKUP requires KNOWN_FREE, explicit diagnostic FAST may use UNKNOWN;
+   neither accepts OCCUPIED or OUT_OF_MAP. Earlier certified braking and
+   physical stopping feasibility remain separate, unproven questions.
+4. **Estimator/receiver continuity, six component failures.** All six have
+   receiver `RECEIVE_STALE`, receive age200.784–210.704ms. Five selected
+   correction rejections have finite, nonzero observability eigenvalues and
+   ratios.002234–.009637 below the existing.01 requirement; the sixth is
+   `IKFOM_LIDAR_UPDATE_NON_FINITE` despite observability ratio.104399 passing.
+   These records disconfirm the hypothesis that all five low-observability
+   labels merely defaulted to false. Correction rejection invalidates navigation
+   health and the propagation worker suspends publication by current contract.
+   However ROS/source recovery stamps cannot be ordered against wall-clock
+   receiver events without a clock/receipt witness; exact publication/delivery
+   causality is NOT_EVALUABLE, not a proven DDS delay or measured publication gap.
+
+The remaining PAUSED cases do not all have an identity-complete first-loss
+witness. Preserve NOT_EVALUABLE rather than assigning them to MINCO, CIRI,
+budget exhaustion or waypoint acceptance by inference.
+
+Independent lifecycle review also retrieves DEC-20260909-004, archive321–365:
+automatic Hold-to-navigation re-entry was deliberately removed. Estimator
+recovery alone cannot reacquire mission/command authority. Restoring automatic
+re-entry would require a separately authorized recovery policy and end-to-end
+ownership evidence; it is not a permissible local completion workaround.
+
+#### Feasibility formulation versus a technical ceiling
+
+The retry imposes a global V/A/J-derived scale as a hard lower bound on every
+piece duration, not only a warm start, while retaining time and energy costs.
+With fixed nonzero endpoint PVAJ, longer duration need not reduce every peak
+or remain in the corridor. An analytic one-piece class witness keeps
+HEAD=(0,5,0,0), TAIL=(10,0,0,0), corridor[0,10], V/A/J limits5/5/8: T4s has
+Vmax5, |A|max2.34375, |J|max1.804220 and monotonic position[0,10], whereas T12s
+has midpoint15.3125m; every T>=12s fails that midpoint. This is a scalar
+analytic counterexample, not a native retry-floor reproduction or a full
+navigation certificate. The floor also intentionally prevents the time cost
+from returning to an overspeed seed. Require a positive same-boundary,
+same-world/route/corridor/limits/deadline alternative below the actual native
+floor before changing this policy; do not remove it speculatively.
+
+Actual Luna now inventories42 original `C_immutable_minco` records in bounded
+existing replay logs:0 original full-nominal certificate positives,0 original
+complete executable bundles. These are selected offline records, not42
+independent native jobs or a global feasibility proof. Time-stretched
+`H_original_guide` positives are different candidates and excluded. Thus simple
+original-seed reordering has no demonstrated leverage in this inventory;
+original seed failure does not prove no other feasible MAIN exists.
+
+An additional bounded replay discriminator now demonstrates that distinction
+constructively for snapshot `nominal_problem_snapshot_2_2_6.json`. This is the
+2026-09-17 snapshot (source revision `d3a801cea3f97295262affd1a8a71b014bcac09d`,
+source fingerprint `6e256135066a66b70e9cd1335777c0810ad68492102222b4a41b94e35811e092`,
+manifest `ba7a29dc2403dad1d03777e27906030dc477404be2340324813f12ce67502e64`),
+not a newly replayed result for the frozen current18 source. Original C has
+duration3.827709s, corridor violation6.004990m and V/A/J28.258694/115.992236/
+683.556402; it is not a feasible starting answer under5/5/8.
+
+In the same retained factorized log, production-equivalent recovery-mode
+probes select the certified28.536962s seed with0 L-BFGS attempts, even with
+40/80ms available (lines97–98). By contrast `H_original_guide`, scale1,
+captured retry cap64, hard80ms, preserves HEAD/TAIL and setup geometry and
+returns a different nominal polynomial after7893us optimizer wall time,
+duration5.021947s, V/A/J4.189960/3.426246/5.686284, nominal certificate PASS
+(lines149–150). Scale.5/2/4 also produce nominal positives within the configured
+optimizer deadline. These are one snapshot's correlated controls, not a
+distribution of independent jobs or a system performance A/B.
+
+Current replay source1796–1908 explains the witness: H preserves guide geometry
+and scales its initialization clock; `geometry_equal_to_original` compares
+effective corridor planes, route gates, initial points, piece mapping and route
+reference, NOT the optimized polynomial curve. Scale1 preserves initialization
+timing too. H calls ordinary optimization rather than recovery baseline-only
+selection. `optimizer_wall_elapsed_us` stops before witness copies/post-hoc
+certification; neither full ready latency nor worst-case CPU is measured.
+The replay's world verdict is explicitly NON_AUTHORITATIVE and
+`complete_executable_bundle=0`. Therefore this is evidence against an inherent
+MINCO feasibility ceiling for that nominal context, not permission to replace
+the baseline or proof that its faster MAIN has a valid SAFE BACKUP. Before any
+mode change, retain a complete certified baseline and prove the replacement's
+joint MAIN/BACKUP/route/world viability inside the unchanged deadline.
+
+The retained log SHA256 is
+`ba01bc95a78da405e226460e51d9ed5233539ce47a965ed211d8931fa9067b65`;
+snapshot SHA256 `ec9a6fc641baebcdb322bddffa5f378b143e33ab8bef27c92b3f29b386175171`.
+The clarified H receipt SHA256 is
+`371e1dd002b454d763919189248f1b9d0a33c669420fec5e17e3bc82bf2a78f4`.
+Receipt, log, snapshot and current unmodified replay-reader source are retained
+in `nominal-renewal-capture-nod2nN/main-recovery-mode-discriminator-20260918-v1.tar`,
+SHA256 `d476bb5c48c0a02fb7b4656c42d166557770cd009ecdd6fb3d8a24fd29d4648b`;
+the current reader's inclusion does not establish the historical binary hash.
+
+#### Proposed numerical progress mechanisms, not implemented changes
+
+Current planning is not a demonstrated random-restart algorithm. Hot replanning
+samples the activated command's traversable continuity prefix, then reconstructs
+the rest through A*. Each optimizer call initializes fresh variables and clears
+its nominal checkpoint; finite best-candidate snapshots and non-worsening
+dynamic-violation retention are local to that call. Failed spatial/time progress
+is not committed as the next request's solver state. Activated-command history
+is explicitly a warm-start hint, never a second execution authority.
+
+One candidate lever is a bounded numerical seed carrying q/T from a
+failed solve into a structurally compatible next request. Reconstruct against
+the new immutable HEAD/TAIL, anchor, corridor mapping, route, frame/epoch, limits
+and world; never carry authority, certificates or an expired deadline with it.
+Invalidate or remap changed portions, and do not blindly reuse quasi-Newton
+curvature history after changing the objective/constraints. Compare against the
+existing guide initialization; an untrusted warm start can be worse than cold.
+Independent review prioritizes bounded feasibility restoration and a complete
+baseline fallback before adding this cache: new HEAD/POST-corridor mappings
+change frequently, and raw tau/xi are not portable between representations.
+Measure actual compatibility and transport cost before expecting cache leverage.
+
+The second lever is actual feasibility restoration before optional time/energy
+optimization. Use scaled constraint violations and a controlled spatial/time
+step, rather than relying solely on a larger penalty or uniform per-piece time
+floor. Preserve the existing best finite iterate, but distinguish numerical
+progress from a complete continuously certified MAIN/BACKUP/route/world bundle.
+Best violation can be non-increasing for one fixed problem without guaranteeing
+global feasibility; across changed worlds/anchors, the problem itself changes.
+
+A fixed-duration feasibility oracle is also worth an offline comparison: with
+fixed positive T and fixed piece/corridor mapping, polynomial endpoint/continuity
+and corridor-control-point constraints are affine; Euclidean V/A/J bounds on
+Bezier derivative control points are convex norm constraints. This admits a
+convex SOCP formulation (or appropriately conservative QP bounds), potentially
+in MINCO q through its fixed-T affine coefficient map. These are sufficient,
+possibly conservative continuous bounds; infeasibility does not establish the
+original curve problem is infeasible. Variable T, BACKUP split choice, nonlinear
+flatness, latest-world validity and admission are not thereby made convex.
+No new backend or dependency is justified until a bounded oracle finds a useful
+positive under the existing constraints and its solve/validation cost is measured.
+
+Incremental SQP/RTI is an established alternative for carrying progress across
+related online problems, with local convergence assumptions on initialization,
+regularity and parameter changes, not a global guarantee for this navigation
+pipeline. See [AS-RTI analysis](https://arxiv.org/html/2403.07101v2) and
+[acados RTI features](https://docs.acados.org/features/index.html).
+Benchmark any alternative offline first; do not replace production L-BFGS or
+admit an intermediate iterate solely because a solver reports convergence.
+
+Required discrimination: cold versus transported warm seed on a fixed captured
+problem and then a controlled sequence of changed anchors/worlds, with unchanged
+per-request deadlines, limits, SAFE/FAST semantics and final validators. Keep
+all failed jobs; measure first complete bundle readiness, acceptance/job
+denominator, numerical violation progress and timing tails. No new observer on
+the command path, gate relaxation or simultaneous production publisher is needed.
+
+#### Completion quality still not accepted
+
+The bounded audit of COMPLETE SAFE5r1 and FAST5r2 confirms measured final
+acceptance points: position error.074909/.164754m and speed.120865/.111249m/s.
+Sustained cruise phase, qualifying command-to-measured tracking and source-aligned
+terminal settling/dwell remain NOT_EVALUABLE. This does not mean all diagnostic
+command tracking is unavailable: root subsequently verified the canonical flat
+`evaluation.metrics["tracking.navigation_reference_vs_truth"]` for SAFE5r1
+(`external-mode-check-20260918T112522-1625611/report.json`): AVAILABLE,
+3753 matched samples, p95 0.491490518 m, max 0.647403662 m, mean 0.201320763 m.
+Source-time, frame-transform and capture-integrity checks pass, but
+`reference_lineage_valid=false` and `coverage_sufficient=false`
+(`REFERENCE_LINEAGE_MISMATCH`, `TRACKING_COVERAGE_POLICY_UNAVAILABLE`), so this
+metric cannot qualify tracking. The retained quality receipt's legacy
+planner-reference-unavailable conclusion does not describe this canonical
+navigation-command metric; preserve the original receipt rather than rewriting
+its hash. Whole-window LIO-versus-truth
+coverage1 and p95.098318/.136698m use first-position alignment and are not
+absolute command tracking. Whole-window speed percentiles are not cruise-only
+quality. ROS completion stamps72.708/68.248s are absolute source times, not
+flight durations. A terminal point does not substitute for a settling window.
+
+#### Recoverable evidence and next discriminator
+
+Ignored receipts include `short-backup-construction-v1-aggregate.json`
+(SHA256 `91fa6b1769c9ddaacc58ce23f34bf0b9ec16049a7bb6b04adf9a7d3a7b6982be`),
+`lio-receive-stale-correction-witness-v1.json`
+(`eae9d6d90d69f6dea27ffdddae115d6486730cecc3f0298b3f86868145ef5a10`),
+`original-c-immutable-minco-inventory-v1.json`
+(`97412cbb273325c12a04564acc95ff991a9f0d9cc27c1bc312a80245df250a1f`),
+and `complete-quality-safe5r1-fast5r2.json`
+(`bc9a061e53e943098bd20509381e164bc36f342be7037107551d19032e0ff19d`).
+These exact receipts, the route/world/floor/slowdown receipts, three gate logs,
+driver, wrapper, plan, driver log and retention manifest are retained in
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/closed18-evidence-receipts-20260918-v1.tar`,
+SHA256 `126dcc41d08c7f138856db538c74ed9204392925473033029f89bf122a9a6c4c`;
+`tar --compare` passes before documentation edits.
+
+The next planner discriminator must construct a positive complete bundle for
+the same boundary/context before changing retry search or split selection.
+Separately resolve estimator/propagation/receiver continuity without relaxing
+health, freshness or operator authority. Keep behavior changes separate from
+observability; increasing budget, adding more observers or relaxing final
+certificates is not justified by these witnesses.
+
+### Complete-baseline refinement opportunity — 2026-09-18
+
+This is a typed-core diagnostic, not a product scheduling change, native A/B,
+mission acceptance or qualification. Actual Luna rebuilt Release (23 packages,
+rc0), then compiled and ran the ignored fixtures against the unchanged backend.
+Root independently checked their result rows, source/binary hashes and the
+authoritative manifest before documentation changes. HEAD remains
+`fff6a6ada6230411af13bc990ab8fce11d850f0d`; manifest SHA256
+`311d3fbd8d681a297acb3c3f08244d6c8adbcb1be4a21eb2134ed099e670de91`, source
+`20147916ef66e203de8cf8150ec664e83e393acb96699f5ad043d3888b98321f`.
+Backend static-library SHA256 remains
+`d70992b5006a5d5e29cdce87ceba5dd7cd594c09c5524a705c005cab43d39b3b`.
+
+Source restriction confirmed: ordinary renewal opens at remaining MAIN time
+`0.08 + 2*0.40 + 0.10 + 0.02 = 1.0 s` (`planner_fsm.hpp:372`), while backend
+urgency suppresses optional refinement at positive remaining MAIN time
+`<=1.0 s` (`planner.cpp:4508`). A certified nominal seed then returns before
+L-BFGS (`nominal_trajectory_optimizer.cpp:2404`). Early forced transitions and
+mandatory optimization without a certified seed are exceptions. This does not
+prove the restriction caused native completion failures; the original decisions
+also protect finalization reserve and avoid hot-splice churn. Targeted lineage:
+DEC-20260901-053/054/055, DEC-20260902-041, DEC-20260906-001,
+DEC-20260909-021 and DEC-20260831-022.
+
+The v1 all-free bounded world with remote STOP32m produced all12 complete
+successors. Early requests improve the same x+2m sampled MAIN progress time
+0.769→0.730s, but this is only about5%; late requests still run L-BFGS because
+their nominal seed is unavailable. It does not justify a scheduler patch.
+
+The authoritative v3 named geometry is STOP(13.1,-2.1,2), not the historical H
+moving-tail/captured-world replay. Each independent SAFE/FAST case exports a
+complete baseline and ACKs it into backend history, then requests a successor
+from its exact PVAJ
+at the unchanged now+400ms future anchor, with the unchanged80ms total budget.
+The world is finite and all-known-free; these cases cannot establish behavior
+under UNKNOWN/occupied evidence. No new production observer or runtime gate is
+introduced. Export uses existing backend validators and fixture
+`TestCommitAuthorizer` for the fixed world identity; no canonical execution-store
+activation, runtime lease/admission or mission authority is exercised.
+
+- Initial baseline:12/12 complete certified-seed bundles, nominal6.582066660s,
+  no L-BFGS. Count separately from the12 successor requests.
+- EARLY: SAFE3/3 and FAST3/3 complete,443 evaluations, full-call solve+export
+  6.835–7.688ms observed, no observed deadline expiry. Exact old/new HEAD PVAJ
+  residual0, both terminal-stop endpoints at the same mission STOP within1e-7m,
+  both declared-end speeds0. From the same future activation, old complete
+  bundle remaining time5.742066660s versus successor4.201631473s (~26.8% shorter).
+  Same x+2m sampled MAIN reach0.744→0.678s is a separate discriminator, not a
+  continuous certificate. Planned endpoint/rest is not measured mission settling.
+- DUE: SAFE0/3 and FAST0/3 new complete bundles. All fail **before MINCO** at
+  `MAIN rejected: insufficient braking evidence`; route/policy support0.085m,
+  directional support12.137m, stage6/reason16 (`kMainKnownFreeInsufficient`).
+  Optimizer-entered0/evaluations0/durationNOT_EVALUABLE. Coarse stage6 does not
+  mean six failed BACKUP optimizations. The unchanged predecessor remains a
+  separate complete candidate; runtime retained-validation/terminal handling is
+  not exercised by this direct-core fixture. These are not six mission failures.
+  DUE never reaches the urgent seed-selection branch: this fixture does not
+  demonstrate urgent suppression. EARLY/DUE also change HEAD and remaining guide,
+  so source coupling must not be promoted to an urgency-ablation result.
+
+All12 successor cases are retained, blocked0; observer rc0 is not12/12 planner
+success. v2's late `used_seed`/duration fields belonged to the initial solve and
+are excluded. v3 resets the existing diagnostic object before each call, as
+runtime already does (`node.cpp:4857`); it does not alter solver or gate behavior.
+Do not pool v1/v2/v3 repeats into independent native trials.
+
+Reviewed v3 source SHA256
+`df7b11467667b0591e2bd4ee6c0de7a009f6823b50a37f549f8df50cbd8a2dd4`, binary
+`5c0b4fcaae7b82c9bd53053a712496c704b0475f277a3aa0da993dd8f290dc7d`, run log
+`676635f2393c2b1b7d089d6c4f99d8999ada1970fd7722f4bdb56b51e16d3020`.
+Recoverable current-source overlay, manifest and v3 artifacts:
+`.artifacts/diagnostics/current-source-overlay-v3-retention.tar`, SHA256
+`a774149f1856f320d6d6ff0a7807f56f704958468f23d08cc62952e19e1ea07a`;
+30 members, tar-compare rc0. User WIP retention is not staging permission.
+
+Decision: an early complete improvement is demonstrably available on this
+fixture, so benchmark a bounded opportunity after a baseline is actually ACKed;
+do not merely change1.0s/80ms/400ms, classify quality as a forced safety transition,
+or rearm on every certified-seed successor. Baseline outcome is not necessarily
+the first baseline; ACK watermark alone can hide a no-op history promotion.
+Use the existing serial worker/current-key/activation transaction, preserve
+debounce, goal/epoch/world/active-generation checks, and keep safety/goal events
+higher priority. Failure must preserve a still-valid active bundle; certified
+terminal hold must not be restarted. An extra quality attempt can itself
+consume CPU and worsen tails: no native performance tag or promotion is earned.
+Feasibility restoration, compatible q/T transport and a fixed-duration convex
+oracle remain proposed numerical levers, not implemented improvements.
+
+### Bounded initial-baseline refinement lifecycle — 2026-09-18
+
+Separate working-tree behavior experiment, not promotion or native performance
+evidence. The existing serial runtime worker now owns a small scheduling
+receipt, not another active/pending store, coordinator, supervisor or solver
+cache. Only the first successfully admitted initial-stopped baseline per
+localization/goal/request may open one early quality attempt after actual
+canonical/Episode/backend G agrees. Desired/executing identity, route, dynamics,
+world generation, current world certificate/lease, healthy MAIN and absence of
+pending/hot/restart/terminal hold are required. Existing quiet tick comes first;
+ordinary safety renewal remains unchanged. Receipt is consumed after a valid
+typed request/future anchor, just before backend entry, with no refund or
+successor/recertification/recovery rearm. It uses the existing Normal-priority
+serial job purpose: assigning Quality0 while every ordinary timer submits
+Normal1 would introduce avoidable self-cancellation.
+
+Controlled RED uses this receipt/test wiring with the legacy horizon wrapper
+still disabled; only the wrapper opening the retained-MAIN branch changes for
+GREEN. Actual Luna results:
+
+- v1 compile fails on an inappropriate world-identity `operator==`; corrected
+  to existing `sameWorldSnapshotIdentity`. No gtests executed, not product RED.
+- v2 scheduling-only helper:3/4 pass and expected early-opening failure.
+  Real-runtime control is FIXTURE_BLOCKED: the old fake world inherits the
+  intentionally fail-closed body-support traversal API. Runtime's initial
+  request correctly supplies body support. This is not a native NO_PATH bug.
+- v3 uses a finite convex all-sensor-known-free world with consistent bounds
+  and explicit sensor-only traversal even when a body witness is supplied;
+  no UNKNOWN permission is conferred. Actual stopped request/facade/backend
+  validation/canonical admission succeeds, and the genuine queued backend ACK
+  is applied. Legacy gate leaves solve generation1 rather than2, no L-BFGS,
+  no pending successor: initial admission is proven. Its future-anchor lease
+  was not asserted; later GREEN v1 exposes that fixture blocker, so matched
+  RED v4 below supersedes v3 for the early-solve boundary comparison.
+
+RED v3 build log SHA256
+`e7daf3c8b3ceae714d87e8dce668147727d999333b6b66c3af193e9f83c03432`,
+FSM log `ae5abeecf091ef79e136025d0d26714f023168223df53301ec7cc074d2e6ddab`,
+runtime log `be259cb57bd13070a3a6bf426bc112c531f119c9f4bdb542c47321449ecfb4df`.
+Disabled-wrapper header `d50f901ee0ee0d248d8a5e45fc846fe0a53cac119ae4b35218a24d1584262580`,
+runtime test binary `31eff61ae0e44d0403328aa86f2272e937e4e67d898a7fd42178a44c516c9710`.
+These are focused package builds, not the old manifest's current authority.
+
+Initial controls require one actual full successor
+staged without stealing active ownership, PVAJ/yaw HEAD parity, pre-ACK/no-op ACK
+rejection, exact identity/current-world/lease, no seed-successor/recertification
+or same-request route rearm, no recovery/terminal override, and failed early
+replacement retaining A only through existing validation without quality retry.
+The failure control uses the existing default-OFF post-solve injection only.
+The real-node synthetic schedule uses measured+300ms, not the earlier core
+probe's+600ms; it does not assert the earlier26.8% planned-END benefit. No
+80ms/400ms/1s tuning, gate/policy relaxation, new observer or algorithm rewrite.
+Full Release/regression/adversarial review then a frozen serial18 SAFE/FAST
+matrix remain required; native completion, actual cruise/tracking/settling and
+CPU/timing tails are NOT_EVALUABLE until measured. No performance tag earned.
+
+#### Matched RED v4 / GREEN v2 closure
+
+GREEN v1 opened preparation (solve generation increased) but never entered the
+backend: the initial lease ended at10.5s, before the requested10.7s anchor.
+The failed-replacement fixture had the same issue at10.6s. This is neither a
+refunded scheduling receipt nor evidence of a production solver failure.
+Both controls now use actual backend committed-trajectory validation against
+a fresh finite sensor-known-free world before existing same-G store
+recertification; no fabricated lease, certificate, UNKNOWN permission or gate
+change. Future-anchor availability is an explicit precondition. The receipt
+requires request/current-world revision agreement; a legitimate same-G recert
+with a refreshed key remains eligible and does not rearm the receipt.
+
+Actual Luna compiled the same Release targets and fixtures twice, changing
+only the legacy/quality wrapper between matched RED and GREEN:
+
+- RED v4: initial full admission, genuine ACK and future-anchor assertions
+  pass. Legacy horizon gate keeps solve generation1, L-BFGS0 and no pending;
+  the initial-opening helper and actual-runtime test fail as expected, while
+  the three scheduling safety controls pass. The generic pending assertion's
+  `FIXTURE_BLOCKED` text is not an additional failed precondition here.
+- GREEN v2: four scheduling tests and both actual-runtime synthetic tests
+  pass. Positive enters L-BFGS, fully validates/adopts a pending successor
+  without stealing active A, and preserves HEAD PVAJ/yaw/yaw-rate within1e-7.
+  Positive full-call observed7.987ms, nominal optimization7.123ms. Negative
+  actually enters the solver then triggers the existing post-solve cycle3
+  injection; retained validation preserves recertified A, no pending and no
+  quality retry. Its observed nominal4.918ms is not the positive's timing.
+  These observations are not latency bounds or a native performance comparison.
+
+Root independently verified log/header/binary hashes and retained exact
+modified/untracked WIP plus focused binaries/logs; retention grants no merge
+authority for unrelated WIP. Ignored artifacts under`.artifacts/diagnostics/`:
+
+| Receipt | SHA256 |
+| --- | --- |
+| RED v4 build log | `124415efe49406230349eb4640985ebbf05456aa2b9e3f93c09a0efbd517e08e` |
+| RED v4 FSM log | `76bb05e713ae08b929217345dfe750d84ef11c5cc37495ede84ea8645f98dcd3` |
+| RED v4 runtime log | `c7b175abd5dcbb03e2a65cf7cd57d02b50ec75a65fe2746f7efebe12a7f49bd6` |
+| RED v4 source overlay tar | `c6d894aef0235e1dda83b71579a46054fd062f3691de729f2268ac5b6658a639` |
+| GREEN v2 build log | `124415efe49406230349eb4640985ebbf05456aa2b9e3f93c09a0efbd517e08e` |
+| GREEN v2 FSM log | `e2810b874ec29f3a8a1699050cde7ca48c8b59dd9f4f756cbe76262f7abba7a7` |
+| GREEN v2 runtime log | `7b7b10ac4577b2869908a483cde88fe451cf811c58599677d3f0035595ddc3ee` |
+| GREEN v2 enabled header | `7ed440f5585603654f7365b6c6b8d016df0e8526a8944377d47b525a9e339d4e` |
+| GREEN v2 source overlay tar | `8fa44122eb73a35078a11bf439fa5711d70e0eb46810086c5ff33aae48d69857` |
+
+Independent read-only review found no authority bypass in this bounded scope;
+that is not native approval. Full canonical Release/regression and frozen
+serial18 SAFE/FAST runs are still required. This change only creates one early
+quality opportunity: it does not implement cross-job q/T transport, Phase-I
+restoration, global convergence or complete-bundle quality monotonicity.
+
+Next numerical discriminator remains offline-only: preserve exact immutable
+HEAD/TAIL, POST-CIRI representation, PASS gates, route/dynamics/policy and total
+compute budget; compare cold initialization with compatible physical q/T
+transport and normalized feasibility-first merit. Retain best violation under
+one problem fingerprint, then compare first nominal certificate separately
+from first complete MAIN+BACKUP. Changing anchor/world/goal invalidates any
+claim of convergence across the old objective; solver hints never gain command
+authority. No runtime observer or new optimization dependency is justified by
+this component result alone.
+
+### Initial-baseline refinement v1 native closure — 2026-09-18
+
+Actual gpt-5.6-luna completed the one serial frozen SAFE/FAST x 2/5/9WP x 3
+matrix, without failed-case retries. Root checked terminal driver/plan receipts,
+the original and corrected aggregate hashes, canonical flat tracking fields,
+gate logs and source-overlay contents. Driver completion at
+2026-09-18T21:04:41+07:00 is `overall_rc=1`, `abort_reason=NONE`: all 18 cases
+were attempted, none remains STARTED/PLANNED, and all cleanup/provenance checks
+are PASS/VALID. This is execution closure, not mission acceptance.
+
+Frozen HEAD is `fff6a6ada6230411af13bc990ab8fce11d850f0d`; source fingerprint
+`d8f862b6c37754a0ff1e88d5121928e45d0ca1125f8cd0741e7bd5208e75218d` and
+authoritative Release manifest SHA256
+`d624cf072f55829d0d1025598d338f162c1c8625c18ca37e8415c476f897d20f`.
+These pins include the pre-existing modified/untracked worktree; this is not
+commit-only evidence. Subsequent documentation closure does not change those
+frozen experiment pins or imply a rebuilt product.
+
+Full pre-matrix gates are closed at this exact snapshot: Release23 packages,
+14-package colcon regression with13 test projects/85 freshly executed CTest
+targets, and `make test` with389 auxiliary Python cases (one declared skip).
+The separate make-test summary's87 targets may include two stale result files;
+it is not87 freshly rerun targets. Ledger validation and diff check passed.
+Ignored gate logs and SHA256:
+
+- `early-baseline-refinement-full-build.log`:
+  `34d0d38e26cd4c2101903a1671ea29fd933139111eeb2ad7603ed17f6e1a3dcf`.
+- `early-baseline-refinement-full-ctest.log`:
+  `0016c93e1999965c4706be2dcb31c6b8b8cf058af1c807e3b79c54c854702905`.
+- `early-baseline-refinement-full-make-test.log`:
+  `5a108a691c3d1fe1eee184fd153171f7d2912977eee9fca540efa9c194fc7209`.
+- `early-baseline-refinement-full-ledger.log`:
+  `b89469ce80b8d473b47ece2064889cc545313cb37e530c2f9db67c9a2ef1b145`.
+
+| Policy | 2WP COMPLETE | 5WP COMPLETE | 9WP COMPLETE |
+| --- | --- | --- | --- |
+| SAFE, BACKUP KNOWN_FREE | 3/3 | 2/3 | 0/3 |
+| FAST, explicit BACKUP UNKNOWN | 1/3 | 1/3 | 1/3 |
+
+Total8 COMPLETE,9 PAUSED_SAFETY_STOP,1 FAILED_COMPONENT. Every row remains
+qualification-ineligible; no report PASS, performance tag or promotion follows.
+The proposed 5WP>=2/3 milestone is NOT_MET in FAST. The preceding short-BACKUP
+snapshot also had SAFE5 2/3 and FAST5 1/3. Aggregate8 versus5 COMPLETE across
+different snapshots is unpaired, not causal evidence of an improvement.
+Requested5m/s is a velocity cap, not proof of sustained5m/s cruise.
+
+Trace renewal reason6 (`kQualityRefinement`) occurs once in SAFE5r2 and once
+in FAST2r2 only. This is not proof of two successful successor admissions or
+an18-case ablation of the scheduling opportunity. A COMPLETE run can contain
+failed solve attempts: SAFE5r2 has14 `nominal_dynamics` reasons. Conversely,
+terminal PAUSED/component outcomes are not all MINCO failures, and an aggregate
+`first_failure_like_record` is not automatically the cause of terminal loss.
+
+Canonical navigation-reference-versus-truth diagnostics for COMPLETE5WP:
+
+| Case | Matched samples | p95 error (m) | Max error (m) |
+| --- | ---: | ---: | ---: |
+| SAFE5r2 | 2530 | 0.599714 | 0.737987 |
+| SAFE5r3 | 3734 | 0.419175 | 0.617026 |
+| FAST5r1 | 1963 | 0.563232 | 0.714181 |
+
+These fields are AVAILABLE, with source-time/frame/capture checks true, but
+reference lineage and coverage eligibility false. Qualification and sufficient
+coverage remain NOT_EVALUABLE, not a tracking PASS. Canonical navigation versus
+LIO is independently NOT_EVALUABLE; do not substitute legacy reference fields.
+Whole-window speed percentiles include hover/braking and cannot close cruise
+quality or terminal source-aligned settling. End-to-end latency upper bounds
+and observer OFF/ON overhead are not supplied by this matrix.
+
+Independent read-only review found no new authority bypass in the bounded
+refinement receipt. Its failed-replacement control retains active MAIN only
+through existing validation; it does not override the existing1s planner
+watchdog, which remains a separate containment boundary. Cancellation after
+context capture can consume an old quality attempt without refund, but cannot
+bypass final current-identity admission. Native causality for these schedules
+requires individual first-loss timelines, not the component result alone.
+
+Recoverable source overlay (33 members, root `tar --compare` rc0 before this
+documentation closure):
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/early-baseline-refinement-v1-source-overlay.tar`,
+SHA256 `47c39381b350b91fe0cf2a02022df9255ebb1045018dc5edae1aa623b94853a6`.
+It retains the exact dirty source, original safety/report documents, gate logs,
+driver/wrapper and manifest. Original aggregate is immutable; corrected metric
+extraction is a separate derivative, not a requalification:
+
+- `early-baseline-refinement-v1-native-aggregate.json`:
+  `4cbc5a1e8b57dad6cfa3f88e317dc5c8da9bc6e6fb4faec3895c268a0126cf59`.
+- `early-baseline-refinement-v1-native-aggregate-canonical-metrics-v1.json`:
+  `e5a5feab925eab614109fb262d38fc53976b22e1b913d3b99fdbf92471c6f881`.
+- Run `early-baseline-refinement-v1/run-20260918T202859864958358/plan.tsv`:
+  `c888be709252f3d3aed8ed52610db9fd2bb706a63f7925a20bacbe1865e8a7d9`.
+- Same run's `driver.log`:
+  `bda4b39b9ad1ce061ee1ad4c3bcf8fd69d02d395b9add1ff4b9fec2d8fa0d57e`.
+
+Decision: do not repeat this generic matrix or claim optimization success from
+the unpaired count. Next bounded discriminator is the executable MAIN crop /
+BACKUP switch / admission transaction, alongside exact terminal first-loss
+attribution for noncomplete5WP. Establish a positive complete bundle under the
+same route/world/HEAD and unchanged deadlines before changing switch search.
+400ms retiming, CIRI1/2 retuning, larger budgets or relaxed gates are not justified
+by this closure. The existing experiment stays unpromoted while its broader
+CPU, tracking/settling and completion benefit remain unproven.
+
+#### Noncomplete 5WP first-loss discrimination
+
+Actual Luna read bounded native mapping/External Mode logs; root independently
+checked the quoted rows. These are specific confirmed boundary outcomes, not a
+complete source-to-PX4 latency reconstruction or a closed-loop stopping proof.
+Wall-log ordering is distinct from trajectory/source timestamps.
+
+- SAFE5r1 (`external-mode-check-20260918T133514-1746638`): ordered acceptance
+  includes waypoint indices0..3. External Mode line159 receives the request5
+  backup hold inside acceptance at error0.659m with terminal hold pending.
+  Runtime subsequently retains emergency endpoint G20 as STOPPED_HOLD. Mapping
+  line503, wall1789738595.838543405, is an exact final-exposure veto:
+  endpoint(41.0360342,0.301287806,2.99999893),
+  measured(41.0652429,1.05481486,2.96155647),
+  anchor0.755072175m exceeds unchanged0.75m; execution freshness VALID,
+  world freshness0 (VALID), command/bundle leases valid, hold support false.
+  The precheck diagnostic bypass at line502 explicitly does not bypass this
+  final boundary. Later receiver staleness/handover is downstream. This is
+  not proof that MINCO failed or waypoint3 was never accepted. Planned rest
+  did not establish measured endpoint capture inside the hold envelope.
+- FAST5r2 (`external-mode-check-20260918T135316-1787436`): initial full solve
+  generation1 succeeds in50.637ms. Mapping line281, wall1789739646.396298559,
+  loses retained permission with anchor0.476/projected0.506m versus0.25m,
+  elapsed4.720s, BACKUP start8.014s, end8.609s, fresh state and clear sampled
+  path. The following decision is solve generation2/result4 with actual
+  callback0.023ms and backend code3; the displayed EXP/BACKUP phase timings
+  still match the older solve and must not be interpreted as a new MINCO
+  optimization. The retained-context grid field is not an observed blocked
+  cell (`blocking_cell_observed=0`, position/time NaN). The subsequent emergency
+  commit is independently rejected at an initial-point-blocked cell3.
+  Planner-failure/handover at External Mode line56 follows. Health causality
+  is NOT_EVALUABLE from this bounded log, not an inferred receiver-stale cause.
+- FAST5r3 (`external-mode-check-20260918T135435-1791206`): waypoint indices0..2
+  are accepted. Earlier generation16's80.127ms deadline miss at mapping line435
+  is followed by a successful generation17 solve at line463 and canonical
+  successor activation G13 at line464. It is therefore not itself terminal
+  first-loss. Line466, wall1789739741.684190777, reports no valid retained safety
+  suffix: anchor0.419/projected0.578m versus0.25m, relative speed1.154m/s,
+  state age0.016s, clear sampled path, elapsed1.076s before BACKUP start4.386s.
+  Generation18/backend-7/commit6 follows at line467, then handover. The
+  retained-context grid is again not an observed blocked-cell witness. Exact
+  candidate latest-world rejection and command/measurement phase alignment
+  remain separate leaf questions; no estimator-health cause is established.
+
+These witnesses change priority: investigate controller/trajectory alignment
+and measured endpoint capture alongside MAIN/BACKUP readiness, rather than
+pooling the three terminal outcomes into a solver fail rate or treating an
+earlier timeout as their cause. Do not enlarge tracking/anchor limits, latch an
+old continuation permission, or restore automatic mode re-entry. The cropped
+MAIN / BACKUP selection seam remains a bounded independent discriminator;
+avoidability for its earlier native route-fold witness is still CONDITIONAL.
+
+### Captured planning request coherence — 2026-09-18
+
+Finding status: CONFIRMED at the controlled runtime/facade boundary; native
+FAST5r2 attribution remains CONDITIONAL. The strong counterargument is that
+the old implementation rejects fail-closed: this is not an unsafe command
+or evidence that MINCO failed to converge.
+
+The scheduling supervisor deliberately excludes producer SOURCE and world
+revision advances from cancellation identity, to avoid starving the serial
+worker on normal odometry/map publication. Runtime nevertheless copied the
+timer key while independently loading newer propagated state and world for
+the typed request. `PlanningRequest::valid()` requires exact key/start-state
+SOURCE and key/world revision agreement; backend `plan()` rejects a mixed
+tuple before geometry/optimization. Typed-request ownership lineage is
+DEC-20260902-017; canonical timeline authority is unchanged.
+
+Actual Luna controlled ordering, without sleeps or forced success:
+
+- Real initial stopped-state fixture at SOURCE10s/worldrev1 -> capture timer
+  key -> advance fake ROS20ms -> publish only state, only same-generation
+  worldrev2, or both -> invoke production `runCycle(old_key)`.
+- All three old-source cases fail with typed `kInvalidInput` and no actual
+  factory admission. Matched unchanged-input positive control passes.
+  RED4-test run closes1 PASS/3 RED, rc1; this is an expected regression
+  discriminator, not an extra native mission denominator.
+- Node-only correction refreshes request SOURCE/revision from its immutable
+  captured inputs after checking ownership, frame, world-generation, active-G
+  and pending-slot fences. It rechecks the actual captured world/state
+  freshness, not an earlier world's check. Anchor PVAJ, full command-world
+  and400ms activation remain factual: mismatch discards this attempt rather
+  than rewriting the witness or classifying it as a solver failure.
+- Worker scheduling key remains unchanged for exact enqueue/dequeue trace
+  attribution; execution admission receives the coherent owned request key.
+  No budget, certificate validator, SAFE/FAST policy or threshold changes.
+- First GREEN build closes baseline6/6, full monitor48/48, existing FSM77/77
+  and worker12/12. Seven tampered-key owner controls reject without solve,
+  active/pending mutation or failure latch. They are not integrated reset/
+  cancellation qualification. Strengthened actual ordinary-moving DUE controls
+  subsequently pass as described below. Full Release/regression and native18
+  have since closed at the separately pinned checkpoint below; the native
+  completion milestone is NOT_MET.
+
+Artifacts under `.artifacts/diagnostics/nominal-renewal-capture-nod2nN/`:
+
+| Artifact | SHA256 |
+|---|---|
+| `request-coherence-before-source-v1.tar` (old node and RED test source) | `fff84d565a9ff196d833d47bd2d2a55c13882f3de859a322a14bd283f618dd81` |
+| `baseline-refinement-focused-build.log` | `aa6d7815d8bf5c81c69b057529210ea38cce7553277d2b5d993395511b4b8447` |
+| `baseline-refinement-focused-test.log` | `20496e9b06f7338f37eb817cf94639d92c8e340a676ca76eb7544ce5b75c6c62` |
+| `baseline-refinement-focused.xml` | `aace9eee62f41ebec1d165d7e5c74a80e52bd5fd9e6ae09eb33723e2e39154ba` |
+| `request-coherence-green-v1-baseline.xml` | `9e1f999658e8f151c3dbdacbe83679e3815deb34013bd15a21344641d0d86bb8` |
+| `request-coherence-green-v1-monitor.xml` | `0ac6866d2263cefe89e3ff324f4a2f261e008d52ee7c7d8b4705f1f4e3d62bf2` |
+| `request-coherence-green-v1-fsm.xml` | `adec45ecb9440a90ef0019e2cb95e31f15e2d255d02d939a2b0405f48a5e434e` |
+| `request-coherence-green-v1-worker.xml` | `d3610f5fa1351b933c8a873204ff8ea1059f2f5aac800a2c45f1378a30ae84c4` |
+
+Old node SHA737fb0929db9e730d3c5b9138b20928dd03ee2df23f1e1ae1f985082c1f23ed6;
+RED test SHAba62ce36f28fda66a1aaf3fc433d76a3b94a1315b7f46561461275fab162b061.
+First GREEN node SHAe3d16c5b38bdf3bdfc719dfe543648a54d815cab806a557de81afa07321f3dce;
+test SHA770dff3d348bd4ff1179cd05758ea65fa886d7d89053736a81ed677b541675f4;
+binary SHAdcc0a4bcf6350092ad746e398f15486d42a3389c78a4d7315480b42fc937ad96.
+Subsequently strengthened tests are a different source snapshot; do not reuse
+these pins as their provenance. Frozen native18 results above predate this fix
+and remain unchanged. No completion improvement, performance tag, hardware
+qualification or native causal attribution is claimed.
+
+Moving checkpoint (different strengthened test source): actual certified
+initial A -> quiet tick -> real backend ACK -> same-G full recertification ->
+ordinary renewal DUE with900ms MAIN remaining -> capture key -> advance20ms
+SOURCE/revision separately or together. Three changed-input cases and matched
+unchanged control all reach a non-invalid-input backend disposition, retaining
+the actual active command. The8-test initial/moving filter passes; full monitor
+52/52 passes. Moving XML pins:
+`request-coherence-moving-v1-focused.xml`
+SHA62586ba4f4be56d27625877304518573991497eaed08314f6ce39027fc8be136;
+`request-coherence-moving-v1-monitor.xml`
+SHA9cccb13f612caa0204fc61619af7704ae5f7fcbc3b06a4f18ff1ee1cc2e107ba;
+binary SHA9ae03030f8d68d47d1b5b907039ef294989ab62913c844c0f7cde6cfe9e7bd9b.
+
+These moving cases do NOT produce a new executable successor: all four,
+including unchanged-input control, reject at
+`PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT` (-12) before MINCO. The log distinguishes
+local20m/directional12.126m from route/policy support0.074m near this terminal
+endpoint; optimizer/BACKUP phase gauges still belong to A. This is a separate
+braking-evidence boundary, not a residual request coherence failure or new
+optimizer success claim. Conditional pending/head-parity assertions are not
+exercised by these four cases; the existing early actual-successor positive
+control separately exercises full staging/head parity. Moving tests here are
+post-correction controls, not additional measured moving REDs. Near-goal
+viability/policy needs its own discriminator before any change; never relax
+the brake, occupied/out-of-map or final exposure checks to obtain a PASS.
+
+### Captured-request coherence native closure — 2026-09-18
+
+The frozen driver completed normally at22:24:14 Vietnam time, abort_reason=NONE;
+its PID1829524 is absent. All18 planned cases were attempted serially, terminal,
+cleanup PASS/STOPPED, with effective config and provenance VALID. No retries or
+discarded failures. Wrapper rc1 and report FAIL/BLOCKED are kept separate from
+native mission outcome. All18 remain qualification-ineligible,0 report PASS.
+
+| Policy | 2WP COMPLETE | 5WP COMPLETE | 9WP COMPLETE |
+|---|---:|---:|---:|
+| SAFE known-free BACKUP | 1/3 | 1/3 | 0/3 |
+| FAST explicit-UNKNOWN BACKUP | 1/3 | 2/3 | 0/3 |
+
+Totals:5 COMPLETE,7 PAUSED_SAFETY_STOP,6 FAILED_COMPONENT. Proposed5WP>=2/3
+in both policies is NOT_MET; no performance tag or promotion. The preceding
+unpaired initial-refinement snapshot completed8/18; this small unpaired matrix
+does not establish either a causal regression or an improvement from the
+request correction. All six9WP cases accepted indices0..7 without completing
+the final waypoint; this directs the next discriminator to terminal execution
+and estimator/command continuity rather than assuming optimizer nonconvergence.
+
+Full gates on the frozen source: canonical Release23 packages; test14 packages,
+85 fresh CTest targets (the87-target summary includes2 stale records), Python
+389 PASS/1 SKIP, facade42/42, monitor52/52, FSM77/77 and worker12/12. Ledger and
+diff checks pass at that checkpoint, not as proof of native flight acceptance.
+
+Frozen identity: HEADfff6a6ada6230411af13bc990ab8fce11d850f0d; source fingerprint
+862ac413a780f49dba4f3eeab03abaadc44c826892083b9cc7b352bdd2e80bb1;
+manifest8f9f7919a954cedd657e2a7a912a9bfe98504041e37d1260c8f500253e1ff3f2;
+nodee3d16c5b38bdf3bdfc719dfe543648a54d815cab806a557de81afa07321f3dce;
+testc90cf556e98e584d6bb00ce1463f7fea6cfa3890ef81747aa662c7040e321d15.
+Subsequent test/report edits are NOT part of this matrix source fingerprint.
+
+Artifact paths below are relative to
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/`:
+
+| Artifact | SHA256 |
+|---|---|
+| `request-coherence-v1-source-overlay.tar` | `f183ba0ca97c24690ed9dddf70d85d9efa3d46a5a67c74ce82791edcfa497694` |
+| `request-coherence-v1-preflight-receipt.json` (immutable historical authorization) | `342edd9a8951ee1ffbee7ea9fae0efb5bc192d3bdd6051d739ddf2d9a2a219cd` |
+| `request-coherence-v1-native-aggregate.json` | `5f04ea7737f99f755c1841937b07263bd852a937b7edf016a4b6feee9b6e5fe7` |
+| `request-coherence-v1-terminal-closure.json` | `98116b39663c0dc56626c1d28b80d4cd38d3ecc8481688acd32131e8078cad5d` |
+| `request-coherence-v1-terminal-closure-receipt.tar.gz` | `a229a0296f46ea3c6213c02bdd0e42897fefc0d2713192151860089d9b683930` |
+| `request-coherence-v1/run-20260918T213824325400872/plan.tsv` | `360aa9c308057701a26b5c9de1bc8f2ea7757fa1359dd0f80a58981da0650e0f` |
+
+Terminal receipt archive comparison against retained originals passes; raw bags
+remain outside it and untouched. Compact aggregate preserves scalar outcomes and
+acceptance indices, not measured cruise/tracking/settling/tail distributions.
+Those remain NOT_EVALUATED in this receipt and cannot be silently called PASS.
+
+First-loss discrimination, not a solver-failure-rate claim:
+
+- Six ODOMETRY_STALE component labels require paired SOURCE/receive/producer
+  witnesses. SAFE2r2 receiver state SOURCE age164ms/receive age204.550ms exceeds
+  its200ms receive boundary; fresh independent estimator health does not prove
+  advancing propagated-state publication. A bridge DT_TOO_LARGE later by about
+ 570ms is not proof of the initiating cause. Do not transfer older campaign
+  health/observability attributions to these six cases.
+- SAFE5r1 G13 first loss occurs in MAIN at elapsed2.732s, before BACKUP5.131s;
+  raw/projected tracking .718/.823m, velocity error1.017m/s. Its15.436ms solve
+  did not exceed deadline. The deterministic seed continuity failure is
+  piece1 Y **velocity**, residual5.906386491005833e-14m/s versus representation
+  bound4.962805584643295e-14m/s, not a jerk violation. Numerical certificate
+  conservatism remains a hypothesis; do not relax tolerance from this run.
+- SAFE5r3's first final STOPPED_HOLD exposure veto is anchor .92352741m>.75m
+  with fresh state/world and valid leases. Its later world failure is downstream.
+- FAST5r2 first revokes G4 on full-world BACKUP OCCUPIED cell at(35.9,.3,3.1),
+  before receiver stale. UNKNOWN permission never permits OCCUPIED/OOM; changing
+  this result into PASS would weaken the requested FAST contract.
+- FAST9r3 actually solves PlanFromRest near the final waypoint in1.780ms, then
+  repeatedly changes recovery references. Its G55 final exposure veto at
+  SOURCE=authorization128.088s is anchor .753250493m>.75m with fresh state/world
+  and valid leases; later recertification and receiver stale are downstream.
+  END-rest and planned in-ball capture do not prove continuous measured settle.
+  Native LIO oscillation does not distinguish physical tracking from frame/
+  estimation error without synchronized PX4/reference/reset witnesses.
+
+Therefore neither a blind15Hz/100ms retune nor further optimizer-only tuning is
+the next corrective action. Controlled active-to-END and immediate-admission
+owner delivery tests, plus bounded native/PX4 terminal alignment, must separate
+the remaining hypotheses without changing budget, anchor or safety policy.
+
+### Rejected ordinary DUE does not alone destroy active-to-END — offline discriminator
+
+Finding refinement: the near-goal governor rejection is CONFIRMED in the actual
+frontend, but the claim that this rejection necessarily prevents the already
+certified active from reaching its endpoint is REJECTED for this controlled
+schedule. No governor or production behavior change is justified by this test.
+
+Actual Luna compiles the ignored oracle against the normal runtime core/backend
+and production monitor fixture, replacing rather than duplicating its original
+test object. Actual typed factory A has MAIN+BACKUP; normal quiet tick and backend
+ACK precede ordinary DUE at900ms MAIN remaining. A's actual400ms future anchor
+carries unchanged full PVAJ/owner/world identity. The actual frontend rejects
+with kMainKnownFreeInsufficient,0 L-BFGS attempts, no H, retaining A/Episode.
+
+Same-A full polynomial world recertification is exercised before END; fake ROS
+time, immutable SOURCE state and current world advance together. The ideal plant
+follows actual A PVAJ through its exact END, then supplies200ms fresh stationary
+observations of that actual rest endpoint. Production command callback and serial
+backend ACK execute; ordinary100ms planning ticks also execute. No post-END full
+polynomial recertification, fabricated successor, timestamp clamp, future lease
+extension or forced command receipt. A/Episode remain alive through END and all
+post-END ticks, no failure latch; post-END phase is STOPPED_HOLD.
+
+Scope limitations: ideal synthetic plant, no DDS/NavMode/PX4 or measured mission
+settling; actual wire exposure receipt NOT_OBSERVED. Success does not certify a
+new H, provide real closed-loop stopping proof, or close native completion.
+Two companion arithmetic-model tests also pass, but are MODEL_ONLY: the inverse
+retains acceleration even at candidate speed0, and its1e-3m/s stopping resolution
+can reject mathematically feasible subresolution speeds. The1e-9m support control
+is not a physical native failure. Endpoint chord .073856178914292m is NOT the
+exact generated guide/support certificate; do not use it as a world proof.
+
+Artifacts under
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/terminal-speed-governor-oracle-v1-run-20260918T-v3/`:
+compile/link/run succeed, filter TerminalSpeedGovernor*,3 PASS/0 FAIL/0 SKIP,rc0.
+Binary SHA756e0200286885c8a1c1730450d9957885e2473301aff403f09b9de60d44cfe0;
+run log d28fe72a0c938681b01bed2fb44119c6fd17a99d29c3a5375e3d22408b4086a2;
+XML731ce590ea257a61ece6d0f9e26da5b71a1af35e845f5b893e890d84b3e46eb4.
+Original ignored oracle SHA92b572cc940848057e300b071028ba45216b69dde9b19bf858e1b543a78c16b4;
+type-only std::min<int64_t> compile repair yields
+10e197dc1073a79b139eeef9a4fda9623a0b2efab6c693e82142a5c75c078c5c.
+Attempts1/2 header/type fixture blockers and logs remain retained, not product
+REDs. Compiled production fixture is the frozen c90cf556 source above, before
+subsequent generic-immediate controlled test additions; installed runtime and
+backend remain those of the closed native matrix.
+
+Next action changes: preserve valid A rather than weaken near-goal braking
+evidence. Diagnose native terminal reference churn/physical-frame tracking and
+the separate controlled immediate store-to-Episode delivery gap. This offline
+counterexample narrows the completion hypothesis rather than counting another
+component PASS as performance improvement.
+
+### Shared immediate cutover and CIRI reference restoration — 2026-09-18
+
+Decision: implement the confirmed ownership correction now, restore enabled
+CIRI reference2 as a separate unpromoted planning trial, and run one final
+Release/regression/native round on the combined pinned snapshot. Do not block
+these changes on another broad audit or tune80ms/400ms/tracking/world policy.
+Native performance attribution between the two changes requires a later matched
+factor comparison; this combined round cannot supply that attribution.
+
+The architecture has product-owned boundaries and one canonical command store,
+but the runtime's execution transaction seam was incomplete. This is not evidence
+that every mutex or every gate is wrong. It is a concrete split-writer protocol:
+generic immediate store commit -> backend ACK enqueue -> runtime Episode/goal
+delivery. Mapping can recertify the exact generation into a new immutable pointer
+between these steps; the late pointer equality then rejects legitimate delivery.
+Changing pointer equality to generation equality would mask the protocol, not fix it.
+
+Actual-factory controls create valid H from matched stationary state, initially
+empty active/pending store and Episode initial hold. Hold only ACK queue mutex,
+invoke production commit asynchronously, then read under real lifecycle owners.
+Old implementation exposes H with Episode0/commandGoalEpoch0; actual full staged
+world validation creates H' of the same G, and releaseACK returnsfalse with
+command_availablefalse/executing_goal absent. Terminal emergency positive passes.
+RED3 tests:2 expected failures/1 positive,rc1. No sleep, handcrafted candidate,
+fake certificate, forced commit, executor/DDS or modified command gate.
+
+Correction generalizes the existing terminal-monitor immediate transaction into
+one `admitImmediateCandidate`, used by normal initial, stopped recovery and
+immediate emergency/terminal paths. Prepared goal and validators stay outside
+loc->input->command; exact predecessor conditional admission and Episode/
+executing_goal/commandGoalEpoch delivery happen under these same existing owners.
+Final owner/world/clock/lease checks are there, not scattered after ACK. ACK stays
+outside, cannot replay identity or revoke H'. Future stage/activation remains
+unchanged. About45 lines of generic late delivery/revocation logic are removed;
+no coordinator, shadow active/pending, new timeout or tunable safety gate.
+
+GREEN3 focused controls and full monitor54/54 PASS,0 skipped, on CIRI1 snapshot.
+Adversarial reviewer caught a test-observer race: direct store reads can precede
+Episode update inside the protected transaction. The final peer uses coherent
+loc->input->command observation, matching production readers; old RED still
+exposes the real pre-ACK gap. Final regressions add actual production goal change,
+epoch reset, execution failure and fake-clock expiry after actual H preparation;
+rejection must preserve the newer/current owner, including active/pending/version.
+Their results and final CIRI2 full gates/native are pending, not silently PASS.
+
+Artifact roots `.artifacts/diagnostics/immediate-owner-cutover-{red,green}-v1/`:
+RED source407661bf60fea717cd100ebabb07f0fd772b62447a8821e9fe9e7b4b140bc62e;
+RED XMLd64d99b2cbc0c51137160f8171441e8274afbf3054f92c13f3734531a024a557.
+GREEN coherent-peer source671974d880506765758f835ce51a5eabc73d3ece48b2ed730fd220c854a547f3;
+binary8e5c3bd0efd8f1efeaee969a82f0c3781346c38049fb80114c59c1d15232cbc1;
+focused XMLddb32cab271ef32e31b7588a0183185b77fb5848fdbfef835d5f9767b7e19b40;
+full monitor XMLa229d4d23196cdf3d2db4a46bd62d211bc911a1d104382268b579adc49875ba8.
+Later supersession tests/config edits are a different source snapshot.
+
+CIRI policy: restore `planner.iris_iter_num=2` and loader fallback2, instead of
+historical TB-003 reduction1. A second pass computes the inscribed ellipsoid and
+rebuilds separating planes; more optimization room is plausible, not a guaranteed
+feasible-rate improvement or monotonic superset for every corridor. Both passes
+share unchanged absolute deadline with existing loop/obstacle expiry checks.
+Point-seed success and closed-clearance rejection now exercise1/2; new reference2
+test checks request-owned already-expired steady deadline while sim time is fixed.
+All continuous corridor/dynamic/flatness/world checks stay mandatory; actual
+SAFE/FAST UNKNOWN distinction unchanged. TB-003 assurance debt remains open until
+matched dense snapshot/dataset/SITL complete-feasible rate and latency tails exist.
+Lineage is the immutable archived TB-003 register (intro30ca02c,2->1); index and
+current contract point to this restoration. Withdraw by reviewed revert if full
+readiness/progression/clearance or tails regress; never extend budget for a PASS.
+
+#### State/frame ownership: the next high-leverage issue, not another solver knob
+
+Independent root arithmetic on decoded FAST9r3 zero-V G55 hold uses actual raw
+setpoint, endpoint, LIO and PX4 local position—not asserted scalar norms from
+the preliminary receipts. SOURCE128.068s LIO endpoint error .7499130659m;
+PX4 timestamp_sample128.072s local-to-actual-setpoint error .1672673000m.
+Apply actual reference NED translation(.2088551549,.0544138068,-.0127511430)
+to basis-converted LIO; its disagreement with PX4 local is .7068104322m, with
+components(.3654067370,.3572250214,.4883125922). Exact SOURCE128.088s LIO endpoint
+error .7532504925m reproduces the native .753250493 final veto.
+
+These are ONE_RECEIPT_NEAREST_PAIR diagnostics, not qualified tracking/causality.
+SOURCE gap4ms, LIO/PX4 receipt gap9.676216ms, setpoint/PX4 receipt gap1.00243ms;
+receipt nanoseconds are preserved as BigInt in the calculator. PX4 input setpoint
+timestamp0 is not an accepted-source receipt. /clock supplies partial sim-time
+witness; no ground truth, EV bias/fusion witness or full accepted-setpoint frame
+certificate. Do not label the untranslated endpoint-NED residual as actual PX4
+tracking or infer GPS fusion from reset counter2. Preliminary v3/v4 labels for
+microseconds/milliseconds and translation ENU/NED are superseded by this calculator.
+
+Source architecture finding: navigation tracking is LIO-owned, position control
+is PX4-local-owned, but their bridge latches only a stationary translation and
+assumes fixed basis. PX4 source EV position-bias estimation can move the domains
+relative to each other when GNSS aiding is active without a local reset. That is
+a CONDITIONAL mechanism here, not proven native fusion. A separate confirmed
+API seam is latch without fresh/source-paired cached LIO/PX4 inputs; rotation/
+covariance error is not proved. The correct next contract repair is consistent
+state/frame ownership, not dynamic translation, snapping state or relaxing.75m.
+
+Retention: `.artifacts/diagnostics/fast9r3-control-window-v5-math.js`
+SHA84000890942dcdd2d28217bdeffe8483ae44de1528b8fc9fa5c1b92f5ed47f9c;
+`fast9r3-control-window-v5-independent-math.json`
+SHA4b904f551cc7297518232952d9ca7883355a18426e2f13152c5fe826ef5e8d98.
+Re-executing calculator reproduces retained JSON byte-for-byte; underlying raw
+bag50b590a39187f49432887c4ce65144f3c5c695567c556e891ca7759fdf666280 retained.
+No new product telemetry, observer or changed estimator/PX4 fusion configuration.
+
+Current flow after the ownership correction:
+
+`captured immutable request -> planner/CIRI/MINCO + complete validators ->`
+`immediate owner/store/Episode cutover OR pending stage -> timed activation ->`
+`sample + final exposure -> frame adapter -> PX4 control -> measured WP progress`.
+
+Backend ACK updates history only. Evidence observes only. Mapping prepares world
+and recertification outside owners, then publishes/revokes under the same owners.
+Mission completion remains measured in External Mode, not planner-owned.
+
+## Nonuniform corridor junction correction — 2026-09-18
+
+Implementation decision: correct a demonstrated numerical construction error
+now, without waiting for another SITL run to decide the algebra. Validate the
+patch with actual helper/certificate regressions and full Release, then measure
+native readiness/completion separately. Do not assume this explains every stop.
+
+### Pre-correction integrated closure
+
+The shared-immediate-cutover/CIRI2 matrix closes all18 attempts, abort NONE,
+all STOPPED/cleanup PASS and provenance/config VALID. Native outcomes from raw
+reports, not process return codes:
+
+| Policy | 2WP complete | 5WP complete | 9WP complete | COMPLETE / PAUSED / component |
+|---|---|---|---|---|
+| SAFE | 0/3 | 1/3 | 0/3 | 1 / 5 / 3 |
+| FAST | 2/3 | 2/3 | 0/3 | 4 / 4 / 1 |
+
+All reports are diagnostic/ineligible,0 report PASS. The same case's native
+COMPLETE may coexist with report FAIL; keep completion and qualification
+distinct. Different waypoint counts use different route/world profiles and
+must not be pooled for causal attribution. This combined correction/CIRI trial
+does not isolate CIRI1 vs2 benefit. Completion acceptance remains NOT_MET.
+
+Frozen HEAD fff6a6ada6230411af13bc990ab8fce11d850f0d;
+source7e761f18ec210f22a15803b4e4bf488f8884a533ee810c815578721a4614f5b8;
+Release manifest27ba4e7befad631be11d1966b04060cd78d13d322f395b2543599632177a1c7b.
+Plan SHA69219f5ccf42fef1c68025a85a1aacad0785ffd8450a01349e024a8934a7c6fc.
+Additive raw-report-hashed aggregate:
+`.artifacts/diagnostics/nominal-renewal-capture-nod2nN/immediate-cutover-ciri2-v1-native-aggregate-v2.json`,
+SHA8d84ae607b0fc58243687f5b9f4ec76c46e9157b5e17b871b0685953cae21da9.
+Earlier verbal outcome totals are superseded by v2's verified row-derived
+counts; the original receipt is retained. Fresh pre-correction gates are85
+CTest XML files/1304 cases,0 failures/errors/skips; Python389 cases with one
+explicit GUI-artifact skip. Retained fresh-gate archive SHA
+e8bd90145c198a6fb8795e5be5aa68008e6011ebbdda71f9dbe1b349257f8048.
+
+### Confirmed seed error and bounded implementation
+
+For exact constant acceleration, adjacent secants are
+`s_previous=v_j-a*h_previous/2`, `s_next=v_j+a*h_next/2`.
+The old arithmetic mean has error `a*(h_next-h_previous)/4`; equal-T tests
+cannot detect it. Opposite-duration weights cancel this term. Normalize both
+durations by their maximum before computing weights to avoid unnecessary
+T*secant/summed-T overflow. Do not derive one weight as1 minus the other.
+
+Existing acceleration/jerk formulas, speed cap, convex-hull damping, endpoint
+PVAJ, piece durations and all certificates remain. This is quadratic-motion
+reproduction, not a claim of exact cubic/constant-jerk interpolation. No solver
+budget,400ms anchor, horizon, physical/nominal limits or SAFE/FAST policy changes.
+No new runtime observer, execution authority, cache, coordinator or FSM.
+Targeted lineage: DEC-20260828-089, archive12727–12759; the historical
+constant-acceleration regression covered equal durations only.
+
+Actual Luna baseline fixture uses production header plus independent
+`x(t)=t+t^2/2` oracle, reversed durations and multiple junctions. Provenance,
+compile and link rc0; gtest rc1, one test failed as expected. For the first
+schedule(.0584,1.409653), a sampled A error15.252029628 and J69.643970904 expose
+real derivative ringing. Seed construction is valid but continuous nominal
+certificate fails at `DeterministicNominalSeedFailureStage::kDynamics=5`;
+do not confuse this with builder enum's coefficient stage.
+RED directory `.artifacts/diagnostics/nonuniform-corridor-secant-v1-RED/run-hrMJ3y`;
+receipt SHA65820983dae46c0ea154e1ca73e0440c0be3a8c07a1a92370e58a2925594ce8c,
+XML SHA109a8c24d6d243880805104fc43f031ff9371b531b5f49dafbac72c9fddf063d.
+
+Root applies normalized weighting and three canonical regressions. Actual Luna
+GREEN fixture compile/link/provenance/test rc0 and14 seed tests PASS; Full
+Release23 packages PASS. Source24c311dfb1e16124e4665b6871546c33c86b03ade4cc899d0c77b5e6bddab9fd,
+manifest795ef64b0635c027566f1d4eea27db2abf6e38bfd6900bf7dc8363299be4a769.
+GREEN directory `.artifacts/diagnostics/nonuniform-corridor-secant-v1-GREEN/run-vZNPEV`;
+receipt SHA743ec6c74b17ac7b824672ea34bea0d0a79fd31907bac27174fcd6af05368164,
+XML SHA736e34266c4ed2874ea6ef3e2289bc5bace9ab911cd264d8af7f42842eb08a8a.
+Full `make test` fails one optimizer assertion; preserve this failed run, not
+call it all-green. `MandatoryFeasibilityDoesNotPreemptOptionalRefinementWindow`
+forbids any incumbent selection, while the executed path completes first solve
+and two retries, then rejects final A2.001017147410794>2 and selects a certified
+earlier iterate. This is allowed final-rejection fallback, not early cutoff.
+Independent adversarial review approves TEST-ONLY oracle correction: raw
+first/last solver codes must not be CANCELED, finish remains before future cutoff,
+and this fixture must continue into later attempts after capture. Candidate,
+hard expiry and V/A/J checks remain; no runtime policy or hard limit changes.
+The first TEST-ONLY rerun has a compile failure from an unqualified lbfgs name;
+root corrects it to math_utils::lbfgs. That failed build is retained and no tests
+are claimed executed in it. Final v3 Full Release23 packages/optimizer31/seed14
+and `make test` rc0:85 fresh CTest targets (87 legacy summary includes two stale
+results), Python389 with one explicit absent-GUI-artifact skip. No native report
+is inferred from the test harness's intentionally failed fake-session report.
+Tested source677b737fc1aa481256ba898580fb4e97216b49f939bb3da97437ce52d454dc28;
+manifest240aca99d10bc6918eb0d1ef6b94279567ee10252e107e93056da728ba2140dc.
+Final gate directory `.artifacts/diagnostics/nonuniform-corridor-secant-v1-gates/run-20260918T234217309746906`;
+make-test log SHA1a4062aaf1fbb1312a373c50e24b39efb7524f66e68b248036010095ddf43fb4,
+optimizer XML SHA5916e118631e72e6e5a667a34cfc2c8a8e2211d7ebcdd4cda12a0ebbd7e0f059,
+seed XML SHA46f57499601118cd87d73008c42627c75c608ba894c6b81f42e0280909b018eb.
+These tests validate the combined worktree. HEAD lacks the worktree's retained
+incumbent prerequisite, so an isolated two-file seed commit is not represented
+as clean-HEAD full validation. Commit packaging is deferred until prerequisite
+scope is reviewed; unrelated WIP is not staged wholesale.
+Production-header fixture
+and continuous nominal certificate do not prove complete BACKUP/world/admission
+or physical stopping. Native completion/performance gain is NOT_ESTABLISHED.
+Recorded estimator/mapping characterization is queued after the new exact
+Release manifest; planner is OFF and estimator/mapping source/config unchanged.
+All failures stay in their denominators. No performance tag or qualification.
