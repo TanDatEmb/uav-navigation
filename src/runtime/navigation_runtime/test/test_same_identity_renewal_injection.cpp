@@ -108,7 +108,7 @@ TEST(WorldRevocationDelivery, FinalizesLifecycleBeforePublicationReturns) {
             navigation_execution::CommitDecision::kCommitted);
   ExecutionEpisode episode;
   episode.beginGoal(3, 7, candidate->request_id, false);
-  episode.commandCommitted(*candidate);
+  ASSERT_TRUE(episode.commandCommitted(*candidate));
   const auto before = store.snapshot();
   const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
   unsigned int finalized = 0;
@@ -138,7 +138,7 @@ class WorldRevocationFixture : public testing::Test {
     ASSERT_EQ(store.tryCommit({world, 7, 1}, predecessor),
               navigation_execution::CommitDecision::kCommitted);
     episode.beginGoal(3, 7, predecessor->request_id, false);
-    episode.commandCommitted(*predecessor);
+    ASSERT_TRUE(episode.commandCommitted(*predecessor));
   }
 
   navigation_execution::ExecutionTimelineStore store;
@@ -155,7 +155,7 @@ TEST_F(WorldRevocationFixture, SupersededRevocationPreservesNewerExecution) {
   const auto newer = std::make_shared<const navigation_planning::CandidateBundle>(replacement);
   ASSERT_EQ(store.tryCommit({world, 7, 2}, newer),
             navigation_execution::CommitDecision::kCommitted);
-  episode.commandCommitted(*newer);
+  ASSERT_TRUE(episode.commandCommitted(*newer));
   unsigned int finalized = 0;
   EXPECT_EQ(store.publishWorldIdentityIfCurrentAndFinalizeRevocation(
                 next_world, before.version, before.active, false,
@@ -248,13 +248,15 @@ TEST_F(WorldRevocationFixture, ConcurrentCommitCannotSplitRevocationAndLifecycle
     const auto result = store.tryCommit({next_world, 7, 2}, newer);
     committed.store(true);
     const bool finalized_before_commit = finalized.load();
-    episode.commandCommitted(*newer);
-    return std::make_pair(result, finalized_before_commit);
+    const bool episode_commit_accepted = episode.commandCommitted(*newer);
+    return std::make_pair(
+        std::make_pair(result, finalized_before_commit), episode_commit_accepted);
   });
   EXPECT_EQ(publication.get(), navigation_world_model::WorldCommitDecision::kCommitted);
   const auto commit_result = commit.get();
-  EXPECT_EQ(commit_result.first, navigation_execution::CommitDecision::kCommitted);
-  EXPECT_TRUE(commit_result.second);
+  EXPECT_EQ(commit_result.first.first, navigation_execution::CommitDecision::kCommitted);
+  EXPECT_TRUE(commit_result.first.second);
+  EXPECT_FALSE(commit_result.second);
   EXPECT_FALSE(commit_seen_inside_finalizer);
   // A later bare store write cannot resurrect a failed runtime episode.
   EXPECT_FALSE(episode.snapshot().command_available);
@@ -376,7 +378,7 @@ TEST(SameIdentityRenewalInjection,
 
   ExecutionEpisode episode;
   episode.beginGoal(3U, 7U, 17U, true);
-  episode.commandCommitted(*predecessor);
+  ASSERT_TRUE(episode.commandCommitted(*predecessor));
 
   // The diagnostic failure is exposed after the real solve, so it must not
   // mutate any execution-owned predecessor state or episode identity.
@@ -407,7 +409,7 @@ TEST(SameIdentityRenewalInjection,
       50, pending_snapshot, [](std::uint64_t) { return true; }));
   EXPECT_EQ(timeline.load(), successor);
   const auto after_activation = episode.snapshot();
-  episode.commandCommitted(*successor);
+  ASSERT_TRUE(episode.commandCommitted(*successor));
   const auto successor_episode = episode.snapshot();
   EXPECT_EQ(after_activation.active_generation, predecessor->bundle_generation);
   EXPECT_EQ(successor_episode.active_generation, successor->bundle_generation);

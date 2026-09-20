@@ -345,7 +345,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       std::uint64_t localization_epoch,
       std::unique_lock<std::mutex>& localization_lock);
   // Caller holds command_execution_lease_failure_latch_.transitionMutex().
-  void applyExecutionRecoveryEventLocked(ExecutionRecoveryEvent event) noexcept;
+  bool applyExecutionRecoveryEventLocked(
+      ExecutionRecoveryEvent event,
+      const navigation_planning::CandidateBundle& bundle) noexcept;
   // Caller holds command_execution_lease_failure_latch_.transitionMutex().
   // Command-store invalidation remains explicit at call sites because ordinary
   // planner failures must retain a still-certified active command.

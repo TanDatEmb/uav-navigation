@@ -63,7 +63,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     node.execution_transaction_id_.store(1U);
     node.execution_episode_.beginGoal(command->localization_epoch, command->goal_epoch,
                                       command->request_id, false);
-    node.execution_episode_.commandCommitted(*command);
+    if (!node.execution_episode_.commandCommitted(*command)) return false;
     node.trajectory_completion_witness_.reset();
     node.trajectory_reaches_goal_.store(false);
     node.terminal_bundle_generation_.store(0U);

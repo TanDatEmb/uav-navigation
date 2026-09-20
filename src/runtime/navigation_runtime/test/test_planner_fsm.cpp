@@ -343,6 +343,26 @@ TEST(PlannerFsm, TerminalStopAcceptsCertifiedBackupEndpointButNotEmergency) {
       navigation_planning::CandidateRole::kBackup));
 }
 
+TEST(PlannerFsm, TerminalMainWithBackupIntentCompletesAtBackupEndpointOnly) {
+  const auto kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  const auto main_role = navigation_planning::CandidateRole::kMain;
+  const auto backup_endpoint_role = navigation_planning::CandidateRole::kBackup;
+  const bool terminal_endpoint = terminalStopEndpointContractValid(
+      true, kind, main_role, backup_endpoint_role);
+  EXPECT_TRUE(terminal_endpoint);
+  EXPECT_TRUE(terminalStopCompletionObserved(
+      true, terminal_endpoint, true, 0.1, 0.2, 0.5));
+
+  // The same MAIN+BACKUP role partition without terminal intent is an
+  // ordinary continuation, not a STOP completion, even if endpoint and
+  // measured position happen to be inside the acceptance radius.
+  const bool ordinary_endpoint = terminalStopEndpointContractValid(
+      false, kind, main_role, backup_endpoint_role);
+  EXPECT_FALSE(ordinary_endpoint);
+  EXPECT_FALSE(terminalStopCompletionObserved(
+      false, ordinary_endpoint, true, 0.1, 0.2, 0.5));
+}
+
 TEST(PlannerFsm, UsesStopDistanceOnlyForTerminalStopApproach) {
   const double braking_distance = plannerTerminalStopBrakingDistanceM(5.0, 2.0, 4.0);
   EXPECT_NEAR(braking_distance, 8.75, 1.0e-12);
@@ -542,19 +562,33 @@ TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
 
 TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
   ExecutionEpisode episode;
-  episode.beginGoal(1U, 1U, 1U, true);
+  episode.beginGoal(1U, 1U, 1U, false);
+  navigation_planning::CandidateBundle active;
+  active.localization_epoch = 1U;
+  active.goal_epoch = 1U;
+  active.request_id = 1U;
+  active.bundle_generation = 4U;
+  active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  active.role = navigation_planning::CandidateRole::kMain;
+  ASSERT_TRUE(episode.commandCommitted(active));
   std::barrier rendezvous(3);
+  std::atomic<bool> backup_applied{false};
+  std::atomic<bool> emergency_applied{false};
   std::thread backup([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated);
+    backup_applied.store(episode.applyRecoveryEvent(
+        ExecutionRecoveryEvent::kBackupActivated, active));
   });
   std::thread emergency([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kEmergencyCommitted);
+    emergency_applied.store(episode.applyRecoveryEvent(
+        ExecutionRecoveryEvent::kEmergencyCommitted, active));
   });
   rendezvous.arrive_and_wait();
   backup.join();
   emergency.join();
+  EXPECT_TRUE(backup_applied.load());
+  EXPECT_TRUE(emergency_applied.load());
 
   const auto result = episode.snapshot().recovery_state;
   EXPECT_TRUE(result == ExecutionRecoveryState::kTrackBackup ||
@@ -563,11 +597,20 @@ TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
 
 TEST(PlannerFsm, SerializedFailClosedCannotBeResurrectedByNominalEvent) {
   ExecutionEpisode episode;
-  episode.beginGoal(1U, 1U, 1U, true);
+  episode.beginGoal(1U, 1U, 1U, false);
+  navigation_planning::CandidateBundle active;
+  active.localization_epoch = 1U;
+  active.goal_epoch = 1U;
+  active.request_id = 1U;
+  active.bundle_generation = 4U;
+  active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  active.role = navigation_planning::CandidateRole::kMain;
+  ASSERT_TRUE(episode.commandCommitted(active));
   std::barrier rendezvous(3);
   std::thread nominal([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated);
+    EXPECT_FALSE(episode.applyRecoveryEvent(
+        ExecutionRecoveryEvent::kBackupActivated, active));
   });
   std::thread fail_closed([&] {
     rendezvous.arrive_and_wait();
