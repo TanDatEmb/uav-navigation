@@ -1132,8 +1132,21 @@ class RuntimeContractTest(unittest.TestCase):
             cmake,
         )
         self.assertTrue(workspace_profile)
-        installed_planner = ROOT / "install/navigation_runtime/share/navigation_runtime/config/planner.yaml"
-        self.assertTrue(installed_planner.is_file())
+        install_prefixes = [
+            Path(prefix)
+            for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(os.pathsep)
+            if prefix
+        ]
+        installed_planner_candidates = [
+            prefix / "share/navigation_runtime/config/planner.yaml"
+            for prefix in install_prefixes
+        ]
+        # Keep the conventional workspace install valid for direct invocations
+        # that have not sourced an isolated colcon prefix.
+        installed_planner_candidates.append(
+            ROOT / "install/navigation_runtime/share/navigation_runtime/config/planner.yaml"
+        )
+        self.assertTrue(any(path.is_file() for path in installed_planner_candidates))
 
     def test_corrected_mapping_precedes_propagated_planner_gates(self) -> None:
         source = (
