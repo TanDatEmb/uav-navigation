@@ -628,7 +628,9 @@ double mainGuideSupport(
         cg_ptr_->setCurrentBodySupport(current_body_support_);
     }
 
-    bool Planner::authorizeAndStage(CandidateCommandBundle&& candidate) {
+    bool Planner::authorizeAndStage(
+            CandidateCommandBundle&& candidate,
+            const navigation_planning::PlanningRequest* request) {
         if (commit_authorizer_ == nullptr || !map_ptr_) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -731,8 +733,8 @@ double mainGuideSupport(
                 // fold gate is bypassed only for this bounded STOP correction;
                 // world, dynamic, yaw, anchor, and handoff certificates still
                 // authorize the candidate independently.
-                const auto* previous_bundle = active_planning_request_
-                    ? active_planning_request_->history.previous_bundle.get()
+                const auto* previous_bundle = request
+                    ? request->history.previous_bundle.get()
                     : nullptr;
                 const bool previous_was_emergency = previous_bundle &&
                     previous_bundle->valid() &&
@@ -741,7 +743,7 @@ double mainGuideSupport(
                     previous_bundle->role ==
                         navigation_planning::CandidateRole::kEmergency &&
                     previous_bundle->bundle_generation ==
-                        active_planning_request_->history.previous_bundle_generation &&
+                        request->history.previous_bundle_generation &&
                     previous_bundle->localization_epoch ==
                         command_identity.localization_epoch &&
                     previous_bundle->goal_epoch == command_identity.goal_epoch &&
@@ -1572,7 +1574,8 @@ double mainGuideSupport(
     }
 
     std::optional<bool> Planner::tryStageMeasuredTerminalStopHold(
-            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline) {
+            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline,
+            const navigation_planning::PlanningRequest* request) {
         if (!terminal_stop_required_ || !route_snapshot_.has_value() ||
             route_snapshot_->active_waypoint_index >= route_snapshot_->waypoints.size() ||
             !map_ptr_ || !solve_state_.rcv || !solve_state_.p.allFinite() ||
@@ -1698,7 +1701,7 @@ double mainGuideSupport(
 
         auto candidate = CmdTraj::buildCandidate(
             hold_exp, nullptr, BackupDisposition::FINISH, true);
-        if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+        if (!candidate || !authorizeAndStage(std::move(*candidate), request)) {
             latest_replan.setRetCode(PLANNER_CANDIDATE_REJECTED);
             planner_context_->warn(
                 " -- [planner] measured terminal STOP hold rejected by final "
@@ -1816,7 +1819,7 @@ double mainGuideSupport(
         latest_replan.setLocalStartP(local_star_pt);
 
         const auto measured_terminal_hold =
-            tryStageMeasuredTerminalStopHold(goal_p, solve_deadline);
+            tryStageMeasuredTerminalStopHold(goal_p, solve_deadline, request);
         if (measured_terminal_hold.has_value()) {
             return *measured_terminal_hold ? SUCCESS : FAILED;
         }
@@ -1880,7 +1883,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -1911,7 +1914,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, disposition,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2122,7 +2125,7 @@ double mainGuideSupport(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
-            if (!authorizeAndStage(std::move(*candidate))) {
+            if (!authorizeAndStage(std::move(*candidate), request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2151,7 +2154,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::NO_NEED,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2181,7 +2184,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::FINISH,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2249,9 +2252,6 @@ double mainGuideSupport(
             current_body_support_admission_pending_ = false;
             current_body_support_matches_start_ = false;
             setCurrentBodySupport({});
-            if (active_planning_request_ == &request) {
-                active_planning_request_ = nullptr;
-            }
             requested_activation_stamp_ns_ = 0;
             requested_activation_yaw_rate_rad_s_ = 0.0;
             diagnostic_solve_generation_ = 0U;
@@ -2282,7 +2282,6 @@ double mainGuideSupport(
             request.dynamics.unknown_space_policy != cfg_.unknown_space_policy) {
             return finish();
         }
-        active_planning_request_ = &request;
         if (request.key.start_mode !=
             navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake) {
             resetExpOptimizationDiagnostics();
@@ -2382,7 +2381,7 @@ double mainGuideSupport(
                 return commitEmergencyBrake(
                     measured, request.start_state.yaw_rad, 0.0,
                     planner_context_->getSimTime(),
-                    request.emergency_terminal_altitude_m)
+                    request.emergency_terminal_altitude_m, &request)
                     ? RET_CODE::SUCCESS : RET_CODE::EMER;
               })()
             : planSuccessorFromExecutionAnchorImpl(
@@ -2574,7 +2573,9 @@ double mainGuideSupport(
                                             const double initial_command_yaw_dot,
                                             const double start_WT,
                                             const std::optional<double>
-                                                terminal_altitude_override_m) {
+                                                terminal_altitude_override_m,
+                                            const navigation_planning::PlanningRequest*
+                                                request) {
         if (!initial_command_state.allFinite() ||
             !std::isfinite(initial_command_yaw) ||
             !std::isfinite(initial_command_yaw_dot) || !std::isfinite(start_WT)) {
@@ -2684,7 +2685,7 @@ double mainGuideSupport(
 
         auto candidate = CmdTraj::buildEmergencyCandidate(
             position_trajectory, yaw_trajectory);
-        if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+        if (!candidate || !authorizeAndStage(std::move(*candidate), request)) {
             planner_context_->error(" -- [planner] emergency brake atomic commit rejected");
             return false;
         }

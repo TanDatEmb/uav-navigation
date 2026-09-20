@@ -104,10 +104,6 @@ namespace navigation_planning_backend {
         mutable std::mutex command_identity_mutex_;
         mutable std::mutex planner_timeline_mutex_;
         CommandIdentity command_identity_{};
-        // Non-owning pointer to the immutable transaction value currently
-        // being solved. Planner::plan is synchronous and clears it on every
-        // exit; writers never retain request data beyond that solve.
-        const navigation_planning::PlanningRequest* active_planning_request_{nullptr};
         // Non-zero only while servicing a typed PlanningRequest. All planner
         // stages use this transaction-owned absolute deadline; compatibility
         // entry points retain the configured local budget.
@@ -261,7 +257,9 @@ namespace navigation_planning_backend {
         double certified_lookahead_m_{std::numeric_limits<double>::quiet_NaN()};
         bool lookahead_complete_{false};
 
-        bool authorizeAndStage(CandidateCommandBundle&& candidate);
+        bool authorizeAndStage(
+            CandidateCommandBundle&& candidate,
+            const navigation_planning::PlanningRequest* request = nullptr);
 
         [[nodiscard]] std::optional<std::uint64_t>
         reserveCandidateGenerationLocked();
@@ -304,7 +302,8 @@ namespace navigation_planning_backend {
         // it may use the request-local body witness, but it must still pass
         // the normal dynamic and immutable-world certificates.
         [[nodiscard]] std::optional<bool> tryStageMeasuredTerminalStopHold(
-            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline);
+            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline,
+            const navigation_planning::PlanningRequest* request);
 
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -653,7 +652,8 @@ namespace navigation_planning_backend {
         bool commitEmergencyBrake(
             const StatePVAJ &initial_command_state, double initial_command_yaw,
             double initial_command_yaw_dot, double start_WT,
-            std::optional<double> terminal_altitude_m = std::nullopt);
+            std::optional<double> terminal_altitude_m = std::nullopt,
+            const navigation_planning::PlanningRequest* request = nullptr);
         void resetExpOptimizationDiagnostics() noexcept {
             if (exp_traj_opt_) exp_traj_opt_->resetDiagnostics();
         }
