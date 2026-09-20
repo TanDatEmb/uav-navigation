@@ -20,10 +20,12 @@ struct TrajectoryDynamicReport {
     double maximum_thrust_n{0.0};
 };
 
-// planner backend's optimizer penalties are sampled soft costs. This independent final
-// gate evaluates the generated polynomial through the same quadrotor flatness
-// model and prevents a low aggregate penalty from authorizing a trajectory
-// outside the vehicle body-rate or thrust envelope.
+// Hard rejection is applied at every bounded uniform sample and every exact
+// polynomial junction using the quadrotor flatness model. This is sampled
+// screening, not a continuous-time guarantee: extrema of the complete
+// flatness model between those evaluation points are not enclosed here.
+// Optimizer penalties are not authorization; a PASS means only that the
+// evaluated points satisfy the configured body-rate and thrust limits.
 inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
         const geometry_utils::Trajectory &trajectory,
         const Config &config,
@@ -43,7 +45,8 @@ inline TrajectoryDynamicReport evaluateTrajectoryDynamics(
         return report;
     }
 
-    // This is a sampled screening gate, so its work must be explicitly
+    // This is a sampled screening gate, not continuous flatness assurance, so
+    // its work must be explicitly
     // bounded before any floating-point-to-size conversion. A caller asking
     // for a finer sampling interval than this budget gets a deterministic
     // rejection instead of an overflowing conversion or loop.

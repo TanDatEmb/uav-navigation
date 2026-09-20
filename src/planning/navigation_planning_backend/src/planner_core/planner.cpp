@@ -19,6 +19,7 @@
 #include <planner_core/replan_contract.hpp>
 #include <planner_core/route_boundary_timing.hpp>
 #include <planner_core/trajectory_world_validator.hpp>
+#include "nominal_problem_snapshot_writer.hpp"
 #include <utils/optimization/polynomial_interpolation.h>
 #include <navigation_world_model/continuous_clearance.hpp>
 #include <navigation_world_model/goal_contract.hpp>
@@ -28,15 +29,9 @@
 #include <traj_opt/trajectory_dynamics.hpp>
 #include <atomic>
 #include <cmath>
-#include <condition_variable>
 #include <cstdlib>
-#include <deque>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <sstream>
 #include <stdexcept>
 #include <navigation_math/scope_timer.hpp>
@@ -128,183 +123,6 @@ AbsoluteDeadline Planner::solveDeadlineForCurrentRequest() const {
     }
     return AbsoluteDeadline(planner_context_->getSimTime(), cfg_.solve_deadline_s);
 }
-
-class NominalProblemSnapshotWriter final {
- public:
-  explicit NominalProblemSnapshotWriter(
-      const std::size_t capacity, std::string directory)
-      : capacity_(std::max<std::size_t>(1U, capacity)),
-        directory_(std::move(directory)) {
-    writeStats(false);
-    worker_ = std::thread([this] { run(); });
-  }
-
-  NominalProblemSnapshotWriter(const NominalProblemSnapshotWriter&) = delete;
-  NominalProblemSnapshotWriter& operator=(const NominalProblemSnapshotWriter&) = delete;
-
-  ~NominalProblemSnapshotWriter() noexcept {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      stopping_ = true;
-    }
-    condition_.notify_one();
-    if (worker_.joinable()) worker_.join();
-    writeStats(true);
-    const auto dropped = dropped_count_.load(std::memory_order_relaxed);
-    if (dropped != 0U) {
-      std::fprintf(stderr,
-                   "[planner] nominal snapshot writer dropped %llu bounded captures\n",
-                   static_cast<unsigned long long>(dropped));
-    }
-  }
-
-  bool enqueue(std::optional<traj_opt::NominalProblemSnapshot> snapshot,
-               const navigation_world_model::WorldModelViewPtr& world,
-               const bool include_world_snapshot) noexcept {
-    if (!snapshot.has_value() || directory_.empty()) return false;
-    submitted_count_.fetch_add(1U, std::memory_order_relaxed);
-    try {
-      Job job;
-      job.snapshot = std::move(snapshot);
-      job.world = world;
-      job.include_world_snapshot = include_world_snapshot;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (stopping_ || queue_.size() >= capacity_) {
-          dropped_count_.fetch_add(1U, std::memory_order_relaxed);
-          return false;
-        }
-        queue_.emplace_back(std::move(job));
-        enqueued_count_.fetch_add(1U, std::memory_order_relaxed);
-      }
-      condition_.notify_one();
-      return true;
-    } catch (...) {
-      dropped_count_.fetch_add(1U, std::memory_order_relaxed);
-      return false;
-    }
-  }
-
-  [[nodiscard]] std::uint64_t droppedCount() const noexcept {
-    return dropped_count_.load(std::memory_order_relaxed);
-  }
-
- private:
-  struct Job {
-    std::optional<traj_opt::NominalProblemSnapshot> snapshot;
-    navigation_world_model::WorldModelViewPtr world;
-    bool include_world_snapshot{false};
-  };
-
-  void writeStats(const bool capture_complete) noexcept {
-    try {
-      std::size_t pending = 0U;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        pending = queue_.size();
-      }
-      pending += static_cast<std::size_t>(
-          active_write_count_.load(std::memory_order_relaxed));
-      std::error_code directory_error;
-      std::filesystem::create_directories(directory_, directory_error);
-      if (directory_error) {
-        stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-        return;
-      }
-      const auto path = std::filesystem::path(directory_) /
-          "nominal_problem_snapshot_capture.json";
-      const auto temporary = std::filesystem::path(directory_) /
-          "nominal_problem_snapshot_capture.json.tmp";
-      std::ofstream output(temporary, std::ios::out | std::ios::trunc);
-      if (!output) {
-        stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-        return;
-      }
-      output << "{\"schema_version\":1"
-             << ",\"capacity\":" << capacity_
-             << ",\"submitted_records\":"
-             << submitted_count_.load(std::memory_order_relaxed)
-             << ",\"accepted_records\":"
-             << enqueued_count_.load(std::memory_order_relaxed)
-             << ",\"written_records\":"
-             << written_count_.load(std::memory_order_relaxed)
-             << ",\"dropped_records\":"
-             << dropped_count_.load(std::memory_order_relaxed)
-             << ",\"write_error_count\":"
-             << write_error_count_.load(std::memory_order_relaxed)
-             << ",\"stats_write_error_count\":"
-             << stats_write_error_count_.load(std::memory_order_relaxed)
-             << ",\"pending_records\":" << pending
-             << ",\"capture_complete\":"
-             << (capture_complete ? "true" : "false")
-             << "}\n";
-      output.close();
-      if (!output) {
-        stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-        return;
-      }
-      std::error_code rename_error;
-      std::filesystem::rename(temporary, path, rename_error);
-      if (rename_error) {
-        stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-        std::error_code remove_error;
-        std::filesystem::remove(temporary, remove_error);
-      }
-    } catch (...) {
-      stats_write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-    }
-  }
-
-  void run() noexcept {
-    for (;;) {
-      Job job;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        condition_.wait(lock, [this] {
-          return stopping_ || !queue_.empty();
-        });
-        if (queue_.empty() && stopping_) return;
-        job = std::move(queue_.front());
-        queue_.pop_front();
-      }
-      active_write_count_.store(1U, std::memory_order_relaxed);
-      bool written = false;
-      try {
-        if (job.snapshot.has_value() && job.include_world_snapshot && job.world) {
-          job.snapshot->diagnostic_world_snapshot = job.world->diagnosticSnapshot();
-        }
-        if (job.snapshot.has_value()) {
-          written = !traj_opt::writeNominalProblemSnapshotJson(
-              *job.snapshot, directory_).empty();
-        }
-      } catch (...) {
-        // Diagnostic capture is best effort and cannot affect planning.
-      }
-      if (written) {
-        written_count_.fetch_add(1U, std::memory_order_relaxed);
-      } else {
-        write_error_count_.fetch_add(1U, std::memory_order_relaxed);
-      }
-      active_write_count_.store(0U, std::memory_order_relaxed);
-      writeStats(false);
-    }
-  }
-
-  const std::size_t capacity_;
-  const std::string directory_;
-  mutable std::mutex mutex_;
-  std::condition_variable condition_;
-  std::deque<Job> queue_;
-  bool stopping_{false};
-  std::atomic<std::uint64_t> submitted_count_{0U};
-  std::atomic<std::uint64_t> enqueued_count_{0U};
-  std::atomic<std::uint64_t> written_count_{0U};
-  std::atomic<std::uint64_t> dropped_count_{0U};
-  std::atomic<std::uint64_t> write_error_count_{0U};
-  std::atomic<std::uint64_t> stats_write_error_count_{0U};
-  std::atomic<std::uint64_t> active_write_count_{0U};
-  std::thread worker_;
-};
 
 namespace {
 
