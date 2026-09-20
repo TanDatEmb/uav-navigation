@@ -1,0 +1,26 @@
+support_m=0.401 requested_mps=1 governor_sufficient=1 governor_speed_mps=1 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.401 requested_mps=3 governor_sufficient=1 governor_speed_mps=1.3125 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.401 requested_mps=5 governor_sufficient=1 governor_speed_mps=1.25 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.401 requested_mps=8 governor_sufficient=1 governor_speed_mps=1 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.45 requested_mps=1 governor_sufficient=1 governor_speed_mps=1 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.45 requested_mps=3 governor_sufficient=1 governor_speed_mps=1.5 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.45 requested_mps=5 governor_sufficient=1 governor_speed_mps=1.25 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.45 requested_mps=8 governor_sufficient=1 governor_speed_mps=1.5 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.6 requested_mps=1 governor_sufficient=1 governor_speed_mps=1 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.6 requested_mps=3 governor_sufficient=1 governor_speed_mps=1.6875 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.6 requested_mps=5 governor_sufficient=1 governor_speed_mps=1.5625 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=0.6 requested_mps=8 governor_sufficient=1 governor_speed_mps=1.5 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=1 requested_mps=1 governor_sufficient=1 governor_speed_mps=1 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=1 requested_mps=3 governor_sufficient=1 governor_speed_mps=2.4375 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=1 requested_mps=5 governor_sufficient=1 governor_speed_mps=2.5 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=1 requested_mps=8 governor_sufficient=1 governor_speed_mps=2.5 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=2 requested_mps=1 governor_sufficient=1 governor_speed_mps=1 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=2 requested_mps=3 governor_sufficient=1 governor_speed_mps=3 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=2 requested_mps=5 governor_sufficient=1 governor_speed_mps=4.0625 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=2 requested_mps=8 governor_sufficient=1 governor_speed_mps=4 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=5 requested_mps=1 governor_sufficient=1 governor_speed_mps=1 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=5 requested_mps=3 governor_sufficient=1 governor_speed_mps=3 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=5 requested_mps=5 governor_sufficient=1 governor_speed_mps=5 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+support_m=5 requested_mps=8 governor_sufficient=1 governor_speed_mps=7 fine_sweep_feasible=1 first_fine_speed_mps=0.001
+positive_control=1 missing_support_control=0
+checked=24 grid_rejects_with_fine_sweep_witness=0

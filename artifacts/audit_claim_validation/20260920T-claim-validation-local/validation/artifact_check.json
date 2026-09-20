@@ -1,0 +1,12 @@
+{
+  "status": "DRIFT_DETECTED",
+  "evidence_records": 45,
+  "claims": 8,
+  "manifest_source_files": 596,
+  "A_source_snapshot_matches_manifest": true,
+  "A_paths_different_in_current_checkout": 15,
+  "captured_checkout_status_preserved": false,
+  "final_checkout_drift_report": "validation/final_checkout_drift.json",
+  "rendered_dot_svg_pairs": 6,
+  "offline_index_links_checked": 44
+}

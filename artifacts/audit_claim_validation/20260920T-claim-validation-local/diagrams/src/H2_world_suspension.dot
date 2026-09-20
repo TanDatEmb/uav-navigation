@@ -1,0 +1,28 @@
+digraph H2 {
+  graph [rankdir=TB, labelloc=t, label="H2 — World suspension, recertification and adapter lease", fontsize=18, fontname="DejaVu Sans"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans", fontsize=10];
+  edge [fontname="DejaVu Sans", fontsize=9];
+  fresh [label="World fresh; current bundle exposed"];
+  stale [label="World observation stale\n(age > configured maximum)"];
+  suspend [label="Runtime cancels worker;\nsuspend exact bundle generation;\nno command from this callback"];
+  recert [label="Fresh world arrives;\nrecertify retained candidate"];
+  resume [label="Recheck exact generation,\nloc/goal epochs, valid bundle,\nno failure latch; restore episode"];
+  fail_recert [label="No fresh world / recertification fails\nor returns after useful lease"];
+  adapter_lease [label="PX4 adapter sees last command\nheader age or receive age > 100 ms\n(no exact completed-recovery exception)"];
+  stop [label="safetyStopNavigation:\nfailure + handover latch;\ncommand invalidated; mission deactivated"];
+  hold [label="Stationary stream/status;\nschedule PX4 Hold"];
+  status [label="VehicleStatus AUTO_LOITER\nseparate observer"];
+  note [shape=note, label="Solid: source-controlled synchronous path\nDotted: time/transport ordering premise\nPX4 acceptance is not observed"];
+  fresh -> stale [label="new world-age check"];
+  stale -> suspend [label="E-H2-01/02/03"];
+  suspend -> recert [style=dashed, label="mapping callback later"];
+  recert -> resume [label="E-H2-04 [exact identity valid]"];
+  resume -> fresh [label="publication can resume"];
+  recert -> fail_recert [label="[not current / invalid / late]"];
+  suspend -> fail_recert [style=dotted, label="no usable recertification"];
+  fail_recert -> adapter_lease [style=dotted, label="receiver lease ages"];
+  adapter_lease -> stop [label="E-H2-05/06"];
+  stop -> hold [label="application requests handover"];
+  hold -> status [style=dashed, label="independent status subscription"];
+  note -> adapter_lease [style=invis];
+}

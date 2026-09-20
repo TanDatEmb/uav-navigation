@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audit H0–H7 — uav-navigation</title>
+  <style>
+    :root { color-scheme: light; --ink:#202a35; --muted:#566574; --line:#d5dde4; --accent:#145d82; --panel:#f4f7f9; }
+    body { margin:0; font:16px/1.55 system-ui,sans-serif; color:var(--ink); background:#fff; }
+    main { max-width:1160px; margin:0 auto; padding:28px 24px 64px; }
+    h1,h2,h3 { line-height:1.2; } h1 { margin:0 0 8px; } h2 { margin-top:38px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    p,li { max-width:90ch; } a { color:var(--accent); } .status { display:inline-block; padding:3px 10px; border:1px solid #bb7b23; border-radius:4px; font-weight:700; }
+    .lead { color:var(--muted); margin-top:0; } .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:14px; }
+    .card { border:1px solid var(--line); border-radius:6px; padding:14px 16px; background:var(--panel); }
+    nav a { margin-right:14px; white-space:nowrap; } .diagram { border:1px solid var(--line); padding:12px; margin:14px 0 24px; overflow:auto; background:white; }
+    .diagram img { display:block; width:auto; max-width:100%; max-height:760px; margin:auto; }
+    table { border-collapse:collapse; width:100%; display:block; overflow-x:auto; }
+    th,td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; min-width:135px; }
+    th { background:var(--panel); } code { overflow-wrap:anywhere; }
+    @media (max-width:650px) { main { padding:18px 14px 40px; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Audit giả thuyết nghẽn H0–H7</h1>
+  <p class="lead">uav-navigation · 2026-09-20 · source-first, offline artifact</p>
+  <p><span class="status">PARTIAL_AS_IS</span> Không có trace workload khớp source, binary và profile; chưa đủ căn cứ xếp hạng bottleneck thực tế.</p>
+  <p><strong>Drift khi chốt:</strong> checkout chuyển từ baseline HEAD 9534d8dc sang 8eaab3d3 trong khi audit đang chạy; 15 source-manifest paths khác A. Verdict ở đây giữ riêng theo frozen A/initial B. H1–H5 trên checkout hiện tại chưa xác minh. <a href="validation/final_checkout_drift.json">Chi tiết/hash drift</a>.</p>
+  <p><a href="AUDIT_VERDICT.md">Đọc báo cáo verdict</a> · <a href="claims.json">claims.json</a> · <a href="evidence/refs.jsonl">evidence refs</a> · <a href="validation/commands.md">lệnh test/build</a></p>
+
+  <h2>Kết luận nhanh</h2>
+  <div class="cards">
+    <section class="card"><h3>Đã xác nhận trong source</h3><p>Loader có nhánh sim-time + zero tracking coefficients; world suspension chỉ resume exact recertified bundle; ROS publish nằm trong lock scope dùng chung với odometry; governor có fixed 16-speed grid.</p></section>
+    <section class="card"><h3>Có điều kiện</h3><p>H1 crossing có thể mất ở MissionController khi witness thiếu và measured segment không còn; chưa chứng minh runtime producer/admission phát candidate với timeline đó. H2 terminal handover là fail-closed, chưa chứng minh lỗi liveness.</p></section>
+    <section class="card"><h3>Nhận xét đã thu hẹp</h3><p>PX4 ModeExecutor Success không chỉ là ACK: pinned implementation chờ ModeCompleted. Timer cùng 5 s không chứng minh xung đột. Lock contention không đồng nghĩa bottleneck target.</p></section>
+  </div>
+
+  <h2>Verdict H0–H7</h2>
+  <table>
+    <thead><tr><th>Claim</th><th>Verdict</th><th>Evidence level</th><th>Missing proof</th></tr></thead>
+    <tbody>
+      <tr><td>H0 · profile premises</td><td>CONFIRMED_WITH_SCOPE</td><td>Loader fixture executed; source/config reviewed</td><td>Live param dump, launch argv, mission, RMW, binary identity</td></tr>
+      <tr><td>H1 · continuation/crossing</td><td>CONDITIONAL</td><td>Production MissionController local counterexample; static upstream path</td><td>Candidate thật qua geometry/admission và matched state trace</td></tr>
+      <tr><td>H2 · world suspension/lease</td><td>CONFIRMED_WITH_SCOPE</td><td>Static reachable fail-closed branch; helper tests</td><td>Transport timeline, adapter execution, PX4 acceptance</td></tr>
+      <tr><td>H3 · publish lock</td><td>STRUCTURE CONFIRMED; BOTTLENECK UNRESOLVED</td><td>Source lock scope + store barrier test</td><td>No-fault target distribution and lock wait/hold separation</td></tr>
+      <tr><td>H4 · recovery timers</td><td>CONDITIONAL</td><td>Distinct owners/start events/clocks in source</td><td>Budget spec and same-episode adapter test</td></tr>
+      <tr><td>H5 · governor/support</td><td>NOT_REPRODUCED</td><td>Unit tests + 24-input helper sweep</td><td>Reachable world/route candidate and duration oracle</td></tr>
+      <tr><td>H6 · Hold API/status</td><td>ACK-ONLY REFUTED; ORDER UNRESOLVED</td><td>Pinned submodule implementation and app callbacks</td><td>PX4 firmware and matched status/callback trace</td></tr>
+      <tr><td>H7 · actual bottleneck</td><td>UNRESOLVED</td><td>Source funnel, no workload cohort</td><td>Correlated run trace and measured alternatives</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Diagram source và SVG</h2>
+  <p>Đường liền là call/guard đồng bộ; nét đứt là callback/event/timer riêng; chấm là điều kiện thời gian chưa quan sát. Mỗi hình liên kết source DOT.</p>
+  <section class="diagram"><h3>H1 · continuation witness</h3><p><a href="diagrams/src/H1_continuation.dot">DOT source</a> · <a href="diagrams/svg/H1_continuation.svg">SVG</a></p><a href="diagrams/svg/H1_continuation.svg"><img src="diagrams/svg/H1_continuation.svg" alt="Continuation producer, adapter updateMission và measured crossing"></a></section>
+  <section class="diagram"><h3>H2 · world suspension</h3><p><a href="diagrams/src/H2_world_suspension.dot">DOT source</a> · <a href="diagrams/svg/H2_world_suspension.svg">SVG</a></p><a href="diagrams/svg/H2_world_suspension.svg"><img src="diagrams/svg/H2_world_suspension.svg" alt="World suspension, recertification, command lease và authority"></a></section>
+  <section class="diagram"><h3>H3 · publication lock scope</h3><p><a href="diagrams/src/H3_publish_lock.dot">DOT source</a> · <a href="diagrams/svg/H3_publish_lock.svg">SVG</a></p><a href="diagrams/svg/H3_publish_lock.svg"><img src="diagrams/svg/H3_publish_lock.svg" alt="Publication lock and competing odometry callback"></a></section>
+  <section class="diagram"><h3>H4 · recovery clocks</h3><p><a href="diagrams/src/H4_recovery_timers.dot">DOT source</a> · <a href="diagrams/svg/H4_recovery_timers.svg">SVG</a></p><a href="diagrams/svg/H4_recovery_timers.svg"><img src="diagrams/svg/H4_recovery_timers.svg" alt="Distinct runtime and adapter recovery timers"></a></section>
+  <section class="diagram"><h3>H5 · governor</h3><p><a href="diagrams/src/H5_governor.dot">DOT source</a> · <a href="diagrams/svg/H5_governor.svg">SVG</a></p><a href="diagrams/svg/H5_governor.svg"><img src="diagrams/svg/H5_governor.svg" alt="Measured state, speed governor and planner return path"></a></section>
+  <section class="diagram"><h3>H6 · Hold API ordering</h3><p><a href="diagrams/src/H6_hold_order.dot">DOT source</a> · <a href="diagrams/svg/H6_hold_order.svg">SVG</a></p><a href="diagrams/svg/H6_hold_order.svg"><img src="diagrams/svg/H6_hold_order.svg" alt="Pinned ModeExecutor callback versus independent VehicleStatus"></a></section>
+
+  <h2>Evidence và reproducibility</h2>
+  <ul>
+    <li><a href="evidence/profile_matrix.md">H0 profile matrix và loader truth table</a></li>
+    <li><a href="evidence/lock_timeline.md">H3 lock timeline và giới hạn bottleneck claim</a></li>
+    <li><a href="evidence/timer_matrix.md">H4 timer owner/start/clock/clear</a></li>
+    <li><a href="evidence/funnel.md">H7 decision funnel và alternative rejects</a></li>
+    <li><a href="tables/scenarios.md">Controlled scenarios và negative controls</a></li>
+    <li><a href="baseline/repo_state.json">Baseline A/B provenance</a></li>
+    <li><a href="validation/commands.md">Build/test commands, exit codes và log paths</a></li>
+  </ul>
+  <h3>Key source links (A snapshot; line range nằm trong refs)</h3>
+  <ul>
+    <li><a href="../../../../uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp">H0 · tracking loader</a></li>
+    <li><a href="../../../../uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/runtime/navigation_runtime/include/navigation_runtime/certified_continuation.hpp">H1 · reserve/witness helpers</a> · <a href="../../../../uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/px4/px4_navigation_external_mode/src/mission_controller.cpp">MissionController crossing gate</a></li>
+    <li><a href="../../../../uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/runtime/navigation_runtime/src/navigation_runtime_node.cpp">H2/H3/H4 · runtime suspension, exposure and timer sites</a> · <a href="../../../../uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp">PX4 adapter decisions</a></li>
+    <li><a href="../../../../uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp">H5 · speed governor</a> · <a href="../../../../uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/planner_core/planner.cpp">planner caller</a></li>
+    <li><a href="../../../../uav-navigation/src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp">H6 · pinned ModeExecutor source</a></li>
+  </ul>
+  <p>Source refs giữ relative path của A snapshot, line range, excerpt và SHA-256; H6 dùng pinned dependency source với revision riêng. Toàn bộ trang/hình ở local; không dùng CDN.</p>
+</main>
+</body>
+</html>

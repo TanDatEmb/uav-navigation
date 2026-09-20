@@ -1,0 +1,4 @@
+H1 native MissionController harness PASS
+positive: current measured crossing + matching continuation advances once
+counterexample: crossing with absent witness then same-position late witness does not recover
+negative control: wrong request identity does not advance

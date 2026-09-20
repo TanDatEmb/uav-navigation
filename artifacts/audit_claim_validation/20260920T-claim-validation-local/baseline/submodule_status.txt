@@ -1,0 +1,2 @@
+ 86d8239e962f6939e05c3737784f60c02fa884db src/external/px4_msgs (v1.17.0)
+ 4a3370f084ac6f1ef001a4afa2b007845ffd0837 src/external/px4_ros2_interface_lib (1.6.1-53-g4a3370f)

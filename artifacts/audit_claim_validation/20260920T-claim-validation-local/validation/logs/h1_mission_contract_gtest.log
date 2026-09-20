@@ -1,0 +1,50 @@
+Running main() from /opt/ros/jazzy/src/gtest_vendor/src/gtest_main.cc
+[==========] Running 19 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 5 tests from MissionContract
+[ RUN      ] MissionContract.LoadsOneValidatedProductSchema
+[       OK ] MissionContract.LoadsOneValidatedProductSchema (0 ms)
+[ RUN      ] MissionContract.RejectsFrameMismatchAndUnknownKeys
+[       OK ] MissionContract.RejectsFrameMismatchAndUnknownKeys (0 ms)
+[ RUN      ] MissionContract.LoaderRejectsOversizedWaypointSequenceBeforeConstruction
+[       OK ] MissionContract.LoaderRejectsOversizedWaypointSequenceBeforeConstruction (78 ms)
+[ RUN      ] MissionContract.RejectsAValidMissionWithTheWrongPlanningFrame
+[       OK ] MissionContract.RejectsAValidMissionWithTheWrongPlanningFrame (0 ms)
+[ RUN      ] MissionContract.RejectsOversizedMissionPayloadsAtContractBoundary
+[       OK ] MissionContract.RejectsOversizedMissionPayloadsAtContractBoundary (0 ms)
+[----------] 5 tests from MissionContract (79 ms total)
+
+[----------] 14 tests from RouteProgress
+[ RUN      ] RouteProgress.SkipsDuplicateWaypointsAndInterpolatesAltitude
+[       OK ] RouteProgress.SkipsDuplicateWaypointsAndInterpolatesAltitude (0 ms)
+[ RUN      ] RouteProgress.TreatsCoincidentPassThroughThenStopAsTerminalBoundary
+[       OK ] RouteProgress.TreatsCoincidentPassThroughThenStopAsTerminalBoundary (0 ms)
+[ RUN      ] RouteProgress.RecognizesOnlyTheCoincidentStopSuccessorView
+[       OK ] RouteProgress.RecognizesOnlyTheCoincidentStopSuccessorView (0 ms)
+[ RUN      ] RouteProgress.ProgressDoesNotRegressWithinOrBeyondNoiseTolerance
+[       OK ] RouteProgress.ProgressDoesNotRegressWithinOrBeyondNoiseTolerance (0 ms)
+[ RUN      ] RouteProgress.ExposesCornerTangentsAndFiniteProjection
+[       OK ] RouteProgress.ExposesCornerTangentsAndFiniteProjection (0 ms)
+[ RUN      ] RouteProgress.MeasuredBoundaryAcceptsForwardJumpButRejectsLateralMiss
+[       OK ] RouteProgress.MeasuredBoundaryAcceptsForwardJumpButRejectsLateralMiss (0 ms)
+[ RUN      ] RouteProgress.MonotonicProjectionSelectsReturnBranchAtReversal
+[       OK ] RouteProgress.MonotonicProjectionSelectsReturnBranchAtReversal (0 ms)
+[ RUN      ] RouteProgress.RejectsAcceptanceOnLaterNearSelfCrossingBranch
+[       OK ] RouteProgress.RejectsAcceptanceOnLaterNearSelfCrossingBranch (0 ms)
+[ RUN      ] RouteProgress.ImmutableSnapshotCarriesMeasuredRouteIdentityAndLookahead
+[       OK ] RouteProgress.ImmutableSnapshotCarriesMeasuredRouteIdentityAndLookahead (0 ms)
+[ RUN      ] RouteProgress.ImmutableSnapshotRepresentsSingleWaypointWithoutSegment
+[       OK ] RouteProgress.ImmutableSnapshotRepresentsSingleWaypointWithoutSegment (0 ms)
+[ RUN      ] RouteProgress.RejectsNonFiniteArcQueriesInsteadOfClampingToOrigin
+[       OK ] RouteProgress.RejectsNonFiniteArcQueriesInsteadOfClampingToOrigin (0 ms)
+[ RUN      ] RouteProgress.ImmutableSnapshotRequiresCompleteOrderedGeometry
+[       OK ] RouteProgress.ImmutableSnapshotRequiresCompleteOrderedGeometry (0 ms)
+[ RUN      ] RouteProgress.RejectsInvalidDirectWaypointSemantics
+[       OK ] RouteProgress.RejectsInvalidDirectWaypointSemantics (0 ms)
+[ RUN      ] RouteProgress.RejectsInvalidDirectMissionIdentityAndLimits
+[       OK ] RouteProgress.RejectsInvalidDirectMissionIdentityAndLimits (0 ms)
+[----------] 14 tests from RouteProgress (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 19 tests from 2 test suites ran. (79 ms total)
+[  PASSED  ] 19 tests.

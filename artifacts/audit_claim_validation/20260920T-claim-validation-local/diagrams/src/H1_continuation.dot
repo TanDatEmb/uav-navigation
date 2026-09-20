@@ -1,0 +1,26 @@
+digraph H1 {
+  graph [rankdir=LR, labelloc=t, label="H1 — Continuation witness vs measured crossing (A source path)", fontsize=18, fontname="DejaVu Sans"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans", fontsize=10];
+  edge [fontname="DejaVu Sans", fontsize=9];
+  candidate [label="Candidate boundary\nMAIN + pass-through\nidentity/route guards"];
+  admission [label="Admission\ncandidate reserve >= R"];
+  sample [label="publishCommand\nwitness true iff\nMAIN end - now >= R"];
+  adapter [label="onNavigationCommand\naccepted + current identity"];
+  immediate [label="updateMission now\n(rechecks state/health/\ncommand lease + identity)"];
+  progress [label="MissionController\nmeasured crossing +\nmatching witness"];
+  advance [label="waypoint_index++\nrequest transition"];
+  no_witness [label="Witness false / stale /\nwrong identity"];
+  lost [label="Crossing segment is not\nreconstructed after sample\nmoves outside acceptance"];
+  timer [label="50 ms mission timer\nalso calls updateMission"];
+  legend [shape=note, label="Solid: synchronous source call\nDashed: separate timer/event\nT IDs = audit transition refs"];
+  candidate -> admission [label="E-H1-02"];
+  admission -> sample [label="valid bundle sampled"];
+  sample -> adapter [label="T-H1: [fresh command] / publish"];
+  adapter -> immediate [label="E-H1-04"];
+  immediate -> progress [label="E-H1-05"];
+  progress -> advance [label="T-H1-P: [crossing && identity witness] / advance"];
+  progress -> no_witness [label="T-H1-N: [no witness] / no progress"];
+  no_witness -> lost [label="later witness after segment moved"];
+  timer -> immediate [style=dashed, label="periodic retry"];
+  legend -> progress [style=invis];
+}

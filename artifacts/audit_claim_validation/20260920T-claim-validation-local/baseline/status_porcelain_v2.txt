@@ -1,0 +1,34 @@
+1 .M N... 100644 100644 100644 18c811fdcf96c0efd073c7d5b7a4512dd2fab251 18c811fdcf96c0efd073c7d5b7a4512dd2fab251 AGENTS.md
+1 .M N... 100644 100644 100644 9245ad17657bbb3cc721dd8028f630570c7c8a50 9245ad17657bbb3cc721dd8028f630570c7c8a50 docs/architecture/continuous_waypoint_trajectory_plan.md
+1 .M N... 100644 100644 100644 6453c7587a9780ab393febe7f696e4fb9e3e4139 6453c7587a9780ab393febe7f696e4fb9e3e4139 docs/architecture/runtime_safety_decision_ledger.md
+1 .M N... 100644 100644 100644 e9734570906d5083edf2a76d8c2e4e047ebeffff e9734570906d5083edf2a76d8c2e4e047ebeffff docs/reports/super_architecture_comparison_2026-09-05.md
+1 .M N... 100644 100644 100644 c27756d8e4bdb5195701ca3a8a8ddc6c2a6ad1a4 c27756d8e4bdb5195701ca3a8a8ddc6c2a6ad1a4 docs/validation/navigation_reimplementation_review.md
+1 .M N... 100644 100644 100644 23a97703be6a8d8c047169ca05841ab631c7a8f7 23a97703be6a8d8c047169ca05841ab631c7a8f7 src/contracts/navigation_contracts/msg/NavigationCommand.msg
+1 .M N... 100644 100644 100644 144b8d305cf3140c39a79ce9c206b1ea660b0ca5 144b8d305cf3140c39a79ce9c206b1ea660b0ca5 src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp
+1 .M N... 100644 100644 100644 de059c5d1b87baa88dc6daa5c563544a28066237 de059c5d1b87baa88dc6daa5c563544a28066237 src/planning/navigation_planning/include/navigation_planning/planner_diagnostics.hpp
+1 .M N... 100644 100644 100644 c42ea52d01a9d221c4680a973b02e5fbec46be0b c42ea52d01a9d221c4680a973b02e5fbec46be0b src/planning/navigation_planning/include/navigation_planning/planning_request.hpp
+1 .M N... 100644 100644 100644 3879430505c8163a4bfd890263963bdc97051e80 3879430505c8163a4bfd890263963bdc97051e80 src/planning/navigation_planning_backend/include/data_structure/cmd_traj.h
+1 .M N... 100644 100644 100644 68cd14429c29d82fb9a6e80999ef4c7c1538b2a1 68cd14429c29d82fb9a6e80999ef4c7c1538b2a1 src/planning/navigation_planning_backend/include/navigation_planning_backend/planner_facade.hpp
+1 .M N... 100644 100644 100644 ad40bbcea560bb25673e622ee2ffe50fdf9a4c57 ad40bbcea560bb25673e622ee2ffe50fdf9a4c57 src/planning/navigation_planning_backend/include/planner_core/config.hpp
+1 .M N... 100644 100644 100644 d6d95aea01fb0e6dde0b4efc0a5ee39b20f8e6e4 d6d95aea01fb0e6dde0b4efc0a5ee39b20f8e6e4 src/planning/navigation_planning_backend/include/planner_core/log_utils.hpp
+1 .M N... 100644 100644 100644 a56c1a0e8a25c2cfed125e10e7f4c871ce8f06ff a56c1a0e8a25c2cfed125e10e7f4c871ce8f06ff src/planning/navigation_planning_backend/include/planner_core/pass_through_terminal_velocity.hpp
+1 .M N... 100644 100644 100644 4606928dcb4432704280a45ff6461ea941019488 4606928dcb4432704280a45ff6461ea941019488 src/planning/navigation_planning_backend/include/planner_core/planner.hpp
+1 .M N... 100644 100644 100644 dbf77e00d63a1a76c61d1d275e683a27b8e40850 dbf77e00d63a1a76c61d1d275e683a27b8e40850 src/planning/navigation_planning_backend/src/planner_core/planner.cpp
+1 .M N... 100644 100644 100644 d93aec46b2c692bb5dacee4d44776fe6b101c527 d93aec46b2c692bb5dacee4d44776fe6b101c527 src/planning/navigation_planning_backend/src/planner_facade.cpp
+1 .M N... 100644 100644 100644 905eecefdda98548068a5d4ce73331eb1fd31f6f 905eecefdda98548068a5d4ce73331eb1fd31f6f src/planning/navigation_planning_backend/test/test_planner_facade.cpp
+1 .M N... 100644 100644 100644 4266714073b9e0fcaef4ab9e1e916716008e74eb 4266714073b9e0fcaef4ab9e1e916716008e74eb src/planning/navigation_planning_backend/test/test_trajectory.cpp
+1 .M N... 100644 100644 100644 76e3eb300ce2b596f200f8b2d42af5d2c3f2506e 76e3eb300ce2b596f200f8b2d42af5d2c3f2506e src/runtime/navigation_runtime/CMakeLists.txt
+1 .M N... 100644 100644 100644 b67d5d33e875cc4470d55aec974584991ce1cd70 b67d5d33e875cc4470d55aec974584991ce1cd70 src/runtime/navigation_runtime/config/planner.yaml
+1 .M N... 100644 100644 100644 84ed04185dd8484e52f4e7b8f0695f4aae4bef51 84ed04185dd8484e52f4e7b8f0695f4aae4bef51 src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp
+1 .M N... 100644 100644 100644 63f0b8ca835d1f6a28cc8bdc57d14c9c8c0a3561 63f0b8ca835d1f6a28cc8bdc57d14c9c8c0a3561 src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp
+1 .M N... 100644 100644 100644 01ee8f5866afd27e7ac85a741da7c744d16e3464 01ee8f5866afd27e7ac85a741da7c744d16e3464 src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp
+1 .M N... 100644 100644 100644 a4a4d01841e91777e149652362d1c9fee9e4ad40 a4a4d01841e91777e149652362d1c9fee9e4ad40 src/runtime/navigation_runtime/src/navigation_runtime_node.cpp
+1 .M N... 100644 100644 100644 08cb1196918e6ade3d208d2645ac95a2dfa6f49f 08cb1196918e6ade3d208d2645ac95a2dfa6f49f src/runtime/navigation_runtime/test/test_execution_episode.cpp
+1 .M N... 100644 100644 100644 2e930ca8a0934da7c658befc98b20af3e96dbb7a 2e930ca8a0934da7c658befc98b20af3e96dbb7a src/runtime/navigation_runtime/test/test_navigation_runtime_terminal_monitor.cpp
+1 .M N... 100644 100644 100644 b53db6954827f9acb40841f153c7cd6eb4c59720 b53db6954827f9acb40841f153c7cd6eb4c59720 src/runtime/navigation_runtime/test/test_planner_fsm.cpp
+1 .M N... 100644 100644 100644 9e9bd23f9f27b38672090ae0df10cf00311e1b40 9e9bd23f9f27b38672090ae0df10cf00311e1b40 src/runtime/navigation_runtime/test/test_planning_worker.cpp
+? docs/safety/archive/runtime_safety_legacy_full.md
+? docs/safety/runtime_safety_current.md
+? docs/safety/runtime_safety_index.md
+? src/runtime/navigation_runtime/include/navigation_runtime/baseline_refinement.hpp
+? tools/validate_runtime_safety_ledger.py

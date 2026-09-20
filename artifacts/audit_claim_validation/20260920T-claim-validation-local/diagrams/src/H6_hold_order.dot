@@ -1,0 +1,22 @@
+digraph H6 {
+  graph [rankdir=LR, labelloc=t, label="H6 — Pinned ModeExecutor API result and independent VehicleStatus", fontsize=18, fontname="DejaVu Sans"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans", fontsize=10];
+  edge [fontname="DejaVu Sans", fontsize=9];
+  app [label="Application schedulePx4Hold\npending=true, in_flight=true"];
+  api [label="Pinned scheduleMode(AUTO_LOITER)"];
+  command [label="Send VEHICLE_CMD_SET_NAV_STATE"];
+  ack [label="Wait for command ACK"];
+  activate [label="On Success: activate scheduled mode"];
+  modecompleted [label="Wait for matching ModeCompleted"];
+  callback [label="App callback"];
+  clear [label="Success or Deactivated:\npending=false, in_flight=false"];
+  retry [label="Failure:\npending=true; retry after 250 ms"];
+  vehicle [label="Independent VehicleStatus"];
+  confirm [label="AUTO_LOITER:\nconfirmed=true; clear pending"];
+  note [shape=note, label="API success is beyond ACK-only.\nOrdering vs status callback and firmware\nsemantics remain unobserved."];
+  app -> api -> command -> ack -> activate -> modecompleted -> callback;
+  callback -> clear [label="Success / Deactivated"];
+  callback -> retry [label="Failure"];
+  vehicle -> confirm [style=dashed, label="nav_state == AUTO_LOITER"];
+  note -> modecompleted [style=invis];
+}

@@ -1,0 +1,1109 @@
+Starting >>> navigation_world_model
+Starting >>> navigation_common
+Starting >>> rog_map_vendor
+-- The CXX compiler identification is GNU 13.3.0
+-- The CXX compiler identification is GNU 13.3.0
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Detecting CXX compiler ABI info - done
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 2.5.6 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 2.5.6 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 2.5.6 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+-- Found builtin_interfaces: 2.0.4 (/opt/ros/jazzy/share/builtin_interfaces/cmake)
+-- Found Boost: /usr/lib/x86_64-linux-gnu/cmake/Boost-1.83.0/BoostConfig.cmake (found suitable version "1.83.0", minimum required is "1.65.0") found components: system filesystem iostreams serialization 
+-- looking for PCL_COMMON
+-- Found PCL_COMMON: /usr/lib/x86_64-linux-gnu/libpcl_common.so  
+-- Found PCL: pcl_common;Boost::system;Boost::filesystem;Boost::iostreams;Boost::serialization  
+-- Found rosidl_generator_c: 4.6.9 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+-- Found ament_cmake_gtest: 2.5.6 (/opt/ros/jazzy/share/ament_cmake_gtest/cmake)
+-- Found gtest sources under '/opt/ros/jazzy/src/gtest_vendor': C++ tests using 'Google Test' will be built
+-- Found rosidl_generator_cpp: 4.6.9 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+-- Configuring done (0.5s)
+-- Generating done (0.0s)
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    CMAKE_EXPORT_COMPILE_COMMANDS
+
+
+-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+-- Build files have been written to: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/build/navigation_world_model
+-- The C compiler identification is GNU 13.3.0
+-- Found eigen3_cmake_module: 0.3.1 (/opt/ros/jazzy/share/eigen3_cmake_module/cmake)
+-- Detecting C compiler ABI info
+-- Found Eigen3: TRUE (found version "3.4.0") 
+-- Found ament_cmake_gtest: 2.5.6 (/opt/ros/jazzy/share/ament_cmake_gtest/cmake)
+-- Found gtest sources under '/opt/ros/jazzy/src/gtest_vendor': C++ tests using 'Google Test' will be built
+-- Install configuration: "Release"
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/include
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/include/navigation_world_model
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/include/navigation_world_model/world_commit_authorizer.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/include/navigation_world_model/goal_contract.hpp
+-- The C compiler identification is GNU 13.3.0
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/include/navigation_world_model/world_model_view.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/include/navigation_world_model/continuous_clearance.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake/navigation_world_modelTargets.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/ament_index/resource_index/package_run_dependencies/navigation_world_model
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/ament_index/resource_index/parent_prefix_path/navigation_world_model
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/environment/ament_prefix_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/environment/ament_prefix_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/environment/path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/environment/path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/local_setup.bash
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/local_setup.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/local_setup.zsh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/local_setup.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/package.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/ament_index/resource_index/packages/navigation_world_model
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake/navigation_world_modelTargetsExport.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake/ament_cmake_export_targets-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake/navigation_world_modelConfig.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake/navigation_world_modelConfig-version.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/package.xml
+--- stderr: navigation_world_model
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    CMAKE_EXPORT_COMPILE_COMMANDS
+
+
+---
+Finished <<< navigation_world_model [0.57s]
+Starting >>> navigation_mission
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info - done
+-- Detecting CXX compiler ABI info
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 2.5.6 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Configuring done (0.8s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/build/rog_map_vendor
+-- Configuring done (0.8s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/build/navigation_common
+[ 16%] Building CXX object CMakeFiles/rog_map_vendor.dir/src/rog_map/inf_map.cpp.o
+[ 16%] Building CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 16%] Building CXX object CMakeFiles/rog_map_vendor.dir/src/rog_map_core/raycaster.cpp.o
+[ 22%] Building CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+[ 27%] Building CXX object CMakeFiles/rog_map_vendor.dir/src/rog_map/rog_map.cpp.o
+[ 33%] Building CXX object CMakeFiles/rog_map_vendor.dir/src/rog_map/sliding_map.cpp.o
+[ 38%] Building CXX object CMakeFiles/rog_map_vendor.dir/src/rog_map/counter_map.cpp.o
+[ 44%] Building CXX object CMakeFiles/rog_map_vendor.dir/src/rog_map/esdf_map.cpp.o
+[ 50%] Building CXX object CMakeFiles/rog_map_vendor.dir/src/rog_map/prob_map.cpp.o
+[ 16%] Building CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 33%] Building CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+-- Found navigation_world_model: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake)
+-- Found ament_cmake_gtest: 2.5.6 (/opt/ros/jazzy/share/ament_cmake_gtest/cmake)
+-- Found gtest sources under '/opt/ros/jazzy/src/gtest_vendor': C++ tests using 'Google Test' will be built
+-- The C compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Configuring done (1.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/build/navigation_mission
+[ 11%] Building CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 22%] Building CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 33%] Building CXX object CMakeFiles/navigation_mission.dir/src/route_progress.cpp.o
+[ 44%] Building CXX object CMakeFiles/navigation_mission.dir/src/mission.cpp.o
+[ 50%] Linking CXX static library libgtest_main.a
+[ 50%] Built target gtest_main
+[ 55%] Linking CXX static library libgtest_main.a
+[ 55%] Built target gtest_main
+[ 55%] Linking CXX static library libgtest_main.a
+[ 55%] Built target gtest_main
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/raycaster.h:30,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map_core/raycaster.cpp:28:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/esdf_map.h:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/esdf_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/inf_map.h:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/inf_map.cpp:28:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/sliding_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+[ 66%] Linking CXX static library libnavigation_mission.a
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/counter_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/inf_map.h:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/prob_map.h:30,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/prob_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+[ 66%] Built target navigation_mission
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/inf_map.h:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/prob_map.h:30,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/rog_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+[ 77%] Linking CXX static library libgtest.a
+[ 66%] Linking CXX static library libgtest.a
+[ 77%] Built target gtest
+[ 88%] Building CXX object CMakeFiles/test_mission_contract.dir/test/test_mission_contract.cpp.o
+[ 66%] Built target gtest
+[ 83%] Building CXX object CMakeFiles/test_navigation_common.dir/test/test_navigation_common.cpp.o
+[ 61%] Linking CXX static library libgtest.a
+[ 61%] Built target gtest
+[100%] Linking CXX executable test_navigation_common
+[100%] Built target test_navigation_common
+-- Install configuration: "Release"
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/include
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/include/navigation_common
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/include/navigation_common/frame_conventions.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/include/navigation_common/bounded_spsc_queue.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/include/navigation_common/time.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake/navigation_commonTargets.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/ament_index/resource_index/package_run_dependencies/navigation_common
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/ament_index/resource_index/parent_prefix_path/navigation_common
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/environment/ament_prefix_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/environment/ament_prefix_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/environment/path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/environment/path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/local_setup.bash
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/local_setup.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/local_setup.zsh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/local_setup.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/package.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/ament_index/resource_index/packages/navigation_common
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake/navigation_commonTargetsExport.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake/ament_cmake_export_targets-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake/navigation_commonConfig.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake/navigation_commonConfig-version.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/package.xml
+Finished <<< navigation_common [17.3s]
+[ 66%] Linking CXX static library librog_map_vendor.a
+[ 66%] Built target rog_map_vendor
+[ 77%] Building CXX object CMakeFiles/test_rog_map_vendor.dir/test/test_raycaster_equivalence.cpp.o
+[ 77%] Building CXX object CMakeFiles/test_rog_map_vendor.dir/test/test_rog_map_lifecycle.cpp.o
+[ 83%] Building CXX object CMakeFiles/test_rog_map_vendor.dir/test/test_yaml_loader.cpp.o
+[ 88%] Building CXX object CMakeFiles/test_rog_map_vendor.dir/test/test_rog_map_smoke.cpp.o
+[ 94%] Building CXX object CMakeFiles/test_rog_map_vendor.dir/test/test_planning_grid_export.cpp.o
+[100%] Linking CXX executable test_mission_contract
+[100%] Built target test_mission_contract
+-- Install configuration: "Release"
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/include
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/include/navigation_mission
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/include/navigation_mission/route_progress.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/include/navigation_mission/mission.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/lib/libnavigation_mission.a
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/navigation_missionTargets.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/navigation_missionTargets-release.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/environment/library_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/environment/library_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/ament_index/resource_index/package_run_dependencies/navigation_mission
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/ament_index/resource_index/parent_prefix_path/navigation_mission
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/environment/ament_prefix_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/environment/ament_prefix_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/environment/path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/environment/path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/local_setup.bash
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/local_setup.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/local_setup.zsh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/local_setup.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/package.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/ament_index/resource_index/packages/navigation_mission
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/navigation_missionTargetsExport.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/navigation_missionTargetsExport-release.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/ament_cmake_export_targets-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/navigation_missionConfig.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake/navigation_missionConfig-version.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/package.xml
+Finished <<< navigation_mission [18.2s]
+Starting >>> navigation_planning
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 2.5.6 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+-- Found builtin_interfaces: 2.0.4 (/opt/ros/jazzy/share/builtin_interfaces/cmake)
+-- Found rosidl_generator_c: 4.6.9 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+-- Found rosidl_generator_cpp: 4.6.9 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+-- Found navigation_common: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake)
+-- Found navigation_mission: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mission/share/navigation_mission/cmake)
+-- Found ament_cmake_gtest: 2.5.6 (/opt/ros/jazzy/share/ament_cmake_gtest/cmake)
+-- Found gtest sources under '/opt/ros/jazzy/src/gtest_vendor': C++ tests using 'Google Test' will be built
+-- The C compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Configuring done (1.2s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/build/navigation_planning
+[ 33%] Building CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 33%] Building CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 50%] Linking CXX static library libgtest_main.a
+[ 50%] Built target gtest_main
+[ 66%] Linking CXX static library libgtest.a
+[ 66%] Built target gtest
+[ 83%] Building CXX object CMakeFiles/test_planning_contracts.dir/test/test_planning_contracts.cpp.o
+[100%] Linking CXX executable test_rog_map_vendor
+[100%] Built target test_rog_map_vendor
+-- Install configuration: "Release"
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/fmt_eigen.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/scope_timer.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/color_text.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/type_utils.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/yaml_loader.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/eigen_alias.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/free_cnt_map.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/esdf_map.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/rog_map.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/inf_map.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/prob_map.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/rog_map_core
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/rog_map_core/raycaster.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/rog_map_core/config.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/rog_map/planning_grid_export.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/lib/librog_map_vendor.a
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/rog_map_vendorTargets.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/rog_map_vendorTargets-release.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/environment/library_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/environment/library_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/ament_index/resource_index/package_run_dependencies/rog_map_vendor
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/ament_index/resource_index/parent_prefix_path/rog_map_vendor
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/environment/ament_prefix_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/environment/ament_prefix_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/environment/path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/environment/path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/local_setup.bash
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/local_setup.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/local_setup.zsh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/local_setup.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/package.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/ament_index/resource_index/packages/rog_map_vendor
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/rog_map_vendorTargetsExport.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/rog_map_vendorTargetsExport-release.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/ament_cmake_export_targets-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/rog_map_vendorConfig.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake/rog_map_vendorConfig-version.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/package.xml
+--- stderr: rog_map_vendor
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/raycaster.h:30,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map_core/raycaster.cpp:28:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/esdf_map.h:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/esdf_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/inf_map.h:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/inf_map.cpp:28:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/sliding_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/counter_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/inf_map.h:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/prob_map.h:30,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/prob_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+In file included from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/inf_map.h:26,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/prob_map.h:30,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map.h:27,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/src/rog_map/rog_map.cpp:24:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:119:17: warning: ‘bool rog_map::lineIntersectBox(navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f, navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+  119 |     static bool lineIntersectBox(navigation_math::Vec3f L1, navigation_math::Vec3f L2, navigation_math::Vec3f B1,
+      |                 ^~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:75:35: warning: ‘navigation_math::Vec3f rog_map::lineBoxIntersectPoint(const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&, const navigation_math::Vec3f&)’ defined but not used [-Wunused-function]
+   75 |     static navigation_math::Vec3f lineBoxIntersectPoint(const navigation_math::Vec3f& pt, const navigation_math::Vec3f& pos,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp:64:19: warning: ‘double rog_map::computePathLength(navigation_math::vec_E<Eigen::Matrix<double, 3, 1> >&)’ defined but not used [-Wunused-function]
+   64 |     static double computePathLength(const navigation_math::vec_E<navigation_math::Vec3f>& path) {
+      |                   ^~~~~~~~~~~~~~~~~
+---
+Finished <<< rog_map_vendor [34.5s]
+Starting >>> navigation_mapping
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 2.5.6 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+-- Found nav_msgs: 5.3.8 (/opt/ros/jazzy/share/nav_msgs/cmake)
+-- Found rosidl_generator_c: 4.6.9 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+-- Found rosidl_generator_cpp: 4.6.9 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+-- Found navigation_common: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_common/share/navigation_common/cmake)
+-- Found navigation_world_model: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake)
+-- Found rog_map_vendor: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake)
+-- Found ament_cmake_gtest: 2.5.6 (/opt/ros/jazzy/share/ament_cmake_gtest/cmake)
+-- Found gtest sources under '/opt/ros/jazzy/src/gtest_vendor': C++ tests using 'Google Test' will be built
+-- The C compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+[100%] Linking CXX executable test_planning_contracts
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+[100%] Built target test_planning_contracts
+-- Install configuration: "Release"
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/candidate_admission.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/planning_timing.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/planning_outcome.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/planning_status.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/planner_diagnostics.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/planning_budget.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/planning_request.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/planning_limits.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/execution_anchor.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/kinematic_state.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/planner_status.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/route_boundary.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/include/navigation_planning/candidate_bundle.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/cmake/navigation_planningTargets.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/ament_index/resource_index/package_run_dependencies/navigation_planning
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/ament_index/resource_index/parent_prefix_path/navigation_planning
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/environment/ament_prefix_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/environment/ament_prefix_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/environment/path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/environment/path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/local_setup.bash
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/local_setup.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/local_setup.zsh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/local_setup.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/package.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/ament_index/resource_index/packages/navigation_planning
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/cmake/navigation_planningTargetsExport.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/cmake/ament_cmake_export_targets-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/cmake/navigation_planningConfig.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/cmake/navigation_planningConfig-version.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/package.xml
+Finished <<< navigation_planning [16.7s]
+-- Configuring done (0.9s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/build/navigation_mapping
+[  8%] Building CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 16%] Building CXX object CMakeFiles/navigation_mapping.dir/src/mapping_actor.cpp.o
+[ 25%] Building CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 33%] Linking CXX static library libgtest_main.a
+[ 33%] Built target gtest_main
+[ 41%] Linking CXX static library libgtest.a
+[ 41%] Built target gtest
+[ 50%] Building CXX object CMakeFiles/test_mapping_worker.dir/test/test_mapping_worker.cpp.o
+[ 58%] Building CXX object CMakeFiles/test_mapping_world_model.dir/test/test_mapping_world_model.cpp.o
+[ 66%] Linking CXX shared library libnavigation_mapping.so
+[ 66%] Built target navigation_mapping
+[ 75%] Building CXX object CMakeFiles/test_mapping_actor.dir/test/test_mapping_actor.cpp.o
+[ 83%] Linking CXX executable test_mapping_worker
+[ 83%] Built target test_mapping_worker
+[ 91%] Linking CXX executable test_mapping_actor
+[ 91%] Built target test_mapping_actor
+[100%] Linking CXX executable test_mapping_world_model
+[100%] Built target test_mapping_world_model
+-- Install configuration: "Release"
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/mapping_actor.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/mapping_diagnostics.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/mapping_observation.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/mapping_types.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/current_body_support.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/mapping_worker.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/observation_accounting.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/visibility_control.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/include/navigation_mapping/world_snapshot_store.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/lib/libnavigation_mapping.so
+-- Set non-toolchain portion of runtime path of "/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/lib/libnavigation_mapping.so" to ""
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/navigation_mappingTargets.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/navigation_mappingTargets-release.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/environment/library_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/environment/library_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/ament_index/resource_index/package_run_dependencies/navigation_mapping
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/ament_index/resource_index/parent_prefix_path/navigation_mapping
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/environment/ament_prefix_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/environment/ament_prefix_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/environment/path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/environment/path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/local_setup.bash
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/local_setup.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/local_setup.zsh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/local_setup.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/package.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/ament_index/resource_index/packages/navigation_mapping
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/navigation_mappingTargetsExport.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/navigation_mappingTargetsExport-release.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/ament_cmake_export_targets-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/navigation_mappingConfig.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake/navigation_mappingConfig-version.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/package.xml
+Finished <<< navigation_mapping [23.4s]
+Starting >>> navigation_planning_backend
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 2.5.6 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+-- Found Boost: /usr/lib/x86_64-linux-gnu/cmake/Boost-1.83.0/BoostConfig.cmake (found suitable version "1.83.0", minimum required is "1.65.0") found components: system filesystem iostreams serialization 
+-- looking for PCL_COMMON
+-- Found PCL_COMMON: /usr/lib/x86_64-linux-gnu/libpcl_common.so  
+-- Found PCL: pcl_common;Boost::system;Boost::filesystem;Boost::iostreams;Boost::serialization  
+-- Found navigation_world_model: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_world_model/share/navigation_world_model/cmake)
+-- Found navigation_planning: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning/share/navigation_planning/cmake)
+-- Found rosidl_generator_c: 4.6.9 (/opt/ros/jazzy/share/rosidl_generator_c/cmake)
+-- Found rosidl_generator_cpp: 4.6.9 (/opt/ros/jazzy/share/rosidl_generator_cpp/cmake)
+-- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+-- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+-- Found rog_map_vendor: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/share/rog_map_vendor/cmake)
+-- Found std_msgs: 5.3.8 (/opt/ros/jazzy/share/std_msgs/cmake)
+-- Found ament_cmake_gtest: 2.5.6 (/opt/ros/jazzy/share/ament_cmake_gtest/cmake)
+-- Found navigation_mapping: 0.1.0 (/home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_mapping/share/navigation_mapping/cmake)
+-- Found gtest sources under '/opt/ros/jazzy/src/gtest_vendor': C++ tests using 'Google Test' will be built
+-- The C compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Configuring done (1.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/build/navigation_planning_backend
+[ 10%] Building CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 10%] Building CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 10%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/planner_core/astar.cpp.o
+[ 10%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/planner_core/corridor_generator.cpp.o
+[ 10%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/planner_core/route_yaw_reference.cpp.o
+[ 12%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/planner_core/ciri.cpp.o
+[ 14%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/traj_opt/nominal_trajectory_optimizer.cpp.o
+[ 16%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/banded_system.cpp.o
+[ 18%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/traj_opt/backup_trajectory_optimizer.cpp.o
+[ 20%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/planner_core/nominal_problem_snapshot_writer.cpp.o
+[ 22%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/planner_facade.cpp.o
+[ 26%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/minco.cpp.o
+[ 28%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/geometry_utils.cpp.o
+[ 26%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/mvie.cpp.o
+[ 30%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/traj_opt/yaw_traj_opt.cpp.o
+[ 32%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/planner_core/planner.cpp.o
+[ 34%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/piece.cpp.o
+[ 36%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/optimization_utils.cpp.o
+[ 38%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/ellipsoid.cpp.o
+[ 40%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/lbfgs.cpp.o
+[ 42%] Linking CXX static library libgtest_main.a
+[ 42%] Built target gtest_main
+[ 44%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/polynomial_interpolation.cpp.o
+[ 46%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/polytope.cpp.o
+[ 48%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/quickhull.cpp.o
+[ 51%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/root_finder.cpp.o
+[ 53%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/sdlp.cpp.o
+[ 55%] Building CXX object CMakeFiles/navigation_planning_backend.dir/src/utils/trajectory.cpp.o
+In file included from /usr/include/eigen3/Eigen/Core:294,
+                 from /usr/include/eigen3/Eigen/Dense:1,
+                 from /usr/include/eigen3/Eigen/Eigen:1,
+                 from /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/eigen_alias.hpp:8,
+                 from /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/type_utils.hpp:10,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/utils/header/type_utils.hpp:4,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/data_structure/base/ellipsoid.h:12,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp:7:
+In copy constructor ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::PlainObjectBase<Derived>&) [with Derived = Eigen::Matrix<double, 3, 1>]’,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>&) [with _Scalar = double; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:414:65,
+    inlined from ‘geometry_utils::Ellipsoid::Ellipsoid(const navigation_math::Mat3f&, const navigation_math::Vec3f&)’ at /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp:70:44:
+/usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:512:17: warning: ‘*(const double*)((char*)&svd + offsetof(Eigen::JacobiSVD<Eigen::Matrix<double, 3, 3, 0, 3, 3>, 3>,Eigen::JacobiSVD<Eigen::Matrix<double, 3, 3, 0, 3, 3>, 3>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<double, 3, 3, 0, 3, 3>, 3> >::m_singularValues.Eigen::Matrix<double, 3, 1, 0, 3, 1>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<double, 3, 1, 0, 3, 1> >::m_storage.Eigen::DenseStorage<double, 3, 3, 1, 0>::m_data.Eigen::internal::plain_array<double, 3, 0, 0>::array[2]))’ may be used uninitialized [-Wmaybe-uninitialized]
+  512 |       : Base(), m_storage(other.m_storage) { }
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp: In constructor ‘geometry_utils::Ellipsoid::Ellipsoid(const navigation_math::Mat3f&, const navigation_math::Vec3f&)’:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp:68:82: note: ‘svd’ declared here
+   68 |     Eigen::JacobiSVD<Eigen::Matrix3d, Eigen::FullPivHouseholderQRPreconditioner> svd(C_, Eigen::ComputeFullU);
+      |                                                                                  ^~~
+[ 57%] Linking CXX static library libgtest.a
+[ 57%] Built target gtest
+In file included from /usr/include/eigen3/Eigen/src/Core/util/ConfigureVectorization.h:346,
+                 from /usr/include/eigen3/Eigen/Core:22,
+                 from /usr/include/eigen3/Eigen/Dense:1,
+                 from /usr/include/eigen3/Eigen/Eigen:1,
+                 from /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/eigen_alias.hpp:8,
+                 from /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/type_utils.hpp:10,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/utils/header/type_utils.hpp:4,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/utils/geometry/geometry_utils.h:38,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/geometry_utils.cpp:10:
+In function ‘__m128d _mm_loadu_pd(const double*)’,
+    inlined from ‘Packet Eigen::internal::ploadu(const typename unpacket_traits<T>::type*) [with Packet = __vector(2) double]’ at /usr/include/eigen3/Eigen/src/Core/arch/SSE/PacketMath.h:746:22,
+    inlined from ‘Packet Eigen::internal::ploadt(const typename unpacket_traits<T>::type*) [with Packet = __vector(2) double; int Alignment = 0]’ at /usr/include/eigen3/Eigen/src/Core/GenericPacketMath.h:969:26,
+    inlined from ‘PacketType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::packet(Eigen::Index, Eigen::Index) const [with int LoadMode = 0; PacketType = __vector(2) double; Derived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:937:50,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignPacket(Eigen::Index, Eigen::Index) [with int StoreMode = 0; int LoadMode = 0; PacketType = __vector(2) double; DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<double, double>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:675:116,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignPacketByOuterInner(Eigen::Index, Eigen::Index) [with int StoreMode = 0; int LoadMode = 0; PacketType = __vector(2) double; DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<double, double>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:689:48,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_innervec_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<double, double>, 0>; int Index = 0; int Stop = 2]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:279:85,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<double, double>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:455:81,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<double, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Functor = assign_op<double, double>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<double, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<double, double>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<double, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Func = assign_op<double, double>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; _Scalar = double; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<double, 3, 1>; Derived2 = Eigen::Matrix<double, 3, 1>; Derived = Eigen::Quaternion<double>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/lib/gcc/x86_64-linux-gnu/13/include/emmintrin.h:134:24: warning: ‘*(__m128d_u*)((char*)&svd + offsetof(Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2>,Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<double, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<double, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<double, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<double, 9, 0, 0>::array[6]))’ may be used uninitialized [-Wmaybe-uninitialized]
+  134 |   return *(__m128d_u *)__P;
+      |                        ^~~
+In file included from /usr/include/eigen3/Eigen/Geometry:42,
+                 from /usr/include/eigen3/Eigen/Dense:6:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<double, 3, 1>; Derived2 = Eigen::Matrix<double, 3, 1>; Derived = Eigen::Quaternion<double>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+In file included from /usr/include/eigen3/Eigen/Core:277:
+In member function ‘Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::CoeffReturnType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::coeff(Eigen::Index, Eigen::Index) const [with Derived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<double, 3, 1>]’,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeff(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<double, double>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:654:63,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeffByOuterInner(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<double, double>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:668:16,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<double, double>, 0>; int Index = 2; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:211:35,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<double, double>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:456:92,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<double, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Functor = assign_op<double, double>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<double, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<double, double>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<double, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Func = assign_op<double, double>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; _Scalar = double; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<double, 3, 1>; Derived2 = Eigen::Matrix<double, 3, 1>; Derived = Eigen::Quaternion<double>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:911:56: warning: ‘svd.Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<double, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<double, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<double, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<double, 9, 0, 0>::array[8]’ may be used uninitialized [-Wmaybe-uninitialized]
+  911 |     return m_data[col * colStride() + row * rowStride()];
+      |                                                        ^
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<double, 3, 1>; Derived2 = Eigen::Matrix<double, 3, 1>; Derived = Eigen::Quaternion<double>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+In member function ‘Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::CoeffReturnType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::coeff(Eigen::Index, Eigen::Index) const [with Derived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<float, 3, 1>]’,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeff(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:654:63,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeffByOuterInner(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:668:16,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 0; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:211:35,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:456:92,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<float, float>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<float, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Func = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; _Scalar = float; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:911:56: warning: ‘svd.Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<float, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<float, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<float, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<float, 9, 0, 0>::array[6]’ may be used uninitialized [-Wmaybe-uninitialized]
+  911 |     return m_data[col * colStride() + row * rowStride()];
+      |                                                        ^
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+In member function ‘Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::CoeffReturnType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::coeff(Eigen::Index, Eigen::Index) const [with Derived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<float, 3, 1>]’,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeff(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:654:63,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeffByOuterInner(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:668:16,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 1; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:211:35,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 0; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:212:88,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:456:92,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<float, float>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<float, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Func = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; _Scalar = float; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:911:56: warning: ‘svd.Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<float, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<float, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<float, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<float, 9, 0, 0>::array[7]’ may be used uninitialized [-Wmaybe-uninitialized]
+  911 |     return m_data[col * colStride() + row * rowStride()];
+      |                                                        ^
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+In member function ‘Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::CoeffReturnType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::coeff(Eigen::Index, Eigen::Index) const [with Derived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<float, 3, 1>]’,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeff(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:654:63,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeffByOuterInner(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:668:16,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 2; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:211:35,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 1; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:212:88,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 0; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:212:88,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:456:92,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<float, float>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<float, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Func = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; _Scalar = float; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:911:56: warning: ‘svd.Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<float, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<float, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<float, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<float, 9, 0, 0>::array[8]’ may be used uninitialized [-Wmaybe-uninitialized]
+  911 |     return m_data[col * colStride() + row * rowStride()];
+      |                                                        ^
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+[ 59%] Linking CXX static library libnavigation_planning_backend.a
+[Processing: navigation_planning_backend]
+[ 59%] Built target navigation_planning_backend
+[ 65%] Building CXX object CMakeFiles/test_planner_runtime_context.dir/test/test_planner_runtime_context.cpp.o
+[ 65%] Building CXX object CMakeFiles/test_planner_config.dir/test/test_planner_config.cpp.o
+[ 65%] Building CXX object CMakeFiles/test_route_backbone.dir/test/test_route_backbone.cpp.o
+[ 67%] Building CXX object CMakeFiles/test_planner_facade.dir/test/test_planner_facade.cpp.o
+[ 69%] Building CXX object CMakeFiles/test_exp_optimizer_seed.dir/test/test_exp_optimizer_seed.cpp.o
+[ 73%] Building CXX object CMakeFiles/test_simplify_sfc_contract.dir/test/test_simplify_sfc_contract.cpp.o
+[ 73%] Building CXX object CMakeFiles/test_corridor_bezier_seed.dir/test/test_corridor_bezier_seed.cpp.o
+[ 79%] Building CXX object CMakeFiles/test_route_yaw_reference.dir/test/test_route_yaw_reference.cpp.o
+[ 79%] Building CXX object CMakeFiles/test_trajectory.dir/test/test_trajectory.cpp.o
+[ 79%] Building CXX object CMakeFiles/replay_nominal_problem_snapshot.dir/test/replay_nominal_problem_snapshot.cpp.o
+[ 81%] Linking CXX executable test_simplify_sfc_contract
+[ 81%] Built target test_simplify_sfc_contract
+[ 83%] Linking CXX executable test_route_backbone
+[ 83%] Built target test_route_backbone
+[ 85%] Linking CXX executable test_route_yaw_reference
+[ 85%] Built target test_route_yaw_reference
+[ 87%] Linking CXX executable test_planner_runtime_context
+[ 87%] Built target test_planner_runtime_context
+[ 89%] Linking CXX executable test_corridor_bezier_seed
+[ 89%] Built target test_corridor_bezier_seed
+[ 91%] Linking CXX executable test_exp_optimizer_seed
+[Processing: navigation_planning_backend]
+[ 91%] Built target test_exp_optimizer_seed
+[ 93%] Linking CXX executable replay_nominal_problem_snapshot
+[ 93%] Built target replay_nominal_problem_snapshot
+[ 95%] Linking CXX executable test_planner_facade
+[ 95%] Built target test_planner_facade
+[ 97%] Linking CXX executable test_planner_config
+[ 97%] Built target test_planner_config
+[100%] Linking CXX executable test_trajectory
+[100%] Built target test_trajectory
+-- Install configuration: "Release"
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/navigation_planning_backend/planner_facade.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/lib/libnavigation_planning_backend.a
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/navigation_planning_backendTargets.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/navigation_planning_backendTargets-release.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/environment/library_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/environment/library_path.dsv
+-- Up-to-date: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_runtime_context
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_runtime_context/planner_runtime_context.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/guide_endpoint.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/corridor_plane_validation.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/corridor_generator.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/hot_replan_recovery.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/route_yaw_reference.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/corridor_bezier_seed.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/replan_contract.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/route_regression_certificate.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/guide_vertical_envelope.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/boundary_velocity_recovery.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/command_time.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/trajectory_world_validator.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/planner_result.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/config.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/log_utils.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/fov_checker.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/absolute_deadline.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/deterministic_nominal_seed.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/ciri.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/altitude_route_projection.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/backup_braking.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/pass_through_terminal_velocity.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/route_backbone.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/route_boundary_timing.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/planning_stage.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/optimized_nominal_candidate.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/planner.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/planner_core/kinematic_state_boundary.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure/cmd_traj.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure/base
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure/base/piece.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure/base/polytope.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure/base/trajectory.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure/base/ellipsoid.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure/backup_traj.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/data_structure/exp_traj.h
+-- Up-to-date: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/navigation_planning_backend
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/navigation_planning_backend/route_yaw_reference.hpp
+-- Up-to-date: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/navigation_planning_backend/planner_facade.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/navigation_planning_backend/planner.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/path_search
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/path_search/astar.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/path_search/config.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/traj_opt
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/traj_opt/yaw_traj_opt.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/traj_opt/minco.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/traj_opt/config.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/traj_opt/backup_trajectory_optimizer.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/traj_opt/trajectory_dynamics.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/traj_opt/nominal_trajectory_optimizer.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header/color_msg_utils.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header/fmt_eigen.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header/scope_timer.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header/color_text.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header/backward.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header/type_utils.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header/yaml_loader.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/header/eigen_alias.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/polynomial_interpolation.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/mvie.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/lbfgs.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/minco.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/optimization_utils.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/sdlp.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/banded_system.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/root_finder.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/optimization/sdqp.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/geometry
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/geometry/polynomial_state_roundoff.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/geometry/quadrotor_flatness.hpp
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/geometry/quickhull.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/include/utils/geometry/geometry_utils.h
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/ament_index/resource_index/package_run_dependencies/navigation_planning_backend
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/ament_index/resource_index/parent_prefix_path/navigation_planning_backend
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/environment/ament_prefix_path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/environment/ament_prefix_path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/environment/path.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/environment/path.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/local_setup.bash
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/local_setup.sh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/local_setup.zsh
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/local_setup.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/package.dsv
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/ament_index/resource_index/packages/navigation_planning_backend
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/navigation_planning_backendTargetsExport.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/navigation_planning_backendTargetsExport-release.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/ament_cmake_export_targets-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/navigation_planning_backendConfig.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/cmake/navigation_planning_backendConfig-version.cmake
+-- Installing: /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/navigation_planning_backend/share/navigation_planning_backend/package.xml
+--- stderr: navigation_planning_backend
+In file included from /usr/include/eigen3/Eigen/Core:294,
+                 from /usr/include/eigen3/Eigen/Dense:1,
+                 from /usr/include/eigen3/Eigen/Eigen:1,
+                 from /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/eigen_alias.hpp:8,
+                 from /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/type_utils.hpp:10,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/utils/header/type_utils.hpp:4,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/data_structure/base/ellipsoid.h:12,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp:7:
+In copy constructor ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::PlainObjectBase<Derived>&) [with Derived = Eigen::Matrix<double, 3, 1>]’,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>&) [with _Scalar = double; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:414:65,
+    inlined from ‘geometry_utils::Ellipsoid::Ellipsoid(const navigation_math::Mat3f&, const navigation_math::Vec3f&)’ at /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp:70:44:
+/usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:512:17: warning: ‘*(const double*)((char*)&svd + offsetof(Eigen::JacobiSVD<Eigen::Matrix<double, 3, 3, 0, 3, 3>, 3>,Eigen::JacobiSVD<Eigen::Matrix<double, 3, 3, 0, 3, 3>, 3>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<double, 3, 3, 0, 3, 3>, 3> >::m_singularValues.Eigen::Matrix<double, 3, 1, 0, 3, 1>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<double, 3, 1, 0, 3, 1> >::m_storage.Eigen::DenseStorage<double, 3, 3, 1, 0>::m_data.Eigen::internal::plain_array<double, 3, 0, 0>::array[2]))’ may be used uninitialized [-Wmaybe-uninitialized]
+  512 |       : Base(), m_storage(other.m_storage) { }
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp: In constructor ‘geometry_utils::Ellipsoid::Ellipsoid(const navigation_math::Mat3f&, const navigation_math::Vec3f&)’:
+/home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp:68:82: note: ‘svd’ declared here
+   68 |     Eigen::JacobiSVD<Eigen::Matrix3d, Eigen::FullPivHouseholderQRPreconditioner> svd(C_, Eigen::ComputeFullU);
+      |                                                                                  ^~~
+In file included from /usr/include/eigen3/Eigen/src/Core/util/ConfigureVectorization.h:346,
+                 from /usr/include/eigen3/Eigen/Core:22,
+                 from /usr/include/eigen3/Eigen/Dense:1,
+                 from /usr/include/eigen3/Eigen/Eigen:1,
+                 from /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/eigen_alias.hpp:8,
+                 from /home/letandat/Dev/uav-navigation/artifacts/audit_claim_validation/20260920T-claim-validation-local/validation/install/rog_map_vendor/include/navigation_math/type_utils.hpp:10,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/utils/header/type_utils.hpp:4,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/include/utils/geometry/geometry_utils.h:38,
+                 from /home/letandat/Dev/uav-navigation-as-is-audit-20260920/artifacts/architecture_as_is/20260920T-as-is-local/baseline/source_snapshot/src/planning/navigation_planning_backend/src/utils/geometry_utils.cpp:10:
+In function ‘__m128d _mm_loadu_pd(const double*)’,
+    inlined from ‘Packet Eigen::internal::ploadu(const typename unpacket_traits<T>::type*) [with Packet = __vector(2) double]’ at /usr/include/eigen3/Eigen/src/Core/arch/SSE/PacketMath.h:746:22,
+    inlined from ‘Packet Eigen::internal::ploadt(const typename unpacket_traits<T>::type*) [with Packet = __vector(2) double; int Alignment = 0]’ at /usr/include/eigen3/Eigen/src/Core/GenericPacketMath.h:969:26,
+    inlined from ‘PacketType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::packet(Eigen::Index, Eigen::Index) const [with int LoadMode = 0; PacketType = __vector(2) double; Derived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:937:50,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignPacket(Eigen::Index, Eigen::Index) [with int StoreMode = 0; int LoadMode = 0; PacketType = __vector(2) double; DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<double, double>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:675:116,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignPacketByOuterInner(Eigen::Index, Eigen::Index) [with int StoreMode = 0; int LoadMode = 0; PacketType = __vector(2) double; DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<double, double>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:689:48,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_innervec_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<double, double>, 0>; int Index = 0; int Stop = 2]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:279:85,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<double, double>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:455:81,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<double, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Functor = assign_op<double, double>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<double, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<double, double>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<double, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Func = assign_op<double, double>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; _Scalar = double; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<double, 3, 1>; Derived2 = Eigen::Matrix<double, 3, 1>; Derived = Eigen::Quaternion<double>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/lib/gcc/x86_64-linux-gnu/13/include/emmintrin.h:134:24: warning: ‘*(__m128d_u*)((char*)&svd + offsetof(Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2>,Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<double, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<double, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<double, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<double, 9, 0, 0>::array[6]))’ may be used uninitialized [-Wmaybe-uninitialized]
+  134 |   return *(__m128d_u *)__P;
+      |                        ^~~
+In file included from /usr/include/eigen3/Eigen/Geometry:42,
+                 from /usr/include/eigen3/Eigen/Dense:6:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<double, 3, 1>; Derived2 = Eigen::Matrix<double, 3, 1>; Derived = Eigen::Quaternion<double>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+In file included from /usr/include/eigen3/Eigen/Core:277:
+In member function ‘Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::CoeffReturnType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::coeff(Eigen::Index, Eigen::Index) const [with Derived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<double, 3, 1>]’,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeff(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<double, double>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:654:63,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeffByOuterInner(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<double, double>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:668:16,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<double, double>, 0>; int Index = 2; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:211:35,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<double, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<double, double>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:456:92,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<double, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Functor = assign_op<double, double>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<double, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<double, double>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<double, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Func = assign_op<double, double>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<double, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<double, 3, 3>, 3, 1, true>; _Scalar = double; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<double, 3, 1>; Derived2 = Eigen::Matrix<double, 3, 1>; Derived = Eigen::Quaternion<double>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:911:56: warning: ‘svd.Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<double, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<double, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<double, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<double, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<double, 9, 0, 0>::array[8]’ may be used uninitialized [-Wmaybe-uninitialized]
+  911 |     return m_data[col * colStride() + row * rowStride()];
+      |                                                        ^
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<double, 3, 1>; Derived2 = Eigen::Matrix<double, 3, 1>; Derived = Eigen::Quaternion<double>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+In member function ‘Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::CoeffReturnType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::coeff(Eigen::Index, Eigen::Index) const [with Derived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<float, 3, 1>]’,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeff(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:654:63,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeffByOuterInner(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:668:16,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 0; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:211:35,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:456:92,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<float, float>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<float, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Func = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; _Scalar = float; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:911:56: warning: ‘svd.Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<float, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<float, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<float, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<float, 9, 0, 0>::array[6]’ may be used uninitialized [-Wmaybe-uninitialized]
+  911 |     return m_data[col * colStride() + row * rowStride()];
+      |                                                        ^
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+In member function ‘Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::CoeffReturnType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::coeff(Eigen::Index, Eigen::Index) const [with Derived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<float, 3, 1>]’,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeff(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:654:63,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeffByOuterInner(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:668:16,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 1; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:211:35,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 0; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:212:88,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:456:92,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<float, float>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<float, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Func = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; _Scalar = float; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:911:56: warning: ‘svd.Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<float, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<float, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<float, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<float, 9, 0, 0>::array[7]’ may be used uninitialized [-Wmaybe-uninitialized]
+  911 |     return m_data[col * colStride() + row * rowStride()];
+      |                                                        ^
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+In member function ‘Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::CoeffReturnType Eigen::internal::mapbase_evaluator<Derived, PlainObjectType>::coeff(Eigen::Index, Eigen::Index) const [with Derived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; PlainObjectType = Eigen::Matrix<float, 3, 1>]’,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeff(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:654:63,
+    inlined from ‘void Eigen::internal::generic_dense_assignment_kernel<DstEvaluatorTypeT, SrcEvaluatorTypeT, Functor, Version>::assignCoeffByOuterInner(Eigen::Index, Eigen::Index) [with DstEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >; SrcEvaluatorTypeT = Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >; Functor = Eigen::internal::assign_op<float, float>; int Version = 0]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:668:16,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 2; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:211:35,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 1; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:212:88,
+    inlined from ‘static void Eigen::internal::copy_using_evaluator_DefaultTraversal_CompleteUnrolling<Kernel, Index, Stop>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>; int Index = 0; int Stop = 3]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:212:88,
+    inlined from ‘static void Eigen::internal::dense_assignment_loop<Kernel, 3, 2>::run(Kernel&) [with Kernel = Eigen::internal::generic_dense_assignment_kernel<Eigen::internal::evaluator<Eigen::Matrix<float, 3, 1> >, Eigen::internal::evaluator<Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true> >, Eigen::internal::assign_op<float, float>, 0>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:456:92,
+    inlined from ‘void Eigen::internal::call_dense_assignment_loop(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:785:37,
+    inlined from ‘static void Eigen::internal::Assignment<DstXprType, SrcXprType, Functor, Eigen::internal::Dense2Dense, Weak>::run(DstXprType&, const SrcXprType&, const Functor&) [with DstXprType = Eigen::Matrix<float, 3, 1>; SrcXprType = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Functor = Eigen::internal::assign_op<float, float>; Weak = void]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:954:31,
+    inlined from ‘void Eigen::internal::call_assignment_no_alias(Dst&, const Src&, const Func&) [with Dst = Eigen::Matrix<float, 3, 1>; Src = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Func = assign_op<float, float>]’ at /usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:890:49,
+    inlined from ‘Derived& Eigen::PlainObjectBase<Derived>::_set_noalias(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:797:41,
+    inlined from ‘Eigen::PlainObjectBase<Derived>::PlainObjectBase(const Eigen::DenseBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; Derived = Eigen::Matrix<float, 3, 1>]’ at /usr/include/eigen3/Eigen/src/Core/PlainObjectBase.h:594:19,
+    inlined from ‘Eigen::Matrix<_Scalar, _Rows, _Cols, _Options, _MaxRows, _MaxCols>::Matrix(const Eigen::EigenBase<OtherDerived>&) [with OtherDerived = Eigen::Block<const Eigen::Matrix<float, 3, 3>, 3, 1, true>; _Scalar = float; int _Rows = 3; int _Cols = 1; int _Options = 0; int _MaxRows = 3; int _MaxCols = 1]’ at /usr/include/eigen3/Eigen/src/Core/Matrix.h:423:29,
+    inlined from ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’ at /usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:658:13:
+/usr/include/eigen3/Eigen/src/Core/CoreEvaluators.h:911:56: warning: ‘svd.Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2>::<unnamed>.Eigen::SVDBase<Eigen::JacobiSVD<Eigen::Matrix<float, 2, 3, 0, 2, 3>, 2> >::m_matrixV.Eigen::Matrix<float, 3, 3, 0, 3, 3>::<unnamed>.Eigen::PlainObjectBase<Eigen::Matrix<float, 3, 3, 0, 3, 3> >::m_storage.Eigen::DenseStorage<float, 9, 3, 3, 0>::m_data.Eigen::internal::plain_array<float, 9, 0, 0>::array[8]’ may be used uninitialized [-Wmaybe-uninitialized]
+  911 |     return m_data[col * colStride() + row * rowStride()];
+      |                                                        ^
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h: In function ‘Derived& Eigen::QuaternionBase<Derived>::setFromTwoVectors(const Eigen::MatrixBase<OtherDerived>&, const Eigen::MatrixBase<OtherDerived>&) [with Derived1 = Eigen::Matrix<float, 3, 1>; Derived2 = Eigen::Matrix<float, 3, 1>; Derived = Eigen::Quaternion<float>]’:
+/usr/include/eigen3/Eigen/src/Geometry/Quaternion.h:657:36: note: ‘svd’ declared here
+  657 |     JacobiSVD<Matrix<Scalar,2,3> > svd(m, ComputeFullV);
+      |                                    ^~~
+---
+Finished <<< navigation_planning_backend [1min 20s]
+
+Summary: 7 packages finished [2min 18s]
+  3 packages had stderr output: navigation_planning_backend navigation_world_model rog_map_vendor

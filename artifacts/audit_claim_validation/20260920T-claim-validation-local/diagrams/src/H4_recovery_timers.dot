@@ -1,0 +1,19 @@
+digraph H4 {
+  graph [rankdir=LR, labelloc=t, label="H4 — Runtime and PX4 recovery clocks have different starts/owners", fontsize=18, fontname="DejaVu Sans"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans", fontsize=10];
+  edge [fontname="DejaVu Sans", fontsize=9];
+  fail [label="Current-identity\nRetryFromRest result"];
+  start_runtime [label="Runtime records first failure\nsteady_clock start"];
+  retry [label="Further failed retries"];
+  runtime_timeout [label="If stopped + recovery state\nand elapsed >= 5 s:\nfail-close runtime"];
+  complete [label="Completed endpoint observed\nby command acceptance or setpoint"];
+  start_adapter [label="PX4 adapter records\nROS-clock deadline"];
+  hold [label="Hold exact completed command\nwhile pending, identity matches,\nnow < deadline"];
+  adapter_timeout [label="Expiry calls safetyStopNavigation"];
+  status [label="Accepted READY replacement\nclears adapter episode"];
+  fail -> start_runtime -> retry -> runtime_timeout;
+  complete -> start_adapter -> hold -> adapter_timeout;
+  status -> hold [style=dashed, label="clears pending; exits wait"];
+  note [shape=note, label="Two owners and clocks;\nno source contract relates start instants."];
+  note -> start_runtime [style=invis];
+}

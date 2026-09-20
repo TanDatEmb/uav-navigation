@@ -1,0 +1,10 @@
+# H4 — recovery clocks and episode ownership
+
+| Timer/state | Owner, clock | Starts | Reader/effect | Clear/reset |
+|---|---|---|---|---|
+| plan_from_rest_first_failure_steady_ns_ | NavigationRuntimeNode; steady nanoseconds | First current-identity RetryFromRest while timer is zero. | Later RetryFromRest checks elapsed only for kInitialHold/kStoppedRecovery and measured speed <= kStationarySpeedMps; timeout uses kStoppedRecoveryTimeoutS (5 s in timing contract). Timeout fail-closes runtime. | Cleared on new goal/start/terminal reset and successful commit/recovery. No cross-process atomic reset. |
+| planner_recovery_pending_ and planner_recovery_deadline_ns_ | PX4 NavigationMode; ROS clock nanoseconds | Accepted terminal STATUS_COMPLETED when recovery is needed; also completed MAIN/BACKUP endpoint observed by updateSetpoint. | updateMission checks deadline and safety-stops on expiry. Completed command stale exception applies only while pending, before deadline, and with exact episode identity. | Cleared by activation/deactivation, accepted READY replacement/recovery result, mission completion and explicit cleanup. Identity includes mission, waypoint, request and bundle generation. |
+| PX4 Hold retry clock | NavigationModeExecutor; steady nanoseconds | Failed Hold handover result. | Retries no more often than 250 ms while pending, unconfirmed and not in-flight; VehicleStatus AUTO_LOITER clears pending/in-flight. | Reset on activation/deactivation; Success or Deactivated clears pending; Failure leaves pending. |
+
+The two five-second-like values have different start events, clocks and owners. Runtime measures repeated PlanFromRest failures; adapter gives a bounded interval after a completed/settling command. Same configured duration is not proof of conflict, and no contract relating them was found. Code permits timing windows where one stage consumes budget before another begins, but no controlled full-handler test or runtime event sequence established a same-episode discarded result. Verdict: CONDITIONAL / specification relation unresolved, not a confirmed defect.
+

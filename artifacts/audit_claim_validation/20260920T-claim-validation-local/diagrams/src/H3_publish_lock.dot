@@ -1,0 +1,25 @@
+digraph H3 {
+  graph [rankdir=LR, labelloc=t, label="H3 — Final command publication inside shared lock scopes", fontsize=18, fontname="DejaVu Sans"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans", fontsize=10];
+  edge [fontname="DejaVu Sans", fontsize=9];
+  subgraph cluster_pub {
+    label="publishCommand thread"; fontname="DejaVu Sans";
+    l1 [label="lock localization_transition_mutex_"];
+    l2 [label="lock input_mutex_"];
+    l3 [label="lock command execution latch"];
+    store [label="publishIfCurrent locks store"];
+    validate [label="final freshness / world /\nidentity / bundle lease checks"];
+    ros [label="rclcpp Publisher::publish"];
+    unlock [label="release store + outer locks"];
+    l1 -> l2 -> l3 -> store -> validate -> ros -> unlock;
+  }
+  subgraph cluster_odom {
+    label="onPropagatedOdometry thread"; fontname="DejaVu Sans";
+    odom [label="request localization_transition_mutex_"];
+    accept [label="state ingress/update after lock"];
+    odom -> accept;
+  }
+  odom -> l1 [style=dashed, dir=both, label="competes for same lock"];
+  note [shape=note, label="Source proves blocking relation.\nPublisher call duration is not lock wait.\nNo target workload distribution captured."];
+  note -> ros [style=invis];
+}

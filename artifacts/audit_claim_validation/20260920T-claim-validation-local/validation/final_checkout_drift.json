@@ -1,0 +1,137 @@
+{
+  "status": "DRIFT_DETECTED",
+  "captured_checkout": {
+    "head": "9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2",
+    "branch": "codex/close-proven-findings",
+    "staged_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "unstaged_diff_sha256": "9dc4eb1071b4c8b417be36ff5b8fab9d3f35b3e383fcbdd990143c4284d409d3"
+  },
+  "current_checkout": {
+    "head": "8eaab3d33db36e9e636ad4005ed91b8f055f4d68",
+    "branch": "codex/close-proven-findings",
+    "staged_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "unstaged_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "status_outside_audit": []
+  },
+  "captured_status_changed": true,
+  "head_changed": true,
+  "committed_paths_since_capture": [
+    "AGENTS.md",
+    "docs/architecture/continuous_waypoint_trajectory_plan.md",
+    "docs/architecture/runtime_safety_decision_ledger.md",
+    "docs/reports/super_architecture_comparison_2026-09-05.md",
+    "docs/safety/archive/runtime_safety_legacy_full.md",
+    "docs/safety/runtime_safety_current.md",
+    "docs/safety/runtime_safety_index.md",
+    "docs/validation/navigation_reimplementation_review.md",
+    "src/contracts/navigation_contracts/msg/NavigationCommand.msg",
+    "src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp",
+    "src/planning/navigation_planning/include/navigation_planning/planner_diagnostics.hpp",
+    "src/planning/navigation_planning/include/navigation_planning/planning_request.hpp",
+    "src/planning/navigation_planning_backend/include/data_structure/cmd_traj.h",
+    "src/planning/navigation_planning_backend/include/navigation_planning_backend/planner_facade.hpp",
+    "src/planning/navigation_planning_backend/include/planner_core/backup_braking.hpp",
+    "src/planning/navigation_planning_backend/include/planner_core/config.hpp",
+    "src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp",
+    "src/planning/navigation_planning_backend/include/planner_core/log_utils.hpp",
+    "src/planning/navigation_planning_backend/include/planner_core/pass_through_terminal_velocity.hpp",
+    "src/planning/navigation_planning_backend/include/planner_core/planner.hpp",
+    "src/planning/navigation_planning_backend/include/traj_opt/trajectory_dynamics.hpp",
+    "src/planning/navigation_planning_backend/src/planner_core/planner.cpp",
+    "src/planning/navigation_planning_backend/src/planner_facade.cpp",
+    "src/planning/navigation_planning_backend/test/test_planner_config.cpp",
+    "src/planning/navigation_planning_backend/test/test_planner_facade.cpp",
+    "src/planning/navigation_planning_backend/test/test_trajectory.cpp",
+    "src/runtime/navigation_runtime/CMakeLists.txt",
+    "src/runtime/navigation_runtime/config/planner.yaml",
+    "src/runtime/navigation_runtime/include/navigation_runtime/baseline_refinement.hpp",
+    "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+    "src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp",
+    "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
+    "src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp",
+    "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+    "src/runtime/navigation_runtime/test/test_execution_episode.cpp",
+    "src/runtime/navigation_runtime/test/test_navigation_runtime_terminal_monitor.cpp",
+    "src/runtime/navigation_runtime/test/test_planner_fsm.cpp",
+    "src/runtime/navigation_runtime/test/test_planning_worker.cpp",
+    "tools/validate_runtime_safety_ledger.py"
+  ],
+  "A_manifest_paths_different_in_current_checkout": [
+    {
+      "path": "docs/safety/runtime_safety_current.md",
+      "current_sha256": "2fd459121d8609d01e85136f344c2bf58130197d4bba14d97cac976b496143f3",
+      "A_sha256": "7fbb5bd9ed47e1447db34a573221bc9cf5b2c7e683133dd4237c872310a5c1fb"
+    },
+    {
+      "path": "docs/safety/runtime_safety_index.md",
+      "current_sha256": "c0ac1695f741b397ba266253de518f05f35cae407f2755c7688237823e954b71",
+      "A_sha256": "d079896204d467e2cb7dac9906ee753e91ee0b6a8df5259633ffb590f42412dd"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/backup_braking.hpp",
+      "current_sha256": "e8934fffade33d577a588e5b25f840965bcc22c392f2d865480df4adb56528d3",
+      "A_sha256": "ba277fe7650a9315e6c8fa22b691d1a9260544eafb33a2f786fb4601badd395e"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/config.hpp",
+      "current_sha256": "116443721bf9cc2551c68a4c09c9855973deef845925253e9dde74d7d49ec5b8",
+      "A_sha256": "bc2fdfda6ecc26694bb0aaaa8a2547288bf7caf6215cb918a91f339c647a4ce4"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp",
+      "current_sha256": "2cbc43c79d0c1de414d8758246eba74ca3d7a25e9b42a8345c32f89484352213",
+      "A_sha256": "19aba9503a8036d2f83fe02c23f1de35e6b6af51d43abd44675a1c4f5d750896"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/traj_opt/trajectory_dynamics.hpp",
+      "current_sha256": "523cfc025af027dc632be17245cd4ae78e7a684c1e6fe57851b00e66919d3d22",
+      "A_sha256": "b0a9f9ff8dc46f22d32a6e95cf36dd20ccf9caecea265fe0bc2f1b67d47278e2"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/planner.cpp",
+      "current_sha256": "e74fe904093e3f56f2c7abe10665557a68d71ae79a72092c35352ec355795adc",
+      "A_sha256": "590e5c517ff1c8d7e889b2b4d91fef090a387bdc4225b6a57096bf3e3ba62a30"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_planner_config.cpp",
+      "current_sha256": "e96181a27df4984931859af6df05307ed7146fb97a1f98979866832c3ccfee10",
+      "A_sha256": "cb0a94a5f8ade99a8de65b18da70b79f1643852b1ba7b4d42f4beacf909e988a"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_trajectory.cpp",
+      "current_sha256": "303fcd02c5d46193190d0adadebe922d31bb3dbe2b32ebb413a533769aa4c3a7",
+      "A_sha256": "b13b2486982fda0d0694102a0c4f800ad643360619d94db8b7507db3bd4d0caa"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/config/planner.yaml",
+      "current_sha256": "840fc0aceceaa52a6ba047b059e4ea146290f7d4e670c8a663a215c66a41582b",
+      "A_sha256": "67f36a1d969118862b787c4edad2447549d02008797f94417c2fbd2bb6775811"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "current_sha256": "ff8c82241f1ca6a39bb52203323c5f25d41d7a681f705b074876d95d5e1ae508",
+      "A_sha256": "d5b8e00684e40c223c69272fd418e44a03bddf2c4c61f820ac13ccb1d2da836f"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp",
+      "current_sha256": "5d8dcffa06a249ce54b4246f31f152ab2508dd6fa163f322ce0e694f9a254674",
+      "A_sha256": "d8c587725bbdc8b789e4914a3e7c070d93128cb0e21760c2d289afebb11f1c14"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "current_sha256": "6ff9e28b4b9ab3028b49c982a11aeb0620a68f50426d8220116e1bebadc86d29",
+      "A_sha256": "61653ae02500e04614de1c6777f41937c97d19d3cb115088babaa6acf14e0e70"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_execution_episode.cpp",
+      "current_sha256": "e26e6e4a5fd2aaaa2947786871093458d3a122ba281805f0fa73fd6eb9cd9eca",
+      "A_sha256": "c93e811bd2647376842e8ed65bbe28d4eb03dcd64f52ae965d3bf1f4600c948a"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_planner_fsm.cpp",
+      "current_sha256": "81cd927be74fa1ff2dddae3ab4608e37696f81d2da46852723b833cebd89a8ea",
+      "A_sha256": "3beb53b3b718431795b5f06486dac79f457788cac7f3121c0a603c0af00be57d"
+    }
+  ],
+  "interpretation": "A findings remain bound to its frozen source snapshot; current checkout requires a separate verdict for every changed claim path."
+}

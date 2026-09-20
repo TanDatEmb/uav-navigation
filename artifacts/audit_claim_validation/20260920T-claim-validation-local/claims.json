@@ -1,0 +1,508 @@
+{
+  "schema_version": 1,
+  "run_id": "20260920T-claim-validation-local",
+  "claim_register_written_before_claim_tests": true,
+  "source_baselines": {
+    "A": {
+      "artifact_commit": "f2bd3f46f9936d622377ea4761f733f988273b66",
+      "source_snapshot_head": "9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2",
+      "source_manifest_sha256": "see baseline/repo_state.json",
+      "reader": "artifact baseline/source_snapshot only"
+    },
+    "B": {
+      "head": "9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2",
+      "branch": "codex/close-proven-findings",
+      "working_tree": "captured in baseline/repo_state.json before audit output creation"
+    },
+    "C_after_final_capture": {
+      "head": "8eaab3d33db36e9e636ad4005ed91b8f055f4d68",
+      "branch": "codex/close-proven-findings",
+      "parent_head": "9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2",
+      "status": "DRIFT_DETECTED",
+      "report": "validation/final_checkout_drift.json"
+    }
+  },
+  "claims": [
+    {
+      "id": "H0",
+      "claim": "Effective profile premises determine whether tracking/health suppression, velocity-only behavior, command leases, recovery budgets, frames and QoS relevant to H1-H7 are active; checked-in defaults alone do not identify a live run.",
+      "premises_to_confirm": [
+        "per-process launch arguments and YAML merge order",
+        "actual `use_sim_time` for runtime and PX4 adapter",
+        "tracking coefficients and optional velocity-only inputs",
+        "constructor clamps/rejections",
+        "build/install overlay and dependency revision",
+        "no live runtime parameter dump at audit start"
+      ],
+      "counterevidence_or_narrowing": [
+        "launch default may force false",
+        "constructor may make a requested profile unreachable",
+        "the two processes may receive separate parameter sets",
+        "clock mode is not itself proof of a safety mode"
+      ],
+      "test_plan": [
+        "trace launch -> YAML -> loader -> consumers in A",
+        "run actual loader template in native fake-parameter fixture over legal truth table",
+        "record B/A build and environment provenance"
+      ],
+      "verdict": "CONFIRMED_WITH_SCOPE",
+      "classification": "SPECIFICATION_GAP",
+      "evidence": [
+        "E-H0-01",
+        "E-H0-02",
+        "E-H0-03",
+        "E-H0-04",
+        "E-H0-05",
+        "E-H0-06",
+        "E-H0-07",
+        "E-H0-08",
+        "E-TEST-H0"
+      ],
+      "execution": [
+        {
+          "status": "TEST_EXECUTED",
+          "name": "h0_tracking_loader_truth_table",
+          "exit_code": 0,
+          "log": "validation/logs/h0_run.log",
+          "compile_log": "validation/logs/h0_compile.log",
+          "binary": "validation/h0_tracking_loader_truth_table"
+        }
+      ],
+      "scope_result": "Loader truth table and configuration paths are source-confirmed. Effective profile of any target run remains unknown because no runtime parameter dump, launch invocation, mission identity, RMW capture or binary provenance exists.",
+      "negative_control": "sim=false leaves both suppression flags false; valid positive tracking coefficient under sim=true turns both off; invalid velocity-only with sim=false is rejected.",
+      "claim_register_written_before_claim_tests": true,
+      "current_checkout_C": {
+        "verdict": "SOURCE_EVIDENCE_PATHS_UNCHANGED",
+        "note": "Referenced implementation/config or pinned dependency hashes remain those of A, but test binaries were built from A and live profile/runtime evidence remains unavailable."
+      }
+    },
+    {
+      "id": "H1",
+      "claim": "A candidate may pass admission with enough analytic MAIN continuation reserve while permitted measured waypoint crossing occurs after the live continuation witness closes, delaying progress until another witness or stop path.",
+      "premises_to_confirm": [
+        "exact reserve and boundary predicates in A",
+        "candidate timing can pass all producer/admission geometry/dynamics/tracking gates",
+        "measured acceptance-ball crossing can be temporally displaced from analytic center crossing within allowed tracking/state age",
+        "consumer does not recover the crossing after a later witness"
+      ],
+      "counterevidence_or_narrowing": [
+        "producer may enforce a longer MAIN reserve",
+        "safety/coincident/terminal witnesses may authorize progress",
+        "previous-position update or retained command may preserve crossing",
+        "replan may renew the witness before it closes"
+      ],
+      "negative_controls": [
+        "positive continuation witness crossing",
+        "crossing while certificate false then valid replacement arrives",
+        "stale/duplicate measurement and wrong identity rejected"
+      ],
+      "test_plan": [
+        "derive expressions from A",
+        "test helper boundary at -1/0/+1 ns",
+        "trace actual mission crossing consumer and relevant test/build path",
+        "do not inject unreachable private flags"
+      ],
+      "verdict": "CONDITIONAL",
+      "classification": "SPECIFICATION_GAP",
+      "evidence": [
+        "E-H1-01",
+        "E-H1-02",
+        "E-H1-03",
+        "E-H1-04",
+        "E-H1-05",
+        "E-H1-06",
+        "E-H1-07",
+        "E-H1-08",
+        "E-H1-09",
+        "E-H1-10",
+        "E-TEST-H1"
+      ],
+      "execution": [
+        {
+          "status": "TEST_EXECUTED",
+          "name": "h1_mission_counterexample",
+          "exit_code": 0,
+          "log": "validation/logs/h1_run.log",
+          "binary": "validation/h1_mission_counterexample",
+          "scope": "actual MissionController and RouteProgress, injected optional witness"
+        },
+        {
+          "status": "TEST_EXECUTED",
+          "name": "mission_contract",
+          "exit_code": 0,
+          "passed": 19,
+          "log": "validation/logs/h1_mission_contract_gtest.log"
+        },
+        {
+          "status": "TEST_EXECUTED",
+          "name": "continuation_reserve_boundary",
+          "exit_code": 0,
+          "passed": 1,
+          "log": "validation/logs/h1_helper_boundary_gtest.log"
+        }
+      ],
+      "scope_result": "Source supports the local mechanism: mission progress requires measured crossing plus current matching continuation unless a narrow exception applies; every mission update replaces the previous sample. However onNavigationCommand immediately calls updateMission for an accepted continuation and rechecks command/state/health/identity, so a timer-only delay assertion is overstated. Exact producer-to-admission candidate timing under real geometry/tracking gates is not reproduced.",
+      "negative_control": "Current matching witness crossing advances once; wrong request identity does not; late witness after the crossing segment has moved outside the acceptance region does not reconstruct the old segment.",
+      "reachability": "LOCAL_COUNTEREXAMPLE using production MissionController/RouteProgress; upstream continuation is injected, so not PRODUCT_PATH_REACHABLE for a specific candidate.",
+      "claim_register_written_before_claim_tests": true,
+      "current_checkout_C": {
+        "verdict": "UNVERIFIED_AFTER_CAPTURE_DRIFT",
+        "affected_paths": [
+          "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
+        ],
+        "note": "A and initial B verdicts remain bound to the frozen source snapshot; C was not merged into their evidence."
+      }
+    },
+    {
+      "id": "H2",
+      "claim": "Runtime world-freshness suspension may leave the PX4 adapter's last accepted command to expire before useful recertification/resume, changing adapter authority through its own stale-command path.",
+      "premises_to_confirm": [
+        "exact suspend mutation and whether active/pending bundle is retained or revoked",
+        "sample/publish behavior while suspended",
+        "effective producer bundle/stream lease and receiver cache lease clocks",
+        "terminal/recovery exceptions and callback that triggers recertification",
+        "later command identity and reactivation guard"
+      ],
+      "counterevidence_or_narrowing": [
+        "suspension may publish an explicit terminal status or stop event",
+        "a certified endpoint hold may exempt command expiry",
+        "receiver may retain only under exact role/identity and valid state",
+        "state/health gates can independently control output"
+      ],
+      "negative_controls": [
+        "fresh world returns before expiry",
+        "stale-but-same-geometry separated from world revision invalidation",
+        "ordinary MAIN vs moving BACKUP vs completed endpoint hold",
+        "state/health kept fresh"
+      ],
+      "test_plan": [
+        "trace source with exact clocks and last accepted command",
+        "use actual handlers/native fake transport if a production seam exists",
+        "never infer PX4 acceptance from ROS publish"
+      ],
+      "verdict": "CONFIRMED_WITH_SCOPE",
+      "classification": "INTENTIONAL_POLICY",
+      "evidence": [
+        "E-H2-01",
+        "E-H2-02",
+        "E-H2-03",
+        "E-H2-04",
+        "E-H2-05",
+        "E-H2-06",
+        "E-H2-07"
+      ],
+      "execution": [
+        {
+          "status": "TEST_EXECUTED",
+          "name": "execution_episode_suspension_assertions",
+          "exit_code": 0,
+          "passed": 2,
+          "log": "validation/logs/h2_execution_episode_gtest.log",
+          "scope": "runtime lifecycle helper only; no PX4 adapter or transport"
+        }
+      ],
+      "scope_result": "Static source path is supported under explicit timing/state/health premises: stale world suspends exact runtime bundle with no command; exact-generation recertification may restore it; otherwise PX4 adapter independently expires its last accepted command and latches safety stop/handover. This is a fail-closed terminal outcome, not proof of a liveness defect. Actual lease timing and PX4 acceptance are unobserved.",
+      "negative_control": "Fresh world recertifies before the adapter lease and passes exact identity/world/state checks; adapter has a narrow exact-identity exception only for a completed command during its bounded recovery interval, not ordinary MAIN.",
+      "reachability": "PRODUCT_PATH_REACHABLE statically conditional on no useful recertified command reaching the adapter before its configured/constructor-validated lease and on other adapter inputs remaining admissible.",
+      "claim_register_written_before_claim_tests": true,
+      "current_checkout_C": {
+        "verdict": "UNVERIFIED_AFTER_CAPTURE_DRIFT",
+        "affected_paths": [
+          "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+          "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+          "src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp"
+        ],
+        "note": "A and initial B verdicts remain bound to the frozen source snapshot; C was not merged into their evidence."
+      }
+    },
+    {
+      "id": "H3",
+      "claim": "A ROS publication performed while holding a lock shared with odometry/goal/scheduler callbacks can create structural blocking; whether it materially limits target workload remains a separate measured-bottleneck claim.",
+      "premises_to_confirm": [
+        "publication is inside exact lock scope in A",
+        "a named callback needs the same lock",
+        "publication API behavior and QoS/RMW/profile are known for any timing claim"
+      ],
+      "counterevidence_or_narrowing": [
+        "publication may be intra-process/nonblocking enqueue",
+        "competing callbacks may run in another callback group/thread",
+        "lock order/early return may avoid the path",
+        "high duration under a barrier is an induced structural result only"
+      ],
+      "negative_controls": [
+        "no fault injection timing sample",
+        "noncompeting callback path",
+        "publication duration measured separately from lock wait/hold"
+      ],
+      "test_plan": [
+        "source lock-scope proof",
+        "barrier-controlled native seam only if existing boundary permits",
+        "microbenchmark only with exact build/N/warmup/payload/RMW and raw data",
+        "compare other funnel stages before ranking"
+      ],
+      "verdict": "CONFIRMED_WITH_SCOPE",
+      "classification": "UNRESOLVED",
+      "evidence": [
+        "E-H3-01",
+        "E-H3-02",
+        "E-H3-03",
+        "E-H3-04"
+      ],
+      "execution": [
+        {
+          "status": "TEST_EXECUTED",
+          "name": "store_lock_freshness_and_world_generation",
+          "exit_code": 0,
+          "passed": 2,
+          "log": "validation/logs/store_focused_gtest.log",
+          "scope": "store-level, no ROS publisher"
+        }
+      ],
+      "scope_result": "Publisher call is inside nested runtime transition locks and CommittedBundleStore mutex; propagated odometry needs shared localization lock, so structural blocking is confirmed. This does not establish RMW blocking duration or workload bottleneck.",
+      "negative_control": "Existing barrier test covers store lock waiting and freshness recheck, not ROS publish. No-fault target workload distribution, lock wait/hold separation, executor queue delays and comparison with planner/corridor/recovery stages are absent.",
+      "bottleneck_verdict": "UNRESOLVED; no target-workload bottleneck can be ranked.",
+      "claim_register_written_before_claim_tests": true,
+      "current_checkout_C": {
+        "verdict": "UNVERIFIED_AFTER_CAPTURE_DRIFT",
+        "affected_paths": [
+          "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
+        ],
+        "note": "A and initial B verdicts remain bound to the frozen source snapshot; C was not merged into their evidence."
+      }
+    },
+    {
+      "id": "H4",
+      "claim": "Runtime plan-from-rest timeout and adapter recovery wait may create an incompatible outcome for one identified recovery episode.",
+      "premises_to_confirm": [
+        "all timer writers/readers/resets",
+        "clock domain and start event of each",
+        "identity keys per timer and clearing on accepted result/epoch/operator event",
+        "product requirement relating the deadlines"
+      ],
+      "counterevidence_or_narrowing": [
+        "timers can intentionally bound separate owner lifetimes",
+        "identity or success callbacks may clear/reset both",
+        "one timer may begin only after the other stage",
+        "no specified relation means a specification gap rather than source defect"
+      ],
+      "negative_controls": [
+        "stopped endpoint vs still-moving completed endpoint",
+        "first failure then success",
+        "replacement around boundary with same/different request and generation",
+        "health/world gate delays solve"
+      ],
+      "test_plan": [
+        "enumerate full event table from code",
+        "use fake clock only through existing production seams",
+        "test actual state handlers if feasible"
+      ],
+      "verdict": "CONDITIONAL",
+      "classification": "SPECIFICATION_GAP",
+      "evidence": [
+        "E-H4-01",
+        "E-H4-02",
+        "E-H4-03",
+        "E-H4-04",
+        "E-H4-05"
+      ],
+      "execution": [
+        {
+          "status": "TEST_EXECUTED",
+          "name": "planner_fsm_recovery_guards",
+          "exit_code": 0,
+          "passed": 3,
+          "log": "validation/logs/fsm_focused_gtest.log",
+          "scope": "production helper/FSM tests; not the PX4 adapter timer handler"
+        }
+      ],
+      "scope_result": "Two recovery timers exist with distinct owner, start event, identity key and clock (runtime steady, PX4 adapter ROS). Their equal default durations do not prove conflict. Source does not define a relationship between the budgets; same-episode accepted-result discard and handover were not reproduced.",
+      "negative_control": "Runtime timeout is guarded by stopped recovery state and measured stationary speed; adapter timer starts only after completed endpoint acceptance/observation and can be cleared by a matching READY replacement.",
+      "claim_register_written_before_claim_tests": true,
+      "current_checkout_C": {
+        "verdict": "UNVERIFIED_AFTER_CAPTURE_DRIFT",
+        "affected_paths": [
+          "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+          "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+          "src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp"
+        ],
+        "note": "A and initial B verdicts remain bound to the frozen source snapshot; C was not merged into their evidence."
+      }
+    },
+    {
+      "id": "H5",
+      "claim": "The configured candidate governor can exclude a feasible lower-speed/duration candidate, or its pre-optimizer work materially consumes solve budget.",
+      "premises_to_confirm": [
+        "current grid/search implementation in A",
+        "measured vs execution-anchor PVA and physical/recovery limits",
+        "support scalar provenance, units and reachability",
+        "specific path returns before optimizer with no candidate fallback",
+        "independent oracle shares the applicable boundary family"
+      ],
+      "counterevidence_or_narrowing": [
+        "grid may have changed from historical 16-sample search",
+        "later validator may reject the candidate regardless",
+        "0.02 m support may be unreachable under map resolution/inflation/unknown policy",
+        "early guard may reject only invalid inputs, not feasible ones",
+        "absence of abort check alone is not a missed deadline"
+      ],
+      "negative_controls": [
+        "positive control with sufficient support",
+        "boundary support/duration tests",
+        "steady-state oracle only when a0=j0=0",
+        "full PVAJ kept separate"
+      ],
+      "test_plan": [
+        "trace caller through gates and fallback before optimizer",
+        "actual helper microcounterexample with clear scope",
+        "measure helper and caller counts/time only with valid provenance"
+      ],
+      "verdict": "NOT_REPRODUCED",
+      "classification": "UNRESOLVED",
+      "evidence": [
+        "E-H5-01",
+        "E-H5-02",
+        "E-H5-03",
+        "E-H5-04",
+        "E-TEST-H5"
+      ],
+      "execution": [
+        {
+          "status": "TEST_EXECUTED",
+          "name": "PlannerSpeedGovernor",
+          "exit_code": 0,
+          "passed": 3,
+          "log": "validation/logs/h5_planner_speed_governor_gtest.log"
+        },
+        {
+          "status": "TEST_EXECUTED",
+          "name": "h5_speed_grid_oracle",
+          "exit_code": 0,
+          "checked": 24,
+          "rejected_with_fine_sweep_witness": 0,
+          "compile_log": "validation/logs/h5_speed_grid_oracle_compile.log",
+          "link_log": "validation/logs/h5_speed_grid_oracle_link.log",
+          "log": "validation/logs/h5_speed_grid_oracle_run.log"
+        }
+      ],
+      "scope_result": "A has a descending 16-sample speed grid. It checks actual measured PVAJ under BACKUP physical limits, then checks proposed steady cruise candidates. Failed governor result returns before nominal endpoint MINCO in this caller. A separate route gate requires partial support greater than 2*resolution (0.4 m at the reviewed default resolution). Duration selection returns the first dynamically feasible seed before the caller checks support. No reachable product false negative or material cost was established.",
+      "negative_control": "Positive concrete-stop fixture and missing-support rejection. Audit sweep tests 24 zero-PVAJ/helper input combinations at support 0.401–5 m and requested speed 1–8 m/s; no case rejected by the grid had a feasible 1 m/s-resolution sweep witness. Same production stopping certificate is the oracle, so this is a helper-local comparison, not an independent mathematical proof or product path.",
+      "reachability": "LOCAL_COUNTEREXAMPLE not found in the stated helper domain; no actual route/world/candidate fixture was constructed.",
+      "claim_register_written_before_claim_tests": true,
+      "current_checkout_C": {
+        "verdict": "UNVERIFIED_AFTER_CAPTURE_DRIFT",
+        "affected_paths": [
+          "src/planning/navigation_planning_backend/include/planner_core/backup_braking.hpp",
+          "src/planning/navigation_planning_backend/include/planner_core/config.hpp",
+          "src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp",
+          "src/planning/navigation_planning_backend/include/traj_opt/trajectory_dynamics.hpp",
+          "src/planning/navigation_planning_backend/src/planner_core/planner.cpp",
+          "src/planning/navigation_planning_backend/test/test_planner_config.cpp",
+          "src/runtime/navigation_runtime/config/planner.yaml"
+        ],
+        "note": "A and initial B verdicts remain bound to the frozen source snapshot; C was not merged into their evidence."
+      }
+    },
+    {
+      "id": "H6",
+      "claim": "`Success` from PX4 `scheduleMode(AUTO_LOITER)` clears retry before `VehicleStatus.AUTO_LOITER` confirmation, but dependency semantics and callback ordering decide whether that is an actual liveness defect.",
+      "premises_to_confirm": [
+        "exact linked/submodule PX4 ROS 2 interface revision",
+        "meaning and dispatch order of Success/Deactivated/Failure",
+        "all writes of pending/in-flight/confirmed and lifecycle reset",
+        "status subscription serialization and operator takeover path"
+      ],
+      "counterevidence_or_narrowing": [
+        "Success may guarantee operation completion or accepted mode transition",
+        "Deactivated may explicitly transfer authority to operator",
+        "status may arrive before API callback",
+        "unconditional retry may reassert mode after operator takeover"
+      ],
+      "negative_controls": [
+        "status before/after callback",
+        "Failure and retry",
+        "Success with missing status",
+        "Deactivated/operator takeover",
+        "stale callback from prior lifecycle"
+      ],
+      "test_plan": [
+        "read exact dependency source pinned by A and inspect build linkage",
+        "only run controlled native/API fixture if the actual API dispatch can be isolated"
+      ],
+      "verdict": "CONDITIONAL",
+      "classification": "SPECIFICATION_GAP",
+      "evidence": [
+        "E-H6-01",
+        "E-H6-02",
+        "E-H6-03",
+        "E-H6-04"
+      ],
+      "execution": [],
+      "scope_result": "The pinned ModeExecutor callback is not merely a VehicleCommand ACK: it waits for matching ModeCompleted after scheduled-mode activation. Therefore any previous phrasing that Success is only an ACK and may stop retry is REFUTED. App still clears pending on Success/Deactivated independently of VehicleStatus AUTO_LOITER; exact callback/status ordering and PX4 mode-result semantics are unresolved without matching firmware/runtime evidence. Deactivated is treated as authority loss and not retried to avoid taking control from an operator.",
+      "subclaims": [
+        {
+          "claim": "scheduleMode Success means command ACK only",
+          "verdict": "REFUTED",
+          "evidence": [
+            "E-H6-02",
+            "E-H6-03",
+            "E-H6-04"
+          ]
+        },
+        {
+          "claim": "Success/VehicleStatus AUTO_LOITER ordering can leave a persistent unconfirmed state",
+          "verdict": "UNRESOLVED",
+          "evidence": [
+            "E-H6-01",
+            "E-H6-03"
+          ]
+        }
+      ],
+      "claim_register_written_before_claim_tests": true,
+      "current_checkout_C": {
+        "verdict": "SOURCE_EVIDENCE_PATHS_UNCHANGED",
+        "note": "Referenced implementation/config or pinned dependency hashes remain those of A, but test binaries were built from A and live profile/runtime evidence remains unavailable."
+      }
+    },
+    {
+      "id": "H7",
+      "claim": "The available evidence can rank a real target-workload bottleneck among H1-H6 or alternative funnel stages.",
+      "premises_to_confirm": [
+        "source/binary/profile-matched workload artifacts",
+        "per-request identity and first causal reject/wait point",
+        "raw repeated timing/frequency data with sufficient provenance",
+        "alternative funnel stages measured on the same workload"
+      ],
+      "counterevidence_or_narrowing": [
+        "source-only path proves possibility not incidence",
+        "fault injection measures induced mechanism",
+        "unproven profile or binary makes logs a lead only",
+        "logs from retries must be grouped by request/solve/bundle/episode"
+      ],
+      "negative_controls": [
+        "same-workload successful control",
+        "compare guide/corridor/baseline/optimizer/recertification/publication/adapter stages"
+      ],
+      "test_plan": [
+        "inventory available artifacts and provenance before using them",
+        "report unavailable traces explicitly",
+        "do not rank by one max, code size, or induced delay"
+      ],
+      "verdict": "UNRESOLVED",
+      "classification": "UNRESOLVED",
+      "evidence": [
+        "E-H5-02",
+        "E-H3-02",
+        "E-H2-05",
+        "E-H1-05"
+      ],
+      "execution": [],
+      "scope_result": "No target-workload artifacts with matched source/binary/profile provenance were found in the bounded artifact scan. The audit cannot rank actual frequency, end-to-end latency or CPU cost. Alternative funnel stages remain plausible source branches, not measured causes.",
+      "negative_control": "No same-workload successful control or per-request failure cohort exists; repeated diagnostic log lines cannot be counted as independent events.",
+      "claim_register_written_before_claim_tests": true,
+      "current_checkout_C": {
+        "verdict": "UNRESOLVED",
+        "note": "No matched target workload was available; audit did not re-evaluate the full post-capture checkout."
+      }
+    }
+  ]
+}

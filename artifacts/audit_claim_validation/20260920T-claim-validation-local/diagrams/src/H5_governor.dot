@@ -1,0 +1,28 @@
+digraph H5 {
+  graph [rankdir=TB, labelloc=t, label="H5 — Measured-state governor before nominal endpoint synthesis", fontsize=18, fontname="DejaVu Sans"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans", fontsize=10];
+  edge [fontname="DejaVu Sans", fontsize=9];
+  input [label="Planner caller: measured PVAJ;\nphysical BACKUP limits;\nmin(20 m, directional, route, policy)"];
+  current [label="evaluateStopReachability(actual PVAJ)"];
+  current_fail [label="FAIL: physical envelope /\nsupport / synthesis reason"];
+  grid [label="16 descending speed samples\nrequested * i / 16"];
+  candidate [label="Prospective steady cruise:\nposition + velocity, a=j=0"];
+  check [label="Concrete stop polynomial\nand support check"];
+  abort [label="Cancellation / ROS deadline /\nsteady deadline before each sample"];
+  return_fail [label="Caller returns FAILED\nbefore nominal endpoint MINCO"];
+  nominal [label="A feasible sampled speed exists;\ncontinue nominal synthesis"];
+  validate [label="Later world candidate validation\nremains independent"];
+  input -> current;
+  current -> current_fail [label="not feasible"];
+  current -> grid [label="feasible"];
+  grid -> abort [label="per iteration"];
+  abort -> return_fail [label="abort"];
+  abort -> candidate [label="continue"];
+  candidate -> check;
+  check -> nominal [label="feasible"];
+  check -> grid [label="not feasible; next lower sample"];
+  grid -> return_fail [label="all 16 exhausted"];
+  nominal -> validate;
+  note [shape=note, label="Existing tests do not establish\ncontinuous false negative or WCET.\nGrid is a source fact, not a measured bottleneck."];
+  note -> grid [style=invis];
+}

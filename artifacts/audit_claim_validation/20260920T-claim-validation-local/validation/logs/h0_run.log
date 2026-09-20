@@ -1,0 +1,5 @@
+sim=false, coefficients=zero -> enabled=false, suppression=false
+sim=true, coefficients=zero -> enabled=true, both suppressions=true
+sim=true, base_m=0.2 -> adaptive gate=true, suppression=false
+sim=false, velocity_only=true -> loader rejects
+sim=true, valid velocity_only=true, zero tracking coefficients -> valid; suppressions remain true
