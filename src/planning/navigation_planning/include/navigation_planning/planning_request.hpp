@@ -2,12 +2,14 @@
 
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 
 #include <Eigen/Core>
 
 #include <navigation_planning/kinematic_state.hpp>
+#include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/execution_anchor.hpp>
 #include <navigation_planning/planning_budget.hpp>
 #include <navigation_planning/planning_limits.hpp>
@@ -66,6 +68,10 @@ struct GoalIdentity {
 struct PlanningHistory {
   std::uint64_t previous_bundle_generation{0};
   Eigen::Vector3d previous_velocity_world{Eigen::Vector3d::Zero()};
+  // Execution-owned immutable predecessor evidence. It is optional for
+  // requests that do not need predecessor-specific recovery policy; when
+  // supplied, its generation and localization lineage are checked below.
+  std::shared_ptr<const CandidateBundle> previous_bundle;
 
   // A zero generation means that there is no prior executable bundle. In
   // that case the velocity field must not be interpreted as prior-command
@@ -87,10 +93,24 @@ struct PlanningRequest {
   // The route is part of the immutable solve snapshot. A planner solve must
   // not read a separately mutable route member after this request is queued.
   navigation_mission::ImmutableRouteSnapshot route_snapshot;
+  // A bounded local solve target can precede the desired mission waypoint.
+  // It is captured with the route so request scheduling cannot substitute a
+  // newer target while preserving the same mission identity.
+  std::optional<Eigen::Vector3d> planning_goal_world;
   navigation_world_model::WorldModelViewPtr world;
   navigation_world_model::CurrentBodySupportPtr current_body_support;
+  std::optional<Eigen::Vector3d> mission_start_position_world;
+  // The corridor endpoint tolerance is request data rather than mutable
+  // planner setup. When absent, the active immutable route waypoint owns it.
+  std::optional<double> goal_acceptance_radius_m;
+  // A bounded terminal altitude is execution-owned evidence used only by a
+  // measured emergency-brake transaction.
+  std::optional<double> emergency_terminal_altitude_m;
   DynamicLimits dynamics;
   PlanningBudget budget;
+  // Diagnostic correlation follows the solve, never planner-instance state.
+  std::uint64_t diagnostic_solve_generation{0U};
+  std::uint64_t diagnostic_planner_cycle{0U};
 
   [[nodiscard]] bool startModeContractValid() const noexcept {
     // The anchor identifies the currently executing predecessor bundle.  On
@@ -112,6 +132,17 @@ struct PlanningRequest {
             ? activation_stamp_ns > key.anchor_stamp_ns
             : !anchor.has_value() && activation_stamp_ns == 0;
     return successor_anchor_valid && stopped_activation_valid;
+  }
+
+  [[nodiscard]] bool predecessorContractValid() const noexcept {
+    return !history.previous_bundle ||
+        (history.previous_bundle->valid() &&
+         history.previous_bundle->bundle_generation ==
+             history.previous_bundle_generation &&
+         history.previous_bundle->localization_epoch == key.localization_epoch &&
+         (key.start_mode != PlanningStartMode::kCommittedFutureState ||
+          (anchor && anchor->active_bundle_generation ==
+                         history.previous_bundle->bundle_generation)));
   }
 
   [[nodiscard]] bool valid() const noexcept {
@@ -140,7 +171,17 @@ struct PlanningRequest {
            world->identity().generation == key.pinned_world_generation &&
            world->identity().revision == key.pinned_world_revision &&
            world->identity().observation_stamp_ns > 0 &&
-           history.valid() && support_contract_valid &&
+           history.valid() && support_contract_valid && predecessorContractValid() &&
+           (!mission_start_position_world.has_value() ||
+            mission_start_position_world->allFinite()) &&
+           (!planning_goal_world.has_value() ||
+            planning_goal_world->allFinite()) &&
+           (!goal_acceptance_radius_m.has_value() ||
+            (std::isfinite(*goal_acceptance_radius_m) &&
+             *goal_acceptance_radius_m > 0.0)) &&
+           (!emergency_terminal_altitude_m.has_value() ||
+            (key.start_mode == PlanningStartMode::kMeasuredEmergencyBrake &&
+             std::isfinite(*emergency_terminal_altitude_m))) &&
            dynamics.valid() &&
            !budget.exhausted();
   }

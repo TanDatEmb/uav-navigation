@@ -20,12 +20,6 @@ namespace {
 using namespace std::chrono_literals;
 
 struct FakePlanner {
-  void cancelActiveSolve() noexcept {
-    ++cancel_calls;
-    if (cancel_hook) cancel_hook();
-  }
-  std::atomic_uint64_t cancel_calls{0};
-  std::function<void()> cancel_hook;
 };
 
 PlanningKey makeKey(std::uint64_t request_id = 1U) {
@@ -62,6 +56,10 @@ class JobGate {
   void waitUntilReleased(std::stop_token stop) {
     std::unique_lock lock(mutex_);
     cv_.wait(lock, stop, [this] { return released_; });
+  }
+  void waitUntilReleasedIgnoringStop() {
+    std::unique_lock lock(mutex_);
+    cv_.wait(lock, [this] { return released_; });
   }
  private:
   std::mutex mutex_;
@@ -134,9 +132,7 @@ TEST(PlanningWorker, RunsOnlyOneJobAndKeepsLatestEqualPriorityPending) {
 }
 
 TEST(PlanningWorker, DropsExactDuplicateWithoutCancellingActiveSolve) {
-  auto planner = std::make_unique<FakePlanner>();
-  auto* planner_view = planner.get();
-  PlanningWorker<FakePlanner> worker(std::move(planner));
+  PlanningWorker<FakePlanner> worker(std::make_unique<FakePlanner>());
   worker.start();
   JobGate gate;
   const auto key = makeKey();
@@ -150,7 +146,6 @@ TEST(PlanningWorker, DropsExactDuplicateWithoutCancellingActiveSolve) {
   EXPECT_EQ(worker.submit(key, PlanningPriority::kNormalRenewal,
                           [](FakePlanner&, std::stop_token) {}),
             PlanningSubmitDisposition::kExactDuplicate);
-  EXPECT_EQ(planner_view->cancel_calls.load(), 0U);
   gate.release();
   worker.shutdown();
   EXPECT_EQ(worker.snapshot().exact_duplicates, 1U);
@@ -193,9 +188,7 @@ TEST(PlanningWorker, AllowsSameLogicalKeyRetryAfterPriorJobCompletes) {
 }
 
 TEST(PlanningWorker, MapRevisionQueuesWithoutCancellingActiveSolve) {
-  auto planner = std::make_unique<FakePlanner>();
-  auto* planner_view = planner.get();
-  PlanningWorker<FakePlanner> worker(std::move(planner));
+  PlanningWorker<FakePlanner> worker(std::make_unique<FakePlanner>());
   worker.start();
   JobGate gate;
   const auto key = makeKey();
@@ -211,7 +204,6 @@ TEST(PlanningWorker, MapRevisionQueuesWithoutCancellingActiveSolve) {
   EXPECT_EQ(worker.submit(newer_map, PlanningPriority::kNormalRenewal,
                           [](FakePlanner&, std::stop_token) {}),
             PlanningSubmitDisposition::kAccepted);
-  EXPECT_EQ(planner_view->cancel_calls.load(), 0U);
   gate.release();
   worker.shutdown();
 }
@@ -258,9 +250,7 @@ TEST(HeadingRebindWorker, RunsBeforeBlockedPositionSolveAndStaleSolveCannotRollb
 }
 
 TEST(PlanningWorker, GoalIdentityChangeCancelsInflightAndKeepsReplacement) {
-  auto planner = std::make_unique<FakePlanner>();
-  auto* planner_view = planner.get();
-  PlanningWorker<FakePlanner> worker(std::move(planner));
+  PlanningWorker<FakePlanner> worker(std::make_unique<FakePlanner>());
   worker.start();
   JobGate gate;
   std::atomic_bool replacement_ran{false};
@@ -279,166 +269,81 @@ TEST(PlanningWorker, GoalIdentityChangeCancelsInflightAndKeepsReplacement) {
   }
   worker.shutdown();
   EXPECT_TRUE(replacement_ran.load());
-  EXPECT_GE(planner_view->cancel_calls.load(), 1U);
   EXPECT_GE(worker.snapshot().cancelled, 1U);
 }
 
-TEST(PlanningWorker, SerializesAmbientCancelBeforeReplacementCanStart) {
-  auto planner = std::make_unique<FakePlanner>();
-  auto* planner_view = planner.get();
-  PlanningWorker<FakePlanner> worker(std::move(planner));
+TEST(PlanningWorker, ReplacementWaitsForCancelledJobToDrainWithoutGlobalInterrupt) {
+  PlanningWorker<FakePlanner> worker(std::make_unique<FakePlanner>());
   worker.start();
 
   JobGate gate;
-  std::mutex turnover_mutex;
-  std::condition_variable turnover_condition;
-  bool cancel_entered = false;
-  bool first_finished = false;
-  bool replacement_started = false;
-  std::atomic_int planner_job{0};
-  std::atomic_int cancel_target{0};
+  std::atomic_bool first_finished{false};
+  std::atomic_bool replacement_started{false};
 
-  planner_view->cancel_hook = [&] {
-    {
-      std::lock_guard lock(turnover_mutex);
-      cancel_entered = true;
-      turnover_condition.notify_all();
-    }
-    gate.release();
-    std::unique_lock lock(turnover_mutex);
-    ASSERT_TRUE(turnover_condition.wait_for(lock, 2s, [&] {
-      return first_finished;
-    }));
-    // With serialized lifecycle cancellation the worker still owns the old
-    // active item here. Under the old unlock-before-cancel implementation,
-    // the pending replacement could already have been promoted and changed
-    // this observable job identity to 2.
-    cancel_target.store(planner_job.load(std::memory_order_acquire),
-                        std::memory_order_release);
-  };
-
-  const auto first_key = makeKey(1U);
   ASSERT_EQ(worker.submit(
-      first_key, PlanningPriority::kNormalRenewal,
+      makeKey(1U), PlanningPriority::kNormalRenewal,
       [&](FakePlanner&, std::stop_token stop) {
-        planner_job.store(1, std::memory_order_release);
         gate.started();
-        gate.waitUntilReleased(stop);
-        {
-          std::lock_guard lock(turnover_mutex);
-          first_finished = true;
-          turnover_condition.notify_all();
-        }
+        // Model an uninterruptible native operation. Cancellation is recorded
+        // on this job's token, but the worker must drain it before starting B.
+        gate.waitUntilReleasedIgnoringStop();
+        EXPECT_TRUE(stop.stop_requested());
+        first_finished.store(true, std::memory_order_release);
       }),
       PlanningSubmitDisposition::kAccepted);
   ASSERT_TRUE(gate.waitUntilStarted());
 
-  PlanningSubmitDisposition replacement_result =
-      PlanningSubmitDisposition::kRejectedInvalid;
-  std::thread replacement_submit([&] {
-    replacement_result = worker.submit(
-        makeKey(2U), PlanningPriority::kGoalTransition,
-        [&](FakePlanner&, std::stop_token) {
-          planner_job.store(2, std::memory_order_release);
-          {
-            std::lock_guard lock(turnover_mutex);
-            replacement_started = true;
-            turnover_condition.notify_all();
-          }
-        });
-  });
-
-  {
-    std::unique_lock lock(turnover_mutex);
-    ASSERT_TRUE(turnover_condition.wait_for(lock, 2s, [&] {
-      return cancel_entered;
-    }));
-  }
-  replacement_submit.join();
-  EXPECT_EQ(replacement_result, PlanningSubmitDisposition::kAccepted);
-  EXPECT_EQ(cancel_target.load(std::memory_order_acquire), 1);
-
-  {
-    std::unique_lock lock(turnover_mutex);
-    ASSERT_TRUE(turnover_condition.wait_for(lock, 2s, [&] {
-      return replacement_started;
-    }));
+  ASSERT_EQ(worker.submit(makeKey(2U), PlanningPriority::kGoalTransition,
+                          [&](FakePlanner&, std::stop_token) {
+                            replacement_started.store(true, std::memory_order_release);
+                          }), PlanningSubmitDisposition::kAccepted);
+  EXPECT_FALSE(first_finished.load(std::memory_order_acquire));
+  EXPECT_FALSE(replacement_started.load(std::memory_order_acquire));
+  EXPECT_EQ(worker.snapshot().cancelled, 1U);
+  gate.release();
+  for (int attempt = 0; attempt < 200 &&
+       !replacement_started.load(std::memory_order_acquire); ++attempt) {
+    std::this_thread::sleep_for(1ms);
   }
   worker.shutdown();
-  EXPECT_EQ(planner_view->cancel_calls.load(), 1U);
+  EXPECT_TRUE(first_finished.load(std::memory_order_acquire));
+  EXPECT_TRUE(replacement_started.load(std::memory_order_acquire));
 }
 
-TEST(PlanningWorker, TerminalCancelKeepsWorkerIdentityThroughBackendInterrupt) {
-  auto planner = std::make_unique<FakePlanner>();
-  auto* planner_view = planner.get();
-  PlanningWorker<FakePlanner> worker(std::move(planner));
+TEST(PlanningWorker, TerminalCancellationIsScopedToExecutionIdentity) {
+  PlanningWorker<FakePlanner> worker(std::make_unique<FakePlanner>());
   worker.start();
   JobGate gate;
   std::atomic_bool old_finished{false};
-  std::atomic_bool cancel_entered{false};
-  std::atomic_bool release_cancel{false};
   std::atomic_bool replacement_started{false};
   std::atomic_bool cancel_result{false};
-  planner_view->cancel_hook = [&] {
-    cancel_entered.store(true, std::memory_order_release);
-    while (!old_finished.load(std::memory_order_acquire)) {
-      std::this_thread::yield();
-    }
-    while (!release_cancel.load(std::memory_order_acquire)) {
-      std::this_thread::yield();
-    }
-  };
+  std::atomic_bool observed_stop{false};
   const auto old_key = makeKey(1U);
   ASSERT_EQ(worker.submit(old_key, PlanningPriority::kNormalRenewal,
                           [&](FakePlanner&, std::stop_token stop) {
                             gate.started();
                             gate.waitUntilReleased(stop);
+                            observed_stop.store(stop.stop_requested(),
+                                                std::memory_order_release);
                             old_finished.store(true, std::memory_order_release);
                           }),
             PlanningSubmitDisposition::kAccepted);
   ASSERT_TRUE(gate.waitUntilStarted());
 
-  std::thread terminal_cancel([&] {
-    cancel_result.store(worker.cancelActiveIfExecutionIdentity(
-        old_key.localization_epoch, old_key.goal_epoch, old_key.request_id,
-        old_key.committed_bundle_generation), std::memory_order_release);
-  });
-  for (int attempt = 0; attempt < 200 &&
-       !cancel_entered.load(std::memory_order_acquire); ++attempt) {
-    std::this_thread::sleep_for(1ms);
-  }
-  if (!cancel_entered.load(std::memory_order_acquire)) {
-    release_cancel.store(true, std::memory_order_release);
-    gate.release();
-    terminal_cancel.join();
-    worker.shutdown();
-    ADD_FAILURE() << "identity-scoped terminal cancellation did not enter backend";
-    return;
-  }
-  for (int attempt = 0; attempt < 200 &&
-       !old_finished.load(std::memory_order_acquire); ++attempt) {
-    std::this_thread::sleep_for(1ms);
-  }
-  if (!old_finished.load(std::memory_order_acquire)) {
-    release_cancel.store(true, std::memory_order_release);
-    gate.release();
-    terminal_cancel.join();
-    worker.shutdown();
-    ADD_FAILURE() << "old worker job did not finish after stop request";
-    return;
-  }
-
-  std::thread replacement_submit([&] {
-    (void)worker.submit(makeKey(2U), PlanningPriority::kGoalTransition,
-                        [&](FakePlanner&, std::stop_token) {
-                          replacement_started.store(true, std::memory_order_release);
-                        });
-  });
-  std::this_thread::sleep_for(10ms);
-  EXPECT_FALSE(replacement_started.load(std::memory_order_acquire));
-  release_cancel.store(true, std::memory_order_release);
-  terminal_cancel.join();
-  replacement_submit.join();
+  EXPECT_FALSE(worker.cancelActiveIfExecutionIdentity(
+      old_key.localization_epoch, old_key.goal_epoch + 1U, old_key.request_id,
+      old_key.committed_bundle_generation));
+  EXPECT_FALSE(observed_stop.load(std::memory_order_acquire));
+  cancel_result.store(worker.cancelActiveIfExecutionIdentity(
+      old_key.localization_epoch, old_key.goal_epoch, old_key.request_id,
+      old_key.committed_bundle_generation), std::memory_order_release);
+  EXPECT_TRUE(cancel_result.load(std::memory_order_acquire));
+  ASSERT_TRUE(gate.waitUntilStarted());
+  gate.release();
+  ASSERT_TRUE(worker.submit(makeKey(2U), PlanningPriority::kGoalTransition,
+                            [&](FakePlanner&, std::stop_token) {
+                              replacement_started.store(true, std::memory_order_release);
+                            }) == PlanningSubmitDisposition::kAccepted);
   for (int attempt = 0; attempt < 200 &&
        !replacement_started.load(std::memory_order_acquire); ++attempt) {
     std::this_thread::sleep_for(1ms);
@@ -446,7 +351,7 @@ TEST(PlanningWorker, TerminalCancelKeepsWorkerIdentityThroughBackendInterrupt) {
   worker.shutdown();
   EXPECT_TRUE(cancel_result.load(std::memory_order_acquire));
   EXPECT_TRUE(replacement_started.load(std::memory_order_acquire));
-  EXPECT_GE(planner_view->cancel_calls.load(), 1U);
+  EXPECT_TRUE(observed_stop.load(std::memory_order_acquire));
 }
 
 TEST(PlanningWorker, RejectsLowerPriorityWhileHigherPriorityIsInflight) {

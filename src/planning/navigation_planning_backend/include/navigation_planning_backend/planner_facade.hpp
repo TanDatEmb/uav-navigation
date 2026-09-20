@@ -34,18 +34,6 @@ class PlannerFacade final {
   PlannerFacade(const PlannerFacade&) = delete;
   PlannerFacade& operator=(const PlannerFacade&) = delete;
 
-  void cancelActiveSolve() noexcept;
-  void resetSolveCancellation() noexcept;
-  void resetOptimizationDiagnostics() noexcept;
-  void setCommandIdentity(std::uint64_t localization_epoch,
-                          std::uint64_t goal_epoch,
-                          std::uint64_t request_id);
-  // Diagnostic-only correlation identity for an optional nominal-problem
-  // snapshot. It never participates in request admission or candidate
-  // validity.
-  void setNominalProblemDiagnosticIdentity(
-      std::uint64_t solve_generation,
-      std::uint64_t planner_cycle) noexcept;
   void discardCommandCandidate() noexcept;
   // Caller owns an unadmitted retained candidate; zero/wrong/retired
   // generations cannot clear the currently registered heading owner.
@@ -58,14 +46,6 @@ class PlannerFacade final {
       const navigation_world_model::WorldModelViewPtr& world,
       double authorization_wall_time_s,
       std::uint64_t expected_generation) const;
-  void setWorldModelView(navigation_world_model::WorldModelViewPtr world);
-  void setGoalAcceptanceRadius(double radius_m) noexcept;
-  [[nodiscard]] bool setRouteSnapshot(
-      const navigation_mission::ImmutableRouteSnapshot& route) noexcept;
-  void setMissionStartPosition(
-      const std::optional<Eigen::Vector3d>& mission_start) noexcept;
-  [[nodiscard]] bool stageImmediateHeadingRebind(
-      double activation_wall_time_s);
   [[nodiscard]] std::optional<navigation_planning::CandidateBundle>
   buildImmediateHeadingRebindCandidate(
       const navigation_world_model::WorldModelViewPtr& world,
@@ -80,52 +60,17 @@ class PlannerFacade final {
       std::uint64_t request_id,
       std::int64_t valid_from_ns,
       std::int64_t valid_until_ns);
-  void setPassThroughNextTarget(
-      const std::optional<Eigen::Vector3d>& next_target) noexcept;
-  bool setState(const navigation_planning::KinematicState& state);
-  // Initial planning is valid only for a stopped/hold state. The runtime
-  // owns that gate; this API names the lifecycle contract explicitly.
-  [[nodiscard]] navigation_planning::PlannerStatus planInitialFromStoppedState(
-      const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
-  // All in-flight renewal is successor planning from the execution timeline.
-  [[nodiscard]] navigation_planning::PlannerStatus planSuccessorFromExecutionAnchor(
-      const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
-
   // Product-facing planning transaction. The request is immutable for the
   // solve and the outcome owns the only candidate handed to execution.
   [[nodiscard]] navigation_planning::PlanningOutcome plan(
       const navigation_planning::PlanningRequest& request);
 
-  // Source-compatibility aliases for tools that have not yet migrated. They
-  // are not used by the runtime lifecycle and do not authorize moving resets.
-  [[deprecated("use planInitialFromStoppedState")]]
-  [[nodiscard]] navigation_planning::PlannerStatus planFromRest(
-      const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
-  [[deprecated("use planSuccessorFromExecutionAnchor")]]
-  [[nodiscard]] navigation_planning::PlannerStatus replanOnce(
-      const Eigen::Vector3d& target_world, double target_yaw_rad, bool new_goal);
-
-  [[nodiscard]] std::optional<navigation_planning::CandidateBundle> exportCommandCandidate(
-      std::uint64_t localization_epoch,
-      std::uint64_t goal_epoch,
-      std::uint64_t request_id,
-      std::int64_t valid_from_ns,
-      std::int64_t valid_until_ns) const;
-
-  [[nodiscard]] bool commitEmergencyBrake(
-      const navigation_planning::TrajectoryPoint& initial_command,
-      double start_wall_time_s,
-      // Optional execution-owned terminal altitude. The caller must bound it
-      // against the measured boundary; the planner still certifies the full
-      // emergency trajectory before committing it.
-      std::optional<double> terminal_altitude_m = std::nullopt);
-
   [[nodiscard]] navigation_planning::CommittedTrajectorySnapshot committedSnapshot() const;
   [[nodiscard]] navigation_planning::CommittedTrajectoryMetadata committedMetadata() const;
   [[nodiscard]] navigation_planning::TrajectoryValidationResult validateCommittedTrajectory(
+      const navigation_planning::CandidateBundle& execution_bundle,
       const navigation_world_model::WorldModelViewPtr& world,
-      double authorization_wall_time_s,
-      std::uint64_t expected_generation = 0U) const;
+      double authorization_wall_time_s) const;
   [[nodiscard]] std::uint64_t committedGeneration() const noexcept;
   [[nodiscard]] bool committedBackupAvailable() const noexcept;
   [[nodiscard]] double committedBackupStartTime() const noexcept;

@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@
 #include <navigation_mapping/observation_accounting.hpp>
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_planning/planning_request.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
@@ -288,7 +290,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       std::uint64_t generation) noexcept;
   void applyQueuedExecutionTimelineActivations(
       navigation_planning_backend::PlannerFacade& planner) noexcept;
-  void runCycle(const PlanningKey& scheduled_key);
+  void runCycle(const PlanningKey& scheduled_key, std::stop_token stop = {});
   [[nodiscard]] std::optional<PlanningKey> currentPlanningKey();
   enum class RetainedValidationPurpose {
     kAfterFailedReplacement,
@@ -318,7 +320,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
       std::uint64_t goal_epoch, std::uint64_t localization_epoch_at_solve,
       const PlanningKey& effective_scheduled_key,
-      const RetainedValidationContext& context);
+      const RetainedValidationContext& context,
+      const navigation_planning::PlanningRequest* request_context = nullptr);
   void observeRetainedDecision(
       const ExecutionTraceSnapshot& trace,
       const RetainedDecisionObservation& decision) noexcept;

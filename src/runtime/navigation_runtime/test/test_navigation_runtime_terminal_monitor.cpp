@@ -180,16 +180,10 @@ class NavigationRuntimeTerminalMonitorTestPeer {
         navigation_execution::StageDecision::kStaged;
   }
   static void monitor(NavigationRuntimeNode& node, const PlanningKey& key) {
-    const auto timeline = node.command_bundle_store_.snapshot();
-    const auto episode = node.execution_episode_.snapshot();
-    const NavigationRuntimeNode::RetainedValidationContext context{
-        NavigationRuntimeNode::RetainedValidationPurpose::kTerminalMainMonitor,
-        false, true, 0U, std::nullopt,
-        retainedCommandTrackingLimit(node.planner_->trackingErrorBudgetMeters(),
-                                    navigation_contracts::kCommandAnchorErrorLimitM),
-        NavigationRuntimeNode::TerminalMonitorBoundary{timeline, episode}};
-    node.validateRetainedCommand(node.active_goal_, key.goal_epoch,
-                                 key.localization_epoch, key, context);
+    // Exercise the production cycle capture and explicit emergency request
+    // construction.  Calling the retained validator without that context used
+    // to test a missing-input failure, not measured emergency certification.
+    node.runCycle(key);
   }
   static navigation_planning::PlanningRequest realTerminalRequest(
       NavigationRuntimeNode& node, const navigation_contracts::msg::NavigationGoal& goal,
@@ -274,14 +268,13 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     const auto timeline = node.command_bundle_store_.snapshot();
     if (!timeline.active ||
         !node.planner_->validateCommittedTrajectory(
-            world, static_cast<double>(stamp_ns) * 1.0e-9,
-            timeline.active->bundle_generation).valid) return false;
+            *timeline.active, world,
+            static_cast<double>(stamp_ns) * 1.0e-9).valid) return false;
     if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
             world->identity(), timeline.version, timeline.active, true,
             stamp_ns + node.data_freshness_window_ns_) !=
         navigation_world_model::WorldCommitDecision::kCommitted) return false;
     node.world_snapshot_store_.publish(world);
-    node.planner_->setWorldModelView(world);
     return true;
   }
 };
@@ -635,6 +628,8 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     ASSERT_EQ(key->committed_bundle_generation, activated.active->bundle_generation);
     ASSERT_EQ(key->anchor_stamp_ns, measured_source_ns);
     const auto solve_generation = NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_);
+    const auto optimizer_attempts_before =
+        NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count;
     NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
     const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
     const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
@@ -648,7 +643,8 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     EXPECT_TRUE(trace->sampled_path_clear);
     EXPECT_DOUBLE_EQ(trace->anchor_error_raw_m, independently_sampled_raw_error_m);
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
-    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count, 0);
+    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count,
+              optimizer_attempts_before);
     if (tracking_pressure) {
       // These tests document the CURRENT distinction, not a new recovery
       // trigger. Positive tracking has a viable independently certified brake;
@@ -884,6 +880,8 @@ TEST_F(NavigationRuntimeTerminalMonitor, RealBackendHealthyTailMonitorsWithoutNo
   ASSERT_TRUE(key);
   ASSERT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::reserveFutureAnchor(*node_, real_stamp_ns_));
   const auto solve_generation = NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_);
+  const auto optimizer_attempts_before =
+      NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count;
   NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
   const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
   EXPECT_EQ(after.version, before.version);
@@ -894,7 +892,8 @@ TEST_F(NavigationRuntimeTerminalMonitor, RealBackendHealthyTailMonitorsWithoutNo
   EXPECT_FALSE(episode.safety_suffix_active);
   EXPECT_FALSE(episode.failure_latched);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
-  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count, 0);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count,
+            optimizer_attempts_before);
   const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
   ASSERT_TRUE(trace);
   EXPECT_EQ(trace->solve_generation, 0U);

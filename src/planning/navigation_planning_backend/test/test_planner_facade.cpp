@@ -25,6 +25,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stop_token>
 #include <stdexcept>
 #include <string>
 
@@ -460,6 +461,37 @@ navigation_planning::PlanningRequest plannerBodySupportRequest(
   return request;
 }
 
+navigation_planning::PlanningRequest plannerRequestForRoute(
+    const navigation_world_model::WorldModelViewPtr& world,
+    const navigation_mission::ImmutableRouteSnapshot& route,
+    const navigation_planning::KinematicState& state,
+    const navigation_planning::DynamicLimits& dynamics,
+    const std::uint64_t goal_epoch,
+    const std::optional<Eigen::Vector3d>& mission_start = std::nullopt) {
+  const auto& waypoint = route.waypoints.at(route.active_waypoint_index);
+  auto request = plannerBodySupportRequest(world, nullptr, waypoint.position_enu);
+  const auto identity = world->identity();
+  request.key.localization_epoch = state.localization_epoch;
+  request.key.goal_epoch = goal_epoch;
+  request.key.request_id = route.request_id;
+  request.key.route_revision = route.route_revision;
+  request.key.pinned_world_generation = identity.generation;
+  request.key.pinned_world_revision = identity.revision;
+  request.key.start_mode = navigation_planning::PlanningStartMode::kStoppedMeasuredState;
+  request.key.anchor_stamp_ns = state.source_stamp_ns;
+  request.goal = {state.localization_epoch, goal_epoch, route.mission_id,
+                  static_cast<std::uint32_t>(route.active_waypoint_index),
+                  route.request_id};
+  request.start_state = state;
+  request.route_snapshot = route;
+  request.world = world;
+  request.current_body_support.reset();
+  request.mission_start_position_world = mission_start;
+  request.goal_acceptance_radius_m = waypoint.acceptance_radius_m;
+  request.dynamics = dynamics;
+  return request;
+}
+
 navigation_world_model::CurrentBodySupportPtr plannerBodySupport(
     const navigation_world_model::WorldSnapshotIdentity& identity) {
   navigation_world_model::CurrentBodySupport support;
@@ -635,7 +667,8 @@ TEST(PlannerFacade, WorldRevalidationPreservesOffCentreBlockingCellAfterActivati
 
   facade.onExecutionTimelineActivated(generation);
   ASSERT_EQ(facade.committedSnapshot().generation, generation);
-  const auto committed = facade.validateCommittedTrajectory(blocked_world, 10.0, generation);
+  const auto committed = facade.validateCommittedTrajectory(
+      *outcome.candidate, blocked_world, 10.0);
   ASSERT_FALSE(committed.valid);
   EXPECT_EQ(committed.failure_code, staged.failure_code);
   EXPECT_TRUE(committed.first_blocked_position.isApprox(blocked_world->blocker, 1.0e-12));
@@ -649,8 +682,10 @@ TEST(PlannerFacade, WorldRevalidationPreservesOffCentreBlockingCellAfterActivati
   EXPECT_EQ(committed.first_blocked_cell_state, staged.first_blocked_cell_state);
   EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
       committed.validated_world, blocked_world->identity()));
+  auto wrong_generation_bundle = *outcome.candidate;
+  ++wrong_generation_bundle.bundle_generation;
   const auto wrong_generation = facade.validateCommittedTrajectory(
-      blocked_world, 10.0, generation + 1U);
+      wrong_generation_bundle, blocked_world, 10.0);
   EXPECT_FALSE(wrong_generation.valid);
   EXPECT_EQ(wrong_generation.evaluated_generation, 0U);
   EXPECT_FALSE(wrong_generation.blocking_cell_observed);
@@ -734,7 +769,7 @@ TEST(PlannerFacade, ProductionPlanUsesMappingSnapshotBodyAdmission) {
   ros_time_s = committed.position.start_wall_time_s +
       committed.position.duration_s;
   EXPECT_TRUE(facade.validateCommittedTrajectory(
-      fixture.snapshot, ros_time_s).valid);
+      *outcome.candidate, fixture.snapshot, ros_time_s).valid);
 
   // The identical production map and route cannot admit the UNKNOWN measured
   // start without the request-local physical-body witness.
@@ -936,7 +971,6 @@ void expectBackupInterruptRecordsFailure(const bool cancel,
   ASSERT_TRUE(progress.update(Eigen::Vector3d{0.0, 0.0, 3.0}).valid);
   const auto route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
   ASSERT_TRUE(route.valid());
-  ASSERT_TRUE(facade.setRouteSnapshot(route));
   navigation_planning::KinematicState state;
   state.position_world = Eigen::Vector3d{0.0, 0.0, 3.0};
   state.source_stamp_ns = 10'000'000'000LL;
@@ -944,15 +978,25 @@ void expectBackupInterruptRecordsFailure(const bool cancel,
   state.localization_epoch = 1U;
   state.world_frame_id = "lio_odom";
   state.body_frame_id = "base_link";
-  ASSERT_TRUE(facade.setState(state));
-  facade.setCommandIdentity(1U, 1U, 1U);
-  facade.setGoalAcceptanceRadius(active.acceptance_radius_m);
+  auto request = plannerBodySupportRequest(world, nullptr, active.position_enu);
+  request.key.request_id = route.request_id;
+  request.key.route_revision = route.route_revision;
+  request.key.anchor_stamp_ns = state.source_stamp_ns;
+  request.goal = {state.localization_epoch, 1U, route.mission_id,
+                  static_cast<std::uint32_t>(route.active_waypoint_index),
+                  route.request_id};
+  request.start_state = state;
+  request.route_snapshot = route;
+  request.dynamics = *limits;
+  request.goal_acceptance_radius_m = active.acceptance_radius_m;
+  std::stop_source cancellation;
+  if (cancel) request.budget.cancellation = cancellation.get_token();
+  ASSERT_TRUE(request.valid());
 
   if (install_active) {
-    ASSERT_EQ(facade.planInitialFromStoppedState(active.position_enu, 0.0, true),
-              navigation_planning::PlannerStatus::kSuccess);
-    const auto initial = facade.exportCommandCandidate(
-        1U, 1U, 1U, state.source_stamp_ns, 30'000'000'000LL);
+    const auto initial_outcome = facade.plan(request);
+    ASSERT_TRUE(initial_outcome.valid());
+    const auto initial = initial_outcome.candidate;
     ASSERT_TRUE(initial);
     ASSERT_TRUE(initial->valid());
     ASSERT_TRUE(initial->backup_available);
@@ -967,12 +1011,13 @@ void expectBackupInterruptRecordsFailure(const bool cancel,
   // before reaching the phase under test. No sleep or wall-time threshold.
   world->current_stage = [&facade] { return facade.solveStage(); };
   world->interrupt = [&] {
-    if (cancel) facade.cancelActiveSolve();
+    if (cancel) cancellation.request_stop();
     else ros_time_s = 1000.0;
   };
-  EXPECT_EQ(facade.planInitialFromStoppedState(
-                active.position_enu, 0.0, !install_active),
-            navigation_planning::PlannerStatus::kFailed);
+  const auto failed_outcome = facade.plan(request);
+  EXPECT_FALSE(failed_outcome.candidate.has_value());
+  EXPECT_FALSE(navigation_planning::completePlanningSucceeded(
+      failed_outcome.outcome));
   ASSERT_TRUE(world->interrupted);
   const auto diagnostics = facade.diagnostics();
   EXPECT_TRUE(diagnostics.backup_certificate.attempted);
@@ -1003,6 +1048,30 @@ void expectBackupInterruptRecordsFailure(const bool cancel,
       EXPECT_TRUE(old_point.jerk_world.isApprox(retained_point.jerk_world));
     }
   }
+
+  if (cancel) {
+    // Cancellation is scoped to this solve. A new request with a distinct
+    // route/goal identity must not inherit the old token or its solve inputs.
+    const auto retry_route = progress.snapshot(
+        mission.id, mission.frame, 1U, 2U, 0U);
+    ASSERT_TRUE(retry_route.valid());
+    auto retry = plannerRequestForRoute(
+        world, retry_route, state, *limits, 2U);
+    ASSERT_TRUE(retry.valid());
+    const auto retried = facade.plan(retry);
+    ASSERT_TRUE(retried.valid())
+        << static_cast<int>(retried.failure_stage) << ":"
+        << static_cast<int>(retried.failure_reason);
+    ASSERT_TRUE(retried.candidate)
+        << static_cast<int>(retried.failure_stage) << ":"
+        << static_cast<int>(retried.failure_reason);
+    EXPECT_EQ(retried.candidate->request_id, retry.key.request_id);
+    EXPECT_EQ(retried.candidate->goal_epoch, retry.key.goal_epoch);
+    EXPECT_EQ(retried.candidate->localization_epoch,
+              retry.key.localization_epoch);
+    EXPECT_EQ(retried.candidate->world_identity.revision,
+              retry.key.pinned_world_revision);
+  }
 }
 
 TEST(PlannerFacade, BackupInterruptedFirstAttemptAccountsFrontend) {
@@ -1027,6 +1096,9 @@ TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
       [&ros_time_s] { return ros_time_s; });
 
   auto initial_request = plannerBodySupportRequest(world, nullptr);
+  // The legacy planner call used the configured nominal cruise when no
+  // mission-specific limits were supplied. Carry that same intent explicitly.
+  initial_request.dynamics.intent.requested_cruise_speed_mps = 5.0;
   initial_request.key.anchor_stamp_ns = 10'000'000'000LL;
   initial_request.start_state.source_stamp_ns = initial_request.key.anchor_stamp_ns;
   initial_request.start_state.receive_stamp_ns = initial_request.key.anchor_stamp_ns;
@@ -1081,11 +1153,16 @@ TEST(PlannerFacade, ExportsCommittedFutureCandidateAtRequestedActivation) {
   successor_request.anchor = anchor;
   successor_request.history.previous_bundle_generation =
       committed.bundle_generation;
+  successor_request.history.previous_bundle =
+      std::make_shared<const navigation_planning::CandidateBundle>(committed);
   successor_request.history.previous_velocity_world =
       anchor_sample->velocity_world;
 
   ASSERT_TRUE(successor_request.startModeContractValid());
   ASSERT_TRUE(successor_request.valid());
+  auto stale_history = successor_request;
+  ++stale_history.history.previous_bundle_generation;
+  EXPECT_FALSE(stale_history.predecessorContractValid());
   const auto successor = facade.plan(successor_request);
   ASSERT_TRUE(successor.valid())
       << static_cast<int>(successor.failure_stage) << ":"
@@ -1127,6 +1204,7 @@ void expectRequestOwnedGuideOrigin(const std::int64_t backend_delay_ns,
         PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
         [&ros_time_s] { return ros_time_s; });
     auto request = plannerBodySupportRequest(world, nullptr);
+    request.dynamics.intent.requested_cruise_speed_mps = 5.0;
     request.key.anchor_stamp_ns = 10'000'000'000LL;
     request.start_state.source_stamp_ns = request.key.anchor_stamp_ns;
     request.start_state.receive_stamp_ns = request.key.anchor_stamp_ns;
@@ -1319,6 +1397,87 @@ TEST(PlannerFacade, DelayedBackendKeepsRequestOwnedGuideOrigin) {
     SCOPED_TRACE(delay_ns);
     expectRequestOwnedGuideOrigin(delay_ns);
   }
+}
+
+TEST(PlannerFacade, SequentialRequestsDoNotReusePriorRouteCruiseOrMissionStart) {
+  auto world = std::make_shared<IdentityOnlyWorld>();
+  TestCommitAuthorizer authorizer(world);
+  navigation_planning_backend::PlannerFacade facade(
+      PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
+      [] { return 10.0; });
+
+  navigation_planning::KinematicState measured;
+  measured.position_world = Eigen::Vector3d{0.0, 0.0, 3.0};
+  measured.source_stamp_ns = 10'000'000'000LL;
+  measured.receive_stamp_ns = measured.source_stamp_ns;
+  measured.localization_epoch = 1U;
+  measured.world_frame_id = "lio_odom";
+  measured.body_frame_id = "base_link";
+
+  navigation_mission::Mission route_a;
+  route_a.id = "request-context";
+  route_a.frame = "lio_odom";
+  route_a.waypoints = {{
+      "east-stop", Eigen::Vector3d{6.0, 0.0, 3.0}, 0.5, 0.0,
+      navigation_mission::MissionWaypoint::Behavior::Stop}};
+  navigation_mission::RouteProgress progress_a(route_a);
+  ASSERT_TRUE(progress_a.update(measured.position_world).valid);
+  const auto snapshot_a = progress_a.snapshot(
+      route_a.id, route_a.frame, 1U, 1U, 0U);
+  ASSERT_TRUE(snapshot_a.valid());
+
+  auto limits_a = *semanticFixtureMissionLimits();
+  limits_a.intent.requested_cruise_speed_mps = 4.0;
+  const Eigen::Vector3d mission_start_a{0.0, 0.0, 3.0};
+  const auto request_a = plannerRequestForRoute(
+      world, snapshot_a, measured, limits_a, 1U, mission_start_a);
+  ASSERT_TRUE(request_a.valid());
+  const auto outcome_a = facade.plan(request_a);
+  ASSERT_TRUE(outcome_a.valid())
+      << static_cast<int>(outcome_a.failure_stage) << ":"
+      << static_cast<int>(outcome_a.failure_reason);
+  ASSERT_TRUE(outcome_a.candidate);
+  facade.onExecutionTimelineActivated(outcome_a.candidate->bundle_generation);
+
+  navigation_mission::Mission route_b;
+  route_b.id = route_a.id;
+  route_b.frame = route_a.frame;
+  route_b.waypoints = {{
+      "north-stop", Eigen::Vector3d{0.0, 6.0, 3.0}, 0.35, 0.0,
+      navigation_mission::MissionWaypoint::Behavior::Stop}};
+  navigation_mission::RouteProgress progress_b(route_b);
+  ASSERT_TRUE(progress_b.update(measured.position_world).valid);
+  const auto snapshot_b = progress_b.snapshot(
+      route_b.id, route_b.frame, 2U, 2U, 0U);
+  ASSERT_TRUE(snapshot_b.valid());
+
+  auto limits_b = limits_a;
+  limits_b.intent.requested_cruise_speed_mps = 2.0;
+  const Eigen::Vector3d mission_start_b{0.0, 1.0, 3.0};
+  auto request_b = plannerRequestForRoute(
+      world, snapshot_b, measured, limits_b, 2U, mission_start_b);
+  request_b.history.previous_bundle =
+      std::make_shared<const navigation_planning::CandidateBundle>(
+          *outcome_a.candidate);
+  request_b.history.previous_bundle_generation =
+      outcome_a.candidate->bundle_generation;
+  request_b.history.previous_velocity_world = measured.velocity_world;
+  ASSERT_TRUE(request_b.valid());
+
+  const auto outcome_b = facade.plan(request_b);
+  ASSERT_TRUE(outcome_b.valid())
+      << static_cast<int>(outcome_b.failure_stage) << ":"
+      << static_cast<int>(outcome_b.failure_reason);
+  ASSERT_TRUE(outcome_b.candidate);
+  EXPECT_EQ(outcome_b.candidate->request_id, request_b.key.request_id);
+  EXPECT_EQ(outcome_b.candidate->goal_epoch, request_b.key.goal_epoch);
+  EXPECT_EQ(outcome_b.candidate->localization_epoch,
+            request_b.key.localization_epoch);
+  EXPECT_TRUE(facade.diagnostics().requested_goal.isApprox(
+      Eigen::Vector3d{0.0, 6.0, 3.0}, 1.0e-6));
+  EXPECT_NEAR(facade.diagnostics().requested_cruise_speed_mps, 2.0, 1.0e-9);
+  EXPECT_NEAR(facade.diagnostics().effective_cruise_speed_mps, 2.0, 1.0e-9);
+  EXPECT_NEAR(facade.diagnostics().route_yaw_target_rad, M_PI_2, 1.0e-6);
 }
 
 TEST(PlannerFacade, ExpiredCommittedActivationDoesNotSlideOrReplacePredecessor) {
@@ -1618,7 +1777,8 @@ TEST(PlannerFacade, SupersededUnactivatedProposalsNeverAliasGeneration) {
       PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer,
       [&ros_time_s] { return ros_time_s; });
 
-  const auto request = plannerBodySupportRequest(world, nullptr);
+  auto request = plannerBodySupportRequest(world, nullptr);
+  request.dynamics.intent.requested_cruise_speed_mps = 5.0;
   ASSERT_TRUE(request.valid());
   const auto first = facade.plan(request);
   ASSERT_TRUE(first.valid());
@@ -1684,7 +1844,7 @@ TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {
       PLANNER_FACADE_CONFIG_PATH, world, std::nullopt, authorizer, [] { return 10.0; });
 
   navigation_mission::ImmutableRouteSnapshot invalid;
-  EXPECT_FALSE(facade.setRouteSnapshot(invalid));
+  EXPECT_FALSE(invalid.valid());
 
   navigation_mission::Mission mission;
   mission.id = "route-contract";
@@ -1704,7 +1864,7 @@ TEST(PlannerFacade, RequiresValidImmutableRouteBeforePlanning) {
       mission.id, mission.frame, 1U, 4U, 0U);
 
   ASSERT_TRUE(snapshot.valid());
-  EXPECT_TRUE(facade.setRouteSnapshot(snapshot));
+  EXPECT_TRUE(snapshot.valid());
 }
 
 TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
@@ -1743,7 +1903,6 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   const auto first_route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
   ASSERT_TRUE(first_route.valid());
   ASSERT_EQ(first_route.active_waypoint_index, 0U);
-  ASSERT_TRUE(facade.setRouteSnapshot(first_route));
 
   navigation_planning::KinematicState state;
   state.position_world = start.position_enu;
@@ -1752,15 +1911,13 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   state.localization_epoch = 1U;
   state.world_frame_id = "lio_odom";
   state.body_frame_id = "base_link";
-  ASSERT_TRUE(facade.setState(state));
-  facade.setMissionStartPosition(start.position_enu);
-  facade.setCommandIdentity(1U, 1U, 1U);
-  facade.setGoalAcceptanceRadius(first.acceptance_radius_m);
-  ASSERT_EQ(facade.planInitialFromStoppedState(
-                first.position_enu, 0.0, true),
-            navigation_planning::PlannerStatus::kSuccess);
-  const auto initial = facade.exportCommandCandidate(
-      1U, 1U, 1U, 10000000000LL, 30000000000LL);
+  const auto initial_outcome = facade.plan(plannerRequestForRoute(
+      world, first_route, state, *semanticFixtureMissionLimits(), 1U,
+      start.position_enu));
+  ASSERT_TRUE(initial_outcome.valid())
+      << static_cast<int>(initial_outcome.failure_stage) << ":"
+      << static_cast<int>(initial_outcome.failure_reason);
+  const auto initial = initial_outcome.candidate;
   ASSERT_TRUE(initial);
   ASSERT_GT(initial->bundle_generation, 0U);
   facade.onExecutionTimelineActivated(initial->bundle_generation);
@@ -1769,10 +1926,7 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   const auto second_route = progress.snapshot(mission.id, mission.frame, 1U, 2U, 1U);
   ASSERT_TRUE(second_route.valid());
   ASSERT_EQ(second_route.active_waypoint_index, 1U);
-  ASSERT_TRUE(facade.setRouteSnapshot(second_route));
   state.position_world = Eigen::Vector3d{7.8, 0.0, 3.0};
-  ASSERT_TRUE(facade.setState(state));
-  facade.setCommandIdentity(1U, 2U, 2U);
 
   const auto out_of_band = facade.buildImmediateHeadingRebindCandidate(
       world, second_route, state.position_world, state.velocity_world,
@@ -1790,9 +1944,7 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   // the independent heading worker exports this exact generation. Neither
   // reapplying the same request nor starting a newer desired request retires
   // that exported owner: the timeline can still activate it and ACK it later.
-  facade.setCommandIdentity(1U, 2U, 2U);
   EXPECT_FALSE(facade.hasStagedCommandCandidate());
-  facade.setCommandIdentity(1U, 3U, 3U);
   EXPECT_FALSE(facade.hasStagedCommandCandidate());
   facade.onExecutionTimelineActivated(initial->bundle_generation);
   EXPECT_EQ(facade.committedGeneration(), initial->bundle_generation);
@@ -1805,10 +1957,7 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   // get exported as that job's result. Its immutable original identity stays.
   EXPECT_EQ(out_of_band->goal_epoch, 2U);
   EXPECT_EQ(out_of_band->request_id, 2U);
-  EXPECT_FALSE(facade.exportCommandCandidate(
-      1U, 2U, 2U, 10500000000LL, 30000000000LL));
-  EXPECT_FALSE(facade.exportCommandCandidate(
-      1U, 3U, 3U, 10500000000LL, 30000000000LL));
+  EXPECT_FALSE(facade.hasStagedCommandCandidate());
 
   // A retired canonical pending heading must not block a fresh measured
   // emergency proposal. This is backend ownership, not an assertion that
@@ -1817,9 +1966,28 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   measured_brake.position_world = state.position_world;
   measured_brake.velocity_world = Eigen::Vector3d{0.5, 0.0, 0.0};
   measured_brake.yaw = state.yaw_rad;
-  ASSERT_TRUE(facade.commitEmergencyBrake(measured_brake, 10.6));
-  const auto emergency = facade.exportCommandCandidate(
-      1U, 3U, 3U, 10600000000LL, 30000000000LL);
+  const auto emergency_route =
+      progress.snapshot(mission.id, mission.frame, 1U, 3U, 1U);
+  auto emergency_request = plannerRequestForRoute(
+      world, emergency_route, state, *semanticFixtureMissionLimits(), 3U,
+      start.position_enu);
+  emergency_request.key.start_mode =
+      navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake;
+  emergency_request.key.committed_bundle_generation = initial->bundle_generation;
+  emergency_request.start_state.velocity_world = measured_brake.velocity_world;
+  emergency_request.history.previous_bundle =
+      std::make_shared<const navigation_planning::CandidateBundle>(*initial);
+  emergency_request.history.previous_bundle_generation =
+      initial->bundle_generation;
+  emergency_request.history.previous_velocity_world = initial->sampleAtDeclaredEnd()
+      ? initial->sampleAtDeclaredEnd()->velocity_world
+      : Eigen::Vector3d::Zero();
+  ASSERT_TRUE(emergency_request.valid());
+  const auto emergency_outcome = facade.plan(emergency_request);
+  ASSERT_TRUE(emergency_outcome.valid())
+      << static_cast<int>(emergency_outcome.failure_stage) << ":"
+      << static_cast<int>(emergency_outcome.failure_reason);
+  const auto emergency = emergency_outcome.candidate;
   ASSERT_TRUE(emergency);
   ASSERT_GT(emergency->bundle_generation, out_of_band->bundle_generation);
   EXPECT_TRUE(facade.hasStagedCommandCandidate());
@@ -1894,18 +2062,18 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
       20100000000LL, 30000000000LL);
   ASSERT_TRUE(replacement);
   EXPECT_GT(replacement->bundle_generation, unadmitted->bundle_generation);
-  facade.setCommandIdentity(1U, 4U, 4U);
   // Model goal C canceling pending G before activation: no ACK G arrives.
   // Nominal C remains able to solve/export, and only its successful newer
   // activation collects the obsolete heading owner. No timeout/retry gate.
   ros_time_s = 20.2;
-  facade.setCommandIdentity(1U, 5U, 5U);
-  ASSERT_TRUE(facade.setRouteSnapshot(
-      progress.snapshot(mission.id, mission.frame, 1U, 5U, 1U)));
-  ASSERT_EQ(facade.planInitialFromStoppedState(second.position_enu, 0.0, true),
-            navigation_planning::PlannerStatus::kSuccess);
-  const auto nominal = facade.exportCommandCandidate(
-      1U, 5U, 5U, 20200000000LL, 80000000000LL);
+  const auto request_c = plannerRequestForRoute(
+      world, progress.snapshot(mission.id, mission.frame, 1U, 5U, 1U),
+      state, *semanticFixtureMissionLimits(), 5U, start.position_enu);
+  const auto request_c_outcome = facade.plan(request_c);
+  ASSERT_TRUE(request_c_outcome.valid())
+      << static_cast<int>(request_c_outcome.failure_stage) << ":"
+      << static_cast<int>(request_c_outcome.failure_reason);
+  const auto nominal = request_c_outcome.candidate;
   ASSERT_TRUE(nominal);
   ASSERT_GT(nominal->bundle_generation, replacement->bundle_generation);
   EXPECT_TRUE(facade.validateStagedCommandCandidate(
@@ -1922,9 +2090,26 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   facade.onExecutionTimelineActivated(replacement->bundle_generation);
   EXPECT_EQ(facade.committedGeneration(), nominal->bundle_generation);
   ASSERT_GT(nominal->duration_s, 10.1);
-  ASSERT_TRUE(facade.commitEmergencyBrake(measured_brake, 30.3));
-  const auto older_position = facade.exportCommandCandidate(
-      1U, 5U, 5U, 30300000000LL, 80000000000LL);
+  auto late_emergency_request = plannerRequestForRoute(
+      world, request_c.route_snapshot, state, *semanticFixtureMissionLimits(), 5U,
+      start.position_enu);
+  late_emergency_request.key.start_mode =
+      navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake;
+  late_emergency_request.key.committed_bundle_generation = nominal->bundle_generation;
+  late_emergency_request.start_state.velocity_world = measured_brake.velocity_world;
+  late_emergency_request.history.previous_bundle =
+      std::make_shared<const navigation_planning::CandidateBundle>(*nominal);
+  late_emergency_request.history.previous_bundle_generation =
+      nominal->bundle_generation;
+  late_emergency_request.history.previous_velocity_world =
+      measured_brake.velocity_world;
+  ros_time_s = 30.3;
+  ASSERT_TRUE(late_emergency_request.valid());
+  const auto late_emergency_outcome = facade.plan(late_emergency_request);
+  ASSERT_TRUE(late_emergency_outcome.valid())
+      << static_cast<int>(late_emergency_outcome.failure_stage) << ":"
+      << static_cast<int>(late_emergency_outcome.failure_reason);
+  const auto older_position = late_emergency_outcome.candidate;
   ASSERT_TRUE(older_position);
   const auto next_heading = facade.buildImmediateHeadingRebindCandidate(
       world, second_route, state.position_world, state.velocity_world,
@@ -1937,12 +2122,15 @@ TEST(PlannerFacade, ImmediateHeadingRebindRetainsPositionAndUsesNewActiveLeg) {
   // Reservation order need not match worker completion order. Do not destroy
   // an older position proposal before its job reaches export/admission gates.
   EXPECT_TRUE(facade.hasStagedCommandCandidate());
-  EXPECT_TRUE(facade.validateStagedCommandCandidate(
-      world, 30.3, older_position->bundle_generation).valid);
-  const auto surviving_position = facade.exportCommandCandidate(
-      1U, 5U, 5U, 30300000000LL, 80000000000LL);
-  ASSERT_TRUE(surviving_position);
-  EXPECT_EQ(surviving_position->bundle_generation, older_position->bundle_generation);
+  const auto older_position_validation = facade.validateStagedCommandCandidate(
+      world, 30.3, older_position->bundle_generation);
+  EXPECT_TRUE(older_position_validation.valid)
+      << "failure=" << older_position_validation.failure_code
+      << " first_blocked=" << older_position_validation.first_blocked_time_s
+      << " samples=" << older_position_validation.sample_count
+      << " blocked_role=" << older_position_validation.blocked_role;
+  EXPECT_EQ(older_position->bundle_generation,
+            late_emergency_outcome.candidate->bundle_generation);
 }
 
 void probeProductPassRenewal(const bool backup_allow_unknown,
@@ -2004,7 +2192,6 @@ void probeProductPassRenewal(const bool backup_allow_unknown,
        navigation_mission::MissionWaypoint::Behavior::PassThrough},
       {"next", Eigen::Vector3d{50.0, 5.0, 3.0}, 0.9, 0.0,
        navigation_mission::MissionWaypoint::Behavior::Stop}};
-  facade.setGoalAcceptanceRadius(mission.waypoints[1].acceptance_radius_m);
   navigation_mission::RouteProgress progress(mission);
   ASSERT_TRUE(progress.update(mission.waypoints.front().position_enu).valid);
   auto initial_request = plannerBodySupportRequest(world, nullptr);
@@ -2218,7 +2405,6 @@ TEST(PlannerFacade, CoincidentPassToStopPreservesCertifiedTerminalBackup) {
   request.key.route_revision = request.route_snapshot.route_revision;
   request.goal.mission_id = mission.id;
   request.dynamics = limits;
-  facade.setGoalAcceptanceRadius(0.8);
   ASSERT_TRUE(navigation_mission::passThroughNextWaypointIsCoincidentStop(request.route_snapshot));
   ASSERT_TRUE(request.valid());
   const auto result = facade.plan(request);
@@ -2261,23 +2447,19 @@ TEST(PlannerFacade, PassThroughLookaheadExportsRouteBoundaryEvent) {
   ASSERT_TRUE(progress.update(Eigen::Vector3d{0.0, 0.0, 3.0}).valid);
   const auto route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
   ASSERT_TRUE(route.valid());
-  ASSERT_TRUE(facade.setRouteSnapshot(route));
 
   navigation_planning::KinematicState state;
   state.position_world = Eigen::Vector3d{0.0, 0.0, 3.0};
-  state.source_stamp_ns = 1;
-  state.receive_stamp_ns = 1;
+  state.source_stamp_ns = 10000000000LL;
+  state.receive_stamp_ns = state.source_stamp_ns;
   state.localization_epoch = 1U;
   state.world_frame_id = "lio_odom";
   state.body_frame_id = "base_link";
-  ASSERT_TRUE(facade.setState(state));
-  facade.setCommandIdentity(1U, 1U, 1U);
-  facade.setGoalAcceptanceRadius(active.acceptance_radius_m);
-
-  const auto status = facade.planInitialFromStoppedState(active.position_enu, 0.0, true);
-  ASSERT_EQ(status, navigation_planning::PlannerStatus::kSuccess);
-  const auto candidate = facade.exportCommandCandidate(1U, 1U, 1U, 10000000000LL,
-                                                       20000000000LL);
+  const auto outcome = facade.plan(plannerRequestForRoute(
+      world, route, state, *semanticFixtureMissionLimits(), 1U));
+  ASSERT_TRUE(outcome.valid()) << static_cast<int>(outcome.failure_stage) << ":"
+                               << static_cast<int>(outcome.failure_reason);
+  const auto candidate = outcome.candidate;
   ASSERT_TRUE(candidate);
   EXPECT_EQ(candidate->activation_stamp_ns, 10000000000LL);
   EXPECT_EQ(candidate->valid_from_ns, 10000000000LL);
@@ -2337,7 +2519,6 @@ TEST(PlannerFacade, GenuineNinetyDegreePassEventUsesActualMissionSphere) {
               navigation_planning::PlanningTimingContract::kSolveDeadlineS));
   request.budget.steady_deadline_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
       request.budget.deadline.time_since_epoch()).count();
-  facade.setGoalAcceptanceRadius(active.acceptance_radius_m);
   ASSERT_TRUE(request.valid());
   ASSERT_EQ(request.route_snapshot.active_waypoint_index, 1U);
 
@@ -2431,7 +2612,7 @@ void expectFutureAnchorInsideUnacceptedPassBoundaryCanRenew(const double speed_m
     request.goal.mission_id = mission.id;
     request.start_state.position_world = mission.waypoints.front().position_enu;
     request.dynamics.intent.requested_cruise_speed_mps = speed_mps;
-    facade.setGoalAcceptanceRadius(mission.waypoints[1].acceptance_radius_m);
+    request.goal_acceptance_radius_m = mission.waypoints[1].acceptance_radius_m;
     ASSERT_TRUE(request.valid());
     const auto initial = facade.plan(request);
     ASSERT_TRUE(initial.candidate.has_value()) << static_cast<int>(initial.failure_stage) << ":"
@@ -2683,20 +2864,17 @@ TEST(PlannerFacade, PassThroughLookaheadPrefixWithoutBoundaryEntryStaysValid) {
   mission.frame = "lio_odom";
   navigation_mission::MissionWaypoint active;
   active.id = "active";
-  active.position_enu = Eigen::Vector3d{10.0, 0.0, 3.0};
+  active.position_enu = Eigen::Vector3d{40.0, 0.0, 3.0};
   active.behavior = navigation_mission::MissionWaypoint::Behavior::PassThrough;
   active.acceptance_radius_m = 0.5;
   navigation_mission::MissionWaypoint next;
   next.id = "next";
-  next.position_enu = Eigen::Vector3d{20.0, 0.0, 3.0};
+  next.position_enu = Eigen::Vector3d{45.0, 0.0, 3.0};
   next.behavior = navigation_mission::MissionWaypoint::Behavior::Stop;
   next.acceptance_radius_m = 0.5;
   mission.waypoints = {active, next};
   navigation_mission::RouteProgress progress(mission);
   ASSERT_TRUE(progress.update(Eigen::Vector3d{0.0, 0.0, 3.0}).valid);
-  ASSERT_TRUE(facade.setRouteSnapshot(progress.snapshot(
-      mission.id, mission.frame, 1U, 1U, 0U)));
-
   navigation_planning::KinematicState state;
   state.position_world = Eigen::Vector3d{0.0, 0.0, 3.0};
   state.source_stamp_ns = 1;
@@ -2704,15 +2882,13 @@ TEST(PlannerFacade, PassThroughLookaheadPrefixWithoutBoundaryEntryStaysValid) {
   state.localization_epoch = 1U;
   state.world_frame_id = "lio_odom";
   state.body_frame_id = "base_link";
-  ASSERT_TRUE(facade.setState(state));
-  facade.setCommandIdentity(1U, 1U, 1U);
-  facade.setGoalAcceptanceRadius(active.acceptance_radius_m);
-
-  ASSERT_EQ(facade.planInitialFromStoppedState(
-                Eigen::Vector3d{5.0, 0.0, 3.0}, 0.0, true),
-            navigation_planning::PlannerStatus::kSuccess);
-  const auto candidate = facade.exportCommandCandidate(1U, 1U, 1U, 10000000000LL,
-                                                       20000000000LL);
+  const auto route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
+  ASSERT_TRUE(route.valid());
+  const auto outcome = facade.plan(plannerRequestForRoute(
+      world, route, state, *semanticFixtureMissionLimits(), 1U));
+  ASSERT_TRUE(outcome.valid()) << static_cast<int>(outcome.failure_stage) << ":"
+                               << static_cast<int>(outcome.failure_reason);
+  const auto candidate = outcome.candidate;
   ASSERT_TRUE(candidate);
   ASSERT_TRUE(candidate->valid());
   EXPECT_FALSE(candidate->route_boundary_event.has_value());
@@ -2746,9 +2922,6 @@ TEST(PlannerFacade, PassThroughEntryAfterBackupDoesNotAdvertiseBoundaryEvent) {
   mission.waypoints = {active, next};
   navigation_mission::RouteProgress progress(mission);
   ASSERT_TRUE(progress.update(Eigen::Vector3d{0.0, 0.0, 3.0}).valid);
-  ASSERT_TRUE(facade.setRouteSnapshot(progress.snapshot(
-      mission.id, mission.frame, 1U, 1U, 0U)));
-
   navigation_planning::KinematicState state;
   state.position_world = Eigen::Vector3d{0.0, 0.0, 3.0};
   state.source_stamp_ns = 1;
@@ -2756,17 +2929,18 @@ TEST(PlannerFacade, PassThroughEntryAfterBackupDoesNotAdvertiseBoundaryEvent) {
   state.localization_epoch = 1U;
   state.world_frame_id = "lio_odom";
   state.body_frame_id = "base_link";
-  ASSERT_TRUE(facade.setState(state));
-  facade.setCommandIdentity(1U, 1U, 1U);
-  // Keep the planner's corridor envelope independent of the deliberately
-  // tighter route-event volume used to place the witness in BACKUP.
-  facade.setGoalAcceptanceRadius(0.5);
-
-  ASSERT_EQ(facade.planInitialFromStoppedState(
-                Eigen::Vector3d{10.0, 0.0, 3.0}, 0.0, true),
-            navigation_planning::PlannerStatus::kSuccess);
-  const auto candidate = facade.exportCommandCandidate(1U, 1U, 1U, 10000000000LL,
-                                                       20000000000LL);
+  const auto route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
+  ASSERT_TRUE(route.valid());
+  auto request = plannerRequestForRoute(
+      world, route, state, *semanticFixtureMissionLimits(), 1U);
+  request.planning_goal_world = Eigen::Vector3d{10.0, 0.0, 3.0};
+  // Keep the corridor goal radius independent from the deliberately tighter
+  // route-event sphere used to place this witness in BACKUP.
+  request.goal_acceptance_radius_m = 0.5;
+  const auto outcome = facade.plan(request);
+  ASSERT_TRUE(outcome.valid()) << static_cast<int>(outcome.failure_stage) << ":"
+                               << static_cast<int>(outcome.failure_reason);
+  const auto candidate = outcome.candidate;
   ASSERT_TRUE(candidate);
   ASSERT_TRUE(candidate->valid());
   ASSERT_TRUE(candidate->backup_available);
@@ -2803,8 +2977,7 @@ TEST(PlannerFacade, EmergencyBrakeDoesNotAdvertiseNominalPassThroughBoundary) {
   mission.waypoints = {active, next};
   navigation_mission::RouteProgress progress(mission);
   ASSERT_TRUE(progress.update(Eigen::Vector3d{9.8, 0.0, 3.0}).valid);
-  ASSERT_TRUE(facade.setRouteSnapshot(progress.snapshot(
-      mission.id, mission.frame, 1U, 1U, 0U)));
+  const auto route = progress.snapshot(mission.id, mission.frame, 1U, 1U, 0U);
 
   navigation_planning::KinematicState state;
   state.position_world = Eigen::Vector3d{9.8, 0.0, 3.0};
@@ -2813,8 +2986,6 @@ TEST(PlannerFacade, EmergencyBrakeDoesNotAdvertiseNominalPassThroughBoundary) {
   state.localization_epoch = 1U;
   state.world_frame_id = "lio_odom";
   state.body_frame_id = "base_link";
-  ASSERT_TRUE(facade.setState(state));
-  facade.setCommandIdentity(1U, 1U, 1U);
 
   navigation_planning::TrajectoryPoint measured_command;
   measured_command.position_world = state.position_world;
@@ -2824,10 +2995,18 @@ TEST(PlannerFacade, EmergencyBrakeDoesNotAdvertiseNominalPassThroughBoundary) {
   measured_command.yaw = 0.0;
   measured_command.yaw_rate = 0.0;
   ASSERT_TRUE(measured_command.finite());
-  ASSERT_TRUE(facade.commitEmergencyBrake(measured_command, 10.0));
-
-  const auto candidate = facade.exportCommandCandidate(
-      1U, 1U, 1U, 10000000000LL, 20000000000LL);
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.intent.requested_cruise_speed_mps = 1.0;
+  auto request = plannerRequestForRoute(
+      world, route, state, dynamics, 1U);
+  request.key.start_mode =
+      navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake;
+  request.start_state.velocity_world = measured_command.velocity_world;
+  ASSERT_TRUE(request.valid());
+  const auto outcome = facade.plan(request);
+  ASSERT_TRUE(outcome.valid()) << static_cast<int>(outcome.failure_stage) << ":"
+                               << static_cast<int>(outcome.failure_reason);
+  const auto candidate = outcome.candidate;
   ASSERT_TRUE(candidate);
   ASSERT_TRUE(candidate->valid());
   EXPECT_EQ(candidate->kind,

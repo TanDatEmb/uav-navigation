@@ -1142,7 +1142,10 @@ class RuntimeContractTest(unittest.TestCase):
         mapping_actor = (
             ROOT / "src/mapping/navigation_mapping/src/mapping_actor.cpp"
         ).read_text(encoding="utf-8")
-        run_cycle = "void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key)"
+        run_cycle = (
+            "void NavigationRuntimeNode::runCycle(\n"
+            "    const PlanningKey& scheduled_key, const std::stop_token stop)"
+        )
         cycle = source[
             source.index(run_cycle):
             source.index("void NavigationRuntimeNode::publishCommand()")]
@@ -4008,7 +4011,8 @@ class RuntimeContractTest(unittest.TestCase):
             ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
         ).read_text(encoding="utf-8")
         self.assertIn("new_goal_", source)
-        self.assertIn("planSuccessorFromExecutionAnchor", source)
+        self.assertIn("planner_->plan(planning_request)", source)
+        self.assertIn("planning_request.route_snapshot = *route_snapshot", source)
 
     def test_candidate_exposure_retains_pre_activation_lease(self) -> None:
         source = (

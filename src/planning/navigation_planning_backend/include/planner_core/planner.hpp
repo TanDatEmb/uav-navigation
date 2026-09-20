@@ -7,6 +7,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 
@@ -103,6 +104,10 @@ namespace navigation_planning_backend {
         mutable std::mutex command_identity_mutex_;
         mutable std::mutex planner_timeline_mutex_;
         CommandIdentity command_identity_{};
+        // Non-owning pointer to the immutable transaction value currently
+        // being solved. Planner::plan is synchronous and clears it on every
+        // exit; writers never retain request data beyond that solve.
+        const navigation_planning::PlanningRequest* active_planning_request_{nullptr};
         // Non-zero only while servicing a typed PlanningRequest. All planner
         // stages use this transaction-owned absolute deadline; compatibility
         // entry points retain the configured local budget.
@@ -201,6 +206,12 @@ namespace navigation_planning_backend {
         // into NominalProblemSnapshot and never affect planning behavior.
         std::uint64_t diagnostic_solve_generation_{0U};
         std::uint64_t diagnostic_planner_cycle_{0U};
+        // Last typed-request cruise values are diagnostic attribution only;
+        // the solve consumes the request value directly at each decision.
+        std::atomic<double> latest_requested_cruise_speed_mps_{
+            std::numeric_limits<double>::quiet_NaN()};
+        std::atomic<double> latest_effective_cruise_speed_mps_{
+            std::numeric_limits<double>::quiet_NaN()};
         // Set for one typed successor solve.  The execution timeline chooses
         // this wall timestamp; the planner must not invent a different splice
         // time after solving.
@@ -408,9 +419,6 @@ namespace navigation_planning_backend {
         int latestCommitDecision() const noexcept {
             return latest_commit_decision_.load();
         }
-        void resetExpOptimizationDiagnostics() noexcept {
-            if (exp_traj_opt_) exp_traj_opt_->resetDiagnostics();
-        }
         traj_opt::ExpOptimizationDiagnostics latestExpOptimizationDiagnostics() const noexcept {
             return exp_traj_opt_ ? exp_traj_opt_->diagnostics()
                                  : traj_opt::ExpOptimizationDiagnostics{};
@@ -419,10 +427,14 @@ namespace navigation_planning_backend {
             return cfg_.solve_deadline_s;
         }
         double requestedCruiseSpeedMetersPerSecond() const noexcept {
-            return cfg_.requested_cruise_speed_mps;
+            const double request = latest_requested_cruise_speed_mps_.load(
+                std::memory_order_relaxed);
+            return std::isfinite(request) ? request : cfg_.requested_cruise_speed_mps;
         }
         double effectiveCruiseSpeedMetersPerSecond() const noexcept {
-            return cfg_.effective_cruise_speed_mps;
+            const double effective = latest_effective_cruise_speed_mps_.load(
+                std::memory_order_relaxed);
+            return std::isfinite(effective) ? effective : cfg_.effective_cruise_speed_mps;
         }
         navigation_planning::VehicleControlEnvelope controlEnvelope() const noexcept {
             return cfg_.control_envelope;
@@ -444,10 +456,6 @@ namespace navigation_planning_backend {
                 ? navigation_world_model::UnknownPolicy::kAllowUnknown
                 : navigation_world_model::UnknownPolicy::kRequireKnownFree;
         }
-        void resetSolveCancellation() noexcept {
-            solve_cancelled_.store(false);
-        }
-
         void discardCommandCandidate() noexcept;
 
         // A nominal solve may overlap an exported retained position/heading
@@ -476,9 +484,10 @@ namespace navigation_planning_backend {
             double authorization_wall_time_s,
             std::uint64_t expected_generation) const;
 
-        // Runtime sets the immutable mission identity before a solve starts.
-        // The identity is copied into the backend candidate and checked again
-        // at export; callers cannot relabel a trajectory after it is planned.
+    private:
+        // These bind the mutable optimizer workspace from the immutable
+        // PlanningRequest. They are deliberately private: runtime callers can
+        // no longer establish a partial ambient planner configuration.
         void setCommandIdentity(const CommandIdentity& identity) {
             if (!identity.valid()) {
                 throw std::invalid_argument("command identity must be non-zero");
@@ -489,13 +498,6 @@ namespace navigation_planning_backend {
             discardCommandCandidate();
             std::lock_guard<std::mutex> guard(command_identity_mutex_);
             command_identity_ = identity;
-        }
-
-        void setNominalProblemDiagnosticIdentity(
-                const std::uint64_t solve_generation,
-                const std::uint64_t planner_cycle) noexcept {
-            diagnostic_solve_generation_ = solve_generation;
-            diagnostic_planner_cycle_ = planner_cycle;
         }
 
         // Planning-thread-only. Runtime pins one immutable revision before a
@@ -516,20 +518,6 @@ namespace navigation_planning_backend {
                     ? std::max(radius_m,
                                navigation_world_model::kGoalCompletionToleranceM)
                     : navigation_world_model::kGoalCompletionToleranceM;
-        }
-
-        // Planning-thread-only mission look-ahead. A pass-through goal uses
-        // this only to shape its terminal velocity; the current waypoint
-        // remains the geometric endpoint and all safety certificates remain
-        // authoritative.
-        void setPassThroughNextTarget(
-                const std::optional<Eigen::Vector3d>& next_target) noexcept {
-            if (next_target.has_value() && next_target->allFinite()) {
-                pass_through_next_target_ = *next_target;
-                pass_through_coincident_terminal_stop_ = false;
-            } else {
-                pass_through_next_target_.reset();
-            }
         }
 
         // Planning-thread-only immutable mission route. Mission, planner
@@ -589,13 +577,12 @@ namespace navigation_planning_backend {
             }
         }
 
+    public:
         bool updateRouteYawReference() noexcept;
 
         // Stage a bounded yaw-only successor from the retained committed
         // position suffix. The execution runtime still owns activation and
         // must admit the staged candidate through its normal boundary.
-        bool stageImmediateHeadingRebind(double activation_wall_time_s);
-
         // Out-of-band construction for a waypoint heading update. It snapshots
         // CmdTraj under its own lock, then reserves the exact staged-candidate
         // generation that the execution activation callback will promote. It
@@ -617,10 +604,6 @@ namespace navigation_planning_backend {
             std::int64_t valid_from_ns,
             std::int64_t valid_until_ns);
 
-        void cancelActiveSolve() {
-            std::lock_guard<std::mutex> guard(solve_commit_mutex_);
-            solve_cancelled_.store(true);
-        }
         std::size_t solvePointCount() const noexcept {
             return cg_ptr_ ? cg_ptr_->solvePointCount() : 0;
         }
@@ -645,58 +628,11 @@ namespace navigation_planning_backend {
         };
         CommandSample sampleCommand();
 
-        // Export one immutable product candidate for the execution boundary.
-        // The backend retains its private trajectory representation; callers do
-        // not sample or lock the backend's mutable command state directly.
-        std::optional<navigation_planning::CandidateBundle> exportCommandCandidate(
-            std::uint64_t localization_epoch,
-            std::uint64_t goal_epoch,
-            std::uint64_t request_id,
-            std::int64_t valid_from_ns,
-            std::int64_t valid_until_ns) const;
-
-        // Last-resort planner-owned braking bundle.  This is intentionally not
-        // a main-only adapter trajectory: it is committed as BACKUP only
-        // after dynamic and inflated-map gates pass.
-        bool commitEmergencyBrake(const StatePVAJ &initial_command_state,
-                                  double initial_command_yaw,
-                                  double initial_command_yaw_dot,
-                                  double start_WT,
-                                  // Optional execution-owned terminal
-                                  // altitude; all dynamic/world certificates
-                                  // remain authoritative.
-                                  std::optional<double> terminal_altitude_m =
-                                      std::nullopt);
-
         void getModuleTimeConsuming(vector<double> &time);
         vector<double> moduleTimeConsumingSnapshot() const;
 
-        // The lifecycle names make the planner/execution boundary explicit:
-        // only the initial path may use a stopped-state seed; all renewal is
-        // a successor seeded from the execution timeline.
-        RET_CODE planInitialFromStoppedState(const Vec3f &goal_p,
-                                              const double &goal_yaw,
-                                              const bool &new_goal);
-
-        RET_CODE
-        planSuccessorFromExecutionAnchor(const Vec3f &goal_p,
-                                          const double &goal_yaw,
-                                          const bool &new_goal);
-
         [[nodiscard]] navigation_planning::PlanningOutcome plan(
             const navigation_planning::PlanningRequest& request);
-
-        // Compatibility entry points for non-runtime tools that have not
-        // migrated yet. They retain the old ABI while forwarding to the
-        // explicit lifecycle operations above.
-        RET_CODE PlanFromRest(const Vec3f &goal_p,
-                              const double &goal_yaw,
-                              const bool &new_goal);
-
-        RET_CODE
-        ReplanOnce(const Vec3f &goal_p,
-                   const double &goal_yaw,
-                   const bool &new_goal);
 
     private:
         RET_CODE planSuccessorFromExecutionAnchorImpl(
@@ -708,6 +644,19 @@ namespace navigation_planning_backend {
         [[nodiscard]] std::int64_t remainingPlannerBudgetUs(
             std::int64_t now_steady_ns) const noexcept;
         [[nodiscard]] AbsoluteDeadline solveDeadlineForCurrentRequest() const;
+        bool setState(const navigation_planning::KinematicState &state);
+        RET_CODE planInitialFromStoppedState(const Vec3f &goal_p,
+                                             const double &goal_yaw,
+                                             const bool &new_goal,
+                                             const navigation_planning::PlanningRequest*
+                                                 request = nullptr);
+        bool commitEmergencyBrake(
+            const StatePVAJ &initial_command_state, double initial_command_yaw,
+            double initial_command_yaw_dot, double start_WT,
+            std::optional<double> terminal_altitude_m = std::nullopt);
+        void resetExpOptimizationDiagnostics() noexcept {
+            if (exp_traj_opt_) exp_traj_opt_->resetDiagnostics();
+        }
         // Internal request admission only. Current-body geometry is never a
         // public mutable planner setting.
         void setCurrentBodySupport(
@@ -736,7 +685,6 @@ namespace navigation_planning_backend {
 
 
     public:
-        bool setState(const navigation_planning::KinematicState &state);
         // Planning-thread-only recovery envelope. A value below one is a
         // conservative speed request, never a relaxation of V/A/J limits.
 

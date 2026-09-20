@@ -1123,8 +1123,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           const auto committed_validation = staged_validation.valid
               ? navigation_planning::TrajectoryValidationResult{}
               : planner_->validateCommittedTrajectory(
-                    result.snapshot, authorization_wall_time_s,
-                    expected_bundle->bundle_generation);
+                    *expected_bundle, result.snapshot,
+                    authorization_wall_time_s);
           const auto& validation = staged_validation.valid
               ? staged_validation : committed_validation;
           if (validation.valid) {
@@ -2533,12 +2533,11 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   }
   auto candidate = planned_candidate.has_value()
       ? planned_candidate
-      : planner_->exportCommandCandidate(
-            localization_epoch, goal_epoch, goal.request_id, now_ns,
-            now_ns + maximum_age_ns);
+      : std::optional<navigation_planning::CandidateBundle>{};
   if (!candidate) {
+    planner_->discardCommandCandidate();
     RCLCPP_WARN(get_logger(),
-                "execution boundary rejected candidate export mission=%s waypoint=%u "
+                "execution boundary rejected missing transaction candidate mission=%s waypoint=%u "
                 "request=%lu now_ns=%lld",
                 goal.mission_id.c_str(), goal.waypoint_index,
                 static_cast<unsigned long>(goal.request_id),
@@ -3195,7 +3194,7 @@ void NavigationRuntimeNode::schedulePlanningCycle() {
         if (!current || !PlanningSupervisor::resultStillCurrent(scheduled_key, *current)) {
           return;
         }
-        runCycle(scheduled_key);
+        runCycle(scheduled_key, stop);
       });
   (void)disposition;
   planning_submit_count_.fetch_add(1, std::memory_order_relaxed);
@@ -3371,7 +3370,8 @@ void NavigationRuntimeNode::applyQueuedExecutionTimelineActivations(
   }
 }
 
-void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
+void NavigationRuntimeNode::runCycle(
+    const PlanningKey& scheduled_key, const std::stop_token stop) {
   const auto cycle_started = std::chrono::steady_clock::now();
   const auto cycle_started_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
       cycle_started.time_since_epoch()).count();
@@ -3725,7 +3725,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     return;
   }
   const auto& execution_state = propagated_state->state;
-  if (!execution_state.finite() || !planner_->setState(execution_state)) {
+  if (!execution_state.finite()) {
     ++invalid_execution_state_count_;
     return;
   }
@@ -4547,14 +4547,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     // It is discard-only, not permission to fall through to nominal renewal.
     if (!terminalMainMonitorPhaseIsOpen(
             *monitor_bundle, episode_at_cycle, now().nanoseconds())) return;
-    planner_->setWorldModelView(latest_world.view);
-    planner_->setGoalAcceptanceRadius(active_route_waypoint.acceptance_radius_m);
-    planner_->setMissionStartPosition(mission_start_position_at_cycle);
-    if (!planner_->setRouteSnapshot(*route_snapshot)) return;
-    planner_->setCommandIdentity(
-        localization_epoch_at_cycle, goal_epoch, goal->request_id);
-    planner_->resetOptimizationDiagnostics();
-    planner_->resetSolveCancellation();
     const RetainedValidationContext monitor_context{
         RetainedValidationPurpose::kTerminalMainMonitor, false, true,
         0U, std::nullopt,
@@ -4562,9 +4554,57 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
             planner_->trackingErrorBudgetMeters(),
             navigation_contracts::kCommandAnchorErrorLimitM),
         TerminalMonitorBoundary{expected_timeline_at_cycle, episode_at_cycle}};
+    // Terminal monitoring intentionally bypasses the nominal optimizer, but
+    // an authorized measured-state recovery still needs the same explicit,
+    // immutable inputs as every other emergency solve.  Build that narrow
+    // transaction from this cycle's captured execution/world/route owners;
+    // validateRetainedCommand will bind the terminal altitude and its fresh
+    // bounded recovery deadline immediately before the solve.
+    navigation_planning::PlanningRequest emergency_context;
+    emergency_context.key = effective_scheduled_key;
+    emergency_context.key.start_mode =
+        navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake;
+    emergency_context.key.anchor_stamp_ns = execution_state.source_stamp_ns;
+    emergency_context.key.committed_bundle_generation =
+        monitor_bundle->bundle_generation;
+    emergency_context.key.pinned_world_generation = latest_world.identity.generation;
+    emergency_context.key.pinned_world_revision = latest_world.identity.revision;
+    emergency_context.goal.localization_epoch = localization_epoch_at_cycle;
+    emergency_context.goal.goal_epoch = goal_epoch;
+    emergency_context.goal.mission_id = goal->mission_id;
+    emergency_context.goal.waypoint_index = goal->waypoint_index;
+    emergency_context.goal.request_id = goal->request_id;
+    emergency_context.start_state = execution_state;
+    emergency_context.history.previous_bundle = monitor_bundle;
+    emergency_context.history.previous_bundle_generation =
+        monitor_bundle->bundle_generation;
+    emergency_context.history.previous_velocity_world = execution_state.velocity_world;
+    emergency_context.route_snapshot = *route_snapshot;
+    emergency_context.planning_goal_world = route_snapshot->waypoints[
+        route_snapshot->active_waypoint_index].position_enu;
+    emergency_context.world = latest_world.view;
+    emergency_context.mission_start_position_world = mission_start_position_at_cycle;
+    emergency_context.goal_acceptance_radius_m = route_snapshot->waypoints[
+        route_snapshot->active_waypoint_index].acceptance_radius_m;
+    emergency_context.dynamics = mission_dynamic_limits_;
+    if (!std::isfinite(
+            emergency_context.dynamics.intent.requested_cruise_speed_mps) ||
+        emergency_context.dynamics.intent.requested_cruise_speed_mps <= 0.0) {
+      emergency_context.dynamics.intent.requested_cruise_speed_mps =
+          planner_->diagnostics().effective_cruise_speed_mps;
+    }
+    emergency_context.diagnostic_planner_cycle = cycle_count_;
+    emergency_context.budget.deadline =
+        navigation_planning::PlanningBudget::Clock::now() +
+        std::chrono::duration_cast<
+            navigation_planning::PlanningBudget::Clock::duration>(
+            std::chrono::duration<double>(planner_->solveDeadlineSeconds()));
+    emergency_context.budget.steady_deadline_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            emergency_context.budget.deadline.time_since_epoch()).count();
     validateRetainedCommand(
         goal, goal_epoch, localization_epoch_at_cycle,
-        effective_scheduled_key, monitor_context);
+        effective_scheduled_key, monitor_context, &emergency_context);
     // No optimizer, future anchor, nominal solve generation/watchdog or
     // common result tail. Monitoring must not masquerade as NO_NEED/failure.
     return;
@@ -4855,36 +4895,15 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
     RCLCPP_ERROR(get_logger(), "planner backend cannot solve without a published WorldModel snapshot");
     return;
   }
-  planner_->setWorldModelView(pinned_world.view);
-  planner_->setGoalAcceptanceRadius(active_route_waypoint.acceptance_radius_m);
-  planner_->setMissionStartPosition(mission_start_position_at_cycle);
-  if (!planner_->setRouteSnapshot(*route_snapshot)) {
-    planner_->cancelActiveSolve();
-    if (cycle_goal) {
-      (void)clearCommandForCurrentIdentity(
-          *cycle_goal, goal_epoch_at_cycle, localization_epoch_at_cycle,
-          expected_timeline_at_cycle);
-    }
-    RCLCPP_ERROR(get_logger(), "planner rejected the immutable route snapshot");
-    return;
-  }
-  planner_->setCommandIdentity(
-      localization_epoch_at_solve, goal_epoch, goal->request_id);
-  planner_->setNominalProblemDiagnosticIdentity(
-      solve_generation, cycle_count_);
-  // Reset diagnostic-only optimizer evidence so a solve that bypasses EXP
-  // cannot inherit retry metrics from the previous planning generation.
-  planner_->resetOptimizationDiagnostics();
-  planner_->resetSolveCancellation();
+  const auto active_bundle_at_renewal = expected_timeline_at_cycle.active;
   const auto solve_started_ros_ns = now().nanoseconds();
   const double execution_age_at_solve_ms =
       executionStateAgeMs(solve_started_ros_ns, execution_stamp_ns);
   runtime_request_created_steady_ns =
       navigation_common::steadyClockNowNanoseconds();
   navigation_planning::PlanningRequest planning_request;
-  // PlanningRequest::start_mode selects the explicit
-  // planSuccessorFromExecutionAnchor lifecycle for every moving renewal;
-  // only a stationary transition selects the initial stopped-state operation.
+  // PlanningRequest::start_mode binds each moving renewal to its exact
+  // execution anchor; stationary transitions use the measured stopped state.
   planning_request.key = effective_scheduled_key;
   planning_request.key.start_mode = plan_from_rest_with_transition
       ? navigation_planning::PlanningStartMode::kStoppedMeasuredState
@@ -4895,6 +4914,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   planning_request.goal.waypoint_index = goal->waypoint_index;
   planning_request.goal.request_id = goal->request_id;
   planning_request.start_state = execution_state;
+  planning_request.mission_start_position_world = mission_start_position_at_cycle;
+  planning_request.goal_acceptance_radius_m =
+      active_route_waypoint.acceptance_radius_m;
+  planning_request.diagnostic_solve_generation = solve_generation;
+  planning_request.diagnostic_planner_cycle = cycle_count_;
+  planning_request.history.previous_bundle = active_bundle_at_renewal;
+  planning_request.budget.cancellation = stop;
   if (planning_request.key.start_mode ==
       navigation_planning::PlanningStartMode::kStoppedMeasuredState) {
     const auto support = navigation_mapping::makeX500Mid360CurrentBodySupport(
@@ -4910,7 +4936,6 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
     }
   }
-  const auto active_bundle_at_renewal = expected_timeline_at_cycle.active;
   const bool desired_identity_matches_executing = goal && executing_goal_at_cycle &&
       goal->mission_id == executing_goal_at_cycle->mission_id &&
       goal->waypoint_index == executing_goal_at_cycle->waypoint_index &&
@@ -4962,16 +4987,17 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
   same_identity_renewal_facts.current_body_support_present =
       planning_request.current_body_support != nullptr;
   same_identity_renewal_facts.terminal_hold_pending = false;
-  planning_request.history.previous_bundle_generation =
-      transition_bundle ? transition_bundle->bundle_generation : 0U;
+  planning_request.history.previous_bundle_generation = active_bundle_at_renewal
+      ? active_bundle_at_renewal->bundle_generation : 0U;
   // PlanningHistory describes a prior executable bundle, not the measured
   // start state. Keep it empty for the initial stopped-state request; putting
   // the current velocity beside generation zero makes the request appear to
   // reference a non-existent prior command and fails the typed contract.
-  planning_request.history.previous_velocity_world = transition_bundle
+  planning_request.history.previous_velocity_world = active_bundle_at_renewal
       ? execution_state.velocity_world
       : Eigen::Vector3d::Zero();
   planning_request.route_snapshot = *route_snapshot;
+  planning_request.planning_goal_world = target;
   planning_request.world = pinned_world.view;
   planning_request.dynamics = mission_dynamic_limits_;
   if (planning_request.key.start_mode ==
@@ -5025,6 +5051,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
           std::chrono::duration<double>(planner_->solveDeadlineSeconds()));
   planning_request.budget.steady_deadline_ns = std::chrono::duration_cast<
       std::chrono::nanoseconds>(planning_request.budget.deadline.time_since_epoch()).count();
+  if (stop.stop_requested()) return;
   navigation_planning::PlanningOutcome planning_outcome;
   {
     // Arm only after the immutable request, activation timing, and execution
@@ -5035,6 +5062,7 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         planner_solve_started_steady_ns_, active_planner_solve_generation_,
         solve_generation, navigation_common::steadyClockNowNanoseconds());
     try {
+      if (stop.stop_requested()) return;
       planning_outcome = planner_->plan(planning_request);
       runtime_result_received_steady_ns =
           navigation_common::steadyClockNowNanoseconds();
@@ -5155,7 +5183,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&
       latest_world && world_freshness == navigation_execution::TimestampFreshness::VALID &&
       execution_freshness == navigation_execution::TimestampFreshness::VALID &&
-      planner_->validateCommittedTrajectory(latest_world.view, now().seconds()).valid;
+      transition_bundle && planner_->validateCommittedTrajectory(
+          *transition_bundle, latest_world.view, now().seconds()).valid;
   const bool handoff_safe_margin_injection = inject_failed_replan_after_handoff_ &&
       inject_failed_replan_once_ && !plan_from_rest_with_transition &&
       replan_for_new_goal && failure_injection_episode.recovery_state ==
@@ -5171,7 +5200,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&
       latest_world && world_freshness == navigation_execution::TimestampFreshness::VALID &&
       execution_freshness == navigation_execution::TimestampFreshness::VALID &&
-      planner_->validateCommittedTrajectory(latest_world.view, now().seconds()).valid;
+      transition_bundle && planner_->validateCommittedTrajectory(
+          *transition_bundle, latest_world.view, now().seconds()).valid;
   const bool repeated_replan_failure = inject_failed_replan_repeated_ &&
       !plan_from_rest_with_transition && transition_bundle && transition_sample &&
       transition_role == navigation_planning::CandidateRole::kMain &&
@@ -5184,7 +5214,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
       transition_anchor_error_m <= retained_tracking_limit_m && latest_world &&
       world_freshness == navigation_execution::TimestampFreshness::VALID &&
       execution_freshness == navigation_execution::TimestampFreshness::VALID &&
-      planner_->validateCommittedTrajectory(latest_world.view, now().seconds()).valid;
+      planner_->validateCommittedTrajectory(
+          *transition_bundle, latest_world.view, now().seconds()).valid;
   const bool repeated_plan_from_rest_failure = inject_failed_plan_from_rest_repeated_ &&
       plan_from_rest_with_transition &&
       failure_injection_episode.recovery_state ==
@@ -5453,7 +5484,8 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         transition_bundle && transition_bundle->terminal_stop,
         solve_generation, result, retained_tracking_limit_m};
     validateRetainedCommand(goal, goal_epoch, localization_epoch_at_solve,
-                            effective_scheduled_key, retained_context);
+                            effective_scheduled_key, retained_context,
+                            &planning_request);
   }
   if (disposition == PlannerResultDisposition::CommandReady) {
     {
@@ -6698,7 +6730,8 @@ void NavigationRuntimeNode::validateRetainedCommand(
     const std::uint64_t goal_epoch,
     const std::uint64_t localization_epoch_at_solve,
     const PlanningKey& effective_scheduled_key,
-    const RetainedValidationContext& context) {
+    const RetainedValidationContext& context,
+    const navigation_planning::PlanningRequest* const request_context) {
   const bool plan_from_rest_with_transition = context.plan_from_rest_with_transition;
   const auto solve_generation = context.solve_generation;
   const auto result = context.planner_result;
@@ -6976,8 +7009,9 @@ void NavigationRuntimeNode::validateRetainedCommand(
       navigation_world_model::CellState::kUnknown;
   bool first_blocked_cell_observed = false;
   if (sampled_path_clear) {
-    const auto validation = latest_world
-        ? planner_->validateCommittedTrajectory(latest_world.view, now().seconds())
+    const auto validation = latest_world && committed_bundle
+        ? planner_->validateCommittedTrajectory(
+              *committed_bundle, latest_world.view, now().seconds())
         : navigation_planning::TrajectoryValidationResult{};
     observation.world_validation_attempted = static_cast<bool>(latest_world);
     observation.world_validation = validation;
@@ -7104,6 +7138,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
       std::isfinite(strict_execution_anchor_error_m) &&
       strict_execution_anchor_error_m <= retained_tracking_limit_m;
   bool emergency_brake_committed = false;
+  std::optional<navigation_planning::CandidateBundle> emergency_candidate;
   bool emergency_certification_failed = false;
   bool emergency_boundary_failed = false;
   bool retained_result_discarded = false;
@@ -7219,8 +7254,59 @@ void NavigationRuntimeNode::validateRetainedCommand(
           measured_altitude_m, command_anchor_altitude_m,
           terminal_altitude_m, retained_tracking_limit_m);
     observation.emergency_preparation_attempted = true;
-    emergency_brake_committed = planner_->commitEmergencyBrake(
-        emergency_command, now().seconds(), terminal_altitude_m);
+    if (request_context && retained_execution_state && latest_world &&
+        latest_world.view && committed_bundle) {
+      auto emergency_request = *request_context;
+      emergency_request.key.start_mode =
+          navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake;
+      emergency_request.key.anchor_stamp_ns =
+          retained_execution_state->state.source_stamp_ns;
+      emergency_request.key.pinned_world_generation =
+          latest_world.identity.generation;
+      emergency_request.key.pinned_world_revision =
+          latest_world.identity.revision;
+      emergency_request.key.committed_bundle_generation =
+          committed_bundle->bundle_generation;
+      emergency_request.anchor.reset();
+      emergency_request.activation_stamp_ns = 0;
+      emergency_request.start_state = retained_execution_state->state;
+      emergency_request.history.previous_bundle = committed_bundle;
+      emergency_request.history.previous_bundle_generation =
+          committed_bundle->bundle_generation;
+      emergency_request.history.previous_velocity_world =
+          retained_execution_state->state.velocity_world;
+      emergency_request.world = latest_world.view;
+      emergency_request.current_body_support.reset();
+      emergency_request.emergency_terminal_altitude_m = terminal_altitude_m;
+      emergency_request.budget.cancellation = {};
+      emergency_request.budget.deadline =
+          navigation_planning::PlanningBudget::Clock::now() +
+          std::chrono::duration_cast<
+              navigation_planning::PlanningBudget::Clock::duration>(
+              std::chrono::duration<double>(planner_->solveDeadlineSeconds()));
+      emergency_request.budget.steady_deadline_ns = std::chrono::duration_cast<
+          std::chrono::nanoseconds>(
+              emergency_request.budget.deadline.time_since_epoch()).count();
+      const auto emergency_outcome = planner_->plan(emergency_request);
+      emergency_brake_committed = emergency_outcome.candidate.has_value() &&
+          emergency_outcome.candidate->valid() &&
+          emergency_outcome.candidate->kind ==
+              navigation_planning::CandidateBundleKind::kEmergencyBrake;
+      if (!emergency_brake_committed) {
+        RCLCPP_WARN(
+            get_logger(),
+            "measured emergency-brake transaction produced no certified candidate "
+            "localization_epoch=%lu goal_epoch=%lu request=%lu stage=%u reason=%u",
+            static_cast<unsigned long>(emergency_request.key.localization_epoch),
+            static_cast<unsigned long>(emergency_request.key.goal_epoch),
+            static_cast<unsigned long>(emergency_request.key.request_id),
+            static_cast<unsigned int>(emergency_outcome.failure_stage),
+            static_cast<unsigned int>(emergency_outcome.failure_reason));
+      }
+      if (emergency_brake_committed) {
+        emergency_candidate = emergency_outcome.candidate;
+      }
+    }
     }
     use_safety_suffix = emergency_brake_committed;
     emergency_certification_failed = !emergency_brake_committed;
@@ -7238,7 +7324,8 @@ void NavigationRuntimeNode::validateRetainedCommand(
   if (emergency_brake_committed &&
       !commitPlannerCandidate(*goal, goal_epoch, localization_epoch_at_solve,
                               now().nanoseconds(), effective_scheduled_key,
-                              std::nullopt, &observation.emergency_store_admitted,
+                              emergency_candidate,
+                              &observation.emergency_store_admitted,
                               context.terminal_monitor)) {
     emergency_brake_committed = false;
     use_safety_suffix = false;

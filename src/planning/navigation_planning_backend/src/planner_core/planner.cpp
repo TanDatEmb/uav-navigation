@@ -32,6 +32,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <stop_token>
 #include <sstream>
 #include <stdexcept>
 #include <navigation_math/scope_timer.hpp>
@@ -730,19 +731,29 @@ double mainGuideSupport(
                 // fold gate is bypassed only for this bounded STOP correction;
                 // world, dynamic, yaw, anchor, and handoff certificates still
                 // authorize the candidate independently.
-                const auto previous = planner_warm_start_.snapshot();
-                const bool previous_was_emergency =
-                    !previous.empty && previous.emergency_brake &&
-                    previous.identity.localization_epoch ==
+                const auto* previous_bundle = active_planning_request_
+                    ? active_planning_request_->history.previous_bundle.get()
+                    : nullptr;
+                const bool previous_was_emergency = previous_bundle &&
+                    previous_bundle->valid() &&
+                    previous_bundle->kind ==
+                        navigation_planning::CandidateBundleKind::kEmergencyBrake &&
+                    previous_bundle->role ==
+                        navigation_planning::CandidateRole::kEmergency &&
+                    previous_bundle->bundle_generation ==
+                        active_planning_request_->history.previous_bundle_generation &&
+                    previous_bundle->localization_epoch ==
                         command_identity.localization_epoch &&
-                    previous.identity.goal_epoch == command_identity.goal_epoch &&
-                    previous.identity.request_id == command_identity.request_id;
+                    previous_bundle->goal_epoch == command_identity.goal_epoch &&
+                    previous_bundle->request_id == command_identity.request_id;
                 Eigen::Vector3d previous_endpoint =
                     Eigen::Vector3d::Constant(
                         std::numeric_limits<double>::quiet_NaN());
                 if (previous_was_emergency) {
-                    previous_endpoint = previous.position.getState(
-                        previous.position.getTotalDuration()).col(0);
+                    const auto endpoint = previous_bundle->sampleAtDeclaredEnd();
+                    if (endpoint && endpoint->finished && endpoint->finite()) {
+                        previous_endpoint = endpoint->position_world;
+                    }
                 }
                 const double emergency_endpoint_distance =
                     previous_endpoint.allFinite()
@@ -1360,137 +1371,6 @@ double mainGuideSupport(
         return route_yaw_reference_.valid;
     }
 
-    bool Planner::stageImmediateHeadingRebind(
-            const double activation_wall_time_s) {
-        if (!std::isfinite(activation_wall_time_s) ||
-            !updateRouteYawReference()) {
-            return false;
-        }
-        const auto committed = planner_warm_start_.snapshot();
-        if (committed.empty || committed.position.empty() || committed.yaw.empty() ||
-            committed.roles.empty() || !std::isfinite(committed.position.start_WT) ||
-            !std::isfinite(committed.position.getTotalDuration()) ||
-            activation_wall_time_s <= committed.position.start_WT) {
-            return false;
-        }
-        const double committed_duration = committed.position.getTotalDuration();
-        const double start_tt = activation_wall_time_s - committed.position.start_WT;
-        if (!std::isfinite(start_tt) || start_tt <= 1.0e-6 ||
-            start_tt >= committed_duration - 1.0e-4) {
-            return false;
-        }
-        const double suffix_duration = committed_duration - start_tt;
-        Trajectory position_suffix;
-        if (!committed.position.getPartialTrajectoryByTime(
-                start_tt, committed_duration, position_suffix)) {
-            return false;
-        }
-        position_suffix.start_WT = activation_wall_time_s;
-        const auto initial_yaw_state = committed.yaw.getState(start_tt);
-        if (initial_yaw_state.rows() < 1 || initial_yaw_state.cols() < 3 ||
-            !initial_yaw_state.allFinite()) {
-            return false;
-        }
-        Vec4f initial_yaw = Vec4f::Zero();
-        initial_yaw(0) = static_cast<float>(initial_yaw_state(0, 0));
-        initial_yaw(1) = static_cast<float>(initial_yaw_state(0, 1));
-        initial_yaw(2) = static_cast<float>(initial_yaw_state(0, 2));
-        const double target_yaw = route_yaw_reference_.target_yaw_rad;
-        const double delta = std::abs(std::remainder(
-            target_yaw - static_cast<double>(initial_yaw(0)), 2.0 * M_PI));
-        const double yaw_rate_limit = cfg_.yaw_rate_max_rad_s;
-        const double yaw_acceleration_limit = cfg_.yaw_acceleration_max_rad_s2;
-        if (!std::isfinite(delta) || !std::isfinite(yaw_rate_limit) ||
-            yaw_rate_limit <= 0.0 || !std::isfinite(yaw_acceleration_limit) ||
-            yaw_acceleration_limit <= 0.0 ||
-            std::abs(static_cast<double>(initial_yaw(1))) > yaw_rate_limit + 1.0e-6 ||
-            std::abs(static_cast<double>(initial_yaw(2))) >
-                yaw_acceleration_limit + 1.0e-6) {
-            return false;
-        }
-        const double requested_turn_duration = std::max({
-            0.20,
-            2.0 * delta / yaw_rate_limit,
-            std::sqrt(8.0 * delta / yaw_acceleration_limit),
-            2.0 * std::abs(static_cast<double>(initial_yaw(1))) /
-                yaw_acceleration_limit});
-        const double turn_duration = std::min(suffix_duration,
-                                              requested_turn_duration);
-        if (!std::isfinite(turn_duration) || turn_duration <= 1.0e-4) {
-            return false;
-        }
-        Trajectory turn_window;
-        turn_window.start_WT = activation_wall_time_s;
-        turn_window.emplace_back(turn_duration, Eigen::MatrixXd::Zero(3, 6));
-        Trajectory yaw_turn;
-        if (!yaw_traj_opt_->optimizeToTarget(
-                initial_yaw, target_yaw, turn_window, yaw_turn) ||
-            yaw_turn.empty()) {
-            return false;
-        }
-        yaw_turn.start_WT = activation_wall_time_s;
-        Trajectory yaw_suffix = yaw_turn;
-        const double hold_duration = suffix_duration - turn_duration;
-        if (hold_duration > 1.0e-5) {
-            const auto final_yaw_state = yaw_turn.getState(yaw_turn.getTotalDuration());
-            if (final_yaw_state.rows() < 1 || final_yaw_state.cols() < 3 ||
-                !final_yaw_state.allFinite()) {
-                return false;
-            }
-            Eigen::MatrixXd hold_coeff = Eigen::MatrixXd::Zero(3, 6);
-            hold_coeff(0, 5) = final_yaw_state(0, 0);
-            Trajectory hold;
-            hold.start_WT = activation_wall_time_s + turn_duration;
-            hold.emplace_back(hold_duration, hold_coeff);
-            yaw_suffix = yaw_turn + hold;
-        }
-        yaw_suffix.start_WT = activation_wall_time_s;
-        if (std::abs(yaw_suffix.getTotalDuration() - suffix_duration) > 1.0e-5 ||
-            !std::isfinite(yaw_suffix.getMaxVelRate()) ||
-            yaw_suffix.getMaxVelRate() > yaw_rate_limit + 1.0e-6 ||
-            !std::isfinite(yaw_suffix.getMaxAccRate()) ||
-            yaw_suffix.getMaxAccRate() > yaw_acceleration_limit + 1.0e-6) {
-            return false;
-        }
-
-        CandidateCommandBundle candidate;
-        candidate.position = std::move(position_suffix);
-        candidate.yaw = std::move(yaw_suffix);
-        candidate.start_wall_time = activation_wall_time_s;
-        candidate.retained_position_heading_rebind = true;
-        candidate.backup_disposition = BackupDisposition::SUCCESS;
-        double first_backup_start = std::numeric_limits<double>::infinity();
-        for (const auto& role : committed.roles) {
-            const double begin = std::max(0.0, role.begin_tt - start_tt);
-            const double end = std::min(suffix_duration, role.end_tt - start_tt);
-            if (end <= begin + 1.0e-6) continue;
-            candidate.roles.push_back({begin, end, role.role});
-            if (role.role == CandidateTrajectoryRole::BACKUP) {
-                first_backup_start = std::min(first_backup_start, begin);
-            }
-        }
-        if (candidate.roles.empty() ||
-            candidate.roles.back().end_tt < suffix_duration - 1.0e-5 ||
-            !std::isfinite(first_backup_start)) {
-            return false;
-        }
-        candidate.backup_suffix_available = true;
-        candidate.backup_start_tt = first_backup_start;
-        traj_opt::TrajectoryDynamicReport dynamic_report;
-        if (!traj_opt::trajectorySatisfiesFlatnessEnvelope(
-                candidate.position, cfg_.exp_traj_cfg, &dynamic_report,
-                0.01, &candidate.yaw)) {
-            planner_context_->warn(
-                " -- [planner] immediate heading rebind rejected by flatness "
-                "body_rate={} thrust=[{},{}]",
-                dynamic_report.maximum_body_rate_rad_s,
-                dynamic_report.minimum_thrust_n,
-                dynamic_report.maximum_thrust_n);
-            return false;
-        }
-        return authorizeAndStage(std::move(candidate));
-    }
-
     std::optional<navigation_planning::CandidateBundle>
     Planner::buildImmediateHeadingRebindCandidate(
             const navigation_world_model::WorldModelViewPtr& world,
@@ -1845,7 +1725,9 @@ double mainGuideSupport(
     RET_CODE
     Planner::planInitialFromStoppedState(const Vec3f &goal_p,
                                          const double &goal_yaw,
-                                         const bool &new_goal) {
+                                         const bool &new_goal,
+                                         const navigation_planning::PlanningRequest*
+                                             request) {
         std::lock_guard<std::mutex> guard(replan_lock_);
         baseline_candidate_ready_for_refinement_ = false;
         {
@@ -1948,7 +1830,7 @@ double mainGuideSupport(
         PlannerResultCode exp_failure = PLANNER_EXP_FAILED;
         RET_CODE exp_ret_code = generateExpTraj(
                 previous_exp_snapshot, exp_traj_info, solve_deadline,
-                true, &exp_failure);
+                true, &exp_failure, request);
         //GenerateRestToRestExpTraj(local_star_pt, exp_traj_info);
         if (exp_ret_code == FAILED) {
             latest_replan.setRetCode(classifySolveFailure(
@@ -2063,13 +1945,6 @@ double mainGuideSupport(
         return FAILED;
     }
 
-
-    RET_CODE
-    Planner::planSuccessorFromExecutionAnchor(const Vec3f &goal_p,
-                                              const double &goal_yaw,
-                                              const bool &new_goal) {
-        return planSuccessorFromExecutionAnchorImpl(goal_p, goal_yaw, new_goal, nullptr);
-    }
 
     RET_CODE
     Planner::planSuccessorFromExecutionAnchorImpl(const Vec3f &goal_p,
@@ -2374,9 +2249,64 @@ double mainGuideSupport(
             current_body_support_admission_pending_ = false;
             current_body_support_matches_start_ = false;
             setCurrentBodySupport({});
+            if (active_planning_request_ == &request) {
+                active_planning_request_ = nullptr;
+            }
+            requested_activation_stamp_ns_ = 0;
+            requested_activation_yaw_rate_rad_s_ = 0.0;
+            diagnostic_solve_generation_ = 0U;
+            diagnostic_planner_cycle_ = 0U;
+            mission_start_position_enu_.reset();
+            if (exp_traj_opt_) {
+                exp_traj_opt_->setMaximumVelocity(nominal_exp_max_velocity_mps_);
+            }
         };
         const ScopeExit cleanup_guard(cleanup);
+        solve_cancelled_.store(false, std::memory_order_release);
+        const std::stop_callback cancellation_callback(
+            request.budget.cancellation, [this] {
+                solve_cancelled_.store(true, std::memory_order_release);
+            });
         if (!request.valid()) return finish();
+        const auto same_limit = [](const double lhs, const double rhs) {
+            return std::isfinite(lhs) && std::isfinite(rhs) &&
+                std::abs(lhs - rhs) <= 1.0e-9 *
+                    std::max({1.0, std::abs(lhs), std::abs(rhs)});
+        };
+        if (!same_limit(request.dynamics.vehicle.maximum_velocity_mps,
+                        cfg_.back_traj_cfg.max_vel) ||
+            !same_limit(request.dynamics.vehicle.maximum_acceleration_mps2,
+                        cfg_.back_traj_cfg.max_acc) ||
+            !same_limit(request.dynamics.vehicle.maximum_jerk_mps3,
+                        cfg_.back_traj_cfg.max_jerk) ||
+            request.dynamics.unknown_space_policy != cfg_.unknown_space_policy) {
+            return finish();
+        }
+        active_planning_request_ = &request;
+        if (request.key.start_mode !=
+            navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake) {
+            resetExpOptimizationDiagnostics();
+        }
+        const auto& request_waypoint = request.route_snapshot.waypoints[
+            request.route_snapshot.active_waypoint_index];
+        setGoalAcceptanceRadius(request.goal_acceptance_radius_m.value_or(
+            request_waypoint.acceptance_radius_m));
+        setMissionStartPosition(request.mission_start_position_world);
+        diagnostic_solve_generation_ = request.diagnostic_solve_generation;
+        diagnostic_planner_cycle_ = request.diagnostic_planner_cycle;
+        const double request_nominal_velocity_mps = std::min(
+            request.dynamics.intent.requested_cruise_speed_mps,
+            cfg_.control_envelope.maximum_velocity_mps);
+        if (!std::isfinite(request_nominal_velocity_mps) ||
+            request_nominal_velocity_mps <= 0.0 || !exp_traj_opt_) {
+            return finish();
+        }
+        latest_requested_cruise_speed_mps_.store(
+            request.dynamics.intent.requested_cruise_speed_mps,
+            std::memory_order_relaxed);
+        latest_effective_cruise_speed_mps_.store(
+            request_nominal_velocity_mps, std::memory_order_relaxed);
+        exp_traj_opt_->setMaximumVelocity(request_nominal_velocity_mps);
         request_deadline_ns_ = request.budget.steady_deadline_ns;
         {
             std::lock_guard<std::mutex> guard(planner_timeline_mutex_);
@@ -2393,9 +2323,8 @@ double mainGuideSupport(
             !setRouteSnapshot(request.route_snapshot)) {
             return finish();
         }
-        const Eigen::Vector3d& target_world =
-            request.route_snapshot.waypoints[request.route_snapshot.active_waypoint_index]
-                .position_enu;
+        const Eigen::Vector3d target_world = request.planning_goal_world.value_or(
+            request_waypoint.position_enu);
         setWorldModelView(request.world);
         const auto request_body_support =
             request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState &&
@@ -2441,7 +2370,7 @@ double mainGuideSupport(
         const auto result = request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kStoppedMeasuredState
             ? planInitialFromStoppedState(
-                target_world, 0.0, true)
+                target_world, 0.0, true, &request)
             : request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake
             ? ([&]() {
@@ -2452,7 +2381,8 @@ double mainGuideSupport(
                 measured.col(3) = request.start_state.jerk_world;
                 return commitEmergencyBrake(
                     measured, request.start_state.yaw_rad, 0.0,
-                    planner_context_->getSimTime(), std::nullopt)
+                    planner_context_->getSimTime(),
+                    request.emergency_terminal_altitude_m)
                     ? RET_CODE::SUCCESS : RET_CODE::EMER;
               })()
             : planSuccessorFromExecutionAnchorImpl(
@@ -2505,18 +2435,6 @@ double mainGuideSupport(
         outcome.failure_stage = navigation_planning::PlanningFailureStage::kNone;
         outcome.failure_reason = navigation_planning::PlanningFailureReason::kNone;
         return finish();
-    }
-
-    RET_CODE Planner::PlanFromRest(const Vec3f &goal_p,
-                                   const double &goal_yaw,
-                                   const bool &new_goal) {
-        return planInitialFromStoppedState(goal_p, goal_yaw, new_goal);
-    }
-
-    RET_CODE Planner::ReplanOnce(const Vec3f &goal_p,
-                                 const double &goal_yaw,
-                                 const bool &new_goal) {
-        return planSuccessorFromExecutionAnchor(goal_p, goal_yaw, new_goal);
     }
 
     void Planner::getOneHeartbeatTime(double &start_WT_pos, bool &traj_finish) {
@@ -2581,17 +2499,6 @@ double mainGuideSupport(
                        std::isfinite(sample.yaw_rate) &&
                        std::isfinite(sample.trajectory_time_s);
         return sample;
-    }
-
-    std::optional<navigation_planning::CandidateBundle> Planner::exportCommandCandidate(
-            const std::uint64_t localization_epoch,
-            const std::uint64_t goal_epoch,
-            const std::uint64_t request_id,
-            const std::int64_t valid_from_ns,
-            const std::int64_t valid_until_ns) const {
-        return exportCommandCandidateDetailed(
-            localization_epoch, goal_epoch, request_id, valid_from_ns,
-            valid_until_ns).candidate;
     }
 
     Planner::CandidateExportResult Planner::exportCommandCandidateDetailed(
@@ -4035,8 +3942,10 @@ double mainGuideSupport(
             cfg_.back_traj_cfg.max_acc;
         viability_dynamics.vehicle.maximum_jerk_mps3 =
             cfg_.back_traj_cfg.max_jerk;
-        viability_dynamics.intent.requested_cruise_speed_mps =
-            cfg_.effective_cruise_speed_mps;
+        viability_dynamics.intent.requested_cruise_speed_mps = request
+            ? std::min(request->dynamics.intent.requested_cruise_speed_mps,
+                       cfg_.control_envelope.maximum_velocity_mps)
+            : cfg_.effective_cruise_speed_mps;
         viability_dynamics.unknown_space_policy = cfg_.unknown_space_policy;
         const auto governed_speed = evidenceAwareSpeedLimit(
             viability_state, viability_dynamics,

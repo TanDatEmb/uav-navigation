@@ -1,4 +1,5 @@
 #include <chrono>
+#include <memory>
 #include <stdexcept>
 
 #include <gtest/gtest.h>
@@ -305,6 +306,23 @@ TEST(PlanningHistory, ZeroGenerationCannotCarryPriorCommandVelocity) {
 
   history.previous_bundle_generation = 11;
   EXPECT_TRUE(history.valid());
+}
+
+TEST(PlanningHistory, ExecutionPredecessorEvidenceIsGenerationAndEpochBound) {
+  navigation_planning::PlanningRequest request;
+  request.key.localization_epoch = 4U;
+  request.key.start_mode =
+      navigation_planning::PlanningStartMode::kStoppedMeasuredState;
+  request.history.previous_bundle_generation = 11U;
+  request.history.previous_bundle =
+      std::make_shared<const navigation_planning::CandidateBundle>(validCandidate());
+  EXPECT_TRUE(request.predecessorContractValid());
+
+  request.history.previous_bundle_generation = 12U;
+  EXPECT_FALSE(request.predecessorContractValid());
+  request.history.previous_bundle_generation = 11U;
+  request.key.localization_epoch = 5U;
+  EXPECT_FALSE(request.predecessorContractValid());
 }
 
 TEST(ExecutionAnchor, RequiresAnImmutableFutureCommandBoundary) {
