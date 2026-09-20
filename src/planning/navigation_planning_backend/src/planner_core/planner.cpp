@@ -4203,12 +4203,15 @@ double mainGuideSupport(
         viability_state.col(2) = solve_state_.a;
         viability_state.col(3) = solve_state_.j;
         navigation_planning::DynamicLimits viability_dynamics;
+        // Stopping is certified against the physical BACKUP recovery envelope;
+        // the returned cruise proposal remains bounded by the nominal MAIN
+        // intent below. A nominal overspeed is not physical infeasibility.
         viability_dynamics.vehicle.maximum_velocity_mps =
-            cfg_.exp_traj_cfg.max_vel;
+            cfg_.back_traj_cfg.max_vel;
         viability_dynamics.vehicle.maximum_acceleration_mps2 =
-            cfg_.exp_traj_cfg.max_acc;
+            cfg_.back_traj_cfg.max_acc;
         viability_dynamics.vehicle.maximum_jerk_mps3 =
-            cfg_.exp_traj_cfg.max_jerk;
+            cfg_.back_traj_cfg.max_jerk;
         viability_dynamics.intent.requested_cruise_speed_mps =
             cfg_.effective_cruise_speed_mps;
         viability_dynamics.unknown_space_policy = cfg_.unknown_space_policy;
@@ -4216,7 +4219,12 @@ double mainGuideSupport(
             viability_state, viability_dynamics,
             {navigation_planning::PlanningTimingContract::kLocalWindowM,
              directional_support.value_or(0.0), route_support_m,
-             main_policy_support_m});
+             main_policy_support_m}, cfg_.sample_traj_dt_s,
+            [&] {
+                return solve_cancelled_.load(std::memory_order_relaxed) ||
+                    solve_deadline.expired(planner_context_->getSimTime()) ||
+                    solve_deadline.steadyExpired();
+            });
         if (!governed_speed.sufficient || governed_speed.speed_mps <= 0.0) {
             planner_context_->warn(
                 " -- [planner] MAIN rejected: insufficient braking evidence "
@@ -4227,7 +4235,22 @@ double mainGuideSupport(
                 cfg_.unknown_space_policy == navigation_world_model::UnknownPolicy::kAllowUnknown
                     ? "allow_unknown" : "require_known_free");
             if (failure_detail != nullptr) {
-                *failure_detail = PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT;
+                switch (governed_speed.failure) {
+                  case EvidenceSpeedFailure::kBudgetExhausted:
+                    *failure_detail = classifySolveFailure(solve_deadline);
+                    break;
+                  case EvidenceSpeedFailure::kOutsideRecoveryEnvelope:
+                    *failure_detail = PLANNER_STOP_OUTSIDE_RECOVERY_ENVELOPE;
+                    break;
+                  case EvidenceSpeedFailure::kStopSynthesisFailed:
+                    *failure_detail = PLANNER_STOP_SYNTHESIS_FAILED;
+                    break;
+                  case EvidenceSpeedFailure::kNone:
+                  case EvidenceSpeedFailure::kInvalidInput:
+                  case EvidenceSpeedFailure::kInsufficientSupport:
+                    *failure_detail = PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT;
+                    break;
+                }
             }
             return FAILED;
         }

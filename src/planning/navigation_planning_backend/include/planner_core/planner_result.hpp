@@ -29,6 +29,8 @@ namespace navigation_planning_backend {
         PLANNER_BACKUP_NO_PATH = -10,
         PLANNER_INVALID_ROUTE = -11,
         PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT = -12,
+        PLANNER_STOP_OUTSIDE_RECOVERY_ENVELOPE = -13,
+        PLANNER_STOP_SYNTHESIS_FAILED = -14,
 
     };
 
@@ -66,6 +68,10 @@ namespace navigation_planning_backend {
             return "Immutable mission route or semantic yaw reference is invalid";
         case PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT:
             return "Main trajectory rejected because strict known-free support was insufficient";
+        case PLANNER_STOP_OUTSIDE_RECOVERY_ENVELOPE:
+            return "Measured stop boundary is outside the supplied physical recovery envelope";
+        case PLANNER_STOP_SYNTHESIS_FAILED:
+            return "Bounded minimum-snap stop synthesis failed; physical infeasibility is unproven";
         }
         return "Unknown planner return code (" + std::to_string(ret) + ")";
     };
