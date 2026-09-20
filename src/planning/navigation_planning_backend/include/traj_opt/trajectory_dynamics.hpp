@@ -154,8 +154,10 @@ inline bool trajectorySatisfiesFlatnessEnvelope(
     if (output != nullptr) {
         *output = report;
     }
-    // The dynamic envelope is a hard physical certificate. Objective slack
-    // must never widen the limits that authorize a command.
+    // The configured limits remain hard rejection thresholds at every
+    // evaluated sample. This sampled screen is not a continuous-time
+    // certificate of the complete flatness model; optimizer slack never
+    // widens the pointwise gate.
     const double minimum_thrust_n = config.min_acc_thr * config.mass;
     const double maximum_thrust_n = config.max_acc_thr * config.mass;
     return report.finite &&
