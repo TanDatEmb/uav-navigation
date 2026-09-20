@@ -46,19 +46,16 @@
       <figure><a href="diagrams/svg/px4_authority.svg"><img src="diagrams/svg/px4_authority.svg" alt="PX4 command admission and Hold authority"></a><figcaption>PX4 command admission / Hold</figcaption></figure>
       <figure><a href="diagrams/svg/decision_authority.svg"><img src="diagrams/svg/decision_authority.svg" alt="Cross-object decision authority"></a><figcaption>Cross-object decision authority</figcaption></figure>
     </div>
-    <section>
-      <h2>Sequence diagram source</h2>
-      <p>Mermaid CLI không có trong môi trường audit; các file nguồn được giữ để render lại khi có <code>mmdc</code>.</p>
-      <ul>
-        <li><a href="diagrams/src/nominal_flow.mmd">Nominal goal → sample → PX4</a></li>
-        <li><a href="diagrams/src/pass_through_handoff.mmd">PASS_THROUGH handoff</a></li>
-        <li><a href="diagrams/src/backup_recovery.mmd">BACKUP / measured recovery</a></li>
-        <li><a href="diagrams/src/terminal_and_handover.mmd">Terminal STOP / PX4 handover</a></li>
-      </ul>
-    </section>
+    <h2>Sequence diagrams</h2>
+    <div class="diagrams">
+      <figure><a href="diagrams/svg/nominal_flow.svg"><img src="diagrams/svg/nominal_flow.svg" alt="Nominal goal planning command and PX4 sequence"></a><figcaption>Nominal: goal → planning → commit → sample → PX4 · <a href="diagrams/src/nominal_flow.mmd">source</a> · <a href="tables/scenarios.md">scenario records</a></figcaption></figure>
+      <figure><a href="diagrams/svg/pass_through_handoff.svg"><img src="diagrams/svg/pass_through_handoff.svg" alt="PASS_THROUGH goal handoff sequence"></a><figcaption>PASS_THROUGH handoff · <a href="diagrams/src/pass_through_handoff.mmd">source</a> · <a href="tables/scenarios.md">scenario records</a></figcaption></figure>
+      <figure><a href="diagrams/svg/backup_recovery.svg"><img src="diagrams/svg/backup_recovery.svg" alt="BACKUP and measured recovery sequence"></a><figcaption>BACKUP / measured recovery · <a href="diagrams/src/backup_recovery.mmd">source</a> · <a href="tables/scenarios.md">scenario records</a></figcaption></figure>
+      <figure><a href="diagrams/svg/terminal_and_handover.svg"><img src="diagrams/svg/terminal_and_handover.svg" alt="Terminal STOP and PX4 handover sequence"></a><figcaption>Terminal STOP / PX4 handover · <a href="diagrams/src/terminal_and_handover.mmd">source</a> · <a href="tables/scenarios.md">scenario records</a></figcaption></figure>
+    </div>
     <div class="grid">
       <section><h2>Coverage</h2><p><a href="tables/coverage.md">Denominator, records và giới hạn coverage</a>; 30 fields, 16 transitions trọng yếu, 12 scenarios, 68 evidence refs.</p></section>
-      <section><h2>Validation</h2><ul><li><a href="validation/semantic_review.md">Semantic review độc lập</a></li><li><a href="validation/test_review.md">Tests đã đọc, chưa chạy</a></li><li><a href="validation/limitations.md">Limitations</a></li><li><a href="validation/render_review.md">Render review</a></li><li><a href="validation/command_log.md">Command log</a></li></ul></section>
+      <section><h2>Validation</h2><ul><li><a href="validation/semantic_review.md">Semantic review độc lập</a></li><li><a href="validation/test_review.md">Tests đã đọc, chưa chạy</a></li><li><a href="validation/limitations.md">Limitations</a></li><li><a href="validation/render_review.md">Render review</a></li><li><a href="validation/render_tool_provenance.md">Mermaid tool provenance</a></li><li><a href="validation/command_log.md">Command log</a></li></ul></section>
       <section><h2>Snapshot</h2><p><a href="baseline/provenance.md">Provenance</a> · <a href="baseline/environment.json">Environment</a> · <a href="baseline/source_manifest.json">Source manifest</a></p></section>
     </div>
   </main>

@@ -20,7 +20,7 @@
       "No matching product compile database/AST",
       "full writer inventory not claimed",
       "no build/tests/runtime trace",
-      "mmdc unavailable, Mermaid retained as source",
+      "Mermaid CLI was absent at initial capture; a follow-up isolated install rendered and visually checked all four Mermaid sequences",
       "run profile/config invocation unknown",
       "several runCycle branches and uncommon exception/cancellation paths need follow-up semantic review",
       "Two source-comment/config descriptions conflict with executable policy: airborne goal publication is conditional; SIM_TIME with zero tracking coefficients activates tracking/health suppression. Both are recorded as source-vs-comment conflicts, not reconciled by inference."
@@ -3496,7 +3496,7 @@
           "kind": "message",
           "from": "R",
           "to": "R",
-          "text": "set desired goal; keep executing identity if handoff not committed"
+          "text": "set desired goal while executing identity remains with predecessor until handoff commit"
         },
         {
           "kind": "message",
@@ -3515,7 +3515,7 @@
           "from": "T",
           "to": "R",
           "arrow": "-->>",
-          "text": "execution identity cutover; consume matching pending goal"
+          "text": "cut over execution identity and consume matching pending goal"
         },
         {
           "kind": "message",
@@ -3530,7 +3530,7 @@
             "M",
             "T"
           ],
-          "text": "Distinct callbacks; no cross-process atomic transaction."
+          "text": "Separate callbacks with no cross-process atomic transaction."
         }
       ]
     },

@@ -1,6 +1,6 @@
 # Hành vi hiện tại
 
-**Kết luận:** `PARTIAL_AS_IS`. Đã truy vết vertical slice từ goal/mission qua planning, committed timeline, ROS command, PX4 adapter và Hold request. Các boundary trọng yếu có source refs, nhưng compile database không khớp, writer inventory không exhaustive, chưa có paired-process trace/test run và Mermaid chưa render; do đó chưa ghi `READY_FOR_REDESIGN_DISCUSSION`.
+**Kết luận:** `PARTIAL_AS_IS`. Đã truy vết vertical slice từ goal/mission qua planning, committed timeline, ROS command, PX4 adapter và Hold request. Các boundary trọng yếu có source refs; compile database không khớp, writer inventory không exhaustive, chưa có paired-process trace/test run. Bảy Graphviz và bốn Mermaid diagram đã render/kiểm tra trực quan, nhưng các khoảng trống bằng chứng còn lại khiến chưa ghi `READY_FOR_REDESIGN_DISCUSSION`.
 
 ## Baseline và phạm vi chạy
 
@@ -66,4 +66,4 @@ The checked-in `mapping.yaml` and `external_mode.yaml` set tracking coefficients
 - **RUNTIME_OBSERVED:** none. No runtime trace was captured.
 - **INFERENCE/UNRESOLVED:** live run profile, full cross-process callback ordering, actual PX4 acceptance/application, rare exception/cancellation and complete writer alias inventory.
 
-Coverage counts and scope denominators are in [model coverage](model/architecture.json) and [coverage table](tables/coverage.md). Seven Graphviz diagrams rendered and structurally parsed; visual review is documented in [render review](validation/render_review.md). Mermaid CLI is unavailable; sequence diagrams remain Mermaid source only. Therefore `PARTIAL_AS_IS` is the delivered status, not ready-for-redesign.
+Coverage counts and scope denominators are in [model coverage](model/architecture.json) and [coverage table](tables/coverage.md). Seven Graphviz and four Mermaid diagrams rendered and structurally parsed; visual review is documented in [render review](validation/render_review.md). Remaining profile, writer-inventory and runtime-evidence gaps keep the delivered status at `PARTIAL_AS_IS`, not ready-for-redesign.

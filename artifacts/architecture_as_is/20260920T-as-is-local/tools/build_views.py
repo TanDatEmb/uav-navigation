@@ -18,7 +18,11 @@ def md_table(headers, rows):
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--skip-render", action="store_true")
+    ap.add_argument("--mmdc", type=pathlib.Path, help="Mermaid CLI executable for rendering sequence SVGs")
+    ap.add_argument("--puppeteer-config", type=pathlib.Path, help="Puppeteer JSON config used by mmdc")
     a=ap.parse_args()
+    if bool(a.mmdc) != bool(a.puppeteer_config):
+        ap.error("--mmdc and --puppeteer-config must be supplied together")
     m=json.loads(MODEL.read_text())
     manifest=json.loads((OUT/"baseline/source_manifest.json").read_text())
     files={x["path"]:x for x in manifest["files"]}
@@ -113,7 +117,8 @@ def main():
     dec='\n'.join([node("goal","Goal acceptance / deferral\nD_GOAL"),node("commit","Candidate commit / activation / revoke\nD_COMMIT"),node("expose","Sample and ROS command exposure\nD_EXPOSE"),node("admit","PX4 mode message admission\nD_ADMIT"),node("setpoint","Setpoint / Hold request\nD_SETPOINT")]+[
         'goal -> commit [label="desired request -> candidate guards",style=solid];','commit -> expose [label="active timeline only",style=solid];','expose -> admit [label="ROS NavigationCommand",style=dashed];','admit -> setpoint [label="cached accepted message + state gates",style=solid];','setpoint -> commit [label="next measured/request callback; async",style=dashed,constraint=false];','note [shape=note,label="No edge means PX4 acceptance is not inferred. Process boundaries and leases create separate decisions."];','goal -> note [style=invis];'])
     write_dot("decision_authority",dec,"LR")
-    # Sequence sources are rendered from model.sequence_diagrams; they are not SVG because mmdc is unavailable.
+    # Sequence source and optional SVG are rendered from model.sequence_diagrams.
+    rendered_mermaid=0
     for seq in m.get("sequence_diagrams", []):
         lines=["sequenceDiagram"]
         for part in seq["participants"]:
@@ -126,11 +131,23 @@ def main():
             elif kind=="else": lines.append(f"    else {step['text']}")
             elif kind=="end": lines.append("    end")
             else: raise SystemExit(f"unknown Mermaid step kind {kind} in {seq['id']}")
-        (OUT/f"diagrams/src/{seq['file']}").write_text("\n".join(lines)+"\n")
-    (OUT/"diagrams/svg/README.md").write_text("Graphviz SVG views are rendered by `tools/build_views.py`. Mermaid CLI (`mmdc`) is not available in the captured tool environment; four `.mmd` sequence sources are retained but intentionally not claimed rendered.\n")
+        src=OUT/f"diagrams/src/{seq['file']}"
+        src.write_text("\n".join(lines)+"\n")
+        if a.mmdc:
+            svg=OUT/f"diagrams/svg/{pathlib.Path(seq['file']).stem}.svg"
+            subprocess.run([str(a.mmdc),"-p",str(a.puppeteer_config),"-i",str(src),"-o",str(svg)],check=True)
+            rendered_mermaid+=1
+    svg_readme="Graphviz SVG views are rendered by `tools/build_views.py`. "
+    if rendered_mermaid==len(m.get("sequence_diagrams", [])):
+        svg_readme+=f"All {rendered_mermaid} Mermaid sequence diagrams were rendered from the canonical model using the supplied `--mmdc` and `--puppeteer-config`.\n"
+    elif rendered_mermaid:
+        svg_readme+=f"{rendered_mermaid} Mermaid sequence diagrams were rendered from the canonical model; remaining `.mmd` files are source-only.\n"
+    else:
+        svg_readme+=f"Mermaid SVG rendering was not requested; {len(m.get('sequence_diagrams', []))} `.mmd` source files remain available.\n"
+    (OUT/"diagrams/svg/README.md").write_text(svg_readme)
     # Compact machine-readable validation; verify_views.py performs strict checks.
     dot_count = len(list((OUT/"diagrams/src").glob("*.dot")))
-    print(f"generated {len(fields)} field rows, {len(m['transitions'])} transition rows, {len(refs)} evidence excerpts, {dot_count} DOT/SVG views, {len(m.get('sequence_diagrams', []))} Mermaid sources")
+    print(f"generated {len(fields)} field rows, {len(m['transitions'])} transition rows, {len(refs)} evidence excerpts, {dot_count} DOT/SVG views, {len(m.get('sequence_diagrams', []))} Mermaid sources, {rendered_mermaid} Mermaid SVGs")
     if not a.skip_render:
         print("Graphviz rendering completed")
 

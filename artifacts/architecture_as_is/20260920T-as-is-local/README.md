@@ -27,16 +27,25 @@ Không tuyên bố exhaustive writer/reader inventory: alias, assignment toàn o
 
 ## Render và kiểm tra
 
-Chạy từ repository root của checkout được chụp, ở nhánh baseline và khi các thay đổi local lúc chụp còn nguyên:
+Chạy từ repository root. Để tái tạo đủ bảy Graphviz SVG và bốn Mermaid SVG, cần `dot`, `mmdc` và Chrome/Chromium. `mmdc` không phải dependency runtime của repo; manifest và lockfile của lần cài cô lập nằm trong `validation/mermaid_cli/`. Ví dụ cài vào thư mục tạm, không cài global:
 
 ```sh
-python3 artifacts/architecture_as_is/20260920T-as-is-local/tools/build_views.py
+# Trong Codex runtime của lần audit này; với runtime khác, thay bằng thư mục chứa `node` và `pnpm`.
+export PATH="/home/letandat/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:/home/letandat/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/fallback:$PATH"
+TOOL_DIR="$(mktemp -d /tmp/uav-as-is-mmdc.XXXXXX)"
+cp artifacts/architecture_as_is/20260920T-as-is-local/validation/mermaid_cli/package.json \
+   artifacts/architecture_as_is/20260920T-as-is-local/validation/mermaid_cli/pnpm-lock.yaml "$TOOL_DIR/"
+(cd "$TOOL_DIR" && PUPPETEER_SKIP_DOWNLOAD=1 pnpm install --ignore-scripts)
+printf '{"executablePath":"/usr/bin/google-chrome","headless":true}\n' > "$TOOL_DIR/puppeteer.json"
+python3 artifacts/architecture_as_is/20260920T-as-is-local/tools/build_views.py \
+  --mmdc "$TOOL_DIR/node_modules/.bin/mmdc" \
+  --puppeteer-config "$TOOL_DIR/puppeteer.json"
 python3 artifacts/architecture_as_is/20260920T-as-is-local/tools/verify_views.py
 python3 artifacts/architecture_as_is/20260920T-as-is-local/tools/verify_snapshot.py
 python3 artifacts/architecture_as_is/20260920T-as-is-local/tools/verify_baseline.py
 ```
 
-`build_views.py` sinh evidence excerpt, các bảng, DOT, Mermaid và render Graphviz SVG. Không có `mmdc`, `node` hoặc `npm` trong môi trường chụp; 4 Mermaid sequence source có sẵn nhưng chưa được render. `verify_views.py` kiểm tra cấu trúc model/artifact, không chứng minh semantics đầy đủ. `verify_snapshot.py` so SHA-256 của toàn bộ file trong manifest với snapshot và checkout hiện tại; nếu báo drift, ngừng dùng ref bị ảnh hưởng như bằng chứng của baseline.
+Lần render bàn giao dùng `@mermaid-js/mermaid-cli` v11.17.0 cài trong `/tmp`, không tải browser riêng; Puppeteer gọi Chrome có sẵn. Chi tiết tool, hash lockfile và lệnh kết quả nằm trong [render tool provenance](validation/render_tool_provenance.md). `build_views.py` sinh evidence excerpt, bảng, DOT/Mermaid source và render SVG. `verify_views.py` kiểm tra cấu trúc model/artifact và SVG, không chứng minh semantics đầy đủ. `verify_snapshot.py` so SHA-256 của toàn bộ file trong manifest với snapshot và checkout hiện tại; nếu báo drift, ngừng dùng ref bị ảnh hưởng như bằng chứng của baseline.
 
 Bản artifact được push lên nhánh audit có thể được mở trên checkout sạch ở HEAD thay vì dirty working tree đã chụp. Khi chỉ kiểm tra tính toàn vẹn của bản archive trên nhánh đó, dùng rõ `--archive-only`:
 

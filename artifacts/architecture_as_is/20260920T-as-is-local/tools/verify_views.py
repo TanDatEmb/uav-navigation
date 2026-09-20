@@ -42,7 +42,7 @@ for required in ['E_RUNTIME_MAIN','E_WORKER','E_TIMELINE','E_PUBLISH','E_MODE_AD
 dots='\n'.join(p.read_text() for p in (OUT/'diagrams/src').glob('*.dot'))
 for tid in transition_ids:
     if tid not in dots: errors.append(f'{tid}: transition is not represented in any DOT view')
-# Every DOT source must have a rendered SVG. Mermaid is allowed to remain source-only if mmdc was unavailable.
+# Every DOT source and modeled Mermaid sequence must have its rendered SVG in this completed artifact.
 svgs=list((OUT/'diagrams/svg').glob('*.svg'))
 for dot in (OUT/'diagrams/src').glob('*.dot'):
     svg=OUT/'diagrams/svg'/f'{dot.stem}.svg'
@@ -63,6 +63,11 @@ for tid in transition_ids:
 scenario_ids={x['id'] for x in m['scenarios']}
 for seq in m.get('sequence_diagrams',[]):
     if not (OUT/'diagrams/src'/seq['file']).is_file(): errors.append(f'missing Mermaid source {seq["file"]}')
+    mermaid_svg=OUT/'diagrams/svg'/f'{pathlib.Path(seq["file"]).stem}.svg'
+    if not mermaid_svg.is_file(): errors.append(f'missing rendered Mermaid SVG {mermaid_svg.name}')
+    else:
+        try: ET.parse(mermaid_svg)
+        except Exception as ex: errors.append(f'invalid Mermaid SVG {mermaid_svg.name}: {ex}')
     for sid in seq.get('scenario_ids',[]):
         if sid not in scenario_ids: errors.append(f'{seq["id"]}: unresolved scenario {sid}')
 if len(m['scenarios']) != 12: errors.append(f'expected 12 scenario records, got {len(m["scenarios"])}')
@@ -106,6 +111,6 @@ for md in OUT.rglob('*.md'):
 if errors:
     print('MODEL/VIEW CHECK FAILED:')
     print('\n'.join(errors)); sys.exit(1)
-print(f'PASS: unique IDs={len(ids)}, fields={len(field_ids)}, transitions={len(transition_ids)}, evidence refs={len(ref_ids)}, rendered DOT SVGs={len(svgs)}')
+print(f'PASS: unique IDs={len(ids)}, fields={len(field_ids)}, transitions={len(transition_ids)}, evidence refs={len(ref_ids)}, rendered SVGs={len(svgs)} (7 DOT + {len(m.get("sequence_diagrams", []))} Mermaid)')
 print(f'PASS: every transition appears in a DOT source; every evidence/path/range/hash and model reference resolves')
 print('LIMIT: this structural checker does not prove the source model is semantically complete or runtime behavior is correct.')
