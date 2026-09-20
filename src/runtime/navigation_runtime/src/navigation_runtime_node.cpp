@@ -4159,9 +4159,13 @@ void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key) {
         : std::nullopt;
     completed_endpoint_valid = endpoint.has_value();
     const auto completed_execution_goal = completed_executing_goal_at_cycle;
+    // Terminal intent is independent of the sampled role partition. A valid
+    // MAIN+BACKUP terminal bundle still owns a STOP endpoint emitted as BACKUP.
     const bool completed_bundle_terminal_stop = committed_bundle &&
-        committed_bundle->kind ==
-            navigation_planning::CandidateBundleKind::kTerminalStop &&
+        (committed_bundle->kind ==
+             navigation_planning::CandidateBundleKind::kTerminalStop ||
+         committed_bundle->kind ==
+             navigation_planning::CandidateBundleKind::kMainWithBackup) &&
         committed_bundle->terminal_stop &&
         committed_bundle->role == navigation_planning::CandidateRole::kMain;
     bool desired_identity_current = false;

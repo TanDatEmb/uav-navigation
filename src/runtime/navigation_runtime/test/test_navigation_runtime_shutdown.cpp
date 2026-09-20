@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -598,12 +599,15 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
           const bool completed_terminal =
               message->status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
               message->position.x > 2.5 && speed <= 0.15;
+          const bool completed_terminal_role =
+              message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN ||
+              (message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+               message->backup_available);
           if (!completed_witness.load(std::memory_order_acquire)) {
             measured_x.store(message->position.x, std::memory_order_release);
             measured_velocity.store(message->velocity.x, std::memory_order_release);
           }
-          if (message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
-              completed_terminal) {
+          if (completed_terminal_role && completed_terminal) {
             terminal_adjacent.store(true, std::memory_order_release);
             completed_position_x.store(message->position.x, std::memory_order_release);
             completed_witness.store(true, std::memory_order_release);
@@ -703,7 +707,9 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
         old_terminal_seen = std::any_of(commands.begin(), commands.end(), [&](const auto& command) {
         return command.request_id == 10U && terminal_adjacent.load(std::memory_order_acquire) &&
                command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
-               command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+               (command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN ||
+                (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
+                 command.backup_available)) &&
                command.position.x > 2.5 &&
                std::hypot(command.velocity.x, std::hypot(command.velocity.y, command.velocity.z)) <=
                    0.15;
@@ -714,7 +720,27 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
   }
   if (!old_terminal_seen) {
     cleanup();
-    FAIL() << "real NavigationRuntimeNode did not publish the old terminal command";
+    std::ostringstream recent_commands;
+    {
+      std::lock_guard lock(samples_mutex);
+      const auto first = commands.size() > 12U ? commands.size() - 12U : 0U;
+      for (std::size_t index = first; index < commands.size(); ++index) {
+        const auto& command = commands[index];
+        if (command.request_id != 10U) continue;
+        recent_commands << " [status=" << static_cast<int>(command.status)
+                        << " role=" << static_cast<int>(command.role)
+                        << " x=" << command.position.x
+                        << " vx=" << command.velocity.x
+                        << " bundle=" << command.bundle_generation
+                        << " reason=" << command.reason_code
+                        << " authorization=" << static_cast<int>(
+                               command.execution_authorization)
+                        << ']';
+      }
+    }
+    FAIL() << "real NavigationRuntimeNode did not publish the old terminal command;"
+           << " terminal_adjacent=" << terminal_adjacent.load()
+           << " recent request-10 commands=" << recent_commands.str();
   }
   // Let the runtime consume the completed predecessor witness before changing
   // desired identity. The successor still starts from the same measured state.
