@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant M as NavigationMode / MissionController
+    participant R as NavigationRuntimeNode
+    participant W as PlanningWorker / Planner
+    participant T as ExecutionTimelineStore
+    participant P as PX4 setpoint interface
+    M->>R: Goal message
+    R->>W: PlanningKey / solve job
+    W-->>R: Candidate result (not yet executable)
+    R->>T: validate and commit or stage
+    T-->>R: active/pending immutable timeline
+    R->>T: due activation + sample + final exposure guard
+    T-->>M: NavigationCommand message
+    M->>M: command admission / cache
+    M->>P: setpoint update input
+    Note over M,P: PX4 command application is not observed by this source path.

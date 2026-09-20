@@ -1,0 +1,37 @@
+digraph G {
+ graph [rankdir=LR, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.65", fontname="DejaVu Sans"];
+ node [fontname="DejaVu Sans",fontsize=10,margin="0.12,0.08"];
+ edge [fontname="DejaVu Sans",fontsize=9,arrowsize=0.75];
+launch [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="navigation_bringup launch
+combined launch: runtime + PX4 external mode"];
+fastlio [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="FAST-LIO process
+separate launch path"];
+runtime [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Process: navigation_runtime
+NavigationRuntimeNode / 2-thread executor"];
+modeproc [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Process: px4_navigation_external_mode
+NavigationMode + Executor + state-input thread"];
+store [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Runtime authority
+ExecutionTimelineStore + ExecutionEpisode"];
+worker [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Planner worker / backend
+serial solve"];
+mission [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="MissionController
+measured progress"];
+px4 [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="PX4 interface
+setpoint update input"];
+world [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Mapping/world snapshot
+worker + store"];
+launch -> runtime [label="creates process",style=solid];
+launch -> modeproc [label="creates process",style=solid];
+fastlio -> runtime [label="ROS state / observations",style=dashed];
+fastlio -> modeproc [label="odometry + health",style=dashed];
+modeproc -> runtime [label="goal / mode status",labeltooltip="async ROS messages",style=dashed];
+runtime -> modeproc [label="NavigationCommand",style=dashed];
+runtime -> worker [label="PlanningRequest",style=solid];
+worker -> store [label="candidate; guarded commit",style=solid];
+world -> store [label="world identity / freshness",style=dotted];
+store -> runtime [label="sample / publish gate",style=solid];
+modeproc -> px4 [label="P/V/A/yaw setpoint input",style=solid];
+px4 -> modeproc [label="VehicleStatus / local position",style=dashed];
+mission -> modeproc [label="timer callback / event",style=solid];
+legend [shape=note,label="Legend: solid = in-process call/ownership; dashed = ROS/PX4 async message; dotted = state observation/validation"];
+}

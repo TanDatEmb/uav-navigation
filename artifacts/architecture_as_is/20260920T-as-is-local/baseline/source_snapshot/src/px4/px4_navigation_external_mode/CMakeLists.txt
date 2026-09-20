@@ -1,0 +1,96 @@
+cmake_minimum_required(VERSION 3.16)
+project(px4_navigation_external_mode LANGUAGES CXX)
+
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 20)
+endif()
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(ament_cmake REQUIRED)
+find_package(navigation_common REQUIRED)
+find_package(navigation_mission REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
+find_package(Eigen3 REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(navigation_contracts REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(px4_msgs REQUIRED)
+find_package(px4_ros2_cpp REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+
+add_library(${PROJECT_NAME}_contract
+  src/mission_controller.cpp)
+target_include_directories(${PROJECT_NAME}_contract PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+target_link_libraries(${PROJECT_NAME}_contract PUBLIC Eigen3::Eigen)
+ament_target_dependencies(${PROJECT_NAME}_contract PUBLIC navigation_common diagnostic_msgs geometry_msgs navigation_contracts navigation_mission nav_msgs)
+target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic)
+
+add_library(${PROJECT_NAME}_adapter STATIC
+  src/navigation_mode_node.cpp)
+target_include_directories(${PROJECT_NAME}_adapter PRIVATE
+  include ${navigation_contracts_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME}_adapter
+  ${PROJECT_NAME}_contract
+  Eigen3::Eigen
+  px4_ros2_cpp::px4_ros2_cpp
+  rclcpp::rclcpp)
+ament_target_dependencies(${PROJECT_NAME}_adapter navigation_common diagnostic_msgs navigation_contracts navigation_mission nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
+target_compile_options(${PROJECT_NAME}_adapter PRIVATE -Wall -Wextra -Wpedantic)
+
+add_executable(${PROJECT_NAME}_node src/main.cpp)
+target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_adapter)
+ament_target_dependencies(${PROJECT_NAME}_node px4_ros2_cpp rclcpp)
+target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
+
+install(DIRECTORY include/ DESTINATION include)
+install(TARGETS ${PROJECT_NAME}_contract
+  EXPORT ${PROJECT_NAME}Targets
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
+install(TARGETS ${PROJECT_NAME}_node
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
+install(EXPORT ${PROJECT_NAME}Targets
+  FILE ${PROJECT_NAME}Targets.cmake
+  NAMESPACE ${PROJECT_NAME}::
+  DESTINATION share/${PROJECT_NAME}/cmake)
+
+ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
+ament_export_dependencies(navigation_common navigation_mission Eigen3 diagnostic_msgs geometry_msgs navigation_contracts nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_mission test/test_mission.cpp)
+  target_link_libraries(test_mission ${PROJECT_NAME}_contract)
+  ament_target_dependencies(test_mission geometry_msgs navigation_contracts navigation_mission nav_msgs)
+  ament_add_gtest(test_navigation_mode_progression test/test_navigation_mode_progression.cpp)
+  target_link_libraries(test_navigation_mode_progression ${PROJECT_NAME}_adapter)
+  ament_target_dependencies(test_navigation_mode_progression px4_ros2_cpp rclcpp)
+  ament_add_gtest(test_navigation_command test/test_navigation_command.cpp)
+  target_include_directories(test_navigation_command PRIVATE
+    include ${navigation_contracts_INCLUDE_DIRS})
+  target_link_libraries(test_navigation_command Eigen3::Eigen px4_ros2_cpp::px4_ros2_cpp)
+  ament_target_dependencies(test_navigation_command navigation_common navigation_contracts nav_msgs)
+  ament_add_gtest(test_tracking_envelope test/test_tracking_envelope.cpp)
+  target_include_directories(test_tracking_envelope PRIVATE include)
+  target_link_libraries(test_tracking_envelope Eigen3::Eigen)
+  ament_add_gtest(test_local_frame_alignment test/test_local_frame_alignment.cpp)
+  target_include_directories(test_local_frame_alignment PRIVATE include)
+  target_link_libraries(test_local_frame_alignment Eigen3::Eigen)
+  ament_target_dependencies(test_local_frame_alignment navigation_common)
+  ament_add_gtest(test_px4_tracking_adapter test/test_px4_tracking_adapter.cpp)
+  target_include_directories(test_px4_tracking_adapter PRIVATE include)
+  target_link_libraries(test_px4_tracking_adapter Eigen3::Eigen)
+  ament_add_gtest(test_velocity_only_continuity test/test_velocity_only_continuity.cpp)
+  target_include_directories(test_velocity_only_continuity PRIVATE include)
+  target_link_libraries(test_velocity_only_continuity Eigen3::Eigen)
+  ament_add_gtest(test_paired_node_lifetime test/test_paired_node_lifetime.cpp)
+  target_include_directories(test_paired_node_lifetime PRIVATE include)
+endif()
+
+ament_package()

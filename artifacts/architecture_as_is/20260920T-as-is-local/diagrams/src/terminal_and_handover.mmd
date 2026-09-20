@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant M as MissionController
+    participant N as NavigationMode
+    participant X as NavigationModeExecutor
+    participant P as PX4 VehicleStatus/API
+    M->>M: trajectory endpoint / terminal witness
+    M->>M: measured position + low speed + confirmation/dwell
+    alt nonterminal STOP
+    M-->>N: accepted waypoint / next PublishGoal
+    else terminal STOP or safety RequestPositionControl
+    M-->>N: Complete or RequestPositionControl
+    N->>N: stationary setpoint path continues
+    N->>X: request AUTO_LOITER
+    X->>P: scheduleMode(Loiter)
+    P-->>X: API callback result
+    P-->>X: VehicleStatus AUTO_LOITER observation
+    X->>X: confirmation latch and retry predicate
+    end
+    Note over M,P: API result, waypoint acceptance, mission completion and Hold confirmation are distinct.

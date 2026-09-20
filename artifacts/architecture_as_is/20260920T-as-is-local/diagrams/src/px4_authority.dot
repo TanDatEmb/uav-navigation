@@ -1,0 +1,15 @@
+digraph G {
+ graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.65", fontname="DejaVu Sans"];
+ node [fontname="DejaVu Sans",fontsize=10,margin="0.12,0.08"];
+ edge [fontname="DejaVu Sans",fontsize=9,arrowsize=0.75];
+T_FRAME_RESET [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_FRAME_RESET: PX4 XY/Z reset counter changes or initial stationary alignment\npair arrives\nGuard: alignment requires active mode and stationary paired LIO/PX4 state\nwithin configured translation; reset invalidates latch\nWrites: F_FRAME_ALIGNMENT\nEffect: changes frame authority for setpoint conversion; no proof PX4\ncontroller accepted previous setpoint"];
+T_FRAME_RESET [URL="../../tables/transitions.html#T_FRAME_RESET",tooltip="T_FRAME_RESET: onPx4LocalPosition/tryAlignPx4LocalFrameLocked -> updateSetpoint"];
+T_LEASE_TIMEOUT [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_LEASE_TIMEOUT: ROS stream lease expires or source/receive freshness becomes\nstale\nGuard: effective source defaults: runtime command_stream 0.10 s, state\n0.50 s; PX4 adapter command 0.10 s, state 0.20 s;\nwatchdog/recovery timers use ROS or steady clocks as named\nWrites: F_FAILURE_LATCH, F_MODE_COMMAND, F_PLANNER_RECOVERY_MODE,\nF_HANDOVER_MODE, F_HOLD_EXECUTOR\nEffect: expired candidate/message is not sampled or represented as\ncontinued command; stationary P/V inputs or Hold request follows\nspecific branch; configured timeouts are separate source and\nreceive clocks"];
+T_LEASE_TIMEOUT [URL="../../tables/transitions.html#T_LEASE_TIMEOUT",tooltip="T_LEASE_TIMEOUT: publishCommand freshness checks / NavigationMode::updateSetpoint watchdog"];
+T_HOLD_API [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_HOLD_API: AUTO_LOITER mode API scheduling/callback then VehicleStatus\ncallback\nGuard: schedule result: Success/Deactivated clears pending/in-flight;\nfailure sets pending and retry at steady now+250 ms; only\nVehicleStatus AUTO_LOITER sets px4_hold_confirmed\nWrites: F_HANDOVER_MODE, F_HOLD_EXECUTOR\nEffect: API completion and actual nav-state confirmation are separate; no\nfinite retry limit; stationary command behavior continues in mode\nuntil deactivation/vehicle takeover; exact PX4 application outcome\nis runtime-observation-only and unavailable here"];
+T_HOLD_API [URL="../../tables/transitions.html#T_HOLD_API",tooltip="T_HOLD_API: RequestPositionControl/Complete -> setPx4HoldHandover -> schedulePx4Hold -> API result + VehicleStatus"];
+T_FRAME_RESET -> T_LEASE_TIMEOUT [style=invis,weight=10];
+T_LEASE_TIMEOUT -> T_HOLD_API [style=invis,weight=10];
+T_LEASE_TIMEOUT -> T_HOLD_API [style=dashed,color="#555555",label="stale command safety path when applicable"];
+legend [shape=note,style="rounded,filled",fillcolor="#f5f5f5",label="Each box is one guarded transition. Dashed labeled edges show supported paths; invisible edges only arrange the page. Independent callbacks may interleave."];
+}

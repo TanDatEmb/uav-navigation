@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant W as Planner worker
+    participant R as Runtime coordinator
+    participant T as Timeline store / sampler
+    participant E as ExecutionEpisode
+    participant N as NavigationMode
+    T->>T: sample reaches certified BACKUP interval
+    T->>E: exact-generation sampled role
+    W-->>R: late nominal result
+    R->>R: recheck timeline, request, episode and leases
+    alt result superseded or emergency certificate fails
+    R->>E: discard stale result or failClosed(Px4Hold)
+    else certified measured stop
+    R->>E: CertifiedStopObserved / stopped recovery
+    R->>W: plan from measured rest or retry
+    end
+    R-->>N: NavigationCommand / status on separate ROS path
+    Note over R,N: Runtime and PX4 adapter recovery clocks/identities are separate.

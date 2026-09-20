@@ -1,0 +1,835 @@
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <limits>
+#include <type_traits>
+#include <utility>
+
+#include <navigation_common/time.hpp>
+#include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_execution/execution_anchor.hpp>
+#include <navigation_world_model/world_commit_authorizer.hpp>
+#include <navigation_world_model/world_model_view.hpp>
+
+namespace navigation_execution {
+
+struct ExecutionTimelineStoreTestAccess;
+
+struct CommitToken {
+  navigation_world_model::WorldSnapshotIdentity world_identity;
+  std::uint64_t goal_epoch{0};
+  std::uint64_t transaction_id{0};
+};
+
+struct ExecutionTimelineSnapshot {
+  std::uint64_t version{0};
+  std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity;
+  std::shared_ptr<const navigation_planning::CandidateBundle> active;
+  std::shared_ptr<const navigation_planning::CandidateBundle> pending;
+  std::int64_t pending_activation_ns{0};
+};
+
+enum class CommitDecision : std::uint8_t {
+  kCommitted,
+  kNoActiveGoal,
+  kWorldAdvanced,
+  kGoalAdvanced,
+  kInvalidCandidate,
+  kCancelled,
+  // The execution pointer was restored because the post-commit finalizer
+  // could not complete.  This is distinct from a stale/cancelled candidate so
+  // callers can account for an internal transaction fault without treating
+  // the previous command as lost.
+  kFinalizationFailed,
+  // Exact predecessor/pending ownership changed before conditional admission.
+  // Append decisions to preserve existing diagnostic ordinals.
+  kPredecessorAdvanced,
+  // The bounded admission predicate returned false or threw. No timeline or
+  // transaction-watermark mutation occurred.
+  kAdmissionRejected,
+};
+
+enum class StageDecision : std::uint8_t {
+  kStaged,
+  kNoActiveGoal,
+  kWorldAdvanced,
+  kGoalAdvanced,
+  kInvalidCandidate,
+  kInvalidAnchor,
+  kActivationTooLate,
+  kCancelled,
+  kFinalizationFailed,
+  // The execution command used to produce the successor anchor is no longer
+  // the current predecessor.  This is distinct from a goal/world rejection:
+  // the same mission and world may still be active while a newer bundle has
+  // replaced the predecessor. Keep this appended so existing diagnostic
+  // ordinals remain stable.
+  kPredecessorAdvanced,
+};
+
+// Sole owner of the product command candidate that is allowed to reach the
+// sampler. Candidate construction and validation happen before tryCommit();
+// the store critical section compares identities and swaps one shared pointer.
+class ExecutionTimelineStore final {
+ public:
+  ExecutionTimelineStore() = default;
+  ExecutionTimelineStore(const ExecutionTimelineStore&) = delete;
+  ExecutionTimelineStore& operator=(const ExecutionTimelineStore&) = delete;
+
+  bool setActiveGoalEpoch(std::uint64_t goal_epoch,
+                          bool retain_committed_bundle = false) noexcept {
+    if (goal_epoch == 0) return false;
+    std::lock_guard lock(mutex_);
+    if (goal_epoch < active_goal_epoch_) return false;
+    active_goal_epoch_ = goal_epoch;
+    if (!retain_committed_bundle && committed_) {
+      committed_.reset();
+      ++active_lineage_version_;
+    }
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    enforceInvariantLocked();
+    ++timeline_version_;
+    return true;
+  }
+
+  // Apply a world refresh only if the exact execution timeline observed before
+  // validation is still current.  The active and pending pointers are
+  // checked independently: an invalid pending successor must not discard a
+  // valid active command.  A superseded refresh is a no-op.
+  navigation_world_model::WorldCommitDecision publishWorldIdentityIfCurrent(
+      const navigation_world_model::WorldSnapshotIdentity& identity,
+      std::uint64_t expected_timeline_version,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_bundle,
+      bool retain_validated_bundle,
+      std::int64_t refreshed_valid_until_ns = 0,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending = {},
+      bool retain_validated_pending = false) noexcept {
+    return publishWorldIdentityIfCurrentAndFinalizeRevocation(
+        identity, expected_timeline_version, expected_bundle,
+        retain_validated_bundle, []() noexcept {}, refreshed_valid_until_ns,
+        expected_pending, retain_validated_pending);
+  }
+
+  // The owner holds its lifecycle locks before entering the world publication
+  // gate. This callback must be noexcept, bounded and must not re-enter the
+  // store or a planner backend. It finalizes only this exact active revocation,
+  // not a superseded publication or a rejected pending successor.
+  template <typename FinalizeRevocation>
+  navigation_world_model::WorldCommitDecision
+  publishWorldIdentityIfCurrentAndFinalizeRevocation(
+      const navigation_world_model::WorldSnapshotIdentity& identity,
+      std::uint64_t expected_timeline_version,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_bundle,
+      bool retain_validated_bundle,
+      FinalizeRevocation&& finalize_revocation,
+      std::int64_t refreshed_valid_until_ns = 0,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending = {},
+      bool retain_validated_pending = false) noexcept {
+    static_assert(std::is_nothrow_invocable_v<FinalizeRevocation&>);
+    if (identity.localization_epoch == 0U || identity.generation == 0U ||
+        identity.revision == 0U || identity.observation_stamp_ns <= 0) {
+      return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+    }
+    const auto prepare = [](const navigation_planning::CandidateBundle& source,
+                            const navigation_world_model::WorldSnapshotIdentity& next,
+                            const std::int64_t refreshed_until_ns)
+        -> std::shared_ptr<const navigation_planning::CandidateBundle> {
+      auto copy = std::make_shared<navigation_planning::CandidateBundle>(source);
+      copy->world_identity = next;
+      if (refreshed_until_ns > copy->valid_until_ns) {
+        auto renewed_until_ns = refreshed_until_ns;
+        if (copy->hasDeclaredEndpointMetadata()) {
+          const auto endpoint_ns = navigation_common::secondsSumToNanoseconds(
+              copy->start_wall_time_s, copy->duration_s);
+          if (!endpoint_ns || *endpoint_ns <= 0) return {};
+          renewed_until_ns = std::min(renewed_until_ns, *endpoint_ns);
+        }
+        copy->valid_until_ns = renewed_until_ns;
+      }
+      if (!copy->valid()) return {};
+      return std::shared_ptr<const navigation_planning::CandidateBundle>(
+          std::move(copy));
+    };
+    return publishWorldIdentityIfCurrentAndFinalizeRevocationImpl(
+        identity, expected_timeline_version, expected_bundle,
+        retain_validated_bundle, std::forward<FinalizeRevocation>(finalize_revocation),
+        refreshed_valid_until_ns, expected_pending, retain_validated_pending, prepare);
+  }
+
+  [[nodiscard]] std::shared_ptr<const navigation_planning::CandidateBundle> load()
+      const noexcept {
+    std::lock_guard lock(mutex_);
+    return committed_;
+  }
+
+  [[nodiscard]] ExecutionTimelineSnapshot snapshot() const noexcept {
+    std::lock_guard lock(mutex_);
+    return {timeline_version_, world_identity_, committed_, pending_,
+            pending_activation_ns_};
+  }
+
+  [[nodiscard]] bool invariantHolds() const noexcept {
+    std::lock_guard lock(mutex_);
+    return !pending_ || static_cast<bool>(committed_);
+  }
+
+  // Sample the execution-owned active command at a future splice point. The
+  // old command must remain valid through the point; otherwise the planner
+  // receives no anchor and the runtime fails closed.
+  [[nodiscard]] std::optional<ExecutionAnchor> reserveAnchor(
+      std::int64_t request_stamp_ns, std::int64_t activation_stamp_ns) const noexcept {
+    if (request_stamp_ns <= 0 || activation_stamp_ns < request_stamp_ns) return std::nullopt;
+    std::shared_ptr<const navigation_planning::CandidateBundle> predecessor;
+    navigation_world_model::WorldSnapshotIdentity expected_world;
+    std::uint64_t expected_version = 0U;
+    std::uint64_t expected_lineage_version = 0U;
+    {
+      std::lock_guard lock(mutex_);
+      if (!committed_ || !world_identity_ ||
+          !navigation_world_model::sameWorldSnapshotIdentity(
+              *world_identity_, committed_->world_identity) ||
+          activation_stamp_ns < committed_->valid_from_ns ||
+          activation_stamp_ns > committed_->valid_until_ns) {
+        return std::nullopt;
+      }
+      predecessor = committed_;
+      expected_world = *world_identity_;
+      expected_version = timeline_version_;
+      expected_lineage_version = active_lineage_version_;
+    }
+
+    // The pinned evaluator is not declared noexcept and may own an expensive
+    // backend value. Evaluate it outside the store mutex, convert any failure
+    // to an unavailable anchor, then require the exact timeline to still be
+    // current before returning the witness.
+    std::optional<ExecutionAnchor> result;
+    try {
+      const auto point = predecessor->sample(activation_stamp_ns);
+      if (!point) return std::nullopt;
+      const auto end_ns = predecessor->declared_end_ns > 0
+          ? predecessor->declared_end_ns : predecessor->valid_until_ns;
+      const auto main_end_ns = predecessor->backup_available
+          ? navigation_common::secondsSumToNanoseconds(
+                predecessor->start_wall_time_s, predecessor->backup_start_time_s)
+          : std::optional<std::int64_t>{end_ns};
+      if (!main_end_ns || *main_end_ns < activation_stamp_ns ||
+          end_ns < activation_stamp_ns) {
+        return std::nullopt;
+      }
+      ExecutionAnchor anchor;
+      anchor.active_bundle_generation = predecessor->bundle_generation;
+      anchor.execution_lineage_version = expected_lineage_version;
+      anchor.localization_epoch = predecessor->localization_epoch;
+      anchor.goal_epoch = predecessor->goal_epoch;
+      anchor.request_id = predecessor->request_id;
+      anchor.request_stamp_ns = request_stamp_ns;
+      anchor.activation_stamp_ns = activation_stamp_ns;
+      anchor.state = *point;
+      anchor.active_role = point->role;
+      anchor.active_main_end_ns = *main_end_ns;
+      anchor.active_bundle_end_ns = end_ns;
+      anchor.command_world = predecessor->world_identity;
+      if (!anchor.valid()) return std::nullopt;
+      result = std::move(anchor);
+    } catch (...) {
+      return std::nullopt;
+    }
+
+    std::lock_guard lock(mutex_);
+    if (timeline_version_ != expected_version || !committed_ ||
+        committed_.get() != predecessor.get() || !world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected_world)) {
+      return std::nullopt;
+    }
+    return result;
+  }
+
+  // Stage, but do not expose, a complete successor. The transaction watermark
+  // is consumed at staging so an older result cannot overwrite a newer
+  // pending command while activation is waiting for the reserved boundary.
+  StageDecision stagePending(
+      const CommitToken& expected, const ExecutionAnchor& anchor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate) noexcept {
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0U ||
+        expected.transaction_id == 0U) return StageDecision::kInvalidCandidate;
+    if (!anchor.valid() || candidate->valid_from_ns != anchor.activation_stamp_ns ||
+        candidate->activation_stamp_ns != anchor.activation_stamp_ns ||
+        candidate->localization_epoch != anchor.localization_epoch ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            candidate->world_identity, expected.world_identity)) {
+      return StageDecision::kInvalidAnchor;
+    }
+    std::lock_guard lock(mutex_);
+    if (active_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) return StageDecision::kGoalAdvanced;
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity)) return StageDecision::kWorldAdvanced;
+    if (expected.transaction_id <= last_transaction_id_) return StageDecision::kCancelled;
+    if (anchor.active_main_end_ns < anchor.activation_stamp_ns ||
+        candidate->valid_until_ns < anchor.activation_stamp_ns) {
+      return StageDecision::kActivationTooLate;
+    }
+    if (active_lineage_version_ != anchor.execution_lineage_version || !committed_ ||
+        !predecessorMatchesAnchor(*committed_, anchor)) {
+      return StageDecision::kPredecessorAdvanced;
+    }
+    pending_ = std::move(candidate);
+    pending_activation_ns_ = anchor.activation_stamp_ns;
+    last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
+    return StageDecision::kStaged;
+  }
+
+  template <typename FinalizeFn>
+  StageDecision stagePendingAndFinalize(
+      const CommitToken& expected, const ExecutionAnchor& anchor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
+      FinalizeFn&& finalize) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0U ||
+        expected.transaction_id == 0U) return StageDecision::kInvalidCandidate;
+    if (!anchor.valid() || candidate->valid_from_ns != anchor.activation_stamp_ns ||
+        candidate->activation_stamp_ns != anchor.activation_stamp_ns ||
+        candidate->localization_epoch != anchor.localization_epoch ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            candidate->world_identity, expected.world_identity)) {
+      return StageDecision::kInvalidAnchor;
+    }
+    if (active_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) return StageDecision::kGoalAdvanced;
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity)) return StageDecision::kWorldAdvanced;
+    if (expected.transaction_id <= last_transaction_id_) return StageDecision::kCancelled;
+    if (anchor.active_main_end_ns < anchor.activation_stamp_ns ||
+        candidate->valid_until_ns < anchor.activation_stamp_ns) {
+      return StageDecision::kActivationTooLate;
+    }
+    if (active_lineage_version_ != anchor.execution_lineage_version || !committed_ ||
+        !predecessorMatchesAnchor(*committed_, anchor)) {
+      return StageDecision::kPredecessorAdvanced;
+    }
+    const auto previous_pending = pending_;
+    const auto previous_pending_activation = pending_activation_ns_;
+    const auto previous_transaction_id = last_transaction_id_;
+    pending_ = std::move(candidate);
+    pending_activation_ns_ = anchor.activation_stamp_ns;
+    last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
+    bool finalized = false;
+    try {
+      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)());
+    } catch (...) {
+      finalized = false;
+    }
+    if (!finalized) {
+      pending_ = previous_pending;
+      pending_activation_ns_ = previous_pending_activation;
+      last_transaction_id_ = previous_transaction_id;
+      ++timeline_version_;
+      return StageDecision::kFinalizationFailed;
+    }
+    return StageDecision::kStaged;
+  }
+
+  // The command timer calls this operation before sampling. No callback or
+  // planner code can replace active outside this single atomic boundary.
+  // The exact timeline snapshot is a transaction token. Its version,
+  // pending pointer/generation and activation instant must still match under
+  // the store mutex before any activation or rollback is attempted.
+  template <typename FinalizeFn>
+  bool activatePendingIfDueAndFinalize(
+      std::int64_t now_ns, const ExecutionTimelineSnapshot& expected,
+      FinalizeFn&& finalize) const noexcept {
+    std::lock_guard lock(mutex_);
+    return activatePendingIfDueAndFinalizeLocked(
+        now_ns, expected.pending, expected.version, expected.pending_activation_ns,
+        true, std::forward<FinalizeFn>(finalize));
+  }
+
+  // Execute the exposure callback while the same transaction lock protects
+  // the committed bundle, goal epoch and world identity. A sampler may have
+  // loaded a shared_ptr just before a map update invalidated it; pointer and
+  // identity revalidation at this boundary prevents that stale command from
+  // reaching the transport. The callback is intentionally inside the lock so
+  // invalidation cannot complete before an already-authorized exposure; the
+  // caller must keep this callback bounded because it serializes store writes.
+  // Returning false rejects exposure at this exact linearization point; a
+  // freshness or transport lease checked before waiting for this mutex is not
+  // sufficient authorization.
+  template <typename ExposureFn>
+  bool publishIfCurrent(
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected,
+      std::uint64_t expected_goal_epoch,
+      ExposureFn&& expose) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!expected || !committed_ || committed_.get() != expected.get() ||
+        committed_->goal_epoch != expected_goal_epoch || !world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected->world_identity)) {
+      return false;
+    }
+    try {
+      if (!static_cast<bool>(std::forward<ExposureFn>(expose)())) return false;
+    } catch (...) {
+      return false;
+    }
+    return true;
+  }
+
+  // Revoke the exact timeline observed by an execution owner. A changed
+  // version means a commit, activation, recertification or pending mutation
+  // won the race; preserve that newer timeline rather than clearing it.
+  bool invalidateIfCurrent(const ExecutionTimelineSnapshot& expected) const noexcept {
+    std::lock_guard lock(mutex_);
+    if (timeline_version_ != expected.version ||
+        committed_.get() != expected.active.get()) {
+      return false;
+    }
+    committed_.reset();
+    ++active_lineage_version_;
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    ++timeline_version_;
+    return true;
+  }
+
+  CommitDecision tryCommit(
+      const CommitToken& expected,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate) noexcept {
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0 ||
+        expected.transaction_id == 0) {
+      return CommitDecision::kInvalidCandidate;
+    }
+    std::lock_guard lock(mutex_);
+    if (active_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) {
+      return CommitDecision::kGoalAdvanced;
+    }
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity) ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, candidate->world_identity)) {
+      return CommitDecision::kWorldAdvanced;
+    }
+    if (expected.transaction_id <= last_transaction_id_) {
+      return CommitDecision::kCancelled;
+    }
+    committed_ = std::move(candidate);
+    ++active_lineage_version_;
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
+    return CommitDecision::kCommitted;
+  }
+
+  // An immediate replacement prepared outside the store lock may depend on
+  // both an exact predecessor and a phase/deadline that can expire while it
+  // waits. Check both at the cutover, before any mutation. Unlike a rollback
+  // finalizer, rejected admission neither advances the timeline/lineage nor
+  // consumes the transaction watermark.
+  //
+  // admit MUST be bounded: only read a clock/captured metadata; no allocation,
+  // I/O, owner/backend/world locks, clock updates, or store re-entry. A clock
+  // exception is an explicit rejection, not termination. Validation and
+  // candidate construction still happen outside this critical section.
+  template <typename AdmissionFn>
+  CommitDecision tryCommitIfCurrent(
+      const CommitToken& expected,
+      const ExecutionTimelineSnapshot& predecessor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
+      AdmissionFn&& admit) noexcept {
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0U ||
+        expected.transaction_id == 0U) {
+      return CommitDecision::kInvalidCandidate;
+    }
+    std::lock_guard lock(mutex_);
+    if (active_goal_epoch_ == 0U) return CommitDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) {
+      return CommitDecision::kGoalAdvanced;
+    }
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity) ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, candidate->world_identity)) {
+      return CommitDecision::kWorldAdvanced;
+    }
+    if (expected.transaction_id <= last_transaction_id_) {
+      return CommitDecision::kCancelled;
+    }
+    if (timeline_version_ != predecessor.version ||
+        committed_.get() != predecessor.active.get() ||
+        pending_.get() != predecessor.pending.get() ||
+        pending_activation_ns_ != predecessor.pending_activation_ns) {
+      return CommitDecision::kPredecessorAdvanced;
+    }
+    try {
+      if (!static_cast<bool>(std::forward<AdmissionFn>(admit)())) {
+        return CommitDecision::kAdmissionRejected;
+      }
+    } catch (...) {
+      return CommitDecision::kAdmissionRejected;
+    }
+    committed_ = std::move(candidate);
+    ++active_lineage_version_;
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
+    return CommitDecision::kCommitted;
+  }
+
+  // Commit the execution candidate and run the planner-history finalizer as
+  // one rollback-safe transaction.  The execution pointer remains the sole
+  // authority: if the cache/history update fails, restore the exact previous
+  // pointer and transaction watermark instead of invalidating a command that
+  // was already accepted for execution.
+  template <typename FinalizeFn>
+  CommitDecision tryCommitAndFinalize(
+      const CommitToken& expected,
+      std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
+      FinalizeFn&& finalize) noexcept {
+    if (!candidate || !candidate->valid() || expected.goal_epoch == 0 ||
+        expected.transaction_id == 0) {
+      return CommitDecision::kInvalidCandidate;
+    }
+    std::lock_guard lock(mutex_);
+    if (active_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;
+    if (active_goal_epoch_ != expected.goal_epoch ||
+        candidate->goal_epoch != expected.goal_epoch) {
+      return CommitDecision::kGoalAdvanced;
+    }
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, expected.world_identity) ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, candidate->world_identity)) {
+      return CommitDecision::kWorldAdvanced;
+    }
+    if (expected.transaction_id <= last_transaction_id_) {
+      return CommitDecision::kCancelled;
+    }
+
+    const auto previous = committed_;
+    const auto previous_pending = pending_;
+    const auto previous_pending_activation = pending_activation_ns_;
+    const auto previous_transaction_id = last_transaction_id_;
+    committed_ = std::move(candidate);
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    last_transaction_id_ = expected.transaction_id;
+    ++timeline_version_;
+    bool finalized = false;
+    try {
+      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)());
+    } catch (...) {
+      finalized = false;
+    }
+    if (!finalized) {
+      committed_ = previous;
+      pending_ = previous_pending;
+      pending_activation_ns_ = previous_pending_activation;
+      last_transaction_id_ = previous_transaction_id;
+      ++timeline_version_;
+      return CommitDecision::kFinalizationFailed;
+    }
+    ++active_lineage_version_;
+    return CommitDecision::kCommitted;
+  }
+
+  void invalidate() noexcept {
+    std::lock_guard lock(mutex_);
+    if (committed_) ++active_lineage_version_;
+    committed_.reset();
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    enforceInvariantLocked();
+    ++timeline_version_;
+  }
+
+ private:
+  friend struct ExecutionTimelineStoreTestAccess;
+
+  template <typename FinalizeRevocation, typename PrepareRecertification>
+  navigation_world_model::WorldCommitDecision
+  publishWorldIdentityIfCurrentAndFinalizeRevocationImpl(
+      const navigation_world_model::WorldSnapshotIdentity& identity,
+      const std::uint64_t expected_timeline_version,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_bundle,
+      const bool retain_validated_bundle,
+      FinalizeRevocation&& finalize_revocation,
+      const std::int64_t refreshed_valid_until_ns,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending,
+      const bool retain_validated_pending,
+      PrepareRecertification&& prepare) noexcept {
+    static_assert(std::is_nothrow_invocable_v<FinalizeRevocation&>);
+
+    // Pin and validate the exact optimistic snapshot before preparing copies.
+    // No candidate work or payload allocation runs under this lock.
+    std::optional<navigation_world_model::WorldSnapshotIdentity> prior_world;
+    std::shared_ptr<const navigation_planning::CandidateBundle> observed_active;
+    std::shared_ptr<const navigation_planning::CandidateBundle> observed_pending;
+    {
+      std::lock_guard lock(mutex_);
+      if (timeline_version_ != expected_timeline_version) {
+        return navigation_world_model::WorldCommitDecision::kSuperseded;
+      }
+      if (world_identity_ && !advances(*world_identity_, identity)) {
+        return navigation_world_model::WorldCommitDecision::kWorldAdvanced;
+      }
+      prior_world = world_identity_;
+      observed_active = committed_;
+      observed_pending = pending_;
+    }
+
+    const bool expected_active_matches = expected_bundle && observed_active &&
+        expected_bundle.get() == observed_active.get();
+    const bool expected_pending_matches = expected_pending && observed_pending &&
+        expected_pending.get() == observed_pending.get();
+    const bool exact_active_owner = expected_active_matches && prior_world &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            *prior_world, observed_active->world_identity);
+    const bool prepare_active = retain_validated_bundle && exact_active_owner;
+    const bool prepare_pending = prepare_active && retain_validated_pending &&
+        expected_pending_matches && prior_world &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            observed_pending->world_identity, *prior_world);
+    std::shared_ptr<const navigation_planning::CandidateBundle> recertified_active;
+    std::shared_ptr<const navigation_planning::CandidateBundle> recertified_pending;
+    bool active_preparation_failed = false;
+    if (prepare_active) {
+      try {
+        recertified_active = std::invoke(
+            prepare, *observed_active, identity, refreshed_valid_until_ns);
+        active_preparation_failed = !recertified_active;
+      } catch (...) {
+        active_preparation_failed = true;
+      }
+    }
+    if (prepare_pending && !active_preparation_failed) {
+      try {
+        recertified_pending = std::invoke(
+            prepare, *observed_pending, identity, std::int64_t{0});
+      } catch (...) {
+        // The successor is independently disposable; the validated active
+        // command remains eligible for recertification and execution.
+        recertified_pending.reset();
+      }
+    }
+
+    // These holders defer payload destruction until after unlocking. In
+    // particular, revocation must not run CandidateBundle/evaluator teardown
+    // inside the timeline critical section.
+    std::shared_ptr<const navigation_planning::CandidateBundle> retired_active;
+    std::shared_ptr<const navigation_planning::CandidateBundle> retired_pending;
+    std::lock_guard lock(mutex_);
+    const bool prior_world_still_current =
+        world_identity_.has_value() == prior_world.has_value() &&
+        (!world_identity_ || navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, *prior_world));
+    if (timeline_version_ != expected_timeline_version ||
+        committed_.get() != observed_active.get() ||
+        pending_.get() != observed_pending.get() ||
+        !prior_world_still_current) {
+      return navigation_world_model::WorldCommitDecision::kSuperseded;
+    }
+    if (world_identity_ && !advances(*world_identity_, identity)) {
+      return navigation_world_model::WorldCommitDecision::kWorldAdvanced;
+    }
+
+    const bool revoke_exact_active = exact_active_owner &&
+        (!prepare_active || active_preparation_failed);
+    if (active_preparation_failed) {
+      retired_active = std::move(committed_);
+      retired_pending = std::move(pending_);
+      pending_activation_ns_ = 0;
+      if (retired_active) ++active_lineage_version_;
+      ++timeline_version_;
+      if (revoke_exact_active) std::invoke(finalize_revocation);
+      // The world transaction is deliberately not consumed. A later refresh
+      // can retry publication without leaving a known-invalid command live.
+      return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+    }
+
+    if (prepare_active) {
+      retired_active = std::move(committed_);
+      committed_ = std::move(recertified_active);
+    } else {
+      retired_active = std::move(committed_);
+      if (retired_active) ++active_lineage_version_;
+    }
+
+    if (prepare_active && recertified_pending) {
+      retired_pending = std::move(pending_);
+      pending_ = std::move(recertified_pending);
+    } else {
+      retired_pending = std::move(pending_);
+      pending_activation_ns_ = 0;
+    }
+    if (!committed_) {
+      retired_pending = std::move(pending_);
+      pending_activation_ns_ = 0;
+    }
+    world_identity_ = identity;
+    ++timeline_version_;
+    if (revoke_exact_active) std::invoke(finalize_revocation);
+    return navigation_world_model::WorldCommitDecision::kCommitted;
+  }
+
+  template <typename FinalizeFn>
+  bool activatePendingIfDueAndFinalizeLocked(
+      std::int64_t now_ns,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending,
+      std::uint64_t expected_version, std::int64_t expected_activation_ns,
+      bool require_exact_token, FinalizeFn&& finalize) const noexcept {
+    if (pending_ && !committed_) {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      ++timeline_version_;
+      return false;
+    }
+    if (!pending_ || pending_activation_ns_ <= 0 || now_ns < pending_activation_ns_) {
+      return false;
+    }
+    if (require_exact_token &&
+        (timeline_version_ != expected_version ||
+         pending_activation_ns_ != expected_activation_ns)) {
+      return false;
+    }
+    if (expected_pending &&
+        (pending_.get() != expected_pending.get() ||
+         pending_->bundle_generation != expected_pending->bundle_generation)) {
+      return false;
+    }
+    if (!world_identity_ ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, pending_->world_identity) ||
+        active_goal_epoch_ != pending_->goal_epoch ||
+        now_ns > pending_->valid_until_ns || !pending_->valid() || !committed_ ||
+        !committed_->valid() ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, committed_->world_identity)) {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      ++timeline_version_;
+      return false;
+    }
+    const auto previous = committed_;
+    const auto successor = pending_;
+    committed_ = successor;
+    pending_.reset();
+    pending_activation_ns_ = 0;
+    ++timeline_version_;
+    bool finalized = false;
+    try {
+      finalized = static_cast<bool>(std::forward<FinalizeFn>(finalize)(
+          successor->bundle_generation));
+    } catch (...) {
+      finalized = false;
+    }
+    if (!finalized) {
+      committed_ = previous;
+      // The finalize callback owns an external transaction (planner history,
+      // for example). Once it rejects, retaining the pending pointer would
+      // leave an unfinalizable candidate parked ahead of future solves.
+      pending_.reset();
+      pending_activation_ns_ = 0;
+      enforceInvariantLocked();
+      ++timeline_version_;
+      return false;
+    }
+    ++active_lineage_version_;
+    return true;
+  }
+
+  // Validate the immutable predecessor anchor without invoking its evaluator
+  // while holding the store mutex. The caller first checks the opaque active
+  // lineage reservation; these semantic fields independently guard accidental
+  // corruption and world recertification. Activation then checks the current
+  // active/world transaction before exposure.
+  [[nodiscard]] static bool predecessorMatchesAnchor(
+      const navigation_planning::CandidateBundle& predecessor,
+      const ExecutionAnchor& anchor) noexcept {
+    if (!anchor.valid() || !predecessor.valid() ||
+        predecessor.bundle_generation != anchor.active_bundle_generation ||
+        predecessor.localization_epoch != anchor.localization_epoch ||
+        predecessor.goal_epoch != anchor.goal_epoch ||
+        predecessor.request_id != anchor.request_id ||
+        !navigation_world_model::sameWorldSnapshotIdentity(
+            predecessor.world_identity, anchor.command_world)) {
+      return false;
+    }
+    const auto start_ns = navigation_common::secondsToNanoseconds(
+        predecessor.start_wall_time_s);
+    const auto end_ns = predecessor.declared_end_ns > 0
+        ? std::optional<std::int64_t>{predecessor.declared_end_ns}
+        : std::optional<std::int64_t>{predecessor.valid_until_ns};
+    const auto main_end_ns = predecessor.backup_available
+        ? navigation_common::secondsSumToNanoseconds(
+              predecessor.start_wall_time_s, predecessor.backup_start_time_s)
+        : end_ns;
+    if (!start_ns || !main_end_ns || !end_ns ||
+        anchor.activation_stamp_ns < predecessor.valid_from_ns ||
+        anchor.activation_stamp_ns > predecessor.valid_until_ns ||
+        *start_ns > anchor.activation_stamp_ns ||
+        *main_end_ns != anchor.active_main_end_ns ||
+        *end_ns != anchor.active_bundle_end_ns ||
+        anchor.activation_stamp_ns > *end_ns) {
+      return false;
+    }
+    const auto elapsed_ns = anchor.activation_stamp_ns - *start_ns;
+    if (elapsed_ns < 0) return false;
+    const auto scheduled = predecessor.scheduledRole(
+        static_cast<double>(elapsed_ns) * 1.0e-9);
+    return scheduled.has_value() && *scheduled == anchor.active_role;
+  }
+
+  void enforceInvariantLocked() const noexcept {
+    if (!committed_) {
+      pending_.reset();
+      pending_activation_ns_ = 0;
+    }
+  }
+
+  [[nodiscard]] static bool advances(
+      const navigation_world_model::WorldSnapshotIdentity& current,
+      const navigation_world_model::WorldSnapshotIdentity& next) noexcept {
+    if (next.localization_epoch != current.localization_epoch) {
+      return next.localization_epoch > current.localization_epoch;
+    }
+    if (next.generation != current.generation) return next.generation > current.generation;
+    return next.revision > current.revision &&
+           next.observation_stamp_ns >= current.observation_stamp_ns;
+  }
+
+  mutable std::mutex mutex_;
+  std::uint64_t active_goal_epoch_{0};
+  mutable std::uint64_t timeline_version_{0};
+  mutable std::uint64_t active_lineage_version_{0};
+  std::uint64_t last_transaction_id_{0};
+  std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity_;
+  mutable std::shared_ptr<const navigation_planning::CandidateBundle> committed_;
+  mutable std::shared_ptr<const navigation_planning::CandidateBundle> pending_;
+  mutable std::int64_t pending_activation_ns_{0};
+};
+
+// Compatibility name for code that only consumes the active-command API.
+using CommittedBundleStore = ExecutionTimelineStore;
+
+}  // namespace navigation_execution

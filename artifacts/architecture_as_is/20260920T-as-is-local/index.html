@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>uav-navigation — kiến trúc hành vi AS-IS</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.55 system-ui, sans-serif; color: #17212b; background: #f3f6f8; }
+    body { max-width: 1120px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1, h2 { line-height: 1.2; } h1 { margin-bottom: .35rem; }
+    .status { display: inline-block; padding: .2rem .55rem; border: 1px solid #9b6700; border-radius: .35rem; background: #fff4d6; font-weight: 700; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 1rem; }
+    section, article { padding: 1rem 1.1rem; border: 1px solid #cbd5dc; border-radius: .6rem; background: white; }
+    a { color: #075a9c; } li { margin: .25rem 0; }
+    .diagrams { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+    figure { margin: 0; padding: .75rem; border: 1px solid #cbd5dc; border-radius: .5rem; background: white; }
+    figure img { display: block; width: 100%; max-height: 430px; object-fit: contain; }
+    figcaption { padding-top: .5rem; font-weight: 600; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>uav-navigation: kiến trúc hành vi AS-IS</h1>
+    <p><span class="status">PARTIAL_AS_IS</span> Mô tả tĩnh theo local checkout chụp ngày 2026-09-20. Không phải xác nhận code đúng, an toàn hoặc đủ điều kiện bay.</p>
+    <p><a href="README.md">README và baseline</a> · <a href="AS_IS.md">Hành vi hiện tại</a> · <a href="REDESIGN_INPUTS.md">Câu hỏi cho thảo luận thiết kế</a> · <a href="model/architecture.json">Model JSON canonical</a></p>
+  </header>
+  <main>
+    <section>
+      <h2>Đọc theo thứ tự</h2>
+      <ol>
+        <li><a href="AS_IS.md">AS_IS.md</a> — goal, mission, planning, commit, command, recovery và PX4 Hold.</li>
+        <li><a href="tables/objects.md">Object/lifetime</a>, <a href="tables/fields.md">field/state</a> và <a href="tables/transitions.html">transition records có liên kết evidence</a>.</li>
+        <li><a href="tables/scenarios.md">12 scenario</a>, <a href="tables/decisions.md">decision sinks</a> và <a href="tables/authority_findings.md">authority findings</a>.</li>
+        <li><a href="evidence/refs.html">Evidence index</a> — excerpt có snapshot line, path và SHA-256.</li>
+        <li><a href="REDESIGN_INPUTS.md">REDESIGN_INPUTS.md</a> — vấn đề cần quyết định ở bước sau, không chứa TO-BE design.</li>
+      </ol>
+    </section>
+    <h2>Diagram đã render</h2>
+    <div class="diagrams">
+      <figure><a href="diagrams/svg/deployment.svg"><img src="diagrams/svg/deployment.svg" alt="Deployment and data/control flow"></a><figcaption>Deployment / data-control flow</figcaption></figure>
+      <figure><a href="diagrams/svg/ownership.svg"><img src="diagrams/svg/ownership.svg" alt="Object ownership and lifetime"></a><figcaption>Object ownership / lifetime</figcaption></figure>
+      <figure><a href="diagrams/svg/mission_progress.svg"><img src="diagrams/svg/mission_progress.svg" alt="Mission progression decisions"></a><figcaption>Mission progression decisions</figcaption></figure>
+      <figure><a href="diagrams/svg/runtime_goal_commit.svg"><img src="diagrams/svg/runtime_goal_commit.svg" alt="Goal to planning and commit flow"></a><figcaption>Goal → planning → commit</figcaption></figure>
+      <figure><a href="diagrams/svg/runtime_recovery.svg"><img src="diagrams/svg/runtime_recovery.svg" alt="Backup and recovery flow"></a><figcaption>BACKUP / recovery</figcaption></figure>
+      <figure><a href="diagrams/svg/px4_authority.svg"><img src="diagrams/svg/px4_authority.svg" alt="PX4 command admission and Hold authority"></a><figcaption>PX4 command admission / Hold</figcaption></figure>
+      <figure><a href="diagrams/svg/decision_authority.svg"><img src="diagrams/svg/decision_authority.svg" alt="Cross-object decision authority"></a><figcaption>Cross-object decision authority</figcaption></figure>
+    </div>
+    <section>
+      <h2>Sequence diagram source</h2>
+      <p>Mermaid CLI không có trong môi trường audit; các file nguồn được giữ để render lại khi có <code>mmdc</code>.</p>
+      <ul>
+        <li><a href="diagrams/src/nominal_flow.mmd">Nominal goal → sample → PX4</a></li>
+        <li><a href="diagrams/src/pass_through_handoff.mmd">PASS_THROUGH handoff</a></li>
+        <li><a href="diagrams/src/backup_recovery.mmd">BACKUP / measured recovery</a></li>
+        <li><a href="diagrams/src/terminal_and_handover.mmd">Terminal STOP / PX4 handover</a></li>
+      </ul>
+    </section>
+    <div class="grid">
+      <section><h2>Coverage</h2><p><a href="tables/coverage.md">Denominator, records và giới hạn coverage</a>; 30 fields, 16 transitions trọng yếu, 12 scenarios, 68 evidence refs.</p></section>
+      <section><h2>Validation</h2><ul><li><a href="validation/semantic_review.md">Semantic review độc lập</a></li><li><a href="validation/test_review.md">Tests đã đọc, chưa chạy</a></li><li><a href="validation/limitations.md">Limitations</a></li><li><a href="validation/render_review.md">Render review</a></li><li><a href="validation/command_log.md">Command log</a></li></ul></section>
+      <section><h2>Snapshot</h2><p><a href="baseline/provenance.md">Provenance</a> · <a href="baseline/environment.json">Environment</a> · <a href="baseline/source_manifest.json">Source manifest</a></p></section>
+    </div>
+  </main>
+</body>
+</html>

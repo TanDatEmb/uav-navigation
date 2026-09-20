@@ -1,0 +1,4311 @@
+#include <algorithm>
+#include <cmath>
+#include <atomic>
+#include <chrono>
+#include <limits>
+#include <stdexcept>
+#include <thread>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <Eigen/Core>
+#include <gtest/gtest.h>
+
+#include "data_structure/base/trajectory.h"
+#include <navigation_world_model/goal_contract.hpp>
+#include "planner_core/planner.hpp"
+#include "planner_core/fov_checker.h"
+#include "path_search/astar.h"
+#include "planner_core/absolute_deadline.hpp"
+#include "planner_core/command_time.hpp"
+#include <navigation_common/time.hpp>
+#include "planner_core/ciri.h"
+#include "planner_core/corridor_generator.h"
+#include "planner_core/corridor_plane_validation.hpp"
+#include "planner_core/guide_endpoint.hpp"
+#include "planner_core/guide_vertical_envelope.hpp"
+#include "planner_core/kinematic_state_boundary.hpp"
+#include "planner_core/replan_contract.hpp"
+#include "planner_core/route_regression_certificate.hpp"
+#include "planner_core/planning_stage.hpp"
+#include "planner_core/trajectory_world_validator.hpp"
+#include "traj_opt/trajectory_dynamics.hpp"
+#include "traj_opt/nominal_trajectory_optimizer.hpp"
+#include "traj_opt/backup_trajectory_optimizer.hpp"
+#include "traj_opt/yaw_traj_opt.h"
+#include "data_structure/base/polytope.h"
+#include "utils/geometry/geometry_utils.h"
+#include "utils/geometry/quickhull.h"
+#include "utils/geometry/quadrotor_flatness.hpp"
+#include "utils/optimization/polynomial_interpolation.h"
+#include "utils/optimization/root_finder.h"
+#include "utils/optimization/lbfgs.h"
+#include "utils/optimization/sdlp.h"
+
+namespace navigation_planning_backend {
+
+struct CiriGeometryTestAccess {
+  static geometry_utils::Ellipsoid findEllipsoid(
+      CIRI& ciri, const Eigen::Matrix3Xd& points,
+      const Eigen::Vector3d& begin, const Eigen::Vector3d& end) {
+    geometry_utils::Ellipsoid result;
+    ciri.findEllipsoid(points, begin, end, result);
+    return result;
+  }
+
+  static bool findTangentPlaneOfSphere(
+      const Eigen::Vector3d& center, double radius,
+      const Eigen::Vector3d& pass_point, const Eigen::Vector3d& seed_point,
+      Eigen::Vector4d& plane) {
+    return CIRI::findTangentPlaneOfSphere(
+        center, radius, pass_point, seed_point, plane);
+  }
+};
+
+}  // namespace navigation_planning_backend
+
+namespace {
+
+geometry_utils::Polytope makeTransitionTestBox(
+    const double min_x, const double max_x,
+    const double min_y = 0.0, const double max_y = 1.0,
+    const double min_z = 0.0, const double max_z = 1.0) {
+  navigation_math::MatD4f planes(6, 4);
+  planes <<
+      1.0, 0.0, 0.0, -max_x,
+     -1.0, 0.0, 0.0,  min_x,
+      0.0, 1.0, 0.0, -max_y,
+      0.0,-1.0, 0.0,  min_y,
+      0.0, 0.0, 1.0, -max_z,
+      0.0, 0.0,-1.0,  min_z;
+  return geometry_utils::Polytope(std::move(planes));
+}
+
+geometry_utils::Polytope makeReconstructedHistoricalCorridor(
+    const double min_x, const double max_x,
+    const double min_z, const double max_z) {
+  navigation_math::MatD4f planes(8, 4);
+  planes <<
+      1.0, 0.0, 0.0, -max_x,
+      0.0, 1.0, 0.0, -6.0,
+      0.0, 0.0, 1.0, -4.5,
+     -1.0, 0.0, 0.0,  min_x,
+      0.0,-1.0, 0.0,  3.0,
+      0.0, 0.0,-1.0,  min_z,
+      0.0, 0.0, 1.0, -max_z,
+      0.0, 0.0,-1.0,  2.5;
+  return geometry_utils::Polytope(std::move(planes));
+}
+
+bool transitionRepresentableForCurrentConsumer(
+    const geometry_utils::Polytope& first,
+    const geometry_utils::Polytope& second) {
+  const auto overlap = first.CrossWith(second);
+  Eigen::Vector3d interior;
+  Eigen::Matrix3Xd vertices;
+  double depth{std::numeric_limits<double>::quiet_NaN()};
+  return geometry_utils::transitionRepresentable(
+      overlap.GetPlanes(), interior, vertices, depth);
+}
+
+void expectAllTransitionsRepresentable(
+    const geometry_utils::PolytopeVec& corridors) {
+  for (std::size_t index = 0; index + 1U < corridors.size(); ++index) {
+    EXPECT_TRUE(transitionRepresentableForCurrentConsumer(
+        corridors[index], corridors[index + 1U]))
+        << "transition index=" << index;
+  }
+}
+
+TEST(PlannerTrajectory,
+     SimplifySfcDoesNotCreateNonRepresentableFaceOnlyTransition) {
+  // Reconstructed historical component fixture: A-B and B-C have robust
+  // positive-volume overlap, while A-C is the lower-dimensional seam that
+  // exposed the SimplifySFC/consumer contract mismatch.  This is a component
+  // regression fixture, not a claim that it is the bitwise historical runtime
+  // PRE chain.
+  geometry_utils::PolytopeVec corridors{
+      makeReconstructedHistoricalCorridor(
+          18.200000762939453, 24.0, 1.2000000476837158, 3.2000000000000002),
+      makeReconstructedHistoricalCorridor(21.0, 27.0, 1.5, 3.2000000000000002),
+      makeReconstructedHistoricalCorridor(24.0, 30.0, 1.5, 3.2000000000000002)};
+  ASSERT_TRUE(transitionRepresentableForCurrentConsumer(
+      corridors[0], corridors[1]));
+  ASSERT_TRUE(transitionRepresentableForCurrentConsumer(
+      corridors[1], corridors[2]));
+
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      navigation_math::Vec3f{20.0, 4.5, 3.0},
+      navigation_math::Vec3f{29.0, 4.5, 3.0}, corridors));
+  ASSERT_EQ(corridors.size(), 3U);
+  expectAllTransitionsRepresentable(corridors);
+}
+
+TEST(PlannerTrajectory, SimplifySfcMayRemoveRepresentableIntermediateCorridor) {
+  geometry_utils::PolytopeVec corridors{
+      makeTransitionTestBox(0.0, 4.0),
+      makeTransitionTestBox(1.0, 3.0),
+      makeTransitionTestBox(2.0, 6.0)};
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      navigation_math::Vec3f{0.5, 0.5, 0.5},
+      navigation_math::Vec3f{5.5, 0.5, 0.5}, corridors));
+  ASSERT_EQ(corridors.size(), 2U);
+  expectAllTransitionsRepresentable(corridors);
+}
+
+TEST(PlannerTrajectory, DisconnectedTransitionIsNotRepresentable) {
+  geometry_utils::PolytopeVec corridors{
+      makeTransitionTestBox(0.0, 2.0),
+      makeTransitionTestBox(1.0, 4.0),
+      makeTransitionTestBox(3.0, 7.0)};
+  ASSERT_TRUE(transitionRepresentableForCurrentConsumer(
+      corridors[0], corridors[1]));
+  ASSERT_TRUE(transitionRepresentableForCurrentConsumer(
+      corridors[1], corridors[2]));
+  EXPECT_FALSE(transitionRepresentableForCurrentConsumer(
+      corridors[0], corridors[2]));
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      navigation_math::Vec3f{0.5, 0.5, 0.5},
+      navigation_math::Vec3f{6.5, 0.5, 0.5}, corridors));
+  ASSERT_EQ(corridors.size(), 3U);
+  expectAllTransitionsRepresentable(corridors);
+}
+
+TEST(PlannerTrajectory, FeasibilityRetryActivatesDisabledViolatedDynamicPenalty) {
+  navigation_math::VecDf weights(7);
+  weights << 5.0e8, 5.0e5, 5.0e5, 0.0, 0.0, 1.0e5, 1.0e5;
+  EXPECT_DOUBLE_EQ(traj_opt::feasibilityRetryPenaltyWeight(weights, 3), 5.0e5);
+  EXPECT_DOUBLE_EQ(traj_opt::feasibilityRetryPenaltyWeight(weights, 1), 5.0e5);
+
+  weights.segment(1, 3).setZero();
+  EXPECT_TRUE(std::isnan(
+      traj_opt::feasibilityRetryPenaltyWeight(weights, 3)));
+  EXPECT_TRUE(std::isnan(
+      traj_opt::feasibilityRetryPenaltyWeight(weights, 0)));
+}
+
+class SweepWorld : public navigation_world_model::WorldModelView {
+ public:
+  double blocked_from_x{std::numeric_limits<double>::infinity()};
+  bool endpoints_in_bounds{true};
+  navigation_world_model::WorldGeometry geometry() const noexcept override {
+    navigation_world_model::WorldGeometry value;
+    value.inflated_resolution_m = 0.2;
+    value.effective_virtual_ground_m = -10.0;
+    value.effective_virtual_ceiling_m = 10.0;
+    return value;
+  }
+  navigation_world_model::WorldSnapshotIdentity identity() const noexcept override {
+    return {1, 1, 1, 1};
+  }
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& p,
+      navigation_world_model::GridLayer) const noexcept override {
+    return p.x() >= blocked_from_x
+        ? navigation_world_model::CellState::kOccupied
+        : navigation_world_model::CellState::kUnknown;
+  }
+  bool contains(const navigation_world_model::Point3&) const noexcept override {
+    return endpoints_in_bounds;
+  }
+  navigation_world_model::GridIndex3 positionToIndex(
+      const navigation_world_model::Point3& p,
+      navigation_world_model::GridLayer) const noexcept override {
+    return (p.array() / 0.2).floor().cast<int>();
+  }
+  navigation_world_model::Point3 indexToPosition(
+      const navigation_world_model::GridIndex3& index,
+      navigation_world_model::GridLayer) const noexcept override {
+    return (index.cast<double>().array() + 0.5).matrix() * 0.2;
+  }
+  std::optional<navigation_world_model::Point3> nearestNotOccupied(
+      const navigation_world_model::Point3& p, navigation_world_model::GridLayer,
+      double) const override { return p; }
+  bool isSegmentTraversable(
+      const navigation_world_model::Point3& a,
+      const navigation_world_model::Point3& b,
+      navigation_world_model::GridLayer,
+      navigation_world_model::UnknownPolicy policy) const noexcept override {
+    if (policy != navigation_world_model::UnknownPolicy::kAllowUnknown) return false;
+    return std::max(a.x(), b.x()) < blocked_from_x;
+  }
+  navigation_world_model::AxisAlignedBox clampToLocalBounds(
+      const navigation_world_model::AxisAlignedBox& box) const noexcept override { return box; }
+  navigation_world_model::PointVector observedOccupiedPoints(
+      const navigation_world_model::AxisAlignedBox&) const override { return {}; }
+};
+
+class BodyHandoverWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return point.x() < 0.0
+        ? navigation_world_model::CellState::kUnknown
+        : navigation_world_model::CellState::kKnownFree;
+  }
+
+  bool isSegmentTraversableWithCurrentBodySupport(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy policy,
+      const navigation_world_model::CurrentBodySupportPtr& support) const noexcept override {
+    if (!support || classify(start, layer) != navigation_world_model::CellState::kUnknown ||
+        !support->contains(start, identity(), support->source_stamp_ns)) {
+      return isSegmentTraversable(start, end, layer, policy);
+    }
+    return classify(end, layer) == navigation_world_model::CellState::kKnownFree ||
+        support->containsSegment(start, end, identity(), support->source_stamp_ns);
+  }
+
+  bool isSegmentTraversable(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy policy) const noexcept override {
+    if (policy == navigation_world_model::UnknownPolicy::kRequireKnownFree &&
+        classify(start, layer) == navigation_world_model::CellState::kKnownFree &&
+        classify(end, layer) == navigation_world_model::CellState::kKnownFree) {
+      return true;
+    }
+    return SweepWorld::isSegmentTraversable(start, end, layer, policy);
+  }
+};
+
+class BodyPrefixCertificateWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    // The voxel sequence along the test chord is UNKNOWN -> KNOWN_FREE ->
+    // UNKNOWN while it remains inside the measured body, then UNKNOWN again
+    // after a physical exit. This keeps the test independent of map history.
+    if (point.x() < -0.05 ||
+        (point.x() >= 0.15 && point.x() < 0.55) ||
+        point.x() >= 0.75) {
+      return navigation_world_model::CellState::kUnknown;
+    }
+    return navigation_world_model::CellState::kKnownFree;
+  }
+};
+
+navigation_world_model::CurrentBodySupportPtr testBodySupport(
+    const navigation_world_model::Point3& body_position,
+    const navigation_world_model::Point3& half_extent) {
+  navigation_world_model::CurrentBodySupport support;
+  support.snapshot_identity = {1U, 1U, 1U, 1};
+  support.body_position = body_position;
+  support.body_orientation = Eigen::Quaterniond::Identity();
+  support.localization_epoch = 1U;
+  support.source_stamp_ns = 1;
+  support.world_frame_id = "lio_odom";
+  support.body_frame_id = "base_link";
+  support.geometry_provenance =
+      "repo:test-model@sha256=0123456789abcdef;"
+      "component=base_link_collision_0_main_obb_only";
+  support.body_box = {Eigen::Vector3d::Zero(), half_extent,
+                      Eigen::Quaterniond::Identity()};
+  support.valid = true;
+  return std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
+}
+
+class CurvedCellWorld final : public SweepWorld {
+ public:
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    const navigation_world_model::Point3 occupied_cell_center(0.5, 0.3, 3.1);
+    return (point - occupied_cell_center).norm() < 1.0e-3
+        ? navigation_world_model::CellState::kOccupied
+        : navigation_world_model::CellState::kUnknown;
+  }
+};
+
+class DiagonalNeighborWorld final : public SweepWorld {
+ public:
+  explicit DiagonalNeighborWorld(
+      const navigation_world_model::Point3& unknown_center)
+      : unknown_center_(unknown_center) {}
+
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return (point - unknown_center_).norm() < 1.0e-9
+        ? navigation_world_model::CellState::kUnknown
+        : navigation_world_model::CellState::kKnownFree;
+  }
+
+ private:
+  navigation_world_model::Point3 unknown_center_;
+};
+
+class CountingAstarWorld final : public SweepWorld {
+ public:
+  navigation_world_model::WorldGeometry geometry() const noexcept override {
+    navigation_world_model::WorldGeometry value;
+    value.evidence_resolution_m = 1.0;
+    value.inflated_resolution_m = 1.0;
+    value.local_center_m = Eigen::Vector3d{4.5, 4.5, 1.5};
+    value.local_size_m = Eigen::Vector3d{20.0, 20.0, 3.0};
+    value.evidence_bounds.global_min_index = Eigen::Vector3i{-5, -5, 0};
+    value.evidence_bounds.dimensions = Eigen::Vector3i{20, 20, 3};
+    value.inflated_bounds = value.evidence_bounds;
+    return value;
+  }
+
+  navigation_world_model::CellState classify(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return occupied(point)
+        ? navigation_world_model::CellState::kOccupied
+        : navigation_world_model::CellState::kKnownFree;
+  }
+
+  bool contains(
+      const navigation_world_model::Point3& point) const noexcept override {
+    return point.x() >= -5.0 && point.x() < 15.0 &&
+           point.y() >= -5.0 && point.y() < 15.0 &&
+           point.z() >= 0.0 && point.z() < 3.0;
+  }
+
+  navigation_world_model::GridIndex3 positionToIndex(
+      const navigation_world_model::Point3& point,
+      navigation_world_model::GridLayer) const noexcept override {
+    return point.array().floor().cast<int>();
+  }
+
+  navigation_world_model::Point3 indexToPosition(
+      const navigation_world_model::GridIndex3& index,
+      navigation_world_model::GridLayer) const noexcept override {
+    return index.cast<double>() + Eigen::Vector3d::Constant(0.5);
+  }
+
+  bool isSegmentTraversable(
+      const navigation_world_model::Point3& start,
+      const navigation_world_model::Point3& end,
+      navigation_world_model::GridLayer layer,
+      navigation_world_model::UnknownPolicy) const noexcept override {
+    const bool identical_to_previous = previous_query_valid_ &&
+        previous_layer_ == layer && previous_start_.isApprox(start, 1.0e-12) &&
+        previous_end_.isApprox(end, 1.0e-12);
+    if (identical_to_previous) {
+      ++consecutive_duplicate_queries_;
+    }
+    previous_query_valid_ = true;
+    previous_layer_ = layer;
+    previous_start_ = start;
+    previous_end_ = end;
+    const bool repeated_undirected_edge = std::any_of(
+        queried_edges_.begin(), queried_edges_.end(),
+        [&](const auto& edge) {
+          return edge.layer == layer &&
+              ((edge.start.isApprox(start, 1.0e-12) &&
+                edge.end.isApprox(end, 1.0e-12)) ||
+               (edge.start.isApprox(end, 1.0e-12) &&
+                edge.end.isApprox(start, 1.0e-12)));
+        });
+    if (repeated_undirected_edge) {
+      ++repeated_undirected_edge_queries_;
+    } else {
+      queried_edges_.push_back({start, end, layer});
+    }
+    const int samples = std::max(
+        1, static_cast<int>(std::ceil((end - start).norm() * 10.0)));
+    for (int sample = 0; sample <= samples; ++sample) {
+      const double ratio = static_cast<double>(sample) /
+                           static_cast<double>(samples);
+      if (occupied(start + ratio * (end - start))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  [[nodiscard]] std::uint64_t consecutiveDuplicateQueries() const noexcept {
+    return consecutive_duplicate_queries_;
+  }
+
+  [[nodiscard]] std::uint64_t repeatedUndirectedEdgeQueries() const noexcept {
+    return repeated_undirected_edge_queries_;
+  }
+
+ private:
+  struct QueriedEdge {
+    navigation_world_model::Point3 start;
+    navigation_world_model::Point3 end;
+    navigation_world_model::GridLayer layer;
+  };
+
+  static bool occupied(const navigation_world_model::Point3& point) noexcept {
+    return point.x() >= 2.0 && point.x() < 3.0 &&
+           point.y() >= -0.5 && point.y() < 1.5;
+  }
+
+  mutable bool previous_query_valid_{false};
+  mutable navigation_world_model::GridLayer previous_layer_{
+      navigation_world_model::GridLayer::kEvidence};
+  mutable navigation_world_model::Point3 previous_start_{
+      navigation_world_model::Point3::Zero()};
+  mutable navigation_world_model::Point3 previous_end_{
+      navigation_world_model::Point3::Zero()};
+  mutable std::uint64_t consecutive_duplicate_queries_{0U};
+  mutable std::vector<QueriedEdge> queried_edges_;
+  mutable std::uint64_t repeated_undirected_edge_queries_{0U};
+};
+
+geometry_utils::Trajectory linearTrajectory(double duration, double start_wall_time) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory result({duration}, {coefficients});
+  result.start_WT = start_wall_time;
+  return result;
+}
+
+geometry_utils::Trajectory offsetLinearTrajectory(
+    double duration, double start_wall_time, double position_offset) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 7) = position_offset;
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory result({duration}, {coefficients});
+  result.start_WT = start_wall_time;
+  return result;
+}
+
+navigation_planning_backend::CandidateCommandBundle ackHistoryTestCandidate(
+    const double start_wall_time, const bool emergency) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, start_wall_time);
+  candidate.yaw = linearTrajectory(1.0, start_wall_time);
+  candidate.start_wall_time = start_wall_time;
+  candidate.roles = {{0.0, 1.0, emergency
+      ? navigation_planning_backend::CandidateTrajectoryRole::BACKUP
+      : navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  candidate.backup_suffix_available = emergency;
+  candidate.backup_start_tt = emergency ? 0.0 : 1.0;
+  candidate.backup_disposition = emergency
+      ? navigation_planning_backend::BackupDisposition::EMERGENCY
+      : navigation_planning_backend::BackupDisposition::NO_NEED;
+  candidate.localization_epoch = 1U;
+  candidate.goal_epoch = 1U;
+  candidate.request_id = 1U;
+  return candidate;
+}
+
+navigation_planning_backend::CommandCertificate ackHistoryTestCertificate() {
+  navigation_planning_backend::CommandCertificate certificate;
+  certificate.pinned_world = {1U, 1U, 1U, 1};
+  certificate.validated_world = certificate.pinned_world;
+  certificate.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  certificate.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  return certificate;
+}
+
+geometry_utils::Trajectory stationaryTrajectory(double duration, double start_wall_time) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 7) = 2.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory result({duration}, {coefficients});
+  result.start_WT = start_wall_time;
+  return result;
+}
+}  // namespace
+
+TEST(CiriGeometry, UsesNonCollinearSeedDirectionWithoutArtificialPerturbation) {
+  Eigen::Vector4d plane;
+  ASSERT_TRUE(navigation_planning_backend::CiriGeometryTestAccess::
+                  findTangentPlaneOfSphere(
+                      Eigen::Vector3d::Zero(), 1.0,
+                      Eigen::Vector3d(2.0, 0.0, 0.0),
+                      Eigen::Vector3d(0.0, 0.005, 0.0), plane));
+
+  // The positive-y seed selects the first tangent branch. A fixed
+  // pass_point - pass_point test would always perturb the seed by 0.01 m,
+  // crossing this deliberately narrow branch boundary and flipping plane.y.
+  EXPECT_NEAR(plane.x(), 0.5, 1e-12);
+  EXPECT_NEAR(plane.y(), std::sqrt(3.0) / 2.0, 1e-12);
+  EXPECT_NEAR(plane.z(), 0.0, 1e-12);
+  EXPECT_NEAR(plane.w(), -1.0, 1e-12);
+}
+
+TEST(CiriGeometry, RejectsInvalidConfigurationBeforeNumericalWork) {
+  navigation_planning_backend::CIRI ciri;
+  EXPECT_THROW(ciri.setupParams(0.0, 1), std::invalid_argument);
+  EXPECT_THROW(ciri.setupParams(0.5, 0), std::invalid_argument);
+  EXPECT_THROW(ciri.setupParams(std::numeric_limits<double>::quiet_NaN(), 1),
+               std::invalid_argument);
+}
+
+TEST(CiriGeometry, ObstacleSelectionPreservesSourceDomainAcrossPermutations) {
+  navigation_planning_backend::CIRI ciri;
+  ciri.setupParams(0.35, 1);
+  // Only the last source point is inside the line-seed ellipsoid. Its source
+  // index 2 cannot index the one-column packed output from pointsInside().
+  Eigen::Matrix3Xd source(3, 3);
+  source.col(0) = Eigen::Vector3d(8.0, 4.0, 3.0);
+  source.col(1) = Eigen::Vector3d(-8.0, 2.0, -4.0);
+  source.col(2) = Eigen::Vector3d(0.0, 0.6, 0.2);
+  const Eigen::Vector3d begin(-1.5, 0.0, 0.0), end(1.5, 0.0, 0.0);
+  Eigen::Matrix3Xd nearest_first(3, 3);
+  nearest_first << source.col(2), source.col(0), source.col(1);
+  const auto reference = navigation_planning_backend::CiriGeometryTestAccess::
+      findEllipsoid(ciri, nearest_first, begin, end);
+  ASSERT_FALSE(reference.empty());
+  ASSERT_TRUE(reference.C().allFinite());
+  for (int shift = 0; shift < 3; ++shift) {
+    Eigen::Matrix3Xd permuted(3, 3);
+    for (int column = 0; column < 3; ++column)
+      permuted.col(column) = source.col((column + shift) % 3);
+    const auto ellipsoid = navigation_planning_backend::CiriGeometryTestAccess::
+        findEllipsoid(ciri, permuted, begin, end);
+    ASSERT_FALSE(ellipsoid.empty()) << "shift=" << shift;
+    ASSERT_TRUE(ellipsoid.C().allFinite()) << "shift=" << shift;
+    EXPECT_NEAR((ellipsoid.C() - reference.C()).norm(), 0.0, 1.0e-10);
+    EXPECT_NEAR(ellipsoid.d().norm(), 0.0, 1.0e-12);
+    // The unique inside obstacle defines a contact boundary, regardless of
+    // input order. A finite but unshrunk seed is not sufficient.
+    EXPECT_NEAR(ellipsoid.dist(navigation_math::Vec3f(source.col(2))),
+                1.0, 1.0e-10);
+  }
+}
+
+TEST(CiriGeometry, AcceptsFinitePointSeedForPointCorridorConstruction) {
+  Eigen::MatrixX4d bounds(6, 4);
+  bounds <<
+      1.0, 0.0, 0.0, -2.0,
+     -1.0, 0.0, 0.0, -2.0,
+      0.0, 1.0, 0.0, -2.0,
+      0.0, -1.0, 0.0, -2.0,
+      0.0, 0.0, 1.0, -2.0,
+      0.0, 0.0, -1.0, -2.0;
+  Eigen::Matrix3Xd obstacles(3, 1);
+  obstacles.col(0) = Eigen::Vector3d(1.5, 1.5, 1.5);
+
+  for (const int iterations : {1, 2}) {
+    SCOPED_TRACE(iterations);
+    navigation_planning_backend::CIRI ciri;
+    ciri.setupParams(0.35, iterations);
+    EXPECT_EQ(ciri.convexDecomposition(
+                bounds, obstacles, Eigen::Vector3d::Zero(),
+                Eigen::Vector3d::Zero()),
+            navigation_math::SUCCESS);
+  }
+}
+
+TEST(CiriGeometry, RejectsObstacleAtClosedSeedClearanceBoundary) {
+  Eigen::MatrixX4d bounds(6, 4);
+  bounds <<
+      1.0, 0.0, 0.0, -2.0,
+     -1.0, 0.0, 0.0, -2.0,
+      0.0, 1.0, 0.0, -2.0,
+      0.0, -1.0, 0.0, -2.0,
+      0.0, 0.0, 1.0, -2.0,
+      0.0, 0.0, -1.0, -2.0;
+  Eigen::Matrix3Xd obstacles(3, 1);
+  obstacles.col(0) = Eigen::Vector3d{0.0, 0.35 - 0.01, 0.0};
+
+  for (const int iterations : {1, 2}) {
+    SCOPED_TRACE(iterations);
+    navigation_planning_backend::CIRI ciri;
+    ciri.setupParams(0.35, iterations);
+    EXPECT_EQ(ciri.convexDecomposition(
+                bounds, obstacles, Eigen::Vector3d{-1.0, 0.0, 0.0},
+                Eigen::Vector3d{1.0, 0.0, 0.0}),
+            navigation_math::FAILED);
+  }
+}
+
+TEST(CiriGeometry, TwoPassReferenceKeepsAbsoluteDeadline) {
+  navigation_planning_backend::CIRI ciri;
+  ciri.setupParams(0.35, 2);
+  // An already-expired request-owned steady deadline must stop before any
+  // numerical work, independently of a simulation clock that has not moved.
+  const navigation_planning_backend::AbsoluteDeadline deadline(100.0, std::int64_t{1});
+  const Eigen::MatrixX4d bounds = Eigen::MatrixX4d::Zero(6, 4);
+  const Eigen::Matrix3Xd points = Eigen::Matrix3Xd::Zero(3, 1);
+  EXPECT_EQ(ciri.convexDecomposition(bounds, points, Eigen::Vector3d::Zero(),
+                                   Eigen::Vector3d::Zero(), &deadline),
+            navigation_math::TIME_OUT);
+}
+
+TEST(PlannerTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
+  std::vector<double> durations{1.0, 1.0};
+  std::vector<Eigen::MatrixXd> coefficients;
+  for (double offset : {0.0, 1.0}) {
+    Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(3, 6);
+    matrix(0, 4) = 1.0;  // x(t) = t + offset
+    matrix(0, 5) = offset;
+    matrix(2, 5) = 3.0;
+    coefficients.push_back(matrix);
+  }
+
+  geometry_utils::Trajectory source(durations, coefficients);
+  geometry_utils::Trajectory partial;
+  ASSERT_TRUE(source.getPartialTrajectoryByTime(0.25, 1.5, partial));
+  ASSERT_EQ(partial.getPieceNum(), 2);
+  EXPECT_NEAR(partial.getTotalDuration(), 1.25, 1e-12);
+  EXPECT_NEAR(partial.getPos(0.0).x(), 0.25, 1e-12);
+  EXPECT_NEAR(partial.getPos(0.75).x(), 1.0, 1e-12);
+  EXPECT_NEAR(partial.getPos(partial.getTotalDuration()).x(), 1.5, 1e-12);
+  EXPECT_NEAR(partial.getVel(0.0).x(), 1.0, 1e-12);
+  EXPECT_NEAR(partial.getVel(partial.getTotalDuration()).x(), 1.0, 1e-12);
+  EXPECT_TRUE(partial.getPos(0.0).allFinite());
+}
+
+TEST(PlannerTrajectory, PartialSliceUsesHalfOpenStartAtPieceBoundary) {
+  std::vector<double> durations{1.0, 1.0};
+  std::vector<Eigen::MatrixXd> coefficients;
+  for (double offset : {0.0, 1.0}) {
+    Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(3, 6);
+    matrix(0, 4) = 1.0;
+    matrix(0, 5) = offset;
+    coefficients.push_back(matrix);
+  }
+
+  geometry_utils::Trajectory source(durations, coefficients);
+  geometry_utils::Trajectory partial;
+  ASSERT_TRUE(source.getPartialTrajectoryByTime(1.0, 1.5, partial));
+  ASSERT_EQ(partial.getPieceNum(), 1);
+  EXPECT_DOUBLE_EQ(partial[0].getDuration(), 0.5);
+  EXPECT_DOUBLE_EQ(partial.start_WT, source.start_WT + 1.0);
+  EXPECT_NEAR(partial.getPos(0.0).x(), 1.0, 1.0e-12);
+  EXPECT_NEAR(partial.getPos(0.5).x(), 1.5, 1.0e-12);
+  EXPECT_TRUE(partial.getState(0.0).allFinite());
+}
+
+TEST(PlannerTrajectory, PartialSliceEndingAtPieceBoundaryKeepsLocalDuration) {
+  std::vector<double> durations{1.0, 1.0};
+  std::vector<Eigen::MatrixXd> coefficients;
+  for (double offset : {0.0, 1.0}) {
+    Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(3, 6);
+    matrix(0, 4) = 1.0;
+    matrix(0, 5) = offset;
+    coefficients.push_back(matrix);
+  }
+
+  geometry_utils::Trajectory source(durations, coefficients);
+  geometry_utils::Trajectory partial;
+  ASSERT_TRUE(source.getPartialTrajectoryByTime(0.0, 1.0, partial));
+  ASSERT_EQ(partial.getPieceNum(), 1);
+  EXPECT_DOUBLE_EQ(partial[0].getDuration(), 1.0);
+  EXPECT_NEAR(partial.getPos(partial.getTotalDuration()).x(), 1.0, 1.0e-12);
+  EXPECT_TRUE(partial.getState(partial.getTotalDuration()).allFinite());
+}
+
+TEST(PlannerTrajectory, PartialSliceMayCrossMixedDegreeCommandBoundary) {
+  Eigen::MatrixXd main_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  main_coefficients(0, 6) = 1.0;
+  Eigen::MatrixXd backup_coefficients = Eigen::MatrixXd::Zero(3, 6);
+  backup_coefficients(0, 4) = 0.5;
+  geometry_utils::Trajectory command(
+      {0.243, 1.0}, {main_coefficients, backup_coefficients});
+  command.start_WT = 10.0;
+
+  geometry_utils::Trajectory prefix;
+  ASSERT_TRUE(command.getPartialTrajectoryByTime(0.188, 0.388, prefix));
+  ASSERT_EQ(prefix.getPieceNum(), 2);
+  EXPECT_EQ(prefix[0].getDegree(), 7);
+  EXPECT_EQ(prefix[1].getDegree(), 5);
+  EXPECT_NEAR(prefix[0].getDuration(), 0.055, 1.0e-12);
+  EXPECT_NEAR(prefix[1].getDuration(), 0.145, 1.0e-12);
+  EXPECT_NEAR(prefix.getTotalDuration(), 0.2, 1.0e-12);
+  EXPECT_TRUE(prefix.getState(0.0).isApprox(command.getState(0.188), 1.0e-12));
+  EXPECT_TRUE(prefix.getState(0.2).isApprox(command.getState(0.388), 1.0e-12));
+}
+
+TEST(PlannerTrajectory, TrajectoryRejectsMismatchedDurationAndCoefficientInputs) {
+  const std::vector<double> durations{1.0};
+  const std::vector<Eigen::MatrixXd> coefficients;
+  EXPECT_THROW((geometry_utils::Trajectory(durations, coefficients)),
+               std::invalid_argument);
+}
+
+TEST(PlannerTrajectory, PieceAccessRejectsOutOfRangeIndices) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory trajectory({1.0}, {coefficients});
+
+  EXPECT_THROW(static_cast<void>(trajectory[-1]), std::out_of_range);
+  EXPECT_THROW(static_cast<void>(trajectory[1]), std::out_of_range);
+}
+
+TEST(PlannerTrajectory, CumulativeTimeOverflowFailsClosed) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  const double large_duration = std::numeric_limits<double>::max() * 0.75;
+  geometry_utils::Trajectory trajectory(
+      {large_duration, large_duration}, {coefficients, coefficients});
+
+  EXPECT_FALSE(std::isfinite(trajectory.getTotalDuration()));
+  EXPECT_FALSE(std::isfinite(trajectory.getWaypointTT(1)));
+
+  trajectory.start_WT = std::numeric_limits<double>::max();
+  geometry_utils::Trajectory partial;
+  EXPECT_FALSE(trajectory.getPartialTrajectoryByID(1, -1, partial));
+  EXPECT_TRUE(partial.empty());
+}
+
+TEST(PlannerTrajectory, PartialTimeSliceRejectsWallTimeOverflow) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  const double maximum = std::numeric_limits<double>::max();
+  geometry_utils::Trajectory trajectory({maximum * 0.75}, {coefficients});
+  trajectory.start_WT = maximum * 0.75;
+  geometry_utils::Trajectory partial;
+
+  EXPECT_FALSE(trajectory.getPartialTrajectoryByTime(
+      maximum * 0.5, maximum * 0.6, partial));
+  EXPECT_TRUE(partial.empty());
+}
+
+TEST(PlannerTrajectory, InvalidTrajectoryEvaluationFailsClosed) {
+  geometry_utils::Trajectory empty;
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  EXPECT_FALSE(empty.getState(0.0, state));
+  EXPECT_FALSE(empty.getPos(0.0).allFinite());
+  EXPECT_FALSE(empty.getState(0.0).allFinite());
+  EXPECT_FALSE(std::isfinite(empty.getWaypointTT(-1)));
+
+  empty.start_WT = 42.0;
+  empty.clear();
+  EXPECT_DOUBLE_EQ(empty.start_WT, 0.0);
+
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory malformed({0.0}, {coefficients});
+  EXPECT_FALSE(malformed.getState(0.0, state));
+  EXPECT_FALSE(malformed.getPos(0.0).allFinite());
+}
+
+TEST(PlannerTrajectory, PieceRejectsMalformedAndLowDegreeRateInputs) {
+  const geometry_utils::Piece constant_piece(
+      1.0, Eigen::MatrixXd::Zero(3, 1));
+  EXPECT_TRUE(constant_piece.getPos(0.5).isApprox(Eigen::Vector3d::Zero()));
+  EXPECT_DOUBLE_EQ(constant_piece.getMaxVelRate(), 0.0);
+  EXPECT_DOUBLE_EQ(constant_piece.getMaxAccRate(), 0.0);
+  EXPECT_DOUBLE_EQ(constant_piece.getMaxJerRate(), 0.0);
+  EXPECT_TRUE(constant_piece.checkMaxVelRate(1.0));
+  EXPECT_TRUE(constant_piece.checkMaxAccRate(1.0));
+  EXPECT_FALSE(constant_piece.getPos(
+      std::numeric_limits<double>::quiet_NaN()).allFinite());
+  EXPECT_EQ(constant_piece.normalizeVelCoeffMat().cols(), 0);
+  EXPECT_EQ(constant_piece.normalizeAccCoeffMat().cols(), 0);
+  EXPECT_EQ(constant_piece.normalizeJerCoeffMat().cols(), 0);
+
+  const geometry_utils::Piece malformed_piece(
+      1.0, Eigen::MatrixXd::Zero(2, 6));
+  EXPECT_FALSE(malformed_piece.getPos(0.0).allFinite());
+  EXPECT_FALSE(std::isfinite(malformed_piece.getMaxVelRate()));
+  EXPECT_FALSE(std::isfinite(malformed_piece.getMaxAccRate()));
+  EXPECT_FALSE(std::isfinite(malformed_piece.getMaxJerRate()));
+  EXPECT_FALSE(malformed_piece.checkMaxVelRate(1.0));
+  EXPECT_FALSE(malformed_piece.checkMaxAccRate(1.0));
+  EXPECT_FALSE(constant_piece.checkMaxVelRate(
+      std::numeric_limits<double>::quiet_NaN()));
+  EXPECT_FALSE(constant_piece.checkMaxAccRate(-1.0));
+}
+
+TEST(PlannerTrajectory, NonFiniteAccelerationBoundIsClassifiedExplicitly) {
+  const geometry_utils::Piece malformed_piece(
+      1.0, Eigen::MatrixXd::Zero(2, 6));
+  EXPECT_FALSE(std::isfinite(
+      navigation_planning_backend::polynomialAccelerationBound(malformed_piece)));
+}
+
+TEST(PlannerTrajectory, TrajectoryRateCertificatesFailClosedAndSupportAliasing) {
+  const Eigen::MatrixXd valid_coefficients = Eigen::MatrixXd::Zero(3, 1);
+  const geometry_utils::Piece valid_piece(1.0, valid_coefficients);
+  const geometry_utils::Piece malformed_piece(1.0, Eigen::MatrixXd::Zero(2, 6));
+  geometry_utils::Trajectory mixed;
+  mixed.emplace_back(malformed_piece);
+  mixed.emplace_back(valid_piece);
+  EXPECT_FALSE(std::isfinite(mixed.getMaxVelRate()));
+  EXPECT_FALSE(std::isfinite(mixed.getMaxAccRate()));
+  EXPECT_FALSE(std::isfinite(mixed.getMaxJerRate()));
+
+  geometry_utils::Trajectory empty;
+  EXPECT_FALSE(empty.checkMaxVelRate(1.0));
+  EXPECT_FALSE(empty.checkMaxAccRate(1.0));
+
+  geometry_utils::Trajectory aliased({1.0}, {valid_coefficients});
+  aliased.append(aliased);
+  EXPECT_EQ(aliased.size(), 2U);
+  EXPECT_TRUE(aliased.getPartialTrajectoryByID(0, -1, aliased));
+  EXPECT_EQ(aliased.size(), 2U);
+  EXPECT_TRUE(aliased.getPartialTrajectoryByTime(0.0, 0.5, aliased));
+  EXPECT_EQ(aliased.size(), 1U);
+}
+
+TEST(PlannerTrajectory, PieceRateCertificateBoundsRootSearchAtInitialBoundary) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
+  coefficients(0, 0) = 0.5;
+  coefficients(0, 1) = 0.0625;
+  const geometry_utils::Piece piece(1.0, coefficients);
+
+  EXPECT_NEAR(piece.getMaxVelRate(), 1.0625, 1.0e-9);
+}
+
+TEST(PlannerTrajectory, PieceRateRootSearchExpandsAwayFromExecutionInterval) {
+  // v(t) = t + 0.0625 has a squared-speed stationary point at the initial
+  // auxiliary left bound. The search must move farther left, not converge
+  // toward the legitimate t=0 execution boundary.
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
+  coefficients(0, 0) = 0.5;
+  coefficients(0, 1) = 0.0625;
+  const geometry_utils::Piece boundary_root_piece(1.0, coefficients);
+  EXPECT_TRUE(std::isfinite(boundary_root_piece.getMaxVelRate()));
+
+  // A normal stop starts with zero acceleration, so d|v|^2/dt is zero at
+  // t=0. Extrema certification must remain finite for that common boundary.
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(1) = Eigen::Vector3d{1.0, 0.0, 0.0};
+  const auto stop = navigation_planning_backend::minimumSnapStopPiece(initial, 1.0);
+  EXPECT_TRUE(std::isfinite(stop.getMaxVelRate()));
+  EXPECT_TRUE(std::isfinite(stop.getMaxAccRate()));
+  EXPECT_TRUE(std::isfinite(stop.getMaxJerRate()));
+}
+
+TEST(PlannerTrajectory, RootFinderRejectsDegenerateNumericalInputs) {
+  const Eigen::VectorXd empty;
+  EXPECT_EQ(math_utils::RootFinder::polyConv(empty, Eigen::VectorXd::Ones(1)).size(), 0);
+  EXPECT_EQ(math_utils::RootFinder::polySqr(empty).size(), 0);
+
+  const Eigen::VectorXd non_finite = Eigen::VectorXd::Constant(
+      2, std::numeric_limits<double>::quiet_NaN());
+  EXPECT_TRUE(math_utils::RootFinder::solvePolynomial(
+      non_finite, 0.0, 1.0, 1.0e-6).empty());
+  EXPECT_EQ(math_utils::RootFinder::countRoots(non_finite, 0.0, 1.0), -1);
+  EXPECT_TRUE(math_utils::RootFinder::solvePolynomial(
+      Eigen::VectorXd::Ones(2), 1.0, 0.0, 1.0e-6).empty());
+  EXPECT_EQ(math_utils::RootFinder::countRoots(
+      Eigen::VectorXd::Ones(2), 1.0, 0.0), -1);
+  EXPECT_EQ(math_utils::RootFinder::countRoots(Eigen::VectorXd::Ones(1), 0.0, 1.0), 0);
+
+  Eigen::VectorXd linear_with_zero(2);
+  linear_with_zero << 1.0, 0.0;
+  EXPECT_EQ(math_utils::RootFinder::countRoots(linear_with_zero, -1.0, 1.0), 1);
+  Eigen::VectorXd repeated_zero(3);
+  repeated_zero << 1.0, 0.0, 0.0;
+  EXPECT_EQ(math_utils::RootFinder::countRoots(repeated_zero, -1.0, 1.0), 1);
+
+  // x^6 + 1 has no real roots.  The non-isolation companion-matrix path
+  // must reject both signs of the complex imaginary component.
+  Eigen::VectorXd complex_only = Eigen::VectorXd::Zero(7);
+  complex_only(0) = 1.0;
+  complex_only(6) = 1.0;
+  EXPECT_TRUE(math_utils::RootFinder::solvePolynomial(
+      complex_only, -2.0, 2.0, 1.0e-6, false).empty());
+}
+
+TEST(PlannerTrajectory, NormalizeAngleHandlesExtremeAndNonFiniteInputs) {
+  const double normalized = geometry_utils::normalize_angle(
+      std::numeric_limits<double>::max());
+  EXPECT_TRUE(std::isfinite(normalized));
+  EXPECT_LE(std::abs(normalized), M_PI);
+  EXPECT_TRUE(std::isnan(geometry_utils::normalize_angle(
+      std::numeric_limits<double>::infinity())));
+}
+
+TEST(PlannerTrajectory, FovPlanesHaveNoUninitializedRowsAndAnglesArePerInstance) {
+  Eigen::MatrixX4d planes;
+  std::vector<Eigen::Matrix3d> points;
+  geometry_utils::GetFovPlanes(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero(),
+                               planes, points);
+  ASSERT_EQ(planes.rows(), 8);
+  ASSERT_EQ(points.size(), 8U);
+  EXPECT_TRUE(planes.allFinite());
+
+  navigation_planning_backend::FOVChecker narrow(
+      navigation_planning_backend::OMNI, 0.0, -5.0, 35.0);
+  navigation_planning_backend::FOVChecker wide(
+      navigation_planning_backend::OMNI, 0.0, -35.0, 35.0);
+  Eigen::MatrixX4d narrow_planes;
+  Eigen::MatrixX4d wide_planes;
+  narrow.getFovCheckPlane(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero(),
+                          narrow_planes);
+  wide.getFovCheckPlane(Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero(),
+                        wide_planes);
+  ASSERT_TRUE(narrow_planes.allFinite());
+  ASSERT_TRUE(wide_planes.allFinite());
+  EXPECT_GT((narrow_planes - wide_planes).norm(), 1.0e-3);
+}
+
+TEST(PlannerTrajectory, SensingHorizonCutIsTransactionalOnInfeasiblePolytope) {
+  navigation_planning_backend::FOVChecker checker(
+      navigation_planning_backend::OMNI, 0.0, -35.0, 35.0);
+  geometry_utils::Polytope poly;
+  EXPECT_FALSE(checker.cutPolyBySensingHorizon(
+      navigation_math::Vec3f::Zero(), navigation_math::Vec3f::UnitX(), 1.0,
+      poly));
+  EXPECT_TRUE(poly.empty());
+}
+
+TEST(PlannerTrajectory, FlatnessMapHasSafeDefaultsAndRejectsInvalidReset) {
+  flatness::FlatnessMap map;
+  double thrust = 0.0;
+  Eigen::Vector4d quaternion;
+  Eigen::Vector3d angular_rate;
+  map.forward(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(),
+              Eigen::Vector3d::Zero(), 0.0, 0.0, thrust, quaternion, angular_rate);
+  EXPECT_TRUE(std::isfinite(thrust));
+  EXPECT_TRUE(quaternion.allFinite());
+  EXPECT_TRUE(angular_rate.allFinite());
+  EXPECT_THROW(map.reset(0.0, 9.81, 0.0, 0.0, 0.0, 1.0e-4), std::invalid_argument);
+}
+
+TEST(PlannerTrajectory, PartialTrajectoryByIdAcceptsExclusiveEndSentinel) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  coefficients(0, 4) = 1.0;
+  geometry_utils::Trajectory source({1.0, 2.0}, {coefficients, coefficients});
+  source.start_WT = 10.0;
+  geometry_utils::Trajectory partial;
+
+  ASSERT_TRUE(source.getPartialTrajectoryByID(1, -1, partial));
+  ASSERT_EQ(partial.getPieceNum(), 1);
+  EXPECT_DOUBLE_EQ(partial.start_WT, 11.0);
+  EXPECT_DOUBLE_EQ(partial.getTotalDuration(), 2.0);
+  EXPECT_FALSE(source.getPartialTrajectoryByID(0, 3, partial));
+}
+
+TEST(PlannerTrajectory, SweepUsesNextPieceAtExactBoundary) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({0.5, 0.5}, {coefficients, coefficients});
+  geometry_utils::Trajectory yaw({0.5, 0.5}, {coefficients, coefficients});
+  position.start_WT = yaw.start_WT = 10.0;
+
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = position;
+  candidate.yaw = yaw;
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  const auto location = navigation_planning_backend::locatePieceForSweep(
+      candidate.position, 0.5);
+  ASSERT_TRUE(location);
+  EXPECT_EQ(location->index, 1);
+  EXPECT_DOUBLE_EQ(location->local_time, 0.0);
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      SweepWorld{}, candidate, 10.5,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, SweepAdvancesAcrossNumericalPieceBoundary) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 1.0;
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({0.2, 0.8}, {coefficients, coefficients});
+  geometry_utils::Trajectory yaw({0.2, 0.8}, {coefficients, coefficients});
+  position.start_WT = yaw.start_WT = 10.0;
+
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = position;
+  candidate.yaw = yaw;
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  const double just_before_boundary = 0.2 - 1.0e-15;
+  const auto location = navigation_planning_backend::locatePieceForSweep(
+      candidate.position, just_before_boundary);
+  ASSERT_TRUE(location);
+  EXPECT_EQ(location->index, 1);
+  EXPECT_DOUBLE_EQ(location->local_time, 0.0);
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      SweepWorld{}, candidate, 10.2 - 1.0e-15,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, CommandTrajectoryTimePreservesEstablishedSamplingSemantics) {
+  const auto before = navigation_planning_backend::commandTrajectoryTime(9.75, 10.0, 2.0);
+  EXPECT_FALSE(before.finished);
+  EXPECT_DOUBLE_EQ(before.trajectory_time_s, -0.25);
+
+  const auto start = navigation_planning_backend::commandTrajectoryTime(10.0, 10.0, 2.0);
+  EXPECT_FALSE(start.finished);
+  EXPECT_DOUBLE_EQ(start.trajectory_time_s, 0.0);
+
+  const auto middle = navigation_planning_backend::commandTrajectoryTime(11.25, 10.0, 2.0);
+  EXPECT_FALSE(middle.finished);
+  EXPECT_DOUBLE_EQ(middle.trajectory_time_s, 1.25);
+
+  const auto finished = navigation_planning_backend::commandTrajectoryTime(12.1, 10.0, 2.0);
+  EXPECT_TRUE(finished.finished);
+  EXPECT_DOUBLE_EQ(finished.trajectory_time_s, 2.0);
+}
+
+TEST(PlannerTrajectory, ExactCommandClockUsesIntegerEpochDelta) {
+  constexpr double start_s = 1788103865.180704;
+  constexpr double duration_s = 0.000123456789;
+  const auto start_ns = navigation_common::secondsToNanoseconds(start_s);
+  const auto end_ns = navigation_common::secondsSumToNanoseconds(start_s, duration_s);
+  ASSERT_TRUE(start_ns.has_value());
+  ASSERT_TRUE(end_ns.has_value());
+
+  const auto at_start = navigation_planning_backend::commandTrajectoryTime(
+      *start_ns, *start_ns, *end_ns, duration_s);
+  EXPECT_FALSE(at_start.finished);
+  EXPECT_DOUBLE_EQ(at_start.trajectory_time_s, 0.0);
+
+  const auto before_end = navigation_planning_backend::commandTrajectoryTime(
+      *end_ns - 1, *start_ns, *end_ns, duration_s);
+  EXPECT_FALSE(before_end.finished);
+  EXPECT_LT(before_end.trajectory_time_s, duration_s);
+
+  const auto at_end = navigation_planning_backend::commandTrajectoryTime(
+      *end_ns, *start_ns, *end_ns, duration_s);
+  EXPECT_FALSE(at_end.finished);
+  EXPECT_DOUBLE_EQ(at_end.trajectory_time_s, duration_s);
+
+  const auto after_end = navigation_planning_backend::commandTrajectoryTime(
+      *end_ns + 1, *start_ns, *end_ns, duration_s);
+  EXPECT_TRUE(after_end.finished);
+  EXPECT_DOUBLE_EQ(after_end.trajectory_time_s, duration_s);
+}
+
+TEST(PlannerTrajectory, HotReplanUsesExecutableCommandClock) {
+  constexpr double history_start_wall_time_s = 41.116;
+  constexpr double command_start_wall_time_s = 43.520;
+  constexpr double replan_start_wall_time_s = 43.720;
+  constexpr double forward_time_s = 0.18;
+  constexpr double emergency_duration_s = 1.468;
+
+  const auto executable = navigation_planning_backend::hotReplanWindow(
+      replan_start_wall_time_s, command_start_wall_time_s,
+      forward_time_s, emergency_duration_s);
+  ASSERT_TRUE(executable.valid);
+  EXPECT_FALSE(executable.reaches_command_end);
+  EXPECT_NEAR(executable.start_tt_s, 0.2, 1.0e-12);
+  EXPECT_NEAR(executable.state_tt_s, 0.38, 1.0e-12);
+
+  const auto stale_history = navigation_planning_backend::hotReplanWindow(
+      replan_start_wall_time_s, history_start_wall_time_s,
+      forward_time_s, emergency_duration_s);
+  ASSERT_TRUE(stale_history.valid);
+  EXPECT_TRUE(stale_history.reaches_command_end);
+}
+
+TEST(PlannerTrajectory, HotReplanAcceptsNanosecondBoundaryRoundoffOnly) {
+  constexpr double replan_start_wall_time_s = 27.072;
+  const double command_start_wall_time_s = std::nextafter(
+      replan_start_wall_time_s, std::numeric_limits<double>::infinity());
+
+  const auto rounded_boundary = navigation_planning_backend::hotReplanWindow(
+      replan_start_wall_time_s, command_start_wall_time_s, 0.4, 2.0);
+  ASSERT_TRUE(rounded_boundary.valid);
+  EXPECT_DOUBLE_EQ(rounded_boundary.start_tt_s, 0.0);
+  EXPECT_DOUBLE_EQ(rounded_boundary.state_tt_s, 0.4);
+
+  const double one_ulp = command_start_wall_time_s - replan_start_wall_time_s;
+  const auto genuinely_early = navigation_planning_backend::hotReplanWindow(
+      replan_start_wall_time_s, command_start_wall_time_s + 8.0 * one_ulp,
+      0.4, 2.0);
+  EXPECT_FALSE(genuinely_early.valid);
+}
+
+TEST(PlannerTrajectory, HotReplanClockFailsClosedAtInvalidBoundaries) {
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(navigation_planning_backend::hotReplanWindow(
+      nan, 10.0, 0.18, 1.0).valid);
+  EXPECT_FALSE(navigation_planning_backend::hotReplanWindow(
+      9.9, 10.0, 0.18, 1.0).valid);
+  EXPECT_FALSE(navigation_planning_backend::hotReplanWindow(
+      10.1, 10.0, -0.18, 1.0).valid);
+
+  const auto ended = navigation_planning_backend::hotReplanWindow(
+      10.9, 10.0, 0.18, 1.0);
+  ASSERT_TRUE(ended.valid);
+  EXPECT_TRUE(ended.reaches_command_end);
+}
+
+TEST(PlannerTrajectory, InheritedBackupIntervalClipsToCandidateClock) {
+  const auto window = navigation_planning_backend::hotReplanWindow(
+      43.720, 43.520, 0.18, 1.468);
+  ASSERT_TRUE(window.valid);
+
+  const auto already_on_backup =
+      navigation_planning_backend::inheritedBackupInterval(0.0, window, 2.0);
+  ASSERT_TRUE(already_on_backup.valid);
+  ASSERT_TRUE(already_on_backup.present);
+  EXPECT_DOUBLE_EQ(already_on_backup.begin_tt_s, 0.0);
+  EXPECT_NEAR(already_on_backup.end_tt_s, 0.18, 1.0e-12);
+
+  const auto enters_backup =
+      navigation_planning_backend::inheritedBackupInterval(0.3, window, 2.0);
+  ASSERT_TRUE(enters_backup.valid);
+  ASSERT_TRUE(enters_backup.present);
+  EXPECT_NEAR(enters_backup.begin_tt_s, 0.1, 1.0e-12);
+  EXPECT_NEAR(enters_backup.end_tt_s, 0.18, 1.0e-12);
+
+  EXPECT_FALSE(navigation_planning_backend::inheritedBackupInterval(
+      0.0, window, 0.1).valid);
+}
+
+TEST(PlannerTrajectory, StateTransitionPiecePreservesCompletePvajBoundary) {
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(0) = Eigen::Vector3d(1.0, -2.0, 3.0);
+  initial.col(1) = Eigen::Vector3d(2.0, 0.5, -0.25);
+  initial.col(2) = Eigen::Vector3d(-0.4, 0.2, 0.3);
+  initial.col(3) = Eigen::Vector3d(0.1, -0.2, 0.05);
+
+  navigation_math::StatePVAJ terminal = navigation_math::StatePVAJ::Zero();
+  terminal.col(0) = Eigen::Vector3d(2.5, -1.0, 2.8);
+  terminal.col(1) = Eigen::Vector3d(1.1, 0.8, 0.0);
+  terminal.col(2) = Eigen::Vector3d(0.2, -0.1, -0.15);
+  terminal.col(3) = Eigen::Vector3d(-0.05, 0.1, 0.02);
+
+  const auto piece = navigation_planning_backend::minimumSnapStateTransitionPiece(
+      initial, terminal, 0.8);
+  ASSERT_TRUE(piece.has_value());
+  EXPECT_TRUE(piece->getState(0.0).isApprox(initial, 1.0e-9));
+  EXPECT_TRUE(piece->getState(0.8).isApprox(terminal, 1.0e-8));
+}
+
+TEST(PlannerTrajectory, StateTransitionPieceRejectsInvalidBoundary) {
+  navigation_math::StatePVAJ finite = navigation_math::StatePVAJ::Zero();
+  EXPECT_FALSE(navigation_planning_backend::minimumSnapStateTransitionPiece(
+      finite, finite, 0.0).has_value());
+
+  auto non_finite = finite;
+  non_finite(0, 0) = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(navigation_planning_backend::minimumSnapStateTransitionPiece(
+      non_finite, finite, 0.8).has_value());
+}
+
+TEST(PlannerTrajectory, YawHandoffRequiresRateAndAccelerationCertificate) {
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  navigation_math::StatePVAJ terminal = navigation_math::StatePVAJ::Zero();
+  terminal(0, 0) = 0.35;
+
+  EXPECT_FALSE(navigation_planning_backend::
+      minimumSnapStateTransitionPieceWithinRateAccelerationLimits(
+          initial, terminal, 0.5, 1.0, 0.3));
+
+  const auto certified = navigation_planning_backend::
+      minimumSnapStateTransitionPieceWithinRateAccelerationLimits(
+          initial, terminal, 5.0, 1.5, 1.0);
+  ASSERT_TRUE(certified.has_value());
+  EXPECT_LE(certified->getMaxVelRate(), 1.5 + 1.0e-6);
+  EXPECT_LE(certified->getMaxAccRate(), 1.0 + 1.0e-6);
+}
+
+TEST(PlannerTrajectory, DevelopmentYawEnvelopeRejectsRateAndAccelerationOverflow) {
+  const std::vector<double> durations{5.0};
+  const Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  const geometry_utils::Trajectory position(durations, {coefficients});
+  traj_opt::YawTrajOpt optimizer(1.5, 1.0);
+  geometry_utils::Trajectory output;
+
+  navigation_math::Vec4f valid_initial = navigation_math::Vec4f::Zero();
+  ASSERT_TRUE(optimizer.optimizeToTarget(valid_initial, M_PI_2, position, output));
+  EXPECT_LE(output.getMaxVelRate(), 1.5 + 1.0e-6);
+  EXPECT_LE(output.getMaxAccRate(), 1.0 + 1.0e-6);
+
+  auto excessive_rate = valid_initial;
+  excessive_rate(1) = 1.5 + 2.0e-6;
+  EXPECT_FALSE(optimizer.optimizeToTarget(excessive_rate, M_PI_2, position, output));
+  EXPECT_EQ(optimizer.lastDiagnostics().failure,
+            traj_opt::YawOptimizationFailure::kInvalidInput);
+
+  auto excessive_acceleration = valid_initial;
+  excessive_acceleration(2) = 1.0 + 2.0e-6;
+  EXPECT_FALSE(optimizer.optimizeToTarget(
+      excessive_acceleration, M_PI_2, position, output));
+  EXPECT_EQ(optimizer.lastDiagnostics().failure,
+            traj_opt::YawOptimizationFailure::kInvalidInput);
+}
+
+TEST(PlannerTrajectory, OnlySuccessfulExpResultMayBuildAndCommitNewCandidate) {
+  EXPECT_TRUE(navigation_planning_backend::expResultMayBuildCommandCandidate(navigation_math::SUCCESS));
+  EXPECT_FALSE(navigation_planning_backend::expResultMayBuildCommandCandidate(navigation_math::NO_NEED));
+  EXPECT_FALSE(navigation_planning_backend::expResultMayBuildCommandCandidate(navigation_math::FAILED));
+  EXPECT_FALSE(navigation_planning_backend::expResultMayBuildCommandCandidate(navigation_math::NEW_TRAJ));
+  EXPECT_FALSE(navigation_planning_backend::expResultMayBuildCommandCandidate(navigation_math::EMER));
+
+  EXPECT_TRUE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::SUCCESS));
+  EXPECT_TRUE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::NO_NEED));
+  EXPECT_TRUE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::FINISH));
+  EXPECT_FALSE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::FAILED));
+  EXPECT_FALSE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::OPT_FAILED));
+  EXPECT_FALSE(navigation_planning_backend::backupResultMayBuildCommandCandidate(navigation_math::EMER));
+}
+
+TEST(PlannerTrajectory, VisibleReplacementDoesNotEraseFutureBackupSuffix) {
+  EXPECT_TRUE(navigation_planning_backend::shouldRetainBackupCapableCommand(
+      false, true));
+  EXPECT_FALSE(navigation_planning_backend::shouldRetainBackupCapableCommand(
+      true, true));
+  EXPECT_FALSE(navigation_planning_backend::shouldRetainBackupCapableCommand(
+      false, false));
+}
+
+TEST(PlannerTrajectory, FlatnessGateRejectsExcessBodyRateAndThrust) {
+  traj_opt::Config config;
+  config.mass = 1.0;
+  config.grav = 9.81;
+  config.dh = 0.0;
+  config.dv = 0.0;
+  config.cp = 0.0;
+  config.v_eps = 1.0e-4;
+  config.max_omg = 2.0;
+  config.min_acc_thr = 6.0;
+  config.max_acc_thr = 15.0;
+  config.quadrotor_flatness.reset(config.mass, config.grav, config.dh, config.dv,
+                                  config.cp, config.v_eps);
+
+  Eigen::MatrixXd hover_coefficients = Eigen::MatrixXd::Zero(3, 6);
+  hover_coefficients(2, 5) = 3.0;
+  geometry_utils::Trajectory hover({1.0}, {hover_coefficients});
+  traj_opt::TrajectoryDynamicReport hover_report;
+  EXPECT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+      hover, config, &hover_report));
+  EXPECT_NEAR(hover_report.minimum_thrust_n, 9.81, 1.0e-9);
+  const auto over_budget_report = traj_opt::evaluateTrajectoryDynamics(
+      hover, config, 1.0e-300);
+  EXPECT_FALSE(over_budget_report.finite);
+
+  // For this representable duration, duration * intervals / intervals rounds
+  // one ulp above duration. The hard gate must sample the exact endpoint.
+  geometry_utils::Trajectory rounded_endpoint_hover(
+      {0.8754185709044305}, {hover_coefficients});
+  traj_opt::TrajectoryDynamicReport rounded_endpoint_report;
+  EXPECT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+      rounded_endpoint_hover, config, &rounded_endpoint_report, 0.005));
+  EXPECT_TRUE(rounded_endpoint_report.finite);
+  EXPECT_EQ(rounded_endpoint_report.nonfinite_mask, 0U);
+
+  // x(t)=10*t^3 creates 60 m/s^3 jerk at t=0, which maps to a body rate far
+  // above the configured envelope even though thrust remains finite.
+  Eigen::MatrixXd aggressive_coefficients = Eigen::MatrixXd::Zero(3, 6);
+  aggressive_coefficients(0, 2) = 10.0;
+  aggressive_coefficients(2, 5) = 3.0;
+  geometry_utils::Trajectory aggressive({1.0}, {aggressive_coefficients});
+  traj_opt::TrajectoryDynamicReport aggressive_report;
+  EXPECT_FALSE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+      aggressive, config, &aggressive_report));
+  EXPECT_GT(aggressive_report.maximum_body_rate_rad_s, config.max_omg);
+
+  Eigen::MatrixXd thrust_coefficients = Eigen::MatrixXd::Zero(3, 6);
+  thrust_coefficients(2, 3) = 10.0;  // z(t)=10*t^2, constant 20 m/s^2 up.
+  geometry_utils::Trajectory excessive_thrust({1.0}, {thrust_coefficients});
+  traj_opt::TrajectoryDynamicReport thrust_report;
+  EXPECT_FALSE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+      excessive_thrust, config, &thrust_report));
+  EXPECT_GT(thrust_report.maximum_thrust_n, config.max_acc_thr);
+
+  Eigen::MatrixXd yaw_coefficients = Eigen::MatrixXd::Zero(3, 6);
+  yaw_coefficients(0, 4) = 3.0;  // Constant 3 rad/s yaw rate.
+  geometry_utils::Trajectory fast_yaw({1.0}, {yaw_coefficients});
+  traj_opt::TrajectoryDynamicReport yaw_report;
+  EXPECT_FALSE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+      hover, config, &yaw_report, 0.01, &fast_yaw));
+  EXPECT_GT(yaw_report.maximum_body_rate_rad_s, config.max_omg);
+}
+
+TEST(PlannerTrajectory, EmergencyBundleIsAtomicallyOwnedByBackup) {
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  position_coefficients(0, 6) = 1.0;
+  position_coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {position_coefficients});
+  position.start_WT = 42.0;
+
+  Eigen::MatrixXd yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  yaw_coefficients(0, 7) = 0.4;
+  geometry_utils::Trajectory yaw({1.0}, {yaw_coefficients});
+  yaw.start_WT = 42.0;
+
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  EXPECT_FALSE(command.empty());
+  EXPECT_TRUE(command.backupTrajectoryAvailable());
+  EXPECT_DOUBLE_EQ(command.getBackupTrajStartTT(), 0.0);
+  EXPECT_TRUE(command.isTTOnBackupTraj(0.01));
+  EXPECT_NEAR(command.getPos(0.5).x(), 0.5, 1.0e-12);
+  EXPECT_NEAR(command.getYaw(0.5).x(), 0.4, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, FinalCommandYawRateCertificateCoversComposedBundle) {
+  Eigen::MatrixXd slow_yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  slow_yaw_coefficients(0, 6) = 1.0;
+  geometry_utils::Trajectory slow_yaw({1.0}, {slow_yaw_coefficients});
+
+  navigation_planning_backend::CandidateCommandBundle slow_candidate;
+  slow_candidate.yaw = slow_yaw;
+  EXPECT_TRUE(navigation_planning_backend::candidateYawRateWithinLimit(
+      slow_candidate, 2.0));
+
+  Eigen::MatrixXd fast_yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  fast_yaw_coefficients(0, 6) = 4.0;
+  geometry_utils::Trajectory fast_yaw({1.0}, {fast_yaw_coefficients});
+  navigation_planning_backend::CandidateCommandBundle fast_candidate;
+  fast_candidate.yaw = fast_yaw;
+  EXPECT_FALSE(navigation_planning_backend::candidateYawRateWithinLimit(
+      fast_candidate, 3.0));
+  EXPECT_FALSE(navigation_planning_backend::candidateYawRateWithinLimit(
+      fast_candidate, std::numeric_limits<double>::quiet_NaN()));
+}
+
+TEST(PlannerTrajectory, RobotStateHasDeterministicFiniteDefaults) {
+  const navigation_math::RobotState state;
+  EXPECT_TRUE(state.p.isZero());
+  EXPECT_TRUE(state.v.isZero());
+  EXPECT_TRUE(state.a.isZero());
+  EXPECT_TRUE(state.j.isZero());
+  EXPECT_TRUE(state.q.coeffs().allFinite());
+  EXPECT_DOUBLE_EQ(state.q.norm(), 1.0);
+  EXPECT_FALSE(state.rcv);
+}
+
+TEST(PlannerTrajectory, FailedCandidateLeavesEmergencyBundleUnchanged) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  position.start_WT = yaw.start_WT = 7.0;
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  EXPECT_TRUE(command.snapshot().emergency_brake);
+  const auto generation = command.generation();
+  const auto diagnostics_before = command.snapshot().diagnostics;
+  const auto before = command.getPos(0.5);
+  geometry_utils::Trajectory invalid_yaw;
+  EXPECT_FALSE(command.setEmergencyBackup(position, invalid_yaw));
+  EXPECT_EQ(command.generation(), generation);
+  EXPECT_TRUE(command.getPos(0.5).isApprox(before));
+  const auto diagnostics_after = command.snapshot().diagnostics;
+  EXPECT_EQ(diagnostics_after.generation, diagnostics_before.generation);
+  EXPECT_TRUE(diagnostics_after.candidate_start_pvaj.isApprox(
+      diagnostics_before.candidate_start_pvaj));
+}
+
+TEST(PlannerTrajectory, DiscontinuousOldToNewSpliceIsRejected) {
+  auto first_position = linearTrajectory(1.0, 10.0);
+  auto first_yaw = linearTrajectory(1.0, 10.0);
+  const auto make_bundle = [&](const auto& position, const auto& yaw,
+                               const std::uint64_t generation,
+                               const navigation_planning::CandidateRole candidate_role =
+                                   navigation_planning::CandidateRole::kMain) {
+    navigation_planning::CandidateBundle bundle;
+    bundle.pinned_world_identity = {1U, 1U, 1U, 1};
+    bundle.world_identity = bundle.pinned_world_identity;
+    bundle.localization_epoch = 1U;
+    bundle.goal_epoch = 1U;
+    bundle.request_id = 1U;
+    bundle.bundle_generation = generation;
+    bundle.start_wall_time_s = position.start_WT;
+    bundle.duration_s = position.getTotalDuration();
+    bundle.declared_start_ns =
+        navigation_common::secondsToNanoseconds(bundle.start_wall_time_s).value();
+    bundle.declared_end_ns = navigation_common::secondsSumToNanoseconds(
+        bundle.start_wall_time_s, bundle.duration_s).value();
+    bundle.valid_from_ns = bundle.declared_start_ns;
+    bundle.valid_until_ns = bundle.declared_end_ns;
+    bundle.activation_stamp_ns = bundle.valid_from_ns;
+    bundle.role = candidate_role;
+    bundle.kind = candidate_role == navigation_planning::CandidateRole::kEmergency
+        ? navigation_planning::CandidateBundleKind::kEmergencyBrake
+        : navigation_planning::CandidateBundleKind::kTerminalStop;
+    bundle.source = navigation_planning::CandidateSource::kRefined;
+    bundle.certificates = {true, true, true, true};
+    bundle.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+    bundle.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+    bundle.role_schedule = {{0.0, bundle.duration_s,
+                             navigation_planning::CandidateRole::kMain}};
+    const auto start_ns = bundle.declared_start_ns;
+    const auto end_ns = bundle.declared_end_ns;
+    bundle.evaluator = [position, yaw, start_ns, end_ns, candidate_role](
+                           const std::int64_t stamp_ns,
+                           navigation_planning::TrajectoryPoint& point) {
+      if (stamp_ns < start_ns || stamp_ns > end_ns) return false;
+      const double trajectory_time_s = std::clamp(
+          static_cast<double>(stamp_ns - start_ns) / 1.0e9,
+          0.0, position.getTotalDuration());
+      const auto pvaj = position.getState(trajectory_time_s);
+      const auto yaw_state = yaw.getState(trajectory_time_s);
+      if (!pvaj.allFinite() || !yaw_state.allFinite()) return false;
+      point.position_world = pvaj.col(0);
+      point.velocity_world = pvaj.col(1);
+      point.acceleration_world = pvaj.col(2);
+      point.jerk_world = pvaj.col(3);
+      point.yaw = yaw_state(0, 0);
+      point.yaw_rate = yaw_state(0, 1);
+      point.role = candidate_role;
+      point.trajectory_time_s = trajectory_time_s;
+      return true;
+    };
+    return bundle;
+  };
+  auto second_position = linearTrajectory(1.0, 10.5);
+  auto second_yaw = linearTrajectory(1.0, 10.5);
+  const auto first = make_bundle(first_position, first_yaw, 1U);
+  const auto second = make_bundle(second_position, second_yaw, 2U);
+  EXPECT_FALSE(navigation_planning::candidateBundleHandoffContinuous(first, second));
+}
+
+TEST(PlannerTrajectory, ExpiredEmergencyMayRebaseOnlyAfterCertifiedStop) {
+  auto emergency_position = linearTrajectory(1.0, 10.0);
+  auto emergency_yaw = linearTrajectory(1.0, 10.0);
+  auto next_position = linearTrajectory(1.0, 10.0);
+  auto next_yaw = linearTrajectory(1.0, 10.0);
+  next_position.start_WT = next_yaw.start_WT = emergency_position.start_WT +
+      emergency_position.getTotalDuration() + 0.5;
+  const auto make_bundle = [&](const auto& position, const auto& yaw,
+                               const std::uint64_t generation,
+                               const navigation_planning::CandidateRole candidate_role) {
+    navigation_planning::CandidateBundle bundle;
+    bundle.pinned_world_identity = {1U, 1U, 1U, 1};
+    bundle.world_identity = bundle.pinned_world_identity;
+    bundle.localization_epoch = 1U;
+    bundle.goal_epoch = 1U;
+    bundle.request_id = 1U;
+    bundle.bundle_generation = generation;
+    bundle.start_wall_time_s = position.start_WT;
+    bundle.duration_s = position.getTotalDuration();
+    bundle.declared_start_ns =
+        navigation_common::secondsToNanoseconds(bundle.start_wall_time_s).value();
+    bundle.declared_end_ns = navigation_common::secondsSumToNanoseconds(
+        bundle.start_wall_time_s, bundle.duration_s).value();
+    bundle.valid_from_ns = bundle.declared_start_ns;
+    bundle.valid_until_ns = bundle.declared_end_ns;
+    bundle.activation_stamp_ns = bundle.valid_from_ns;
+    bundle.role = candidate_role;
+    bundle.kind = candidate_role == navigation_planning::CandidateRole::kEmergency
+        ? navigation_planning::CandidateBundleKind::kEmergencyBrake
+        : navigation_planning::CandidateBundleKind::kTerminalStop;
+    bundle.source = navigation_planning::CandidateSource::kRefined;
+    bundle.certificates = {true, true, true, true};
+    bundle.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+    bundle.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+    bundle.role_schedule = {{0.0, bundle.duration_s, candidate_role}};
+    const auto start_ns = bundle.declared_start_ns;
+    const auto end_ns = bundle.declared_end_ns;
+    bundle.evaluator = [position, yaw, start_ns, end_ns, candidate_role](
+                           const std::int64_t stamp_ns,
+                           navigation_planning::TrajectoryPoint& point) {
+      if (stamp_ns < start_ns || stamp_ns > end_ns) return false;
+      const double trajectory_time_s = std::clamp(
+          static_cast<double>(stamp_ns - start_ns) / 1.0e9,
+          0.0, position.getTotalDuration());
+      const auto pvaj = position.getState(trajectory_time_s);
+      const auto yaw_state = yaw.getState(trajectory_time_s);
+      if (!pvaj.allFinite() || !yaw_state.allFinite()) return false;
+      point.position_world = pvaj.col(0);
+      point.velocity_world = pvaj.col(1);
+      point.acceleration_world = pvaj.col(2);
+      point.jerk_world = pvaj.col(3);
+      point.yaw = yaw_state(0, 0);
+      point.yaw_rate = yaw_state(0, 1);
+      point.role = candidate_role;
+      point.trajectory_time_s = trajectory_time_s;
+      return true;
+    };
+    return bundle;
+  };
+  const auto make_bundle_with_kind = [&](const auto& position, const auto& yaw,
+                                         const auto kind, const auto role,
+                                         const std::uint64_t generation) {
+    auto bundle = make_bundle(position, yaw, generation, role);
+    bundle.kind = kind;
+    bundle.role = role;
+    bundle.role_schedule = {{0.0, bundle.duration_s, role}};
+    return bundle;
+  };
+  const auto emergency = make_bundle_with_kind(
+      emergency_position, emergency_yaw,
+      navigation_planning::CandidateBundleKind::kEmergencyBrake,
+      navigation_planning::CandidateRole::kEmergency, 1U);
+  const auto next = make_bundle_with_kind(
+      next_position, next_yaw,
+      navigation_planning::CandidateBundleKind::kTerminalStop,
+      navigation_planning::CandidateRole::kMain, 2U);
+  EXPECT_FALSE(navigation_planning::candidateBundleHandoffContinuous(
+      emergency, next));
+  EXPECT_TRUE(navigation_planning::candidateBundleHandoffContinuous(
+      emergency, next, nullptr, true));
+}
+
+TEST(PlannerTrajectory, ExpiredBackupSuffixMayRebaseOnlyAfterCertifiedStop) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  position.start_WT = yaw.start_WT = 20.0;
+  const auto start_ns = navigation_common::secondsToNanoseconds(position.start_WT).value();
+  const auto end_ns = navigation_common::secondsSumToNanoseconds(
+      position.start_WT, position.getTotalDuration()).value();
+
+  navigation_planning::CandidateBundle previous;
+  previous.pinned_world_identity = {1U, 1U, 1U, 1};
+  previous.world_identity = previous.pinned_world_identity;
+  previous.localization_epoch = 1U;
+  previous.goal_epoch = 1U;
+  previous.request_id = 1U;
+  previous.bundle_generation = 1U;
+  previous.start_wall_time_s = position.start_WT;
+  previous.duration_s = position.getTotalDuration();
+  previous.declared_start_ns = start_ns;
+  previous.declared_end_ns = end_ns;
+  previous.valid_from_ns = start_ns;
+  previous.valid_until_ns = end_ns;
+  previous.activation_stamp_ns = previous.valid_from_ns;
+  previous.role = navigation_planning::CandidateRole::kMain;
+  previous.backup_available = true;
+  previous.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  previous.certificates = {true, true, true, false};
+  previous.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  previous.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  previous.role_schedule = {
+      {0.0, 0.5, navigation_planning::CandidateRole::kMain},
+      {0.5, 1.0, navigation_planning::CandidateRole::kBackup}};
+  previous.evaluator = [start_ns, end_ns](const std::int64_t stamp_ns,
+                                          navigation_planning::TrajectoryPoint& point) {
+    if (stamp_ns < start_ns || stamp_ns > end_ns) return false;
+    point.position_world = Eigen::Vector3d::Zero();
+    point.velocity_world = Eigen::Vector3d::Zero();
+    point.acceleration_world = Eigen::Vector3d::Zero();
+    point.jerk_world = Eigen::Vector3d::Zero();
+    point.yaw = 0.0;
+    point.yaw_rate = 0.0;
+    point.trajectory_time_s = static_cast<double>(stamp_ns - start_ns) * 1.0e-9;
+    point.role = point.trajectory_time_s >= 0.5
+        ? navigation_planning::CandidateRole::kBackup
+        : navigation_planning::CandidateRole::kMain;
+    return true;
+  };
+
+  auto next = previous;
+  next.bundle_generation = 2U;
+  next.start_wall_time_s = position.start_WT + position.getTotalDuration() + 0.25;
+  next.declared_start_ns = navigation_common::secondsToNanoseconds(
+      next.start_wall_time_s).value();
+  next.declared_end_ns = navigation_common::secondsSumToNanoseconds(
+      next.start_wall_time_s, next.duration_s).value();
+  next.valid_from_ns = next.declared_start_ns;
+  next.valid_until_ns = next.declared_end_ns;
+  next.activation_stamp_ns = next.valid_from_ns;
+  next.role = navigation_planning::CandidateRole::kMain;
+  next.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  next.backup_available = false;
+  next.certificates = {true, true, true, true};
+  const auto next_start_ns = next.declared_start_ns;
+  const auto next_end_ns = next.declared_end_ns;
+  next.role_schedule = {{0.0, next.duration_s,
+                         navigation_planning::CandidateRole::kMain}};
+  next.evaluator = [next_start_ns, next_end_ns](
+      const std::int64_t stamp_ns, navigation_planning::TrajectoryPoint& point) {
+    if (stamp_ns < next_start_ns || stamp_ns > next_end_ns) return false;
+    point.position_world = Eigen::Vector3d{5.0, 0.0, 0.0};
+    point.velocity_world = Eigen::Vector3d::Zero();
+    point.acceleration_world = Eigen::Vector3d::Zero();
+    point.jerk_world = Eigen::Vector3d::Zero();
+    point.yaw = 0.0;
+    point.yaw_rate = 0.0;
+    point.trajectory_time_s = static_cast<double>(stamp_ns - next_start_ns) * 1.0e-9;
+    point.role = navigation_planning::CandidateRole::kMain;
+    return true;
+  };
+
+  EXPECT_FALSE(navigation_planning::candidateBundleHandoffContinuous(
+      previous, next));
+  EXPECT_TRUE(navigation_planning::candidateBundleHandoffContinuous(
+      previous, next, nullptr, true));
+
+  auto terminal = previous;
+  terminal.bundle_generation = 3U;
+  terminal.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  terminal.backup_available = false;
+  terminal.role_schedule = {{0.0, terminal.duration_s,
+                             navigation_planning::CandidateRole::kMain}};
+  terminal.evaluator = [start_ns, end_ns](
+      const std::int64_t stamp_ns, navigation_planning::TrajectoryPoint& point) {
+    if (stamp_ns < start_ns || stamp_ns > end_ns) return false;
+    point.position_world = Eigen::Vector3d::Zero();
+    point.velocity_world = Eigen::Vector3d::Zero();
+    point.acceleration_world = Eigen::Vector3d::Zero();
+    point.jerk_world = Eigen::Vector3d::Zero();
+    point.yaw = 0.0;
+    point.yaw_rate = 0.0;
+    point.trajectory_time_s = static_cast<double>(stamp_ns - start_ns) * 1.0e-9;
+    point.role = navigation_planning::CandidateRole::kMain;
+    return true;
+  };
+  terminal.terminal_stop = true;
+  terminal.certificates.terminal_stop = true;
+  EXPECT_TRUE(navigation_planning::candidateBundleHandoffContinuous(
+      terminal, next, nullptr, true));
+}
+
+TEST(PlannerTrajectory, CommitDiagnosticsDescribeExactContinuousOldToNewSplice) {
+  auto first_position = linearTrajectory(1.0, 10.0);
+  auto first_yaw = linearTrajectory(1.0, 10.0);
+  navigation_planning_backend::CmdTraj command;
+  navigation_planning_backend::CommandCertificate certificate;
+  certificate.pinned_world = {1U, 1U, 1U, 1};
+  certificate.validated_world = certificate.pinned_world;
+  certificate.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  certificate.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  const auto make_candidate = [&](const auto& position, const auto& yaw) {
+    navigation_planning_backend::CandidateCommandBundle candidate;
+    candidate.position = position;
+    candidate.yaw = yaw;
+    candidate.start_wall_time = position.start_WT;
+    candidate.roles = {{0.0, position.getTotalDuration(),
+                        navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+    candidate.backup_start_tt = position.getTotalDuration();
+    candidate.backup_disposition = navigation_planning_backend::BackupDisposition::NO_NEED;
+    candidate.localization_epoch = 1U;
+    candidate.goal_epoch = 1U;
+    candidate.request_id = 1U;
+    return candidate;
+  };
+  ASSERT_TRUE(command.commitCandidate(
+      make_candidate(first_position, first_yaw), certificate));
+
+  auto second_position = offsetLinearTrajectory(1.0, 10.5, 0.5);
+  auto second_yaw = offsetLinearTrajectory(1.0, 10.5, 0.5);
+  ASSERT_TRUE(command.commitCandidate(
+      make_candidate(second_position, second_yaw), certificate));
+  const auto second = command.snapshot();
+  ASSERT_EQ(second.generation, 2U);
+  EXPECT_TRUE(second.diagnostics.previous_valid);
+  EXPECT_DOUBLE_EQ(second.diagnostics.previous_sample_tt, 0.5);
+  EXPECT_TRUE(second.diagnostics.position_residual.isZero(1.0e-12));
+  EXPECT_TRUE(second.diagnostics.velocity_residual.isZero(1.0e-12));
+  EXPECT_TRUE(second.diagnostics.acceleration_residual.isZero(1.0e-12));
+  EXPECT_TRUE(second.diagnostics.jerk_residual.isZero(1.0e-12));
+  EXPECT_NEAR(second.diagnostics.yaw_residual, 0.0, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, AckCanonicalStartEqualityPreservesTrajectoryOrigins) {
+  const auto certificate = ackHistoryTestCertificate();
+  for (const std::int64_t start_ns : {56'092'000'000LL, 83'716'000'000LL,
+                                    97'344'000'000LL}) {
+    const double product_start = static_cast<double>(start_ns) * 1.0e-9;
+    const double quotient_start = static_cast<double>(start_ns) / 1.0e9;
+    ASSERT_GT(product_start, quotient_start);
+    ASSERT_EQ(navigation_common::secondsToNanoseconds(product_start), start_ns);
+    ASSERT_EQ(navigation_common::secondsToNanoseconds(quotient_start), start_ns);
+    for (const bool previous_emergency : {false, true}) {
+      for (const bool next_emergency : {false, true}) {
+        navigation_planning_backend::CmdTraj command;
+        ASSERT_TRUE(command.commitCandidate(
+            ackHistoryTestCandidate(product_start, previous_emergency), certificate, 3U));
+        auto next = ackHistoryTestCandidate(quotient_start, next_emergency);
+        EXPECT_TRUE(command.canCommitCandidate(next));
+        ASSERT_TRUE(command.commitCandidate(std::move(next), certificate, 5U));
+        const auto committed = command.snapshot();
+        EXPECT_EQ(committed.generation, 5U);
+        EXPECT_DOUBLE_EQ(committed.position.start_WT, quotient_start);
+        EXPECT_DOUBLE_EQ(committed.yaw.start_WT, quotient_start);
+        EXPECT_EQ(committed.emergency_brake, next_emergency);
+      }
+    }
+  }
+}
+
+TEST(PlannerTrajectory, AckNanosecondOrderingAgreesAtPrecheckAndCommit) {
+  constexpr std::int64_t start_ns = 83'716'000'000LL;
+  const double current_start = static_cast<double>(start_ns) * 1.0e-9;
+  const auto certificate = ackHistoryTestCertificate();
+  for (const bool emergency : {false, true}) {
+    navigation_planning_backend::CmdTraj command;
+    ASSERT_TRUE(command.commitCandidate(
+        ackHistoryTestCandidate(current_start, emergency), certificate, 3U));
+    const auto before = command.snapshot();
+    auto earlier = ackHistoryTestCandidate(
+        static_cast<double>(start_ns - 1) / 1.0e9, emergency);
+    ASSERT_EQ(navigation_common::secondsToNanoseconds(earlier.position.start_WT),
+              start_ns - 1);
+    EXPECT_FALSE(command.canCommitCandidate(earlier));
+    EXPECT_FALSE(command.commitCandidate(std::move(earlier), certificate, 5U));
+    const auto unchanged = command.snapshot();
+    EXPECT_EQ(unchanged.generation, before.generation);
+    EXPECT_DOUBLE_EQ(unchanged.position.start_WT, before.position.start_WT);
+    EXPECT_DOUBLE_EQ(unchanged.yaw.start_WT, before.yaw.start_WT);
+    EXPECT_TRUE(unchanged.position.getState(0.25).isApprox(before.position.getState(0.25)));
+    EXPECT_EQ(unchanged.roles.size(), before.roles.size());
+    EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+        unchanged.certificate.validated_world, before.certificate.validated_world));
+    EXPECT_EQ(unchanged.diagnostics.generation, before.diagnostics.generation);
+    auto later = ackHistoryTestCandidate(
+        static_cast<double>(start_ns + 1) / 1.0e9, emergency);
+    ASSERT_EQ(navigation_common::secondsToNanoseconds(later.position.start_WT), start_ns + 1);
+    EXPECT_TRUE(command.canCommitCandidate(later));
+    EXPECT_TRUE(command.commitCandidate(std::move(later), certificate, 5U));
+    EXPECT_EQ(command.generationSnapshot(), 5U);
+  }
+}
+
+TEST(PlannerTrajectory, AckInvalidStartRejectedWithEmptyOrPopulatedHistory) {
+  const auto certificate = ackHistoryTestCertificate();
+  for (const bool populated : {false, true}) {
+    for (const bool emergency : {false, true}) {
+      for (const double invalid_start : {std::numeric_limits<double>::quiet_NaN(),
+              std::numeric_limits<double>::infinity(),
+              -std::numeric_limits<double>::infinity(), -1.0,
+              std::numeric_limits<double>::max()}) {
+        navigation_planning_backend::CmdTraj command;
+        if (populated) {
+          ASSERT_TRUE(command.commitCandidate(
+              ackHistoryTestCandidate(10.0, emergency), certificate, 3U));
+        }
+        const auto before = command.snapshot();
+        auto invalid = ackHistoryTestCandidate(invalid_start, emergency);
+        EXPECT_FALSE(command.canCommitCandidate(invalid));
+        EXPECT_FALSE(command.commitCandidate(std::move(invalid), certificate, 5U));
+        const auto unchanged = command.snapshot();
+        EXPECT_EQ(unchanged.empty, before.empty);
+        EXPECT_EQ(unchanged.generation, before.generation);
+        EXPECT_DOUBLE_EQ(unchanged.position.start_WT, before.position.start_WT);
+        EXPECT_DOUBLE_EQ(unchanged.yaw.start_WT, before.yaw.start_WT);
+        EXPECT_EQ(unchanged.roles.size(), before.roles.size());
+        EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+            unchanged.certificate.validated_world, before.certificate.validated_world));
+        EXPECT_EQ(unchanged.diagnostics.generation, before.diagnostics.generation);
+      }
+    }
+  }
+}
+
+TEST(PlannerTrajectory, AckMetadataCannotMaskOneNanosecondStartRegression) {
+  constexpr std::int64_t start_ns = 83'716'000'000LL;
+  const double current_start = static_cast<double>(start_ns) / 1.0e9;
+  const auto certificate = ackHistoryTestCertificate();
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.commitCandidate(ackHistoryTestCandidate(current_start, false),
+                                       certificate, 3U));
+  auto masked = ackHistoryTestCandidate(static_cast<double>(start_ns - 1) / 1.0e9, true);
+  masked.start_wall_time = current_start;
+  ASSERT_EQ(navigation_common::secondsToNanoseconds(masked.position.start_WT), start_ns - 1);
+  EXPECT_FALSE(command.canCommitCandidate(masked));
+  EXPECT_FALSE(command.commitCandidate(std::move(masked), certificate, 5U));
+  EXPECT_EQ(command.generationSnapshot(), 3U);
+  EXPECT_DOUBLE_EQ(command.snapshot().position.start_WT, current_start);
+}
+
+TEST(PlannerTrajectory, AckMetadataMayDifferOnlyWithinSameCanonicalStart) {
+  constexpr std::int64_t start_ns = 83'716'000'000LL;
+  const double product_start = static_cast<double>(start_ns) * 1.0e-9;
+  const double quotient_start = static_cast<double>(start_ns) / 1.0e9;
+  const auto certificate = ackHistoryTestCertificate();
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.commitCandidate(ackHistoryTestCandidate(product_start, false),
+                                       certificate, 3U));
+  auto same_start = ackHistoryTestCandidate(product_start, true);
+  same_start.start_wall_time = quotient_start;
+  EXPECT_TRUE(command.canCommitCandidate(same_start));
+  ASSERT_TRUE(command.commitCandidate(std::move(same_start), certificate, 5U));
+  EXPECT_DOUBLE_EQ(command.snapshot().position.start_WT, product_start);
+}
+
+TEST(PlannerTrajectory, AckLegacyZeroStartRemainsRepresentable) {
+  navigation_planning_backend::CmdTraj command;
+  const auto certificate = ackHistoryTestCertificate();
+  auto initial = ackHistoryTestCandidate(0.0, true);
+  EXPECT_TRUE(command.canCommitCandidate(initial));
+  ASSERT_TRUE(command.commitCandidate(std::move(initial), certificate, 3U));
+  auto equal = ackHistoryTestCandidate(0.0, false);
+  EXPECT_TRUE(command.canCommitCandidate(equal));
+  EXPECT_TRUE(command.commitCandidate(std::move(equal), certificate, 5U));
+}
+
+TEST(PlannerTrajectory, ExplicitProposalGenerationMayAdvanceWithGapsButNotRegress) {
+  navigation_planning_backend::CmdTraj command;
+  navigation_planning_backend::CommandCertificate certificate;
+  certificate.pinned_world = {1U, 1U, 1U, 1};
+  certificate.validated_world = certificate.pinned_world;
+  certificate.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  certificate.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  const auto make_candidate = [&](const double start_wall_time) {
+    auto candidate_position = linearTrajectory(1.0, start_wall_time);
+    auto candidate_yaw = linearTrajectory(1.0, start_wall_time);
+    navigation_planning_backend::CandidateCommandBundle candidate;
+    candidate.position = std::move(candidate_position);
+    candidate.yaw = std::move(candidate_yaw);
+    candidate.start_wall_time = start_wall_time;
+    candidate.roles = {{0.0, 1.0,
+                        navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+    candidate.backup_start_tt = 1.0;
+    candidate.backup_disposition =
+        navigation_planning_backend::BackupDisposition::NO_NEED;
+    candidate.localization_epoch = 1U;
+    candidate.goal_epoch = 1U;
+    candidate.request_id = 1U;
+    return candidate;
+  };
+
+  ASSERT_TRUE(command.commitCandidate(make_candidate(10.0), certificate, 3U));
+  EXPECT_EQ(command.generationSnapshot(), 3U);
+  EXPECT_FALSE(command.commitCandidate(make_candidate(10.5), certificate, 2U));
+  EXPECT_EQ(command.generationSnapshot(), 3U);
+  EXPECT_TRUE(command.commitCandidate(make_candidate(10.5), certificate, 5U));
+  const auto committed = command.snapshot();
+  EXPECT_EQ(committed.generation, 5U);
+  EXPECT_EQ(committed.diagnostics.previous_generation, 3U);
+  EXPECT_EQ(committed.diagnostics.generation, 5U);
+}
+
+TEST(PlannerTrajectory, CommitDiagnosticsClampPriorSampleAtFinishedEnd) {
+  navigation_planning_backend::CmdTraj command;
+  auto first_position = linearTrajectory(1.0, 10.0);
+  auto first_yaw = linearTrajectory(1.0, 10.0);
+  ASSERT_TRUE(command.setEmergencyBackup(first_position, first_yaw));
+
+  auto after_position = linearTrajectory(1.0, 20.0);
+  auto after_yaw = linearTrajectory(1.0, 20.0);
+  ASSERT_TRUE(command.setEmergencyBackup(after_position, after_yaw));
+  EXPECT_DOUBLE_EQ(command.snapshot().diagnostics.previous_sample_tt, 1.0);
+}
+
+TEST(PlannerTrajectory, RegressedCandidateStartTimeCannotReplaceCommittedBundle) {
+  navigation_planning_backend::CmdTraj command;
+  auto current_position = linearTrajectory(1.0, 10.0);
+  auto current_yaw = linearTrajectory(1.0, 10.0);
+  ASSERT_TRUE(command.setEmergencyBackup(current_position, current_yaw));
+  const auto before = command.snapshot();
+  const bool before_role_at_start = command.isTTOnBackupTraj(0.0);
+  const bool before_role_at_end = command.isTTOnBackupTraj(1.0);
+
+  auto historical_position = linearTrajectory(1.0, 9.5);
+  auto historical_yaw = linearTrajectory(1.0, 9.5);
+  auto historical = navigation_planning_backend::CmdTraj::buildEmergencyCandidate(
+      historical_position, historical_yaw);
+  ASSERT_TRUE(historical);
+  EXPECT_FALSE(command.commitCandidate(std::move(*historical), {}));
+
+  const auto after = command.snapshot();
+  EXPECT_EQ(after.generation, before.generation);
+  EXPECT_DOUBLE_EQ(after.position.start_WT, before.position.start_WT);
+  EXPECT_DOUBLE_EQ(after.yaw.start_WT, before.yaw.start_WT);
+  EXPECT_TRUE(after.position.getState(0.25).isApprox(
+      before.position.getState(0.25)));
+  EXPECT_TRUE(after.yaw.getState(0.25).isApprox(before.yaw.getState(0.25)));
+  EXPECT_EQ(after.empty, before.empty);
+  EXPECT_EQ(after.backup_available, before.backup_available);
+  EXPECT_DOUBLE_EQ(after.backup_start_tt, before.backup_start_tt);
+  EXPECT_EQ(command.isTTOnBackupTraj(0.0), before_role_at_start);
+  EXPECT_EQ(command.isTTOnBackupTraj(1.0), before_role_at_end);
+  EXPECT_EQ(after.certificate.pinned_world.generation,
+            before.certificate.pinned_world.generation);
+  EXPECT_EQ(after.certificate.pinned_world.revision,
+            before.certificate.pinned_world.revision);
+  EXPECT_EQ(after.certificate.pinned_world.observation_stamp_ns,
+            before.certificate.pinned_world.observation_stamp_ns);
+  EXPECT_EQ(after.certificate.validated_world.generation,
+            before.certificate.validated_world.generation);
+  EXPECT_EQ(after.certificate.validated_world.revision,
+            before.certificate.validated_world.revision);
+  EXPECT_EQ(after.certificate.validated_world.observation_stamp_ns,
+            before.certificate.validated_world.observation_stamp_ns);
+  EXPECT_DOUBLE_EQ(after.certificate.validation_begin_tt,
+                   before.certificate.validation_begin_tt);
+  EXPECT_EQ(after.diagnostics.generation, before.diagnostics.generation);
+  EXPECT_EQ(after.diagnostics.previous_generation,
+            before.diagnostics.previous_generation);
+  EXPECT_DOUBLE_EQ(after.diagnostics.candidate_start_wall_time,
+                   before.diagnostics.candidate_start_wall_time);
+  EXPECT_TRUE(after.diagnostics.candidate_start_pvaj.isApprox(
+      before.diagnostics.candidate_start_pvaj));
+  EXPECT_EQ(after.diagnostics.previous_valid, before.diagnostics.previous_valid);
+  EXPECT_DOUBLE_EQ(after.diagnostics.previous_sample_tt,
+                   before.diagnostics.previous_sample_tt);
+  EXPECT_TRUE(after.diagnostics.previous_pvaj.isApprox(
+      before.diagnostics.previous_pvaj));
+  EXPECT_TRUE(after.diagnostics.position_residual.isApprox(
+      before.diagnostics.position_residual));
+  EXPECT_TRUE(after.diagnostics.velocity_residual.isApprox(
+      before.diagnostics.velocity_residual));
+  EXPECT_TRUE(after.diagnostics.acceleration_residual.isApprox(
+      before.diagnostics.acceleration_residual));
+  EXPECT_TRUE(after.diagnostics.jerk_residual.isApprox(
+      before.diagnostics.jerk_residual));
+  EXPECT_DOUBLE_EQ(after.diagnostics.candidate_start_yaw,
+                   before.diagnostics.candidate_start_yaw);
+  EXPECT_DOUBLE_EQ(after.diagnostics.candidate_start_yaw_rate,
+                   before.diagnostics.candidate_start_yaw_rate);
+  EXPECT_DOUBLE_EQ(after.diagnostics.previous_yaw,
+                   before.diagnostics.previous_yaw);
+  EXPECT_DOUBLE_EQ(after.diagnostics.previous_yaw_rate,
+                   before.diagnostics.previous_yaw_rate);
+  EXPECT_DOUBLE_EQ(after.diagnostics.yaw_residual,
+                   before.diagnostics.yaw_residual);
+  EXPECT_DOUBLE_EQ(after.diagnostics.yaw_rate_residual,
+                   before.diagnostics.yaw_rate_residual);
+}
+
+TEST(PlannerTrajectory, EqualOrNewerCandidateStartTimeCanCommit) {
+  navigation_planning_backend::CmdTraj command;
+  auto first_position = linearTrajectory(1.0, 10.0);
+  auto first_yaw = linearTrajectory(1.0, 10.0);
+  ASSERT_TRUE(command.setEmergencyBackup(first_position, first_yaw));
+
+  auto equal_position = linearTrajectory(1.0, 10.0);
+  auto equal_yaw = linearTrajectory(1.0, 10.0);
+  ASSERT_TRUE(command.setEmergencyBackup(equal_position, equal_yaw));
+  auto newer_position = linearTrajectory(1.0, 10.1);
+  auto newer_yaw = linearTrajectory(1.0, 10.1);
+  ASSERT_TRUE(command.setEmergencyBackup(newer_position, newer_yaw));
+  EXPECT_EQ(command.snapshot().generation, 3U);
+}
+
+TEST(PlannerTrajectory, CommitDiagnosticsWrapYawResidualAcrossPiBoundary) {
+  auto position = linearTrajectory(1.0, 10.0);
+  Eigen::MatrixXd first_yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  first_yaw_coefficients(0, 7) = std::acos(-1.0) - 0.1;
+  geometry_utils::Trajectory first_yaw({1.0}, {first_yaw_coefficients});
+  first_yaw.start_WT = 10.0;
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, first_yaw));
+
+  Eigen::MatrixXd second_yaw_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  second_yaw_coefficients(0, 7) = -std::acos(-1.0) + 0.1;
+  geometry_utils::Trajectory second_yaw({1.0}, {second_yaw_coefficients});
+  second_yaw.start_WT = 10.0;
+  ASSERT_TRUE(command.setEmergencyBackup(position, second_yaw));
+  EXPECT_NEAR(command.snapshot().diagnostics.yaw_residual, 0.2, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, InheritedBackupPrefixSurvivesMainOnlyCommit) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw, 0.0, 0.4);
+  navigation_planning_backend::CmdTraj command;
+  auto candidate = navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, nullptr, navigation_planning_backend::BackupDisposition::NO_NEED);
+  ASSERT_TRUE(candidate);
+  candidate->localization_epoch = 1U;
+  candidate->goal_epoch = 1U;
+  candidate->request_id = 1U;
+  navigation_planning_backend::CommandCertificate certificate;
+  certificate.pinned_world = {1U, 1U, 1U, 1};
+  certificate.validated_world = certificate.pinned_world;
+  certificate.protected_region.minimum = Eigen::Vector3d::Zero();
+  certificate.protected_region.maximum = Eigen::Vector3d::Ones();
+  ASSERT_TRUE(command.commitCandidate(std::move(*candidate), certificate));
+  EXPECT_FALSE(command.backupTrajectoryAvailable());
+  EXPECT_TRUE(command.isTTOnBackupTraj(0.0));
+  EXPECT_TRUE(command.isTTOnBackupTraj(0.4));
+  EXPECT_FALSE(command.isTTOnBackupTraj(0.5));
+}
+
+TEST(PlannerTrajectory, CandidateBuilderPreservesInheritedAndNewBackupRoles) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw, 0.1, 0.3);
+  navigation_planning_backend::BackupTraj backup;
+  auto backup_position = linearTrajectory(0.5, 10.6);
+  auto backup_yaw = linearTrajectory(0.5, 10.6);
+  backup.setTrajectory(10.6, 0.6, backup_position, backup_yaw);
+
+  auto candidate = navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, &backup, navigation_planning_backend::BackupDisposition::SUCCESS);
+  ASSERT_TRUE(candidate);
+  EXPECT_NEAR(candidate->position.getTotalDuration(), 1.1, 1.0e-12);
+  ASSERT_EQ(candidate->roles.size(), 4U);
+  EXPECT_EQ(candidate->roles[0].role, navigation_planning_backend::CandidateTrajectoryRole::MAIN);
+  EXPECT_DOUBLE_EQ(candidate->roles[1].begin_tt, 0.1);
+  EXPECT_DOUBLE_EQ(candidate->roles[1].end_tt, 0.3);
+  EXPECT_EQ(candidate->roles[1].role, navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+  EXPECT_DOUBLE_EQ(candidate->roles[3].begin_tt, 0.6);
+  EXPECT_DOUBLE_EQ(candidate->roles[3].end_tt, 1.1);
+  EXPECT_EQ(candidate->roles[3].role, navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+  EXPECT_TRUE(candidate->backup_suffix_available);
+}
+
+TEST(PlannerTrajectory, CandidateBuilderDoesNotCutRequiredMainPrefix) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw);
+  ASSERT_TRUE(exp.setRequiredMainPrefixDuration(0.4));
+
+  navigation_planning_backend::BackupTraj early_backup;
+  early_backup.setTrajectory(
+      10.3, 0.3, linearTrajectory(0.5, 10.3), linearTrajectory(0.5, 10.3));
+  EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, &early_backup,
+      navigation_planning_backend::BackupDisposition::SUCCESS));
+
+  navigation_planning_backend::BackupTraj delayed_backup;
+  delayed_backup.setTrajectory(
+      10.4, 0.4, linearTrajectory(0.5, 10.4), linearTrajectory(0.5, 10.4));
+  auto candidate = navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, &delayed_backup,
+      navigation_planning_backend::BackupDisposition::SUCCESS);
+  ASSERT_TRUE(candidate);
+  EXPECT_DOUBLE_EQ(candidate->backup_start_tt, 0.4);
+  EXPECT_DOUBLE_EQ(candidate->position.getTotalDuration(), 0.9);
+}
+
+TEST(PlannerTrajectory, BackupFeasibilityDependsOnMainPrefixNotOnlyCruiseSpeed) {
+  // Constructive counterexample, not a PlannerFacade/mission acceptance test:
+  // the production braking seed for a cruise prefix is not admitted, while a
+  // C3 decelerating MAIN prefix does. Both keep the product MAIN reserve and
+  // exactly the same initial PVAJ, nominal/physical limits and world policy.
+  class FrontierWorld final : public SweepWorld {
+   public:
+    explicit FrontierWorld(const navigation_world_model::CellState frontier_cell =
+                               navigation_world_model::CellState::kUnknown)
+        : frontier_cell_(frontier_cell) {}
+    navigation_world_model::WorldGeometry geometry() const noexcept override {
+      auto value = SweepWorld::geometry();
+      value.evidence_resolution_m = value.inflated_resolution_m;
+      value.occupied_inflation_radius_m = 1.0;
+      value.local_size_m = Eigen::Vector3d{50.0, 50.0, 8.0};
+      return value;
+    }
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& point,
+        navigation_world_model::GridLayer) const noexcept override {
+      return point.x() < 4.0 ? navigation_world_model::CellState::kKnownFree
+                            : frontier_cell_;
+    }
+    bool isSegmentTraversable(
+        const navigation_world_model::Point3& begin,
+        const navigation_world_model::Point3& end,
+        navigation_world_model::GridLayer,
+        navigation_world_model::UnknownPolicy policy) const noexcept override {
+      return std::max(begin.x(), end.x()) < 4.0 ||
+             (policy == navigation_world_model::UnknownPolicy::kAllowUnknown &&
+              frontier_cell_ == navigation_world_model::CellState::kUnknown);
+    }
+   private:
+    const navigation_world_model::CellState frontier_cell_;
+  } world;
+  navigation_planning_backend::Config config(PLANNER_PRODUCT_CONFIG_PATH);
+  config.bindWorldGeometry(world.geometry());
+  constexpr double kInitialSpeedMps = 4.5;
+  constexpr double kJerkRampDurationS = 0.1;
+  const double main_duration_s =
+      navigation_planning::PlanningTimingContract::kMinimumMainReserveS;
+  ASSERT_GT(main_duration_s, kJerkRampDurationS);
+  navigation_math::StatePVAJ initial = navigation_math::StatePVAJ::Zero();
+  initial.col(0) << 0.0, 0.0, 3.0;
+  initial(0, 1) = kInitialSpeedMps;
+  Eigen::MatrixXd cruise_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  cruise_coefficients.col(7) = initial.col(0);
+  cruise_coefficients.col(6) = initial.col(1);
+  geometry_utils::Trajectory cruise({main_duration_s}, {cruise_coefficients});
+
+  auto ramp_coefficients = cruise_coefficients;
+  ramp_coefficients(0, 3) = -config.exp_traj_cfg.max_jerk /
+                          (24.0 * kJerkRampDurationS);
+  geometry_utils::Trajectory decelerating(
+      {kJerkRampDurationS}, {ramp_coefficients});
+  const auto ramp_end = decelerating.getState(kJerkRampDurationS);
+  Eigen::MatrixXd hold_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  hold_coefficients.col(7) = ramp_end.col(0);
+  hold_coefficients.col(6) = ramp_end.col(1);
+  hold_coefficients.col(5) = ramp_end.col(2) / 2.0;
+  hold_coefficients.col(4) = ramp_end.col(3) / 6.0;
+  decelerating.emplace_back(main_duration_s - kJerkRampDurationS,
+                            hold_coefficients);
+  ASSERT_TRUE(cruise.getState(0.0).isApprox(initial, 1.0e-12));
+  ASSERT_TRUE(decelerating.getState(0.0).isApprox(initial, 1.0e-12));
+  ASSERT_TRUE(decelerating[1].getState(0.0).isApprox(ramp_end, 1.0e-12));
+  // Independent scalar integration of the jerk ramp and hold, rather than
+  // another call to the production stopping-envelope estimator.
+  const double jerk = config.exp_traj_cfg.max_jerk;
+  const double hold_s = main_duration_s - kJerkRampDurationS;
+  const double ramp_x = kInitialSpeedMps * kJerkRampDurationS -
+      jerk * std::pow(kJerkRampDurationS, 3) / 24.0;
+  const double ramp_v = kInitialSpeedMps -
+      jerk * std::pow(kJerkRampDurationS, 2) / 6.0;
+  const double ramp_a = -jerk * kJerkRampDurationS / 2.0;
+  const auto decelerating_switch = decelerating.getState(main_duration_s);
+  EXPECT_NEAR(decelerating_switch(0, 0),
+              ramp_x + ramp_v * hold_s + ramp_a * hold_s * hold_s / 2.0 -
+                  jerk * hold_s * hold_s * hold_s / 6.0, 1.0e-12);
+  EXPECT_NEAR(decelerating_switch(0, 1),
+              ramp_v + ramp_a * hold_s - jerk * hold_s * hold_s / 2.0, 1.0e-12);
+  EXPECT_NEAR(decelerating_switch(0, 2), ramp_a - jerk * hold_s, 1.0e-12);
+  EXPECT_NEAR(decelerating_switch(0, 3), -jerk, 1.0e-12);
+
+  for (const auto* main : {&cruise, &decelerating}) {
+    ASSERT_LE(main->getMaxVelRate(), config.exp_traj_cfg.max_vel);
+    ASSERT_LE(main->getMaxAccRate(), config.exp_traj_cfg.max_acc);
+    ASSERT_LE(main->getMaxJerRate(), config.exp_traj_cfg.max_jerk);
+  }
+  const auto build_bundle = [&](const geometry_utils::Trajectory& main) {
+    const auto switch_state = main.getState(main_duration_s);
+    const auto seed = navigation_planning_backend::makeBackupBrakingSeed(
+        main_duration_s, switch_state, config.back_traj_cfg.max_vel,
+        config.back_traj_cfg.max_acc, config.back_traj_cfg.max_jerk,
+        config.sample_traj_dt_s, 0.0);
+    EXPECT_TRUE(seed.feasible);
+    if (!seed.feasible) {
+      return std::optional<navigation_planning_backend::CandidateCommandBundle>{};
+    }
+    const auto stop = navigation_planning_backend::minimumSnapStopPiece(
+        switch_state, seed.duration_s);
+    EXPECT_TRUE(stop.getState(0.0).isApprox(switch_state, 1.0e-12));
+    EXPECT_LE(stop.getMaxVelRate(), config.back_traj_cfg.max_vel);
+    EXPECT_LE(stop.getMaxAccRate(), config.back_traj_cfg.max_acc);
+    EXPECT_LE(stop.getMaxJerRate(), config.back_traj_cfg.max_jerk);
+    EXPECT_NEAR(stop.getVel(seed.duration_s).norm(), 0.0, 1.0e-9);
+    EXPECT_NEAR(stop.getAcc(seed.duration_s).norm(), 0.0, 1.0e-9);
+    EXPECT_NEAR(stop.getJer(seed.duration_s).norm(), 0.0, 1.0e-9);
+    geometry_utils::Trajectory backup_position;
+    backup_position.emplace_back(stop);
+    geometry_utils::Trajectory main_yaw(
+        {main_duration_s}, {Eigen::MatrixXd::Zero(3, 8)});
+    geometry_utils::Trajectory backup_yaw(
+        {seed.duration_s}, {Eigen::MatrixXd::Zero(3, 8)});
+    EXPECT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+        main, config.exp_traj_cfg, nullptr, 0.01, &main_yaw));
+    EXPECT_TRUE(traj_opt::trajectorySatisfiesFlatnessEnvelope(
+        backup_position, config.back_traj_cfg, nullptr, 0.01, &backup_yaw));
+    navigation_planning_backend::ExpTraj exp;
+    exp.setTrajectory(10.0, main, main_yaw);
+    EXPECT_TRUE(exp.setRequiredMainPrefixDuration(main_duration_s));
+    navigation_planning_backend::BackupTraj backup;
+    backup.setTrajectory(10.0 + main_duration_s, main_duration_s,
+                         backup_position, backup_yaw);
+    return navigation_planning_backend::CmdTraj::buildCandidate(
+        exp, &backup, navigation_planning_backend::BackupDisposition::SUCCESS);
+  };
+  const auto cruise_bundle = build_bundle(cruise);
+  const auto decelerating_bundle = build_bundle(decelerating);
+  ASSERT_TRUE(cruise_bundle);
+  ASSERT_TRUE(decelerating_bundle);
+  RecordProperty("cruise_backup_duration_s", std::to_string(
+      cruise_bundle->position.getTotalDuration() - main_duration_s));
+  RecordProperty("decelerating_backup_duration_s", std::to_string(
+      decelerating_bundle->position.getTotalDuration() - main_duration_s));
+  RecordProperty("cruise_stop_x_m", std::to_string(cruise_bundle->position.getPos(
+      cruise_bundle->position.getTotalDuration()).x()));
+  RecordProperty("decelerating_stop_x_m", std::to_string(
+      decelerating_bundle->position.getPos(
+          decelerating_bundle->position.getTotalDuration()).x()));
+  EXPECT_DOUBLE_EQ(cruise_bundle->backup_start_tt, main_duration_s);
+  EXPECT_DOUBLE_EQ(decelerating_bundle->backup_start_tt, main_duration_s);
+  const auto validate = [&](const auto& bundle) {
+    return navigation_planning_backend::validateExecutableCandidate(
+        world, bundle, 10.0,
+        navigation_world_model::UnknownPolicy::kAllowUnknown, {}, false,
+        navigation_world_model::UnknownPolicy::kRequireKnownFree);
+  };
+  const auto cruise_validation = validate(*cruise_bundle);
+  EXPECT_FALSE(cruise_validation.valid);
+  EXPECT_EQ(cruise_validation.blocked_role,
+            navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+  EXPECT_EQ(cruise_validation.blocked_cell_state,
+            navigation_world_model::CellState::kUnknown);
+  // FAST is a distinct policy, not a relaxed SAFE result. The same cruise
+  // bundle may use UNKNOWN, but cannot use currently known OCCUPIED cells.
+  const auto validate_fast = [&](const FrontierWorld& snapshot) {
+    return navigation_planning_backend::validateExecutableCandidate(
+        snapshot, *cruise_bundle, 10.0,
+        navigation_world_model::UnknownPolicy::kAllowUnknown, {}, false,
+        navigation_world_model::UnknownPolicy::kAllowUnknown);
+  };
+  EXPECT_TRUE(validate_fast(world).valid);
+  const FrontierWorld occupied_world(navigation_world_model::CellState::kOccupied);
+  const auto occupied_validation = validate_fast(occupied_world);
+  EXPECT_FALSE(occupied_validation.valid);
+  EXPECT_EQ(occupied_validation.blocked_role,
+            navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+  EXPECT_EQ(occupied_validation.blocked_cell_state,
+            navigation_world_model::CellState::kOccupied);
+  // Independently supplied known-free convex corridor, not a claim that CIRI
+  // or the frontend can construct/select this corridor on a runtime map.
+  navigation_math::MatD4f corridor(6, 4);
+  corridor << 1.0, 0.0, 0.0, -3.8,
+             -1.0, 0.0, 0.0, -0.2,
+              0.0, 1.0, 0.0, -1.0,
+              0.0,-1.0, 0.0, -1.0,
+              0.0, 0.0, 1.0, -4.0,
+              0.0, 0.0,-1.0,  2.0;
+  for (int piece = 0; piece < decelerating_bundle->position.getPieceNum(); ++piece) {
+    EXPECT_LE(navigation_planning_backend::maximumContinuousCorridorPlaneViolation(
+                  decelerating_bundle->position[piece], corridor),
+              config.exp_traj_cfg.corridor_plane_tolerance_m);
+  }
+  EXPECT_TRUE(validate(*decelerating_bundle).valid);
+  EXPECT_LT(decelerating_bundle->position.getPos(
+                decelerating_bundle->position.getTotalDuration()).x(), 4.0);
+}
+
+TEST(PlannerTrajectory, CandidateBuilderDoesNotAdvertiseZeroLengthBackupSuffix) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw);
+
+  navigation_planning_backend::BackupTraj backup;
+  auto empty_position = linearTrajectory(0.0, 11.0);
+  auto empty_yaw = linearTrajectory(0.0, 11.0);
+  backup.setTrajectory(11.0, 1.0, empty_position, empty_yaw);
+
+  // A non-null backup object is not sufficient evidence.  The executable
+  // bundle must either contain a positive-duration final BACKUP interval or
+  // reject construction before it can reach authorization.
+  EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, &backup, navigation_planning_backend::BackupDisposition::SUCCESS));
+}
+
+TEST(PlannerTrajectory, InheritedBackupIntersectionNeverCrossesNewSuffix) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  auto backup_position = linearTrajectory(0.5, 10.6);
+  auto backup_yaw = linearTrajectory(0.5, 10.6);
+  navigation_planning_backend::BackupTraj backup;
+  backup.setTrajectory(10.6, 0.6, backup_position, backup_yaw);
+
+  for (const auto [begin, end] : std::vector<std::pair<double, double>>{
+           {0.7, 0.9}, {0.5, 0.8}, {0.6, 0.6}, {0.2, 0.6}}) {
+    navigation_planning_backend::ExpTraj exp;
+    exp.setTrajectory(10.0, position, yaw, begin, end);
+    auto candidate = navigation_planning_backend::CmdTraj::buildCandidate(
+        exp, &backup, navigation_planning_backend::BackupDisposition::SUCCESS);
+    ASSERT_TRUE(candidate);
+    double previous_end = 0.0;
+    for (const auto& interval : candidate->roles) {
+      EXPECT_LE(interval.begin_tt, interval.end_tt);
+      EXPECT_DOUBLE_EQ(interval.begin_tt, previous_end);
+      previous_end = interval.end_tt;
+    }
+    EXPECT_DOUBLE_EQ(previous_end, candidate->position.getTotalDuration());
+    EXPECT_TRUE(std::any_of(candidate->roles.begin(), candidate->roles.end(),
+                            [](const auto& interval) {
+                              return interval.role ==
+                                         navigation_planning_backend::CandidateTrajectoryRole::BACKUP &&
+                                     interval.begin_tt <= 0.6 && interval.end_tt >= 0.6;
+                            }));
+    if (begin > 0.6) {
+      const auto first_backup = std::find_if(
+          candidate->roles.begin(), candidate->roles.end(), [](const auto& interval) {
+            return interval.role == navigation_planning_backend::CandidateTrajectoryRole::BACKUP;
+          });
+      ASSERT_NE(first_backup, candidate->roles.end());
+      EXPECT_DOUBLE_EQ(first_backup->begin_tt, 0.6);
+    }
+  }
+}
+
+TEST(PlannerTrajectory, ExpOnlyDispositionsAndEmergencyPreserveProvenance) {
+  auto position = stationaryTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw, 0.0, 0.2);
+  for (const auto disposition : {navigation_planning_backend::BackupDisposition::FINISH,
+                                 navigation_planning_backend::BackupDisposition::NO_NEED}) {
+    auto candidate = navigation_planning_backend::CmdTraj::buildCandidate(
+        exp, nullptr, disposition);
+    ASSERT_TRUE(candidate);
+    EXPECT_EQ(candidate->backup_disposition, disposition);
+    EXPECT_FALSE(candidate->backup_suffix_available);
+    ASSERT_EQ(candidate->roles.size(), 2U);
+    EXPECT_EQ(candidate->roles.front().role,
+              navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+    EXPECT_EQ(candidate->roles.back().role,
+              navigation_planning_backend::CandidateTrajectoryRole::MAIN);
+  }
+
+  auto emergency = navigation_planning_backend::CmdTraj::buildEmergencyCandidate(position, yaw);
+  ASSERT_TRUE(emergency);
+  EXPECT_EQ(emergency->backup_disposition,
+            navigation_planning_backend::BackupDisposition::EMERGENCY);
+  // A safety brake is not a nominal mission terminal STOP. Runtime must
+  // replan the active waypoint after the measured stop instead of treating
+  // an endpoint inside the acceptance ball as waypoint completion.
+  EXPECT_FALSE(emergency->terminal_stop);
+  ASSERT_EQ(emergency->roles.size(), 1U);
+  EXPECT_EQ(emergency->roles.front().role,
+            navigation_planning_backend::CandidateTrajectoryRole::BACKUP);
+}
+
+TEST(PlannerTrajectory, MainOnlyMovingTerminalRequiresBackupSuffix) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = stationaryTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw);
+
+  for (const auto disposition : {navigation_planning_backend::BackupDisposition::FINISH,
+                                 navigation_planning_backend::BackupDisposition::NO_NEED}) {
+    EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildCandidate(
+        exp, nullptr, disposition));
+  }
+}
+
+TEST(PlannerTrajectory, MainOnlyRestHasNoFlightTunedTerminalEpsilon) {
+  auto position = stationaryTrajectory(1.0, 10.0);
+  auto yaw = stationaryTrajectory(1.0, 10.0);
+  navigation_planning_backend::ExpTraj exp;
+  exp.setTrajectory(10.0, position, yaw);
+  EXPECT_TRUE(navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, nullptr, navigation_planning_backend::BackupDisposition::FINISH));
+
+  auto moving = position;
+  auto coefficients = moving[0].getCoeffMat();
+  coefficients(0, 6) = std::numeric_limits<double>::epsilon();
+  geometry_utils::Trajectory nonzero_terminal({1.0}, {coefficients});
+  nonzero_terminal.start_WT = 10.0;
+  exp.setTrajectory(10.0, nonzero_terminal, yaw);
+  EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildCandidate(
+      exp, nullptr, navigation_planning_backend::BackupDisposition::FINISH));
+}
+
+TEST(PlannerTrajectory, CandidateRejectsZeroDurationPiece) {
+  auto position = linearTrajectory(1.0, 10.0);
+  auto yaw = linearTrajectory(1.0, 10.0);
+  geometry_utils::Trajectory malformed_position(
+      {0.0, 1.0}, {position[0].getCoeffMat(), position[0].getCoeffMat()});
+  geometry_utils::Trajectory malformed_yaw(
+      {0.0, 1.0}, {yaw[0].getCoeffMat(), yaw[0].getCoeffMat()});
+
+  EXPECT_FALSE(navigation_planning_backend::CmdTraj::buildEmergencyCandidate(
+      malformed_position, malformed_yaw));
+}
+
+TEST(PlannerTrajectory, LatestWorldSweepAllowsUnknownAndRejectsFutureObstacle) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+  SweepWorld world;
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0, navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree).valid);
+  world.blocked_from_x = 0.7;
+  const auto blocked = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0, navigation_world_model::UnknownPolicy::kAllowUnknown);
+  EXPECT_FALSE(blocked.valid);
+  // The continuous tube certificate may reject at the first segment whose
+  // conservative voxel tube reaches the obstacle boundary.
+  EXPECT_GT(blocked.first_blocked_tt, 0.0);
+}
+
+TEST(PlannerTrajectory, InitialBodyAdmissionCertifiesFullCandidateBeforeAdvancingClock) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  position_coefficients(0, 6) = 0.2;
+  position_coefficients(0, 7) = -0.1;
+  position_coefficients(2, 7) = 0.007;
+  candidate.position = geometry_utils::Trajectory({1.0}, {position_coefficients});
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {{0.0, 1.0,
+      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  BodyHandoverWorld world;
+  navigation_world_model::CurrentBodySupport support;
+  support.snapshot_identity = world.identity();
+  support.body_position = Eigen::Vector3d{-0.1, 0.0, 0.0};
+  support.body_orientation = Eigen::Quaterniond::Identity();
+  support.localization_epoch = 1U;
+  support.source_stamp_ns = 1;
+  support.world_frame_id = "lio_odom";
+  support.body_frame_id = "base_link";
+  support.geometry_provenance =
+      "repo:test-model@sha256=0123456789abcdef;"
+      "component=base_link_collision_0_main_obb_only";
+  support.body_box = {{0.0, 0.0, 0.007},
+                      {0.17677669529663687, 0.17677669529663687, 0.025},
+                      Eigen::Quaterniond::Identity()};
+  support.valid = true;
+  auto support_ptr =
+      std::make_shared<const navigation_world_model::CurrentBodySupport>(support);
+
+  // Authorization occurs after the command start, but initial admission
+  // certifies the complete polynomial from the measured pose. The UNKNOWN
+  // prefix is inside the body voxel and the remaining path is known-free.
+  const auto initial = validateExecutableCandidate(
+      world, candidate, 10.2,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, support_ptr,
+      true);
+  EXPECT_TRUE(initial.valid);
+  EXPECT_NEAR(initial.begin_tt, 0.2, 1.0e-12);
+
+  // The same advancing-clock recheck has no request-local admission witness.
+  // Its executable start is still UNKNOWN and must fail closed.
+  const auto recertified = validateExecutableCandidate(
+      world, candidate, 10.2,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, support_ptr,
+      false);
+  EXPECT_FALSE(recertified.valid);
+}
+
+TEST(PlannerTrajectory, InitialBodyAdmissionUsesLocalCurveCertificate) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  // The polynomial is stationary at the measured start but accelerates later
+  // in the same piece. A whole-piece acceleration bound would charge the
+  // initial 50 ms segment for that future curvature and erode the physical
+  // body OBB away entirely.
+  position_coefficients(0, 0) = 3.2;
+  position_coefficients(0, 7) = -0.1;
+  candidate.position = geometry_utils::Trajectory(
+      {1.0}, {position_coefficients});
+  candidate.yaw = stationaryTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {{0.0, 1.0,
+      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  BodyHandoverWorld world;
+  const auto support = testBodySupport(
+      navigation_world_model::Point3{-0.1, 0.0, 0.0},
+      navigation_world_model::Point3{0.2, 0.2, 0.025});
+  ASSERT_TRUE(support);
+  EXPECT_GT(navigation_planning_backend::polynomialAccelerationBound(
+      candidate.position[0]), 100.0);
+  EXPECT_LT(navigation_planning_backend::polynomialAccelerationBoundOverInterval(
+      candidate.position[0], 0.0, 0.05), 1.0);
+
+  const auto validation = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, support, true);
+  EXPECT_TRUE(validation.valid);
+}
+
+TEST(PlannerTrajectory, BodyAdmissionSurvivesKnownFreeCellInsideInitialBody) {
+  BodyPrefixCertificateWorld world;
+  const auto support = testBodySupport(
+      navigation_world_model::Point3::Zero(),
+      navigation_world_model::Point3{0.5, 0.4, 0.4});
+  bool body_prefix_remains = false;
+
+  // UNKNOWN -> KNOWN_FREE -> UNKNOWN is still one admissible physical body
+  // prefix. Sensor-free evidence is not a lifecycle transition.
+  EXPECT_TRUE(navigation_planning_backend::certificateTubeIsSafe(
+      world, {-0.3, 0.0, 0.0}, {0.3, 0.0, 0.0}, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2,
+      nullptr, nullptr, support, &body_prefix_remains));
+  EXPECT_TRUE(body_prefix_remains);
+}
+
+TEST(PlannerTrajectory, BodyAdmissionRejectsUnknownAfterPhysicalExit) {
+  BodyPrefixCertificateWorld world;
+  const auto support = testBodySupport(
+      navigation_world_model::Point3::Zero(),
+      navigation_world_model::Point3{0.5, 0.4, 0.4});
+
+  // The same witness cannot be renewed after the chord leaves B0. The final
+  // UNKNOWN cell is deliberately beyond the physical OBB.
+  EXPECT_FALSE(navigation_planning_backend::certificateTubeIsSafe(
+      world, {-0.3, 0.0, 0.0}, {0.9, 0.0, 0.0}, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2,
+      nullptr, nullptr, support));
+}
+
+TEST(PlannerTrajectory, ExpiredCandidateCannotBeValidatedAtItsTerminalPoint) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  SweepWorld world;
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.5,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+  // Validation must reject a candidate whose complete executable interval is
+  // already in the past; clamping to t=duration must not turn it into a
+  // terminal-point certificate.
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 11.01,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, ContinuousTubeRejectsCurvePassingThroughOccupiedCell) {
+  constexpr double vertex_time = 0.5 / 0.98;
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients(0, 6) = 0.98;
+  coefficients(1, 5) = -0.3 / (vertex_time * vertex_time);
+  coefficients(1, 6) = 0.6 / vertex_time;
+  coefficients(2, 7) = 3.0;
+
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  CurvedCellWorld world;
+  // The curve crosses the occupied voxel around t=0.5102 while its sampled
+  // points remain 0.1 m below the voxel center. The tube certificate must
+  // inspect the cell covered by the bounded curve deviation.
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, ContinuousTubeIgnoresOccupiedCellOutsideCurveTube) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  // This occupied cell is inside the segment's axis-aligned bounding box but
+  // outside the actual swept tube. A box-only certificate would falsely
+  // reject the candidate.
+  CurvedCellWorld world;
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, ContinuousTubeDoesNotClassifyDiagonalCellOutsideTube) {
+  const navigation_world_model::Point3 start(0.1, 0.21, 0.21);
+  const navigation_world_model::Point3 end(1.1, 0.21, 0.21);
+  DiagonalNeighborWorld world({0.1, 0.1, 0.1});
+
+  // The old center-distance-plus-half-diagonal approximation included this
+  // diagonal neighbour even though its voxel box is separated from the
+  // zero-radius centerline by sqrt(0.01^2 + 0.01^2).
+  EXPECT_TRUE(navigation_planning_backend::certificateTubeIsSafe(
+      world, start, end, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2));
+}
+
+TEST(PlannerTrajectory, ContinuousTubeClassifiesCellTouchedByCenterline) {
+  const navigation_world_model::Point3 start(0.1, 0.2, 0.2);
+  const navigation_world_model::Point3 end(1.1, 0.2, 0.2);
+  DiagonalNeighborWorld world({0.1, 0.1, 0.1});
+
+  // The same neighbour is now touched at the voxel corner and must remain a
+  // fail-closed UNKNOWN for a BACKUP certificate.
+  EXPECT_FALSE(navigation_planning_backend::certificateTubeIsSafe(
+      world, start, end, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2));
+}
+
+TEST(PlannerTrajectory, ContinuousTubeReportsActualBlockingCell) {
+  const navigation_world_model::Point3 start(0.1, 0.2, 0.2);
+  const navigation_world_model::Point3 end(1.1, 0.2, 0.2);
+  const navigation_world_model::Point3 expected_blocker(0.1, 0.1, 0.1);
+  DiagonalNeighborWorld world(expected_blocker);
+  navigation_world_model::CellState blocked_state{
+      navigation_world_model::CellState::kUndefined};
+  navigation_world_model::Point3 blocked_position =
+      navigation_world_model::Point3::Constant(
+          std::numeric_limits<double>::quiet_NaN());
+  navigation_planning_backend::CertificateTubeFailure detail{};
+
+  EXPECT_FALSE(navigation_planning_backend::certificateTubeIsSafe(
+      world, start, end, 0.0,
+      navigation_world_model::UnknownPolicy::kRequireKnownFree, 0.2,
+      &blocked_state, &blocked_position, {}, nullptr, &detail));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kNonTraversableCell);
+  EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUnknown);
+  EXPECT_TRUE(blocked_position.isApprox(expected_blocker, 1.0e-12));
+}
+
+TEST(PlannerTrajectory, ContinuousTubeNonCellFailuresDoNotFabricateBlocker) {
+  DiagonalNeighborWorld world({0.1, 0.1, 0.1});
+  navigation_world_model::CellState blocked_state{};
+  navigation_world_model::Point3 blocked_position = Eigen::Vector3d::Zero();
+  navigation_planning_backend::CertificateTubeFailure detail{};
+  const Eigen::Vector3d start{0.1, 0.21, 0.21};
+  const auto query = [&](const Eigen::Vector3d& end, double resolution,
+                         const navigation_world_model::CurrentBodySupportPtr& support = {}) {
+    return navigation_planning_backend::certificateTubeIsSafe(
+        world, start, end, 0.0,
+        navigation_world_model::UnknownPolicy::kRequireKnownFree, resolution,
+        &blocked_state, &blocked_position, support, nullptr, &detail);
+  };
+  EXPECT_FALSE(query(Eigen::Vector3d{1.1, 0.21, 0.21}, 0.0));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kInvalidGeometry);
+  EXPECT_FALSE(blocked_position.allFinite());
+  EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUndefined);
+
+  EXPECT_FALSE(query(Eigen::Vector3d{10000.0, 0.21, 0.21}, 0.2));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kEnumerationLimit);
+  EXPECT_FALSE(blocked_position.allFinite());
+  EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUndefined);
+
+  const auto invalid_support = std::make_shared<const navigation_world_model::CurrentBodySupport>();
+  EXPECT_FALSE(query(Eigen::Vector3d{1.1, 0.21, 0.21}, 0.2, invalid_support));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kInvalidBodyPrefix);
+  EXPECT_FALSE(blocked_position.allFinite());
+  EXPECT_EQ(blocked_state, navigation_world_model::CellState::kUndefined);
+
+  EXPECT_TRUE(query(Eigen::Vector3d{1.1, 0.21, 0.21}, 0.2));
+  EXPECT_EQ(detail, navigation_planning_backend::CertificateTubeFailure::kNone);
+  EXPECT_FALSE(blocked_position.allFinite());
+}
+
+TEST(PlannerTrajectory, CurveBoundRejectionIsNotAQueriedBlockingCell) {
+  class AllFreeWorld final : public SweepWorld {
+   public:
+    bool block_other_points{false};
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& point,
+        navigation_world_model::GridLayer) const noexcept override {
+      return !block_other_points || (point - Eigen::Vector3d{0.1, 0.21, 2.0}).norm() < 1.0e-12
+          ? navigation_world_model::CellState::kKnownFree
+          : navigation_world_model::CellState::kOccupied;
+    }
+  } world;
+  Eigen::Matrix<double, 3, 8> coefficients = Eigen::Matrix<double, 3, 8>::Zero();
+  coefficients(0, 7) = 0.1;
+  coefficients(1, 7) = 0.21;
+  coefficients(2, 7) = 2.0;
+  coefficients(1, 5) = 500000.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto result = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0, navigation_world_model::UnknownPolicy::kAllowUnknown);
+  ASSERT_FALSE(result.valid);
+  EXPECT_EQ(result.failure,
+            navigation_planning_backend::SweptValidationResult::Failure::kCertificateTubeBlocked);
+  EXPECT_GT(result.curve_deviation_bound_m, result.curve_deviation_tolerance_m);
+  EXPECT_EQ(result.tube_failure, navigation_planning_backend::CertificateTubeFailure::kNone);
+  EXPECT_FALSE(result.blocking_cell_observed);
+  EXPECT_EQ(result.blocked_cell_state, navigation_world_model::CellState::kUndefined);
+  EXPECT_TRUE(result.blocked_position.allFinite());  // Geometric location only.
+
+  // Numeric and cell rejection can coexist; do not replace one with an
+  // exclusive inferred cause or hide a real cell witness behind the bound.
+  world.block_other_points = true;
+  const auto both = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0, navigation_world_model::UnknownPolicy::kAllowUnknown);
+  ASSERT_FALSE(both.valid);
+  EXPECT_GT(both.curve_deviation_bound_m, both.curve_deviation_tolerance_m);
+  EXPECT_EQ(both.tube_failure,
+            navigation_planning_backend::CertificateTubeFailure::kNonTraversableCell);
+  EXPECT_TRUE(both.blocking_cell_observed);
+  EXPECT_EQ(both.blocked_cell_state, navigation_world_model::CellState::kOccupied);
+}
+
+TEST(PlannerTrajectory, CandidateValidationReportsActualTubeBlocker) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 0.5, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+      {0.5, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
+  };
+  // The main prefix is allowed to cross UNKNOWN, while the backup interval
+  // must report the first actual UNKNOWN voxel in its swept tube.
+  SweepWorld world;
+
+  const auto result = navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.failure,
+            navigation_planning_backend::SweptValidationResult::Failure::
+                kCertificateTubeBlocked);
+  EXPECT_EQ(result.blocked_cell_state,
+            navigation_world_model::CellState::kUnknown);
+  EXPECT_TRUE(result.blocked_position.allFinite());
+  EXPECT_TRUE(result.blocking_cell_observed);
+  EXPECT_EQ(result.tube_failure,
+            navigation_planning_backend::CertificateTubeFailure::kNonTraversableCell);
+  EXPECT_EQ(result.evaluated_unknown_policy,
+            static_cast<int>(navigation_world_model::UnknownPolicy::kRequireKnownFree));
+  EXPECT_TRUE(std::isfinite(result.unsafe_interval_end_tt));
+  EXPECT_LE(result.curve_deviation_bound_m, result.curve_deviation_tolerance_m);
+  EXPECT_NEAR(result.blocked_position.x(), 0.5, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, BackupRoleRequiresKnownFreeEvidence) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 0.5, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+      {0.5, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
+  };
+
+  SweepWorld world;
+  EXPECT_FALSE(navigation_planning_backend::validateExecutableCandidate(
+      world, candidate, 10.0,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+  EXPECT_TRUE(navigation_planning_backend::candidateHasBackupSuffix(candidate));
+
+  candidate.roles.pop_back();
+  EXPECT_FALSE(navigation_planning_backend::candidateHasBackupSuffix(candidate));
+}
+
+TEST(PlannerTrajectory, MainOnlyAllowUnknownUsesMissionCertificatePolicy) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  EXPECT_EQ(
+      navigation_planning_backend::candidateCertificatePolicy(
+          candidate, navigation_world_model::UnknownPolicy::kAllowUnknown),
+      navigation_world_model::UnknownPolicy::kAllowUnknown);
+
+  candidate.roles = {
+      {0.0, 0.5, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+      {0.5, 1.0, navigation_planning_backend::CandidateTrajectoryRole::BACKUP},
+  };
+  EXPECT_EQ(
+      navigation_planning_backend::candidateCertificatePolicy(
+          candidate, navigation_world_model::UnknownPolicy::kAllowUnknown),
+      navigation_world_model::UnknownPolicy::kAllowUnknown);
+}
+
+TEST(PlannerTrajectory, MainOnlyRevalidationUsesAllowUnknownPolicy) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+
+  SweepWorld newer_world;
+  const auto mission_policy = navigation_world_model::UnknownPolicy::kAllowUnknown;
+  const auto certificate_policy =
+      navigation_planning_backend::candidateCertificatePolicy(candidate, mission_policy);
+  EXPECT_EQ(certificate_policy,
+            navigation_world_model::UnknownPolicy::kAllowUnknown);
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+                   newer_world, candidate, 10.0, certificate_policy)
+                   .valid);
+}
+
+TEST(PlannerTrajectory, LatestWorldSweepIgnoresAlreadyExecutedBlockedPrefix) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, 10.0);
+  candidate.yaw = linearTrajectory(1.0, 10.0);
+  candidate.start_wall_time = 10.0;
+  class PrefixWorld final : public SweepWorld {
+   public:
+    navigation_world_model::CellState classify(
+        const navigation_world_model::Point3& p,
+        navigation_world_model::GridLayer) const noexcept override {
+      return p.x() < 0.4 ? navigation_world_model::CellState::kOccupied
+                         : navigation_world_model::CellState::kUnknown;
+    }
+    bool isSegmentTraversable(
+        const navigation_world_model::Point3& a,
+        const navigation_world_model::Point3&,
+        navigation_world_model::GridLayer,
+        navigation_world_model::UnknownPolicy) const noexcept override {
+      return a.x() >= 0.4;
+    }
+  } prefix_world;
+  candidate.roles = {
+      {0.0, 1.0, navigation_planning_backend::CandidateTrajectoryRole::MAIN},
+  };
+  EXPECT_TRUE(navigation_planning_backend::validateExecutableCandidate(
+      prefix_world, candidate, 10.5,
+      navigation_world_model::UnknownPolicy::kAllowUnknown).valid);
+}
+
+TEST(PlannerTrajectory, NonFiniteYawCannotReplaceCommittedGeneration) {
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  position_coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {position_coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  position.start_WT = yaw.start_WT = 5.0;
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  const auto generation = command.generation();
+
+  Eigen::MatrixXd invalid_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  invalid_coefficients(0, 7) = std::numeric_limits<double>::quiet_NaN();
+  geometry_utils::Trajectory invalid_yaw({1.0}, {invalid_coefficients});
+  invalid_yaw.start_WT = 5.0;
+  EXPECT_FALSE(command.setEmergencyBackup(position, invalid_yaw));
+  EXPECT_EQ(command.generation(), generation);
+}
+
+TEST(PlannerTrajectory, ConcurrentCommitAndSnapshotNeverMixGenerations) {
+  Eigen::MatrixXd position_coefficients = Eigen::MatrixXd::Zero(3, 8);
+  position_coefficients(0, 6) = 1.0;
+  position_coefficients(2, 7) = 3.0;
+  geometry_utils::Trajectory position({1.0}, {position_coefficients});
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  position.start_WT = yaw.start_WT = 1.0;
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.setEmergencyBackup(position, yaw));
+  std::atomic_bool failed{false};
+  std::thread writer([&] {
+    for (int index = 0; index < 500; ++index) {
+      if (!command.setEmergencyBackup(position, yaw)) failed.store(true);
+    }
+  });
+  std::thread reader([&] {
+    std::uint64_t previous_generation = 0;
+    for (int index = 0; index < 500; ++index) {
+      const auto snapshot = command.snapshot();
+      const auto state = snapshot.position.getPos(0.5);
+      if (snapshot.generation < previous_generation || !state.allFinite() ||
+          snapshot.diagnostics.generation != snapshot.generation ||
+          snapshot.diagnostics.previous_generation + 1U != snapshot.generation) {
+        failed.store(true);
+      }
+      previous_generation = snapshot.generation;
+    }
+  });
+  writer.join();
+  reader.join();
+  EXPECT_FALSE(failed.load());
+}
+
+TEST(PlannerTrajectory, SemanticYawTargetRespectsRateAndAccelerationEnvelope) {
+  const std::vector<double> durations{5.0};
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  coefficients.col(4) = Eigen::Vector3d{1.0, 0.0, 0.0};
+  geometry_utils::Trajectory position(durations, {coefficients});
+  const navigation_math::Vec4f initial_yaw{0.0, 0.0, 0.1, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0, 0.5);
+  geometry_utils::Trajectory yaw;
+
+  ASSERT_TRUE(optimizer.optimizeToTarget(initial_yaw, M_PI_2, position, yaw));
+  EXPECT_NEAR(yaw.getTotalDuration(), position.getTotalDuration(), 1.0e-12);
+  EXPECT_LE(yaw.getMaxVelRate(), 1.0 + 1.0e-6);
+  EXPECT_LE(yaw.getMaxAccRate(), 0.5 + 1.0e-6);
+  EXPECT_NEAR(yaw.getState(0.0)(0, 2), initial_yaw(2), 1.0e-9);
+  EXPECT_NEAR(yaw.getState(yaw.getTotalDuration())(0, 2), 0.0, 1.0e-9);
+  EXPECT_NEAR(yaw.getPos(yaw.getTotalDuration()).x(), M_PI_2, 1.0e-6);
+}
+
+TEST(PlannerTrajectory, SemanticYawExecutesCertifiedPartialTurnWhenTimeIsShort) {
+  const std::vector<double> durations{0.5};
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory position(durations, {coefficients});
+  const navigation_math::Vec4f initial_yaw{3.0, 0.0, 0.0, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0, 0.5);
+  geometry_utils::Trajectory yaw;
+
+  ASSERT_TRUE(optimizer.optimizeToTarget(initial_yaw, -3.0, position, yaw));
+  EXPECT_LE(yaw.getMaxVelRate(), 1.0 + 1.0e-6);
+  EXPECT_LE(yaw.getMaxAccRate(), 0.5 + 1.0e-6);
+  const double endpoint = yaw.getPos(yaw.getTotalDuration()).x();
+  EXPECT_GT(endpoint, initial_yaw(0));
+  EXPECT_LT(endpoint, initial_yaw(0) + std::remainder(-3.0 - 3.0, 2.0 * M_PI));
+}
+
+TEST(PlannerTrajectory, SemanticYawReportsInfeasibleShortSameHeadingStop) {
+  const std::vector<double> durations{0.2};
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory position(durations, {coefficients});
+  const navigation_math::Vec4f initial_yaw{0.0, 0.8, 0.0, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0, 0.3);
+  geometry_utils::Trajectory yaw;
+
+  EXPECT_FALSE(optimizer.optimizeToTarget(initial_yaw, 0.0, position, yaw));
+  const auto& diagnostics = optimizer.lastDiagnostics();
+  EXPECT_EQ(diagnostics.failure,
+            traj_opt::YawOptimizationFailure::kNoFeasibleHold);
+  EXPECT_DOUBLE_EQ(diagnostics.duration_s, 0.2);
+  EXPECT_DOUBLE_EQ(diagnostics.requested_delta_rad, 0.0);
+  EXPECT_GT(diagnostics.hold_max_acceleration_rad_s2, 0.3);
+  EXPECT_GT(diagnostics.stopping_max_acceleration_rad_s2, 0.3);
+}
+
+TEST(PlannerTrajectory, MinimumJerkForwardYawStopHasPhysicalAccelerationPeak) {
+  const navigation_math::Vec3f initial{0.0, 0.8, 0.0};
+  const navigation_math::Vec3f terminal{0.08, 0.0, 0.0};
+  const navigation_math::VecDf times =
+      navigation_math::VecDf::Constant(1, 0.2);
+  const navigation_math::VecDf no_waypoints;
+  const auto stopping = geometry_utils::poly_interpo::minimumJerkInterpolation<1>(
+      initial, terminal, no_waypoints, times);
+
+  ASSERT_FALSE(stopping.empty());
+  SCOPED_TRACE(::testing::Message() << "coefficients:\n"
+                                   << stopping[0].getCoeffMat());
+  EXPECT_NEAR(stopping.getVel(0.0).x(), 0.8, 1.0e-12);
+  EXPECT_NEAR(stopping.getPos(0.2).x(), 0.08, 1.0e-12);
+  EXPECT_NEAR(stopping.getVel(0.2).x(), 0.0, 1.0e-12);
+  EXPECT_NEAR(stopping.getAcc(0.2).x(), 0.0, 1.0e-12);
+  EXPECT_NEAR(stopping.getMaxAccRate(), 6.0, 1.0e-8);
+}
+
+navigation_mission::ImmutableRouteSnapshot makeStraightActiveRouteSnapshot(
+    const Eigen::Vector3d& start_position = Eigen::Vector3d{0.0, 0.0, 3.0},
+    const Eigen::Vector3d& active_position = Eigen::Vector3d{20.0, 0.0, 3.0},
+    const Eigen::Vector3d& measured_position = Eigen::Vector3d{5.0, 0.0, 3.0},
+    const bool active_stop = false) {
+  navigation_mission::Mission mission;
+  mission.id = "route-regression-test";
+  mission.frame = "lio_odom";
+  navigation_mission::MissionWaypoint start;
+  start.id = "start";
+  start.position_enu = start_position;
+  navigation_mission::MissionWaypoint active;
+  active.id = "active";
+  active.position_enu = active_position;
+  active.behavior = active_stop
+      ? navigation_mission::MissionWaypoint::Behavior::Stop
+      : navigation_mission::MissionWaypoint::Behavior::PassThrough;
+  active.acceptance_radius_m = 0.5;
+  mission.waypoints = {start, active};
+  navigation_mission::RouteProgress progress(mission);
+  const auto measured = progress.update(measured_position);
+  EXPECT_TRUE(measured.valid);
+  return progress.snapshot(mission.id, mission.frame, 1U, 1U, 1U);
+}
+
+navigation_mission::ImmutableRouteSnapshot makeCornerActiveRouteSnapshot() {
+  navigation_mission::Mission mission;
+  mission.id = "route-regression-corner-test";
+  mission.frame = "lio_odom";
+  navigation_mission::MissionWaypoint start;
+  start.id = "start";
+  start.position_enu = Eigen::Vector3d{0.0, 0.0, 3.0};
+  navigation_mission::MissionWaypoint corner;
+  corner.id = "corner";
+  corner.position_enu = Eigen::Vector3d{20.0, 0.0, 3.0};
+  corner.acceptance_radius_m = 0.9;
+  navigation_mission::MissionWaypoint outgoing;
+  outgoing.id = "outgoing";
+  outgoing.position_enu = Eigen::Vector3d{20.0, 10.0, 3.0};
+  mission.waypoints = {start, corner, outgoing};
+  navigation_mission::RouteProgress progress(mission);
+  const auto measured = progress.update(Eigen::Vector3d{5.0, 0.0, 3.0});
+  EXPECT_TRUE(measured.valid);
+  return progress.snapshot(mission.id, mission.frame, 1U, 1U, 1U);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateRejectsFoldedNominal) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
+  // x(t)=5+8t-4t^2 advances to x=9 and folds back to x=5.
+  coefficients.row(0) << -4.0, 8.0, 5.0;
+  coefficients(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({2.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 2.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeStraightActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_FALSE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 4.0, 1.0e-9);
+  EXPECT_NEAR(certificate.first_violation_time_s, 2.0, 1.0e-9);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateAcceptsForwardDetour) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 2);
+  coefficients.col(0) << 4.0, 2.0, 0.0;
+  coefficients.col(1) << 5.0, 0.0, 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({2.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 2.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeStraightActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateDoesNotGateBackupBrake) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 2);
+  coefficients.col(0) << -1.0, 0.0, 0.0;
+  coefficients.col(1) << 5.0, 0.0, 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 1.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::BACKUP}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeStraightActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_FALSE(certificate.applicable);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateAllowsNegativeEnuDirection) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 2);
+  coefficients.col(0) << -4.0, 0.0, 0.0;
+  coefficients.col(1) << 5.0, 0.0, 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 1.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  const auto reverse_enu_route = makeStraightActiveRouteSnapshot(
+      Eigen::Vector3d{10.0, 0.0, 3.0}, Eigen::Vector3d{0.0, 0.0, 3.0},
+      Eigen::Vector3d{5.0, 0.0, 3.0});
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, reverse_enu_route, 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateChangesTangentInsideAcceptanceBall) {
+  Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
+  incoming.row(0) << 14.4, 5.0;
+  incoming(2, 1) = 3.0;
+  Eigen::MatrixXd outgoing = Eigen::MatrixXd::Zero(3, 3);
+  // The outgoing piece bows in X while progressing monotonically in Y. A
+  // single incoming-tangent certificate sees a 1 m X regression at its tail;
+  // route-arc progress correctly remains monotonic after the pinned junction.
+  outgoing.row(0) << -1.0, 1.0, 19.4;
+  outgoing.row(1) << 0.0, 7.0, 0.0;
+  outgoing(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory(
+      {1.0, 1.0}, {incoming, outgoing});
+  candidate.roles = {{0.0, 2.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeCornerActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateKeepsIncomingTangentAtExactWaypointHandoff) {
+  Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
+  incoming.row(0) << 19.4, 0.0;
+  incoming(2, 1) = 3.0;
+  Eigen::MatrixXd final_incoming = Eigen::MatrixXd::Zero(3, 3);
+  final_incoming.row(0) << 0.0, 0.6, 19.4;
+  final_incoming.row(1) << -3.0, 3.0, 0.0;
+  final_incoming(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory(
+      {1.0, 1.0}, {incoming, final_incoming});
+  candidate.roles = {{0.0, 2.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  candidate.preserve_incoming_route_tangent = true;
+
+  // The second piece reaches the exact corner while its Y excursion would
+  // look like a 0.75 m regression if the outgoing tangent were switched at
+  // the first in-ball junction. It is monotonic on the incoming X leg.
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeCornerActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 0.0, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, MainRouteRegressionCertificateRejectsFoldAfterCorner) {
+  Eigen::MatrixXd incoming = Eigen::MatrixXd::Zero(3, 2);
+  incoming.row(0) << 14.4, 5.0;
+  incoming(2, 1) = 3.0;
+  Eigen::MatrixXd outgoing = Eigen::MatrixXd::Zero(3, 3);
+  outgoing(0, 2) = 19.4;
+  // y(t)=-4t^2+8t advances 4 m, then returns to the corner at t=2.
+  outgoing.row(1) << -4.0, 8.0, 0.0;
+  outgoing(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory(
+      {1.0, 2.0}, {incoming, outgoing});
+  candidate.roles = {{0.0, 3.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate, makeCornerActiveRouteSnapshot(), 0.0, 0.5);
+  EXPECT_TRUE(certificate.applicable);
+  EXPECT_FALSE(certificate.valid);
+  EXPECT_NEAR(certificate.maximum_regression_m, 4.0, 1.0e-9);
+}
+
+TEST(PlannerTrajectory, BoundedTerminalStopRecoveryDoesNotUseRouteFoldGate) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 3);
+  // Start just outside the STOP acceptance ball, then return into it while
+  // the route-progress coordinate decreases. This is the bounded correction
+  // produced after an emergency stop overshoots the checkpoint.
+  coefficients.row(0) << -3.7, 3.6, 19.6;
+  coefficients(2, 2) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 1.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  candidate.terminal_stop = true;
+
+  const auto certificate = navigation_planning_backend::certifyMainRouteRegression(
+      candidate,
+      makeStraightActiveRouteSnapshot(
+          Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{20.0, 0.0, 3.0},
+          Eigen::Vector3d{19.5, 0.0, 3.0}, true),
+      0.0, 0.5, true);
+  EXPECT_FALSE(certificate.applicable);
+  EXPECT_TRUE(certificate.valid);
+}
+
+TEST(PlannerTrajectory, BoundedPassThroughRecoveryUsesEmergencyIdentityBoundary) {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 2);
+  // The measured emergency endpoint is just beyond the pass-through
+  // waypoint. The MAIN correction returns into its acceptance ball; its
+  // BACKUP suffix is not part of the route-progress certificate.
+  coefficients.row(0) << -1.0, 21.0;
+  coefficients(2, 1) = 3.0;
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = geometry_utils::Trajectory({1.0}, {coefficients});
+  candidate.position.start_WT = 10.0;
+  candidate.roles = {{0.0, 1.0,
+                      navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  candidate.backup_suffix_available = true;
+
+  const auto route = makeStraightActiveRouteSnapshot(
+      Eigen::Vector3d{0.0, 0.0, 3.0}, Eigen::Vector3d{20.0, 0.0, 3.0},
+      Eigen::Vector3d{20.8, 0.0, 3.0});
+  const auto nominal_certificate =
+      navigation_planning_backend::certifyMainRouteRegression(
+          candidate, route, 0.0, 0.5);
+  EXPECT_TRUE(nominal_certificate.applicable);
+  EXPECT_FALSE(nominal_certificate.valid);
+
+  const auto recovery_certificate =
+      navigation_planning_backend::certifyMainRouteRegression(
+          candidate, route, 0.0, 0.5, true);
+  EXPECT_FALSE(recovery_certificate.applicable);
+  EXPECT_TRUE(recovery_certificate.valid);
+}
+
+TEST(PlannerTrajectory, SemanticYawUsesForwardStoppingDisplacementForBackupHold) {
+  const std::vector<double> durations{3.0};
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 6);
+  geometry_utils::Trajectory position(durations, {coefficients});
+  const navigation_math::Vec4f initial_yaw{
+      0.516842123820765, 0.24656354241796274,
+      -0.06843350325595021, 0.0};
+  traj_opt::YawTrajOpt optimizer(1.0, 0.3);
+  geometry_utils::Trajectory yaw;
+
+  ASSERT_TRUE(optimizer.optimizeToTarget(
+      initial_yaw, initial_yaw(0), position, yaw));
+  const auto& diagnostics = optimizer.lastDiagnostics();
+  EXPECT_TRUE(diagnostics.used_stopping_displacement);
+  const double expected_displacement =
+      0.5 * initial_yaw(1) * 3.0 + initial_yaw(2) * 9.0 / 12.0;
+  EXPECT_NEAR(diagnostics.stopping_displacement_rad,
+              expected_displacement, 1.0e-12);
+  EXPECT_NEAR(yaw.getPos(3.0).x(),
+              initial_yaw(0) + expected_displacement, 1.0e-9);
+  EXPECT_NEAR(yaw.getVel(3.0).x(), 0.0, 1.0e-9);
+  EXPECT_NEAR(yaw.getAcc(3.0).x(), 0.0, 1.0e-9);
+  EXPECT_LE(yaw.getMaxVelRate(), 1.0 + 1.0e-6);
+  EXPECT_LE(yaw.getMaxAccRate(), 0.3 + 1.0e-6);
+}
+
+TEST(PlannerTrajectory, YawNormalizationRecoversNonFiniteTarget) {
+  double yaw = std::numeric_limits<double>::infinity();
+  geometry_utils::normalizeNextYaw(1.2, yaw);
+  EXPECT_DOUBLE_EQ(yaw, 1.2);
+
+  yaw = -std::numeric_limits<double>::infinity();
+  geometry_utils::normalizeNextYaw(std::numeric_limits<double>::quiet_NaN(), yaw);
+  EXPECT_DOUBLE_EQ(yaw, 0.0);
+}
+
+TEST(PlannerTrajectory, SearchFallbacksShareOneAbsoluteDeadline) {
+  const navigation_planning_backend::AbsoluteDeadline deadline(100.0, 0.04);
+  EXPECT_NEAR(deadline.remaining(100.01), 0.03, 1.0e-12);
+  EXPECT_NEAR(deadline.remaining(100.039), 0.001, 1.0e-12);
+  EXPECT_DOUBLE_EQ(deadline.remaining(100.04), 0.0);
+  EXPECT_TRUE(deadline.expired(100.05));
+  EXPECT_DOUBLE_EQ(deadline.remaining(std::numeric_limits<double>::quiet_NaN()), 0.0);
+  const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  EXPECT_GT(deadline.steadyDeadlineNanoseconds(), now_ns);
+  EXPECT_FALSE(deadline.steadyExpired());
+  EXPECT_EQ(deadline.steadyDeadlineNanoseconds() -
+                deadline.refinementDeadlineNanoseconds(0.04),
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::duration<double>(0.04)).count());
+  EXPECT_THROW((navigation_planning_backend::AbsoluteDeadline{0.0, 0.0}), std::invalid_argument);
+  EXPECT_THROW((navigation_planning_backend::AbsoluteDeadline{0.0, -1.0}), std::invalid_argument);
+  EXPECT_THROW((navigation_planning_backend::AbsoluteDeadline{0.0, std::numeric_limits<double>::quiet_NaN()}),
+               std::invalid_argument);
+  EXPECT_THROW((navigation_planning_backend::AbsoluteDeadline{0.0, std::numeric_limits<double>::infinity()}),
+               std::invalid_argument);
+  EXPECT_THROW((navigation_planning_backend::AbsoluteDeadline{0.0, std::numeric_limits<double>::max()}),
+               std::invalid_argument);
+
+  // Simulation time may remain frozen while the optimizer is still executing.
+  // The monotonic budget must expire independently of the ROS-time contract.
+  const navigation_planning_backend::AbsoluteDeadline frozen_sim_time(42.0, 0.001);
+  std::this_thread::sleep_for(std::chrono::milliseconds(3));
+  EXPECT_TRUE(frozen_sim_time.steadyExpired());
+  EXPECT_NEAR(frozen_sim_time.remaining(42.0), 0.001, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, CancelledRefinementRetainsCertifiedNominalSeed) {
+  traj_opt::ExpOptimizationDiagnostics diagnostics;
+  diagnostics.cancelled = true;
+  diagnostics.used_certified_seed = true;
+
+  const auto result = traj_opt::classifyNominalSolveResult(
+      true, diagnostics, true);
+  EXPECT_TRUE(result.candidateAvailable());
+  EXPECT_EQ(result.status, traj_opt::NominalSolveStatus::kCertifiedSeed);
+  EXPECT_TRUE(result.cancellation_observed);
+  EXPECT_TRUE(result.deadline_observed);
+
+  diagnostics.used_certified_seed = false;
+  const auto failed = traj_opt::classifyNominalSolveResult(
+      false, diagnostics, false);
+  EXPECT_FALSE(failed.candidateAvailable());
+  EXPECT_EQ(failed.status, traj_opt::NominalSolveStatus::kFailed);
+}
+
+TEST(PlannerTrajectory, ConnectedGoalIsResolvedBeforeCorridorConstruction) {
+  const navigation_math::Vec3f guide_endpoint(1.0, 2.0, 3.0);
+  const navigation_math::Vec3f goal(1.1, 2.0, 3.0);
+  const auto result = navigation_planning_backend::resolveGuideEndpoint(
+      guide_endpoint, goal, 0.4);
+  EXPECT_TRUE(result.goal_connected);
+  EXPECT_TRUE(result.position.isApprox(goal));
+}
+
+TEST(PlannerTrajectory, SimplifySfcPreservesRouteBoundaryGate) {
+  using geometry_utils::MatD4f;
+  using geometry_utils::Polytope;
+  using geometry_utils::PolytopeVec;
+  using navigation_math::Vec3f;
+
+  const auto make_box = [](double min_x, double max_x,
+                           double min_y, double max_y,
+                           double min_z, double max_z) {
+    MatD4f planes(6, 4);
+    planes <<
+        1.0, 0.0, 0.0, -max_x,
+       -1.0, 0.0, 0.0, min_x,
+        0.0, 1.0, 0.0, -max_y,
+        0.0,-1.0, 0.0, min_y,
+        0.0, 0.0, 1.0, -max_z,
+        0.0, 0.0,-1.0, min_z;
+    return Polytope(planes);
+  };
+
+  Polytope gate = make_box(0.8, 1.2, -0.2, 0.2, 2.8, 3.2);
+  gate.SetRouteBoundaryContract(Vec3f{1.0F, 0.0F, 3.0F}, 0.9);
+  PolytopeVec sfcs{
+      make_box(-1.0, 2.0, -1.0, 1.0, 2.0, 4.0),
+      gate,
+      make_box(0.0, 3.0, -1.0, 1.0, 2.0, 4.0)};
+
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      Vec3f(0.0, 0.0, 3.0), Vec3f(2.5, 0.0, 3.0), sfcs));
+  ASSERT_EQ(sfcs.size(), 3U);
+  EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
+  EXPECT_TRUE(sfcs[1].GetRouteBoundaryPoint().isApprox(
+      Vec3f{1.0F, 0.0F, 3.0F}));
+  EXPECT_DOUBLE_EQ(sfcs[1].GetRouteBoundaryRadius(), 0.9);
+}
+
+TEST(PlannerTrajectory, SimplifySfcTrimsRedundantTailWithoutCrossingRouteGate) {
+  auto gate = makeTransitionTestBox(4.8, 5.2);
+  gate.SetRouteBoundaryContract(navigation_math::Vec3f{5.0, 0.5, 0.5}, 0.9);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), gate,
+      makeTransitionTestBox(4.0, 10.0),
+      makeTransitionTestBox(9.0, 14.0),
+      makeTransitionTestBox(11.0, 16.0),
+      makeTransitionTestBox(12.0, 17.0)};
+  const auto original = sfcs;
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {13.0, 0.5, 0.5}, sfcs));
+  ASSERT_EQ(sfcs.size(), 4U);
+  for (std::size_t index = 0; index < sfcs.size(); ++index) {
+    EXPECT_TRUE(sfcs[index].GetPlanes().isApprox(original[index].GetPlanes(), 0.0));
+  }
+  EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
+  EXPECT_TRUE(sfcs[1].GetRouteBoundaryPoint().isApprox(
+      navigation_math::Vec3f{5.0, 0.5, 0.5}, 0.0));
+  EXPECT_DOUBLE_EQ(sfcs[1].GetRouteBoundaryRadius(), 0.9);
+  EXPECT_TRUE(sfcs.back().PointIsInside({13.0, 0.5, 0.5}));
+  expectAllTransitionsRepresentable(sfcs);
+}
+
+TEST(PlannerTrajectory, SimplifySfcKeepsOutgoingGateNeighbourAndInteriorCells) {
+  auto gate = makeTransitionTestBox(4.8, 5.2);
+  gate.SetRouteBoundaryContract(navigation_math::Vec3f{5.0, 0.5, 0.5}, 0.9);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), gate,
+      makeTransitionTestBox(4.0, 10.0),
+      makeTransitionTestBox(4.0, 12.0)};
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {5.1, 0.5, 0.5}, sfcs));
+  // Even when the gate contains the tail, its outgoing neighbour remains:
+  // the boundary's incoming/outgoing junction contracts must not disappear.
+  ASSERT_EQ(sfcs.size(), 3U);
+  EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
+  EXPECT_DOUBLE_EQ(sfcs.back().GetPlanes()(0, 3), -10.0);
+}
+
+TEST(PlannerTrajectory, SimplifySfcRetainsTailNeededForEndpointOrMarkedGate) {
+  auto gate = makeTransitionTestBox(4.8, 5.2);
+  gate.SetRouteBoundaryContract(navigation_math::Vec3f{5.0, 0.5, 0.5}, 0.9);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), gate,
+      makeTransitionTestBox(4.0, 10.0),
+      makeTransitionTestBox(9.0, 14.0)};
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {13.0, 0.5, 0.5}, sfcs));
+  EXPECT_EQ(sfcs.size(), 4U);
+  sfcs.back().SetRouteBoundaryContract(
+      navigation_math::Vec3f{9.5, 0.5, 0.5}, 0.9);
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {9.5, 0.5, 0.5}, sfcs));
+  ASSERT_EQ(sfcs.size(), 4U);
+  EXPECT_TRUE(sfcs.back().IsRouteBoundaryGate());
+}
+
+TEST(PlannerTrajectory, SimplifySfcProtectsEveryGateAndItsOutgoingNeighbour) {
+  auto first_gate = makeTransitionTestBox(4.8, 5.2);
+  first_gate.SetRouteBoundaryContract({5.0, 0.5, 0.5}, 0.9);
+  auto last_gate = makeTransitionTestBox(8.8, 9.2);
+  last_gate.SetRouteBoundaryContract({9.0, 0.5, 0.5}, 0.8);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), first_gate,
+      makeTransitionTestBox(4.0, 10.0), last_gate,
+      makeTransitionTestBox(8.0, 14.0),
+      makeTransitionTestBox(11.0, 16.0)};
+  const auto original = sfcs;
+  // The tail is also inside cell2, but truncating there would lose gate3.
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5}, {9.1, 0.5, 0.5}, sfcs));
+  ASSERT_EQ(sfcs.size(), 5U);
+  for (std::size_t index = 0; index < sfcs.size(); ++index) {
+    EXPECT_TRUE(sfcs[index].GetPlanes().isApprox(original[index].GetPlanes(), 0.0));
+    EXPECT_EQ(sfcs[index].IsRouteBoundaryGate(), original[index].IsRouteBoundaryGate());
+  }
+  EXPECT_DOUBLE_EQ(sfcs[1].GetRouteBoundaryRadius(), 0.9);
+  EXPECT_DOUBLE_EQ(sfcs[3].GetRouteBoundaryRadius(), 0.8);
+  expectAllTransitionsRepresentable(sfcs);
+}
+
+TEST(PlannerTrajectory, SimplifySfcDoesNotTrimMarkedChainForInvalidTail) {
+  auto gate = makeTransitionTestBox(4.8, 5.2);
+  gate.SetRouteBoundaryContract({5.0, 0.5, 0.5}, 0.9);
+  geometry_utils::PolytopeVec sfcs{
+      makeTransitionTestBox(-1.0, 6.0), gate,
+      makeTransitionTestBox(4.0, 10.0), makeTransitionTestBox(9.0, 14.0)};
+  ASSERT_TRUE(geometry_utils::SimplifySFC(
+      {0.0, 0.5, 0.5},
+      navigation_math::Vec3f::Constant(std::numeric_limits<double>::quiet_NaN()), sfcs));
+  EXPECT_EQ(sfcs.size(), 4U);
+  EXPECT_TRUE(sfcs[1].IsRouteBoundaryGate());
+}
+
+TEST(PlannerTrajectory, GoalPoliciesRemainNamedAndShareProvisionalValue) {
+  EXPECT_DOUBLE_EQ(navigation_world_model::kGoalConnectionToleranceM,
+                   navigation_world_model::kGoalCompletionToleranceM);
+  EXPECT_DOUBLE_EQ(navigation_world_model::kNearGoalShortcutToleranceM,
+                   navigation_world_model::kGoalCompletionToleranceM);
+}
+
+TEST(PlannerTrajectory, NearGoalSegmentRejectsOccupiedAndOutOfMapEndpoints) {
+  SweepWorld world;
+  const navigation_world_model::Point3 start(0.0, 0.0, 0.0);
+  const navigation_world_model::Point3 goal(1.0, 0.0, 0.0);
+  EXPECT_TRUE(navigation_world_model::isGoalSegmentTraversable(world, start, goal));
+
+  world.blocked_from_x = 0.5;
+  EXPECT_FALSE(navigation_world_model::isGoalSegmentTraversable(world, start, goal));
+
+  world.blocked_from_x = std::numeric_limits<double>::infinity();
+  world.endpoints_in_bounds = false;
+  EXPECT_FALSE(navigation_world_model::isGoalSegmentTraversable(world, start, goal));
+}
+
+TEST(PlannerTrajectory, TimeAllocatorHandlesSwitchingDistanceRoundoff) {
+  double elapsed = std::numeric_limits<double>::quiet_NaN();
+  double velocity = std::numeric_limits<double>::quiet_NaN();
+  constexpr double distance = 5.608921464952064;
+  geometry_utils::simplePMTimeAllocator(
+      3.0, 2.0, 0.0, distance, distance, elapsed, velocity);
+  EXPECT_TRUE(std::isfinite(elapsed));
+  EXPECT_GE(elapsed, 0.0);
+  EXPECT_TRUE(std::isfinite(velocity));
+}
+
+TEST(PlannerTrajectory, GuideTimeAllocationUsesPointAlignedTravelledDistance) {
+  const navigation_math::Vec3f start(0.0, 0.0, 0.0);
+  const navigation_math::vec_E<navigation_math::Vec3f> nonuniform_path{
+      start,
+      navigation_math::Vec3f(0.3, 0.0, 0.0),
+      navigation_math::Vec3f(4.7, 0.0, 0.0),
+      navigation_math::Vec3f(30.0, 0.0, 0.0),
+  };
+
+  double previous_total_time = std::numeric_limits<double>::infinity();
+  for (const double maximum_velocity : {2.0, 5.0, 6.0, 10.0}) {
+    geometry_utils::GuideTimeAllocation allocation;
+    ASSERT_TRUE(geometry_utils::allocateGuideElapsedTimes(
+        5.0, maximum_velocity, 0.0, start, nonuniform_path, allocation));
+    ASSERT_EQ(allocation.points.size(), 3U);
+    ASSERT_EQ(allocation.elapsed_s.size(), allocation.points.size());
+    EXPECT_TRUE(allocation.points.front().isApprox(nonuniform_path[1]));
+    EXPECT_TRUE(allocation.points.back().isApprox(nonuniform_path.back()));
+    EXPECT_NEAR(allocation.path_length_m, 30.0, 1.0e-12);
+    EXPECT_GT(allocation.elapsed_s.front(), 0.0);
+    for (std::size_t index = 1; index < allocation.elapsed_s.size(); ++index) {
+      EXPECT_GT(allocation.elapsed_s[index], allocation.elapsed_s[index - 1]);
+    }
+
+    double expected_total_time = std::numeric_limits<double>::quiet_NaN();
+    double terminal_velocity = std::numeric_limits<double>::quiet_NaN();
+    geometry_utils::simplePMTimeAllocator(
+        5.0, maximum_velocity, 0.0, 30.0, 30.0,
+        expected_total_time, terminal_velocity);
+    EXPECT_NEAR(allocation.elapsed_s.back(), expected_total_time, 1.0e-12);
+    EXPECT_LE(allocation.elapsed_s.back(), previous_total_time);
+    previous_total_time = allocation.elapsed_s.back();
+  }
+}
+
+TEST(PlannerTrajectory, ContinuationGuideDoesNotManufactureFrontierStop) {
+  const navigation_math::Vec3f start(0.0, 0.0, 0.0);
+  const navigation_math::vec_E<navigation_math::Vec3f> path{
+      navigation_math::Vec3f(4.0, 0.0, 0.0),
+      navigation_math::Vec3f(14.0, 0.0, 0.0),
+  };
+  geometry_utils::GuideTimeAllocation allocation;
+  ASSERT_TRUE(geometry_utils::allocateGuideContinuationElapsedTimes(
+      2.0, 4.0, 5.0, 0.0, start, path, allocation));
+  ASSERT_EQ(allocation.elapsed_s.size(), 2U);
+  EXPECT_GT(allocation.elapsed_s.front(), 0.0);
+  EXPECT_GT(allocation.elapsed_s.back(), allocation.elapsed_s.front());
+  EXPECT_NEAR(allocation.path_length_m, 14.0, 1.0e-12);
+  EXPECT_NEAR(allocation.terminal_velocity_mps, 5.0, 1.0e-12);
+  EXPECT_NEAR(allocation.elapsed_s.back(), 4.3, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, ShortContinuationGuideEndsWithBoundedPositiveSpeed) {
+  geometry_utils::JerkLimitedContinuationProfile profile;
+  ASSERT_TRUE(geometry_utils::makeJerkLimitedContinuationProfile(
+      0.5, 0.0, 5.0, 2.0, 4.0, profile));
+  EXPECT_GT(profile.terminal_velocity_mps, 0.0);
+  EXPECT_LT(profile.terminal_velocity_mps, 5.0);
+  EXPECT_LE(profile.maximum_jerk_mps3, 4.0);
+  EXPECT_LE(4.0 * profile.jerk_phase_s, 2.0 + 1.0e-12);
+  EXPECT_NEAR(profile.distanceAtTime(profile.total_duration_s), 0.5, 1.0e-12);
+}
+
+TEST(PlannerTrajectory, ContinuationGuideRejectsOverspeedAndInvalidLimits) {
+  geometry_utils::JerkLimitedContinuationProfile profile;
+  EXPECT_FALSE(geometry_utils::makeJerkLimitedContinuationProfile(
+      10.0, 5.1, 5.0, 2.0, 4.0, profile));
+  EXPECT_FALSE(geometry_utils::makeJerkLimitedContinuationProfile(
+      10.0, 0.0, 5.0, 2.0, 0.0, profile));
+}
+
+TEST(PlannerTrajectory, SubdividesEverySparseGuideEdgeForCorridorSeeds) {
+  const navigation_math::vec_Vec3f path{
+      navigation_math::Vec3f{44.0F, 5.0F, 3.0F},
+      navigation_math::Vec3f{50.0F, 5.0F, 3.0F},
+      navigation_math::Vec3f{50.0F, -0.7F, 3.0F}};
+  navigation_math::vec_Vec3f subdivided;
+  ASSERT_TRUE(geometry_utils::subdividePathByMaximumSegmentLength(
+      path, 3.0, subdivided));
+  ASSERT_EQ(subdivided.front(), path.front());
+  ASSERT_EQ(subdivided.back(), path.back());
+  ASSERT_EQ(subdivided.size(), 5U);
+  for (std::size_t index = 1U; index < subdivided.size(); ++index) {
+    EXPECT_LE((subdivided[index] - subdivided[index - 1U]).norm(), 3.0 + 1.0e-6);
+  }
+  EXPECT_TRUE(subdivided[2].isApprox(navigation_math::Vec3f{50.0F, 5.0F, 3.0F}));
+}
+
+TEST(PlannerTrajectory, TruncatesRemoteRouteToBoundedCertifiedPrefix) {
+  const navigation_math::vec_Vec3f path{
+      navigation_math::Vec3f{0.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{4.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{4.0F, 4.0F, 3.0F},
+      navigation_math::Vec3f{12.0F, 4.0F, 3.0F}};
+  navigation_math::vec_Vec3f prefix;
+  bool truncated = false;
+  ASSERT_TRUE(geometry_utils::truncatePathAtDistance(
+      path, 7.0, prefix, truncated));
+  ASSERT_TRUE(truncated);
+  ASSERT_EQ(prefix.size(), 3U);
+  EXPECT_TRUE(prefix.front().isApprox(path.front()));
+  EXPECT_TRUE(prefix[1].isApprox(path[1]));
+  EXPECT_NEAR((prefix.back() - path[1]).norm(), 3.0, 1.0e-6);
+  EXPECT_NEAR(
+      (prefix[1] - prefix[0]).norm() + (prefix[2] - prefix[1]).norm(),
+      7.0, 1.0e-6);
+}
+
+TEST(PlannerTrajectory, BoundsRemoteAstarBeforeExpandingPastVisibility) {
+  EXPECT_DOUBLE_EQ(geometry_utils::localRouteSearchHorizon(45.0, 14.0), 14.0);
+  EXPECT_DOUBLE_EQ(geometry_utils::localRouteSearchHorizon(8.0, 14.0), 8.0);
+  EXPECT_TRUE(std::isnan(
+      geometry_utils::localRouteSearchHorizon(45.0, 0.0)));
+  EXPECT_TRUE(std::isnan(
+      geometry_utils::localRouteSearchHorizon(
+          std::numeric_limits<double>::infinity(), 14.0)));
+}
+
+TEST(PlannerTrajectory, InflatedAstarDoesNotRepeatIdenticalEdgeCertificates) {
+  auto world = std::make_shared<CountingAstarWorld>();
+  path_search::PathSearchConfig config;
+  config.allow_diag = true;
+  config.heu_type = 2;
+  config.heuristic_weight = 1.5;
+  auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>();
+  path_search::Astar astar(config, context, world, 1.0);
+  navigation_math::vec_Vec3f path;
+  const int flags = path_search::ON_INF_MAP |
+                    path_search::UNKNOWN_AS_FREE |
+                    path_search::DONT_USE_INF_NEIGHBOR;
+
+  const auto result = astar.pointToPointPathSearch(
+      navigation_math::Vec3f{0.5F, 0.5F, 1.5F},
+      navigation_math::Vec3f{5.5F, 0.5F, 1.5F},
+      flags, 20.0, path, 1.0, true);
+
+  EXPECT_TRUE(result == navigation_math::REACH_GOAL ||
+              result == navigation_math::REACH_HORIZON);
+  EXPECT_GT(path.size(), 2U);
+  EXPECT_EQ(world->consecutiveDuplicateQueries(), 0U);
+  EXPECT_EQ(world->repeatedUndirectedEdgeQueries(), 0U);
+}
+
+TEST(PlannerTrajectory, AstarRejectsMalformedPublicBoundaries) {
+  auto world = std::make_shared<CountingAstarWorld>();
+  path_search::PathSearchConfig config;
+  config.heu_type = 2;
+  auto context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>();
+  EXPECT_THROW(
+      path_search::Astar(config, nullptr, world, 1.0), std::invalid_argument);
+
+  path_search::Astar astar(config, context, world, 1.0);
+  navigation_math::vec_Vec3f path;
+  const int flags = path_search::ON_INF_MAP |
+                    path_search::UNKNOWN_AS_FREE |
+                    path_search::DONT_USE_INF_NEIGHBOR;
+  EXPECT_EQ(astar.pointToPointPathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F},
+                navigation_math::Vec3f{5.5F, 0.5F, 1.5F}, flags, 20.0, path,
+                std::numeric_limits<double>::infinity(), true),
+            navigation_math::INIT_ERROR);
+  EXPECT_EQ(astar.escapePathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F}, flags, path, true,
+                std::numeric_limits<double>::infinity()),
+            navigation_math::INIT_ERROR);
+  EXPECT_EQ(astar.escapePathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F}, flags, path, true,
+                std::numeric_limits<double>::quiet_NaN()),
+            navigation_math::INIT_ERROR);
+  EXPECT_EQ(astar.pointToPointPathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F},
+                navigation_math::Vec3f{5.5F, 0.5F, 1.5F}, flags, 20.0, path,
+                1.0e300, true),
+            navigation_math::INIT_ERROR);
+  EXPECT_EQ(astar.escapePathSearch(
+                navigation_math::Vec3f{0.5F, 0.5F, 1.5F}, flags, path, true,
+                1.0e300),
+            navigation_math::INIT_ERROR);
+}
+
+TEST(PlannerTrajectory, DoesNotTruncateRouteWithinBound) {
+  const navigation_math::vec_Vec3f path{
+      navigation_math::Vec3f{0.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{2.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{2.0F, 2.0F, 3.0F}};
+  navigation_math::vec_Vec3f prefix;
+  bool truncated = true;
+  ASSERT_TRUE(geometry_utils::truncatePathAtDistance(
+      path, 10.0, prefix, truncated));
+  EXPECT_FALSE(truncated);
+  ASSERT_EQ(prefix.size(), path.size());
+  for (std::size_t index = 0U; index < path.size(); ++index) {
+    EXPECT_TRUE(prefix[index].isApprox(path[index]));
+  }
+  EXPECT_LE(geometry_utils::computePathLength(prefix), 10.0);
+}
+
+TEST(PlannerTrajectory, RejectsInvalidRoutePrefixBounds) {
+  navigation_math::vec_Vec3f prefix;
+  bool truncated = false;
+  EXPECT_FALSE(geometry_utils::truncatePathAtDistance(
+      navigation_math::vec_Vec3f{navigation_math::Vec3f::Zero()},
+      5.0, prefix, truncated));
+  EXPECT_FALSE(geometry_utils::truncatePathAtDistance(
+      navigation_math::vec_Vec3f{
+          navigation_math::Vec3f::Zero(),
+          navigation_math::Vec3f{1.0F, 0.0F, 0.0F}},
+      0.0, prefix, truncated));
+}
+
+TEST(PlannerTrajectory, SparseGuideSubdivisionRejectsInvalidInputs) {
+  navigation_math::vec_Vec3f subdivided;
+  EXPECT_FALSE(geometry_utils::subdividePathByMaximumSegmentLength(
+      {}, 3.0, subdivided));
+  EXPECT_FALSE(geometry_utils::subdividePathByMaximumSegmentLength(
+      navigation_math::vec_Vec3f{navigation_math::Vec3f::Zero()}, 0.0, subdivided));
+  EXPECT_FALSE(geometry_utils::subdividePathByMaximumSegmentLength(
+      navigation_math::vec_Vec3f{
+          navigation_math::Vec3f::Zero(),
+          navigation_math::Vec3f{
+              std::numeric_limits<float>::quiet_NaN(), 0.0F, 0.0F}},
+      3.0, subdivided));
+}
+
+TEST(PlannerTrajectory, PolytopeRejectsMalformedPlanesAndPoints) {
+  using geometry_utils::Polytope;
+  // MatD4f fixes the public plane width at four columns, so a wrong-width
+  // value is unrepresentable. Exercise the remaining malformed shape: no
+  // planes.
+  Polytope malformed_shape(navigation_math::MatD4f::Zero(0, 4));
+  EXPECT_TRUE(malformed_shape.empty());
+  EXPECT_FALSE(malformed_shape.PointIsInside(navigation_math::Vec3f::Zero()));
+
+  navigation_math::MatD4f malformed_values = navigation_math::MatD4f::Zero(1, 4);
+  malformed_values(0, 0) = std::numeric_limits<double>::quiet_NaN();
+  Polytope malformed_nan(malformed_values);
+  EXPECT_TRUE(malformed_nan.empty());
+
+  navigation_math::MatD4f box_planes(6, 4);
+  box_planes <<
+      1.0, 0.0, 0.0, -1.0,
+      -1.0, 0.0, 0.0, -1.0,
+      0.0, 1.0, 0.0, -1.0,
+      0.0, -1.0, 0.0, -1.0,
+      0.0, 0.0, 1.0, -1.0,
+      0.0, 0.0, -1.0, -1.0;
+  const Polytope valid(box_planes);
+  EXPECT_TRUE(valid.PointIsInside(navigation_math::Vec3f::Zero()));
+  EXPECT_FALSE(valid.PointIsInside(
+      navigation_math::Vec3f::Constant(std::numeric_limits<float>::quiet_NaN())));
+  EXPECT_FALSE(valid.PointIsInside(navigation_math::Vec3f::Zero(), -1.0));
+}
+
+TEST(PlannerTrajectory, QuickHullRejectsEmptyAndMalformedPublicInputs) {
+  geometry_utils::QuickHull<double> quick_hull;
+  const std::vector<geometry_utils::Vector3<double>> empty;
+  EXPECT_TRUE(quick_hull.getConvexHull(empty, false, true).getIndexBuffer().empty());
+
+  const std::vector<geometry_utils::Vector3<double>> malformed{
+      {0.0, 0.0, 0.0},
+      {1.0, 0.0, 0.0},
+      {0.0, std::numeric_limits<double>::infinity(), 0.0},
+      {0.0, 0.0, 1.0}};
+  EXPECT_TRUE(quick_hull.getConvexHull(malformed, false, true)
+                  .getIndexBuffer()
+                  .empty());
+  EXPECT_TRUE(quick_hull.getConvexHull(malformed.data(), malformed.size(), false, true)
+                  .getIndexBuffer()
+                  .empty());
+
+  EXPECT_THROW(
+      quick_hull.getConvexHullAsMesh(static_cast<const double *>(nullptr), 1, false),
+      std::invalid_argument);
+  const std::vector<double> malformed_flat{0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                                           0.0, std::numeric_limits<double>::infinity(), 0.0,
+                                           0.0, 0.0, 1.0};
+  EXPECT_THROW(quick_hull.getConvexHullAsMesh(malformed_flat.data(), 4, false), std::invalid_argument);
+}
+
+TEST(PlannerTrajectory, LbfgsRejectsMalformedBoundaryInputs) {
+  using Lbfgs = math_utils::lbfgs;
+  const auto evaluate = +[](void *, const Eigen::VectorXd &variables,
+                            Eigen::VectorXd &gradient) {
+    gradient = 2.0 * variables;
+    return variables.squaredNorm();
+  };
+  const auto malformed_gradient = +[](void *, const Eigen::VectorXd &,
+                                      Eigen::VectorXd &gradient) {
+    gradient = Eigen::VectorXd::Zero(1);
+    return 0.0;
+  };
+  const auto malformed_step_bound = +[](void *, const Eigen::VectorXd &,
+                                        const Eigen::VectorXd &) {
+    return std::numeric_limits<double>::quiet_NaN();
+  };
+
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    auto parameters = Lbfgs::lbfgs_parameter_t{};
+    parameters.g_epsilon = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, evaluate, nullptr, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_GEPSILON);
+  }
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    auto parameters = Lbfgs::lbfgs_parameter_t{};
+    parameters.max_step = std::numeric_limits<double>::infinity();
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, evaluate, nullptr, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_MAXSTEP);
+  }
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    const auto parameters = Lbfgs::lbfgs_parameter_t{};
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, malformed_gradient, nullptr, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_FUNCVAL);
+  }
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    const auto parameters = Lbfgs::lbfgs_parameter_t{};
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, evaluate, malformed_step_bound, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_MAXSTEP);
+  }
+  {
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    const auto parameters = Lbfgs::lbfgs_parameter_t{};
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, nullptr, nullptr, nullptr, nullptr, parameters),
+              Lbfgs::LBFGSERR_INVALID_FUNCVAL);
+  }
+  {
+    int callback_count = 0;
+    const auto failsOnSecondEvaluation = +[](void *raw, const Eigen::VectorXd &variables,
+                                             Eigen::VectorXd &gradient) {
+      auto *count = static_cast<int *>(raw);
+      ++(*count);
+      if (*count >= 2) {
+        gradient = Eigen::VectorXd::Constant(variables.size(),
+                                             std::numeric_limits<double>::quiet_NaN());
+        return std::numeric_limits<double>::quiet_NaN();
+      }
+      gradient = 2.0 * variables;
+      return variables.squaredNorm();
+    };
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    double f = 0.0;
+    const auto parameters = Lbfgs::lbfgs_parameter_t{};
+    EXPECT_EQ(Lbfgs::lbfgs_optimize(x, f, failsOnSecondEvaluation, nullptr, nullptr,
+                                    &callback_count, parameters),
+              Lbfgs::LBFGSERR_INVALID_FUNCVAL);
+    EXPECT_TRUE(std::isfinite(f));
+    EXPECT_DOUBLE_EQ(f, 2.0);
+    EXPECT_EQ(callback_count, 2);
+  }
+}
+
+TEST(PlannerTrajectory, SdlpRejectsMalformedConstraintsAndNormalizesHugeInputs) {
+  Eigen::Matrix<double, 4, 1> objective =
+      Eigen::Matrix<double, 4, 1>::Ones();
+  Eigen::Matrix<double, -1, 4> planes(1, 4);
+  Eigen::Matrix<double, -1, 1> bounds(1);
+  Eigen::Matrix<double, 4, 1> solution;
+
+  planes.setZero();
+  bounds.setZero();
+  EXPECT_TRUE(std::isinf(math_utils::sdlp::linprog<4>(
+      objective, planes, bounds, solution)));
+  EXPECT_FALSE(solution.allFinite());
+
+  Eigen::Matrix<double, -1, 1> mismatched_bounds(0);
+  EXPECT_TRUE(std::isinf(math_utils::sdlp::linprog<4>(
+      objective, planes, mismatched_bounds, solution)));
+
+  objective(0) = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_TRUE(std::isinf(math_utils::sdlp::linprog<4>(
+      objective, planes, bounds, solution)));
+
+  const double huge[2] = {std::numeric_limits<double>::max(),
+                          -std::numeric_limits<double>::max()};
+  double normalized[2] = {0.0, 0.0};
+  EXPECT_FALSE(math_utils::sdlp::unit2(huge, normalized));
+  EXPECT_TRUE(std::isfinite(normalized[0]));
+  EXPECT_TRUE(std::isfinite(normalized[1]));
+}
+
+TEST(PlannerTrajectory, PolytopeResetClearsGeometryAndMetadata) {
+  using geometry_utils::Polytope;
+  navigation_math::MatD4f box_planes(6, 4);
+  box_planes <<
+      1.0, 0.0, 0.0, -1.0,
+      -1.0, 0.0, 0.0, -1.0,
+      0.0, 1.0, 0.0, -1.0,
+      0.0, -1.0, 0.0, -1.0,
+      0.0, 0.0, 1.0, -1.0,
+      0.0, 0.0, -1.0, -1.0;
+  auto polytope = Polytope(box_planes);
+  polytope.SetKnownFree(true);
+  polytope.SetSeedLine({navigation_math::Vec3f::Zero(),
+                        navigation_math::Vec3f::UnitX()}, 0.5);
+  polytope.Reset();
+  EXPECT_TRUE(polytope.empty());
+  EXPECT_FALSE(polytope.IsKnownFree());
+  EXPECT_FALSE(polytope.HaveSeedLine());
+  EXPECT_FALSE(polytope.PointIsInside(navigation_math::Vec3f::Zero()));
+}
+
+TEST(PlannerTrajectory, EllipsoidBoundariesFailClosedAndPreserveSourceIds) {
+  geometry_utils::Ellipsoid empty;
+  EXPECT_TRUE(empty.empty());
+  EXPECT_FALSE(empty.inside(navigation_math::Vec3f::Zero()));
+  navigation_math::Vec3f closest_point = navigation_math::Vec3f::Zero();
+  EXPECT_TRUE(std::isnan(empty.pointDistanceToEllipsoid(
+      navigation_math::Vec3f::Zero(), closest_point)));
+  EXPECT_FALSE(closest_point.allFinite());
+  EXPECT_EQ(empty.nearestPointId(Eigen::Matrix3Xd(3, 0)), -1);
+  int point_id = 42;
+  EXPECT_TRUE(std::isnan(empty.nearestPointDistance(Eigen::Matrix3Xd(3, 0), point_id)));
+  EXPECT_EQ(point_id, -1);
+
+  geometry_utils::Ellipsoid invalid(
+      navigation_math::Mat3f::Zero(), navigation_math::Vec3f::Zero());
+  EXPECT_TRUE(invalid.empty());
+
+  const geometry_utils::Ellipsoid sphere(
+      navigation_math::Mat3f::Identity(), navigation_math::Vec3f::Ones(),
+      navigation_math::Vec3f::Zero());
+  EXPECT_FALSE(sphere.empty());
+  Eigen::Matrix3Xd points(3, 3);
+  points << 2.0, 0.0, 0.5,
+            0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0;
+  navigation_math::Mat3Df inside_points;
+  int nearest_inside_id = -1;
+  ASSERT_TRUE(sphere.pointsInside(points, inside_points, nearest_inside_id));
+  EXPECT_EQ(nearest_inside_id, 1);
+  EXPECT_EQ(inside_points.cols(), 2);
+}
+
+TEST(PlannerTrajectory, EllipsoidPointFilteringSupportsAliasAndPreservesInputIds) {
+  const geometry_utils::Ellipsoid sphere(
+      navigation_math::Mat3f::Identity(), navigation_math::Vec3f::Ones(),
+      navigation_math::Vec3f::Zero());
+  Eigen::Matrix3Xd source(3, 5);
+  source << 2.0, 0.5, 3.0, 0.1, -4.0,
+            0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0;
+  const Eigen::Matrix3Xd source_before = source;
+  Eigen::Matrix3Xd filtered;
+  int source_id = -1;
+  ASSERT_TRUE(sphere.pointsInside(source, filtered, source_id));
+  ASSERT_EQ(filtered.cols(), 2);
+  EXPECT_EQ(source_id, 3);
+  EXPECT_GE(source_id, filtered.cols());
+  EXPECT_EQ(source, source_before);
+  EXPECT_DOUBLE_EQ(filtered(0, 0), 0.5);
+  EXPECT_DOUBLE_EQ(filtered(0, 1), 0.1);
+
+  int alias_source_id = -1;
+  ASSERT_TRUE(sphere.pointsInside(source, source, alias_source_id));
+  EXPECT_EQ(alias_source_id, source_id);  // Pre-call input identity, not packed ID.
+  EXPECT_EQ(source, filtered);
+
+  Eigen::Matrix3Xd outside(3, 1);
+  outside.col(0) = Eigen::Vector3d(2.0, 0.0, 0.0);
+  EXPECT_FALSE(sphere.pointsInside(outside, outside, alias_source_id));
+  EXPECT_EQ(alias_source_id, -1);
+  EXPECT_EQ(outside.cols(), 0);
+}
+
+TEST(PlannerTrajectory, EllipsoidMatrixPlaneTransformMatchesScalarTransform) {
+  const geometry_utils::Ellipsoid ellipsoid(
+      navigation_math::Mat3f::Identity(),
+      navigation_math::Vec3f{2.0F, 3.0F, 4.0F},
+      navigation_math::Vec3f{10.0F, 20.0F, 30.0F});
+  ASSERT_FALSE(ellipsoid.empty());
+
+  Eigen::MatrixX4d planes_e(2, 4);
+  planes_e << 1.0, 0.0, 0.0, -1.0,
+              0.0, -1.0, 0.0, -2.0;
+  const Eigen::MatrixX4d planes_w = ellipsoid.toWorldFrame(planes_e);
+
+  ASSERT_EQ(planes_w.rows(), planes_e.rows());
+  for (Eigen::Index row = 0; row < planes_e.rows(); ++row) {
+    const Eigen::Vector4d plane_e = planes_e.row(row).transpose();
+    EXPECT_TRUE(planes_w.row(row).transpose().isApprox(
+        ellipsoid.toWorldFrame(plane_e), 1.0e-12));
+  }
+  EXPECT_DOUBLE_EQ(planes_w(0, 3), -6.0);
+  EXPECT_DOUBLE_EQ(planes_w(1, 3), 14.0 / 3.0);
+}
+
+TEST(PlannerTrajectory, BackupOptimizerRejectsMalformedPublicBoundaryInputs) {
+  traj_opt::Config config;
+  config.mass = 1.0;
+  config.grav = 9.81;
+  config.dh = 0.0;
+  config.dv = 0.0;
+  config.cp = 0.0;
+  config.v_eps = 1.0e-4;
+  config.max_vel = 5.0;
+  config.max_acc = 5.0;
+  config.max_jerk = 10.0;
+  config.max_omg = 5.0;
+  config.min_acc_thr = 1.0;
+  config.max_acc_thr = 20.0;
+  config.smooth_eps = 0.01;
+  config.opt_accuracy = 1.0e-5;
+  config.integral_reso = 10;
+  config.piece_num = 1;
+  config.quadrotor_flatness.reset(
+      config.mass, config.grav, config.dh, config.dv, config.cp, config.v_eps);
+
+  EXPECT_THROW(
+      traj_opt::BackupTrajOpt(config, nullptr), std::invalid_argument);
+
+  auto context = std::make_shared<
+      navigation_planner_context::PlannerRuntimeContext>();
+  traj_opt::BackupTrajOpt optimizer(config, context);
+  geometry_utils::Trajectory output;
+  double output_time = 0.0;
+  double duration = 1.0;
+  const navigation_math::VecDf endpoint = navigation_math::VecDf::Zero(3);
+  geometry_utils::Polytope empty_sfc;
+  EXPECT_FALSE(optimizer.optimize(geometry_utils::Trajectory{}, 0.0, 1.0, 0.0,
+                                  endpoint, duration, empty_sfc, output,
+                                  output_time));
+  EXPECT_TRUE(output.empty());
+}
+
+TEST(PlannerTrajectory, RouteBoundaryCannotCreateOverlongLineSeed) {
+  auto world = std::make_shared<SweepWorld>();
+  navigation_planner_context::PlannerRuntimeContext::Ptr context =
+      std::make_shared<navigation_planner_context::PlannerRuntimeContext>();
+  navigation_planning_backend::CorridorGenerator generator(
+      context, world, 10.0, 3.0, 0.1, 0.35, 1,
+      navigation_world_model::UnknownPolicy::kAllowUnknown);
+
+  const navigation_math::vec_Vec3f path{
+      navigation_math::Vec3f{0.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{6.0F, 0.0F, 3.0F},
+      navigation_math::Vec3f{6.0F, -5.0F, 3.0F}};
+  navigation_planning_backend::CorridorGenerator::RouteBoundaryGate gate{
+      navigation_math::Vec3f{6.0F, 0.0F, 3.0F}, 0.9};
+  geometry_utils::PolytopeVec sfcs;
+  navigation_math::Vec3f shifted_start;
+  ASSERT_TRUE(generator.SearchPolytopeOnPath(path, sfcs, shifted_start, false,
+                                             nullptr, gate));
+  ASSERT_FALSE(sfcs.empty());
+  const auto gate_polytope = std::find_if(
+      sfcs.begin(), sfcs.end(), [](const auto &polytope) {
+        return polytope.IsRouteBoundaryGate();
+      });
+  ASSERT_NE(gate_polytope, sfcs.end());
+  const auto centre = gate.point;
+  EXPECT_TRUE(gate_polytope->PointIsInside(centre, 1.0e-6));
+  // The gate cell is an inner approximation, not a box circumscribing the
+  // acceptance ball. A point 0.8 radius away on one axis remains inside the
+  // sphere but must not be authorized by this convex cell.
+  EXPECT_FALSE(gate_polytope->PointIsInside(
+      centre + navigation_math::Vec3f{0.8 * gate.radius_m, 0.0, 0.0},
+      1.0e-6));
+  const auto vertical_envelope =
+      navigation_planning_backend::deriveGuideVerticalEnvelope(path, 0.2);
+  EXPECT_TRUE(navigation_planning_backend::applyGuideVerticalEnvelope(
+      sfcs, vertical_envelope));
+}
+
+TEST(PlannerTrajectory, GuideTimeAllocationPreservesNonZeroInitialSpeedOnShortPath) {
+  const navigation_math::Vec3f start(0.0, 0.0, 0.0);
+  const navigation_math::vec_Vec3f short_path{
+      start, navigation_math::Vec3f(1.0, 0.0, 0.0)};
+  geometry_utils::GuideTimeAllocation allocation;
+  ASSERT_TRUE(geometry_utils::allocateGuideElapsedTimes(
+      2.0, 3.0, 2.4, start, short_path, allocation));
+  ASSERT_EQ(allocation.points.size(), 1U);
+  EXPECT_NEAR(allocation.elapsed_s.back(), 0.5367, 0.005);
+  EXPECT_NEAR(allocation.terminal_velocity_mps, 1.3266, 0.005);
+  EXPECT_GE(allocation.terminal_velocity_mps, 0.0);
+}
+
+TEST(PlannerTrajectory, GuideTimeAllocationRejectsDegenerateOrInvalidInputs) {
+  const navigation_math::Vec3f start(0.0, 0.0, 0.0);
+  const navigation_math::vec_E<navigation_math::Vec3f> duplicate_path{start, start};
+  geometry_utils::GuideTimeAllocation allocation;
+  EXPECT_FALSE(geometry_utils::allocateGuideElapsedTimes(
+      5.0, 10.0, 0.0, start, duplicate_path, allocation));
+  EXPECT_FALSE(geometry_utils::allocateGuideElapsedTimes(
+      0.0, 10.0, 0.0, start,
+      navigation_math::vec_E<navigation_math::Vec3f>{navigation_math::Vec3f(1.0, 0.0, 0.0)},
+      allocation));
+
+  double elapsed = 0.0;
+  double velocity = 0.0;
+  geometry_utils::simplePMTimeAllocator(
+      std::numeric_limits<double>::quiet_NaN(), 10.0, 0.0, 1.0, 0.5,
+      elapsed, velocity);
+  EXPECT_FALSE(std::isfinite(elapsed));
+  EXPECT_FALSE(std::isfinite(velocity));
+  geometry_utils::simplePMTimeAllocator(5.0, 10.0, 0.0, 1.0, 1.5,
+                                        elapsed, velocity);
+  EXPECT_FALSE(std::isfinite(elapsed));
+  EXPECT_FALSE(std::isfinite(velocity));
+}
+
+TEST(PlannerTrajectory, GoalConnectionUsesInclusiveBoundary) {
+  const navigation_math::Vec3f guide_endpoint(0.0, 0.0, 0.0);
+  const navigation_math::Vec3f goal(0.2, 0.0, 0.0);
+  const auto result = navigation_planning_backend::resolveGuideEndpoint(
+      guide_endpoint, goal, 0.2);
+  EXPECT_TRUE(result.goal_connected);
+  EXPECT_TRUE(result.position.isApprox(goal));
+}
+
+TEST(PlannerTrajectory, SolveFailureCodesRemainDistinct) {
+  EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(
+                navigation_planning_backend::PLANNER_SOLVE_TIMEOUT),
+            "Solve deadline exhausted before a candidate could be committed");
+  EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(
+                navigation_planning_backend::PLANNER_SOLVE_CANCELLED),
+            "Solve was cancelled before a candidate could be committed");
+  EXPECT_NE(navigation_planning_backend::PLANNER_SOLVE_TIMEOUT,
+            navigation_planning_backend::PLANNER_BACKUP_FAILED);
+  EXPECT_NE(navigation_planning_backend::PLANNER_SOLVE_CANCELLED,
+            navigation_planning_backend::PLANNER_BACKUP_FAILED);
+  EXPECT_NE(navigation_planning_backend::PLANNER_EXP_FAILED,
+            navigation_planning_backend::PLANNER_BACKUP_FAILED);
+  EXPECT_NE(navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT,
+            navigation_planning_backend::PLANNER_EXP_FAILED);
+  EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(
+                navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT),
+            "Main trajectory rejected because strict known-free support was insufficient");
+  EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(
+                navigation_planning_backend::PLANNER_CANDIDATE_REJECTED),
+            "Generated candidate failed construction or world validation");
+}
+
+TEST(PlannerTrajectory, MainKnownFreeFailureUsesTypedNominalSeedReason) {
+  using Stage = navigation_planning::PlanningFailureStage;
+  using Reason = navigation_planning::PlanningFailureReason;
+  EXPECT_EQ(static_cast<int>(Reason::kWorldChanged), 11);
+  EXPECT_EQ(static_cast<int>(Reason::kNoCompleteBundleAtDeadline), 12);
+  EXPECT_EQ(static_cast<int>(Reason::kStaleResult), 13);
+  EXPECT_EQ(static_cast<int>(Reason::kSuperseded), 14);
+  EXPECT_EQ(static_cast<int>(Reason::kInvalidInput), 15);
+  EXPECT_EQ(static_cast<int>(Reason::kMainKnownFreeInsufficient), 16);
+
+  const auto [stage, reason] = navigation_planning_backend::classifyPlannerFailure(
+      navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT,
+      false);
+  EXPECT_EQ(stage, navigation_planning::PlanningFailureStage::kNominalSeed);
+  EXPECT_EQ(reason,
+            navigation_planning::PlanningFailureReason::kMainKnownFreeInsufficient);
+
+  const auto [generic_stage, generic_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_EXP_FAILED, false);
+  EXPECT_EQ(generic_stage,
+            navigation_planning::PlanningFailureStage::kNominalRefinement);
+  EXPECT_EQ(generic_reason,
+            navigation_planning::PlanningFailureReason::kNominalDynamics);
+
+  const auto [timeout_stage, timeout_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_SOLVE_TIMEOUT, false);
+  EXPECT_EQ(timeout_stage, Stage::kDeadline);
+  EXPECT_EQ(timeout_reason, Reason::kNoCompleteBundleAtDeadline);
+
+  const auto [exp_stage, exp_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_EXP_FAILED, true);
+  EXPECT_EQ(exp_stage, Stage::kNominalSeed);
+  EXPECT_EQ(exp_reason, Reason::kNominalDynamics);
+
+  const auto [backup_stage, backup_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_BACKUP_OPTIMIZATION_FAILED,
+          false);
+  EXPECT_EQ(backup_stage, Stage::kBackupRefinement);
+  EXPECT_EQ(backup_reason, Reason::kBackupDynamics);
+
+  const auto [main_stage, main_reason] =
+      navigation_planning_backend::classifyPlannerFailure(
+          navigation_planning_backend::PLANNER_MAIN_KNOWN_FREE_INSUFFICIENT,
+          false);
+  EXPECT_EQ(main_stage, Stage::kNominalSeed);
+  EXPECT_EQ(main_reason, Reason::kMainKnownFreeInsufficient);
+}
+
+TEST(PlannerTrajectory, BackupWorldWitnessDoesNotBecomeDynamicsOrOverrideEarlierFailure) {
+  using Stage = navigation_planning::PlanningFailureStage;
+  using Reason = navigation_planning::PlanningFailureReason;
+  using Rejection = navigation_planning::BackupCertificateRejectStage;
+  using namespace navigation_planning_backend;
+  navigation_planning::BackupCertificateDiagnostics backup;
+  backup.attempted = true;
+  backup.feasible_seed_count = 1U;
+  backup.aligned_hull_pass_count = 1U;
+  backup.known_free_check_count = 1U;
+  backup.last_reject_stage = static_cast<int>(Rejection::kKnownFree);
+  const auto classify = [&](const int result) {
+    return classifyPlannerFailure(result, true, backup);
+  };
+  EXPECT_EQ(classify(PLANNER_BACKUP_OPTIMIZATION_FAILED),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupKnownFreeInsufficient));
+  EXPECT_EQ(classify(PLANNER_BACKUP_FAILED),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupKnownFreeInsufficient));
+  EXPECT_EQ(classify(PLANNER_BACKUP_NO_PATH),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupKnownFreeInsufficient));
+  EXPECT_EQ(classifyPlannerFailure(PLANNER_BACKUP_NO_PATH, true, backup,
+                navigation_world_model::UnknownPolicy::kAllowUnknown),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupWorldBlocked));
+  backup.last_known_free_cell_state =
+      static_cast<int>(navigation_world_model::CellState::kOccupied);
+  EXPECT_EQ(classifyPlannerFailure(PLANNER_BACKUP_OPTIMIZATION_FAILED, true, backup,
+                navigation_world_model::UnknownPolicy::kAllowUnknown),
+            std::make_pair(Stage::kBackupSeed, Reason::kBackupWorldBlocked));
+  EXPECT_EQ(static_cast<int>(Reason::kCandidateExportInvalid), 17);
+  EXPECT_EQ(static_cast<int>(Reason::kBackupWorldBlocked), 18);
+  EXPECT_STREQ(navigation_planning::planningFailureReasonName(Reason::kBackupWorldBlocked),
+               "backup_world_blocked");
+  EXPECT_EQ(classify(PLANNER_SOLVE_TIMEOUT),
+            std::make_pair(Stage::kDeadline, Reason::kNoCompleteBundleAtDeadline));
+  EXPECT_EQ(classify(PLANNER_SOLVE_CANCELLED),
+            std::make_pair(Stage::kDeadline, Reason::kSuperseded));
+  EXPECT_EQ(classify(PLANNER_EXP_FAILED),
+            std::make_pair(Stage::kNominalSeed, Reason::kNominalDynamics));
+  EXPECT_EQ(classify(PLANNER_CANDIDATE_REJECTED),
+            std::make_pair(Stage::kCommitRecertification, Reason::kWorldChanged));
+  const auto expect_generic = [&] {
+    EXPECT_EQ(classify(PLANNER_BACKUP_OPTIMIZATION_FAILED),
+              std::make_pair(Stage::kBackupRefinement, Reason::kBackupDynamics));
+  };
+  backup.attempted = false;
+  expect_generic();
+  backup.attempted = true;
+  backup.selected = true;
+  expect_generic();
+  backup.selected = false;
+  backup.known_free_check_count = 0U;
+  expect_generic();
+  backup.known_free_check_count = 1U;
+  backup.known_free_pass_count = 1U;
+  expect_generic();
+  backup.known_free_pass_count = 0U;
+  for (const auto rejection : {Rejection::kSeed, Rejection::kAlignedSfc,
+                               Rejection::kAlignedHull, Rejection::kDynamic,
+                               Rejection::kRefinementKnownFree, Rejection::kDeadline}) {
+    backup.last_reject_stage = static_cast<int>(rejection);
+    expect_generic();
+  }
+}
+
+TEST(PlannerTrajectory, BackupFailureKeepsActionableCause) {
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::TIME_OUT),
+            navigation_planning_backend::PLANNER_SOLVE_TIMEOUT);
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::OPT_FAILED),
+            navigation_planning_backend::PLANNER_BACKUP_OPTIMIZATION_FAILED);
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::INIT_ERROR),
+            navigation_planning_backend::PLANNER_BACKUP_INITIALIZATION_FAILED);
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::NO_PATH),
+            navigation_planning_backend::PLANNER_BACKUP_NO_PATH);
+  EXPECT_EQ(navigation_planning_backend::classifyBackupResult(
+                navigation_math::FAILED),
+            navigation_planning_backend::PLANNER_BACKUP_FAILED);
+}
+
+TEST(PlannerTrajectory, UnconnectedOrInvalidGoalDoesNotMoveGuideEndpoint) {
+  const navigation_math::Vec3f guide_endpoint(1.0, 2.0, 3.0);
+  const navigation_math::Vec3f goal(2.0, 2.0, 3.0);
+  const auto unconnected = navigation_planning_backend::resolveGuideEndpoint(
+      guide_endpoint, goal, 0.4);
+  EXPECT_FALSE(unconnected.goal_connected);
+  EXPECT_TRUE(unconnected.position.isApprox(guide_endpoint));
+
+  navigation_math::Vec3f invalid_goal = goal;
+  invalid_goal.x() = std::numeric_limits<double>::quiet_NaN();
+  const auto invalid = navigation_planning_backend::resolveGuideEndpoint(
+      guide_endpoint, invalid_goal, 0.4);
+  EXPECT_FALSE(invalid.goal_connected);
+  EXPECT_TRUE(invalid.position.isApprox(guide_endpoint));
+}
+
+TEST(PlannerTrajectory, SolveStagesHaveStableDecisionTraceNames) {
+  EXPECT_EQ(navigation_planning_backend::solveStageName(0), "idle");
+  EXPECT_EQ(navigation_planning_backend::solveStageName(2), "astar");
+  EXPECT_EQ(navigation_planning_backend::solveStageName(4), "main_minco");
+  EXPECT_EQ(navigation_planning_backend::solveStageName(5), "backup");
+  EXPECT_EQ(navigation_planning_backend::solveStageName(33), "corridor_iris");
+  EXPECT_EQ(navigation_planning_backend::solveStageName(43), "corridor_overlap");
+  EXPECT_EQ(navigation_planning_backend::solveStageName(44),
+            "corridor_vertex_parameterization");
+  EXPECT_EQ(navigation_planning_backend::nominalSetupSolveStage(3), 43);
+  EXPECT_EQ(navigation_planning_backend::nominalSetupSolveStage(4), 44);
+  EXPECT_EQ(navigation_planning_backend::nominalSetupSolveStage(5), 45);
+  EXPECT_EQ(navigation_planning_backend::nominalSetupSolveStage(0), 4);
+  EXPECT_EQ(navigation_planning_backend::solveStageName(999), "unknown");
+}
+
+TEST(PlannerTrajectory, UnknownReturnCodeHasDeterministicDiagnostic) {
+  EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(42),
+            "Unknown planner return code (42)");
+}
+
+TEST(PlannerTrajectory, UnwrittenReplanLogFactsStayUnavailableAcrossCopy) {
+  navigation_planning_backend::LogOneReplan original;
+  auto copied = original;
+  const auto inspect = [](auto&... fields) {
+    static_assert(sizeof...(fields) == 34U);
+    const auto values = std::tie(fields...);
+    EXPECT_TRUE(std::get<0>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<1>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<2>(values).array().isNaN().all());
+    EXPECT_TRUE(std::isnan(std::get<3>(values)));
+    EXPECT_TRUE(std::isnan(std::get<4>(values)));
+    EXPECT_TRUE(std::get<5>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<9>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<10>(values).array().isNaN().all());
+    EXPECT_TRUE(std::isnan(std::get<15>(values)));
+    EXPECT_TRUE(std::isnan(std::get<16>(values)));
+    EXPECT_TRUE(std::isnan(std::get<17>(values)));
+    EXPECT_TRUE(std::get<20>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<21>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<13>(values).empty());
+    EXPECT_TRUE(std::get<14>(values).empty());
+    EXPECT_EQ(std::get<25>(values),
+              navigation_planning_backend::PLANNER_UNDEFINED);
+  };
+  copied.serialize(inspect);
+  original.serialize(inspect);
+}
+
+TEST(PlannerTrajectory, FinalNominalLogCopyDoesNotFabricateBackupFacts) {
+  navigation_planning_backend::LogOneReplan original;
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients.col(7) = Eigen::Vector3d{10.75, 0.0, 2.0};
+  coefficients.col(6) = Eigen::Vector3d{4.8, 0.0, 0.0};
+  geometry_utils::Trajectory main({1.0}, {coefficients});
+  main.start_WT = 12.0;
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  yaw.start_WT = main.start_WT;
+  original.setExpTraj(main);
+  original.setExpYawTraj(yaw);
+  auto copied = original;
+  const auto inspect = [&](auto&... fields) {
+    static_assert(sizeof...(fields) == 34U);
+    const auto values = std::tie(fields...);
+    const auto& logged_main = std::get<13>(values);
+    const auto& logged_yaw = std::get<14>(values);
+    ASSERT_EQ(logged_main.getPieceNum(), 1);
+    ASSERT_EQ(logged_yaw.getPieceNum(), 1);
+    EXPECT_DOUBLE_EQ(logged_main.start_WT, main.start_WT);
+    EXPECT_DOUBLE_EQ(logged_main.getTotalDuration(), main.getTotalDuration());
+    EXPECT_TRUE(logged_main[0].getCoeffMat().isApprox(coefficients, 0.0));
+    EXPECT_TRUE(logged_yaw[0].getCoeffMat().isZero(0.0));
+    EXPECT_TRUE(std::isnan(std::get<4>(values)));  // No invented replan stamp.
+    EXPECT_TRUE(std::isnan(std::get<15>(values)));
+    EXPECT_TRUE(std::get<20>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<23>(values).empty());
+  };
+  copied.serialize(inspect);
+}

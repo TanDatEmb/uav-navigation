@@ -1,0 +1,3752 @@
+{
+  "schema_version": 1,
+  "model_kind": "code_reading_index_not_runtime_fsm",
+  "baseline_manifest": "baseline/source_manifest.json",
+  "status": "PARTIAL_AS_IS",
+  "scope": {
+    "deployment_overview": "Two principal ROS processes: navigation_runtime and px4_navigation_external_mode. FAST-LIO is a separate estimator process. Combined bringup launches runtime and PX4 mode; estimator launch is separate. PX4 mode executable owns an external-mode executor plus a state-input node/thread.",
+    "deep_scope": [
+      "mission progression",
+      "goal/request handoff",
+      "planning worker/candidate admission",
+      "committed command timeline",
+      "sample and ROS publication",
+      "PX4 NavigationCommand admission",
+      "PX4 setpoint update",
+      "recovery and measured stop",
+      "Hold handover"
+    ],
+    "limitations": [
+      "No matching product compile database/AST",
+      "full writer inventory not claimed",
+      "no build/tests/runtime trace",
+      "mmdc unavailable, Mermaid retained as source",
+      "run profile/config invocation unknown",
+      "several runCycle branches and uncommon exception/cancellation paths need follow-up semantic review",
+      "Two source-comment/config descriptions conflict with executable policy: airborne goal publication is conditional; SIM_TIME with zero tracking coefficients activates tracking/health suppression. Both are recorded as source-vs-comment conflicts, not reconciled by inference."
+    ],
+    "profile": "Static analysis of captured local working tree; checked-in default mapping config declares sitl. No live launch/build profile established."
+  },
+  "objects": [
+    {
+      "id": "O_RUNTIME",
+      "symbol": "navigation_runtime::NavigationRuntimeNode",
+      "instance": "one node created by navigation_runtime_main; one process instance per launch, lifetime main executor",
+      "lifetime_owner": "navigation_runtime_main.cpp; rclcpp MultiThreadedExecutor with two threads",
+      "decision_authority": "accept desired goal; form PlanningKey; coordinate candidate commit; publish sampled NavigationCommand subject to timeline/store and lease checks",
+      "evidence": [
+        "E_RUNTIME_MAIN",
+        "E_RUNTIME_SETUP",
+        "E_RUNTIME_FIELDS"
+      ]
+    },
+    {
+      "id": "O_WORKER",
+      "symbol": "navigation_runtime::PlanningWorker<PlannerFacade>",
+      "instance": "unique_ptr owned by NavigationRuntimeNode; one serial worker instance",
+      "lifetime_owner": "NavigationRuntimeNode construction/destruction",
+      "decision_authority": "queue policy and active-solve cancellation only; not candidate validity/commit or command publication",
+      "evidence": [
+        "E_WORKER",
+        "E_RUNTIME_FIELDS"
+      ]
+    },
+    {
+      "id": "O_EPISODE",
+      "symbol": "navigation_runtime::ExecutionEpisode",
+      "instance": "embedded in NavigationRuntimeNode; mutex-protected snapshot is runtime lifecycle authority",
+      "lifetime_owner": "NavigationRuntimeNode",
+      "decision_authority": "execution phase/recovery lifecycle, active generation, command availability, suffix and failure latch",
+      "evidence": [
+        "E_EPISODE",
+        "E_RUNTIME_FIELDS"
+      ]
+    },
+    {
+      "id": "O_TIMELINE",
+      "symbol": "navigation_execution::ExecutionTimelineStore",
+      "instance": "embedded in NavigationRuntimeNode; owns active and pending immutable CandidateBundle",
+      "lifetime_owner": "NavigationRuntimeNode",
+      "decision_authority": "authoritative active/pending bundle, activation, commit/revoke and final publication serialization",
+      "evidence": [
+        "E_TIMELINE",
+        "E_RUNTIME_FIELDS"
+      ]
+    },
+    {
+      "id": "O_SAMPLER",
+      "symbol": "navigation_execution::CommandSampler",
+      "instance": "embedded in NavigationRuntimeNode; read-only sampler over timeline snapshot",
+      "lifetime_owner": "NavigationRuntimeNode",
+      "decision_authority": "sample role/time from current active bundle; no commit or activation authority",
+      "evidence": [
+        "E_SAMPLER",
+        "E_RUNTIME_FIELDS"
+      ]
+    },
+    {
+      "id": "O_PENDING_GOAL",
+      "symbol": "navigation_runtime::PendingGoalHandoffOwner",
+      "instance": "embedded in NavigationRuntimeNode; single pending goal slot",
+      "lifetime_owner": "NavigationRuntimeNode",
+      "decision_authority": "retain/consume a same-mission ordered goal behind active moving safety suffix",
+      "evidence": [
+        "E_PENDING_GOAL",
+        "E_RUNTIME_FIELDS"
+      ]
+    },
+    {
+      "id": "O_MODE",
+      "symbol": "px4_navigation_external_mode::NavigationMode",
+      "instance": "one mode object inside NodeWithModeExecutor",
+      "lifetime_owner": "px4_navigation_external_mode main",
+      "decision_authority": "admit NavigationCommand into local cache; mission callback; convert cached PVA to PX4 setpoint inputs; request Hold via executor callback",
+      "evidence": [
+        "E_PX4_MAIN",
+        "E_MODE_FIELDS",
+        "E_MODE_ADMISSION",
+        "E_SETPOINT"
+      ]
+    },
+    {
+      "id": "O_MISSION",
+      "symbol": "px4_navigation_external_mode::MissionController",
+      "instance": "unique_ptr owned by NavigationMode per loaded mission",
+      "lifetime_owner": "NavigationMode activation/deactivation and mission load",
+      "decision_authority": "airborne gating, measured waypoint acceptance, retry, terminal hold/dwell, mission Complete/Failure event",
+      "evidence": [
+        "E_MISSION_FIELDS",
+        "E_MISSION_FLOW",
+        "E_MISSION_TEST"
+      ]
+    },
+    {
+      "id": "O_EXECUTOR",
+      "symbol": "px4_navigation_external_mode::NavigationModeExecutor",
+      "instance": "NodeWithModeExecutor-owned executor, paired with NavigationMode",
+      "lifetime_owner": "main; mode executor lifecycle",
+      "decision_authority": "request AUTO_LOITER through PX4 API and track API result / VehicleStatus confirmation",
+      "evidence": [
+        "E_PX4_MAIN",
+        "E_HOLD"
+      ]
+    },
+    {
+      "id": "O_CONTRACT",
+      "symbol": "navigation_contracts::NavigationCommand validation helpers",
+      "instance": "pure helpers used by NavigationMode admission and setpoint path",
+      "lifetime_owner": "package functions",
+      "decision_authority": "reject malformed, stale, wrong-frame or wrong-identity message; does not observe PX4 controller acceptance",
+      "evidence": [
+        "E_COMMAND_CONTRACT",
+        "E_MODE_ADMISSION"
+      ]
+    },
+    {
+      "id": "O_WORLD",
+      "symbol": "navigation_mapping::WorldSnapshotStore / mapping workers",
+      "instance": "embedded store and worker in NavigationRuntimeNode",
+      "lifetime_owner": "NavigationRuntimeNode",
+      "decision_authority": "publish current world snapshot identity/revision; world validator supplies candidate validation",
+      "evidence": [
+        "E_RUNTIME_FIELDS",
+        "E_RUNTIME_SETUP",
+        "E_CANDIDATE"
+      ]
+    },
+    {
+      "id": "O_PLANNER",
+      "symbol": "navigation_planning_backend::PlannerFacade and backend",
+      "instance": "one backend referenced by worker; solver call can overlap command sampling",
+      "lifetime_owner": "runtime process; serial PlanningWorker",
+      "decision_authority": "produce candidate result; not independently allowed to expose it to PX4",
+      "evidence": [
+        "E_REQUEST",
+        "E_CANDIDATE",
+        "E_WORKER"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "F_DESIRED_GOAL",
+      "object": "O_RUNTIME",
+      "name": "active_goal_",
+      "type": "optional<NavigationGoal>",
+      "initialization": "empty; set after validated goal ingress; cleared on epoch reset/fail-closed paths",
+      "meaning": "runtime desired request identity and route payload",
+      "scope": "runtime process/request",
+      "writers": [
+        "onGoal/applyValidatedGoalLocked",
+        "foreign-mission transition",
+        "localization epoch reset",
+        "failClosedLocked/goal clear"
+      ],
+      "readers": [
+        "currentPlanningKey",
+        "runCycle request snapshot",
+        "candidate admission/activation guard",
+        "publishCommand identity checks"
+      ],
+      "reset": "clear on localization reset/fail closed; replaced only after goal validation",
+      "clock_unit": "ROS header stamp in goal; no timer stored in field",
+      "identity": "mission_id, waypoint_index, request_id, route_revision, active_goal_epoch",
+      "protection": "input_mutex_ under canonical localization->input->command transition order",
+      "roles": [
+        "authoritative control state",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_RUNTIME_FIELDS",
+        "E_GOAL",
+        "E_EPOCH",
+        "E_COMMIT"
+      ]
+    },
+    {
+      "id": "F_EXECUTING_GOAL",
+      "object": "O_RUNTIME",
+      "name": "executing_goal_",
+      "type": "optional<NavigationGoal>",
+      "initialization": "empty; may remain old while desired PASS_THROUGH successor is pending",
+      "meaning": "goal identity corresponding to physical command timeline; changes on immediate commit or pending activation",
+      "scope": "runtime execution episode",
+      "writers": [
+        "admitImmediateCandidate",
+        "apply queued timeline activation",
+        "epoch/fail-closed invalidation"
+      ],
+      "readers": [
+        "command timeline/current planning key checks",
+        "publishCommand final exposure",
+        "recovery attribution"
+      ],
+      "reset": "cleared/reinitialized at reset/revocation; swapped on timeline cutover",
+      "clock_unit": "none",
+      "identity": "goal tuple + command_goal_epoch + bundle generation",
+      "protection": "input_mutex_ and command transition mutex; timeline finalization is separate store boundary",
+      "roles": [
+        "authoritative control state",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_RUNTIME_FIELDS",
+        "E_IMMEDIATE",
+        "E_ACTIVATION",
+        "E_PUBLISH"
+      ]
+    },
+    {
+      "id": "F_PENDING_GOAL",
+      "object": "O_PENDING_GOAL",
+      "name": "PendingGoalHandoffOwner::pending_goal_",
+      "type": "NavigationGoal::ConstSharedPtr",
+      "initialization": "empty",
+      "meaning": "single latest admissible same-mission goal deferred while moving safety suffix owns execution",
+      "scope": "one runtime moving suffix handoff",
+      "writers": [
+        "enqueue after goal admission under suffix guard"
+      ],
+      "readers": [
+        "measured-stop handoff and pending goal consumption",
+        "timeline activation guard"
+      ],
+      "reset": "consume exact pointer after successor cutover or clear on invalidation/foreign mission",
+      "clock_unit": "none",
+      "identity": "mission/waypoint/request and localization/goal epoch recheck",
+      "protection": "owner mutex plus runtime transition locks",
+      "roles": [
+        "authoritative control state",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_PENDING_GOAL",
+        "E_GOAL",
+        "E_ACTIVATION"
+      ]
+    },
+    {
+      "id": "F_ACTIVE_GOAL_EPOCH",
+      "object": "O_RUNTIME",
+      "name": "active_goal_epoch_",
+      "type": "atomic_uint64_t",
+      "initialization": "0",
+      "meaning": "monotonic runtime goal/request invalidation token; distinct from request id",
+      "scope": "runtime process",
+      "writers": [
+        "validated goal transition",
+        "foreign goal transition",
+        "epoch/fail-closed paths"
+      ],
+      "readers": [
+        "PlanningKey/request validation",
+        "candidate admission/commit/activation/publication"
+      ],
+      "reset": "incremented/bumped by goal and lifecycle changes; zero is invalid in candidate identity",
+      "clock_unit": "none",
+      "identity": "not interchangeable with localization_epoch or request_id",
+      "protection": "atomic plus transition locks for compound state",
+      "roles": [
+        "identity/version"
+      ],
+      "evidence": [
+        "E_RUNTIME_FIELDS",
+        "E_GOAL",
+        "E_COMMIT"
+      ]
+    },
+    {
+      "id": "F_LOCALIZATION_EPOCH",
+      "object": "O_RUNTIME",
+      "name": "active_localization_epoch_ / localization_epoch_ready_",
+      "type": "atomic_uint64_t + atomic_bool",
+      "initialization": "epoch 1 / ready true",
+      "meaning": "state/map coordinate lifetime and readiness latch; reset blocks command exposure until new world/state is established",
+      "scope": "localization episode across callbacks",
+      "writers": [
+        "onPropagatedOdometry/onEstimatorHealth epoch transitions",
+        "localization reset handler"
+      ],
+      "readers": [
+        "state input, PlanningKey, candidate validate/commit and final command exposure"
+      ],
+      "reset": "higher epoch drains/cancels and invalidates; readiness restored only after reset requirements",
+      "clock_unit": "epoch counter",
+      "identity": "PropagatedOdometry.localization_epoch, health epoch, world identity",
+      "protection": "atomics and localization_transition_mutex_",
+      "roles": [
+        "authoritative control state",
+        "latch",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_EPOCH",
+        "E_RUNTIME_FIELDS",
+        "E_PROPAGATED"
+      ]
+    },
+    {
+      "id": "F_EXEC_RECOVERY",
+      "object": "O_EPISODE",
+      "name": "ExecutionEpisode::Snapshot::recovery_state",
+      "type": "ExecutionRecoveryState enum",
+      "initialization": "InitialHold; state resides in mutex-protected Episode snapshot",
+      "meaning": "runtime's physical execution recovery authority; pure transition helper alone does not commit state",
+      "scope": "one execution episode and active candidate identity",
+      "writers": [
+        "ExecutionEpisode beginGoal/commandCommitted/observeSampledSafetyRole/stoppedHold/failClosed",
+        "runtime applyExecutionRecoveryEventLocked"
+      ],
+      "readers": [
+        "planning admission/key, candidate commit, sample handling, command role policy"
+      ],
+      "reset": "beginGoal or failClosed changes episode; exact generation checks reject stale mutators",
+      "clock_unit": "none",
+      "identity": "goal epoch, localization epoch, request id, active bundle generation",
+      "protection": "ExecutionEpisode mutex plus runtime compound transition locks",
+      "roles": [
+        "authoritative control state",
+        "derived predicate"
+      ],
+      "evidence": [
+        "E_EPISODE",
+        "E_RECOVERY_HELPER",
+        "E_RECOVERY_USE",
+        "E_EPISODE_TEST"
+      ]
+    },
+    {
+      "id": "F_FAILURE_LATCH",
+      "object": "O_EPISODE",
+      "name": "Snapshot::failure_latched / command_execution_lease_failure_latch_",
+      "type": "bool + latch object",
+      "initialization": "false / allows initial exposure",
+      "meaning": "fail-closed command stop; latch serializes one-time lease failure while episode denies command",
+      "scope": "runtime command lifecycle",
+      "writers": [
+        "execution freshness failure in publishCommand",
+        "failClosedLocked/ExecutionEpisode",
+        "epoch reset"
+      ],
+      "readers": [
+        "commit/activation/sample/publication guards"
+      ],
+      "reset": "explicit fresh lifecycle/reset only; no automatic expiry",
+      "clock_unit": "none",
+      "identity": "current command goal and execution epoch",
+      "protection": "episode mutex and latch transitionMutex_",
+      "roles": [
+        "authoritative control state",
+        "latch"
+      ],
+      "evidence": [
+        "E_EPISODE",
+        "E_PUBLISH",
+        "E_ACTIVATION"
+      ]
+    },
+    {
+      "id": "F_TIMELINE",
+      "object": "O_TIMELINE",
+      "name": "active_ / pending_ / version_",
+      "type": "shared_ptr<const CandidateBundle> pair + version",
+      "initialization": "empty; updates through guarded store methods",
+      "meaning": "sole runtime committed/executing command bundle authority; pending does not execute before due activation",
+      "scope": "runtime store lifetime",
+      "writers": [
+        "tryCommitIfCurrent",
+        "stagePending",
+        "activatePendingIfDueAndFinalize",
+        "invalidate/recertify"
+      ],
+      "readers": [
+        "CommandSampler, candidate prep/admission, publishIfCurrent, diagnostics"
+      ],
+      "reset": "revoke/invalidate on identity/world/state/lifecycle failure",
+      "clock_unit": "ROS ns valid_from/valid_until/activation",
+      "identity": "world snapshot identity, goal/localization epoch, request id, bundle generation, txn/version",
+      "protection": "store mutex and compare-token rechecks",
+      "roles": [
+        "authoritative control state",
+        "identity/version",
+        "deadline/counter"
+      ],
+      "evidence": [
+        "E_TIMELINE",
+        "E_COMMIT",
+        "E_ACTIVATION",
+        "E_PUBLISH"
+      ]
+    },
+    {
+      "id": "F_WORKER_QUEUE",
+      "object": "O_WORKER",
+      "name": "active_ / pending_",
+      "type": "active job + optional latest pending job",
+      "initialization": "none; started with worker",
+      "meaning": "one serial planner and one replaceable pending request; queue state is scheduling, not execution authority",
+      "scope": "worker lifetime",
+      "writers": [
+        "submit/cancel/cancelIdentity/shutdown",
+        "worker run loop"
+      ],
+      "readers": [
+        "worker loop, status snapshots, runtime scheduling"
+      ],
+      "reset": "pending replacement/drop and shutdown/join",
+      "clock_unit": "steady clock for runtime watchdog; job keys include stamps",
+      "identity": "PlanningKey incl localization/goal/request/world/dynamics identity",
+      "protection": "worker mutex; planner backend recursive mutex for run/cancel path",
+      "roles": [
+        "authoritative control state for queue only",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_WORKER",
+        "E_WORKER_TEST"
+      ]
+    },
+    {
+      "id": "F_MODE_COMMAND",
+      "object": "O_MODE",
+      "name": "navigation_command_",
+      "type": "optional<NavigationCommand>",
+      "initialization": "empty; invalidated at activate/deactivate",
+      "meaning": "last locally admitted ROS command snapshot; not evidence of PX4 application",
+      "scope": "mode activation and command stream",
+      "writers": [
+        "onNavigationCommand commit transition",
+        "transitionCertifiedCommand retain/invalidate",
+        "mode activation/deactivation/failure"
+      ],
+      "readers": [
+        "updateMission continuation/terminal witness",
+        "updateSetpoint PVA and lease gates"
+      ],
+      "reset": "invalidate on activation/deactivation, terminal fail/handover and selected command changes",
+      "clock_unit": "ROS source/valid_until plus steady receive stamp",
+      "identity": "mission/waypoint/request/epochs/world/generation/sample id",
+      "protection": "trajectory_mutex_ serializes with mission timer and cache mutations",
+      "roles": [
+        "transport snapshot/cache",
+        "identity/version",
+        "deadline/counter"
+      ],
+      "evidence": [
+        "E_MODE_FIELDS",
+        "E_MODE_ADMISSION",
+        "E_MISSION_EVENT",
+        "E_SETPOINT"
+      ]
+    },
+    {
+      "id": "F_WAYPOINT",
+      "object": "O_MISSION",
+      "name": "active_waypoint_index_ / request_id_ / route_progress_",
+      "type": "size_t + uint64 + RouteProgress",
+      "initialization": "mission start/checkpoint on activate; request advances monotonically",
+      "meaning": "PX4-side mission progression identity based on accepted measured evidence",
+      "scope": "mission lifecycle",
+      "writers": [
+        "activate/deactivate checkpoint",
+        "update accepted waypoint",
+        "retry failed goal"
+      ],
+      "readers": [
+        "update guard, goal publisher, command identity admission"
+      ],
+      "reset": "reactivation resumes checkpoint and increments request; mission replacement constructs controller",
+      "clock_unit": "seconds for internal retry/progress sample timing",
+      "identity": "mission id + waypoint index + request id + route revision",
+      "protection": "MissionController mutex; called under NavigationMode trajectory_mutex for cross-object linearization",
+      "roles": [
+        "authoritative control state",
+        "identity/version",
+        "deadline/counter"
+      ],
+      "evidence": [
+        "E_MISSION_FIELDS",
+        "E_MISSION_FLOW",
+        "E_MISSION_TEST"
+      ]
+    },
+    {
+      "id": "F_TRAJECTORY_READY",
+      "object": "O_MISSION",
+      "name": "trajectory_ready_",
+      "type": "bool",
+      "initialization": "false/reset on activation; on accepted trajectory set true",
+      "meaning": "mode-side readiness latch gates mission progression and initial planner acquisition; does not prove command currently leased",
+      "scope": "mission request",
+      "writers": [
+        "onTrajectory/onNativeTrajectoryReady and failure/reset paths"
+      ],
+      "readers": [
+        "MissionController::update and state transitions"
+      ],
+      "reset": "false on goal replacement, deactivation, error; set by admissible command trajectory",
+      "clock_unit": "none",
+      "identity": "current MissionController request, but NavigationCommand admission has separate correlation checks",
+      "protection": "MissionController mutex",
+      "roles": [
+        "latch",
+        "derived predicate"
+      ],
+      "evidence": [
+        "E_MISSION_FIELDS",
+        "E_MISSION_FLOW",
+        "E_MODE_ADMISSION"
+      ]
+    },
+    {
+      "id": "F_TERMINAL_HOLD",
+      "object": "O_MISSION",
+      "name": "terminal_hold_pending_ / pending_position_control_",
+      "type": "bool pair",
+      "initialization": "false; activated on STOP or safety fallback paths",
+      "meaning": "separate mission-level terminal settling and requested mode handover flags; neither equals measured stop, waypoint accepted, or mission complete",
+      "scope": "mission terminal/safety episode",
+      "writers": [
+        "onTrajectory role/kind transitions; update STOP/safety timeout; deactivate/reset"
+      ],
+      "readers": [
+        "MissionController::update branch order; NavigationMode event handling"
+      ],
+      "reset": "cleared only after measured confirmation or explicit lifecycle transition",
+      "clock_unit": "confirmation/dwell seconds in MissionController timers",
+      "identity": "current mission waypoint/request",
+      "protection": "MissionController mutex under trajectory lock at mode boundary",
+      "roles": [
+        "latch",
+        "authoritative control state"
+      ],
+      "evidence": [
+        "E_MISSION_FIELDS",
+        "E_MISSION_FLOW",
+        "E_MODE_FIELDS"
+      ]
+    },
+    {
+      "id": "F_SUFFIX_HANDOFF",
+      "object": "O_MODE",
+      "name": "safety_suffix_handoff_pending_ + waypoint/request tuple",
+      "type": "bool + tuple",
+      "initialization": "false/zero; set when retaining a matching BACKUP command across waypoint handoff",
+      "meaning": "PX4-side permission to admit exact old safety suffix while new goal is being planned; not the runtime pending-goal owner",
+      "scope": "one cross-process goal handoff",
+      "writers": [
+        "handleMissionEvent PublishGoal",
+        "onNavigationCommand accepted current command/reset/deactivate"
+      ],
+      "readers": [
+        "onNavigationCommand identity admission, updateMission suffix-stop decision"
+      ],
+      "reset": "first accepted new-goal command, lifecycle reset, or safety handover",
+      "clock_unit": "none",
+      "identity": "old backup waypoint/request plus new current request",
+      "protection": "trajectory_mutex_",
+      "roles": [
+        "latch",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_MODE_FIELDS",
+        "E_MISSION_EVENT",
+        "E_MODE_ADMISSION"
+      ]
+    },
+    {
+      "id": "F_PLANNER_RECOVERY_MODE",
+      "object": "O_MODE",
+      "name": "planner_recovery_pending_ + deadline + identity",
+      "type": "bool + ROS ns deadline + mission/wp/request/generation",
+      "initialization": "false; timer starts on specific terminal/completed command recovery path",
+      "meaning": "adapter-side bounded window waiting for fresh planner command after endpoint; separate from runtime ExecutionEpisode::StoppedRecovery",
+      "scope": "PX4 mode-side recovery episode",
+      "writers": [
+        "updateSetpoint completed command branch and clear/reset helper"
+      ],
+      "readers": [
+        "updateSetpoint fresh/stale command handling, updateMission timeout"
+      ],
+      "reset": "fresh admissible command, lifecycle/handover, or timeout/failure",
+      "clock_unit": "ROS ns; configured 5.0 s default",
+      "identity": "mode-side mission/wp/request/bundle generation",
+      "protection": "trajectory_mutex_",
+      "roles": [
+        "deadline/counter",
+        "latch",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_MODE_FIELDS",
+        "E_SETPOINT"
+      ]
+    },
+    {
+      "id": "F_FRAME_ALIGNMENT",
+      "object": "O_MODE",
+      "name": "px4_local_frame_aligned_ / PX4 reset counters",
+      "type": "bool + frame/reset snapshot",
+      "initialization": "false; align from stationary paired LIO/PX4 observations",
+      "meaning": "frame witness gates ENU-to-PX4 setpoint conversion and invalidates on PX4 reset",
+      "scope": "PX4 local frame epoch",
+      "writers": [
+        "tryAlignPx4LocalFrameLocked",
+        "onPx4LocalPosition reset detection",
+        "activate/deactivate"
+      ],
+      "readers": [
+        "updateSetpoint coordinate conversion and safety checks"
+      ],
+      "reset": "clear when PX4 XY/Z reset counter changes or mode lifecycle resets",
+      "clock_unit": "PX4 reset counters and source/steady stamps",
+      "identity": "PX4 frame reset counters + localization epoch",
+      "protection": "trajectory_mutex_",
+      "roles": [
+        "latch",
+        "identity/version",
+        "transport snapshot/cache"
+      ],
+      "evidence": [
+        "E_MODE_FIELDS",
+        "E_FRAME"
+      ]
+    },
+    {
+      "id": "F_HANDOVER_MODE",
+      "object": "O_MODE",
+      "name": "handover_requested_ / mission_terminal_ / failure_reported_",
+      "type": "bools",
+      "initialization": "false on activation",
+      "meaning": "NavigationMode terminal/failure handover gate; command arrival cannot reopen mission after terminal handover",
+      "scope": "mode activation",
+      "writers": [
+        "mission Complete/RequestPositionControl, failNavigation, deactivate/activate"
+      ],
+      "readers": [
+        "command admission, setpoint, mission timer"
+      ],
+      "reset": "on activate; set terminal/failure independently by events",
+      "clock_unit": "none",
+      "identity": "mission and current request",
+      "protection": "trajectory_mutex_ for compound snapshots",
+      "roles": [
+        "authoritative control state",
+        "latch"
+      ],
+      "evidence": [
+        "E_MODE_FIELDS",
+        "E_MISSION_EVENT",
+        "E_MODE_ADMISSION"
+      ]
+    },
+    {
+      "id": "F_HOLD_EXECUTOR",
+      "object": "O_EXECUTOR",
+      "name": "px4_hold_confirmed_ / hold_handover_pending_ / hold_handover_in_flight_",
+      "type": "bool triplet + attempts/retry time",
+      "initialization": "false/0 on executor activate",
+      "meaning": "API scheduling, API completion, and observed VehicleStatus AUTO_LOITER are distinct; vehicle status is confirmation",
+      "scope": "paired mode executor lifetime",
+      "writers": [
+        "request callback, schedulePx4Hold/API result, VehicleStatus callback, lifecycle reset"
+      ],
+      "readers": [
+        "50 ms timer retry predicate"
+      ],
+      "reset": "confirmed AUTO_LOITER clears pending/in-flight; activation/deactivation clears all",
+      "clock_unit": "steady ns retry timestamp, 250 ms after API failure",
+      "identity": "held vehicle mode, no mission bundle id",
+      "protection": "executor callbacks/timer; serialization from PX4 executor not inferred beyond source",
+      "roles": [
+        "latch",
+        "deadline/counter"
+      ],
+      "evidence": [
+        "E_HOLD",
+        "E_PX4_MAIN"
+      ]
+    },
+    {
+      "id": "F_COMMAND_LEASE",
+      "object": "O_TIMELINE",
+      "name": "CandidateBundle.valid_from_ns / valid_until_ns + NavigationCommand.valid_until",
+      "type": "ROS time nanoseconds",
+      "initialization": "assigned on candidate export/commit and each command emission; message stream lease is now+100 ms by default",
+      "meaning": "candidate validity and emitted stream validity are distinct windows; receipt time and source state freshness are independently checked",
+      "scope": "bundle and command sample",
+      "writers": [
+        "planner candidate export; publishCommand message builder"
+      ],
+      "readers": [
+        "commit/activation/publishIfCurrent; NavigationMode commandContractValidAt/updateSetpoint"
+      ],
+      "reset": "expires by clock; no lease extension from stale sample; bounded recovery exceptions are identity-specific",
+      "clock_unit": "ROS ns; source and steady receive clocks also used",
+      "identity": "bundle generation and command sample id",
+      "protection": "immutable bundle + store lock; mode cache mutex",
+      "roles": [
+        "deadline/counter",
+        "derived predicate"
+      ],
+      "evidence": [
+        "E_CANDIDATE",
+        "E_PUBLISH",
+        "E_COMMAND_CONTRACT",
+        "E_SETPOINT"
+      ]
+    },
+    {
+      "id": "F_EPISODE_PHASE",
+      "object": "O_EPISODE",
+      "name": "ExecutionEpisodeSnapshot::phase / command_available / active_generation / safety_suffix_active / restart_from_rest",
+      "type": "mutex-protected snapshot fields",
+      "initialization": "reset to InitialHold, unavailable, no active generation; beginGoal may retain an existing command",
+      "meaning": "lifecycle, active authority and restart latch co-owned with recovery_state; more authoritative than free-standing mirror flags",
+      "scope": "one physical execution episode",
+      "writers": [
+        "reset/beginGoal",
+        "commandCommitted",
+        "observeSampledSafetyRole",
+        "stoppedHold/requestRestartFromRest",
+        "failClosed"
+      ],
+      "readers": [
+        "planning admission, sample policy, candidate commit, final exposure and diagnostics"
+      ],
+      "reset": "exact generation/goal identity mutations; reset/failClosed clear ownership",
+      "clock_unit": "none",
+      "identity": "localization_epoch, goal_epoch, request_id, active_generation",
+      "protection": "ExecutionEpisode mutex; compound runtime transitions also lock localization/input/lease transition",
+      "roles": [
+        "authoritative control state",
+        "latch",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_EPISODE_SNAPSHOT",
+        "E_EPISODE"
+      ]
+    },
+    {
+      "id": "F_PLANNING_KEY",
+      "object": "O_PLANNER",
+      "name": "PlanningKey identity tuple",
+      "type": "separate uint64 counters, enum start mode, int64 anchor stamp",
+      "initialization": "invalid zero counters; formed per schedulePlanningCycle snapshot",
+      "meaning": "localization epoch, goal epoch, request id, route revision, committed bundle generation, world generation/revision, start mode, anchor stamp and dynamics hash are distinct; none can substitute for another",
+      "scope": "one solve request/result attribution",
+      "writers": [
+        "currentPlanningKey snapshots runtime state"
+      ],
+      "readers": [
+        "worker dedup/cancel, PlanningRequest validity, candidate output and commit recheck"
+      ],
+      "reset": "new state/request/world/anchor forms a new key; old result rejected by current key checks",
+      "clock_unit": "anchor_stamp_ns in ROS time; no epoch unit conflation",
+      "identity": "all listed tuple components are independent fields",
+      "protection": "captured immutable value; inputs copied under runtime locks",
+      "roles": [
+        "identity/version",
+        "deadline/counter"
+      ],
+      "evidence": [
+        "E_REQUEST",
+        "E_SCHEDULE"
+      ]
+    },
+    {
+      "id": "F_WORLD_IDENTITY",
+      "object": "O_WORLD",
+      "name": "WorldSnapshotIdentity::localization_epoch/generation/revision/observation_stamp_ns",
+      "type": "uint64 epoch/generation/revision + int64 observation time",
+      "initialization": "set by mapping snapshot publication",
+      "meaning": "world version and freshness witness separate from goal/request/bundle identity",
+      "scope": "one immutable world snapshot",
+      "writers": [
+        "mapping worker/store publication"
+      ],
+      "readers": [
+        "planning request, recertification, candidate admission, activation, publish freshness gate"
+      ],
+      "reset": "new observation/revision/generation replaces snapshot; epoch change invalidates prior lineage",
+      "clock_unit": "observation_stamp_ns ROS time",
+      "identity": "localization epoch, world generation and revision, source observation stamp",
+      "protection": "immutable snapshot identity; WorldSnapshotStore synchronization",
+      "roles": [
+        "identity/version",
+        "deadline/counter",
+        "transport snapshot/cache"
+      ],
+      "evidence": [
+        "E_WORLD_ID",
+        "E_TIMELINE",
+        "E_CANDIDATE"
+      ]
+    },
+    {
+      "id": "F_EXEC_STATE_LEASE",
+      "object": "O_RUNTIME",
+      "name": "ExecutionStateStore::state_ / ExecutionStateLease::ingress_sequence",
+      "type": "shared_ptr<const ExecutionStateLease>",
+      "initialization": "empty; first accepted finite KinematicState establishes active epoch",
+      "meaning": "latest immutable propagated state; monotonic source time and exact epoch gate publication; separate receive steady stamp and ingress sequence do not replace source-time freshness",
+      "scope": "runtime execution state cache",
+      "writers": [
+        "onPropagatedOdometry -> ExecutionStateStore::publish",
+        "resetForLocalizationEpoch"
+      ],
+      "readers": [
+        "PlanningKey, candidate anchor, emergency check, publishCommand final lease gate"
+      ],
+      "reset": "epoch reset clears exact cached lease",
+      "clock_unit": "KinematicState source_stamp_ns in ROS clock; receive stamp steady clock",
+      "identity": "localization epoch + ingress sequence; sequence is not freshness",
+      "protection": "ExecutionStateStore mutex and immutable shared snapshot",
+      "roles": [
+        "transport snapshot/cache",
+        "identity/version",
+        "deadline/counter"
+      ],
+      "evidence": [
+        "E_EXEC_STATE_STORE",
+        "E_EXEC_STATE_LEASE",
+        "E_PROPAGATED"
+      ]
+    },
+    {
+      "id": "F_RUNTIME_TERMINAL_WITNESS",
+      "object": "O_RUNTIME",
+      "name": "trajectory_completion_witness_ / trajectory_reaches_goal_ / terminal_bundle_generation_",
+      "type": "optional witness + atomic bool + uint64 generation",
+      "initialization": "no witness / false / zero",
+      "meaning": "terminal sampling and goal endpoint lineage; endpoint sample alone does not mean mission accepted or complete",
+      "scope": "one candidate generation and goal request",
+      "writers": [
+        "publishCommand only after matching completed sample; lifecycle/recovery/epoch reset clears"
+      ],
+      "readers": [
+        "currentPlanningKey terminal suppression, stopped hold predicate, terminal monitor admission"
+      ],
+      "reset": "identity mismatch, goal/epoch change, new request/recovery clears",
+      "clock_unit": "witness source stamp and bundle valid window in ROS ns",
+      "identity": "active goal and exact terminal bundle generation",
+      "protection": "witness under transition locks; atomics use acquire/release",
+      "roles": [
+        "latch",
+        "identity/version",
+        "derived predicate"
+      ],
+      "evidence": [
+        "E_RUNTIME_LEASE_FIELDS",
+        "E_PUBLISH_END",
+        "E_RECOVERY_USE"
+      ]
+    },
+    {
+      "id": "F_NEW_GOAL",
+      "object": "O_RUNTIME",
+      "name": "new_goal_",
+      "type": "bool",
+      "initialization": "false",
+      "meaning": "request transition marker used by planner/terminal guard while desired and executing goals may differ",
+      "scope": "goal handoff interval",
+      "writers": [
+        "applyValidatedGoalLocked and commit/activation cleanup"
+      ],
+      "readers": [
+        "currentPlanningKey, commit, terminal monitor and retained callback predicates"
+      ],
+      "reset": "cleared after admitted successor cutover or rejected/invalidated request path",
+      "clock_unit": "none",
+      "identity": "active goal and execution goal tuple",
+      "protection": "input_mutex_",
+      "roles": [
+        "latch",
+        "derived predicate"
+      ],
+      "evidence": [
+        "E_HANDOFF_FLAGS",
+        "E_SCHEDULE",
+        "E_COMMIT"
+      ]
+    },
+    {
+      "id": "F_HOT_GOAL",
+      "object": "O_RUNTIME",
+      "name": "hot_goal_transition_",
+      "type": "bool",
+      "initialization": "false",
+      "meaning": "retarget planner through committed-future successor path while prior command remains active",
+      "scope": "same-mission pass-through request handoff",
+      "writers": [
+        "applyValidatedGoalLocked; activation/fail/reset paths"
+      ],
+      "readers": [
+        "currentPlanningKey start mode, candidate stage/commit, terminal monitor"
+      ],
+      "reset": "cleared at matching successor activation or fail-closed reset",
+      "clock_unit": "none",
+      "identity": "desired request distinct from executing predecessor",
+      "protection": "input_mutex_ and command transition lock",
+      "roles": [
+        "latch",
+        "derived predicate"
+      ],
+      "evidence": [
+        "E_HANDOFF_FLAGS",
+        "E_SCHEDULE",
+        "E_ACTIVATION"
+      ]
+    },
+    {
+      "id": "F_SKIP_REPLAN",
+      "object": "O_RUNTIME",
+      "name": "skip_replan_once_",
+      "type": "atomic_bool",
+      "initialization": "false",
+      "meaning": "one scheduler renewal suppressed after a stopped-state successful plan; a mirror, not recovery owner",
+      "scope": "next planning timer cycle",
+      "writers": [
+        "successful stopped-state plan; consume/reset in scheduler"
+      ],
+      "readers": [
+        "schedulePlanningCycle only"
+      ],
+      "reset": "consumed by one planning scheduler pass or explicit reset",
+      "clock_unit": "one timer cycle",
+      "identity": "current goal identity indirectly via runtime guard",
+      "protection": "atomic; runtime transition sets related state",
+      "roles": [
+        "derived predicate",
+        "latch"
+      ],
+      "evidence": [
+        "E_HANDOFF_FLAGS",
+        "E_SCHEDULE"
+      ]
+    },
+    {
+      "id": "F_FOREIGN_HOLD",
+      "object": "O_RUNTIME",
+      "name": "foreign_mission_hold_after_stop_ / foreign_mission_cancel_pending_",
+      "type": "bool + atomic bool + target epoch tuple",
+      "initialization": "false/false/zero",
+      "meaning": "foreign mission change is treated as authority violation; moving certified suffix drains before fail-closed hold/cancel",
+      "scope": "foreign mission handoff",
+      "writers": [
+        "transitionForeignMissionLocked; measured stop consume path"
+      ],
+      "readers": [
+        "goal admission, stopped-recovery branch, worker cancellation guard"
+      ],
+      "reset": "clear after target epoch cancellation consumed or lifecycle reset",
+      "clock_unit": "none",
+      "identity": "foreign target, transition and localization epoch",
+      "protection": "localization/input/command lock order plus atomics",
+      "roles": [
+        "authoritative control state",
+        "latch",
+        "identity/version"
+      ],
+      "evidence": [
+        "E_RUNTIME_FIELDS",
+        "E_GOAL",
+        "E_RECOVERY_USE"
+      ]
+    },
+    {
+      "id": "F_TRACKING_EXPERIMENT",
+      "object": "O_MODE",
+      "name": "tracking_experiment_ / TrackingExperimentPolicy",
+      "type": "policy with enabled/suppress flags and numeric coefficients",
+      "initialization": "loaded from parameters; enabled=use_sim_time; suppress_braking=use_sim_time && !trackingGateEnabled(); suppress_estimator_health_response=suppress_braking; default config coefficients are zero",
+      "meaning": "conditional experiment policy affects runtime tracking validation and mode geometric-tracking/health response; zero coefficients disable adaptive envelope but under use_sim_time=true cause suppress flags to be true",
+      "scope": "process configuration/launch profile, constant for process lifetime",
+      "writers": [
+        "loadTrackingExperimentPolicy during both runtime and PX4 mode construction"
+      ],
+      "readers": [
+        "runtime retained/transition tracking validation; mode command admission and health check; optional velocity-only setpoint branch"
+      ],
+      "reset": "construction only; no dynamic update found",
+      "clock_unit": "coefficients are metres/seconds; use_sim_time selects simulated profile",
+      "identity": "process launch parameters and use_sim_time; does not alter goal or bundle ID",
+      "protection": "immutable after construction; used in callbacks",
+      "roles": [
+        "authoritative control policy",
+        "derived predicate",
+        "profile gate"
+      ],
+      "evidence": [
+        "E_TRACKING_POLICY",
+        "E_TRACKING_CONFIG",
+        "E_EXTERNAL_MODE_CONFIG",
+        "E_TRACKING_RUNTIME",
+        "E_TRACKING_MODE_BYPASS"
+      ]
+    },
+    {
+      "id": "F_RUNTIME_TRACKING_EXPERIMENT",
+      "object": "O_RUNTIME",
+      "name": "tracking_experiment_ / TrackingExperimentPolicy",
+      "type": "policy with enabled/suppress flags and numeric coefficients",
+      "initialization": "loaded from parameters; enabled=use_sim_time; suppress_braking=use_sim_time && !trackingGateEnabled(); the mapping.yaml coefficients are zero",
+      "meaning": "runtime experiment policy changes transition and retained-command tracking acceptance when enabled; this is a separate process-local copy from PX4 mode policy",
+      "scope": "runtime process configuration lifetime",
+      "writers": [
+        "loadTrackingExperimentPolicy in NavigationRuntimeNode construction"
+      ],
+      "readers": [
+        "runCycle transition/path tracking, retained validation and emergency pressure calculations"
+      ],
+      "reset": "constructor-only immutable process policy",
+      "clock_unit": "coefficients are metres/seconds; use_sim_time selects simulated policy",
+      "identity": "runtime parameter file and use_sim_time launch argument",
+      "protection": "immutable after construction",
+      "roles": [
+        "authoritative control policy",
+        "derived predicate",
+        "profile gate"
+      ],
+      "evidence": [
+        "E_TRACKING_POLICY",
+        "E_TRACKING_CONFIG",
+        "E_LAUNCH_DEFAULT",
+        "E_TRACKING_RUNTIME",
+        "E_RUNTIME_TRACKING_GATE",
+        "E_EXPERIMENTAL_TRACKING_HELPER"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D_GOAL",
+      "sink": "accept/reject/defer goal",
+      "authority": "NavigationRuntimeNode goal callback under localization/input locks, PendingGoalHandoffOwner for same-mission suffix deferral",
+      "participants": [
+        "F_DESIRED_GOAL",
+        "F_PENDING_GOAL",
+        "F_ACTIVE_GOAL_EPOCH",
+        "F_EXEC_RECOVERY",
+        "F_LOCALIZATION_EPOCH"
+      ],
+      "effects": "replace desired goal; possibly preserve executing predecessor or single-slot defer; cancel/queue solve",
+      "evidence": [
+        "E_GOAL",
+        "E_PENDING_GOAL",
+        "E_EPOCH"
+      ]
+    },
+    {
+      "id": "D_COMMIT",
+      "sink": "commit, stage, activate, revoke CandidateBundle",
+      "authority": "NavigationRuntimeNode guards plus ExecutionTimelineStore atomic store operations",
+      "participants": [
+        "F_DESIRED_GOAL",
+        "F_EXECUTING_GOAL",
+        "F_ACTIVE_GOAL_EPOCH",
+        "F_TIMELINE",
+        "F_EXEC_RECOVERY",
+        "F_FAILURE_LATCH",
+        "F_LOCALIZATION_EPOCH",
+        "F_PLANNING_KEY",
+        "F_WORLD_IDENTITY",
+        "F_EPISODE_PHASE",
+        "F_HOT_GOAL"
+      ],
+      "effects": "successor pending until activation; emergency can cut over immediately; invalid candidates do not gain execution ownership",
+      "evidence": [
+        "E_COMMIT",
+        "E_TIMELINE",
+        "E_ACTIVATION"
+      ]
+    },
+    {
+      "id": "D_EXPOSE",
+      "sink": "sample/publish NavigationCommand",
+      "authority": "NavigationRuntimeNode publishCommand + final ExecutionTimelineStore::publishIfCurrent gate",
+      "participants": [
+        "F_TIMELINE",
+        "F_EXECUTING_GOAL",
+        "F_COMMAND_LEASE",
+        "F_FAILURE_LATCH",
+        "F_LOCALIZATION_EPOCH",
+        "F_EXEC_RECOVERY",
+        "F_EXEC_STATE_LEASE",
+        "F_WORLD_IDENTITY",
+        "F_RUNTIME_TERMINAL_WITNESS"
+      ],
+      "effects": "publish exact sampled identity if state/world/goal/leases/lifecycle still current; else drop, suspend or fail closed",
+      "evidence": [
+        "E_PUBLISH",
+        "E_COMMAND_CONTRACT"
+      ]
+    },
+    {
+      "id": "D_ADMIT",
+      "sink": "admit/reject NavigationCommand and feed mission progression",
+      "authority": "NavigationMode::onNavigationCommand, serialized with mission timer under trajectory_mutex_",
+      "participants": [
+        "F_MODE_COMMAND",
+        "F_WAYPOINT",
+        "F_SUFFIX_HANDOFF",
+        "F_HANDOVER_MODE",
+        "F_FRAME_ALIGNMENT"
+      ],
+      "effects": "cache exact message and notify MissionController; ROS message acceptance is not PX4 controller acceptance",
+      "evidence": [
+        "E_MODE_ADMISSION",
+        "E_MISSION_EVENT"
+      ]
+    },
+    {
+      "id": "D_SETPOINT",
+      "sink": "PX4 TrajectorySetpointType::update / request hold",
+      "authority": "NavigationMode::updateSetpoint plus frame/health/lease gates; NavigationModeExecutor owns mode handover",
+      "participants": [
+        "F_MODE_COMMAND",
+        "F_COMMAND_LEASE",
+        "F_PLANNER_RECOVERY_MODE",
+        "F_FRAME_ALIGNMENT",
+        "F_HANDOVER_MODE",
+        "F_HOLD_EXECUTOR"
+      ],
+      "effects": "publish P/V/A/yaw setpoint inputs or stationary input; jerk is not sent in the PX4 setpoint; request AUTO_LOITER has separate API/status stages",
+      "evidence": [
+        "E_SETPOINT",
+        "E_HOLD"
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "id": "T_ACTIVATE",
+      "object": "O_MODE/O_MISSION/O_EXECUTOR",
+      "entrypoint": "NavigationMode::onActivate -> MissionController::activate -> updateMission -> handleMissionEvent",
+      "predicate_before": "MissionController is Idle/checkpointed; on activation it resets to WaitingForAirborne and has no admitted NavigationCommand.",
+      "event": "PX4 external mode activation followed by the immediate mission timer update",
+      "guard": "MissionController::update returns no goal while !airborne; airborne is isArmed() && local position z > 0.5 m. If armed/above threshold on immediate update, it enters ExecutingWaypoint and emits PublishGoal. A separate source comment claims first goal is published from onActivate; code plus unit test qualify that statement.",
+      "branch_priority": "NavigationMode resets per-activation command/recovery/frame latches but retains process health/odometry samples; MissionController restores checkpoint if valid; update returns no goal until airborne; then goal acquisition precedes fresh command admission.",
+      "read_set": [
+        "F_WAYPOINT",
+        "F_MODE_COMMAND",
+        "F_FRAME_ALIGNMENT",
+        "F_HANDOVER_MODE"
+      ],
+      "write_set": [
+        "F_MODE_COMMAND",
+        "F_WAYPOINT",
+        "F_FRAME_ALIGNMENT",
+        "F_HANDOVER_MODE",
+        "F_HOLD_EXECUTOR"
+      ],
+      "effects": [
+        "publish NavigationGoal",
+        "stationary setpoint while bounded initial PVA acquisition",
+        "no evidence of PX4 applied command"
+      ],
+      "concurrency": "PX4 mode executor and state-input thread; trajectory mutex serializes command/timer snapshots; no total order across independent state input",
+      "evidence": [
+        "E_MODE_ACTIVATE",
+        "E_MISSION_FLOW",
+        "E_MODE_SETUP",
+        "E_FRAME",
+        "E_ACTIVATE_COMMENT",
+        "E_MISSION_UPDATE"
+      ]
+    },
+    {
+      "id": "T_GOAL_ACCEPT",
+      "object": "O_RUNTIME/O_PENDING_GOAL",
+      "entrypoint": "NavigationRuntimeNode::onGoal -> applyValidatedGoalLocked",
+      "predicate_before": "goal tuple compared to current mission/order and localization epoch; safety suffix and foreign mission facts inspected",
+      "event": "NavigationGoal ROS message ingress",
+      "guard": "valid route snapshot and monotonic same-mission identity; if safety suffix active, only newer ordered same-mission goal is deferred; foreign mission is held until stop/fail-closed",
+      "branch_priority": "decode/validate then localization->input locks; stale/duplicate returns no-op; pending suffix branch before direct goal replacement; normal branch cancels/rekeys worker and advances goal epoch",
+      "read_set": [
+        "F_DESIRED_GOAL",
+        "F_PENDING_GOAL",
+        "F_EXEC_RECOVERY",
+        "F_LOCALIZATION_EPOCH",
+        "F_NEW_GOAL",
+        "F_HOT_GOAL",
+        "F_FOREIGN_HOLD"
+      ],
+      "write_set": [
+        "F_DESIRED_GOAL",
+        "F_PENDING_GOAL",
+        "F_ACTIVE_GOAL_EPOCH",
+        "F_EXECUTING_GOAL",
+        "F_WORKER_QUEUE",
+        "F_NEW_GOAL",
+        "F_HOT_GOAL",
+        "F_FOREIGN_HOLD"
+      ],
+      "effects": [
+        "new goal can become desired before executing identity changes",
+        "queue/cancel planning request",
+        "pending pointer consumed only after matching execution handoff"
+      ],
+      "concurrency": "localization_epoch_ingress_mutex_ then localization_transition_mutex_ then input_mutex_; callbacks asynchronous across processes",
+      "evidence": [
+        "E_GOAL",
+        "E_PENDING_GOAL",
+        "E_RUNTIME_FIELDS"
+      ]
+    },
+    {
+      "id": "T_SCHEDULE",
+      "object": "O_RUNTIME/O_WORKER/O_PLANNER",
+      "entrypoint": "planning timer -> schedulePlanningCycle -> PlanningWorker::submit -> runCycle",
+      "predicate_before": "localization ready, desired/execution identity and current world/state valid; no already-current terminal stop or failure guard",
+      "event": "5 Hz planning timer or explicit replan trigger",
+      "guard": "PlanningKey exists and survives current-key recheck; queue policy accepts or replaces pending item",
+      "branch_priority": "single serial worker; duplicate no-op; priority/replacement may interrupt active solve under worker mutex; latest pending job consumed after active exits",
+      "read_set": [
+        "F_DESIRED_GOAL",
+        "F_EXECUTING_GOAL",
+        "F_ACTIVE_GOAL_EPOCH",
+        "F_LOCALIZATION_EPOCH",
+        "F_TIMELINE",
+        "F_EXEC_RECOVERY",
+        "F_WORKER_QUEUE",
+        "F_PLANNING_KEY",
+        "F_WORLD_IDENTITY",
+        "F_SKIP_REPLAN",
+        "F_NEW_GOAL",
+        "F_HOT_GOAL",
+        "F_RUNTIME_TRACKING_EXPERIMENT"
+      ],
+      "write_set": [
+        "F_WORKER_QUEUE"
+      ],
+      "effects": [
+        "solve can run while command sampling continues",
+        "planner result itself does not commit or publish"
+      ],
+      "concurrency": "planning and command timer callback groups/workers; worker serializes backend solve, runtime timers may execute concurrently",
+      "evidence": [
+        "E_SCHEDULE",
+        "E_WORKER",
+        "E_WORKER_TEST"
+      ]
+    },
+    {
+      "id": "T_CANDIDATE",
+      "object": "O_RUNTIME/O_TIMELINE/O_EPISODE",
+      "entrypoint": "runCycle -> commitPlannerCandidate or admitImmediateCandidate -> ExecutionTimelineStore",
+      "predicate_before": "candidate uncommitted; active timeline and execution episode snapshot captured for optimistic recheck",
+      "event": "planner returns candidate or emergency validation completes",
+      "guard": "candidate.valid + identity/world/certificate/dynamics/anchor/lease guards and current predecessor/version/episode; normal successor staged when active; immediate measured emergency uses separate boundary; failed emergency certification applies EmergencyCertificationFailed and failClosed",
+      "branch_priority": "invalid/stale/superseded rejects first; emergency boundary/admission differs; staged successor requires current exact timeline token and future activation",
+      "read_set": [
+        "F_DESIRED_GOAL",
+        "F_EXECUTING_GOAL",
+        "F_ACTIVE_GOAL_EPOCH",
+        "F_LOCALIZATION_EPOCH",
+        "F_TIMELINE",
+        "F_EXEC_RECOVERY",
+        "F_FAILURE_LATCH",
+        "F_PLANNING_KEY",
+        "F_WORLD_IDENTITY",
+        "F_EPISODE_PHASE",
+        "F_RUNTIME_TRACKING_EXPERIMENT"
+      ],
+      "write_set": [
+        "F_TIMELINE",
+        "F_EXECUTING_GOAL",
+        "F_EXEC_RECOVERY",
+        "F_FAILURE_LATCH"
+      ],
+      "effects": [
+        "candidate may be staged, committed or rejected; no claim that commit means sample/exposure/PX4 acceptance"
+      ],
+      "concurrency": "candidate preparation outside critical section; recheck/commit under localization->input->command locks and store version CAS",
+      "evidence": [
+        "E_COMMIT",
+        "E_IMMEDIATE",
+        "E_CANDIDATE",
+        "E_RECOVERY_USE"
+      ]
+    },
+    {
+      "id": "T_ACTIVATE_SUCCESSOR",
+      "object": "O_RUNTIME/O_TIMELINE/O_EPISODE",
+      "entrypoint": "publishCommand timer -> activatePendingIfDueAndFinalize -> queued PlannerFacade history sync",
+      "predicate_before": "pending candidate exists and ROS now reaches activation stamp; old active remains execution authority",
+      "event": "command timer reaches staged activation boundary",
+      "guard": "pending generation matches; epoch ready; lease latch allows; recovery state known and nominal allowed; failure false; desired goal tuple/goal epoch/localization epoch/pending goal exact",
+      "branch_priority": "pre-guard failure drops or preserves active per store contract; successful store swap changes executing identity and episode; queued planner activation is synchronized in subsequent worker callback",
+      "read_set": [
+        "F_TIMELINE",
+        "F_DESIRED_GOAL",
+        "F_EXECUTING_GOAL",
+        "F_ACTIVE_GOAL_EPOCH",
+        "F_LOCALIZATION_EPOCH",
+        "F_EXEC_RECOVERY",
+        "F_FAILURE_LATCH",
+        "F_PENDING_GOAL"
+      ],
+      "write_set": [
+        "F_TIMELINE",
+        "F_EXECUTING_GOAL",
+        "F_PENDING_GOAL",
+        "F_EXEC_RECOVERY"
+      ],
+      "effects": [
+        "atomic store cutover for command timeline; planner history facade synchronization is a later queued side effect",
+        "desired, pending, active generation and planner history are not one distributed transaction"
+      ],
+      "concurrency": "localization/input/command locks plus timeline store lock; queue sync later",
+      "evidence": [
+        "E_ACTIVATION",
+        "E_TIMELINE"
+      ]
+    },
+    {
+      "id": "T_SAMPLE_BACKUP",
+      "object": "O_RUNTIME/O_EPISODE/O_SAMPLER",
+      "entrypoint": "publishCommand -> CommandSampler::sample -> observeSampledSafetyRole",
+      "predicate_before": "sample identity exact to active store; sample role from active timeline interval",
+      "event": "ROS-time sample enters BACKUP or EMERGENCY suffix interval",
+      "guard": "valid sample and exact active bundle/executing identity still current; no planned-stop-hold misclassification",
+      "branch_priority": "stale sample dropped; valid sampled safety role synchronizes Episode recovery; backup is not main continuation",
+      "read_set": [
+        "F_TIMELINE",
+        "F_EXECUTING_GOAL",
+        "F_EXEC_RECOVERY",
+        "F_COMMAND_LEASE"
+      ],
+      "write_set": [
+        "F_EXEC_RECOVERY"
+      ],
+      "effects": [
+        "command status/role encodes sampled execution role; MissionController only receives it after downstream admission"
+      ],
+      "concurrency": "command timer and runtime state callbacks are concurrent; exact pointer/generation recheck under transition locks",
+      "evidence": [
+        "E_PUBLISH",
+        "E_RECOVERY_USE",
+        "E_EPISODE"
+      ]
+    },
+    {
+      "id": "T_PUBLISH",
+      "object": "O_RUNTIME/O_TIMELINE",
+      "entrypoint": "NavigationRuntimeNode::publishCommand final publishIfCurrent",
+      "predicate_before": "sample ready; source/receive state and world freshness, candidate and stream lease computed",
+      "event": "command timer attempts ROS publication",
+      "guard": "same active sampled pointer, goal/localization/world identity and episode; current state freshness, world freshness, message and bundle lease; stopped hold additionally requires known-free world and measured anchor proximity",
+      "branch_priority": "lease failure latches/fail-closes; stale world suspends/revalidates; superseded sample drops; if all valid publish NavigationCommand; otherwise safety/rejected message branch",
+      "read_set": [
+        "F_TIMELINE",
+        "F_EXECUTING_GOAL",
+        "F_LOCALIZATION_EPOCH",
+        "F_COMMAND_LEASE",
+        "F_FAILURE_LATCH",
+        "F_EXEC_RECOVERY",
+        "F_EXEC_STATE_LEASE",
+        "F_WORLD_IDENTITY",
+        "F_RUNTIME_TERMINAL_WITNESS"
+      ],
+      "write_set": [
+        "F_FAILURE_LATCH",
+        "F_EXEC_RECOVERY"
+      ],
+      "effects": [
+        "ROS publisher gets exact command only after final gate; publication is not PX4 command acceptance"
+      ],
+      "concurrency": "timeline store serializes exposure with commit/revoke; lock chain and freshness re-read at linearization boundary",
+      "evidence": [
+        "E_PUBLISH",
+        "E_COMMAND_CONTRACT"
+      ]
+    },
+    {
+      "id": "T_ADMIT_COMMAND",
+      "object": "O_MODE/O_CONTRACT/O_MISSION",
+      "entrypoint": "NavigationMode::onNavigationCommand",
+      "predicate_before": "candidate ROS message not yet local cache; old admitted command may be retained",
+      "event": "NavigationCommand callback",
+      "guard": "contract, valid_until, frame, localization epoch, mission/wp/request or exact retained predecessor/suffix identity, world non-regression, sample monotonicity, state/health freshness, command role/phase and stop proximity checks",
+      "branch_priority": "reject transition retains prior certified command when configured; terminal/handover/failure prevents reopening; only admitted message replaces cache and updates MissionController readiness/terminal facts",
+      "read_set": [
+        "F_MODE_COMMAND",
+        "F_WAYPOINT",
+        "F_SUFFIX_HANDOFF",
+        "F_HANDOVER_MODE",
+        "F_FRAME_ALIGNMENT",
+        "F_COMMAND_LEASE",
+        "F_TRACKING_EXPERIMENT"
+      ],
+      "write_set": [
+        "F_MODE_COMMAND",
+        "F_TRAJECTORY_READY",
+        "F_TERMINAL_HOLD",
+        "F_SUFFIX_HANDOFF",
+        "F_PLANNER_RECOVERY_MODE"
+      ],
+      "effects": [
+        "local acceptance then timer/tick may advance mission; no direct guarantee PX4 used the command"
+      ],
+      "concurrency": "trajectory_mutex_ serializes this callback with updateMission mission timer",
+      "evidence": [
+        "E_MODE_ADMISSION",
+        "E_COMMAND_CONTRACT",
+        "E_MISSION_EVENT",
+        "E_TRACKING_MODE"
+      ]
+    },
+    {
+      "id": "T_PASS_PROGRESS",
+      "object": "O_MISSION/O_MODE/O_RUNTIME",
+      "entrypoint": "updateMission -> MissionController::update -> handleMissionEvent(PublishGoal) -> runtime onGoal",
+      "predicate_before": "active waypoint/request, measured route-progress history, current admitted command continuation witness or certified backup stop witness",
+      "event": "measured pass-through crossing or certified stopped-suffix acceptance",
+      "guard": "trajectory ready/current witness and measured current segment crossing inside acceptance radius with fresh sample gap; suffix stop additionally low measured speed/near certified command; STOP coincident predecessor has separate terminal-readiness path",
+      "branch_priority": "timer watchdog/recovery precedes controller update; no guard => no acceptance; accepted increments waypoint and request, emits new goal; old exact READY command may bridge handoff until lease expires/new admitted command",
+      "read_set": [
+        "F_WAYPOINT",
+        "F_MODE_COMMAND",
+        "F_SUFFIX_HANDOFF",
+        "F_TERMINAL_HOLD",
+        "F_COMMAND_LEASE"
+      ],
+      "write_set": [
+        "F_WAYPOINT",
+        "F_SUFFIX_HANDOFF",
+        "F_PLANNER_RECOVERY_MODE",
+        "F_DESIRED_GOAL",
+        "F_ACTIVE_GOAL_EPOCH",
+        "F_PENDING_GOAL"
+      ],
+      "effects": [
+        "new desired request published; executing predecessor can remain authoritative until candidate timeline swap; mission progress and planner progress are asynchronous"
+      ],
+      "concurrency": "mode command and timer serialized by trajectory_mutex_; ROS process message delivery asynchronous",
+      "evidence": [
+        "E_MISSION_FLOW",
+        "E_MISSION_EVENT",
+        "E_GOAL",
+        "E_MISSION_TEST",
+        "E_PROGRESSION_TEST"
+      ]
+    },
+    {
+      "id": "T_STOP_COMPLETE",
+      "object": "O_MISSION/O_MODE/O_EXECUTOR",
+      "entrypoint": "MissionController::update and NavigationMode::handleMissionEvent",
+      "predicate_before": "STOP waypoint trajectory has endpoint/terminal witness or safety braking event; mission remains active",
+      "event": "measured settle/confirmation/dwell or bounded safety timeout",
+      "guard": "measured position inside acceptance radius; measured velocity <= configured acceptance speed; continuous confirmation window; hold dwell; pass-through safety path uses certified stop and 0.5 s confirmation or 5 s safety timeout",
+      "branch_priority": "pending position-control event first; wait for trajectory end before safety confirmation; failure/missing trajectory requests position control; terminal STOP after hold_s emits Complete; nonterminal stop emits PublishGoal; safety timeout emits RequestPositionControl",
+      "read_set": [
+        "F_WAYPOINT",
+        "F_MODE_COMMAND",
+        "F_TRAJECTORY_READY",
+        "F_TERMINAL_HOLD",
+        "F_HANDOVER_MODE"
+      ],
+      "write_set": [
+        "F_WAYPOINT",
+        "F_TERMINAL_HOLD",
+        "F_HANDOVER_MODE",
+        "F_HOLD_EXECUTOR"
+      ],
+      "effects": [
+        "measured settle, waypoint acceptance, mission Complete and Hold request are distinct events",
+        "Complete publishes Bool/status and calls completed(Success); RequestPositionControl invokes Hold callback"
+      ],
+      "concurrency": "MissionController mutex; mode trajectory lock for update/event handling",
+      "evidence": [
+        "E_MISSION_FLOW",
+        "E_MISSION_EVENT",
+        "E_MISSION_TEST",
+        "E_HOLD"
+      ]
+    },
+    {
+      "id": "T_RECOVERY_STOP",
+      "object": "O_RUNTIME/O_EPISODE/O_PENDING_GOAL",
+      "entrypoint": "runCycle measured-stop check -> applyExecutionRecoveryEventLocked(CertifiedStopObserved) / publishCommand planned stop hold",
+      "predicate_before": "runtime recovery is TrackBackup or EmergencyBrake with active certified suffix; measured state/witness current",
+      "event": "measured state meets stopped recovery criteria or sampled terminal safety stop",
+      "guard": "exact active bundle/gen and state identity, freshness, stop envelope, world/certificate checks; unresolved/UNKNOWN does not grant restart",
+      "branch_priority": "failed/unknown stop evidence keeps command fail-closed or existing certified suffix; valid stopped hold marks restart_from_rest; deferred same-mission goal can then be consumed/replanned; timeout follows configured runtime recovery path",
+      "read_set": [
+        "F_EXEC_RECOVERY",
+        "F_TIMELINE",
+        "F_EXECUTING_GOAL",
+        "F_COMMAND_LEASE",
+        "F_PENDING_GOAL",
+        "F_LOCALIZATION_EPOCH",
+        "F_EPISODE_PHASE",
+        "F_FOREIGN_HOLD",
+        "F_RUNTIME_TERMINAL_WITNESS"
+      ],
+      "write_set": [
+        "F_EXEC_RECOVERY",
+        "F_TIMELINE",
+        "F_PENDING_GOAL",
+        "F_DESIRED_GOAL",
+        "F_WORKER_QUEUE"
+      ],
+      "effects": [
+        "stopped recovery may schedule plan-from-rest; external PX4 mode has a separate 5 s completed-command recovery clock"
+      ],
+      "concurrency": "planning worker and command sampler concurrent; exact generation and episode checks; lock/store linearization not equivalent to complete cross-process transaction",
+      "evidence": [
+        "E_RECOVERY_USE",
+        "E_EPISODE",
+        "E_RUNTIME_TIMEOUT",
+        "E_MODE_RECOVERY"
+      ]
+    },
+    {
+      "id": "T_EMERGENCY_FAIL",
+      "object": "O_RUNTIME/O_EPISODE/O_TIMELINE",
+      "entrypoint": "runCycle emergency certification result -> recovery event + failClosedLocked",
+      "predicate_before": "terminal MAIN/anchor check or emergency response requested; old command can be exceeded/invalid",
+      "event": "emergency brake candidate fails certification or boundary validation",
+      "guard": "emergency_certification_failed or emergency_boundary_failed after exact request/execution owner recheck",
+      "branch_priority": "superseded/stale owner result discarded first; if still owner, failed certification sets recovery Px4Hold and fail-closes; no fabricated emergency trajectory",
+      "read_set": [
+        "F_TIMELINE",
+        "F_EXECUTING_GOAL",
+        "F_EXEC_RECOVERY",
+        "F_FAILURE_LATCH",
+        "F_LOCALIZATION_EPOCH"
+      ],
+      "write_set": [
+        "F_EXEC_RECOVERY",
+        "F_FAILURE_LATCH",
+        "F_TIMELINE"
+      ],
+      "effects": [
+        "publisher exposes rejected/terminal authorization status; PX4 mode then chooses safety stop/handover through its own status/mission path"
+      ],
+      "concurrency": "result callback rechecks captured timeline/episode/request under localization/input/command locks",
+      "evidence": [
+        "E_RECOVERY_USE",
+        "E_RUNTIME_TIMEOUT",
+        "E_EPISODE"
+      ]
+    },
+    {
+      "id": "T_EPOCH_RESET",
+      "object": "O_RUNTIME/O_WORLD/O_EPISODE/O_TIMELINE",
+      "entrypoint": "onPropagatedOdometry/onEstimatorHealth -> localization epoch reset handler",
+      "predicate_before": "incoming higher localization epoch or epoch/frame mismatch invalidates previous source-state lineage",
+      "event": "estimator epoch advances/reset",
+      "guard": "epoch is nonzero, monotonic; reset path clears readiness and drains/cancels old epoch data",
+      "branch_priority": "set readiness false and cancel/invalidate old timeline/leases/episode/goal; require new consistent state/world before re-exposure",
+      "read_set": [
+        "F_LOCALIZATION_EPOCH",
+        "F_DESIRED_GOAL",
+        "F_TIMELINE",
+        "F_EXEC_RECOVERY",
+        "F_COMMAND_LEASE"
+      ],
+      "write_set": [
+        "F_LOCALIZATION_EPOCH",
+        "F_DESIRED_GOAL",
+        "F_EXECUTING_GOAL",
+        "F_TIMELINE",
+        "F_EXEC_RECOVERY",
+        "F_FAILURE_LATCH",
+        "F_WORKER_QUEUE"
+      ],
+      "effects": [
+        "old result cannot regain command authority after epoch transition; no claim of total cross-callback order beyond epoch locks/identity checks"
+      ],
+      "concurrency": "ingress->localization->input->command order; mapper drain and worker cancel around reset",
+      "evidence": [
+        "E_EPOCH",
+        "E_PROPAGATED",
+        "E_EPISODE_TEST",
+        "E_BUNDLE_TEST"
+      ]
+    },
+    {
+      "id": "T_FRAME_RESET",
+      "object": "O_MODE/O_EXECUTOR",
+      "entrypoint": "onPx4LocalPosition/tryAlignPx4LocalFrameLocked -> updateSetpoint",
+      "predicate_before": "PX4 local-frame alignment has prior reset-counter witness",
+      "event": "PX4 XY/Z reset counter changes or initial stationary alignment pair arrives",
+      "guard": "alignment requires active mode and stationary paired LIO/PX4 state within configured translation; reset invalidates latch",
+      "branch_priority": "reset -> no aligned translation until re-established; setpoint path holds/blocks conversion; only then output transformed setpoint",
+      "read_set": [
+        "F_FRAME_ALIGNMENT",
+        "F_MODE_COMMAND",
+        "F_COMMAND_LEASE"
+      ],
+      "write_set": [
+        "F_FRAME_ALIGNMENT"
+      ],
+      "effects": [
+        "changes frame authority for setpoint conversion; no proof PX4 controller accepted previous setpoint"
+      ],
+      "concurrency": "state-input node thread shares trajectory mutex with setpoint/mode; source stamps and steady receive stamps retained",
+      "evidence": [
+        "E_FRAME",
+        "E_SETPOINT"
+      ]
+    },
+    {
+      "id": "T_HOLD_API",
+      "object": "O_MODE/O_MISSION/O_EXECUTOR",
+      "entrypoint": "RequestPositionControl/Complete -> setPx4HoldHandover -> schedulePx4Hold -> API result + VehicleStatus",
+      "predicate_before": "mode requested safety Hold or mission completed; stationary safety stream remains active during handoff",
+      "event": "AUTO_LOITER mode API scheduling/callback then VehicleStatus callback",
+      "guard": "schedule result: Success/Deactivated clears pending/in-flight; failure sets pending and retry at steady now+250 ms; only VehicleStatus AUTO_LOITER sets px4_hold_confirmed",
+      "branch_priority": "VehicleStatus confirmation clears pending; timer retries only while pending && !confirmed; successful API callback clears pending before VehicleStatus confirmation",
+      "read_set": [
+        "F_HANDOVER_MODE",
+        "F_HOLD_EXECUTOR",
+        "F_MODE_COMMAND"
+      ],
+      "write_set": [
+        "F_HANDOVER_MODE",
+        "F_HOLD_EXECUTOR"
+      ],
+      "effects": [
+        "API completion and actual nav-state confirmation are separate; no finite retry limit; stationary command behavior continues in mode until deactivation/vehicle takeover",
+        "exact PX4 application outcome is runtime-observation-only and unavailable here"
+      ],
+      "concurrency": "executor timer and callbacks; synchronization beyond source callbacks not established by inspected source",
+      "evidence": [
+        "E_MISSION_EVENT",
+        "E_HOLD",
+        "E_SETPOINT",
+        "E_PX4_MAIN"
+      ]
+    },
+    {
+      "id": "T_LEASE_TIMEOUT",
+      "object": "O_RUNTIME/O_MODE/O_EXECUTOR",
+      "entrypoint": "publishCommand freshness checks / NavigationMode::updateSetpoint watchdog",
+      "predicate_before": "active command may exist but lease/state/health/world may expire",
+      "event": "ROS stream lease expires or source/receive freshness becomes stale",
+      "guard": "effective source defaults: runtime command_stream 0.10 s, state 0.50 s; PX4 adapter command 0.10 s, state 0.20 s; watchdog/recovery timers use ROS or steady clocks as named",
+      "branch_priority": "runtime state lease latches/failClosed; stale world suspends; PX4 stale state fails; completed terminal endpoint may enter exact identity 5 s recovery; otherwise stationary input then safety stop/Hold",
+      "read_set": [
+        "F_COMMAND_LEASE",
+        "F_FAILURE_LATCH",
+        "F_MODE_COMMAND",
+        "F_PLANNER_RECOVERY_MODE",
+        "F_HANDOVER_MODE"
+      ],
+      "write_set": [
+        "F_FAILURE_LATCH",
+        "F_MODE_COMMAND",
+        "F_PLANNER_RECOVERY_MODE",
+        "F_HANDOVER_MODE",
+        "F_HOLD_EXECUTOR"
+      ],
+      "effects": [
+        "expired candidate/message is not sampled or represented as continued command; stationary P/V inputs or Hold request follows specific branch",
+        "configured timeouts are separate source and receive clocks"
+      ],
+      "concurrency": "runtime timers vs planner worker; PX4 state input thread vs 50 Hz setpoint timer; no total order across processes",
+      "evidence": [
+        "E_RUNTIME_SETUP",
+        "E_MODE_SETUP",
+        "E_PUBLISH",
+        "E_SETPOINT",
+        "E_HOLD"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S01",
+      "name": "Activate -> airborne/health/state/frame -> first command",
+      "pre_state": "mode inactive/checkpointed; no locally admitted command; runtime may have no fresh current epoch/world",
+      "events": [
+        "mode activates and calls updateMission",
+        "MissionController enters WaitingForAirborne; if not (isArmed && measured local z>0.5), emits no goal",
+        "after airborne, MissionController enters ExecutingWaypoint and emits first goal",
+        "health/odometry ingress and optional stationary PX4-frame alignment",
+        "runtime solve/commit/sample/publish",
+        "PX4 adapter admits command and 50 Hz setpoint gate evaluates"
+      ],
+      "branch": "No mission goal before airborne guard; after goal, stationary setpoint during bounded command acquisition; moving PVA only after required health, state, lease, identity and frame gates.",
+      "post_state": "local command cache may be admitted; PX4 setpoint update called; actual PX4 application unknown",
+      "status": "static-path-supported; MissionController unit test covers airborne gate; NavigationMode onActivate comment is broader than update guard/test and is preserved as conflict",
+      "evidence": [
+        "E_MODE_ACTIVATE",
+        "E_MISSION_FLOW",
+        "E_FRAME",
+        "E_PUBLISH",
+        "E_SETPOINT",
+        "E_PROGRESSION_TEST",
+        "E_ACTIVATE_COMMENT",
+        "E_MISSION_UPDATE"
+      ]
+    },
+    {
+      "id": "S02",
+      "name": "Nominal request -> solve -> validation -> commit -> sample -> PX4 boundary",
+      "pre_state": "current desired/executing identity and fresh world/state; active bundle absent or valid",
+      "events": [
+        "PlanningKey snapshot",
+        "serial worker solves",
+        "candidate cert/identity checks",
+        "store commit immediate or stage future successor",
+        "command timer activates due successor",
+        "sampler samples role/time",
+        "final store exposure gate publishes",
+        "PX4 callback validates/cache then setpoint timer updates"
+      ],
+      "branch": "failed/stale guard rejects or preserves prior active; staged remains non-executable until due activation",
+      "post_state": "source proves each code boundary; no proof that PX4 accepted/applied the setpoint",
+      "status": "static-path-supported; component tests support store and adapter substeps; no runtime trace",
+      "evidence": [
+        "E_SCHEDULE",
+        "E_WORKER",
+        "E_CANDIDATE",
+        "E_COMMIT",
+        "E_ACTIVATION",
+        "E_PUBLISH",
+        "E_MODE_ADMISSION",
+        "E_SETPOINT",
+        "E_BUNDLE_TEST"
+      ]
+    },
+    {
+      "id": "S03",
+      "name": "PASS_THROUGH request advances while old command is active",
+      "pre_state": "mission/wp/request N; fresh measured route progress; exact admitted continuation or certified suffix stop; runtime executing N",
+      "events": [
+        "measured crossing/stop accepted",
+        "MissionController advances waypoint/request and emits goal N+1",
+        "NavigationMode retains exact still-valid old command if retention predicate allows",
+        "runtime accepts new desired identity, may keep executing predecessor while successor is staged",
+        "activation swaps timeline/executing identity; pending pointer consumed if suffix deferred"
+      ],
+      "branch": "old command is never relabeled; old lease/identity gates remain; suffix ownership permits one same-mission pending goal",
+      "post_state": "mission request may be N+1 while executing identity is N until commit boundary; no atomic cross-process transaction",
+      "status": "static-path-supported; progression and stale-witness tests support pieces",
+      "evidence": [
+        "E_MISSION_FLOW",
+        "E_MISSION_EVENT",
+        "E_GOAL",
+        "E_ACTIVATION",
+        "E_PROGRESSION_TEST",
+        "E_MISSION_TEST"
+      ]
+    },
+    {
+      "id": "S04",
+      "name": "MAIN -> BACKUP while nominal solve is in flight; late nominal result",
+      "pre_state": "active MAIN+BACKUP timeline; normal renewal solve active",
+      "events": [
+        "sampler reaches bundle-declared BACKUP interval",
+        "exact role sample updates ExecutionEpisode recovery",
+        "normal solve result later rechecks request/execution/timeline/episode owner",
+        "commit guard rejects nominal result unless current recovery permits it"
+      ],
+      "branch": "worker only serializes planner jobs; sampling still runs; stale candidate is discarded/retained decision uses exact timeline snapshot",
+      "post_state": "BACKUP remains authority if result superseded; source path exists. Test covers stale episode mutator and worker cancellation/identity but not full timer race as one integrated trace",
+      "status": "static-path-supported; integrated race trace unresolved",
+      "evidence": [
+        "E_RECOVERY_USE",
+        "E_PUBLISH",
+        "E_COMMIT",
+        "E_EPISODE_TEST",
+        "E_WORKER_TEST"
+      ]
+    },
+    {
+      "id": "S05",
+      "name": "Emergency selected; emergency certification fails",
+      "pre_state": "terminal MAIN/anchor watcher or exceeded command guard; exact bundle active",
+      "events": [
+        "runCycle prepares measured-state emergency candidate",
+        "candidate certification/boundary may fail",
+        "request/execution snapshot is rechecked",
+        "current-owner failure applies kEmergencyCertificationFailed and failClosed"
+      ],
+      "branch": "superseded callback is discarded first; current callback fail-closes; no emergency trajectory is synthesized",
+      "post_state": "runtime authorization rejected/terminal; downstream adapter safety stop and Hold are separate transitions",
+      "status": "static-path-supported; exact end-to-end event not runtime-observed",
+      "evidence": [
+        "E_RECOVERY_USE",
+        "E_RECOVERY_HELPER",
+        "E_EPISODE_TEST",
+        "E_PUBLISH"
+      ]
+    },
+    {
+      "id": "S06",
+      "name": "Measured stop -> stopped recovery -> retry/replan or timeout",
+      "pre_state": "BACKUP/EMERGENCY suffix owns timeline, runtime recovery tracks suffix",
+      "events": [
+        "measured state/certificate stop evidence checked",
+        "Episode transitions to StoppedRecovery/StoppedHold and remembers restart-from-rest",
+        "worker schedules plan-from-rest or deferred handoff",
+        "runtime stopped-recovery deadline can fail closed",
+        "PX4 adapter has separate completed-command 5 s planner recovery clock"
+      ],
+      "branch": "UNKNOWN or stale/mismatched evidence never authorizes restart; runtime and PX4 recovery timers are distinct identities/clocks",
+      "post_state": "new MAIN commit may resume; otherwise runtime fail-closed or adapter Hold on its own timeout branch",
+      "status": "static-path-supported; exact integrated timeout race unresolved",
+      "evidence": [
+        "E_RECOVERY_USE",
+        "E_EPISODE",
+        "E_RUNTIME_TIMEOUT",
+        "E_MODE_RECOVERY",
+        "E_EPISODE_TEST"
+      ]
+    },
+    {
+      "id": "S07",
+      "name": "Terminal STOP -> measured settling -> waypoint acceptance -> mission completion",
+      "pre_state": "STOP waypoint active; candidate endpoint/terminal status and mode command may be current",
+      "events": [
+        "trajectory endpoint can be published COMPLETED",
+        "measured position/speed and confirmation/dwell evaluated",
+        "nonterminal stop accepts waypoint then publishes next goal; terminal stop emits Complete after hold_s",
+        "mode sets mission_terminal/handover and publishes completion Bool/status; executor requests Hold"
+      ],
+      "branch": "trajectory-ended, terminal hold pending, measured settle, accepted waypoint, mission Complete, Hold requested and Hold confirmed are distinct",
+      "post_state": "mission completion status published and setpoint/hold behavior persists until mode/status transition",
+      "status": "static-path-supported and several unit tests cover distinct predicates",
+      "evidence": [
+        "E_MISSION_FLOW",
+        "E_MISSION_EVENT",
+        "E_MISSION_TEST",
+        "E_PROGRESSION_TEST"
+      ]
+    },
+    {
+      "id": "S08",
+      "name": "PASS_THROUGH and STOP coincident/zero-length boundary",
+      "pre_state": "route has a PASS_THROUGH immediately followed by coincident STOP",
+      "events": [
+        "pass-through current request reaches stop boundary with terminal/safety marker",
+        "coincident-stop helper keeps terminal readiness pending",
+        "measured STOP settling then emits next goal or completion"
+      ],
+      "branch": "special semantics exist; do not collapse pass acceptance and STOP acceptance; outside exactly-coincident path, general zero-length route semantics need additional audit",
+      "post_state": "next STOP owns measured hold/terminal acceptance",
+      "status": "static-path-supported for coincident pass-through STOP; broader zero-length cases unresolved; unit test covers helper case",
+      "evidence": [
+        "E_MISSION_FLOW",
+        "E_MISSION_TEST"
+      ]
+    },
+    {
+      "id": "S09",
+      "name": "World revision or localization epoch changes across solve/commit/publish",
+      "pre_state": "solve captures world identity/revision and localization epoch",
+      "events": [
+        "new world snapshot or higher localization epoch arrives before candidate/command final gate",
+        "optimistic commit/exposure rechecks identity and current freshness",
+        "epoch reset drains/cancels/invalidate; world change requires recertification"
+      ],
+      "branch": "old candidate rejected or old command temporarily suspended only under revalidation path; failed current owner fails closed",
+      "post_state": "old lineage cannot be exposed once mismatching identity gate is observed",
+      "status": "static-path-supported; store/epoch tests exercise components; no end-to-end runtime trace",
+      "evidence": [
+        "E_COMMIT",
+        "E_PUBLISH",
+        "E_EPOCH",
+        "E_BUNDLE_TEST",
+        "E_TERMINAL_TEST"
+      ]
+    },
+    {
+      "id": "S10",
+      "name": "Command lease expiry, stale state/health, PX4 frame reset",
+      "pre_state": "active or cached command and previous source/receive/frame witnesses",
+      "events": [
+        "bundle/message/state/health lease expires or PX4 reset counters advance",
+        "runtime publication gate and mode setpoint gate reevaluate current freshness/frame",
+        "frame invalidated until stationary paired alignment witness"
+      ],
+      "branch": "runtime fail-closed or world suspend; PX4 stationary hold then bounded terminal recovery only on exact identity; otherwise safety stop/Hold; stale/wrong frame command rejected",
+      "post_state": "no old moving setpoint is authorized by stale cache; applied vehicle state unknown",
+      "status": "static-path-supported; progression tests cover wrong epoch/stale health/odom; frame runtime trace absent",
+      "evidence": [
+        "E_PUBLISH",
+        "E_MODE_ADMISSION",
+        "E_SETPOINT",
+        "E_FRAME",
+        "E_PROGRESSION_TEST"
+      ]
+    },
+    {
+      "id": "S11",
+      "name": "Operator takeover, deactivate/reactivate, late callback or pending request",
+      "pre_state": "mode/runtime active, possible pending worker result or deferred goal",
+      "events": [
+        "operator mode exit/deactivate invalidates local command and MissionController checkpoints",
+        "executor clears hold tracking; reactivation resets per-mode latches and resumes checkpoint with a new request",
+        "runtime receives status/goal identity callbacks and rejects stale epochs/identity where guards apply"
+      ],
+      "branch": "deactivation callback cleanup is code-backed; exact propagation/cancellation of every runtime pending item across process handover requires more review; stale callback behavior depends identity guards",
+      "post_state": "mode may restart mission checkpoint with new request; no blanket proof all remote pending queue entries cleared",
+      "status": "static-path-supported for mode checkpoint; cross-process pending-state drain unresolved",
+      "evidence": [
+        "E_MODE_ACTIVATE",
+        "E_MISSION_TEST",
+        "E_MODE_ADMISSION",
+        "E_GOAL",
+        "E_WORKER_TEST"
+      ]
+    },
+    {
+      "id": "S12",
+      "name": "PX4 Hold requested -> API result -> VehicleStatus confirmation",
+      "pre_state": "request position control or Complete; stationary setpoint input active; executor hold flags clear",
+      "events": [
+        "schedule AUTO_LOITER",
+        "API callback returns result",
+        "VehicleStatus reports AUTO_LOITER or not",
+        "50 ms timer retries only if pending and not confirmed"
+      ],
+      "branch": "API failure keeps pending and sets steady retry +250 ms; API Success/Deactivated clears pending; only observed AUTO_LOITER confirms and clears both",
+      "post_state": "source has a path where API success precedes status confirmation and retry predicate is disabled while pending=false; runtime evidence needed to determine normal callback/status relationship",
+      "status": "static-path-supported; confirmation semantics are source-backed; API-success-without-status liveness is conditional/unresolved and untested here",
+      "evidence": [
+        "E_HOLD",
+        "E_SETPOINT"
+      ]
+    }
+  ],
+  "authority_findings": [
+    {
+      "id": "FIND-01",
+      "classification": "CONDITIONAL",
+      "priority": "high",
+      "decision": "Mission progress and command execution identity are owned in separate processes and can temporarily name different request generations.",
+      "objects_fields": [
+        "O_MISSION:F_WAYPOINT",
+        "O_MODE:F_MODE_COMMAND",
+        "O_RUNTIME:F_DESIRED_GOAL",
+        "O_RUNTIME:F_EXECUTING_GOAL",
+        "O_PENDING_GOAL:F_PENDING_GOAL",
+        "O_TIMELINE:F_TIMELINE"
+      ],
+      "supporting_evidence": "NavigationMode retains old accepted command without relabeling and runtime separates active_goal_ from executing_goal_; pending goal is a single exact-pointer suffix handoff; timeline activation changes executing identity.",
+      "counterexample_or_validity_mechanism": "Distinct request/goal/localization/bundle identities, leases, and measured continuation/suffix-stop witnesses make this a deliberate asynchronous handoff; no one cross-process transaction exists.",
+      "synchronization": "trajectory_mutex_ within mode; runtime lock order and store CAS within runtime; ROS message delivery between processes is asynchronous.",
+      "impact": "A delayed/reordered goal or command can temporarily leave mission desired progress ahead of physical command owner; source contains identity guards but integrated delayed/reorder coverage is incomplete.",
+      "tests": "test_navigation_mode_progression tests predecessor/current-request and stale witness behavior; runtime worker/store tests cover independent sub-boundaries; no integrated ROS two-process trace.",
+      "evidence": [
+        "E_RUNTIME_FIELDS",
+        "E_MISSION_EVENT",
+        "E_ACTIVATION",
+        "E_PROGRESSION_TEST",
+        "E_BUNDLE_TEST"
+      ]
+    },
+    {
+      "id": "FIND-02",
+      "classification": "CONDITIONAL",
+      "priority": "high",
+      "decision": "Hold handover uses separate mode request, executor scheduling, API completion, and observed vehicle navigation state flags.",
+      "objects_fields": [
+        "O_MODE:F_HANDOVER_MODE",
+        "O_EXECUTOR:F_HOLD_EXECUTOR",
+        "O_MISSION:F_TERMINAL_HOLD"
+      ],
+      "supporting_evidence": "Only VehicleStatus AUTO_LOITER sets px4_hold_confirmed_; schedule API Success/Deactivated clears pending and in-flight without setting confirmed, while retry timer requires pending && !confirmed.",
+      "counterexample_or_validity_mechanism": "PX4 mode API Success may be contractually followed by state transition; current source alone does not establish timing or guarantee. Failure results do retry every 250 ms; no maximum retry count is found.",
+      "synchronization": "Executor timer/subscription/API callbacks; source does not show a shared explicit mutex for these flags; callback-group/executor serialization details require verifying PX4 library implementation.",
+      "impact": "If API reports Success but AUTO_LOITER is never observed, source path stops retrying while confirmation remains false; this is a liveness risk hypothesis, not observed vehicle behavior.",
+      "tests": "No targeted executor handover test located among reviewed tests; need controlled adapter test/trace capturing API result and VehicleStatus order.",
+      "evidence": [
+        "E_HOLD",
+        "E_PX4_MAIN"
+      ]
+    },
+    {
+      "id": "FIND-03",
+      "classification": "CONDITIONAL",
+      "priority": "medium",
+      "decision": "Runtime recovery and PX4 adapter recovery each have separate state, timer, identity, and terminal effects.",
+      "objects_fields": [
+        "O_EPISODE:F_EXEC_RECOVERY",
+        "O_MODE:F_PLANNER_RECOVERY_MODE",
+        "O_MODE:F_SUFFIX_HANDOFF",
+        "O_MODE:F_HANDOVER_MODE"
+      ],
+      "supporting_evidence": "ExecutionEpisode owns runtime TrackBackup/Emergency/StoppedRecovery/Px4Hold; NavigationMode owns a separate 5 s completed-command recovery episode and its own suffix handoff/hold flags.",
+      "counterexample_or_validity_mechanism": "The two processes handle different lifetimes and message boundaries; fields may be projections/replicas keyed by distinct goal/request/bundle identities, not duplicate authority.",
+      "synchronization": "Message status/command contracts and exact identity lease checks; there is no shared cross-process transaction or common timer.",
+      "impact": "Same episode can appear as runtime stopped recovery while PX4 adapter awaits a new command; timing mismatch can cause stale recovery or early handover if message identity changes; integrated sequence remains unobserved.",
+      "tests": "Runtime episode and mode progression tests cover components; no paired-runtime/PX4 adapter scenario test in this review.",
+      "evidence": [
+        "E_EPISODE",
+        "E_MODE_FIELDS",
+        "E_SETPOINT",
+        "E_EPISODE_TEST",
+        "E_PROGRESSION_TEST"
+      ]
+    },
+    {
+      "id": "FIND-04",
+      "classification": "CONDITIONAL",
+      "priority": "high",
+      "decision": "SITL tracking/health response experiment activation is controlled by use_sim_time, and zero coefficients do not mean all bypass behavior is disabled.",
+      "objects_fields": [
+        "O_RUNTIME:F_TRACKING_EXPERIMENT",
+        "O_MODE:F_TRACKING_EXPERIMENT",
+        "O_CONTRACT:TrackingExperimentPolicy",
+        "O_RUNTIME:F_RUNTIME_TRACKING_EXPERIMENT"
+      ],
+      "supporting_evidence": "loadTrackingExperimentPolicy sets enabled=use_sim_time; when all tracking coefficients are zero, trackingGateEnabled() is false, so simulated mode sets suppress_braking=true and suppress_estimator_health_response=true. Both runtime and PX4 mode read the policy. Source emits an explicit SITL increased-collision-risk/not-flight-qualification warning. Config comments say a zero tracking envelope disables tracking/health gates, while YAML zeros are present. Runtime runCycle selects the experiment acceptance result in place of the path-relative gate when enabled; `experimentPermitsTracking` allows out-of-envelope tracking if suppress_braking is true.",
+      "counterexample_or_validity_mechanism": "Combined launch defaults use_sim_time=false; if selected run passes false, suppress flags stay false. For simulated profile use_sim_time=true, code sets suppress flags true despite zero coefficients. The actual launch args/runtime profile used by a live deployment are not known in this static audit. Combined launch argument use_sim_time defaults false, but the user-selected SITL launch may pass true; no active launch values were observable.",
+      "synchronization": "Immutable policy loaded at process construction; runtime and PX4 mode are separate parameterized processes and can receive different parameter sets.",
+      "impact": "Under SIM_TIME with zero tracking coefficients, runtime/mode may suppress the geometric tracking-brake/estimator-health response; the experiment logs characterize this as increased collision risk. This is code-proven for that parameter valuation, not an assertion that the live profile used it.",
+      "tests": "Reviewed mode fixture asserts tracking_experiment_.enabled and suppress_estimator_health_response are false for its test configuration; no test specifically covers use_sim_time=true with zero coefficients across both processes.",
+      "evidence": [
+        "E_TRACKING_POLICY",
+        "E_TRACKING_CONFIG",
+        "E_EXTERNAL_MODE_CONFIG",
+        "E_TRACKING_RUNTIME",
+        "E_TRACKING_MODE_BYPASS",
+        "E_PROGRESSION_TEST",
+        "E_RUNTIME_TRACKING_GATE",
+        "E_EXPERIMENTAL_TRACKING_HELPER",
+        "E_LAUNCH_DEFAULT"
+      ]
+    }
+  ],
+  "important_cross_layer_combinations": [
+    {
+      "id": "C01",
+      "tuple": "MissionController advances N->N+1 while runtime executing_goal_ remains N and active bundle N",
+      "status": "static-path-supported",
+      "why": "explicit pass-through and retained command handoff path",
+      "evidence": [
+        "E_MISSION_EVENT",
+        "E_RUNTIME_FIELDS",
+        "E_ACTIVATION"
+      ]
+    },
+    {
+      "id": "C02",
+      "tuple": "PlanningWorker active solve while command sampler publishes active committed bundle",
+      "status": "observed-by-static-path-supported",
+      "why": "separate worker and command timer; overlapping calls possible in multithreaded runtime",
+      "evidence": [
+        "E_RUNTIME_MAIN",
+        "E_RUNTIME_SETUP",
+        "E_WORKER",
+        "E_PUBLISH"
+      ]
+    },
+    {
+      "id": "C03",
+      "tuple": "pending successor exists while old active remains sample/exposure authority",
+      "status": "test-supported",
+      "why": "store tests explicitly cover retain-until-activation and failed/missed activation",
+      "evidence": [
+        "E_TIMELINE",
+        "E_BUNDLE_TEST"
+      ]
+    },
+    {
+      "id": "C04",
+      "tuple": "runtime Episode recovery=TrackBackup while PX4 mode admits a matching completed BACKUP hold",
+      "status": "static-path-supported; integrated reachability unresolved",
+      "why": "both sides have exact backup/identity path but process-delivery interleaving not traced",
+      "evidence": [
+        "E_RECOVERY_USE",
+        "E_MODE_ADMISSION",
+        "E_PROGRESSION_TEST"
+      ]
+    },
+    {
+      "id": "C05",
+      "tuple": "NavigationMode handover_requested=true; executor px4_hold_confirmed=false; stationary setpoint continues",
+      "status": "static-path-supported",
+      "why": "handover callback begins async request; setpoint branch emits stationary hold while active",
+      "evidence": [
+        "E_MISSION_EVENT",
+        "E_SETPOINT",
+        "E_HOLD"
+      ]
+    },
+    {
+      "id": "C06",
+      "tuple": "command cache present but lease expired or odometry/health stale",
+      "status": "test-supported",
+      "why": "cache is a snapshot; every setpoint/admission rechecks leases; stale state fails closed",
+      "evidence": [
+        "E_MODE_ADMISSION",
+        "E_SETPOINT",
+        "E_PROGRESSION_TEST"
+      ]
+    },
+    {
+      "id": "C07",
+      "tuple": "PX4 frame alignment false after reset while command exists",
+      "status": "static-path-supported",
+      "why": "reset invalidates frame witness; conversion path requires realignment",
+      "evidence": [
+        "E_FRAME",
+        "E_SETPOINT"
+      ]
+    },
+    {
+      "id": "C08",
+      "tuple": "API handover result Success but AUTO_LOITER observation not yet received",
+      "status": "static-path-supported for intermediate state; eventual reachability unresolved",
+      "why": "success clears pending; confirmation only VehicleStatus; timing not tested/observed",
+      "evidence": [
+        "E_HOLD"
+      ]
+    }
+  ],
+  "package_scope_ref": "../baseline/package_inventory.json",
+  "evidence_refs": [
+    {
+      "id": "E_RUNTIME_MAIN",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_main.cpp",
+      "symbol": "main",
+      "start": 3,
+      "end": 10,
+      "claim": "runtime process entrypoint and MultiThreadedExecutor spin"
+    },
+    {
+      "id": "E_RUNTIME_SETUP",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "NavigationRuntimeNode::NavigationRuntimeNode / callback setup",
+      "start": 644,
+      "end": 800,
+      "claim": "effective source defaults and profile guard",
+      "segments": [
+        [
+          644,
+          690
+        ],
+        [
+          710,
+          759
+        ]
+      ]
+    },
+    {
+      "id": "E_RUNTIME_FIELDS",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
+      "symbol": "NavigationRuntimeNode members",
+      "start": 429,
+      "end": 595,
+      "claim": "runtime locks, goal/epoch/lease/timeline/worker owners and selected mirrors",
+      "segments": [
+        [
+          429,
+          464
+        ],
+        [
+          471,
+          483
+        ]
+      ]
+    },
+    {
+      "id": "E_GOAL",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "onGoal/applyValidatedGoalLocked/transitionForeignMissionLocked",
+      "start": 2036,
+      "end": 2279,
+      "claim": "goal decode, rejection, ordering, safety suffix and desired/executing changes",
+      "segments": [
+        [
+          2036,
+          2105
+        ],
+        [
+          2124,
+          2180
+        ],
+        [
+          2181,
+          2279
+        ]
+      ]
+    },
+    {
+      "id": "E_PENDING_GOAL",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp",
+      "symbol": "PendingGoalHandoffOwner",
+      "start": 23,
+      "end": 91,
+      "claim": "single pending goal slot guard and exact consume"
+    },
+    {
+      "id": "E_EPOCH",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "localization epoch reset handler",
+      "start": 1767,
+      "end": 1847,
+      "claim": "epoch reset invalidation/cancellation/readiness sequence",
+      "segments": [
+        [
+          1767,
+          1810
+        ],
+        [
+          1810,
+          1847
+        ]
+      ]
+    },
+    {
+      "id": "E_PROPAGATED",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "onPropagatedOdometry",
+      "start": 1960,
+      "end": 2034,
+      "claim": "state frame, epoch, sequence, source time and derived state admission",
+      "segments": [
+        [
+          1960,
+          1997
+        ],
+        [
+          1998,
+          2034
+        ]
+      ]
+    },
+    {
+      "id": "E_SCHEDULE",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "currentPlanningKey/schedulePlanningCycle",
+      "start": 3004,
+      "end": 3178,
+      "claim": "distinct planning identity and bounded worker submission",
+      "segments": [
+        [
+          3004,
+          3065
+        ],
+        [
+          3065,
+          3119
+        ],
+        [
+          3121,
+          3178
+        ]
+      ]
+    },
+    {
+      "id": "E_WORKER",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/planning_worker.hpp",
+      "symbol": "PlanningWorker submit/cancel/run loop",
+      "start": 93,
+      "end": 352,
+      "claim": "queue capacity/latest pending/cancellation/serial solve semantics",
+      "segments": [
+        [
+          93,
+          130
+        ],
+        [
+          141,
+          185
+        ],
+        [
+          193,
+          217
+        ],
+        [
+          268,
+          310
+        ],
+        [
+          330,
+          352
+        ]
+      ]
+    },
+    {
+      "id": "E_REQUEST",
+      "path": "src/planning/navigation_planning/include/navigation_planning/planning_request.hpp",
+      "symbol": "PlanningKey/PlanningRequest",
+      "start": 20,
+      "end": 157,
+      "claim": "request identity, world/state snapshots and start mode"
+    },
+    {
+      "id": "E_CANDIDATE",
+      "path": "src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp",
+      "symbol": "CandidateBundle",
+      "start": 18,
+      "end": 279,
+      "claim": "roles, bundle kind, identities, leases, certificate validity"
+    },
+    {
+      "id": "E_COMMIT",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "commitPlannerCandidate",
+      "start": 2495,
+      "end": 2695,
+      "claim": "candidate identity/admission/stage versus immediate execution guards",
+      "segments": [
+        [
+          2495,
+          2545
+        ],
+        [
+          2546,
+          2589
+        ],
+        [
+          2590,
+          2635
+        ],
+        [
+          2636,
+          2695
+        ]
+      ]
+    },
+    {
+      "id": "E_IMMEDIATE",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "admitImmediateCandidate",
+      "start": 2417,
+      "end": 2493,
+      "claim": "immediate command cutover exact identity/lease/world guard",
+      "segments": [
+        [
+          2417,
+          2450
+        ],
+        [
+          2451,
+          2493
+        ]
+      ]
+    },
+    {
+      "id": "E_TIMELINE",
+      "path": "src/execution/navigation_execution/include/navigation_execution/committed_bundle_store.hpp",
+      "symbol": "ExecutionTimelineStore",
+      "start": 76,
+      "end": 495,
+      "claim": "store ownership, token checks, stage/activate/publish serialization",
+      "segments": [
+        [
+          76,
+          100
+        ],
+        [
+          255,
+          290
+        ],
+        [
+          346,
+          389
+        ],
+        [
+          408,
+          437
+        ],
+        [
+          451,
+          495
+        ]
+      ]
+    },
+    {
+      "id": "E_SAMPLER",
+      "path": "src/execution/navigation_execution/include/navigation_execution/command_sampler.hpp",
+      "symbol": "CommandSampler::sample",
+      "start": 35,
+      "end": 112,
+      "claim": "read-only sample, pending and expiration semantics"
+    },
+    {
+      "id": "E_ACTIVATION",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "publishCommand pending activation",
+      "start": 7694,
+      "end": 7785,
+      "claim": "activation finalizer identity/recovery/lease checks",
+      "segments": [
+        [
+          7694,
+          7735
+        ],
+        [
+          7736,
+          7785
+        ]
+      ]
+    },
+    {
+      "id": "E_PUBLISH",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "publishCommand command creation and final exposure",
+      "start": 7920,
+      "end": 8010,
+      "claim": "state freshness and transition lock gate",
+      "segments": [
+        [
+          7920,
+          7955
+        ],
+        [
+          7956,
+          8006
+        ]
+      ]
+    },
+    {
+      "id": "E_PUBLISH_END",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "publishCommand final publication boundary",
+      "start": 8500,
+      "end": 8565,
+      "claim": "command status/role/PVAJ and ROS publish",
+      "segments": [
+        [
+          8500,
+          8539
+        ],
+        [
+          8540,
+          8565
+        ]
+      ]
+    },
+    {
+      "id": "E_PUBLISH_FINAL",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "publishCommand final store exposure disposition",
+      "start": 8565,
+      "end": 8869,
+      "claim": "publishIfCurrent / stale drop / fail-closed outcome",
+      "segments": [
+        [
+          8565,
+          8600
+        ],
+        [
+          8601,
+          8640
+        ],
+        [
+          8641,
+          8685
+        ],
+        [
+          8686,
+          8730
+        ],
+        [
+          8780,
+          8869
+        ]
+      ]
+    },
+    {
+      "id": "E_RECOVERY_HELPER",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp",
+      "symbol": "transitionExecutionRecovery",
+      "start": 7,
+      "end": 85,
+      "claim": "pure enum transition helper and fail-closed defaults",
+      "segments": [
+        [
+          7,
+          42
+        ],
+        [
+          43,
+          85
+        ]
+      ]
+    },
+    {
+      "id": "E_EPISODE",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "symbol": "ExecutionEpisode",
+      "start": 11,
+      "end": 249,
+      "claim": "mutex-owned snapshot and exact generation transitions",
+      "segments": [
+        [
+          41,
+          72
+        ],
+        [
+          75,
+          115
+        ],
+        [
+          116,
+          180
+        ],
+        [
+          181,
+          249
+        ]
+      ]
+    },
+    {
+      "id": "E_RECOVERY_USE",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "runCycle measured stop, terminal/emergency validation and retained-result state transition",
+      "start": 3780,
+      "end": 4050,
+      "claim": "recovery gates and measured-stop progression",
+      "segments": [
+        [
+          3780,
+          3805
+        ],
+        [
+          3820,
+          3855
+        ],
+        [
+          3890,
+          3919
+        ],
+        [
+          3920,
+          3947
+        ],
+        [
+          3948,
+          3975
+        ],
+        [
+          3976,
+          4003
+        ],
+        [
+          4004,
+          4027
+        ],
+        [
+          4028,
+          4050
+        ]
+      ]
+    },
+    {
+      "id": "E_RECOVERY_COMMIT",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "emergency result and backup activation",
+      "start": 7490,
+      "end": 7625,
+      "claim": "current-owner result disposition; emergency certification fail and backup state event",
+      "segments": [
+        [
+          7490,
+          7527
+        ],
+        [
+          7527,
+          7565
+        ],
+        [
+          7566,
+          7617
+        ],
+        [
+          7618,
+          7625
+        ]
+      ]
+    },
+    {
+      "id": "E_RUNTIME_TIMEOUT",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "stopped-recovery timeout and plan-from-rest retry",
+      "start": 5380,
+      "end": 5450,
+      "claim": "runtime timeout source and recovery branch",
+      "segments": [
+        [
+          5386,
+          5423
+        ],
+        [
+          5425,
+          5445
+        ]
+      ]
+    },
+    {
+      "id": "E_MODE_SETUP",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "NavigationMode constructor/callback registration",
+      "start": 99,
+      "end": 257,
+      "claim": "mode topics, timers, QoS and state input node",
+      "segments": [
+        [
+          99,
+          145
+        ],
+        [
+          145,
+          169
+        ],
+        [
+          226,
+          257
+        ]
+      ]
+    },
+    {
+      "id": "E_MODE_FIELDS",
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/navigation_mode.hpp",
+      "symbol": "NavigationMode and NavigationModeExecutor state members",
+      "start": 190,
+      "end": 291,
+      "claim": "mode-side flags, recovery tuple, suffix, frame and executor handover state"
+    },
+    {
+      "id": "E_MISSION_FIELDS",
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp",
+      "symbol": "MissionController fields and constants",
+      "start": 99,
+      "end": 128,
+      "claim": "mission owner fields and effective safety timing constants"
+    },
+    {
+      "id": "E_MODE_ACTIVATE",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "NavigationMode::onActivate/onDeactivate",
+      "start": 707,
+      "end": 805,
+      "claim": "mode lifecycle reset/checkpoint behavior",
+      "segments": [
+        [
+          707,
+          739
+        ],
+        [
+          740,
+          769
+        ],
+        [
+          771,
+          805
+        ]
+      ]
+    },
+    {
+      "id": "E_MISSION_FLOW",
+      "path": "src/px4/px4_navigation_external_mode/src/mission_controller.cpp",
+      "symbol": "MissionController activate/trajectory/update",
+      "start": 28,
+      "end": 688,
+      "claim": "mission transition order, measured acceptance and terminal/safety branches",
+      "segments": [
+        [
+          48,
+          89
+        ],
+        [
+          340,
+          388
+        ],
+        [
+          385,
+          445
+        ],
+        [
+          445,
+          510
+        ],
+        [
+          535,
+          688
+        ]
+      ]
+    },
+    {
+      "id": "E_MODE_ADMISSION",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "NavigationMode::onNavigationCommand",
+      "start": 856,
+      "end": 1337,
+      "claim": "adapter command admission and mission-controller notification",
+      "segments": [
+        [
+          856,
+          950
+        ],
+        [
+          950,
+          1035
+        ],
+        [
+          1035,
+          1115
+        ],
+        [
+          1230,
+          1337
+        ]
+      ]
+    },
+    {
+      "id": "E_MISSION_EVENT",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "updateMission/handleMissionEvent",
+      "start": 1339,
+      "end": 1659,
+      "claim": "serialized measured update, goal retention/publication, completion and Hold event",
+      "segments": [
+        [
+          1339,
+          1475
+        ],
+        [
+          1477,
+          1527
+        ],
+        [
+          1528,
+          1599
+        ],
+        [
+          1614,
+          1659
+        ]
+      ]
+    },
+    {
+      "id": "E_SETPOINT",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "NavigationMode::updateSetpoint",
+      "start": 2268,
+      "end": 2825,
+      "claim": "command/state/health lease, stationary/terminal recovery and PX4 setpoint input selection",
+      "segments": [
+        [
+          2268,
+          2335
+        ],
+        [
+          2335,
+          2420
+        ],
+        [
+          2420,
+          2555
+        ],
+        [
+          2680,
+          2825
+        ]
+      ]
+    },
+    {
+      "id": "E_FRAME",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "onPx4LocalPosition/tryAlignPx4LocalFrameLocked",
+      "start": 1720,
+      "end": 1807,
+      "claim": "stationary alignment and PX4 reset invalidation",
+      "segments": [
+        [
+          1720,
+          1746
+        ],
+        [
+          1747,
+          1807
+        ]
+      ]
+    },
+    {
+      "id": "E_HOLD",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "NavigationModeExecutor hold handover callbacks",
+      "start": 2827,
+      "end": 2945,
+      "claim": "API completion vs AUTO_LOITER VehicleStatus confirmation and retry",
+      "segments": [
+        [
+          2827,
+          2865
+        ],
+        [
+          2866,
+          2905
+        ],
+        [
+          2907,
+          2945
+        ]
+      ]
+    },
+    {
+      "id": "E_COMMAND_CONTRACT",
+      "path": "src/contracts/navigation_contracts/include/navigation_contracts/navigation_command_contract.hpp",
+      "symbol": "NavigationCommand contract helpers",
+      "start": 21,
+      "end": 126,
+      "claim": "field validity, time/frame and continuation predicates",
+      "segments": [
+        [
+          21,
+          58
+        ],
+        [
+          59,
+          126
+        ]
+      ]
+    },
+    {
+      "id": "E_MISSION_TEST",
+      "path": "src/px4/px4_navigation_external_mode/test/test_mission.cpp",
+      "symbol": "MissionController behavior assertions",
+      "start": 233,
+      "end": 500,
+      "claim": "airborne gate and measured pass-through tests",
+      "segments": [
+        [
+          233,
+          272
+        ],
+        [
+          290,
+          416
+        ],
+        [
+          455,
+          500
+        ]
+      ]
+    },
+    {
+      "id": "E_MISSION_TEST_TERMINAL",
+      "path": "src/px4/px4_navigation_external_mode/test/test_mission.cpp",
+      "symbol": "MissionController STOP/coincident/deactivate assertions",
+      "start": 746,
+      "end": 875,
+      "claim": "coincident STOP, measured terminal radius/speed and dwell assertions",
+      "segments": [
+        [
+          746,
+          797
+        ],
+        [
+          799,
+          848
+        ],
+        [
+          850,
+          875
+        ]
+      ]
+    },
+    {
+      "id": "E_MISSION_TEST_LIFECYCLE",
+      "path": "src/px4/px4_navigation_external_mode/test/test_mission.cpp",
+      "symbol": "MissionController deactivate/reactivate tests",
+      "start": 1580,
+      "end": 1616,
+      "claim": "no further goal after deactivate and checkpoint resume assertion",
+      "segments": [
+        [
+          1580,
+          1616
+        ]
+      ]
+    },
+    {
+      "id": "E_PROGRESSION_TEST",
+      "path": "src/px4/px4_navigation_external_mode/test/test_navigation_mode_progression.cpp",
+      "symbol": "NavigationMode progression integration fixture assertions",
+      "start": 244,
+      "end": 516,
+      "claim": "accepted continuation, wrong epoch/request/predecessor and handover guards",
+      "segments": [
+        [
+          244,
+          278
+        ],
+        [
+          388,
+          422
+        ],
+        [
+          466,
+          516
+        ]
+      ]
+    },
+    {
+      "id": "E_PROGRESSION_TEST_SUFFIX",
+      "path": "src/px4/px4_navigation_external_mode/test/test_navigation_mode_progression.cpp",
+      "symbol": "completed backup and STOP progression assertions",
+      "start": 548,
+      "end": 645,
+      "claim": "late measured suffix stop, moving-state rejection, terminal confirmation",
+      "segments": [
+        [
+          548,
+          594
+        ],
+        [
+          596,
+          645
+        ]
+      ]
+    },
+    {
+      "id": "E_WORKER_TEST",
+      "path": "src/runtime/navigation_runtime/test/test_planning_worker.cpp",
+      "symbol": "PlanningWorker queue/cancel assertions",
+      "start": 95,
+      "end": 315,
+      "claim": "single worker, latest pending, identity replacement/cancellation serialization tests",
+      "segments": [
+        [
+          95,
+          159
+        ],
+        [
+          260,
+          315
+        ]
+      ]
+    },
+    {
+      "id": "E_EPISODE_TEST",
+      "path": "src/runtime/navigation_runtime/test/test_execution_episode.cpp",
+      "symbol": "ExecutionEpisode assertions",
+      "start": 91,
+      "end": 259,
+      "claim": "stale generation cannot rewrite successor, lifecycle transitions, measured restart and failclosed state",
+      "segments": [
+        [
+          91,
+          117
+        ],
+        [
+          119,
+          155
+        ],
+        [
+          190,
+          259
+        ]
+      ]
+    },
+    {
+      "id": "E_BUNDLE_TEST",
+      "path": "src/execution/navigation_execution/test/test_committed_bundle_store.cpp",
+      "symbol": "ExecutionTimelineStore test assertions",
+      "start": 1082,
+      "end": 1385,
+      "claim": "activation, invalidation/exposure and world recertification tests",
+      "segments": [
+        [
+          1082,
+          1227
+        ],
+        [
+          1254,
+          1385
+        ]
+      ]
+    },
+    {
+      "id": "E_TERMINAL_TEST",
+      "path": "src/runtime/navigation_runtime/test/test_navigation_runtime_terminal_monitor.cpp",
+      "symbol": "terminal monitor regression assertions",
+      "start": 1561,
+      "end": 1665,
+      "claim": "prepared candidate expiry/goal/epoch/failure and state freshness gates",
+      "segments": [
+        [
+          1561,
+          1608
+        ],
+        [
+          1626,
+          1665
+        ]
+      ]
+    },
+    {
+      "id": "E_MISSION_ACTIVATE",
+      "path": "src/px4/px4_navigation_external_mode/src/mission_controller.cpp",
+      "symbol": "MissionController::activate/deactivate",
+      "start": 48,
+      "end": 89,
+      "claim": "waiting-for-airborne init, checkpoint and deactivation clear"
+    },
+    {
+      "id": "E_MISSION_UPDATE",
+      "path": "src/px4/px4_navigation_external_mode/src/mission_controller.cpp",
+      "symbol": "MissionController::update airborne and braking branches",
+      "start": 340,
+      "end": 445,
+      "claim": "first goal guard and measured braking stop acceptance/order",
+      "segments": [
+        [
+          340,
+          362
+        ],
+        [
+          374,
+          445
+        ]
+      ]
+    },
+    {
+      "id": "E_MISSION_UPDATE_END",
+      "path": "src/px4/px4_navigation_external_mode/src/mission_controller.cpp",
+      "symbol": "MissionController::update terminal stop, dwell and completion branches",
+      "start": 445,
+      "end": 688,
+      "claim": "pass-through witness, terminal measured confirmation/dwell, complete and failure branches"
+    },
+    {
+      "id": "E_HANDOFF_FLAGS",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
+      "symbol": "desired/executing identity and planner handoff flags",
+      "start": 429,
+      "end": 483,
+      "claim": "distinct goals, pending owner, epoch and new/hot/skip replanning flags"
+    },
+    {
+      "id": "E_EPISODE_SNAPSHOT",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "symbol": "ExecutionEpisodeSnapshot",
+      "start": 41,
+      "end": 56,
+      "claim": "phase/recovery/identity/availability/failure/suffix/restart are one snapshot"
+    },
+    {
+      "id": "E_WORLD_ID",
+      "path": "src/mapping/navigation_world_model/include/navigation_world_model/world_model_view.hpp",
+      "symbol": "WorldSnapshotIdentity",
+      "start": 200,
+      "end": 205,
+      "claim": "world generation, revision, localization epoch and observation time are distinct"
+    },
+    {
+      "id": "E_EXEC_STATE_STORE",
+      "path": "src/execution/navigation_execution/include/navigation_execution/execution_state_store.hpp",
+      "symbol": "ExecutionStateStore",
+      "start": 10,
+      "end": 48,
+      "claim": "immutable epoch-tagged state lease and monotonic source-time/reset checks",
+      "segments": [
+        [
+          10,
+          35
+        ],
+        [
+          38,
+          48
+        ]
+      ]
+    },
+    {
+      "id": "E_EXEC_STATE_LEASE",
+      "path": "src/execution/navigation_execution/include/navigation_execution/execution_state_lease.hpp",
+      "symbol": "ExecutionStateLease",
+      "start": 9,
+      "end": 15,
+      "claim": "ingress sequence is not source/receive freshness"
+    },
+    {
+      "id": "E_MODE_TIMEOUT_CONFIG",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "NavigationMode constructor timeout validation",
+      "start": 108,
+      "end": 169,
+      "claim": "effective command 0.10, state 0.20, initial/recovery 5.0 s constrained values",
+      "segments": [
+        [
+          108,
+          141
+        ],
+        [
+          141,
+          169
+        ]
+      ]
+    },
+    {
+      "id": "E_RUNTIME_LEASE_FIELDS",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
+      "symbol": "runtime lease/recovery/witness fields",
+      "start": 496,
+      "end": 560,
+      "claim": "failure latch and exact terminal witness fields",
+      "segments": [
+        [
+          496,
+          525
+        ],
+        [
+          549,
+          560
+        ]
+      ]
+    },
+    {
+      "id": "E_RUNTIME_HANDOFF_FLAGS",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
+      "symbol": "new_goal/hot_goal/skip_replan flags",
+      "start": 471,
+      "end": 483,
+      "claim": "three planner handoff flags and stated ownership",
+      "segments": [
+        [
+          471,
+          483
+        ]
+      ]
+    },
+    {
+      "id": "E_RUNTIME_WORKERS",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
+      "symbol": "runtime stores and worker ownership",
+      "start": 584,
+      "end": 595,
+      "claim": "world store, timeline, sampler and worker ownership",
+      "segments": [
+        [
+          584,
+          595
+        ]
+      ]
+    },
+    {
+      "id": "E_TRACKING_POLICY",
+      "path": "src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp",
+      "symbol": "loadTrackingExperimentPolicy",
+      "start": 10,
+      "end": 90,
+      "claim": "SIM_TIME enables experiment; zero coefficients suppress tracking/health response; velocity-only profile guard",
+      "segments": [
+        [
+          10,
+          38
+        ],
+        [
+          57,
+          90
+        ]
+      ]
+    },
+    {
+      "id": "E_TRACKING_RUNTIME",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "runtime tracking experiment setup and transition gate",
+      "start": 667,
+      "end": 675,
+      "claim": "runtime loads policy and explicitly logs increased collision risk"
+    },
+    {
+      "id": "E_TRACKING_MODE",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "PX4 tracking experiment command admission and health gate",
+      "start": 902,
+      "end": 943,
+      "claim": "health epoch admit condition and identity gate; suppress flag participates",
+      "segments": [
+        [
+          902,
+          943
+        ]
+      ]
+    },
+    {
+      "id": "E_TRACKING_MODE_BYPASS",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "tracking gate suppression in command admission",
+      "start": 1051,
+      "end": 1115,
+      "claim": "tracking experiment can suppress geometric tracking braking",
+      "segments": [
+        [
+          1051,
+          1092
+        ],
+        [
+          1093,
+          1115
+        ]
+      ]
+    },
+    {
+      "id": "E_TRACKING_CONFIG",
+      "path": "config/runtime/mapping.yaml",
+      "symbol": "tracking_experiment default parameters",
+      "start": 1,
+      "end": 12,
+      "claim": "zero coefficients described as disabling tracking/health gates; source loader behavior differs when use_sim_time true"
+    },
+    {
+      "id": "E_EXTERNAL_MODE_CONFIG",
+      "path": "config/runtime/external_mode.yaml",
+      "symbol": "external mode config defaults",
+      "start": 1,
+      "end": 21,
+      "claim": "default topic/frame and 0.10/0.20/5 s adapter settings plus zero tracking coefficients"
+    },
+    {
+      "id": "E_ACTIVATE_COMMENT",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "checkArmingAndRunConditions comment",
+      "start": 807,
+      "end": 853,
+      "claim": "comment says first goal from onActivate; guard exempts airborne warmup and code update path separately waits for airborne",
+      "segments": [
+        [
+          807,
+          853
+        ]
+      ]
+    },
+    {
+      "id": "E_PX4_MAIN",
+      "path": "src/px4/px4_navigation_external_mode/src/main.cpp",
+      "symbol": "main and paired state-input node lifetime",
+      "start": 11,
+      "end": 85,
+      "claim": "mode executor process entrypoint and independent state input thread lifetime",
+      "segments": [
+        [
+          11,
+          34
+        ],
+        [
+          55,
+          85
+        ]
+      ]
+    },
+    {
+      "id": "E_RUNTIME_TRACKING_GATE",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "symbol": "runtime uses experimental tracking acceptance during replan/retained validation",
+      "start": 4583,
+      "end": 4602,
+      "claim": "runtime experiment acceptance replaces path-relative guard when policy enabled",
+      "segments": [
+        [
+          4583,
+          4602
+        ]
+      ]
+    },
+    {
+      "id": "E_EXPERIMENTAL_TRACKING_HELPER",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/experimental_tracking.hpp",
+      "symbol": "assessExperimentalTracking / experimentPermitsTracking",
+      "start": 48,
+      "end": 123,
+      "claim": "runtime policy computes actual/predicted adaptive envelope and gates result with experiment policy",
+      "segments": [
+        [
+          48,
+          74
+        ],
+        [
+          105,
+          123
+        ]
+      ]
+    },
+    {
+      "id": "E_LAUNCH_DEFAULT",
+      "path": "src/navigation_bringup/launch/avoidance_mission.launch.py",
+      "symbol": "use_sim_time argument default",
+      "start": 8,
+      "end": 51,
+      "claim": "combined launch exposes use_sim_time and defaults false"
+    },
+    {
+      "id": "E_MODE_RECOVERY",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "symbol": "NavigationMode::updateSetpoint completed command recovery window",
+      "start": 2704,
+      "end": 2755,
+      "claim": "completed endpoint held under exact identity for bounded planner recovery window; timeout is checked by mission timer",
+      "segments": [
+        [
+          2704,
+          2738
+        ],
+        [
+          2739,
+          2755
+        ]
+      ]
+    }
+  ],
+  "coverage": {
+    "field_inventory_count": 30,
+    "field_inventory_basis": "selected state/identity/lease fields on critical decision path; not every private member or numeric algorithm value",
+    "field_with_source_refs": "30/30 model fields have at least one source reference; writer/reader inventories remain non-exhaustive",
+    "transition_inventory_count": 16,
+    "transition_basis": "behavior-significant selected transitions from mission through PX4 authority; not an exhaustive enumeration of every runCycle branch, reset, exception or helper",
+    "decision_sinks": "5/5 requested sink classes represented: goal, candidate commit/replace/revoke, command expose/sample/publish, recovery/emergency/hold, PX4 handover",
+    "scenario_count": "12/12 requested scenarios addressed with source path or explicitly unresolved limits",
+    "writer_completeness": "NOT_ESTABLISHED: direct and indirect C++ write set not exhaustively AST-indexed; exact writer/reader lists describe inspected critical paths",
+    "test_coverage": "Tests read and selected assertions linked; not run in this audit",
+    "runtime_trace_coverage": "0 runtime traces acquired",
+    "semantic_review": "Manual source review is independent from model lint but bounded; see unresolved paths and limitation section"
+  },
+  "sequence_diagrams": [
+    {
+      "id": "SEQ-NOMINAL",
+      "file": "nominal_flow.mmd",
+      "scenario_ids": [
+        "S02"
+      ],
+      "participants": [
+        {
+          "id": "M",
+          "label": "NavigationMode / MissionController"
+        },
+        {
+          "id": "R",
+          "label": "NavigationRuntimeNode"
+        },
+        {
+          "id": "W",
+          "label": "PlanningWorker / Planner"
+        },
+        {
+          "id": "T",
+          "label": "ExecutionTimelineStore"
+        },
+        {
+          "id": "P",
+          "label": "PX4 setpoint interface"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "R",
+          "text": "Goal message"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "W",
+          "text": "PlanningKey / solve job"
+        },
+        {
+          "kind": "message",
+          "from": "W",
+          "to": "R",
+          "arrow": "-->>",
+          "text": "Candidate result (not yet executable)"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "T",
+          "text": "validate and commit or stage"
+        },
+        {
+          "kind": "message",
+          "from": "T",
+          "to": "R",
+          "arrow": "-->>",
+          "text": "active/pending immutable timeline"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "T",
+          "text": "due activation + sample + final exposure guard"
+        },
+        {
+          "kind": "message",
+          "from": "T",
+          "to": "M",
+          "arrow": "-->>",
+          "text": "NavigationCommand message"
+        },
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "M",
+          "text": "command admission / cache"
+        },
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "P",
+          "text": "setpoint update input"
+        },
+        {
+          "kind": "note",
+          "over": [
+            "M",
+            "P"
+          ],
+          "text": "PX4 command application is not observed by this source path."
+        }
+      ]
+    },
+    {
+      "id": "SEQ-PASS",
+      "file": "pass_through_handoff.mmd",
+      "scenario_ids": [
+        "S03"
+      ],
+      "participants": [
+        {
+          "id": "M",
+          "label": "MissionController"
+        },
+        {
+          "id": "N",
+          "label": "NavigationMode"
+        },
+        {
+          "id": "R",
+          "label": "NavigationRuntimeNode"
+        },
+        {
+          "id": "T",
+          "label": "ExecutionTimelineStore"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "M",
+          "text": "measured pass-through crossing + current witness"
+        },
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "N",
+          "text": "PublishGoal for next waypoint/request"
+        },
+        {
+          "kind": "message",
+          "from": "N",
+          "to": "N",
+          "text": "retain exact old command if certified and leased"
+        },
+        {
+          "kind": "message",
+          "from": "N",
+          "to": "R",
+          "text": "publish new NavigationGoal"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "R",
+          "text": "set desired goal; keep executing identity if handoff not committed"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "T",
+          "text": "stage successor under identity/version checks"
+        },
+        {
+          "kind": "message",
+          "from": "T",
+          "to": "T",
+          "text": "activate at declared boundary"
+        },
+        {
+          "kind": "message",
+          "from": "T",
+          "to": "R",
+          "arrow": "-->>",
+          "text": "execution identity cutover; consume matching pending goal"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "N",
+          "arrow": "-->>",
+          "text": "new identity NavigationCommand"
+        },
+        {
+          "kind": "note",
+          "over": [
+            "M",
+            "T"
+          ],
+          "text": "Distinct callbacks; no cross-process atomic transaction."
+        }
+      ]
+    },
+    {
+      "id": "SEQ-RECOVERY",
+      "file": "backup_recovery.mmd",
+      "scenario_ids": [
+        "S04",
+        "S05",
+        "S06"
+      ],
+      "participants": [
+        {
+          "id": "W",
+          "label": "Planner worker"
+        },
+        {
+          "id": "R",
+          "label": "Runtime coordinator"
+        },
+        {
+          "id": "T",
+          "label": "Timeline store / sampler"
+        },
+        {
+          "id": "E",
+          "label": "ExecutionEpisode"
+        },
+        {
+          "id": "N",
+          "label": "NavigationMode"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "message",
+          "from": "T",
+          "to": "T",
+          "text": "sample reaches certified BACKUP interval"
+        },
+        {
+          "kind": "message",
+          "from": "T",
+          "to": "E",
+          "text": "exact-generation sampled role"
+        },
+        {
+          "kind": "message",
+          "from": "W",
+          "to": "R",
+          "arrow": "-->>",
+          "text": "late nominal result"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "R",
+          "text": "recheck timeline, request, episode and leases"
+        },
+        {
+          "kind": "alt",
+          "text": "result superseded or emergency certificate fails"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "E",
+          "text": "discard stale result or failClosed(Px4Hold)"
+        },
+        {
+          "kind": "else",
+          "text": "certified measured stop"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "E",
+          "text": "CertifiedStopObserved / stopped recovery"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "W",
+          "text": "plan from measured rest or retry"
+        },
+        {
+          "kind": "end"
+        },
+        {
+          "kind": "message",
+          "from": "R",
+          "to": "N",
+          "arrow": "-->>",
+          "text": "NavigationCommand / status on separate ROS path"
+        },
+        {
+          "kind": "note",
+          "over": [
+            "R",
+            "N"
+          ],
+          "text": "Runtime and PX4 adapter recovery clocks/identities are separate."
+        }
+      ]
+    },
+    {
+      "id": "SEQ-TERMINAL",
+      "file": "terminal_and_handover.mmd",
+      "scenario_ids": [
+        "S07",
+        "S08",
+        "S12"
+      ],
+      "participants": [
+        {
+          "id": "M",
+          "label": "MissionController"
+        },
+        {
+          "id": "N",
+          "label": "NavigationMode"
+        },
+        {
+          "id": "X",
+          "label": "NavigationModeExecutor"
+        },
+        {
+          "id": "P",
+          "label": "PX4 VehicleStatus/API"
+        }
+      ],
+      "steps": [
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "M",
+          "text": "trajectory endpoint / terminal witness"
+        },
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "M",
+          "text": "measured position + low speed + confirmation/dwell"
+        },
+        {
+          "kind": "alt",
+          "text": "nonterminal STOP"
+        },
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "N",
+          "arrow": "-->>",
+          "text": "accepted waypoint / next PublishGoal"
+        },
+        {
+          "kind": "else",
+          "text": "terminal STOP or safety RequestPositionControl"
+        },
+        {
+          "kind": "message",
+          "from": "M",
+          "to": "N",
+          "arrow": "-->>",
+          "text": "Complete or RequestPositionControl"
+        },
+        {
+          "kind": "message",
+          "from": "N",
+          "to": "N",
+          "text": "stationary setpoint path continues"
+        },
+        {
+          "kind": "message",
+          "from": "N",
+          "to": "X",
+          "text": "request AUTO_LOITER"
+        },
+        {
+          "kind": "message",
+          "from": "X",
+          "to": "P",
+          "text": "scheduleMode(Loiter)"
+        },
+        {
+          "kind": "message",
+          "from": "P",
+          "to": "X",
+          "arrow": "-->>",
+          "text": "API callback result"
+        },
+        {
+          "kind": "message",
+          "from": "P",
+          "to": "X",
+          "arrow": "-->>",
+          "text": "VehicleStatus AUTO_LOITER observation"
+        },
+        {
+          "kind": "message",
+          "from": "X",
+          "to": "X",
+          "text": "confirmation latch and retry predicate"
+        },
+        {
+          "kind": "end"
+        },
+        {
+          "kind": "note",
+          "over": [
+            "M",
+            "P"
+          ],
+          "text": "API result, waypoint acceptance, mission completion and Hold confirmation are distinct."
+        }
+      ]
+    }
+  ]
+}

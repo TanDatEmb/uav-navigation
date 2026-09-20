@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>navigation_mission</name>
+  <version>0.1.0</version>
+  <description>Product-owned mission schema and validated loader shared by navigation nodes.</description>
+  <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>eigen</depend>
+  <depend>navigation_world_model</depend>
+  <depend>yaml-cpp</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

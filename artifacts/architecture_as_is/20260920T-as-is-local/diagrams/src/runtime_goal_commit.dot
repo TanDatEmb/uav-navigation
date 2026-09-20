@@ -1,0 +1,25 @@
+digraph G {
+ graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.65", fontname="DejaVu Sans"];
+ node [fontname="DejaVu Sans",fontsize=10,margin="0.12,0.08"];
+ edge [fontname="DejaVu Sans",fontsize=9,arrowsize=0.75];
+T_GOAL_ACCEPT [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_GOAL_ACCEPT: NavigationGoal ROS message ingress\nGuard: valid route snapshot and monotonic same-mission identity; if\nsafety suffix active, only newer ordered same-mission goal is\ndeferred; foreign mission is held until stop/fail-closed\nWrites: F_DESIRED_GOAL, F_PENDING_GOAL, F_ACTIVE_GOAL_EPOCH,\nF_EXECUTING_GOAL, F_WORKER_QUEUE, F_NEW_GOAL, F_HOT_GOAL,\nF_FOREIGN_HOLD\nEffect: new goal can become desired before executing identity changes;\nqueue/cancel planning request; pending pointer consumed only after\nmatching execution handoff"];
+T_GOAL_ACCEPT [URL="../../tables/transitions.html#T_GOAL_ACCEPT",tooltip="T_GOAL_ACCEPT: NavigationRuntimeNode::onGoal -> applyValidatedGoalLocked"];
+T_SCHEDULE [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_SCHEDULE: 5 Hz planning timer or explicit replan trigger\nGuard: PlanningKey exists and survives current-key recheck; queue policy\naccepts or replaces pending item\nWrites: F_WORKER_QUEUE\nEffect: solve can run while command sampling continues; planner result\nitself does not commit or publish"];
+T_SCHEDULE [URL="../../tables/transitions.html#T_SCHEDULE",tooltip="T_SCHEDULE: planning timer -> schedulePlanningCycle -> PlanningWorker::submit -> runCycle"];
+T_CANDIDATE [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_CANDIDATE: planner returns candidate or emergency validation completes\nGuard: candidate.valid + identity/world/certificate/dynamics/anchor/lease\nguards and current predecessor/version/episode; normal successor\nstaged when active; immediate measured emergency uses separate\nboundary; failed emergency certification applies\nEmergencyCertificationFailed and failClosed\nWrites: F_TIMELINE, F_EXECUTING_GOAL, F_EXEC_RECOVERY, F_FAILURE_LATCH\nEffect: candidate may be staged, committed or rejected; no claim that\ncommit means sample/exposure/PX4 acceptance"];
+T_CANDIDATE [URL="../../tables/transitions.html#T_CANDIDATE",tooltip="T_CANDIDATE: runCycle -> commitPlannerCandidate or admitImmediateCandidate -> ExecutionTimelineStore"];
+T_ACTIVATE_SUCCESSOR [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_ACTIVATE_SUCCESSOR: command timer reaches staged activation boundary\nGuard: pending generation matches; epoch ready; lease latch allows;\nrecovery state known and nominal allowed; failure false; desired\ngoal tuple/goal epoch/localization epoch/pending goal exact\nWrites: F_TIMELINE, F_EXECUTING_GOAL, F_PENDING_GOAL, F_EXEC_RECOVERY\nEffect: atomic store cutover for command timeline; planner history facade\nsynchronization is a later queued side effect; desired, pending,\nactive generation and planner history are not one distributed\ntransaction"];
+T_ACTIVATE_SUCCESSOR [URL="../../tables/transitions.html#T_ACTIVATE_SUCCESSOR",tooltip="T_ACTIVATE_SUCCESSOR: publishCommand timer -> activatePendingIfDueAndFinalize -> queued PlannerFacade history sync"];
+T_PUBLISH [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_PUBLISH: command timer attempts ROS publication\nGuard: same active sampled pointer, goal/localization/world identity and\nepisode; current state freshness, world freshness, message and\nbundle lease; stopped hold additionally requires known-free world\nand measured anchor proximity\nWrites: F_FAILURE_LATCH, F_EXEC_RECOVERY\nEffect: ROS publisher gets exact command only after final gate;\npublication is not PX4 command acceptance"];
+T_PUBLISH [URL="../../tables/transitions.html#T_PUBLISH",tooltip="T_PUBLISH: NavigationRuntimeNode::publishCommand final publishIfCurrent"];
+T_GOAL_ACCEPT -> T_SCHEDULE [style=invis,weight=10];
+T_SCHEDULE -> T_CANDIDATE [style=invis,weight=10];
+T_CANDIDATE -> T_ACTIVATE_SUCCESSOR [style=invis,weight=10];
+T_ACTIVATE_SUCCESSOR -> T_PUBLISH [style=invis,weight=10];
+T_GOAL_ACCEPT -> T_SCHEDULE [style=dashed,color="#555555",label="request accepted"];
+T_SCHEDULE -> T_CANDIDATE [style=dashed,color="#555555",label="solve result"];
+T_CANDIDATE -> T_ACTIVATE_SUCCESSOR [style=dashed,color="#555555",label="staged successor only"];
+T_CANDIDATE -> T_PUBLISH [style=dashed,color="#555555",label="immediate admission path"];
+T_ACTIVATE_SUCCESSOR -> T_PUBLISH [style=dashed,color="#555555",label="after due activation"];
+legend [shape=note,style="rounded,filled",fillcolor="#f5f5f5",label="Each box is one guarded transition. Dashed labeled edges show supported paths; invisible edges only arrange the page. Independent callbacks may interleave."];
+}

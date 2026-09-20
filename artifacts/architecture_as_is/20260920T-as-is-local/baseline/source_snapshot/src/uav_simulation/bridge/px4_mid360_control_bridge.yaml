@@ -1,0 +1,21 @@
+# Gazebo Harmonic -> ROS 2 Jazzy low-bandwidth/control bridge.
+# Keep /clock and estimator-critical IMU isolated from PointCloud conversion so
+# high-bandwidth serialization cannot head-of-line block execution-state time.
+- ros_topic_name: /clock
+  gz_topic_name: /world/px4_lio_smoke/clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: gz.msgs.Clock
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /lidar/imu
+  gz_topic_name: /sim/mid360/imu
+  ros_type_name: sensor_msgs/msg/Imu
+  gz_type_name: gz.msgs.IMU
+  direction: GZ_TO_ROS
+
+# Evaluation-only Gazebo truth. It must never feed LIO or PX4 navigation.
+- ros_topic_name: /sim/ground_truth/odometry
+  gz_topic_name: /model/x500_mid360/odometry_with_covariance
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: gz.msgs.OdometryWithCovariance
+  direction: GZ_TO_ROS

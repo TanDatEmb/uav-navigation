@@ -1,0 +1,565 @@
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cmath>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <Eigen/Core>
+#include <Eigen/Geometry>
+#include <Eigen/StdVector>
+
+namespace navigation_world_model {
+
+using Point3 = Eigen::Vector3d;
+using GridIndex3 = Eigen::Vector3i;
+using PointVector = std::vector<Point3, Eigen::aligned_allocator<Point3>>;
+
+enum class CellState : std::uint8_t {
+  kUndefined,
+  kUnknown,
+  kOutOfMap,
+  kOccupied,
+  kKnownFree,
+  kFrontier,
+};
+
+// Free-space provenance is deliberately separate from the CellState domain.
+// SENSOR_FREE is backed by the probabilistic/raycast map. Physical-body
+// bootstrap is queried only through the explicit segment oracle and is never
+// a general world overlay.
+enum class FreeSpaceEvidence : std::uint8_t {
+  kUnknown,
+  kSensorFree,
+  kOccupied,
+  kOutOfMap,
+};
+
+enum class HandoverClearanceReason : std::uint8_t {
+  kNone = 0,
+  kNoSensorEvidence,
+  kOccupiedContradiction,
+};
+
+enum class GridLayer : std::uint8_t { kEvidence, kInflated };
+enum class UnknownPolicy : std::uint8_t { kAllowUnknown, kRequireKnownFree };
+
+[[nodiscard]] constexpr bool isValidCellState(CellState state) noexcept {
+  switch (state) {
+    case CellState::kUndefined:
+    case CellState::kUnknown:
+    case CellState::kOutOfMap:
+    case CellState::kOccupied:
+    case CellState::kKnownFree:
+    case CellState::kFrontier:
+      return true;
+  }
+  return false;
+}
+
+// The immutable planning-grid export stores only evidence states.  The other
+// enum values remain part of the query result domain, but must never enter the
+// backing array as if they were evidence.
+[[nodiscard]] constexpr bool isStoredCellState(CellState state) noexcept {
+  return state == CellState::kUnknown || state == CellState::kOccupied ||
+         state == CellState::kKnownFree;
+}
+
+// One total traversability predicate for every world-model consumer. Unknown
+// and frontier cells are equivalent for this decision; OUT_OF_MAP, OCCUPIED,
+// UNDEFINED and any future invalid value are never traversable.
+[[nodiscard]] constexpr bool isCellTraversable(
+    CellState state, UnknownPolicy unknown_policy) noexcept {
+  switch (state) {
+    case CellState::kKnownFree:
+      return true;
+    case CellState::kUnknown:
+    case CellState::kFrontier:
+      return unknown_policy == UnknownPolicy::kAllowUnknown;
+    case CellState::kUndefined:
+    case CellState::kOutOfMap:
+    case CellState::kOccupied:
+      return false;
+  }
+  return false;
+}
+
+struct AxisAlignedBox {
+  Point3 minimum{Point3::Zero()};
+  Point3 maximum{Point3::Zero()};
+
+  [[nodiscard]] bool valid() const noexcept {
+    return minimum.allFinite() && maximum.allFinite() &&
+           (maximum.array() >= minimum.array()).all();
+  }
+};
+
+struct GridBounds {
+  GridIndex3 global_min_index{GridIndex3::Zero()};
+  GridIndex3 dimensions{GridIndex3::Zero()};
+
+  [[nodiscard]] bool valid() const noexcept {
+    return (dimensions.array() > 0).all();
+  }
+};
+
+struct WorldGeometry {
+  double evidence_resolution_m{0.0};
+  double inflated_resolution_m{0.0};
+  double occupied_inflation_radius_m{0.0};
+  double effective_virtual_ground_m{0.0};
+  double effective_virtual_ceiling_m{0.0};
+  Point3 local_center_m{Point3::Zero()};
+  Point3 local_size_m{Point3::Zero()};
+  // When false, the effective Z values describe the current sliding-map
+  // availability window, not physical occupied floor/ceiling planes.
+  bool virtual_ground_ceiling_enabled{true};
+  // Discrete bounds are authoritative for index-addressed search.  They are
+  // kept per layer because the inflated storage may have a different
+  // resolution and halo from the evidence grid.
+  GridBounds evidence_bounds{};
+  GridBounds inflated_bounds{};
+};
+
+// Return the finite distance from `origin` to the first boundary of the
+// axis-aligned local map along a unit direction.  The world model remains an
+// ENU evidence grid; this helper is only a geometry contract for consumers
+// that need to decide whether an oriented route has enough support.  It does
+// not rotate or resample the voxel storage.
+[[nodiscard]] inline std::optional<double> directionalSupportToLocalBoundary(
+    const Point3& origin, const Point3& direction,
+    const WorldGeometry& geometry) noexcept {
+  if (!origin.allFinite() || !direction.allFinite() ||
+      !geometry.local_center_m.allFinite() ||
+      !geometry.local_size_m.allFinite() ||
+      (geometry.local_size_m.array() <= 0.0).any()) {
+    return std::nullopt;
+  }
+
+  const double direction_scale = direction.cwiseAbs().maxCoeff();
+  if (!std::isfinite(direction_scale) || direction_scale <= 0.0) {
+    return std::nullopt;
+  }
+  const double direction_norm = direction_scale *
+      (direction / direction_scale).norm();
+  if (!std::isfinite(direction_norm) || direction_norm <= 1.0e-12) {
+    return std::nullopt;
+  }
+  const Point3 unit_direction = direction / direction_norm;
+  Point3 local_min;
+  Point3 local_max;
+  for (int axis = 0; axis < 3; ++axis) {
+    const long double half = 0.5L * static_cast<long double>(geometry.local_size_m(axis));
+    const long double center = static_cast<long double>(geometry.local_center_m(axis));
+    const long double minimum = center - half;
+    const long double maximum = center + half;
+    if (!std::isfinite(minimum) || !std::isfinite(maximum) ||
+        minimum < static_cast<long double>(std::numeric_limits<double>::lowest()) ||
+        maximum > static_cast<long double>(std::numeric_limits<double>::max()) ||
+        minimum > maximum) {
+      return std::nullopt;
+    }
+    local_min(axis) = static_cast<double>(minimum);
+    local_max(axis) = static_cast<double>(maximum);
+  }
+  constexpr double kBoundaryEpsilonM = 1.0e-9;
+  if ((origin.array() < local_min.array() - kBoundaryEpsilonM).any() ||
+      (origin.array() > local_max.array() + kBoundaryEpsilonM).any()) {
+    return 0.0;
+  }
+
+  double support_m = std::numeric_limits<double>::infinity();
+  for (int axis = 0; axis < 3; ++axis) {
+    const double component = unit_direction(axis);
+    if (std::abs(component) <= 1.0e-12) {
+      continue;
+    }
+    const double boundary = component > 0.0 ? local_max(axis) : local_min(axis);
+    const long double distance =
+        (static_cast<long double>(boundary) - static_cast<long double>(origin(axis))) /
+        static_cast<long double>(component);
+    if (!std::isfinite(distance) ||
+        distance < -static_cast<long double>(kBoundaryEpsilonM) ||
+        distance > static_cast<long double>(std::numeric_limits<double>::max())) {
+      return std::nullopt;
+    }
+    support_m = std::min(support_m, std::max(0.0, static_cast<double>(distance)));
+  }
+  if (!std::isfinite(support_m)) {
+    return std::nullopt;
+  }
+  return support_m;
+}
+
+struct WorldSnapshotIdentity {
+  std::uint64_t localization_epoch{0};
+  std::uint64_t generation{0};
+  std::uint64_t revision{0};
+  std::int64_t observation_stamp_ns{0};
+};
+
+// Opt-in, diagnostic-only materialization of one immutable world view.  This
+// is intentionally a value object rather than a WorldModelView replacement:
+// production planners continue to consume the original immutable view, while
+// offline nominal-problem replay can reconstruct the exact cell queries made
+// by the view that was pinned for a solve.
+struct WorldModelDiagnosticSnapshot {
+  WorldSnapshotIdentity identity{};
+  WorldGeometry geometry{};
+  bool unknown_inflation_enabled{false};
+  bool virtual_ground_ceiling_enabled{true};
+  double virtual_ground_m{0.0};
+  double virtual_ceiling_m{0.0};
+  double inflated_virtual_ground_m{0.0};
+  double inflated_virtual_ceiling_m{0.0};
+  std::vector<std::uint8_t> evidence_states;
+  std::vector<std::uint8_t> inflated_states;
+  std::vector<GridIndex3> nearest_offsets;
+  bool complete{false};
+};
+
+// Ephemeral support for the latest measured rigid body only.  This is a
+// geometry witness, never a history or occupancy update.  The primitive
+// values are supplied by the mapping adapter's project-owned model contract.
+struct CurrentBodySupport {
+  struct Box {
+    Point3 center{Point3::Zero()};
+    Point3 half_extent{Point3::Zero()};
+    Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
+  };
+
+  WorldSnapshotIdentity snapshot_identity{};
+  Point3 body_position{Point3::Zero()};
+  Eigen::Quaterniond body_orientation{Eigen::Quaterniond::Identity()};
+  std::uint64_t localization_epoch{0};
+  std::int64_t source_stamp_ns{0};
+  std::string world_frame_id;
+  std::string body_frame_id;
+  // Stable source references are part of the witness so a geometry change
+  // cannot silently reuse an old support contract.
+  std::string geometry_provenance;
+  // The main X500 collision box is the only connected physical component
+  // containing the measured base_link origin. The legs and MID360 housing
+  // are separated by physical gaps, so they cannot extend a contiguous
+  // current-body prefix without permitting forbidden UNKNOWN re-entry.
+  Box body_box{};
+  bool valid{false};
+
+  [[nodiscard]] static bool finiteUnitQuaternion(
+      const Eigen::Quaterniond& quaternion) noexcept {
+    if (!quaternion.coeffs().allFinite()) return false;
+    const double norm = quaternion.norm();
+    return std::isfinite(norm) && norm > 0.0 &&
+           std::abs(norm - 1.0) <= 1.0e-6;
+  }
+
+  [[nodiscard]] bool finiteGeometry() const noexcept {
+    if (geometry_provenance.empty() ||
+        geometry_provenance.find("@sha256=") == std::string::npos ||
+        geometry_provenance.find("component=base_link_collision_0_main_obb_only") ==
+            std::string::npos ||
+        !body_position.allFinite() ||
+        !finiteUnitQuaternion(body_orientation) ||
+        localization_epoch == 0U || world_frame_id.empty() ||
+        body_frame_id != "base_link" ||
+        source_stamp_ns <= 0 || snapshot_identity.generation == 0U ||
+        snapshot_identity.revision == 0U ||
+        snapshot_identity.localization_epoch != localization_epoch) {
+      return false;
+    }
+    return body_box.center.allFinite() && body_box.half_extent.allFinite() &&
+        (body_box.half_extent.array() > 0.0).all() &&
+        finiteUnitQuaternion(body_box.orientation);
+  }
+
+  [[nodiscard]] bool matchesMeasuredState(
+      const Point3& measured_position,
+      const Eigen::Quaterniond& measured_orientation,
+      const std::uint64_t measured_epoch,
+      const std::int64_t measured_stamp_ns) const noexcept {
+    if (!finiteGeometry() || !measured_position.allFinite() ||
+        !finiteUnitQuaternion(measured_orientation) ||
+        measured_epoch != localization_epoch || measured_stamp_ns != source_stamp_ns) {
+      return false;
+    }
+    // Quaternion signs represent the same rotation; compare the absolute
+    // inner product after requiring both inputs to be unit quaternions.
+    return (measured_position - body_position).norm() <= 1.0e-9 &&
+        std::abs(measured_orientation.dot(body_orientation)) >= 1.0 - 1.0e-9;
+  }
+
+  [[nodiscard]] bool matchesMeasuredState(
+      const Point3& measured_position,
+      const Eigen::Quaterniond& measured_orientation,
+      const std::uint64_t measured_epoch,
+      const std::int64_t measured_stamp_ns,
+      const std::string& measured_world_frame,
+      const std::string& measured_body_frame) const noexcept {
+    return matchesMeasuredState(measured_position, measured_orientation,
+                                measured_epoch, measured_stamp_ns) &&
+        measured_world_frame == world_frame_id && measured_body_frame == body_frame_id;
+  }
+
+  [[nodiscard]] bool matchesWorldSnapshot(
+      const WorldSnapshotIdentity& identity,
+      const std::int64_t now_stamp_ns) const noexcept {
+    return valid && finiteGeometry() &&
+        snapshot_identity.localization_epoch == identity.localization_epoch &&
+        snapshot_identity.generation == identity.generation &&
+        snapshot_identity.revision == identity.revision &&
+        snapshot_identity.observation_stamp_ns == identity.observation_stamp_ns &&
+        now_stamp_ns == source_stamp_ns;
+  }
+
+  [[nodiscard]] bool contains(const Point3& point,
+                              const WorldSnapshotIdentity& identity,
+                              const std::int64_t now_stamp_ns) const noexcept {
+    if (!valid || !finiteGeometry() || !point.allFinite() ||
+        snapshot_identity.localization_epoch != identity.localization_epoch ||
+        snapshot_identity.generation != identity.generation ||
+        snapshot_identity.revision != identity.revision ||
+        snapshot_identity.observation_stamp_ns != identity.observation_stamp_ns ||
+        now_stamp_ns != source_stamp_ns) {
+      return false;
+    }
+    const Point3 body_point = body_orientation.conjugate() *
+                              (point - body_position);
+    if (!body_point.allFinite()) return false;
+    const Point3 local = body_box.orientation.conjugate() *
+                         (body_point - body_box.center);
+    if (!local.allFinite()) return false;
+    // Treat the mathematical OBB boundary as closed while absorbing the
+    // round-off introduced by the two rigid-frame transforms. The tolerance
+    // is scale-aware and remains far below any physical/map margin.
+    const double scale = std::max(1.0, body_box.half_extent.cwiseAbs().maxCoeff());
+    const double tolerance = 64.0 * std::numeric_limits<double>::epsilon() * scale;
+    return std::isfinite(tolerance) &&
+        (local.cwiseAbs().array() <=
+         (body_box.half_extent.array() + tolerance)).all();
+  }
+
+ private:
+  [[nodiscard]] static std::optional<std::pair<double, double>> boxInterval(
+      const Point3& start, const Point3& delta, const Box& box,
+      const double radius_m) noexcept {
+    const Point3 local_start = box.orientation.conjugate() * (start - box.center);
+    const Point3 local_delta = box.orientation.conjugate() * delta;
+    const Point3 extent = box.half_extent - Point3::Constant(radius_m);
+    if (!local_start.allFinite() || !local_delta.allFinite() ||
+        !extent.allFinite() || (extent.array() < 0.0).any()) return std::nullopt;
+    double lower = 0.0;
+    double upper = 1.0;
+    for (int axis = 0; axis < 3; ++axis) {
+      if (std::abs(local_delta(axis)) <= 1.0e-15) {
+        if (std::abs(local_start(axis)) > extent(axis) + 1.0e-12) return std::nullopt;
+        continue;
+      }
+      double a = (-extent(axis) - local_start(axis)) / local_delta(axis);
+      double b = ( extent(axis) - local_start(axis)) / local_delta(axis);
+      if (a > b) std::swap(a, b);
+      lower = std::max(lower, a);
+      upper = std::min(upper, b);
+      if (lower > upper + 1.0e-12) return std::nullopt;
+    }
+    return std::pair<double, double>{std::clamp(lower, 0.0, 1.0),
+                                     std::clamp(upper, 0.0, 1.0)};
+  }
+
+ public:
+  // Return the largest contiguous prefix of the chord whose eroded tube is
+  // inside the measured body OBB. A nonzero prefix is valid only when the
+  // chord starts in the body; callers use the returned boundary to prevent
+  // UNKNOWN re-entry after the body has been left.
+  [[nodiscard]] double contiguousBodyPrefixFraction(
+      const Point3& start, const Point3& end, const double radius_m = 0.0) const noexcept {
+    if (!valid || !finiteGeometry() || !start.allFinite() || !end.allFinite() ||
+        !std::isfinite(radius_m) || radius_m < 0.0) return 0.0;
+    const Point3 local_start = body_orientation.conjugate() *
+        (start - body_position);
+    const Point3 local_end = body_orientation.conjugate() *
+        (end - body_position);
+    if (!local_start.allFinite() || !local_end.allFinite()) return 0.0;
+    const auto interval = boxInterval(local_start, local_end - local_start,
+                                      body_box, radius_m);
+    if (!interval || interval->first > 1.0e-12) return 0.0;
+    return std::clamp(interval->second, 0.0, 1.0);
+  }
+
+  // Prove containment of the whole segment (or an eroded tube) in the
+  // physical OBB. Slab intervals catch gaps that point sampling misses.
+  [[nodiscard]] bool containsSegment(
+      const Point3& start, const Point3& end,
+      const WorldSnapshotIdentity& identity, const std::int64_t now_stamp_ns,
+      const double radius_m = 0.0) const noexcept {
+    if (!valid || !finiteGeometry() || !start.allFinite() || !end.allFinite() ||
+        !std::isfinite(radius_m) || radius_m < 0.0 ||
+        snapshot_identity.localization_epoch != identity.localization_epoch ||
+        snapshot_identity.generation != identity.generation ||
+        snapshot_identity.revision != identity.revision ||
+        snapshot_identity.observation_stamp_ns != identity.observation_stamp_ns ||
+        now_stamp_ns != source_stamp_ns) return false;
+    // Primitive parameters are expressed in base_link. Transform the query
+    // into that frame before doing exact interval arithmetic; applying the
+    // body-frame boxes directly to world coordinates is only correct at the
+    // origin with identity attitude.
+    return contiguousBodyPrefixFraction(start, end, radius_m) >= 1.0 - 1.0e-12;
+  }
+
+  // An UNKNOWN interval may use this witness only while the evaluated
+  // segment remains in the initial contiguous prefix of the measured body.
+  // The prefix boundary is computed from the whole ordered segment, so a
+  // later geometric re-entry cannot reopen the exception.
+  [[nodiscard]] bool unknownIntervalWithinInitialBodyPrefix(
+      const Point3& start, const Point3& end,
+      const double interval_begin, const double interval_end,
+      const WorldSnapshotIdentity& identity,
+      const std::int64_t now_stamp_ns,
+      const double radius_m = 0.0) const noexcept {
+    constexpr double kIntervalTolerance = 1.0e-9;
+    if (!std::isfinite(interval_begin) || !std::isfinite(interval_end) ||
+        interval_begin < -kIntervalTolerance ||
+        interval_end < interval_begin - kIntervalTolerance ||
+        interval_end > 1.0 + kIntervalTolerance ||
+        !std::isfinite(radius_m) || radius_m < 0.0 ||
+        !matchesWorldSnapshot(identity, now_stamp_ns) ||
+        !contains(start, identity, now_stamp_ns)) {
+      return false;
+    }
+    const double prefix_fraction = contiguousBodyPrefixFraction(
+        start, end, radius_m);
+    return std::isfinite(prefix_fraction) &&
+        interval_end <= prefix_fraction + kIntervalTolerance;
+  }
+};
+
+using CurrentBodySupportPtr = std::shared_ptr<const CurrentBodySupport>;
+
+struct WorldChangeRecord {
+  WorldSnapshotIdentity identity{};
+  AxisAlignedBox affected_region{};
+  bool affects_whole_world{false};
+};
+
+// Each immutable snapshot carries a bounded newest-first provenance window.
+// The producer owns the retention limit; consumers require contiguous revision
+// coverage and fail closed when the requested interval is older than the
+// retained window. A flat immutable window is deliberate: truncating a singly
+// linked list at its tail would either lose a recent record or require an
+// unbounded walk.
+struct WorldChangeHistory {
+  std::vector<WorldChangeRecord> records;
+};
+
+using WorldChangeHistoryPtr = std::shared_ptr<const WorldChangeHistory>;
+
+[[nodiscard]] inline bool sameWorldSnapshotIdentity(
+    const WorldSnapshotIdentity& lhs,
+    const WorldSnapshotIdentity& rhs) noexcept {
+  return lhs.localization_epoch == rhs.localization_epoch &&
+         lhs.generation == rhs.generation && lhs.revision == rhs.revision &&
+         lhs.observation_stamp_ns == rhs.observation_stamp_ns;
+}
+
+// Read-only planning contract. Implementations must preserve their documented
+// cell centers, ray traversal, nearest-cell tie breaking, and occupied-point
+// order. A view used by one solve must keep one identity for the whole solve.
+class WorldModelView {
+ public:
+  virtual ~WorldModelView() = default;
+
+  [[nodiscard]] virtual WorldGeometry geometry() const noexcept = 0;
+  [[nodiscard]] virtual WorldSnapshotIdentity identity() const noexcept = 0;
+
+  // Implementations may provide a complete immutable materialization for
+  // diagnostic/offline replay. The default is deliberately unavailable so
+  // a production view cannot accidentally be treated as replayable merely
+  // because it has a valid identity.
+  [[nodiscard]] virtual std::optional<WorldModelDiagnosticSnapshot>
+  diagnosticSnapshot() const {
+    return std::nullopt;
+  }
+
+  // Return true unless the changes after `older` are proven disjoint from the
+  // protected trajectory region. Implementations that cannot provide complete
+  // provenance must retain the fail-closed default.
+  [[nodiscard]] virtual bool changedRegionIntersectsSince(
+      const WorldSnapshotIdentity& older,
+      const AxisAlignedBox& protected_region) const noexcept {
+    static_cast<void>(older);
+    static_cast<void>(protected_region);
+    return true;
+  }
+  [[nodiscard]] virtual CellState classify(const Point3& point,
+                                           GridLayer layer) const noexcept = 0;
+  [[nodiscard]] virtual FreeSpaceEvidence classifyFreeSpace(
+      const Point3& point, GridLayer layer,
+      std::int64_t now_stamp_ns = 0) const noexcept {
+    static_cast<void>(now_stamp_ns);
+    const auto state = classify(point, layer);
+    switch (state) {
+      case CellState::kKnownFree: return FreeSpaceEvidence::kSensorFree;
+      case CellState::kOccupied: return FreeSpaceEvidence::kOccupied;
+      case CellState::kOutOfMap: return FreeSpaceEvidence::kOutOfMap;
+      case CellState::kUnknown:
+      case CellState::kFrontier:
+      case CellState::kUndefined:
+        return FreeSpaceEvidence::kUnknown;
+    }
+    return FreeSpaceEvidence::kUnknown;
+  }
+  [[nodiscard]] virtual HandoverClearanceReason handoverClearanceReason(
+      const Point3& point, GridLayer layer,
+      std::int64_t now_stamp_ns = 0) const noexcept {
+    static_cast<void>(now_stamp_ns);
+    const auto state = classify(point, layer);
+    if (state == CellState::kOccupied) {
+      return HandoverClearanceReason::kOccupiedContradiction;
+    }
+    return state == CellState::kKnownFree
+               ? HandoverClearanceReason::kNone
+               : HandoverClearanceReason::kNoSensorEvidence;
+  }
+  [[nodiscard]] bool isSensorKnownFree(
+      const Point3& point, GridLayer layer) const noexcept {
+    return classifyFreeSpace(point, layer) == FreeSpaceEvidence::kSensorFree;
+  }
+  [[nodiscard]] bool isOccupiedOrInflated(
+      const Point3& point, GridLayer layer) const noexcept {
+    return classifyFreeSpace(point, layer) == FreeSpaceEvidence::kOccupied;
+  }
+  [[nodiscard]] virtual bool contains(const Point3& point) const noexcept = 0;
+  [[nodiscard]] virtual GridIndex3 positionToIndex(const Point3& point,
+                                                   GridLayer layer) const noexcept = 0;
+  [[nodiscard]] virtual Point3 indexToPosition(const GridIndex3& index,
+                                               GridLayer layer) const noexcept = 0;
+  [[nodiscard]] virtual std::optional<Point3> nearestNotOccupied(
+      const Point3& start, GridLayer layer, double maximum_distance_m) const = 0;
+  [[nodiscard]] virtual bool isSegmentTraversable(
+      const Point3& start, const Point3& end, GridLayer layer,
+      UnknownPolicy unknown_policy) const noexcept = 0;
+  // Explicit handover oracle. Mapping snapshots keep this sensor-only; a
+  // planner may apply a separately validated current-body witness solely to
+  // the measured start prefix. BACKUP/future validation remains sensor-only.
+  [[nodiscard]] virtual bool isSegmentTraversableWithCurrentBodySupport(
+      const Point3& start, const Point3& end, GridLayer layer,
+      UnknownPolicy unknown_policy,
+      const CurrentBodySupportPtr& support = {}) const noexcept {
+    // Implementations must opt in explicitly. A body witness is never
+    // silently interpreted as generic UNKNOWN permission.
+    return support ? false : isSegmentTraversable(start, end, layer, unknown_policy);
+  }
+  [[nodiscard]] virtual AxisAlignedBox clampToLocalBounds(
+      const AxisAlignedBox& requested) const noexcept = 0;
+  [[nodiscard]] virtual PointVector observedOccupiedPoints(
+      const AxisAlignedBox& box) const = 0;
+};
+
+using WorldModelViewPtr = std::shared_ptr<const WorldModelView>;
+
+}  // namespace navigation_world_model

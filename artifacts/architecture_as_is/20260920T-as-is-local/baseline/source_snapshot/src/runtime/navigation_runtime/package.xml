@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>navigation_runtime</name>
+  <version>0.1.0</version>
+  <description>Native planner backend PVA navigation runtime for PX4.</description>
+  <maintainer email="maintainers@example.invalid">UAV Navigation maintainers</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>ament_index_cpp</depend>
+  <depend>builtin_interfaces</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>navigation_common</depend>
+  <depend>navigation_contracts</depend>
+  <depend>navigation_execution</depend>
+  <depend>navigation_planning</depend>
+  <depend>navigation_mapping</depend>
+  <depend>navigation_mission</depend>
+  <depend>navigation_world_model</depend>
+  <depend>navigation_planning_backend</depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

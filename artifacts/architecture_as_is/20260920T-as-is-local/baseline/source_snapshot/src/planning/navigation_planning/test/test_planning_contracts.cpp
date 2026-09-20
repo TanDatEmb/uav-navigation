@@ -1,0 +1,496 @@
+#include <chrono>
+#include <stdexcept>
+
+#include <gtest/gtest.h>
+
+#include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_planning/candidate_admission.hpp>
+#include <navigation_planning/execution_anchor.hpp>
+#include <navigation_planning/kinematic_state.hpp>
+#include <navigation_planning/planning_outcome.hpp>
+#include <navigation_planning/planning_request.hpp>
+#include <navigation_planning/planning_limits.hpp>
+#include <navigation_planning/planner_diagnostics.hpp>
+
+namespace {
+
+TEST(VehicleControlEnvelope, RequiresPositiveValuesInsidePhysicalModel) {
+  navigation_planning::VehicleDynamicModel physical;
+  navigation_planning::VehicleControlEnvelope control;
+  control.maximum_velocity_mps = 5.0;
+  control.maximum_acceleration_mps2 = 4.0;
+  control.maximum_jerk_mps3 = 8.0;
+  EXPECT_TRUE(control.valid(physical));
+
+  control.maximum_velocity_mps = 0.0;
+  EXPECT_FALSE(control.valid(physical));
+  control.maximum_velocity_mps = 5.0;
+  control.maximum_acceleration_mps2 = physical.maximum_acceleration_mps2 + 1.0;
+  EXPECT_FALSE(control.valid(physical));
+  control.maximum_acceleration_mps2 = 4.0;
+  control.maximum_jerk_mps3 = physical.maximum_jerk_mps3 + 1.0;
+  EXPECT_FALSE(control.valid(physical));
+}
+
+void refreshEndpointMetadata(navigation_planning::CandidateBundle& candidate) {
+  candidate.declared_start_ns = *navigation_common::secondsToNanoseconds(
+      candidate.start_wall_time_s);
+  candidate.declared_end_ns = *navigation_common::secondsSumToNanoseconds(
+      candidate.start_wall_time_s, candidate.duration_s);
+  candidate.activation_stamp_ns = candidate.valid_from_ns;
+}
+
+navigation_planning::CandidateBundle validCandidate() {
+  navigation_planning::CandidateBundle candidate;
+  candidate.world_identity.localization_epoch = 4;
+  candidate.world_identity.generation = 2;
+  candidate.world_identity.revision = 8;
+  candidate.world_identity.observation_stamp_ns = 100;
+  candidate.pinned_world_identity = candidate.world_identity;
+  candidate.localization_epoch = 4;
+  candidate.goal_epoch = 7;
+  candidate.request_id = 9;
+  candidate.bundle_generation = 11;
+  candidate.valid_from_ns = 100;
+  candidate.valid_until_ns = 200;
+  candidate.start_wall_time_s = 1.0e-7;
+  candidate.duration_s = 1.0e-7;
+  refreshEndpointMetadata(candidate);
+  candidate.backup_start_time_s = 0.0;
+  candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  candidate.certificates = {true, true, true, true};
+  candidate.protected_region.minimum = Eigen::Vector3d::Zero();
+  candidate.protected_region.maximum = Eigen::Vector3d::Ones();
+  candidate.role_schedule = {{0.0, 1.0e-7,
+                              navigation_planning::CandidateRole::kMain}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.position_world.x() = 1.0;
+    point.trajectory_time_s = static_cast<double>(stamp - 100) * 1.0e-9;
+    return true;
+  };
+  return candidate;
+}
+
+TEST(PlanningCandidate, RejectsInvalidProvenanceAndNonFiniteSamples) {
+  auto candidate = validCandidate();
+  ASSERT_TRUE(candidate.valid());
+  EXPECT_TRUE(candidate.sample(150).has_value());
+  EXPECT_FALSE(candidate.sample(99).has_value());
+
+  candidate.world_identity.localization_epoch = 3;
+  EXPECT_FALSE(candidate.valid());
+}
+
+TEST(PlanningCandidate, DeclaredBoundarySampleMayPrecedeExecutionLease) {
+  auto candidate = validCandidate();
+  candidate.valid_from_ns = 150;
+  candidate.valid_until_ns = 200;
+  candidate.activation_stamp_ns = 150;
+
+  EXPECT_FALSE(candidate.sample(100).has_value());
+  EXPECT_TRUE(candidate.sampleAtDeclaredStamp(100).has_value());
+}
+
+TEST(PlanningCandidate, RejectsEvaluatorRoleMutationAndUnknownRole) {
+  auto candidate = validCandidate();
+  candidate.evaluator = [](std::int64_t, navigation_planning::TrajectoryPoint& point) {
+    point.role = navigation_planning::CandidateRole::kBackup;
+    return true;
+  };
+  EXPECT_FALSE(candidate.sample(150).has_value());
+  candidate.role = static_cast<navigation_planning::CandidateRole>(255U);
+  EXPECT_FALSE(candidate.valid());
+}
+
+TEST(PlanningCandidate, EvaluatorExceptionsFailClosedAtEverySampleBoundary) {
+  const auto previous = validCandidate();
+  auto candidate = validCandidate();
+  candidate.evaluator = [](
+                            std::int64_t,
+                            navigation_planning::TrajectoryPoint&) -> bool {
+    throw std::runtime_error("synthetic candidate evaluator failure");
+  };
+
+  EXPECT_FALSE(candidate.sample(150).has_value());
+  EXPECT_FALSE(candidate.sampleAtDeclaredStamp(150).has_value());
+  EXPECT_FALSE(candidate.sampleAtDeclaredEnd().has_value());
+  EXPECT_FALSE(navigation_planning::candidateBundleHandoffContinuous(
+      previous, candidate));
+}
+
+TEST(PlanningCandidate, AllowsDeclaredMainToBackupRoleSchedule) {
+  auto candidate = validCandidate();
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.backup_start_time_s = 7.5e-8;
+  candidate.role_schedule = {
+      {0.0, 7.5e-8, navigation_planning::CandidateRole::kMain},
+      {7.5e-8, 1.0e-7, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.role = stamp < 175
+                     ? navigation_planning::CandidateRole::kMain
+                     : navigation_planning::CandidateRole::kBackup;
+    point.trajectory_time_s = static_cast<double>(stamp - 100) * 1.0e-9;
+    return true;
+  };
+
+  const auto main = candidate.sample(150);
+  ASSERT_TRUE(main.has_value());
+  EXPECT_EQ(main->role, navigation_planning::CandidateRole::kMain);
+  const auto backup = candidate.sample(175);
+  ASSERT_TRUE(backup.has_value());
+  EXPECT_EQ(backup->role, navigation_planning::CandidateRole::kBackup);
+
+  candidate.backup_available = false;
+  EXPECT_FALSE(candidate.sample(175).has_value());
+}
+
+TEST(PlanningCandidate, RequiresExplicitTerminalStopSemanticForMainWithBackup) {
+  auto candidate = validCandidate();
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.backup_start_time_s = 7.5e-8;
+  candidate.certificates.terminal_stop = true;
+  candidate.terminal_stop = true;
+  candidate.role_schedule = {
+      {0.0, 7.5e-8, navigation_planning::CandidateRole::kMain},
+      {7.5e-8, 1.0e-7, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.role = stamp < 175
+                     ? navigation_planning::CandidateRole::kMain
+                     : navigation_planning::CandidateRole::kBackup;
+    point.trajectory_time_s = static_cast<double>(stamp - 100) * 1.0e-9;
+    return true;
+  };
+  EXPECT_TRUE(candidate.valid());
+  EXPECT_TRUE(navigation_planning::certifiedTerminalStopAtEndpoint(candidate));
+
+  candidate.certificates.terminal_stop = false;
+  EXPECT_FALSE(candidate.valid());
+}
+
+TEST(PlanningCandidate, AdmissionRequiresDerivedMainReserve) {
+  auto candidate = validCandidate();
+  candidate.start_wall_time_s = 10.0;
+  candidate.duration_s = 2.0;
+  candidate.backup_start_time_s = 1.0;
+  refreshEndpointMetadata(candidate);
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.certificates.terminal_stop = false;
+  candidate.role_schedule = {
+      {0.0, 1.0, navigation_planning::CandidateRole::kMain},
+      {1.0, 2.0, navigation_planning::CandidateRole::kBackup}};
+  candidate.evaluator = [](std::int64_t stamp,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.trajectory_time_s = static_cast<double>(stamp) * 1.0e-9 - 10.0;
+    point.role = point.trajectory_time_s < 1.0
+        ? navigation_planning::CandidateRole::kMain
+        : navigation_planning::CandidateRole::kBackup;
+    return true;
+  };
+  const double exactly_reserved_now =
+      candidate.start_wall_time_s + candidate.backup_start_time_s -
+      navigation_planning::PlanningTimingContract::kMinimumMainReserveS;
+  EXPECT_TRUE(navigation_planning::candidateHasRequiredMainReserve(
+      candidate, exactly_reserved_now));
+  EXPECT_FALSE(navigation_planning::candidateHasRequiredMainReserve(
+      candidate, exactly_reserved_now + 2.0e-9));
+}
+
+TEST(PlanningCandidate, CertifiedTerminalStopIsReserveExempt) {
+  auto candidate = validCandidate();
+  ASSERT_TRUE(navigation_planning::certifiedTerminalStopAtEndpoint(candidate));
+  EXPECT_TRUE(navigation_planning::candidateHasRequiredMainReserve(
+      candidate, 100.0));
+  candidate.evaluator = [](std::int64_t,
+                           navigation_planning::TrajectoryPoint& point) {
+    point.velocity_world.x() = 0.01;
+    point.trajectory_time_s = 1.0e-7;
+    return true;
+  };
+  EXPECT_FALSE(navigation_planning::candidateHasRequiredMainReserve(
+      candidate, 100.0));
+}
+
+TEST(PlanningCandidate, FinalRoleWinsWhenProducerOffsetRoundsOneNanosecondShort) {
+  auto candidate = validCandidate();
+  candidate.duration_s = 0.000019999400017999461;
+  candidate.backup_available = true;
+  candidate.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  candidate.certificates.terminal_stop = false;
+  // This reproduces a producer role endpoint whose independently rounded
+  // offset is 19,999 ns while the declared duration rounds to 20,000 ns.
+  candidate.role_schedule = {
+      {0.0, 0.000009, navigation_planning::CandidateRole::kMain},
+      {0.000009, 0.0000199994, navigation_planning::CandidateRole::kBackup}};
+  const auto role = candidate.scheduledRole(candidate.duration_s);
+  ASSERT_TRUE(role.has_value());
+  EXPECT_EQ(*role, navigation_planning::CandidateRole::kBackup);
+}
+
+TEST(PlanningOutcome, SuccessRequiresCandidateAndFailureDoesNotCarryOne) {
+  navigation_planning::PlanningOutcome success;
+  success.outcome = navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle;
+  success.failure_stage = navigation_planning::PlanningFailureStage::kNone;
+  success.failure_reason = navigation_planning::PlanningFailureReason::kNone;
+  success.candidate = validCandidate();
+  EXPECT_TRUE(success.valid());
+
+  navigation_planning::PlanningOutcome failure;
+  failure.outcome = navigation_planning::CompletePlanningOutcome::kNoCompleteBundle;
+  failure.failure_stage = navigation_planning::PlanningFailureStage::kDeadline;
+  failure.failure_reason =
+      navigation_planning::PlanningFailureReason::kNoCompleteBundleAtDeadline;
+  EXPECT_TRUE(failure.valid());
+  failure.candidate = validCandidate();
+  EXPECT_FALSE(failure.valid());
+
+  navigation_planning::PlanningOutcome retained;
+  retained.outcome =
+      navigation_planning::CompletePlanningOutcome::kRetainedCommittedBundle;
+  retained.failure_stage = navigation_planning::PlanningFailureStage::kNone;
+  retained.failure_reason = navigation_planning::PlanningFailureReason::kNone;
+  EXPECT_TRUE(retained.valid());
+}
+
+TEST(RouteBoundary, RequiresExplicitVolumeEventAndUnitTangents) {
+  navigation_planning::RouteBoundaryConstraint constraint;
+  constraint.admissible_volume.minimum = Eigen::Vector3d(-1.0, -1.0, -1.0);
+  constraint.admissible_volume.maximum = Eigen::Vector3d(1.0, 1.0, 1.0);
+  constraint.incoming_tangent = Eigen::Vector3d::UnitX();
+  constraint.outgoing_tangent = Eigen::Vector3d::UnitY();
+  constraint.corner_speed_mps = 2.0;
+  EXPECT_TRUE(constraint.valid());
+  EXPECT_TRUE(constraint.contains(Eigen::Vector3d::Zero()));
+  EXPECT_TRUE(constraint.contains(Eigen::Vector3d(1.0 + 5.0e-7, 0.0, 0.0)));
+  EXPECT_FALSE(constraint.contains(Eigen::Vector3d(1.0 + 2.0e-6, 0.0, 0.0)));
+  EXPECT_FALSE(constraint.contains(Eigen::Vector3d(2.0, 0.0, 0.0)));
+
+  navigation_planning::RouteBoundaryEvent event;
+  event.boundary_stamp_ns = 100;
+  event.position_world = Eigen::Vector3d::Zero();
+  event.incoming_tangent = Eigen::Vector3d::UnitX();
+  event.outgoing_tangent = Eigen::Vector3d::UnitY();
+  event.corner_speed_mps = 2.0;
+  EXPECT_TRUE(event.valid());
+  event.outgoing_tangent = Eigen::Vector3d(2.0, 0.0, 0.0);
+  EXPECT_FALSE(event.valid());
+}
+
+TEST(PlanningRequest, KeyPinsEveryMutableIdentityAndStartMode) {
+  navigation_planning::PlanningKey key;
+  key.localization_epoch = 3;
+  key.goal_epoch = 4;
+  key.request_id = 5;
+  key.route_revision = 6;
+  key.committed_bundle_generation = 7;
+  key.pinned_world_generation = 8;
+  key.pinned_world_revision = 9;
+  key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
+  key.anchor_stamp_ns = 10;
+  key.dynamics_hash = 11;
+  EXPECT_TRUE(key.valid());
+  key.anchor_stamp_ns = 0;
+  EXPECT_FALSE(key.valid());
+}
+
+TEST(PlanningHistory, ZeroGenerationCannotCarryPriorCommandVelocity) {
+  navigation_planning::PlanningHistory history;
+  history.previous_velocity_world = Eigen::Vector3d(0.2, 0.0, 0.0);
+  EXPECT_FALSE(history.valid());
+
+  history.previous_bundle_generation = 11;
+  EXPECT_TRUE(history.valid());
+}
+
+TEST(ExecutionAnchor, RequiresAnImmutableFutureCommandBoundary) {
+  navigation_planning::ExecutionAnchor anchor;
+  anchor.active_bundle_generation = 11;
+  anchor.execution_lineage_version = 12;
+  anchor.localization_epoch = 3;
+  anchor.goal_epoch = 7;
+  anchor.request_id = 9;
+  anchor.request_stamp_ns = 100;
+  anchor.activation_stamp_ns = 500;
+  anchor.active_main_end_ns = 900;
+  anchor.active_bundle_end_ns = 1000;
+  anchor.command_world = {3, 4, 8, 120};
+  EXPECT_TRUE(anchor.valid());
+
+  anchor.execution_lineage_version = 0;
+  EXPECT_FALSE(anchor.valid());
+  anchor.execution_lineage_version = 12;
+
+  anchor.active_main_end_ns = 499;
+  EXPECT_FALSE(anchor.valid());
+}
+
+TEST(PlanningRequest, CommittedFutureStateCannotOmitOrMoveItsAnchor) {
+  navigation_planning::PlanningRequest request;
+  request.key.localization_epoch = 3;
+  request.key.goal_epoch = 7;
+  request.key.request_id = 9;
+  request.key.route_revision = 6;
+  request.key.committed_bundle_generation = 11;
+  request.key.pinned_world_generation = 4;
+  request.key.pinned_world_revision = 8;
+  request.key.start_mode =
+      navigation_planning::PlanningStartMode::kCommittedFutureState;
+  request.key.anchor_stamp_ns = 100;
+  request.key.dynamics_hash = 12;
+  request.goal.localization_epoch = 3;
+  request.goal.goal_epoch = 7;
+  request.goal.request_id = 9;
+  request.goal.mission_id = "mission";
+
+  EXPECT_FALSE(request.startModeContractValid());
+  EXPECT_FALSE(request.valid());
+
+  navigation_planning::ExecutionAnchor anchor;
+  anchor.active_bundle_generation = 11;
+  anchor.execution_lineage_version = 12;
+  anchor.localization_epoch = 3;
+  anchor.goal_epoch = 7;
+  anchor.request_id = 9;
+  anchor.request_stamp_ns = 100;
+  anchor.activation_stamp_ns = 500;
+  anchor.active_main_end_ns = 900;
+  anchor.active_bundle_end_ns = 1000;
+  anchor.command_world = {3, 4, 8, 120};
+  request.anchor = anchor;
+  request.activation_stamp_ns = 500;
+  EXPECT_TRUE(request.startModeContractValid());
+  EXPECT_FALSE(request.valid());
+
+  // A committed-future successor is anchored to the currently executing
+  // predecessor.  Its mission/waypoint request identity is carried by the
+  // request key and may legitimately advance at the handoff boundary.
+  request.anchor->goal_epoch = 6;
+  request.anchor->request_id = 8;
+  EXPECT_TRUE(request.startModeContractValid());
+  request.anchor->goal_epoch = request.key.goal_epoch;
+  request.anchor->request_id = request.key.request_id;
+
+  request.activation_stamp_ns = 501;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.activation_stamp_ns = 500;
+
+  request.anchor->active_bundle_generation = 10;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.anchor->active_bundle_generation = request.key.committed_bundle_generation;
+
+  request.anchor->command_world.generation = 5;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.anchor->command_world.generation = request.key.pinned_world_generation;
+
+  request.activation_stamp_ns = request.key.anchor_stamp_ns;
+  EXPECT_FALSE(request.startModeContractValid());
+  request.activation_stamp_ns = 500;
+
+  request.anchor->request_id = 10;
+  EXPECT_TRUE(request.startModeContractValid());
+  request.anchor->request_id = request.key.request_id;
+  request.anchor->goal_epoch = 8;
+  EXPECT_TRUE(request.startModeContractValid());
+}
+
+TEST(PlanningRequest, RequiresCanonicalRouteValueAndRejectsMalformedSnapshot) {
+  navigation_planning::PlanningRequest request;
+  EXPECT_FALSE(request.route_snapshot.valid());
+  EXPECT_FALSE(request.valid());
+
+  request.route_snapshot.mission_id = "mission";
+  request.route_snapshot.frame = "lio_odom";
+  request.route_snapshot.route_revision = 1U;
+  request.route_snapshot.request_id = 1U;
+  request.route_snapshot.waypoints.emplace_back();
+  EXPECT_FALSE(request.route_snapshot.valid());
+  EXPECT_FALSE(request.valid());
+}
+
+TEST(PlanningBudget, UsesSteadyClockAndCancellation) {
+  navigation_planning::PlanningBudget budget;
+  budget.deadline = navigation_planning::PlanningBudget::Clock::now() +
+                    std::chrono::seconds(1);
+  EXPECT_FALSE(budget.exhausted());
+  std::stop_source source;
+  budget.cancellation = source.get_token();
+  source.request_stop();
+  EXPECT_TRUE(budget.cancelled());
+  EXPECT_TRUE(budget.exhausted());
+}
+
+TEST(KinematicState, RequiresTimeFrameAndYawContract) {
+  navigation_planning::KinematicState state;
+  state.source_stamp_ns = 100;
+  state.receive_stamp_ns = 120;
+  state.localization_epoch = 3;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+  state.yaw_rad = 0.25;
+  EXPECT_TRUE(state.finite());
+
+  state.receive_stamp_ns = 0;
+  EXPECT_FALSE(state.finite());
+}
+
+TEST(KinematicState, QuaternionFiniteCheckIsStableForLargeFiniteCoefficients) {
+  navigation_planning::KinematicState state;
+  state.source_stamp_ns = 100;
+  state.receive_stamp_ns = 120;
+  state.localization_epoch = 3;
+  state.world_frame_id = "lio_odom";
+  state.body_frame_id = "base_link";
+  state.yaw_rad = 0.25;
+
+  state.orientation_world_body = Eigen::Quaterniond(1.0e200, 1.0e200,
+                                                      -1.0e200, 1.0e200);
+  EXPECT_FALSE(state.finite());
+
+  state.orientation_world_body = Eigen::Quaterniond(0.0, 0.0, 0.0, 0.0);
+  EXPECT_FALSE(state.finite());
+}
+
+TEST(DynamicLimits, HasOneProductOwnedValidationContract) {
+  navigation_planning::DynamicLimits valid;
+  valid.vehicle.maximum_velocity_mps = 12.0;
+  valid.vehicle.maximum_acceleration_mps2 = 5.0;
+  valid.vehicle.maximum_jerk_mps3 = 30.0;
+  valid.intent.requested_cruise_speed_mps = 7.0;
+  EXPECT_TRUE(valid.valid());
+
+  navigation_planning::DynamicLimits invalid = valid;
+  invalid.vehicle.maximum_acceleration_mps2 = 0.0;
+  EXPECT_FALSE(invalid.valid());
+}
+
+TEST(TrajectorySnapshot, PreservesRoleAndFinishedStateAtProductBoundary) {
+  navigation_planning::TrajectorySnapshot snapshot;
+  snapshot.start_wall_time_s = 10.0;
+  snapshot.duration_s = 2.0;
+  snapshot.evaluator = [](double time_s, navigation_planning::TrajectoryPoint& point) {
+    point.position_world.x() = time_s;
+    point.trajectory_time_s = time_s;
+    return true;
+  };
+  snapshot.role_evaluator = [](double time_s) {
+    return time_s >= 1.0 ? navigation_planning::CandidateRole::kBackup
+                         : navigation_planning::CandidateRole::kMain;
+  };
+
+  navigation_planning::TrajectoryPoint main_point;
+  ASSERT_TRUE(snapshot.sample(0.5, main_point));
+  EXPECT_EQ(main_point.role, navigation_planning::CandidateRole::kMain);
+  EXPECT_FALSE(main_point.finished);
+
+  navigation_planning::TrajectoryPoint backup_point;
+  ASSERT_TRUE(snapshot.sample(2.0, backup_point));
+  EXPECT_EQ(backup_point.role, navigation_planning::CandidateRole::kBackup);
+  EXPECT_TRUE(backup_point.finished);
+}
+
+}  // namespace

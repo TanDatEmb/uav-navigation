@@ -1,0 +1,1 @@
+Graphviz SVG views are rendered by `tools/build_views.py`. Mermaid CLI (`mmdc`) is not available in the captured tool environment; four `.mmd` sequence sources are retained but intentionally not claimed rendered.

@@ -1,0 +1,100 @@
+fast_lio:
+  ros__parameters:
+    frames:
+      odom: lio_odom
+      base: base_link
+      imu: livox_imu_frame
+      lidar: livox_frame
+    input:
+      lidar_topic: /lidar/points
+      imu_topic: /lidar/imu
+      visibility_points_topic: /lidar/free_space_endpoints
+      lidar_frame: livox_frame
+      imu_frame: livox_imu_frame
+      lidar_message_type: pointcloud2
+      qos_reliability: best_effort
+    timing:
+      lidar_mode: simultaneous_scan
+      clock_domain: simulation_time
+      livox_timestamp_policy: require_header_match
+      max_imu_gap_s: 0.02
+      reject_timestamp_regression: true
+    initial_prior:
+      source: zero
+      context: ground_startup
+      source_frame: lio_odom
+      source_frame_transform: same_frame
+      components: { position: true, velocity: true, attitude: yaw_only }
+    tracking:
+      maximum_recoverable_imu_gap_s: 0.05
+      recovery_confirmation_updates: 3
+      discontinuity_covariance_inflation: 10.0
+    lifecycle:
+      maximum_initial_map_registration_failures: 10
+      lost_after_registration_failures: 5
+      degraded_after_lidar_gap_s: 0.2
+      lost_after_lidar_gap_s: 1.0
+    extrinsic:
+      translation_imu_lidar: [-0.011, -0.02329, 0.04412]
+      rotation_imu_lidar_xyzw: [0.0, 0.0, 0.0, 1.0]
+    initialization:
+      minimum_imu_samples: 200
+      require_stationary: true
+    preprocessing:
+      minimum_range_m: 0.5
+      maximum_range_m: 40.0
+      scan_voxel_size_m: 0.2
+    registration:
+      maximum_iterations: 4
+      minimum_translation_observability_ratio: 0.01
+      correspondence_parallel_threads: 3
+    mapping:
+      registration_map: { voxel_size_m: 0.3 }
+      local_map:
+        half_extent_m: [30.0, 30.0, 15.0]
+        crop_trigger_distance_m: 5.0
+        absolute_map_point_guard: 250000
+    output:
+      # FAST-LIO already deskews, filters, and publishes this cloud in the
+      # odometry/world frame for the planner backend ROG-Map input boundary.
+      publish_registered_points: true
+    propagated_odometry:
+      publish_rate_hz: 50.0
+      imu_ingress_capacity: 4096
+      imu_history_duration_s: 1.0
+      # Keep propagated execution inside the existing 0.50 s stream stale
+      # budget. The 0.25 s value rejected short correction scheduling gaps
+      # even while fresh IMU propagation and external odometry remained
+      # current.
+      maximum_correction_age_s: 0.50
+    runtime:
+      imu_queue_capacity: 4096
+      lidar_queue_capacity: 16
+      maximum_processing_lag_s: 0.2
+      overload_policy: fail
+px4_external_odometry_bridge:
+  ros__parameters:
+    timing:
+      # The bridge receives odometry stamped by the simulator ROS clock.  This
+      # must agree with use_sim_time:=true; PX4 transport synchronization is
+      # applied at the DDS boundary and is not duplicated here.
+      clock_domain: simulation_time
+    external_odometry:
+      maximum_age_s: 0.5
+      diagnostics_maximum_age_s: 2.0
+      position_jump_m: 0.75
+      orientation_jump_rad: 0.35
+      maximum_expected_speed_mps: 10.0
+      maximum_expected_angular_rate_rad_s: 6.0
+      minimum_continuity_dt_s: 0.0001
+      maximum_continuity_dt_s: 0.5
+px4_odometry_bridge:
+  ros__parameters:
+    reset:
+      maximum_metadata_age_s: 0.1
+      maximum_event_association_gap_s: 0.005
+      stable_samples_after_reset: 3
+simulation:
+  ros__parameters:
+    world: px4_lio_smoke
+    model: x500_mid360

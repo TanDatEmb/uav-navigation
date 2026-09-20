@@ -1,0 +1,36 @@
+digraph G {
+ graph [rankdir=LR, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.65", fontname="DejaVu Sans"];
+ node [fontname="DejaVu Sans",fontsize=10,margin="0.12,0.08"];
+ edge [fontname="DejaVu Sans",fontsize=9,arrowsize=0.75];
+runtime [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="NavigationRuntimeNode
+active_goal_ (desired)
+executing_goal_ (physical identity)"];
+pending [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="PendingGoalHandoffOwner
+one deferred goal slot"];
+episode [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="ExecutionEpisode
+phase + recovery snapshot + latch"];
+timeline [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="ExecutionTimelineStore
+active + pending immutable bundle"];
+sampler [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="CommandSampler
+read-only time/role sample"];
+worker [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="PlanningWorker
+active + latest pending job"];
+mode [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="NavigationMode
+admitted NavigationCommand cache"];
+mission [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="MissionController
+route progress / waypoint / request"];
+executor [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="NavigationModeExecutor
+API handover + status confirmation"];
+runtime -> pending [label="owns",style=solid];
+runtime -> episode [label="owns",style=solid];
+runtime -> timeline [label="owns",style=solid];
+runtime -> sampler [label="owns",style=solid];
+runtime -> worker [label="owns",style=solid];
+runtime -> mode [label="NavigationCommand async ROS",style=dashed];
+mode -> runtime [label="NavigationGoal / ModeStatus async ROS",style=dashed];
+mode -> mission [label="owns / calls under trajectory lock",style=solid];
+mode -> executor [label="Hold request callback",style=solid];
+timeline -> sampler [label="snapshot read",style=dotted];
+episode -> runtime [label="snapshot decision input",style=dotted];
+legend [shape=note,label="Legend: solid = ownership/synchronous call; dashed = async handoff/message; dotted = read-only snapshot or observation. Desired, executing, committed, cached and PX4 vehicle state are distinct."];
+}

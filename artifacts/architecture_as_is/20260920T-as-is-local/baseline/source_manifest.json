@@ -1,0 +1,4199 @@
+{
+  "captured_utc": "2026-09-20T13:02:50.229317+00:00",
+  "repository_root": "/home/letandat/Dev/uav-navigation",
+  "head": "9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2",
+  "branch": "codex/close-proven-findings",
+  "detached": false,
+  "worktree_status_porcelain_v2": "# branch.oid 9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2\n# branch.head codex/close-proven-findings\n# branch.upstream origin/codex/close-proven-findings\n# branch.ab +0 -0\n1 .D N... 100644 100644 000000 716b8204170127449e81f6bbabf7f32182002def 716b8204170127449e81f6bbabf7f32182002def .artifacts/review/sitl-stabilization-20260908/AGENT_REPORT.md\n1 .D N... 100644 100644 000000 d86b1cba7ddef4cddc83ff1b210d10c3cdce48e7 d86b1cba7ddef4cddc83ff1b210d10c3cdce48e7 .artifacts/review/sitl-stabilization-20260908/SITL_CAMPAIGN_REPORT.md\n1 .D N... 100644 100644 000000 bed73a2bea972fbbc8f1250e179a914cfabd1e0f bed73a2bea972fbbc8f1250e179a914cfabd1e0f .artifacts/review/sitl-stabilization-20260908/SITL_MATRIX.md\n1 .M N... 100644 100644 100644 18c811fdcf96c0efd073c7d5b7a4512dd2fab251 18c811fdcf96c0efd073c7d5b7a4512dd2fab251 AGENTS.md\n1 .M N... 100644 100644 100644 9245ad17657bbb3cc721dd8028f630570c7c8a50 9245ad17657bbb3cc721dd8028f630570c7c8a50 docs/architecture/continuous_waypoint_trajectory_plan.md\n1 .M N... 100644 100644 100644 6453c7587a9780ab393febe7f696e4fb9e3e4139 6453c7587a9780ab393febe7f696e4fb9e3e4139 docs/architecture/runtime_safety_decision_ledger.md\n1 .M N... 100644 100644 100644 e9734570906d5083edf2a76d8c2e4e047ebeffff e9734570906d5083edf2a76d8c2e4e047ebeffff docs/reports/super_architecture_comparison_2026-09-05.md\n1 .M N... 100644 100644 100644 c27756d8e4bdb5195701ca3a8a8ddc6c2a6ad1a4 c27756d8e4bdb5195701ca3a8a8ddc6c2a6ad1a4 docs/validation/navigation_reimplementation_review.md\n1 .M N... 100644 100644 100644 23a97703be6a8d8c047169ca05841ab631c7a8f7 23a97703be6a8d8c047169ca05841ab631c7a8f7 src/contracts/navigation_contracts/msg/NavigationCommand.msg\n1 .M N... 100644 100644 100644 144b8d305cf3140c39a79ce9c206b1ea660b0ca5 144b8d305cf3140c39a79ce9c206b1ea660b0ca5 src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp\n1 .M N... 100644 100644 100644 de059c5d1b87baa88dc6daa5c563544a28066237 de059c5d1b87baa88dc6daa5c563544a28066237 src/planning/navigation_planning/include/navigation_planning/planner_diagnostics.hpp\n1 .M N... 100644 100644 100644 c42ea52d01a9d221c4680a973b02e5fbec46be0b c42ea52d01a9d221c4680a973b02e5fbec46be0b src/planning/navigation_planning/include/navigation_planning/planning_request.hpp\n1 .M N... 100644 100644 100644 3879430505c8163a4bfd890263963bdc97051e80 3879430505c8163a4bfd890263963bdc97051e80 src/planning/navigation_planning_backend/include/data_structure/cmd_traj.h\n1 .M N... 100644 100644 100644 68cd14429c29d82fb9a6e80999ef4c7c1538b2a1 68cd14429c29d82fb9a6e80999ef4c7c1538b2a1 src/planning/navigation_planning_backend/include/navigation_planning_backend/planner_facade.hpp\n1 .M N... 100644 100644 100644 ad40bbcea560bb25673e622ee2ffe50fdf9a4c57 ad40bbcea560bb25673e622ee2ffe50fdf9a4c57 src/planning/navigation_planning_backend/include/planner_core/config.hpp\n1 .M N... 100644 100644 100644 d6d95aea01fb0e6dde0b4efc0a5ee39b20f8e6e4 d6d95aea01fb0e6dde0b4efc0a5ee39b20f8e6e4 src/planning/navigation_planning_backend/include/planner_core/log_utils.hpp\n1 .M N... 100644 100644 100644 a56c1a0e8a25c2cfed125e10e7f4c871ce8f06ff a56c1a0e8a25c2cfed125e10e7f4c871ce8f06ff src/planning/navigation_planning_backend/include/planner_core/pass_through_terminal_velocity.hpp\n1 .M N... 100644 100644 100644 4606928dcb4432704280a45ff6461ea941019488 4606928dcb4432704280a45ff6461ea941019488 src/planning/navigation_planning_backend/include/planner_core/planner.hpp\n1 .M N... 100644 100644 100644 dbf77e00d63a1a76c61d1d275e683a27b8e40850 dbf77e00d63a1a76c61d1d275e683a27b8e40850 src/planning/navigation_planning_backend/src/planner_core/planner.cpp\n1 .M N... 100644 100644 100644 d93aec46b2c692bb5dacee4d44776fe6b101c527 d93aec46b2c692bb5dacee4d44776fe6b101c527 src/planning/navigation_planning_backend/src/planner_facade.cpp\n1 .M N... 100644 100644 100644 905eecefdda98548068a5d4ce73331eb1fd31f6f 905eecefdda98548068a5d4ce73331eb1fd31f6f src/planning/navigation_planning_backend/test/test_planner_facade.cpp\n1 .M N... 100644 100644 100644 4266714073b9e0fcaef4ab9e1e916716008e74eb 4266714073b9e0fcaef4ab9e1e916716008e74eb src/planning/navigation_planning_backend/test/test_trajectory.cpp\n1 .M N... 100644 100644 100644 76e3eb300ce2b596f200f8b2d42af5d2c3f2506e 76e3eb300ce2b596f200f8b2d42af5d2c3f2506e src/runtime/navigation_runtime/CMakeLists.txt\n1 .M N... 100644 100644 100644 b67d5d33e875cc4470d55aec974584991ce1cd70 b67d5d33e875cc4470d55aec974584991ce1cd70 src/runtime/navigation_runtime/config/planner.yaml\n1 .M N... 100644 100644 100644 84ed04185dd8484e52f4e7b8f0695f4aae4bef51 84ed04185dd8484e52f4e7b8f0695f4aae4bef51 src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp\n1 .M N... 100644 100644 100644 63f0b8ca835d1f6a28cc8bdc57d14c9c8c0a3561 63f0b8ca835d1f6a28cc8bdc57d14c9c8c0a3561 src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp\n1 .M N... 100644 100644 100644 01ee8f5866afd27e7ac85a741da7c744d16e3464 01ee8f5866afd27e7ac85a741da7c744d16e3464 src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp\n1 .M N... 100644 100644 100644 a4a4d01841e91777e149652362d1c9fee9e4ad40 a4a4d01841e91777e149652362d1c9fee9e4ad40 src/runtime/navigation_runtime/src/navigation_runtime_node.cpp\n1 .M N... 100644 100644 100644 08cb1196918e6ade3d208d2645ac95a2dfa6f49f 08cb1196918e6ade3d208d2645ac95a2dfa6f49f src/runtime/navigation_runtime/test/test_execution_episode.cpp\n1 .M N... 100644 100644 100644 2e930ca8a0934da7c658befc98b20af3e96dbb7a 2e930ca8a0934da7c658befc98b20af3e96dbb7a src/runtime/navigation_runtime/test/test_navigation_runtime_terminal_monitor.cpp\n1 .M N... 100644 100644 100644 b53db6954827f9acb40841f153c7cd6eb4c59720 b53db6954827f9acb40841f153c7cd6eb4c59720 src/runtime/navigation_runtime/test/test_planner_fsm.cpp\n1 .M N... 100644 100644 100644 9e9bd23f9f27b38672090ae0df10cf00311e1b40 9e9bd23f9f27b38672090ae0df10cf00311e1b40 src/runtime/navigation_runtime/test/test_planning_worker.cpp\n? artifacts/\n? docs/safety/\n? src/runtime/navigation_runtime/include/navigation_runtime/baseline_refinement.hpp\n? tools/validate_runtime_safety_ledger.py",
+  "unstaged_diff_sha256": "b66befd802d529c7846f5523bf96ab4678b6b67b6f222a9134f3f71be1077b2a",
+  "staged_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "unstaged_diff_bytes": 1815760,
+  "staged_diff_bytes": 0,
+  "remotes_redacted": [
+    {
+      "name": "remote.origin.url",
+      "url": "git@github.com:TanDatEmb/uav-navigation.git"
+    }
+  ],
+  "submodule_status": [
+    " 86d8239e962f6939e05c3737784f60c02fa884db src/external/px4_msgs (v1.17.0)",
+    " 4a3370f084ac6f1ef001a4afa2b007845ffd0837 src/external/px4_ros2_interface_lib (1.6.1-53-g4a3370f)"
+  ],
+  "source_files": 596,
+  "snapshot_scope": "first-party source/config/build/interface text under src and config, current safety contract/index, root agent contract and safety-ledger validator; excludes artifacts, runtime evidence, build products and external submodule payloads",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "14a3f8c999fca2e8a782a107f5b81c31cdd964ab75fe3e0beb4f836df9814adc",
+      "bytes": 1466,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "Makefile",
+      "sha256": "9092bdae8602fe257ad78167394e0b17d290112114370f9a6c4573284b2c3e13",
+      "bytes": 6684,
+      "lines": 108,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "README.md",
+      "sha256": "9b81f16ed138269bf888322fe709c575aa9248e6618874abd3d7def6c5798e72",
+      "bytes": 6755,
+      "lines": 172,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "sha256": "a69cb91b373e25b729baa464c1286ffc7a5220d50e8b1e724cb0ab50f8cb8780",
+      "bytes": 3029,
+      "lines": 28,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/common.yaml",
+      "sha256": "3ac3c068783a750089c275f85a1fe8f808db859ab00e816d11e1734eddfd3779",
+      "bytes": 1599,
+      "lines": 35,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/dataset.yaml",
+      "sha256": "45100bedfb2b130bcba813f929c167301fca38b8fea4c04d535f867e042f652b",
+      "bytes": 2381,
+      "lines": 75,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/external_mode.yaml",
+      "sha256": "457107fe6205ceb5f858bd290048e6d50ca64a99dc707d1626bca9a3a4733281",
+      "bytes": 935,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/external_mode_scenario.yaml",
+      "sha256": "e15e2a3ee5837adb0c5baab3562304ec579fbe9790ae44df42e2e25ce7c5d909",
+      "bytes": 1355,
+      "lines": 33,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/map_profiles.yaml",
+      "sha256": "3092b7087fe798354274ffdb25dadb35548117f98eeb94ed6a9b5de6bda415ee",
+      "bytes": 18126,
+      "lines": 311,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/mapping.yaml",
+      "sha256": "996245bd5fc51521648bafe408a52d588b3f9ba7c87964f61652443e79337ae6",
+      "bytes": 876,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/corridor.yaml",
+      "sha256": "2983c0ecccfebe42b3432bd4bbec38fce109727dc71d851f32a63a27f039dd69",
+      "bytes": 1011,
+      "lines": 33,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/external_mode_pillar.yaml",
+      "sha256": "75a32cf0639361b9dd5659c92b2af5c00687443a0ae92fabd24ce0a3be032e43",
+      "bytes": 1172,
+      "lines": 38,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/forest_clutter.yaml",
+      "sha256": "adc713f0d587d1ce9bacb2feaa202baf2f23f68e428cdba57f82e6a24147978f",
+      "bytes": 483,
+      "lines": 9,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_cross_obstacles.yaml",
+      "sha256": "48865bf0ed7d313c4d2f3117ecf135ab4d84e8ff614f01ccb63105af1f4101c1",
+      "bytes": 898,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_featured.yaml",
+      "sha256": "3d7a0fc1adb18c0db2060f74e0ebc984db388cc4f2ae0e985d17c471a3a6b73f",
+      "bytes": 1010,
+      "lines": 34,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_open.yaml",
+      "sha256": "0550cca63730aa1a6b140b87141224bb88477cb11eaaf8a5a1338dd157d7386c",
+      "bytes": 763,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_open_featured_core_60.yaml",
+      "sha256": "bf61ea1b9002cc985374f1790ad388fea6cedca08b62641cbad6d4c27ad8f297",
+      "bytes": 507,
+      "lines": 20,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_open_featured_core_60_pv.yaml",
+      "sha256": "832159367e41956de0134a83e3786d525444f00928605676768b1e53f08abde1",
+      "bytes": 516,
+      "lines": 20,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_open_featured_speed.yaml",
+      "sha256": "42176c07fc3446736c329fb5635d23b7256114aa7b94fb82a73343f0e4898037",
+      "bytes": 639,
+      "lines": 22,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_open_slow.yaml",
+      "sha256": "b4d4a4b3349cc751eb603ff166a75129c08236d993c419d10474aa0df6d8bd61",
+      "bytes": 771,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_three_pillars.yaml",
+      "sha256": "dc8d21bf56f788e458ebf2888e6401c3cfa38c0f5a71f5e1c88b82226373b91f",
+      "bytes": 1941,
+      "lines": 47,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_three_pillars_multiwaypoint.yaml",
+      "sha256": "5d794822d420e17ea2625089f558877c503677d8941c577403a696b774f134a3",
+      "bytes": 1498,
+      "lines": 50,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/long_three_pillars_speed.yaml",
+      "sha256": "1d3f443c3b564815f9cf1ede5f99c28ba8f231b51705e1e4a6338eb787e97cc6",
+      "bytes": 629,
+      "lines": 22,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/navigation_generalization.yaml",
+      "sha256": "44550ff4a764dbb739f401c867c9ba09fc321735f1334541b41e784bdaed48d1",
+      "bytes": 1612,
+      "lines": 25,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/no_path.yaml",
+      "sha256": "76ff820d9981b6b4bd927f8bfeee27114f1625952085ab2ccd9b62eb1faf9919",
+      "bytes": 758,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/occlusion.yaml",
+      "sha256": "32c32af6c6d2a40480fca5a498e54fdbf9e0059495bee5b5e7bb5bdcd80ad73c",
+      "bytes": 944,
+      "lines": 32,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/occlusion_degenerate.yaml",
+      "sha256": "5c129c4a8a1e9e2e358c096be1cdaf13b3dc96f6b226e8c05856cc5fd3aca545",
+      "bytes": 667,
+      "lines": 11,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/open.yaml",
+      "sha256": "8f721406bbe18ab538f97a35e9a2e3fe86fa5238987b7a2184798a67124516a4",
+      "bytes": 1030,
+      "lines": 34,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/pillar.yaml",
+      "sha256": "c94c504cdd3c78005ba2b41eb74cb05921ea913811c6f8af1594f75becf469aa",
+      "bytes": 933,
+      "lines": 34,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/recorded_replay.yaml",
+      "sha256": "23f0369c55c49c8873f7544cf5e48039ccb551b15a5d23db37700ad5f14769e6",
+      "bytes": 656,
+      "lines": 17,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/single_pillar_speed.yaml",
+      "sha256": "88c6fdaff04e0a7b96dd6fa920a71d5a028a52f406a3f6a23353af846cad9382",
+      "bytes": 508,
+      "lines": 20,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/single_pillar_speed_pv.yaml",
+      "sha256": "875d6e484f35591c646eff191a3185629e76205a36abaf2874990ecd4e82fc7c",
+      "bytes": 517,
+      "lines": 20,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/speed.yaml",
+      "sha256": "79a498427b67454ad17dfebd7478b57cd92a3139e04b481b36ede4fce79305a5",
+      "bytes": 760,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/t2_same_identity_renewal.yaml",
+      "sha256": "2775ffd4207693ba9aaa1b7664fb28da076f697f5583b1489ba1976850459699",
+      "bytes": 761,
+      "lines": 24,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/tunnel_irregular.yaml",
+      "sha256": "f29a7d204019e18bf3dff28e8d50d8825c2654277b6a88dd30d5efbdf65f4749",
+      "bytes": 484,
+      "lines": 9,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/missions/tunnel_smooth.yaml",
+      "sha256": "cb0cce9712bc892fd279456ae892d0ce60dc2c4a9d6b16f5a85a16e8deaa6b19",
+      "bytes": 481,
+      "lines": 9,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/offboard.yaml",
+      "sha256": "ec108a09ed7da1ad0eb5788e6b7da68934a4b3be6ed86eac1c3dc5ff8f9a2a42",
+      "bytes": 1038,
+      "lines": 14,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/planning_stability_qualification.yaml",
+      "sha256": "9c223331c6489217cb4a5bc451f404d045704330ce9626548fdfbae7cd1b5503",
+      "bytes": 2091,
+      "lines": 62,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "config/runtime/sim.yaml",
+      "sha256": "7a10d650dadf12198afe27e9844d2a0d1ccfeaf2fcdb084643a5459f653380bd",
+      "bytes": 3386,
+      "lines": 100,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "docs/safety/runtime_safety_current.md",
+      "sha256": "7fbb5bd9ed47e1447db34a573221bc9cf5b2c7e683133dd4237c872310a5c1fb",
+      "bytes": 38474,
+      "lines": 500,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "docs/safety/runtime_safety_index.md",
+      "sha256": "d079896204d467e2cb7dac9906ee753e91ee0b6a8df5259633ffb590f42412dd",
+      "bytes": 265329,
+      "lines": 782,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/common/navigation_common/CMakeLists.txt",
+      "sha256": "d1e6de4a7e55ae6e17b1768debd162c04d9188cddeee42afe1c5e33c5b1569fd",
+      "bytes": 1461,
+      "lines": 39,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/common/navigation_common/include/navigation_common/bounded_spsc_queue.hpp",
+      "sha256": "389702a604bbd45636ab01fecaf0bbdc1c95e3e2240a8d5ec64086aab01d573b",
+      "bytes": 2193,
+      "lines": 57,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/common/navigation_common/include/navigation_common/frame_conventions.hpp",
+      "sha256": "0db918403099001e6ce901119f7344ec30013f73e66d8250ae2e3705856610d8",
+      "bytes": 1211,
+      "lines": 44,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/common/navigation_common/include/navigation_common/time.hpp",
+      "sha256": "b80ff0025bd3cdd4d0cb1cfefd018abcf9dd0a894d5a98af9156611020193f9a",
+      "bytes": 5772,
+      "lines": 150,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/common/navigation_common/package.xml",
+      "sha256": "fe320b400bdd229453090f079c2fd26eb0edee19c37c3ac9331c75939a8c2b83",
+      "bytes": 672,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/common/navigation_common/test/test_navigation_common.cpp",
+      "sha256": "a7a4f099d71e7b52dafe54cba32a40381ed7f7950678754b770fb09b786537c0",
+      "bytes": 4331,
+      "lines": 104,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/CMakeLists.txt",
+      "sha256": "64099515457d1e8107a3158d4724b724489674795b54574dadd1b4354738f99b",
+      "bytes": 1575,
+      "lines": 44,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/README.md",
+      "sha256": "03821c3c9cbcf086686a2ad547ea4542f6fba58f4cfc6f1a84c7c2865f5d3fb8",
+      "bytes": 902,
+      "lines": 19,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/include/navigation_contracts/command_safety_contract.hpp",
+      "sha256": "3ea521e5ae5654403f3c3fd59a89fad58c38ca249b9fc828753ed69b1f5e36f5",
+      "bytes": 1140,
+      "lines": 27,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/include/navigation_contracts/execution_state_freshness.hpp",
+      "sha256": "6a0f3c80b202ddd27b16a895ec09031a3f50c4502d8d22ccb93e0195f3ed4612",
+      "bytes": 3230,
+      "lines": 82,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/include/navigation_contracts/navigation_command_contract.hpp",
+      "sha256": "d307efcbb23ab85cf15011b92a2fa1eed72ed6baeb437990535baa3af4d01404",
+      "bytes": 6351,
+      "lines": 129,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/include/navigation_contracts/odometry_validity.hpp",
+      "sha256": "5e0f6a7cc205cd30496d13b3ceac47f44fb342557cec570c87cd489b5fc3414a",
+      "bytes": 528,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp",
+      "sha256": "5fae04e0d3727b431780394acb61db88a59ccb839f468defbc8161062472e664",
+      "bytes": 7083,
+      "lines": 150,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/msg/EstimatorHealth.msg",
+      "sha256": "da45fa875a847a578a04edce1e82a7c580b2d31d891b35db2f37d461f14822e5",
+      "bytes": 709,
+      "lines": 25,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/msg/NavigationCommand.msg",
+      "sha256": "da4af90527e666e7803da7e5f09b07690acad362790e76e38c52fe7c6798c14e",
+      "bytes": 4063,
+      "lines": 116,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/msg/NavigationGoal.msg",
+      "sha256": "27afee4a9a74f982d1f54b208fb5501be4a98846848b1212cab484a2b1d722f1",
+      "bytes": 632,
+      "lines": 20,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/msg/NavigationModeStatus.msg",
+      "sha256": "b3109274e1b233c9ce426d834861a28bd30d7c9b015e9489665557eecf513ee0",
+      "bytes": 1092,
+      "lines": 42,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/msg/PropagatedOdometry.msg",
+      "sha256": "d1fe81e316af6ae258dd0e4243aeab9fef04ae16031e72964482f22288507716",
+      "bytes": 319,
+      "lines": 7,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/msg/RegisteredScan.msg",
+      "sha256": "86d2dada4ce11fa92c458c45ea3e0523904d842886f0c774fd2739942ebcb514",
+      "bytes": 1888,
+      "lines": 43,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/msg/RouteSnapshot.msg",
+      "sha256": "4611f795d37b6f0fc531bccc8efa6799ecb00b415623539ce634bf9e3d66bbdb",
+      "bytes": 443,
+      "lines": 18,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/package.xml",
+      "sha256": "63054333e4d0a65981372d05b05d48d2a7355042f10578459cf922d718bb62fa",
+      "bytes": 842,
+      "lines": 20,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/srv/SampleOdometryAtTime.srv",
+      "sha256": "47c81ce3471bb4530c3cc1567049e6ac2ed000416616aa615de61142d85c7a2d",
+      "bytes": 280,
+      "lines": 12,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_contracts/test/test_typed_interfaces.cpp",
+      "sha256": "75afa2c659a39eb6ebb0142cfea60996dc041d8ed344f1d431f84778d8d6697e",
+      "bytes": 14044,
+      "lines": 297,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_mission/CMakeLists.txt",
+      "sha256": "48497a27444bd4d353d79e314766e916a9afbdb2df0b7ccdb8554646bdde0c4b",
+      "bytes": 1523,
+      "lines": 45,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_mission/README.md",
+      "sha256": "fc035c7b5b9e38b14c9fc59ca408e5df7f73808b3bf018f18a43577318aea58e",
+      "bytes": 409,
+      "lines": 9,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_mission/include/navigation_mission/mission.hpp",
+      "sha256": "698d285ad3028a2e856c73eb068c648a494eb4b632d6e664b261b07f6b9d239f",
+      "bytes": 3136,
+      "lines": 85,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_mission/include/navigation_mission/route_progress.hpp",
+      "sha256": "1a0b5406382f457245c3099106ff205627a496dacbdc9d9465a5feed76aecd4c",
+      "bytes": 6509,
+      "lines": 158,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_mission/package.xml",
+      "sha256": "a910af2169abf8f0c8f47390451e48931de8b3387e53226a8e1cf28f35cabe0c",
+      "bytes": 593,
+      "lines": 14,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_mission/src/mission.cpp",
+      "sha256": "bbf8c4b596066425451966d2da0520246a8141b014557a6b710cd2bbadaa8b9c",
+      "bytes": 7433,
+      "lines": 173,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_mission/src/route_progress.cpp",
+      "sha256": "e825cdc5f546251f4a7cf0a2d7ebaaf40a86e4f688310603beb08556503fa3f0",
+      "bytes": 22953,
+      "lines": 510,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/contracts/navigation_mission/test/test_mission_contract.cpp",
+      "sha256": "4a3f9b76c7fde3f4d3c5da943f4ea6731fd13af02a659dd56bc6403a6f13768c",
+      "bytes": 16259,
+      "lines": 413,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/CMakeLists.txt",
+      "sha256": "063087eb96fb8bb21b027120241a8c8b9e0401b157d61f5b19274809ac665f36",
+      "bytes": 3861,
+      "lines": 106,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/common/constants.hpp",
+      "sha256": "0e544442f4ec8706cf28dd0f60bef0a210ea07ee36ff9dfd621e92a6d3f71eca",
+      "bytes": 219,
+      "lines": 10,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/common/result.hpp",
+      "sha256": "4b7d62a851dd364b8c7d44e165175bbd14ae6dee71653adb42928f5ff0795723",
+      "bytes": 1528,
+      "lines": 69,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/common/status.hpp",
+      "sha256": "1476ed38b8bbc509719c4a090d6e53f3a3bc2ec6373b2ed79c6472f58fd3fa47",
+      "bytes": 970,
+      "lines": 44,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/common/types.hpp",
+      "sha256": "a587c927f76bdac5b1512553f899c2a0bee923db3c53128428b98b2875fc96e5",
+      "bytes": 162,
+      "lines": 10,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/configuration/estimator_config.hpp",
+      "sha256": "1bfe898aaa433ccdb41129172c4394891953fb5e0adafc169aced49836e587d6",
+      "bytes": 2111,
+      "lines": 58,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/deskew/deskew_mode.hpp",
+      "sha256": "d6359f2d616647a94efc13106cbc0dc9793386c3cf4198827d55edf6a4c41fee",
+      "bytes": 529,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/deskew/deskew_result.hpp",
+      "sha256": "d0c683cbfafeb4633805d35a0a3f7f7e603216436a5c220b11b3d507aa56f718",
+      "bytes": 561,
+      "lines": 26,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/deskew/scan_deskewer.hpp",
+      "sha256": "9e9192ad8c70cc414ebe30e4c2f0d48cc44e61da7bccd489a72a090f104cc07c",
+      "bytes": 1017,
+      "lines": 31,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/estimation/ikfom_estimator.hpp",
+      "sha256": "e65504baa65dbb2575304749905b6b1bcb945ce30323a62937b420a75822fd3f",
+      "bytes": 4047,
+      "lines": 108,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/estimation/ikfom_state.hpp",
+      "sha256": "487e7649a296a18229a7dbfe8b49af987502a1379f0cf5bd310f1d2d118b4528",
+      "bytes": 1526,
+      "lines": 45,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/estimation/imu_trajectory.hpp",
+      "sha256": "e40258f167f4f3e8684a3bc22e1c2a9bbd8647cbfbfa90627b998f69c8018b9d",
+      "bytes": 1562,
+      "lines": 47,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/estimation/manifold_state.hpp",
+      "sha256": "dee85893a650e71871eae2b6abd985a0d96046a81e1db2abe764a4855f65400a",
+      "bytes": 2933,
+      "lines": 64,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/estimation/state_estimate.hpp",
+      "sha256": "619571cafb4cc0999a79cd32bb0c6a74d9af87818449a67b47e59ed9455945c5",
+      "bytes": 429,
+      "lines": 18,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/geometry/frame.hpp",
+      "sha256": "9d6f4f1baf3248cfa322b360fb46de1d5218e0d1777b2da0ce9d5fb92cb7fab2",
+      "bytes": 494,
+      "lines": 23,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/geometry/frame_ids.hpp",
+      "sha256": "f7383848ce37069a746c5d328da3056a454da5d15ad621375d455f99611d613f",
+      "bytes": 423,
+      "lines": 12,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/geometry/pose_interpolator.hpp",
+      "sha256": "90c54e1217aa120af3c9d95a66dabd6c052cc4e6d9ee27627a4d0d97ea8bd3bf",
+      "bytes": 573,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/geometry/rigid_transform.hpp",
+      "sha256": "f752f82c3369ac439f2fc5209136f8d54449be0d631bf057aba2b55bea5f1af7",
+      "bytes": 1908,
+      "lines": 49,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/geometry/transform_utils.hpp",
+      "sha256": "2b10ee034c895a4f3b477a2363a9ea4f01e237447460e9e58566fc9ad6702ee8",
+      "bytes": 323,
+      "lines": 13,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/initialization/imu_initializer.hpp",
+      "sha256": "08c42375267b14abdb789758e22a81337a2e3c8c41291a7538fa69e958e6a113",
+      "bytes": 1299,
+      "lines": 43,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/initialization/initial_state_prior.hpp",
+      "sha256": "1d3d2e1d26226f8d88f5d874d567a974bb5fcfe67a3c21646a9255d0aa5b5f0f",
+      "bytes": 2041,
+      "lines": 60,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/initialization/initial_state_prior_applicator.hpp",
+      "sha256": "89f247ed2cf3a2e080835075068de61bdc2dd01999d37bf61f5ae3839146d37e",
+      "bytes": 786,
+      "lines": 24,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/initialization/initial_state_prior_policy.hpp",
+      "sha256": "99249b0a5da66ae0f8dee6bdc9f0d2b83c29e9468eede6b363925c4af4b6195a",
+      "bytes": 3481,
+      "lines": 86,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/initialization/initialization_result.hpp",
+      "sha256": "e978de10c3fac033a8d6a436ee0562edb61a88aa482f882d794bfc967e7657e5",
+      "bytes": 853,
+      "lines": 27,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/mapping/ikd_tree_registration_map.hpp",
+      "sha256": "20b61c03fa6d60466af3ec450d653a370a74facb55ecad78cec2acbd4ff0416c",
+      "bytes": 2434,
+      "lines": 79,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/mapping/local_map_manager.hpp",
+      "sha256": "c292f82ca17691aa4b24f567e385c5710d8d88388a9d68060d9bc2df50524bce",
+      "bytes": 1485,
+      "lines": 49,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/mapping/map_insertion_policy.hpp",
+      "sha256": "cdfef81889f1ba8172d16bbcf229cc6dfa5dc6585c09c386a8b5a2262eef3f5a",
+      "bytes": 616,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/mapping/registration_map.hpp",
+      "sha256": "ff3cf8b8c41d7f0300c6af44738492377139ceea1b1e20d7e35d34338f6f640b",
+      "bytes": 1561,
+      "lines": 48,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/navigation/angular_velocity_resolver.hpp",
+      "sha256": "39081244afd4993e4ae59a8d258799c3b8fc07f28d48e452ea62d69cd380097e",
+      "bytes": 976,
+      "lines": 32,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/navigation/base_link_covariance_projector.hpp",
+      "sha256": "79590f79d65ce94cc9ef1292e5442332f36f7f200bd4d2cff2f07e83cb0458f6",
+      "bytes": 2307,
+      "lines": 74,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/navigation/base_link_state_converter.hpp",
+      "sha256": "bf1dc76a17d412514d929d355f04c3af6b04e737c00af95ecdac76b18cf4b38c",
+      "bytes": 1304,
+      "lines": 41,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/navigation/kinematic_state_estimate.hpp",
+      "sha256": "c77274648d55bfb701716437c47e7e16d90bfb2ff7a05220f3f7e582446960bb",
+      "bytes": 635,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/navigation/rigid_body_state.hpp",
+      "sha256": "468451d214cf8c43dde888eafb79b210e7ccd9c49d921c0fc8ab02a4b829d15a",
+      "bytes": 2065,
+      "lines": 52,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/pipeline/estimator_diagnostics.hpp",
+      "sha256": "015f24d28af4aa9b3d079e0d88db5a33834f137192f477b84fa68ea44775e3af",
+      "bytes": 10750,
+      "lines": 317,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/pipeline/fast_lio_pipeline.hpp",
+      "sha256": "c851480d903b43dcce07bca2f10fba81f18105a1ad4912a858f62425f25c1ef6",
+      "bytes": 7042,
+      "lines": 153,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/pipeline/process_result.hpp",
+      "sha256": "275642243e647eb953f48d0221daf126f06a9cb1e230905b491c4686be09b7bc",
+      "bytes": 1764,
+      "lines": 47,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/preprocessing/point_cloud_preprocessor.hpp",
+      "sha256": "2da79ff724de9bb0a4b4bb60cc9c8d94e99b179d83cbaebbc6aba3ee8890ce7d",
+      "bytes": 979,
+      "lines": 41,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/preprocessing/point_filter.hpp",
+      "sha256": "884665153241ce8759dae73263991ea3efc8f210433754f3ed77d5ee4a99254c",
+      "bytes": 525,
+      "lines": 25,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/preprocessing/voxel_filter.hpp",
+      "sha256": "8dcaa023d9e887c4cbbc0c14a1a04b5d0209db7c7ddda5844b1856dc1ed5fb2b",
+      "bytes": 420,
+      "lines": 23,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/propagation/imu_state_propagator.hpp",
+      "sha256": "2e64ab01e307cf857cedbee3b7cfbc8f819fc7e46807f6fe731efc6a8334a8c4",
+      "bytes": 3846,
+      "lines": 116,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/registration/linearized_measurement.hpp",
+      "sha256": "932309ebdf529060ed53d8b02bd8d1e8a696bacb7356af56f03c1f286d4ee514",
+      "bytes": 500,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/registration/plane_estimator.hpp",
+      "sha256": "112924f50cc8f1cbe225fbf4bf48b8acf78bff0b3de7282b6eb24e45261ccb57",
+      "bytes": 857,
+      "lines": 36,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/registration/residual_builder.hpp",
+      "sha256": "b8e914c505eaf30323dfbf09471b4842b406cc66bcd6cd9306a987cbac490397",
+      "bytes": 4030,
+      "lines": 123,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/registration/residual_gate.hpp",
+      "sha256": "cd1209feb988ed77fe173fb5fc1a7821ca84f0c59a105425e4be5a22ecf1b3d3",
+      "bytes": 928,
+      "lines": 41,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/sensor/imu_sample.hpp",
+      "sha256": "4a3489a3bfdbe4852a74f04e40cc7f196a1484e351c5efed87106580a3047fff",
+      "bytes": 409,
+      "lines": 18,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/sensor/lidar_point.hpp",
+      "sha256": "842e00f1adf7ed64c669208942db7e5f09cd71718711353e0fff653a5aa537e6",
+      "bytes": 404,
+      "lines": 18,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/sensor/lidar_scan.hpp",
+      "sha256": "df9f9534c1db981fe88f43c22d1168db4edff723c4a1fc6a92dd27e53b922855",
+      "bytes": 481,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/sensor/measurement_group.hpp",
+      "sha256": "50914d4b28d34a5b6df048c20ef38afa81ae88a2cae966102c03564c0a467546",
+      "bytes": 733,
+      "lines": 27,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/synchronization/measurement_buffer.hpp",
+      "sha256": "43ea01b86939dcc39126e1b5cfd76bfbb10a1e6d9f5c39ff1967f82961435d49",
+      "bytes": 1689,
+      "lines": 61,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/synchronization/measurement_synchronizer.hpp",
+      "sha256": "519b81fd66b8e0a8d9f43f08c004011d83bb9a63dbd6e890fadcab76a4fdcf0e",
+      "bytes": 2551,
+      "lines": 89,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/time/clock_domain.hpp",
+      "sha256": "510ff367dd03c10e58feb5c1c415a29f390a9cc9404295a51d3773ec52742f9c",
+      "bytes": 645,
+      "lines": 31,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/time/duration.hpp",
+      "sha256": "ccde80b1188460ef0700c58d9afc49138036b13aabe12745aeb563b0d38db33d",
+      "bytes": 864,
+      "lines": 31,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/time/timestamp.hpp",
+      "sha256": "c5c3d0dab589b5214c4c90d870ac0404ac4c6c3aa94ba2a718b30ed79fa14e65",
+      "bytes": 1451,
+      "lines": 40,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/include/fast_lio_core/time/timestamp_validator.hpp",
+      "sha256": "9181dee998b7927dc1fd1612d48614b094e8afc94d3b905d56601a1ccbfa01ab",
+      "bytes": 976,
+      "lines": 36,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/package.xml",
+      "sha256": "b0276842d1bcb44062ae85432dde1ef8a0e79717366d31e9119c555b655336d7",
+      "bytes": 581,
+      "lines": 14,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/deskew/scan_deskewer.cpp",
+      "sha256": "d1992c0cb3f8205e2ed894ef4ea9a0b80009e254527370b75abd8d9fb0f67dc4",
+      "bytes": 3786,
+      "lines": 97,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/estimation/ikfom_estimator.cpp",
+      "sha256": "c542eb62dd3f9232c074ce38a72d004230301bc553f40913bdbd70f86cd1171d",
+      "bytes": 21693,
+      "lines": 536,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/estimation/ikfom_state.cpp",
+      "sha256": "f04834a88855ce05c2a13595ce58744617fe95d647890aa32ca1088ac53c551b",
+      "bytes": 1938,
+      "lines": 52,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/estimation/imu_trajectory.cpp",
+      "sha256": "09e94af911e9d275360e4ed2379b6707e9c81d9dc433423a7f427d2902917e88",
+      "bytes": 4892,
+      "lines": 123,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/estimation/manifold_state.cpp",
+      "sha256": "d40c762ae0f09d2918340a36aba66cfb9123130b606cb006634275495fadd0af",
+      "bytes": 3322,
+      "lines": 105,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/geometry/pose_interpolator.cpp",
+      "sha256": "730c181ac299448947e5d0cd7ad6aaaf3872371ee1f7fce4cd545b93ad113b20",
+      "bytes": 2482,
+      "lines": 58,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/geometry/rigid_transform.cpp",
+      "sha256": "47ae15ee7ae58ce4224447c436d823a5e6c02902e08560e2fea60e6aea99dc27",
+      "bytes": 4542,
+      "lines": 105,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/geometry/transform_utils.cpp",
+      "sha256": "9ec335f733dac477c53f906ae0ffd8b16594f3b8cc4b2af4a45750d1fa2c2aa8",
+      "bytes": 521,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/initialization/imu_initializer.cpp",
+      "sha256": "89ea8bac3a6caab35a0ca76c4912efea908f3ace4924d29ede66477173982294",
+      "bytes": 7002,
+      "lines": 162,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/initialization/initial_state_prior.cpp",
+      "sha256": "98772167a46f6dd5fc84151d995a04e60844a94936c0d528b2bf9527813b0a84",
+      "bytes": 2289,
+      "lines": 59,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/initialization/initial_state_prior_applicator.cpp",
+      "sha256": "4d1f774c861c0b19b52d7b6a7047f293611aa1c38bb0a483b58dacb00de208df",
+      "bytes": 4616,
+      "lines": 107,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/mapping/ikd_tree_registration_map.cpp",
+      "sha256": "998d2beb8bea4f7d3b46687f8334d7276c85cf4fcdff42335c87f9bfb2b0779e",
+      "bytes": 11362,
+      "lines": 306,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/mapping/local_map_manager.cpp",
+      "sha256": "073e70a7b009f7c1276e45e49bea061ea5b17616b9f2f2682be62c754978f905",
+      "bytes": 2055,
+      "lines": 56,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/mapping/map_insertion_policy.cpp",
+      "sha256": "0ad132bfed72d1bfbf613dbcbc607b5707933674e9091b0cf9142494611aad18",
+      "bytes": 657,
+      "lines": 18,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/navigation/angular_velocity_resolver.cpp",
+      "sha256": "3a486bded4a40cde7e3cc478c0389cc9e0eab2834a194631517c6331d6787b17",
+      "bytes": 6809,
+      "lines": 177,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/navigation/base_link_covariance_projector.cpp",
+      "sha256": "230842c48ef244e7f70a04e7c9699f49ca595e65bf370740fa98782c186cd4ca",
+      "bytes": 8722,
+      "lines": 220,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/navigation/base_link_state_converter.cpp",
+      "sha256": "5c1bc3895292bbc2a7729d9e8f28d72f167cb3a71a5858c313aed38732cfb4df",
+      "bytes": 4114,
+      "lines": 118,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/pipeline/estimator_diagnostics.cpp",
+      "sha256": "758a6b37ace73c75b166af17bc36f3253f429f17573a16515a94a6f10c83ea61",
+      "bytes": 2244,
+      "lines": 75,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/pipeline/fast_lio_pipeline.cpp",
+      "sha256": "fbdacc6c578b5bd0e9314a5033c4ade7ba8b4c9ffa2983f8fa6967bec32c48dd",
+      "bytes": 77152,
+      "lines": 1665,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/preprocessing/point_cloud_preprocessor.cpp",
+      "sha256": "bad232ff4893f11aef83f1cf9049f7685b1b5902965c87b1d1e96262a0bdcd20",
+      "bytes": 1105,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/preprocessing/point_filter.cpp",
+      "sha256": "0fa30ebc9fb6ddba2a7ccec9eb2f2cc4fd884cc2ee2ebbfb729bda43b29d1047",
+      "bytes": 1165,
+      "lines": 34,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/preprocessing/voxel_filter.cpp",
+      "sha256": "b086ff84753bec43c46e3d4704a7d0c123c1a281b3dd82f77e1b4fcfe08429ee",
+      "bytes": 2025,
+      "lines": 62,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/propagation/imu_state_propagator.cpp",
+      "sha256": "6665da6b8fd0bd787137086bfb604adeb4d2edfa3d44d7ee49223c6a3dacb060",
+      "bytes": 13525,
+      "lines": 369,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/registration/linearized_measurement.cpp",
+      "sha256": "858a95b03f1c525d62acf82762d83d0bb20ef78a6ceea4be51a9c8a3738f1a6f",
+      "bytes": 770,
+      "lines": 23,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/registration/plane_estimator.cpp",
+      "sha256": "37d4eff06f404744d22fd370eb6086b73a69ab1759b4da0c1f975dc3cdd969d2",
+      "bytes": 3254,
+      "lines": 90,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/registration/residual_builder.cpp",
+      "sha256": "96d42ed9e3dc443c8748263053b6ff9468c9a0fcafd04c25a847adcd21cbff34",
+      "bytes": 11763,
+      "lines": 276,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/registration/residual_gate.cpp",
+      "sha256": "a16715d8a1a20ae0edb8e1c5ee386c21525fc546c1f87a479e7619d2ea4ac7f9",
+      "bytes": 2011,
+      "lines": 55,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/sensor/imu_sample.cpp",
+      "sha256": "a7a90c070faea91c9137522d7b8ae0180e5112675353994b77c9302be07710fd",
+      "bytes": 483,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/sensor/lidar_scan.cpp",
+      "sha256": "4e75f2cd937fe6fef42d91a7cee79405ab80fb76ab7dead5a22da96ee6183968",
+      "bytes": 2289,
+      "lines": 61,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/synchronization/measurement_buffer.cpp",
+      "sha256": "f2f6e14333e7d6a84d685dbffd5c402852395f7ebbe091a28ffe24a4c7e16a51",
+      "bytes": 5848,
+      "lines": 163,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/synchronization/measurement_synchronizer.cpp",
+      "sha256": "0b12ab255e45bccb5259ec15cc31e69ae698cfd9775f5dddfbe2f1d63115a5c1",
+      "bytes": 7589,
+      "lines": 187,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/time/duration.cpp",
+      "sha256": "49cc6d946d45af9af7fbbcbac649dc765a968003d9800a06d75646ff6b64d708",
+      "bytes": 1099,
+      "lines": 32,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/time/timestamp.cpp",
+      "sha256": "c97e03183841311d36271552c127f4d73b76d593fd13c2ea2ef8e588156062a4",
+      "bytes": 1837,
+      "lines": 59,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/src/time/timestamp_validator.cpp",
+      "sha256": "fd4b80c243ddd7d9deb5e16da8ce0b7b3fbd004a42edb783a157ff785689e4d0",
+      "bytes": 2101,
+      "lines": 59,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/reference/active_ikfom_measurement_update.hpp",
+      "sha256": "953ffaf29ac655831b3a35939f3b83b48ea0a74d335d1029400aa1826ed06fb4",
+      "bytes": 1437,
+      "lines": 41,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/reference/dense_ikfom_measurement_update.hpp",
+      "sha256": "580507ae7fbd4e29f5fc0a4e37d3c861f15d8a2424bf3a2d626382350c7809e1",
+      "bytes": 1762,
+      "lines": 51,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_angular_velocity_resolver.cpp",
+      "sha256": "10b88d8dd471972f8cc5bfa9f1fa51448643c9c6370a66a32a2d9895db7f695c",
+      "bytes": 3229,
+      "lines": 83,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_base_link_covariance_projector.cpp",
+      "sha256": "5900cdcb7f62988500701902c1b15453ff1706fdbcb6c684446ecf1889641b08",
+      "bytes": 14493,
+      "lines": 316,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_base_link_state_converter.cpp",
+      "sha256": "a04e6f15668e7a4d6e43947f8242e134152d3d3f866e89d9f430b5ca13a6e0a8",
+      "bytes": 14500,
+      "lines": 304,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_duration.cpp",
+      "sha256": "61ce039f339930e48e5a043b740c645de1eee38fae29610cac12832ed86a2e29",
+      "bytes": 1330,
+      "lines": 42,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_fast_lio_pipeline.cpp",
+      "sha256": "dca5da695261ff7673b0dc38b7f5d9585a13acf0a415944d5d13f75310745b77",
+      "bytes": 38804,
+      "lines": 826,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_frame_conventions.cpp",
+      "sha256": "ae0322c98ef2c8c19e33744fb653cb40814ed571a993e92a8c217d6e913640f4",
+      "bytes": 3486,
+      "lines": 82,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_ikfom_compact_equivalence.cpp",
+      "sha256": "e8f93d8b45227c0188e7982618e62867f88c164227781e0db5c9269ad0a329a5",
+      "bytes": 9931,
+      "lines": 258,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_ikfom_estimator.cpp",
+      "sha256": "31ee8511856c208f64a8386cbb463158de8fdbda9778234d413fe13f45ecbcb4",
+      "bytes": 15851,
+      "lines": 395,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_ikfom_incremental_propagation.cpp",
+      "sha256": "2eabd6ccaca71e095f7c9a472bdba4e0244c1f4fab95803adc76ff55eee5b3dc",
+      "bytes": 10768,
+      "lines": 248,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_ikfom_jacobians.cpp",
+      "sha256": "475c0de2a52e34cfb7b3f215bb735e2ef448c8e9c41ec65b6fdfb0482e80cf1e",
+      "bytes": 2454,
+      "lines": 63,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_imu_initializer.cpp",
+      "sha256": "edc38b37516e0b58e9834c27a1c288fad640b6c1cd366f45ba12a2fa7ae034c2",
+      "bytes": 3538,
+      "lines": 91,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_imu_state_propagator.cpp",
+      "sha256": "e452cffe877bfe0b4718720c0b133aba13b659972b82bad24aac797118369d55",
+      "bytes": 11066,
+      "lines": 243,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_initial_state_prior.cpp",
+      "sha256": "44bd7b666e3945ab6b45eb60df0ffc13f4d020fbef85f7d4da2e72ba6d0797b0",
+      "bytes": 4594,
+      "lines": 101,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_initial_state_prior_pipeline.cpp",
+      "sha256": "478aad461a87eb7f6fbf41f0b6b95e779e38e7cefa3c06fc1bd9eba98fdc9d9e",
+      "bytes": 18777,
+      "lines": 381,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_measurement_buffer.cpp",
+      "sha256": "12ae5cf0e8c5e9706daab1b68ecdd33130255d193f5033c707f993199e84c258",
+      "bytes": 4004,
+      "lines": 103,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_measurement_synchronizer.cpp",
+      "sha256": "c150c56127aa8508fe6f358c60fda27b2991381b2bff8e6fd1ffe3e7483f7270",
+      "bytes": 11893,
+      "lines": 274,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_plane_estimator.cpp",
+      "sha256": "8e857a81d8463e839cf220da334ba596c6f885e9f03cda260eec7446d4a8756f",
+      "bytes": 1573,
+      "lines": 51,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_point_filter.cpp",
+      "sha256": "7ac3701e063a80f423fba37cd3af4e2204d5b740c6c68e3449da08c1ead7f4e1",
+      "bytes": 1099,
+      "lines": 39,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_pose_interpolator.cpp",
+      "sha256": "8b30b2c60c0b29701d9b4353316383cb7e55c78c7085dd07163557517a055718",
+      "bytes": 3376,
+      "lines": 70,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_registration_map.cpp",
+      "sha256": "b6ff3e6dd09459bc84926d0f5ffd10129a6a332689cc8973230a7f878ed52de9",
+      "bytes": 6323,
+      "lines": 164,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_residual_builder.cpp",
+      "sha256": "bbc7bb9efecaef6b8d710332ccdb72348042a7b3a6010978e4118940a500e8f8",
+      "bytes": 7830,
+      "lines": 191,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_rigid_transform.cpp",
+      "sha256": "7371961a6ac77d23b8e4ae66803b834a9d41b94d533fb05806e400bf4c357c30",
+      "bytes": 3457,
+      "lines": 78,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_scan_deskewer.cpp",
+      "sha256": "47b1e3cc5b1f124b7812885162b7936388796d64b7cdec774c0741a871b3ec43",
+      "bytes": 6309,
+      "lines": 127,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_core/test/test_timestamp.cpp",
+      "sha256": "333de5a7517e01ed35e52a0fb7b87b81a25536554d2ef668eca55b15c9f9fce5",
+      "bytes": 1810,
+      "lines": 46,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/CMakeLists.txt",
+      "sha256": "f91a020dc4f1aea7799ed6f1af0503ea19b2778213b62d86b25dbf9e4ce5b2e5",
+      "bytes": 3705,
+      "lines": 92,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/fast_lio_node.hpp",
+      "sha256": "7c868f50f7fdbc8b55e97a363adb01ca675e4df7cf7aa65ca405fa154f1e19fd",
+      "bytes": 4606,
+      "lines": 118,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/lio_public_frame_generation.hpp",
+      "sha256": "65fe6d61e9203e9dfec415415e6a17545013081f025b726221cfe6be4c1c9fcc",
+      "bytes": 1491,
+      "lines": 50,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/parameter_loader.hpp",
+      "sha256": "1ccab0c7bd8b75040c80e6a4d5c54e97dee9922960f788565a5322fb03c06e13",
+      "bytes": 4633,
+      "lines": 120,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/propagated_odometry_worker.hpp",
+      "sha256": "29ccdddaa0c8f3693cde3bc6179e4a232930bf9d7f5c29241544c1548814fd5f",
+      "bytes": 5624,
+      "lines": 149,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/qos_profiles.hpp",
+      "sha256": "812fdf1395c2401395cc9457bcbdf8c64220997bbba3a30438052e938e016b03",
+      "bytes": 766,
+      "lines": 22,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_imu_adapter.hpp",
+      "sha256": "1f347d1837e6d25e0ff0a2f7cda337490595eb3db893cb866fc068cf10b999d7",
+      "bytes": 457,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_lidar_adapter.hpp",
+      "sha256": "bbef621a7336ca3f1796ba521093b1f9a45bbb83dfb29d0b0a330f1668658ece",
+      "bytes": 1865,
+      "lines": 59,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_livox_custom_adapter.hpp",
+      "sha256": "d6661e3d98eb46ee3d44df1ede44c29556cf92e276b6ecd55b9af092253332f3",
+      "bytes": 1477,
+      "lines": 46,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_odometry_serializer.hpp",
+      "sha256": "ede4bf489d74acc508c2e53095eab2dec9a8d2d276f9b247fb3893808174932d",
+      "bytes": 564,
+      "lines": 20,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_output_publisher.hpp",
+      "sha256": "f1cc747255599d80cf573e352fce872ceb8663aa58b86569fbd980c71743e4c2",
+      "bytes": 6360,
+      "lines": 141,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_propagated_odometry_publisher.hpp",
+      "sha256": "229df56f2d1a16b979433e203ec6cf279948fab83222dff9b346ef613718a7b2",
+      "bytes": 1668,
+      "lines": 44,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_static_transform_resolver.hpp",
+      "sha256": "f354b558080e9883c13c3f4358b2fe9b5a65c2685b3011e599b97e6ff51d0f8f",
+      "bytes": 740,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_time_converter.hpp",
+      "sha256": "e300bb60c372e943523cbbea4a661e9306f1441a77da64da12f527b23e035c36",
+      "bytes": 424,
+      "lines": 17,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/ros_transform_publisher.hpp",
+      "sha256": "2b0cd743a4ff8867e8ca547daadaa79a7943b9af777b725543f0b30ef8b13a56",
+      "bytes": 1077,
+      "lines": 38,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/include/fast_lio_ros/runtime_diagnostics.hpp",
+      "sha256": "b42d36565c5527bd23c7e969692d66dd1ef729bbea8dd0ebb781210fd51f9e42",
+      "bytes": 15466,
+      "lines": 373,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/package.xml",
+      "sha256": "477fd588b4660c962be21e799d4c68ee4617d014446f5d8ee4d9a676347cfd7e",
+      "bytes": 855,
+      "lines": 23,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/fast_lio_node.cpp",
+      "sha256": "50a63ceb5fffe57f60b13419eaf7e8fd8e181e89b926e1d7e28b1035481b1f83",
+      "bytes": 36956,
+      "lines": 861,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/lio_public_frame_generation.cpp",
+      "sha256": "4f1b45b43c94c8aef233f728cd8cd3b664943b5441c4fff0fcb620e9f2339cf9",
+      "bytes": 1100,
+      "lines": 35,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/main.cpp",
+      "sha256": "cb7be2a406254c66998a82fc11f5dfb89deebb23db87e987656accb27c720ed2",
+      "bytes": 604,
+      "lines": 24,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/parameter_loader.cpp",
+      "sha256": "d5e96ec2d92d7aff2ddd5008d223c18190e8bf6d9585dabb9545164bac892631",
+      "bytes": 34244,
+      "lines": 683,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/propagated_odometry_worker.cpp",
+      "sha256": "1e80a37dc915761130c543397f00d4d86bd4a064824fec59dce93df5344dc842",
+      "bytes": 23127,
+      "lines": 635,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/qos_profiles.cpp",
+      "sha256": "96c86dcc843ee2ae77f079b09f43342b2ea45515e8c5789bad604e5a87e96306",
+      "bytes": 915,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_imu_adapter.cpp",
+      "sha256": "784ebf8a3b2b8aac85d208bda21961349aff8bb6343ce046059dbd550e75e51e",
+      "bytes": 1414,
+      "lines": 40,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_lidar_adapter.cpp",
+      "sha256": "66b4f44372a69cbb02dc13766deb417b049d62a4f7d07c392f68329eb02d3372",
+      "bytes": 12230,
+      "lines": 278,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_livox_custom_adapter.cpp",
+      "sha256": "bc9eda864ec1e717c1a233f123354cd5adcee726ea6da49aecb84be2cb8480de",
+      "bytes": 8803,
+      "lines": 220,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_odometry_serializer.cpp",
+      "sha256": "ff267eba80ccb72aae1f6cef848b3517ad3701ea6b609bfb8f57b2853e549599",
+      "bytes": 2657,
+      "lines": 55,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_output_publisher.cpp",
+      "sha256": "1788b46226b6d83ba34d47f376158eae42de332a507611195625429092c6f726",
+      "bytes": 46775,
+      "lines": 956,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_propagated_odometry_publisher.cpp",
+      "sha256": "b7b12238cecde06404443b52c8de674e505f70a86fe2ff805e8c9ff9bd919b15",
+      "bytes": 2684,
+      "lines": 68,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_static_transform_resolver.cpp",
+      "sha256": "869cecda661c6454dd5632b0ae6945051a48f00d9998f8e78c6c42a229655ceb",
+      "bytes": 1805,
+      "lines": 44,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_time_converter.cpp",
+      "sha256": "f1610806a2f124383c624c0a0b228bb80dc5834056763c9e65cbfece171edaf1",
+      "bytes": 830,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/src/ros_transform_publisher.cpp",
+      "sha256": "cb0fe1c7886db158249a71fe1120ad056edc3f0da84798f09e12369150a6ebaa",
+      "bytes": 2613,
+      "lines": 79,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_fast_lio_node_fanout.cpp",
+      "sha256": "495d7001173334b5fdd5dfc2962ca44aa6db3b14964fd44b2bbdc680eea64d64",
+      "bytes": 771,
+      "lines": 23,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_lio_public_frame_generation.cpp",
+      "sha256": "4702150a577fd640972e197ea1c37e5d4f4337248a099bd5c6550afe57016bd9",
+      "bytes": 1789,
+      "lines": 44,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_parameter_loader.cpp",
+      "sha256": "161c74db81c937e56de8eb093ceea871a28e7c0b378b8e590a542448e23985d2",
+      "bytes": 20777,
+      "lines": 437,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_propagated_odometry_worker.cpp",
+      "sha256": "4b6f169a94c6c3cb745b83df842dc9c502d9c6c58829bfac19953a8f510bd5f2",
+      "bytes": 29443,
+      "lines": 715,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_qos_profiles.cpp",
+      "sha256": "2e25fbc51489747cb8e2fbcb370e58010f193c81ec3a3be4023359a5a7cc8da4",
+      "bytes": 1128,
+      "lines": 36,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_ros_imu_adapter.cpp",
+      "sha256": "5693e5873c4cec7804a2fed52732c95cc937eee41a61069b6411b35ba6b6a7bf",
+      "bytes": 1402,
+      "lines": 37,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_ros_lidar_adapter.cpp",
+      "sha256": "c62fcc50d22b53402aed6218cc921871e42e790e99365361f30af1fbcb5e1d49",
+      "bytes": 13178,
+      "lines": 319,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_ros_livox_custom_adapter.cpp",
+      "sha256": "4b3b68ac5e1229626b7112a270190340298651ec41f032b7402c4d60168243a4",
+      "bytes": 7335,
+      "lines": 192,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_ros_odometry_serializer.cpp",
+      "sha256": "506f3efe946ca2c508699843a324a8c5b569b4a69e023ef904a68696da1f2d5b",
+      "bytes": 2184,
+      "lines": 54,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_ros_propagated_odometry_publisher.cpp",
+      "sha256": "1bdea1e637b2b6415603c001383862a64afe4f67f3717afccca2c66f0618fbf6",
+      "bytes": 1619,
+      "lines": 45,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_ros_time_converter.cpp",
+      "sha256": "68f74629579eabf2ae4094b63eff2e7fdb4d9a727b59767f686f04d469ea5e67",
+      "bytes": 1484,
+      "lines": 44,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_ros/test/test_runtime_diagnostics.cpp",
+      "sha256": "b1e33d11b8ef23bd09d784907e9401cdfeb1f0c0ba12dc5328deec592b879151",
+      "bytes": 6043,
+      "lines": 157,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_tools/CMakeLists.txt",
+      "sha256": "025a516907685d02d00f5a92cafd7e0a580c2042682ae84b41295083d6247c71",
+      "bytes": 839,
+      "lines": 26,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_tools/config/evaluation.yaml",
+      "sha256": "973e48505b4fb6263541353c813980093c708ba4893ff6eeb8cc5a135bfe0246",
+      "bytes": 91,
+      "lines": 4,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_tools/include/fast_lio_tools/evaluation_config.hpp",
+      "sha256": "00569a8c5a6e715082f8b13936271b49360c1f4686ddd14e60ea8821a8922c43",
+      "bytes": 223,
+      "lines": 12,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_tools/package.xml",
+      "sha256": "02ba656abb60b9d9825f2997c73c0007bc159a64e662f3ffedd602a3569fe96b",
+      "bytes": 617,
+      "lines": 16,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/fast_lio_tools/src/lio_offline.cpp",
+      "sha256": "3ce73cfe5e359f55df52af2488dba6ce5ef78c1cef1c9550d23301470449d36e",
+      "bytes": 19083,
+      "lines": 390,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikd_tree_vendor/CMakeLists.txt",
+      "sha256": "6784adf7faa323926fe7893b34167e28e48d2dc0a05c9b29d19004acd9cbf055",
+      "bytes": 1790,
+      "lines": 47,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikd_tree_vendor/LICENSES/ikd-Tree-GPL-2.0.txt",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "bytes": 18092,
+      "lines": 339,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikd_tree_vendor/PATCHES.md",
+      "sha256": "d509291f1ad2d4be53f24554ac46c46a56b9db807d9a2d0a4de1fa85e787d709",
+      "bytes": 2353,
+      "lines": 42,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikd_tree_vendor/UPSTREAM.md",
+      "sha256": "e6b551bf0ad33ec5ddc13713f938bb9240ff3deb3b2a1b1a25d7226485a4191d",
+      "bytes": 989,
+      "lines": 20,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikd_tree_vendor/package.xml",
+      "sha256": "b60e4655d11e92c6d7cf14003e9941f0a7c5e22c21dd977e7e7f8a820ab646ef",
+      "bytes": 629,
+      "lines": 14,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikd_tree_vendor/test/test_ikd_tree_upstream_smoke.cpp",
+      "sha256": "9a9ca14fb2662ad230597acda026e06cf11f1c07d34c9481b0e1f53ed9e78ad6",
+      "bytes": 15096,
+      "lines": 388,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikfom_vendor/CMakeLists.txt",
+      "sha256": "edec905ea34899415dc7698963c960c0ad8be5849c58228ea2d971f45bd9a257",
+      "bytes": 1605,
+      "lines": 43,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikfom_vendor/LICENSES/IKFoM-GPL-2.0.txt",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "bytes": 18092,
+      "lines": 339,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikfom_vendor/LICENSES/README.md",
+      "sha256": "c28e2f67da467734916335d836813eb880559229ea43aec94436a2d69644dbcc",
+      "bytes": 343,
+      "lines": 6,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikfom_vendor/PATCHES.md",
+      "sha256": "b442004024f956de12881880587f843b4aa8a69fd1b0073c0c1122c33c1fef21",
+      "bytes": 1415,
+      "lines": 31,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikfom_vendor/UPSTREAM.md",
+      "sha256": "b7bf5ee504e6ad4c4814d4de7c23d62349fff15c887e2e5d00886172f80c4b1e",
+      "bytes": 1849,
+      "lines": 37,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikfom_vendor/cmake/README.md",
+      "sha256": "c48347d6b54c0f757ef95d741c70c6be4ba91b85c12f5b2f84c9df011d85ea9f",
+      "bytes": 245,
+      "lines": 5,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikfom_vendor/package.xml",
+      "sha256": "0a46477b9f997135344fa53546716d19681ab52896e79f534c999dda66266ed6",
+      "bytes": 645,
+      "lines": 16,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/estimation/ikfom_vendor/test/test_ikfom_upstream_smoke.cpp",
+      "sha256": "ac6d5d550b3ba1e72cab4da1e53908fd7a623b00823a506458c7cc989399e301",
+      "bytes": 525,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/CMakeLists.txt",
+      "sha256": "ddc7363210456a0839f53a5615e33e95e065780a488bbdd93a8e4fec33179056",
+      "bytes": 2019,
+      "lines": 50,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/include/navigation_execution/command_sampler.hpp",
+      "sha256": "930fa123132c91b2138ab1f6d072c5231ac40473400ce1ad34081275cbb1c619",
+      "bytes": 4470,
+      "lines": 114,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/include/navigation_execution/committed_bundle_store.hpp",
+      "sha256": "8534395d7466ec8834eba9f39fc503226726e2f9795852d4dde31667ef4990ed",
+      "bytes": 36490,
+      "lines": 835,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/include/navigation_execution/execution_anchor.hpp",
+      "sha256": "0a7016435c97bd8eac6269ee6f393fcebbe15e54153c12870bdb11838f77daae",
+      "bytes": 2719,
+      "lines": 69,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/include/navigation_execution/execution_state_gate.hpp",
+      "sha256": "8562cf48f6ad50f9cb3c9cf31911ca4ddf41bd542dea415bbd9d6bb4e5663969",
+      "bytes": 789,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/include/navigation_execution/execution_state_lease.hpp",
+      "sha256": "8e73239628a92c164f973fdfac00c83b57e5c706b05d3bf27cea217b7d13d18b",
+      "bytes": 508,
+      "lines": 17,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/include/navigation_execution/execution_state_store.hpp",
+      "sha256": "f875dbae681a746bd4708b1e0377286ad9e1299793f7043fb752e08590ec1a75",
+      "bytes": 1666,
+      "lines": 50,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/include/navigation_execution/timestamp_freshness.hpp",
+      "sha256": "f576d2e58f4ac27f1e03c25551249a60d1afa7c9c0d0bcde6603e54c281cadbd",
+      "bytes": 789,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/package.xml",
+      "sha256": "27514f30d412c732add7f1ebf4391edd99a1a01d3756702cc08a38acfa461446",
+      "bytes": 690,
+      "lines": 16,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/test/test_committed_bundle_store.cpp",
+      "sha256": "08de14b3add2b82c14056b9bc40fa909c5713f14db3cb4a89ac601af13fef243",
+      "bytes": 84059,
+      "lines": 1840,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/execution/navigation_execution/test/test_timestamp_freshness.cpp",
+      "sha256": "26da61e8d50b54e8430dca6914813e81703f59fdb51b64d0b66fb8e2587ef968",
+      "bytes": 9254,
+      "lines": 241,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/CMakeLists.txt",
+      "sha256": "e890e81bcca2592dee8c4ae94c7ad4155a6f5466adb75c349ba7f899ad605e2a",
+      "bytes": 3761,
+      "lines": 93,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/current_body_support.hpp",
+      "sha256": "089c049dfb12794a32df5b2bba7a47e7631cf9281225b197f43e398bbcdac8ae",
+      "bytes": 3144,
+      "lines": 70,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/mapping_actor.hpp",
+      "sha256": "f024defb2ecfdc2d88de080f5a850bbc4ec5b4209b74785ae903917c74e0ee4b",
+      "bytes": 3186,
+      "lines": 96,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/mapping_diagnostics.hpp",
+      "sha256": "0f157ece34583b80933f2fb647daf37b22970858d09fbf7d42ffd4ebc8aa7cd9",
+      "bytes": 62,
+      "lines": 3,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/mapping_observation.hpp",
+      "sha256": "06ccbd4c962bab9c41d970dba76807fd2d9320e86eb957bee9990a971257e927",
+      "bytes": 1692,
+      "lines": 39,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/mapping_types.hpp",
+      "sha256": "348c3587c1870342b2ee09d26ea58b4c4dc3d9e4f8897e79d08ea6997a8071f2",
+      "bytes": 6173,
+      "lines": 176,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/mapping_worker.hpp",
+      "sha256": "917497fd227e1c7d99a3c037f7a4e452326f0a4efd7098965c516cdf360c6488",
+      "bytes": 8924,
+      "lines": 296,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/mapping_world_snapshot.hpp",
+      "sha256": "5ab33fbfa504650dd06ad7d5cafdcdd1f84ad15d98be2233b02b507bb957d773",
+      "bytes": 51784,
+      "lines": 1086,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/observation_accounting.hpp",
+      "sha256": "4703995c62b3f57430c8f973715f32afd4f7c7657df771fb98578c649e1619b5",
+      "bytes": 5515,
+      "lines": 202,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/visibility_control.hpp",
+      "sha256": "081be89f3a65589a63391e862d9191926bf1552187e1d4f4e40b97b74573c138",
+      "bytes": 471,
+      "lines": 13,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/include/navigation_mapping/world_snapshot_store.hpp",
+      "sha256": "e36a455e4854797f5f0f4e3916b4f773b260f24caba1bdfde18330ed8a3031ee",
+      "bytes": 8256,
+      "lines": 180,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/package.xml",
+      "sha256": "9de68c15b83cde82a44deadd0e06fd4bafff7e4ad9f72789a546277fc4d486a2",
+      "bytes": 617,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/src/mapping_actor.cpp",
+      "sha256": "a87bc82745e51500864293d4848fce9ae7124c8278830d0f393e1fe4a6f57a5d",
+      "bytes": 30430,
+      "lines": 619,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/src/mapping_world_model_adapter.hpp",
+      "sha256": "4f1f07aa1ae39d563c583094c8517b722c9733ff1f929e0f6497a8321acbca66",
+      "bytes": 10830,
+      "lines": 260,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/test/test_mapping_actor.cpp",
+      "sha256": "f143ea263049785d87b81cad2fb772b881aaf9308eb080a08faf99778cd2cd5e",
+      "bytes": 26864,
+      "lines": 562,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/test/test_mapping_worker.cpp",
+      "sha256": "600583fe5527bbd78a8830bd5955e182e0086d6efa6330b438e6a6b3992e359f",
+      "bytes": 16538,
+      "lines": 492,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_mapping/test/test_mapping_world_model.cpp",
+      "sha256": "9b706466bf32d55e2bbb704aea043baf47a52cf66651f031e3535211bcda74a5",
+      "bytes": 40556,
+      "lines": 800,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_world_model/CMakeLists.txt",
+      "sha256": "d4826e1d4a124d7192fad3c10e7a5dbefcdcf95c648e0a27b0fd9e1d71448228",
+      "bytes": 853,
+      "lines": 24,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_world_model/include/navigation_world_model/continuous_clearance.hpp",
+      "sha256": "6fb6951697463551b2c78ddfd6f9790318e413a28f67ccb08c671569fa3a0bce",
+      "bytes": 4410,
+      "lines": 99,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_world_model/include/navigation_world_model/goal_contract.hpp",
+      "sha256": "0213e0e634944a54a6779919f9e87993d4aa1674f4671e9c96a32a4783107800",
+      "bytes": 1456,
+      "lines": 31,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_world_model/include/navigation_world_model/world_commit_authorizer.hpp",
+      "sha256": "83519666ab9caffec7363d536d34d4487a101a678564d5a9ffc767dac64a2ebf",
+      "bytes": 2110,
+      "lines": 62,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_world_model/include/navigation_world_model/world_model_view.hpp",
+      "sha256": "8722fd0456be1e2880934e589dd8a6f93a4511d56b0d01288fd9bbee4b48573e",
+      "bytes": 24160,
+      "lines": 565,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/navigation_world_model/package.xml",
+      "sha256": "1b524ed77481b1b02a34361ec408cf1a41ea4c70732b868ab368f5bfe2e215f8",
+      "bytes": 592,
+      "lines": 13,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/CMakeLists.txt",
+      "sha256": "08b2f6f7fef8c71cc86ddab9a61e31970221d9db383b26182129a360f1d4df36",
+      "bytes": 4076,
+      "lines": 112,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/UPSTREAM.md",
+      "sha256": "068ad98cbe39bf8318c2708ed5a42e000592b96feabfdedabaf0ae5ecd7bda43",
+      "bytes": 16090,
+      "lines": 296,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/navigation_math/color_text.hpp",
+      "sha256": "fc04ba50ffadaf00fe3abb6719b7a1d25d4e211bc9dddff40815e723a0ad6966",
+      "bytes": 1655,
+      "lines": 31,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/navigation_math/eigen_alias.hpp",
+      "sha256": "948c7da94766dd614d66204ecfe63cd17475679db0431de8ac7d14c5682935c2",
+      "bytes": 3862,
+      "lines": 140,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/navigation_math/fmt_eigen.hpp",
+      "sha256": "b8fcf5f30b400642cf091c23815ba38eee727ff32842da22262b774ed3e6c21b",
+      "bytes": 4205,
+      "lines": 106,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/navigation_math/scope_timer.hpp",
+      "sha256": "32f54589f8da1bfc5d68ad3af2e8512e84e91d933d467f1bdc3de3832ca4ca21",
+      "bytes": 4217,
+      "lines": 114,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/navigation_math/type_utils.hpp",
+      "sha256": "4e5b917fde247f397cc9dcc25d856b11258bf112aedf989b16dbffe183f33e1c",
+      "bytes": 2413,
+      "lines": 89,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/navigation_math/yaml_loader.hpp",
+      "sha256": "883de847addb50b78576250617685faacbe8811bb1c0b0c51d174612fc6adf15",
+      "bytes": 5580,
+      "lines": 151,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/esdf_map.h",
+      "sha256": "6292c03cbb895d836e1facb07aa65c990369c6754990532e34b754d5c29d143f",
+      "bytes": 4087,
+      "lines": 105,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/free_cnt_map.h",
+      "sha256": "9fea7a745b70d172bf57b2347d5c74559bdc6c7372329940b58dbcf92b8b79f8",
+      "bytes": 4096,
+      "lines": 111,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/inf_map.h",
+      "sha256": "3979f74ceddf57bbf85d30f40cadb0473c78bffe4b0f580a24266cf9adacb73f",
+      "bytes": 3809,
+      "lines": 113,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/planning_grid_export.hpp",
+      "sha256": "20eadb5cdca62653e4b784dca6dddf84997cabebc4fcccc07350a1615606fedb",
+      "bytes": 2144,
+      "lines": 68,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/prob_map.h",
+      "sha256": "910ebbaaad69bac0f7a592b70b930bcbdb048087b1b8b4f6170b5f26e331df6f",
+      "bytes": 11737,
+      "lines": 296,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/rog_map.h",
+      "sha256": "40afc5a56f8be2c955371332cd91337bf5959a37f8a836f9dc43252c49bf94a4",
+      "bytes": 5506,
+      "lines": 144,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/rog_map_core/common_lib.hpp",
+      "sha256": "49ebeb25d57f94ee1b65a0b72bce77e8566043bcb482f2c72ea9696612dc59d2",
+      "bytes": 5859,
+      "lines": 141,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/rog_map_core/config.hpp",
+      "sha256": "380363addeeb6e15e35491ed8cbce96f81e63a99308a1292d348a1e7b45e1025",
+      "bytes": 32008,
+      "lines": 620,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/rog_map_core/counter_map.h",
+      "sha256": "291f7cf1783c85e2248fc212fc1704eb9ef55ec03668deb8cba78b983450839f",
+      "bytes": 4760,
+      "lines": 140,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/rog_map_core/raycaster.h",
+      "sha256": "a55f534cf3ae92694e279f066ffedd7f6a884c03d6a639240449067f26d12061",
+      "bytes": 3107,
+      "lines": 97,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/include/rog_map/rog_map_core/sliding_map.h",
+      "sha256": "f1b4e1ac81c455d3ea1d77278f667d7be2810c83ddeb4857c494eaaed803a250",
+      "bytes": 5096,
+      "lines": 148,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/package.xml",
+      "sha256": "e5bad3a9fb58901b4894f0e7ed6f0a3429288eabc9f688c249ad9031d2b8e3f8",
+      "bytes": 903,
+      "lines": 27,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/src/rog_map/counter_map.cpp",
+      "sha256": "83e3a3aa76a348b1142a4f4b4ecbd33c290a8ab2e52ee6287351f81a7ab92eac",
+      "bytes": 7098,
+      "lines": 165,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/src/rog_map/esdf_map.cpp",
+      "sha256": "9f1b80eea9751999b8c322aeb6227dc2257631df7f16afd2a6be64e059d37d44",
+      "bytes": 22182,
+      "lines": 518,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/src/rog_map/inf_map.cpp",
+      "sha256": "1ddd6ef1091ccedfaccf8c23dfb5c96b9d0aa058f9a07f973f739c27547d3e69",
+      "bytes": 21336,
+      "lines": 488,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/src/rog_map/prob_map.cpp",
+      "sha256": "35f14b23e7136cc61da4d91fbb7560e09864c59d7fbd80f275a7bea2d0721a15",
+      "bytes": 42859,
+      "lines": 1119,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/src/rog_map/rog_map.cpp",
+      "sha256": "99bde71e0cbae2bfb0b9b4f2f9b7448c6d50144bb8792cded9bde7e660e07bd8",
+      "bytes": 30759,
+      "lines": 730,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/src/rog_map/sliding_map.cpp",
+      "sha256": "c5958180b73f84ec1f23a46a939676e68bae395feee36fe112dc1bf0b60442b8",
+      "bytes": 14805,
+      "lines": 371,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/src/rog_map_core/raycaster.cpp",
+      "sha256": "2655e8a13f6981a812354e9dd9c4d38bbeb85d3ea2778aeaca9a6cc7d87a8cb3",
+      "bytes": 12768,
+      "lines": 287,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/fixtures/rog_map_no_virtual_planes.yaml",
+      "sha256": "0b4ec6c7299aba0f4558eb1e69415744f961cfb5d6990f1f0c688403e96ce2d8",
+      "bytes": 1205,
+      "lines": 49,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/fixtures/rog_map_raycasting_boundary.yaml",
+      "sha256": "eb7a960364143100c607c7c8c8e35d437eb92a598151a750ab1550b6dcc7896d",
+      "bytes": 1217,
+      "lines": 49,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/fixtures/rog_map_test.yaml",
+      "sha256": "ac1b9d027cbaba3187ed2d42f5ae85042485590dd2e51b4a4fa271c73c346188",
+      "bytes": 1279,
+      "lines": 50,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/test_planning_grid_export.cpp",
+      "sha256": "a73340e738eecedc2fa13b03e8801c431db8300f2ea231f3086957f3ad93a63c",
+      "bytes": 20457,
+      "lines": 434,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/test_raycaster_equivalence.cpp",
+      "sha256": "4392b4546e7e90b8973b8dd6730cddae51a19c7acb0e5a7167a6d07172c68122",
+      "bytes": 3808,
+      "lines": 122,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/test_rog_map_fixture.hpp",
+      "sha256": "ab79c3a8f69604b162480bfc99f8cc8c1fad66d52cbe0b38c0b79ecd9bcf8d9c",
+      "bytes": 829,
+      "lines": 28,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/test_rog_map_lifecycle.cpp",
+      "sha256": "aa5a486e330c8df4de60f56bfea97ab82b4cc68b6154bd5092004c136512771c",
+      "bytes": 1700,
+      "lines": 50,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/test_rog_map_smoke.cpp",
+      "sha256": "56e47265ee27040a0e84a64f6f3e88f7eb30fcd61da1966ee712a8aff140dfbd",
+      "bytes": 8064,
+      "lines": 183,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/mapping/rog_map_vendor/test/test_yaml_loader.cpp",
+      "sha256": "ee0fcf7405e8c25b56e3a2d027d6f2d647502b16e56e5e755afc973d69ea219d",
+      "bytes": 6689,
+      "lines": 191,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/navigation_bringup/CMakeLists.txt",
+      "sha256": "1217c96c4f1439ccdb84344d55591b7217d9829c3e187cd94ae5bec99039ccf5",
+      "bytes": 187,
+      "lines": 10,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/navigation_bringup/README.md",
+      "sha256": "4cd814ceb2f3b498e19ae471b97b4a1647140ecbefcbe93c743d1dc4c7f02db8",
+      "bytes": 2660,
+      "lines": 67,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/navigation_bringup/launch/avoidance_mission.launch.py",
+      "sha256": "ebe585e064869dc2fc8279245f0b7aa87c126fde8f5188fe1cb382b54d8105c4",
+      "bytes": 2102,
+      "lines": 52,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/navigation_bringup/launch/fast_lio.launch.py",
+      "sha256": "2890f8210bee5d4d32868f0849ac81ade0947448f0534318c70197eed95ad70a",
+      "bytes": 3280,
+      "lines": 78,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/navigation_bringup/launch/navigation_runtime.launch.py",
+      "sha256": "07750ec3e9b9886c3f60d0b09a8a498a1b5aca2dbb1eeb52c7a3b88911ebb8ab",
+      "bytes": 1297,
+      "lines": 33,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/navigation_bringup/launch/px4_external_mode.launch.py",
+      "sha256": "5bda2a9dfa873c683e58a7b3142766695bd4d4bc3b6f79c061a5359021316d60",
+      "bytes": 1125,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/navigation_bringup/package.xml",
+      "sha256": "5061a1cb409cac46b073c31d67367f5ca05ab01ba41c699634cd11482b8ae014",
+      "bytes": 863,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/navigation_bringup/rviz/fast_lio.rviz",
+      "sha256": "29d2dd1dc2b9d46c2b0f06ea61eedf94970ed24f807d8e40d8c5392350bd9346",
+      "bytes": 3683,
+      "lines": 141,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/CMakeLists.txt",
+      "sha256": "5d9e5758f5e8d883318a9d65217a0020a5c816cf1a595e70f65198b39b99aa90",
+      "bytes": 1934,
+      "lines": 52,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/candidate_admission.hpp",
+      "sha256": "b38a23c0c187692a3f1516caa03d156188abfde63bf5263c0ff182aa19487ff8",
+      "bytes": 2064,
+      "lines": 58,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp",
+      "sha256": "e656fc54002b16af7af379c0dc5e5bd3ea3420747c89d0062a3293bed566f016",
+      "bytes": 21579,
+      "lines": 476,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/execution_anchor.hpp",
+      "sha256": "90000c3314395492d77b9e09fdcb6a15990259e5840876d0f80c81b521d4b3d0",
+      "bytes": 1881,
+      "lines": 44,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/kinematic_state.hpp",
+      "sha256": "e25fdf69f3b5eb599ed963e917b768a1b2bec1d392ee50ac298d0c04ddfb631b",
+      "bytes": 1928,
+      "lines": 47,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/planner_diagnostics.hpp",
+      "sha256": "ca06cb994aba957b58aed8260f523b3060207325460b90468e31950eda2edaca",
+      "bytes": 14039,
+      "lines": 319,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/planner_status.hpp",
+      "sha256": "22610e48fdce9263fc1359e4665b818fd2923234591cda9454b6295e9646c6af",
+      "bytes": 410,
+      "lines": 19,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/planning_budget.hpp",
+      "sha256": "824f6f6e63e0beb5dc6d66e2758095361353b00dffcd1c3f602500fdbed4292d",
+      "bytes": 859,
+      "lines": 28,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/planning_limits.hpp",
+      "sha256": "8d5ce38f45516a4f2c18eca7208955209ddc87ff327801e6173c3f2da56c797a",
+      "bytes": 4323,
+      "lines": 102,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/planning_outcome.hpp",
+      "sha256": "4bff338afc5cc49fe4af54ca597bb145f972d02e5845349eb92b77e9817825b8",
+      "bytes": 7078,
+      "lines": 177,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/planning_request.hpp",
+      "sha256": "472f5b8a16b37af1fdcf79590f266c82b0b65dc635045dda19b4b3f61088da30",
+      "bytes": 6871,
+      "lines": 160,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/planning_status.hpp",
+      "sha256": "da029ce6b734b19f0b42d9c84a54342dd6121a5da857c08ce20cbb924f8d9cd9",
+      "bytes": 901,
+      "lines": 38,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp",
+      "sha256": "b95e1d9c6df85452a9543049dbb96a37087c515b04734066eb5e717f5c702b50",
+      "bytes": 1535,
+      "lines": 35,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/include/navigation_planning/route_boundary.hpp",
+      "sha256": "dfa16eeba57c3139997f188aa7cea066b19a4aca7b8eec223c3dabc63460333b",
+      "bytes": 3346,
+      "lines": 79,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/package.xml",
+      "sha256": "b059196cd61ff5ade58f5b62d613304d4992b1b24af3bda577410b598d3617f5",
+      "bytes": 785,
+      "lines": 18,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning/test/test_planning_contracts.cpp",
+      "sha256": "78c438b9959a52ce78d5c1c5fd815c9af7020cfd912b27defcc905d5b97c2d73",
+      "bytes": 19697,
+      "lines": 496,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/CMakeLists.txt",
+      "sha256": "9572b773a7a1090d7924b54bcd0aed50a57254311e79d0dc0b9cfc1ab0dea784",
+      "bytes": 9111,
+      "lines": 224,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/PLANNER_BACKEND_PORT_SHA256.json",
+      "sha256": "6d805a59c28aa25f57d4fb57efb2915588e6f61f1a61dd5635c14e33be8fa402",
+      "bytes": 5643,
+      "lines": 55,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/UPSTREAM.md",
+      "sha256": "9f49ff8f3711011ab8d0ef7ba7c59aed207a0adae3173b462b280924ef8bcb87",
+      "bytes": 1499,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/data_structure/backup_traj.h",
+      "sha256": "f663c27fd058f261e5794e56d4fcd4a93a7d4e3f5926772c998af69ae563abc9",
+      "bytes": 3235,
+      "lines": 140,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/data_structure/base/ellipsoid.h",
+      "sha256": "3847b88a26569c6927c74c9d9b3723b2bfc3895ad8c71f155b77f39b9039a631",
+      "bytes": 4067,
+      "lines": 117,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/data_structure/base/piece.h",
+      "sha256": "c33197b813ea3384314633a533fb20b58ccadc1698142a167c1b0694fcddef82",
+      "bytes": 3816,
+      "lines": 119,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/data_structure/base/polytope.h",
+      "sha256": "5d9ad04f940bab7a4acf2c26f567829462069511321d2652d1d095e93b4cc401",
+      "bytes": 8852,
+      "lines": 239,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/data_structure/base/trajectory.h",
+      "sha256": "64c5b687a9d46ff2e0d26a70443f892558f118f820638a428224692a14a2c6d9",
+      "bytes": 5133,
+      "lines": 168,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/data_structure/cmd_traj.h",
+      "sha256": "f9ba73d5e0b88e3502becd2225f843c0a9304bb2083bf50b3777d9674cb84eda",
+      "bytes": 29939,
+      "lines": 683,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/data_structure/exp_traj.h",
+      "sha256": "f71697bf807bc61e0122908b1f0e4d8cfc4c049bd44a9e20a0686311aaff9a74",
+      "bytes": 4929,
+      "lines": 168,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/navigation_planning_backend/planner.hpp",
+      "sha256": "7a01e4fb5a2fc2e8bc69a4b3cda6a109276eaef0e7438ff94730f3e06aa4e0ff",
+      "bytes": 731,
+      "lines": 22,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/navigation_planning_backend/planner_facade.hpp",
+      "sha256": "b4564bc139685d30c553fbc67919a6925a11236924da26de2c1a064c6b203b0f",
+      "bytes": 6100,
+      "lines": 131,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/navigation_planning_backend/route_yaw_reference.hpp",
+      "sha256": "3ccffde6def2ec76dbc6f7e2d2b7682dc96edb96b8e533224a4bb65eca541063",
+      "bytes": 273,
+      "lines": 6,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/path_search/astar.h",
+      "sha256": "1a518289bd6a706c5b9251e51a86c5c815e587ee90cc5f00a089e5aabd68220c",
+      "bytes": 7331,
+      "lines": 212,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/path_search/config.hpp",
+      "sha256": "c5b403c1d0e554215af756f882c2d65a09e289318a06eb006c48db4ad288d160",
+      "bytes": 1801,
+      "lines": 47,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/absolute_deadline.hpp",
+      "sha256": "0faabb2cc33a91880ccb1cbaee08fc690b7d83cc2e400bc0eb2b8d780b5bcda5",
+      "bytes": 5483,
+      "lines": 120,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/altitude_route_projection.hpp",
+      "sha256": "5e93caf96340faa597aaf786ed2c9612a6502e8585e7ede40e8ce2fe659ae69e",
+      "bytes": 1959,
+      "lines": 54,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/backup_braking.hpp",
+      "sha256": "ba277fe7650a9315e6c8fa22b691d1a9260544eafb33a2f786fb4601badd395e",
+      "bytes": 20969,
+      "lines": 494,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/boundary_velocity_recovery.hpp",
+      "sha256": "b91a1098b35c39a319161128025d1b39842f994f8b640576da4ffdd8dd802d88",
+      "bytes": 3774,
+      "lines": 91,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/ciri.h",
+      "sha256": "6fb251e61e480b64ae009d823f40ab0df2a372ef309092582aca1c4141fb7feb",
+      "bytes": 5692,
+      "lines": 150,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/command_time.hpp",
+      "sha256": "7e8eb74a877f0b4144334803d857cccfb3423ca2b80f41f92bdb694c6432bf92",
+      "bytes": 5378,
+      "lines": 135,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/config.hpp",
+      "sha256": "bc2fdfda6ecc26694bb0aaaa8a2547288bf7caf6215cb918a91f339c647a4ce4",
+      "bytes": 27392,
+      "lines": 477,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/corridor_bezier_seed.hpp",
+      "sha256": "fbf1459b17314a084c074540e191e225476ce2a7d433f2bd776847a9c9b547e6",
+      "bytes": 25453,
+      "lines": 564,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/corridor_generator.h",
+      "sha256": "576b2dc02266dd8290750fa5e1de168f3b8d9a3e61514e7bf071ab27998f0a4c",
+      "bytes": 5700,
+      "lines": 154,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/corridor_plane_validation.hpp",
+      "sha256": "ac7ba66a0c42ad7431d1de94e63b89685f22b0ad0d162ee7bfdf132e29220fbd",
+      "bytes": 4556,
+      "lines": 111,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/deterministic_nominal_seed.hpp",
+      "sha256": "74fed0b244500ea564ab547a9f842a627348bb94480eeddef2ed6dbceeed4658",
+      "bytes": 13941,
+      "lines": 314,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp",
+      "sha256": "19aba9503a8036d2f83fe02c23f1de35e6b6af51d43abd44675a1c4f5d750896",
+      "bytes": 6596,
+      "lines": 172,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/fov_checker.h",
+      "sha256": "e72273dada2b582f716be801a8d22d361e6b4c5f955c5240b5714d1b60653b2e",
+      "bytes": 8782,
+      "lines": 208,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/guide_endpoint.hpp",
+      "sha256": "3f9d5321a9dbf963c4356504c3e90f606d8e892f01f3a937545750248ead55e4",
+      "bytes": 1029,
+      "lines": 31,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/guide_vertical_envelope.hpp",
+      "sha256": "d15e5d701eafbfab4ac3ede1e07b72ab2dda0a8bc25d129e94ebff1684b867cc",
+      "bytes": 8616,
+      "lines": 201,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/hot_replan_recovery.hpp",
+      "sha256": "58db780dab8aadea7b2c845b332c1a40a959a0ec6373858123ef90414c3c7bd8",
+      "bytes": 3886,
+      "lines": 94,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/kinematic_state_boundary.hpp",
+      "sha256": "7474e8b8b67ad4c13da63947248da6da47cf6c36cef666e01bc77a7d72be0b12",
+      "bytes": 6192,
+      "lines": 144,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/log_utils.hpp",
+      "sha256": "23f9bcab1b2dc40adf67ac3a64a25c108b104f189694574eebac19bad8abca5b",
+      "bytes": 9811,
+      "lines": 275,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/optimized_nominal_candidate.hpp",
+      "sha256": "6f16ea9bc762725705d5507a17163809a2974e41d06515bd4046b64c4a7de867",
+      "bytes": 6045,
+      "lines": 151,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/pass_through_terminal_velocity.hpp",
+      "sha256": "e097a54d70274ecddc849583bcb02eb235c9f4c7be540e2a02ddfad56abbc309",
+      "bytes": 23864,
+      "lines": 527,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/planner.hpp",
+      "sha256": "96b13ff8ef52fa89451edb2af7b300614596be9b29b2e643fc478a0b333527f6",
+      "bytes": 35344,
+      "lines": 749,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/planner_result.hpp",
+      "sha256": "c5fa65395f14319fa0276b6816b3567cead3ecfba72239243eae0775e9073640",
+      "bytes": 3334,
+      "lines": 79,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/planning_stage.hpp",
+      "sha256": "493561b06d9718aae4895870b9470703082a004fe935d60bc8a40bfaf446e9ee",
+      "bytes": 1656,
+      "lines": 49,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/replan_contract.hpp",
+      "sha256": "5fa04e2f1939089025b1ee27e2660fb63e41d8486a540274f108921ecc8bb717",
+      "bytes": 5620,
+      "lines": 118,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/route_backbone.hpp",
+      "sha256": "706674881cf92c6fba4f05d66e968a0310e251655b7f1e186a131f36f3542194",
+      "bytes": 5788,
+      "lines": 133,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/route_boundary_timing.hpp",
+      "sha256": "05611575c38ea5059d8a8316e8d0935a1863b7793ba05bd0185e040a112fffb7",
+      "bytes": 19158,
+      "lines": 423,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/route_regression_certificate.hpp",
+      "sha256": "dbab6b17cd2c392cafc3d0632666ff38b65c7f7b8e40806535b0cd14ad7f600c",
+      "bytes": 9968,
+      "lines": 214,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/route_yaw_reference.hpp",
+      "sha256": "ad76759a48d16652c8ec901a25f65bf9d12084cfc5354c8ef3e8aaf090afdd6a",
+      "bytes": 2135,
+      "lines": 67,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/trajectory_world_validator.hpp",
+      "sha256": "633bd995860d8b46465629e1d0f779e9a7281b20729359e816aa8e1e93b50c3d",
+      "bytes": 41312,
+      "lines": 851,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_runtime_context/planner_runtime_context.hpp",
+      "sha256": "69e9be60fe5391b008f1efd57ceaa0a761499b30fbe28d7cd311c7d0a7494a0e",
+      "bytes": 4253,
+      "lines": 92,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/traj_opt/backup_trajectory_optimizer.hpp",
+      "sha256": "a6198edb8a8ba987679614ca6dfc1b3b4c939e10680d4104ef9141a50d05a7db",
+      "bytes": 6813,
+      "lines": 200,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/traj_opt/config.hpp",
+      "sha256": "86fd184278617847811fffbc77c5e27d05cfa75285833f3191d302a98f9838f4",
+      "bytes": 15007,
+      "lines": 283,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/traj_opt/minco.h",
+      "sha256": "92b2ecc37066b9fbc3be88146ad8d9ad499a427c12d596e56667a78669f8b748",
+      "bytes": 6929,
+      "lines": 195,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/traj_opt/nominal_trajectory_optimizer.hpp",
+      "sha256": "1595f645bb7ed300098c17a2da5fca4942508e81ded6bd04a841003d913694f8",
+      "bytes": 35390,
+      "lines": 771,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/traj_opt/trajectory_dynamics.hpp",
+      "sha256": "b0a9f9ff8dc46f22d32a6e95cf36dd20ccf9caecea265fe0bc2f1b67d47278e2",
+      "bytes": 7495,
+      "lines": 167,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/traj_opt/yaw_traj_opt.h",
+      "sha256": "2db230500717d2c4a7c19a0a4d253d41742b95b9906ead2f11effd0dd3fa277c",
+      "bytes": 2318,
+      "lines": 66,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/geometry/geometry_utils.h",
+      "sha256": "10a84720da418b15d80008961ea5545a79097f35d61616e93af0483e56f332c3",
+      "bytes": 35142,
+      "lines": 766,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/geometry/polynomial_state_roundoff.hpp",
+      "sha256": "aaaf75b2f658e3a8f937b52b0c649c3b03dfa24a345d1798df1ef83917806443",
+      "bytes": 3692,
+      "lines": 87,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/geometry/quadrotor_flatness.hpp",
+      "sha256": "3b9480e789249635e482d2631b05dfe17e508f60054c6ffeef2eed7d5c72775f",
+      "bytes": 15119,
+      "lines": 322,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/geometry/quickhull.h",
+      "sha256": "aa2d6d9f0d972c939b7df4b307cb4bdd8fd35802faa8f18c683f65b5520815b8",
+      "bytes": 22027,
+      "lines": 611,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/header/backward.hpp",
+      "sha256": "28491fb5f32e6ac64386938b30196e70fcb03dbb3c6a964dc110fedab406f3b3",
+      "bytes": 240,
+      "lines": 5,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/header/color_msg_utils.hpp",
+      "sha256": "65d4fcee180daaf11ec1d7efbd1dbb5f53642f7c8eee79f816cc9a32e732a52d",
+      "bytes": 4269,
+      "lines": 154,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/header/color_text.hpp",
+      "sha256": "053d49b54181c10e8d2b60b84565440dc932aa28f1c57334ef19f523275d05ce",
+      "bytes": 56,
+      "lines": 3,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/header/eigen_alias.hpp",
+      "sha256": "c93b441c21b7ce0a7683df8700ee7588e281ef990ccef183f6ee10e22ff5e92b",
+      "bytes": 57,
+      "lines": 3,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/header/fmt_eigen.hpp",
+      "sha256": "1e1e0fa0e626d17abb13937d68c9ae007278ddd984975bc274f97fe0cee5e990",
+      "bytes": 55,
+      "lines": 3,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/header/scope_timer.hpp",
+      "sha256": "2f1862bd3dd9fa21946e8df947c4a95008c34d1c3f1ca88dec18aef44bb1b14e",
+      "bytes": 57,
+      "lines": 3,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/header/type_utils.hpp",
+      "sha256": "b39f78a55de9c7511e6d98e652e4f253e165a6eb4fe28abebb29e91dce1f86ae",
+      "bytes": 120,
+      "lines": 5,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/header/yaml_loader.hpp",
+      "sha256": "f5231820dd0d606aaa9566569fc33d6ee55100ec8b1f54ee0278a559a3cd7cc8",
+      "bytes": 57,
+      "lines": 3,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/banded_system.h",
+      "sha256": "2e6d461f8725968e86d1d9ee087e6b0e3019cf45a66e4a7034c922b07b58fa31",
+      "bytes": 3167,
+      "lines": 89,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/lbfgs.h",
+      "sha256": "14ee85131e63fd04694b2e31aefe39bfb064bc96af2c3475f4a5703f59f53651",
+      "bytes": 18678,
+      "lines": 349,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/minco.h",
+      "sha256": "cdda34961e883de65eff01e11836e21928d9d81ac4e3437467533ee0d686d587",
+      "bytes": 5542,
+      "lines": 167,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/mvie.h",
+      "sha256": "7fba78d8b55516b277ebd447431af85c66ebbcd0ee9f7400ea6cbcf52b96be9f",
+      "bytes": 892,
+      "lines": 38,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/optimization_utils.h",
+      "sha256": "c4c0d7beb5f83bee317036602497e992d7b577aa8e265ee23c114cd971c01185",
+      "bytes": 4070,
+      "lines": 101,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/polynomial_interpolation.h",
+      "sha256": "2bd5e935bcf65bdcf74d895aa624d85caaa97d6f28edf4fd2822c340a0aea601",
+      "bytes": 13759,
+      "lines": 344,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/root_finder.h",
+      "sha256": "2de35824d99c7edf416f3cf52e80b7c8b25ad737006ad7ead29fae0b62f9b947",
+      "bytes": 9965,
+      "lines": 240,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/sdlp.h",
+      "sha256": "fa0e222b27955026c28415b2cdeb89e7992cc99cb5aa152bcdbfe2f8cb5c5a02",
+      "bytes": 7222,
+      "lines": 186,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/utils/optimization/sdqp.hpp",
+      "sha256": "2a4121b16a461d4160c90066ada95a2b934bdd1cf3bec17eed94946a5e30d025",
+      "bytes": 10407,
+      "lines": 373,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/package.xml",
+      "sha256": "642350d63d3398f8d7909fa4a20ac01fb2faae8a41cdad095d1ffe30ef64546f",
+      "bytes": 938,
+      "lines": 26,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/astar.cpp",
+      "sha256": "11112beb2f719e4d53231ecf4aaff505c2bedde4f0bb4452fb2849fa6d4ff3c5",
+      "bytes": 59892,
+      "lines": 1212,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/ciri.cpp",
+      "sha256": "76f74c9e794bea308ac2a6d9171f596e46eda788f19282d8953c9411d2d35726",
+      "bytes": 20159,
+      "lines": 456,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/corridor_generator.cpp",
+      "sha256": "77e87c559e37fc7728a457aae80e2097469163ef8acdf75ac229442b1e8ac698",
+      "bytes": 29790,
+      "lines": 629,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/nominal_problem_snapshot_writer.cpp",
+      "sha256": "a8af0579ec0bf671b3e888202e6d143a151957ac91657b2c9339125d239e0191",
+      "bytes": 5594,
+      "lines": 163,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/nominal_problem_snapshot_writer.hpp",
+      "sha256": "20f54877493ceaddd44f79ba61ff9cb0174c4e2648337460093cae7018c6c0ae",
+      "bytes": 1876,
+      "lines": 58,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/planner.cpp",
+      "sha256": "590e5c517ff1c8d7e889b2b4d91fef090a387bdc4225b6a57096bf3e3ba62a30",
+      "bytes": 341883,
+      "lines": 6220,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/route_yaw_reference.cpp",
+      "sha256": "9a0a53f90c87f0c77d9c5c540941111ee314a902c725955280de4fcd0f87c825",
+      "bytes": 9815,
+      "lines": 219,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_facade.cpp",
+      "sha256": "a1568eaf934efc3078fe103365596701c893dbb6979c94fe8dc7672563f6a717",
+      "bytes": 26496,
+      "lines": 567,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/traj_opt/backup_trajectory_optimizer.cpp",
+      "sha256": "e0cfe612b24411cea4eaf1cb004dfbfc1a60dd5317eef58ee58a4ebc5e06d1c4",
+      "bytes": 39873,
+      "lines": 933,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/traj_opt/nominal_trajectory_optimizer.cpp",
+      "sha256": "23d16e4146433ce621a13e812a1f3e7c47ca73b8703e1e8ab9a0173dbb441c4a",
+      "bytes": 195248,
+      "lines": 3923,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/traj_opt/yaw_traj_opt.cpp",
+      "sha256": "9ec48561aead6ad276b89ef88f2a842a6c0d9e1684a47f551809b29a83ba277d",
+      "bytes": 4977,
+      "lines": 117,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/banded_system.cpp",
+      "sha256": "89965e22761bb0408b60461bba41bf52ecd57529e48d10d93747e79fd8bee7ce",
+      "bytes": 3075,
+      "lines": 111,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/ellipsoid.cpp",
+      "sha256": "c897b2968703d5c994fd6cd5c38a70d3f9a4bc3ecb569bfa9bd38bc8cc2e080f",
+      "bytes": 8950,
+      "lines": 272,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/geometry_utils.cpp",
+      "sha256": "334cb82a5dfbece81b79a3a27a45a52be298ab7a89f41b5f63bb449caaf9fec8",
+      "bytes": 36343,
+      "lines": 1024,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/lbfgs.cpp",
+      "sha256": "fec55fd09aa18db8842a9c1ea65deea7ad9fb88af470266b18c45671618c0274",
+      "bytes": 15902,
+      "lines": 445,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/minco.cpp",
+      "sha256": "88a71a124bea4d42e660e67d2859a68475e6a91a3c6eab002e0d2743dc4ea360",
+      "bytes": 32906,
+      "lines": 906,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/mvie.cpp",
+      "sha256": "9e133202115ad29025fc49999dc2007f14397d9ed45bb63fabd72477e6fc9b27",
+      "bytes": 8436,
+      "lines": 245,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/optimization_utils.cpp",
+      "sha256": "a29384a00bc01eef518f026a7351db28ae2dd3d9ddff82065e306ad327f317d4",
+      "bytes": 11873,
+      "lines": 326,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/piece.cpp",
+      "sha256": "b95f2e4fd46d48888f49681a2c70f2a5bfced76907a4084d2d5302d420ca2af6",
+      "bytes": 13157,
+      "lines": 382,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/polynomial_interpolation.cpp",
+      "sha256": "000c9ee87e6c742923d3bfb40dd54ffefcc0f26f27f021790fc354c6fc1e2050",
+      "bytes": 1570,
+      "lines": 27,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/polytope.cpp",
+      "sha256": "b5388f4b1bdf441ccfe5e0f022574f4bce48425dbc32839c0c61c2d782a3ee5a",
+      "bytes": 6938,
+      "lines": 221,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/quickhull.cpp",
+      "sha256": "195917fa2836640330ef9053449b2c125d88d0507afebcecdf04468231003ea3",
+      "bytes": 40951,
+      "lines": 1025,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/root_finder.cpp",
+      "sha256": "9274955d97a24ff02e9dd7be0e27eeb39df03d1647d8ab7052aa17af84e56596",
+      "bytes": 27797,
+      "lines": 864,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/sdlp.cpp",
+      "sha256": "e9cb6e9f56e659b32c1d7aa62da69cf3bc67fc5aa8e54efc0822d2d944b68411",
+      "bytes": 19309,
+      "lines": 578,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/utils/trajectory.cpp",
+      "sha256": "f8c527c049ba6f68086e1b41386b7c0e69d19801625f404ea84ccaabf6908c46",
+      "bytes": 18815,
+      "lines": 536,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/replay_nominal_problem_snapshot.cpp",
+      "sha256": "2c987fc735d65c44b40f5a2a9c907510205314c0e812ae86cec789ba26d9082a",
+      "bytes": 92658,
+      "lines": 1931,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_corridor_bezier_seed.cpp",
+      "sha256": "e3582d55b2bb0981ec416be421e262d9a7169a4ad0a3d8bb7dff69510433fa1f",
+      "bytes": 24583,
+      "lines": 560,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_exp_optimizer_seed.cpp",
+      "sha256": "259ffb0d1d0cc24dcda135b34de2f56214bbf4e86e3ea2bdfed360b743e10d86",
+      "bytes": 62447,
+      "lines": 1370,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_planner_config.cpp",
+      "sha256": "cb0a94a5f8ade99a8de65b18da70b79f1643852b1ba7b4d42f4beacf909e988a",
+      "bytes": 89119,
+      "lines": 1944,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_planner_facade.cpp",
+      "sha256": "fed31cab133744bcbcc96001ebcb734645691b00d0c8f319fc452cc78c59859d",
+      "bytes": 165288,
+      "lines": 3248,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_planner_runtime_context.cpp",
+      "sha256": "114c57c39e7c08e4d0f2b13d2a9e6b637ae4cff0c8eb825e91126deb89f0c0ce",
+      "bytes": 2468,
+      "lines": 76,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_route_backbone.cpp",
+      "sha256": "5eb8818ef56e72f3d179c8d7261257115ddd05625160e1dbaa4906bfe7e4964f",
+      "bytes": 5112,
+      "lines": 134,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_route_yaw_reference.cpp",
+      "sha256": "dd18076dc6f6b67ed26f14dd816a2363b01eaa1ffb6235787b7bcf22cd19c488",
+      "bytes": 14791,
+      "lines": 333,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_simplify_sfc_contract.cpp",
+      "sha256": "a5919d5a4b01867b63d1bc809688db53f4214aaf82ca76d27665e6e42b46a54b",
+      "bytes": 4709,
+      "lines": 129,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_trajectory.cpp",
+      "sha256": "b13b2486982fda0d0694102a0c4f800ad643360619d94db8b7507db3bd4d0caa",
+      "bytes": 197774,
+      "lines": 4311,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/CMakeLists.txt",
+      "sha256": "c042eaf40f83f37655bc051633bb1b4f63783f3f0fc145df0c5586c0ea0cc92c",
+      "bytes": 4763,
+      "lines": 96,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/certified_command_handoff.hpp",
+      "sha256": "13f1bd00d1634158df47de3a1b917adfc6cfe51b9d8edde4413b02cef7a0dd6c",
+      "bytes": 1856,
+      "lines": 45,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/command_acceptance_gate.hpp",
+      "sha256": "a1ad7ab360214c1dfc39d4f46e20654aa8f82f6460d9642ebf2d5fb51a619265",
+      "bytes": 764,
+      "lines": 25,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/local_frame_alignment.hpp",
+      "sha256": "12e40ee9590d40dba61d0185aca15427294f2853165a46b26cc677bbd65a1ca7",
+      "bytes": 1534,
+      "lines": 41,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission.hpp",
+      "sha256": "b16c4196389ee8e05f45cf42e5d1bbf04967ad8bfbbffb2745e9e05e884c6ce3",
+      "bytes": 434,
+      "lines": 13,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_command_identity.hpp",
+      "sha256": "d5c14b940e76c1acd9b82fc925566bf2708a05744b3aef2e19911ed4dec6cf7b",
+      "bytes": 4205,
+      "lines": 76,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp",
+      "sha256": "4828be630cda3e919c3b9d5d53039a316c089692a1d1236747baaeb0f023e31e",
+      "bytes": 5288,
+      "lines": 130,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/navigation_input_validation.hpp",
+      "sha256": "7063bd3d4417699f3026fdf9ee8096be25ed232c84de738878b673c73d03dd66",
+      "bytes": 398,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/navigation_mode.hpp",
+      "sha256": "8e37cf08335dbcc46ce142883b60e97fe02780ed1591ebd3db743e870a098d19",
+      "bytes": 13212,
+      "lines": 293,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/paired_node_lifetime.hpp",
+      "sha256": "d9c1f01ad60b3afa5b7d2e23cf020b1e76bb083c2af07c43a3eea9674f3271ac",
+      "bytes": 833,
+      "lines": 28,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/planner_recovery.hpp",
+      "sha256": "f222c109013300b36c59501c70bef02cca1d8410eea2b988259ba9162aa690d3",
+      "bytes": 1816,
+      "lines": 40,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_input_trace.hpp",
+      "sha256": "bcf3503b60f208ed444f7ba81680195a2cf966bac5d683c7783cd0fb0f6c88e4",
+      "bytes": 2694,
+      "lines": 76,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/px4_tracking_adapter.hpp",
+      "sha256": "a3b6955b51170fae26d7b110d799e9a96d8ba6602569ab316880d19059ff0404",
+      "bytes": 19875,
+      "lines": 508,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/reject_provenance.hpp",
+      "sha256": "25e5faa7eac97cc9e3d92f348c14a4e8acbc1010572dc6a96d52b8434d79ca39",
+      "bytes": 4449,
+      "lines": 88,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/runtime_metrics_policy.hpp",
+      "sha256": "5cca8793a85e650cacd1d5b8833358c6c8fd6050923d5892209fb517b8e660cd",
+      "bytes": 512,
+      "lines": 17,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/tracking_envelope.hpp",
+      "sha256": "c2ee91616d2fafd632e3578c061859bd4f05a054f1279b163ec0c3650b4ca061",
+      "bytes": 3136,
+      "lines": 88,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/velocity_only_continuity.hpp",
+      "sha256": "7520b3a80430fa60b1eb838e0a61585a9b7fd670a493cfffc4018740f9bc98a4",
+      "bytes": 16801,
+      "lines": 370,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/package.xml",
+      "sha256": "15eb89d179b376b3c85f0f2e77a79846778ce725ad32d077b3a5d2cb3bda72f9",
+      "bytes": 987,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/src/main.cpp",
+      "sha256": "a6d342a75a7052968de375e4b500fb5344faaeccfbb652490e023b06b95af623",
+      "bytes": 3326,
+      "lines": 86,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/src/mission_controller.cpp",
+      "sha256": "5a9e4098e4f111e2efd6c66d379611fec8ff59ba6f8c4588c2329b98f9c52b15",
+      "bytes": 32984,
+      "lines": 752,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "sha256": "6a38f5d904cbc900564a28f3698fb9325b02fc9050d66faa6076672ba8d9b2c9",
+      "bytes": 150166,
+      "lines": 2946,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/test/test_local_frame_alignment.cpp",
+      "sha256": "dc138c9ec7afd86e79a742e6cab802f8414d4e114a75ab43bcbe8739fdcbef20",
+      "bytes": 992,
+      "lines": 24,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/test/test_mission.cpp",
+      "sha256": "1d5cca51d260bd1c95a6513837181b3f630b435c56cbb6eb6dcfa092af1553bc",
+      "bytes": 70612,
+      "lines": 1616,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/test/test_navigation_command.cpp",
+      "sha256": "6a1a60a1bd543552a1662148b624191adbad40f69fbf419599031427bd1a5f49",
+      "bytes": 18158,
+      "lines": 379,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/test/test_navigation_mode_progression.cpp",
+      "sha256": "3fa9e67fb9000bd1015e2446b113bbce1ec062be462416ca71f95be23673083c",
+      "bytes": 23845,
+      "lines": 656,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/test/test_paired_node_lifetime.cpp",
+      "sha256": "fa3547d7f97e8369274e294385c12030fa8e7bf3601129cd41d09fc09498edeb",
+      "bytes": 1882,
+      "lines": 68,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/test/test_px4_tracking_adapter.cpp",
+      "sha256": "1be3bf4d4470b652b069fbff4e19485996d319f5cad2fee8182807e40aa5d2e8",
+      "bytes": 15428,
+      "lines": 380,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/test/test_tracking_envelope.cpp",
+      "sha256": "19b39e9172f8ca1554f2960d4b99aabbe92ceab7bf3bc8b85e0df9c972a82ae0",
+      "bytes": 7614,
+      "lines": 174,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_navigation_external_mode/test/test_velocity_only_continuity.cpp",
+      "sha256": "01daf2a53826217cc44c12c74935d8ca2f97dc6c5d2c75a6ebd2ebd54c87d42b",
+      "bytes": 11791,
+      "lines": 270,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/CMakeLists.txt",
+      "sha256": "736a99d2e3d321eff7c514f1badf1abdceb8f15044b4106e01369f3208fecc4b",
+      "bytes": 4530,
+      "lines": 100,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/external_odometry_conversion.hpp",
+      "sha256": "7395ef569a851cd5366069831f0922cc0321ac27a262ab30f36625edf33aed55",
+      "bytes": 2550,
+      "lines": 60,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/external_odometry_gate.hpp",
+      "sha256": "004566d022b3db198bd935ffa7f72cf97d7156193bf00f1eb4df31451ca6360c",
+      "bytes": 1050,
+      "lines": 39,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/frame_converter.hpp",
+      "sha256": "8fcdc294c367c73113f05c3962bb1f77a79e0c819546e991a495e79decd9006e",
+      "bytes": 2762,
+      "lines": 84,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/frame_generation_policy.hpp",
+      "sha256": "43dab9d5b579564b476fe565d617cfb7202d764f45e28b2503808743845081c2",
+      "bytes": 1401,
+      "lines": 36,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/geometric_jump_continuity.hpp",
+      "sha256": "2cc6a9465c57815a8582f147e28f68cf68cdaf38c39e9bedd658f1832504c3d7",
+      "bytes": 1745,
+      "lines": 62,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/geometric_jump_latch.hpp",
+      "sha256": "1a7c31aa34efaea34d2e153ef6605c45e53e560f5335965f24a187641e7ba82d",
+      "bytes": 1109,
+      "lines": 35,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/odometry_ring_buffer.hpp",
+      "sha256": "1ff7ce9eb263e333e7b46627035eee5d6d03d2bd482c80bdae6e66039db4fed2",
+      "bytes": 1795,
+      "lines": 55,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/reference_point_converter.hpp",
+      "sha256": "837f50557c9d7522de7662323a89e4527484633d76eeca357efa448ac713aa86",
+      "bytes": 657,
+      "lines": 29,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/reset_compensator.hpp",
+      "sha256": "d6abf9b18ce06c337d8463127cee31e9406f1d28f4cc8d3ae3b52c11d69382d3",
+      "bytes": 3222,
+      "lines": 90,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/time_validator.hpp",
+      "sha256": "3496a7908b096eb67f977235720f7994aa18d2fe18b4bc4616fb8935146cc6e7",
+      "bytes": 1527,
+      "lines": 56,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/timestamp_conversion.hpp",
+      "sha256": "50d70b204a9dae50d4f94c371dc5c59e70840d2333a217b8f1560ba3f35a756d",
+      "bytes": 2483,
+      "lines": 74,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/include/px4_odometry_bridge/topic_version.hpp",
+      "sha256": "c92478c8d8a1f9745a852ab93e9849ba04e5dc248fd18ee6984d74097e7c22c2",
+      "bytes": 769,
+      "lines": 27,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/package.xml",
+      "sha256": "8778c251c41a0dc81f5e857ec59d54be53d0be8b255b8c380f88d3d37332f3da",
+      "bytes": 728,
+      "lines": 18,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/external_odometry_conversion.cpp",
+      "sha256": "fa732a03a52cd95db9ac3527da2d5185ba6c9807d3acd529479de4ed73a845b2",
+      "bytes": 6966,
+      "lines": 177,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/external_odometry_gate.cpp",
+      "sha256": "a9cf936e205d1ffd974ba6176c76ff27b88a9d9d8964ef988814df650d41e54e",
+      "bytes": 2101,
+      "lines": 51,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/frame_converter.cpp",
+      "sha256": "73bfd5ecc5cd2248ce468ee7e9b937f35ff5ebb30c04d1badf328f500cf2f39b",
+      "bytes": 5082,
+      "lines": 123,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/geometric_jump_continuity.cpp",
+      "sha256": "ead38dce15b6735c3df3ecbfa0e3e655eb6f103ad0235efd543a9de178d98ef7",
+      "bytes": 8919,
+      "lines": 201,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/geometric_jump_latch.cpp",
+      "sha256": "50204c3aceefafc3d564d3c91a5fb35e5d86fa795272dff5ae064a07d9542f81",
+      "bytes": 1317,
+      "lines": 45,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/odometry_ring_buffer.cpp",
+      "sha256": "bcd0d477a61ee9d8be3eb240036cb712840563a38bed1e7ce2cf94174ef6b456",
+      "bytes": 5791,
+      "lines": 142,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/px4_external_odometry_bridge_node.cpp",
+      "sha256": "2b4a7ade978883fdb92c80becc3e926f8654dbd09aa5d0f52f8f34cc84f78f79",
+      "bytes": 25935,
+      "lines": 543,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/px4_odometry_bridge_node.cpp",
+      "sha256": "8ebe36a966303517f32a2518ddc4ec3761ddfae8868ae0df1b89e480df26e17e",
+      "bytes": 32391,
+      "lines": 641,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/reference_point_converter.cpp",
+      "sha256": "348021d0db2462fb73d1651dbdd558e6bc031cbd604e2b97290af0b3fbcf759c",
+      "bytes": 1179,
+      "lines": 22,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/reset_compensator.cpp",
+      "sha256": "23de7064de48ec97d62a065de87b5a4275954a95a643d24f08af298a7a5a1786",
+      "bytes": 11664,
+      "lines": 255,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/time_validator.cpp",
+      "sha256": "e0b5ec8a505a748ade437fd18d582da72abd7444656410978aedaea9820a5dce",
+      "bytes": 3251,
+      "lines": 79,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/src/timestamp_conversion.cpp",
+      "sha256": "29153bfc073102322ab9536c8a24e4b10e3525d5491a144f7fde042d260c713e",
+      "bytes": 4729,
+      "lines": 121,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/test/test_external_odometry_conversion.cpp",
+      "sha256": "d147562ba5839f9b12e0b930ea51336144138a574631f518be9b255081e09e75",
+      "bytes": 8551,
+      "lines": 196,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/test/test_external_odometry_gate.cpp",
+      "sha256": "38282181611658f5d99fb6101d4014dd1bf3f3313626ef8b9cd1b18ff274913c",
+      "bytes": 2340,
+      "lines": 62,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/test/test_geometric_jump_continuity.cpp",
+      "sha256": "910261944435b6d5f1ea07f82450afa060fe166928069720ae02f5837414f779",
+      "bytes": 6796,
+      "lines": 172,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/test/test_geometric_jump_latch.cpp",
+      "sha256": "ceb7a2231c503ccca571623fd0b9ff3215064961b6838648858b6afe9f6e1039",
+      "bytes": 1991,
+      "lines": 56,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/test/test_px4_odometry_bridge.cpp",
+      "sha256": "d82def59ed8b7364e79a654d05df79f3fea8f84a20019515c1550b56d00401e7",
+      "bytes": 32538,
+      "lines": 731,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/px4/px4_odometry_bridge/test/test_timestamp_conversion.cpp",
+      "sha256": "7c00a2a0acc3eb60c5692f4e86814c98a890500adb854acf4d78e183a59e29cb",
+      "bytes": 7170,
+      "lines": 166,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/CMakeLists.txt",
+      "sha256": "48df3acb638a49fdcedf5bcfe9edccad87e9bd35ce7e42c21af59766b3a365cd",
+      "bytes": 9375,
+      "lines": 201,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/config/planner.yaml",
+      "sha256": "67f36a1d969118862b787c4edad2447549d02008797f94417c2fbd2bb6775811",
+      "bytes": 13129,
+      "lines": 268,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/baseline_refinement.hpp",
+      "sha256": "7ed440f5585603654f7365b6c6b8d016df0e8526a8944377d47b525a9e339d4e",
+      "bytes": 5497,
+      "lines": 117,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/certified_continuation.hpp",
+      "sha256": "07b295657db70190092175330bdae28ea74e3a3d2825ab7a4d9c837ba0c00664",
+      "bytes": 4330,
+      "lines": 100,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/commit_trace.hpp",
+      "sha256": "e7bafe0cab9c430b578d68d6f3d7d1edb6af835e101db2098b44ed488fdfc755",
+      "bytes": 1041,
+      "lines": 28,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "sha256": "d5b8e00684e40c223c69272fd418e44a03bddf2c4c61f820ac13ccb1d2da836f",
+      "bytes": 9639,
+      "lines": 251,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp",
+      "sha256": "d8c587725bbdc8b789e4914a3e7c070d93128cb0e21760c2d289afebb11f1c14",
+      "bytes": 3200,
+      "lines": 87,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_trace_snapshot.hpp",
+      "sha256": "9dfe8a0f0be60c97a4b97dda19fa997a49ddda5f4637507a62e55351732ccf7a",
+      "bytes": 9229,
+      "lines": 180,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/experimental_tracking.hpp",
+      "sha256": "90d34137ed878f762cae01a48601bd05ffdeecb56d4ace2f94e27fc63a2769a5",
+      "bytes": 6302,
+      "lines": 125,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/heading_rebind_worker.hpp",
+      "sha256": "3e148b1129b4380375818e8fd4223a3e70b4a698145c854b9fd7866c1ffdef6d",
+      "bytes": 3408,
+      "lines": 124,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/kinematic_derivative_estimator.hpp",
+      "sha256": "c5b861eb988ecfd33dcb38f8b29f0d3cd4e93361db5af845b06af866859486c3",
+      "bytes": 3166,
+      "lines": 94,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/localization_epoch_reset.hpp",
+      "sha256": "811e7467b9490c97d471296176e94810463205b9508be4dd5bb912b3023eccd3",
+      "bytes": 906,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/mapping_fail_stop.hpp",
+      "sha256": "4ef5526fd927790b13d32778b1a8630afd3e8bb06e9ee72e7e853ea2e0452082",
+      "bytes": 176,
+      "lines": 9,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/mapping_observation_contract.hpp",
+      "sha256": "a3da73d6ea13a570e6ae7bdc74a43a38d5578923da12ee376bfc0f3b975c278a",
+      "bytes": 1149,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/mission_dynamics.hpp",
+      "sha256": "74a52114da76e66ba5e5b87a2cf77d073d675b7324e3144d4787cd87df95bd22",
+      "bytes": 492,
+      "lines": 16,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
+      "sha256": "e79063d1b94e345a7d80c7220eb13f4cdcda7780ffff2a993ccc391900ef03dd",
+      "bytes": 31627,
+      "lines": 597,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/path_relative_tracking.hpp",
+      "sha256": "c45ec9152b021d5eebe88d99630d4a263cf1ee3279c0683df76baf8e0f86439f",
+      "bytes": 13055,
+      "lines": 286,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp",
+      "sha256": "bbf6749f0f5e752908685f748cdadb776b7f151007e02bc5a99b1e8203350e78",
+      "bytes": 49758,
+      "lines": 992,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/planning_key.hpp",
+      "sha256": "9bfac2408bcf541787650af1dd4b7aa4013ca2d526c9a8a56f019e59fd31729e",
+      "bytes": 255,
+      "lines": 10,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/planning_supervisor.hpp",
+      "sha256": "46a505e01cc3f248ab7d8cf374e21aba3d5d77a406a6aa7c593943916b1581ac",
+      "bytes": 2730,
+      "lines": 69,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/planning_worker.hpp",
+      "sha256": "2e43af7f63246b825de9fc281a2ca4c37492a3237953f63f606c06c95c311a35",
+      "bytes": 13530,
+      "lines": 354,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/retained_decision_observation.hpp",
+      "sha256": "9fdc45f69524de428ca5f753c85540d7a0f9db8da1c931d1a2a124db3080ea07",
+      "bytes": 15178,
+      "lines": 292,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/runtime_boundaries.hpp",
+      "sha256": "6b79fcc42418b5e74a3b8ce373c6532d54ac448e5e82d438a31a343e38db6d00",
+      "bytes": 6652,
+      "lines": 179,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/same_identity_renewal_injection.hpp",
+      "sha256": "cfded722498a1142e219963ba372e3614cb14fd84dd0d2ec9f89a9f51621cf36",
+      "bytes": 4181,
+      "lines": 107,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/trajectory_completion.hpp",
+      "sha256": "e6e77000f3c12093f4a90ea21e2eb01c4c03d4908324d4ad5f8647dc3b9da147",
+      "bytes": 2081,
+      "lines": 53,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/package.xml",
+      "sha256": "7237f511acec1f69cdcb112035b896df2766f5c95e70bce359828c8cb540a984",
+      "bytes": 942,
+      "lines": 24,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/src/mapping_fail_stop.cpp",
+      "sha256": "5425f211d842ed9e4a2b74d620c64403fe237646414ef009d30b2b66299d4b10",
+      "bytes": 620,
+      "lines": 23,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/src/mission_dynamics.cpp",
+      "sha256": "359a552cada88e86b1a3c99e1969cc2b211a7e2765c6aa7847d731ba3510af36",
+      "bytes": 787,
+      "lines": 23,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_main.cpp",
+      "sha256": "6e285cff80075c8705506052a546bb749c61c5bfdb52bccf3aa89aac56ad8483",
+      "bytes": 363,
+      "lines": 11,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "sha256": "61653ae02500e04614de1c6777f41937c97d19d3cb115088babaa6acf14e0e70",
+      "bytes": 492144,
+      "lines": 8871,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_certified_continuation.cpp",
+      "sha256": "b979fcfc932b341ab95580256be7691ee5c2106dbfff9100627f615d0c83c0b1",
+      "bytes": 7303,
+      "lines": 174,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_execution_episode.cpp",
+      "sha256": "c93e811bd2647376842e8ed65bbe28d4eb03dcd64f52ae965d3bf1f4600c948a",
+      "bytes": 13260,
+      "lines": 312,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_execution_trace_snapshot.cpp",
+      "sha256": "a9ceef9fddb4ff5e6ab64fd09cee5f83131b5bfef3b5b9b661c120bd92d1e7cc",
+      "bytes": 7453,
+      "lines": 185,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_kinematic_derivative_estimator.cpp",
+      "sha256": "ce7ef9e75c3007d58fc89c91ddebc4acc254750a46b183fb0953d2e1bff6e7e0",
+      "bytes": 2484,
+      "lines": 63,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_localization_epoch_reset.cpp",
+      "sha256": "be9431288e042719d26b3fd87932b7ed8a6f5b923215a7062606fcc6b64a5c58",
+      "bytes": 3037,
+      "lines": 91,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_mapping_fail_stop.cpp",
+      "sha256": "7163314998aebec5b0a5791f5ee47a67fb965f0dce6eae63fce8cf9652ca50e6",
+      "bytes": 955,
+      "lines": 31,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_mission_dynamics.cpp",
+      "sha256": "511b7c75f2fdad860a3d85d86587e35f95f23e58c7534e8044efbcabe73e1c23",
+      "bytes": 2260,
+      "lines": 85,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_navigation_runtime_shutdown.cpp",
+      "sha256": "8fdbc569a8a1fd4d84a0422bf7cdcfdbef6be41867a19857d48140dcdd33cb36",
+      "bytes": 36145,
+      "lines": 796,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_navigation_runtime_terminal_monitor.cpp",
+      "sha256": "ea06e01dc8888d748ddec5baaea5999a88532003f740584710e5f92c14d12a9a",
+      "bytes": 105935,
+      "lines": 1942,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_path_relative_tracking.cpp",
+      "sha256": "e54109dec6d796013f713c01687ab32545806a5b936fb8c65ebdf543212561e3",
+      "bytes": 17795,
+      "lines": 406,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_planner_fsm.cpp",
+      "sha256": "3beb53b3b718431795b5f06486dac79f457788cac7f3121c0a603c0af00be57d",
+      "bytes": 78625,
+      "lines": 1624,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_planning_worker.cpp",
+      "sha256": "5e05971f98599b2092665230ed0c965fcd70dff1d3997a0f55bea326381f89b8",
+      "bytes": 19415,
+      "lines": 523,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_retained_decision_observation.cpp",
+      "sha256": "870dde2532291d6473702a330c93e6bbc27063188b6d157140b11c1e3c01ecaa",
+      "bytes": 7412,
+      "lines": 153,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_same_identity_renewal_injection.cpp",
+      "sha256": "4a787cb354785e99457a5ac012cfffe9c5a059380dc6fdb25a8b6b040c05f295",
+      "bytes": 17990,
+      "lines": 419,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_world_snapshot_store.cpp",
+      "sha256": "07f43bbec8c0c8ca1c59c1813a058f497501c8248bfbd8918ddbe739a4abab1b",
+      "bytes": 14804,
+      "lines": 392,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_description/CMakeLists.txt",
+      "sha256": "482736052c59509f9685e2a4e1cd86d1fd959a3e4156db2539b2c96ccfb68c30",
+      "bytes": 356,
+      "lines": 18,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_description/launch/publish_sensor_frames.launch.py",
+      "sha256": "3f7f9af38dd890e24224d0e1daf1594ae24cfe8cda1d778c23bb97bc350b0cf9",
+      "bytes": 2510,
+      "lines": 59,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_description/package.xml",
+      "sha256": "d64830daeba419d6c980b7f00818448fe1d660d0044875111c6968fa2fd0e788",
+      "bytes": 682,
+      "lines": 17,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_description/test/test_sensor_frames_contract.py",
+      "sha256": "c834802a742dc81d3d978b453e06c89fcefccf8cbbe8f53e7073cd14a5abf4d0",
+      "bytes": 1817,
+      "lines": 43,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_description/urdf/uav_sensor_frames.urdf.xacro",
+      "sha256": "1d498c50d0c1ac02b2f2cca6090e99244cf6a309690db05e8ca20188d827449b",
+      "bytes": 1666,
+      "lines": 35,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/CMakeLists.txt",
+      "sha256": "708c449386d8b65d11af415c9cc83e1239900aaf271676bdeb48bf0b12333543",
+      "bytes": 2336,
+      "lines": 68,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/bridge/px4_mid360_control_bridge.yaml",
+      "sha256": "a38d7d92b1a154340e2ac7fb9b8a06125cc2d5656911a8e47b3918f449fd5264",
+      "bytes": 826,
+      "lines": 21,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/bridge/px4_mid360_lidar_bridge.yaml",
+      "sha256": "f7b49215915e60ef55d2ba83dec139443a3da7721971808d7673e3586333bce6",
+      "bytes": 801,
+      "lines": 16,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/include/uav_simulation/visibility_cloud.hpp",
+      "sha256": "8979715474b1d472d6ab924bf868ef01f7672dc7d717108cfa33cde7ba607d0d",
+      "bytes": 2301,
+      "lines": 66,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/models/lidar_mid360/model.sdf",
+      "sha256": "fcd1679e0cc9a652b665d220738bf6ed70c4af2e99656220aae64994de90d2dc",
+      "bytes": 3200,
+      "lines": 80,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/models/x500_mid360/model.sdf",
+      "sha256": "7e924e71a275bfcdddd2ad7469b77f947053511a113f112efa03d876fa3d4c09",
+      "bytes": 1188,
+      "lines": 26,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/package.xml",
+      "sha256": "19341096ae1b5a5ac862d0418f1d4e125843a8229f972489bc1c2504668f387c",
+      "bytes": 1049,
+      "lines": 38,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/src/gz_lidar_bridge.cpp",
+      "sha256": "de0131fe66ca650fd3c08086cbda850ba9fb83e432a86f806044cc3f6b6955ae",
+      "bytes": 6910,
+      "lines": 189,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/src/visibility_bridge.cpp",
+      "sha256": "8224f89d9128ad64fc9bd051daf8f91158023c201627025d98f48182a5c87f35",
+      "bytes": 7230,
+      "lines": 176,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/src/visibility_cloud.cpp",
+      "sha256": "453b7b5195964e7e8fa58d05f03c38342deb0af880d91688a2a36dacac041302",
+      "bytes": 13012,
+      "lines": 296,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/test/test_px4_mid360_assets.py",
+      "sha256": "8ff9aaa1efb2be3d5927cd6797036dbf58e358585b4be04f261755c46c6dd129",
+      "bytes": 9487,
+      "lines": 191,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/test/test_visibility_cloud.cpp",
+      "sha256": "c6c4c6a1eba6306ee2895ece28b08158fd08ec7daea9921e7f736e55c7cda888",
+      "bytes": 7797,
+      "lines": 209,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/closed_loop_characterization.sdf",
+      "sha256": "ac34286eeb90ddf343985f3350153798cb83b71e8cc55faf7e32a652f2036337",
+      "bytes": 6282,
+      "lines": 30,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/corridor.sdf",
+      "sha256": "494b9286caab9444c72a7214957ea4446baeb850d606e715806a59e0fa6031fa",
+      "bytes": 2524,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/forest_clutter.sdf",
+      "sha256": "58e864770f58331eeb925b54f0951edbfad98f11714fd62e336507eedcd13bd3",
+      "bytes": 3621,
+      "lines": 13,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/long_cross_obstacles.sdf",
+      "sha256": "f32c8b16a7b904226460921a030df12bd45b287d03624add23f951ae1c62957d",
+      "bytes": 4459,
+      "lines": 28,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/long_featured.sdf",
+      "sha256": "cb40ad74ddeada92570d33c648387af4ba46282ba823675a6e438df1952ed3c8",
+      "bytes": 10967,
+      "lines": 47,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/long_open.sdf",
+      "sha256": "c4bd3531780c106c1ba6ed5c46ce7f3fd75663550d687907abf2b8897fb12a70",
+      "bytes": 2517,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/long_open_featured_speed.sdf",
+      "sha256": "6a59ea14074aa0cbe7475d1f719be4a681a7ab0e14a09be8f78c7f0c5b809e98",
+      "bytes": 17319,
+      "lines": 73,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/long_three_pillars.sdf",
+      "sha256": "a066f07ac6d56650902fbeeca81ed579a1b4378e1f858cd0d653dd4c828a5fd8",
+      "bytes": 9293,
+      "lines": 43,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/long_three_pillars_speed.sdf",
+      "sha256": "237d2e31258565282d80d7379bd6c5c5cc160a84408062e15bf633043b1dfb35",
+      "bytes": 12616,
+      "lines": 57,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/navigation_generalization.sdf",
+      "sha256": "ecdb840a1acf1e319cf3d7dc4e0a47315d7e575ccf315224981f4eccbe5d67e7",
+      "bytes": 7180,
+      "lines": 40,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/no_path.sdf",
+      "sha256": "45fcd0f713394ebacb7dc756c9a5bed0c4875a69bdad9ac4c9127303593716b4",
+      "bytes": 2658,
+      "lines": 17,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/occlusion.sdf",
+      "sha256": "769791e18c505fd4ad212f1b96fce32780a0d31fa62bf19c66c162ea9a7a71fe",
+      "bytes": 6425,
+      "lines": 38,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/occlusion_degenerate.sdf",
+      "sha256": "f79f2b98d4c28c06407db41f79071b2c7e3e20a47b5dd951e314cefba2410ebf",
+      "bytes": 2171,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/open.sdf",
+      "sha256": "ea5943e3d08e25b05d36fa3c7dafbbfb82d8ce1c92ded91afcd0efc6a9f6b2a4",
+      "bytes": 2128,
+      "lines": 14,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/pillar.sdf",
+      "sha256": "7e0bc568bd892ab5a2f86c7be65731ec4e6379f3bc7a93d6612f0f997df4275e",
+      "bytes": 2563,
+      "lines": 15,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/px4_lio_smoke.sdf",
+      "sha256": "c294b920d5bf3c8cf0d2b7978ba151235184b3e4c3080bdc4ae45bb29b36d9c4",
+      "bytes": 3729,
+      "lines": 60,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/tunnel_irregular.sdf",
+      "sha256": "893ce75b0df3bfc3ecb62239a7260bcde7eb97ae0b3025c61c814e074a33644e",
+      "bytes": 3272,
+      "lines": 12,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "src/uav_simulation/worlds/tunnel_smooth.sdf",
+      "sha256": "6873f0126b63493f16b383e84485425d3d68493d0d17216baa4c735e5eb685e5",
+      "bytes": 2415,
+      "lines": 12,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "symlink_install_manifest.txt",
+      "sha256": "c3b448c2437f15d6ec48aafe74def8e97d767dc4281cc1b4c188aa704ea4cdfa",
+      "bytes": 3093,
+      "lines": 26,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "tools/validate_runtime_safety_ledger.py",
+      "sha256": "6d5b84ab07db77e0f652ae84fe9432e9272d1cdd0548a9421b5bbaf8c62d5828",
+      "bytes": 9242,
+      "lines": 207,
+      "source_kind": "working_tree"
+    },
+    {
+      "path": "build/compile_commands.json",
+      "sha256": "32e3692ca5c79a3cab76266b502fe9996142e1494b39fdee6506a7e5e40fc2c1",
+      "bytes": 129285,
+      "lines": 344,
+      "source_kind": "generated_build_metadata_unverified"
+    }
+  ],
+  "capture_drift": []
+}

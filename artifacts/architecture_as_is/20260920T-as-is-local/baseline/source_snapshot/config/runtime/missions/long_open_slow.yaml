@@ -1,0 +1,30 @@
+mission:
+  version: 1
+  id: external_mode_long_open_slow_route
+  frame: lio_odom
+  waypoints:
+    - id: long_departure
+      position: [5.0, 0.0, 2.8]
+      acceptance_radius_m: 0.8
+      behavior: pass_through
+    - id: long_mid_1
+      position: [17.0, 0.0, 2.8]
+      acceptance_radius_m: 0.8
+      behavior: pass_through
+    - id: long_mid_2
+      position: [27.0, 0.0, 3.0]
+      acceptance_radius_m: 0.8
+      behavior: pass_through
+    - id: long_mid_3
+      position: [42.0, 0.0, 2.8]
+      acceptance_radius_m: 0.8
+      behavior: pass_through
+    - id: long_finish
+      position: [53.0, 0.0, 2.8]
+      acceptance_radius_m: 0.8
+      behavior: stop
+      hold_s: 0.5
+  planning:
+    requested_cruise_speed_mps: 0.8
+    unknown_policy: allow_unknown
+  control:

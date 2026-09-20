@@ -1,0 +1,18 @@
+digraph G {
+ graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.65", fontname="DejaVu Sans"];
+ node [fontname="DejaVu Sans",fontsize=10,margin="0.12,0.08"];
+ edge [fontname="DejaVu Sans",fontsize=9,arrowsize=0.75];
+T_SAMPLE_BACKUP [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_SAMPLE_BACKUP: ROS-time sample enters BACKUP or EMERGENCY suffix interval\nGuard: valid sample and exact active bundle/executing identity still\ncurrent; no planned-stop-hold misclassification\nWrites: F_EXEC_RECOVERY\nEffect: command status/role encodes sampled execution role;\nMissionController only receives it after downstream admission"];
+T_SAMPLE_BACKUP [URL="../../tables/transitions.html#T_SAMPLE_BACKUP",tooltip="T_SAMPLE_BACKUP: publishCommand -> CommandSampler::sample -> observeSampledSafetyRole"];
+T_RECOVERY_STOP [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_RECOVERY_STOP: measured state meets stopped recovery criteria or sampled\nterminal safety stop\nGuard: exact active bundle/gen and state identity, freshness, stop\nenvelope, world/certificate checks; unresolved/UNKNOWN does not\ngrant restart\nWrites: F_EXEC_RECOVERY, F_TIMELINE, F_PENDING_GOAL, F_DESIRED_GOAL,\nF_WORKER_QUEUE\nEffect: stopped recovery may schedule plan-from-rest; external PX4 mode\nhas a separate 5 s completed-command recovery clock"];
+T_RECOVERY_STOP [URL="../../tables/transitions.html#T_RECOVERY_STOP",tooltip="T_RECOVERY_STOP: runCycle measured-stop check -> applyExecutionRecoveryEventLocked(CertifiedStopObserved) / publishCommand planned stop hold"];
+T_EMERGENCY_FAIL [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_EMERGENCY_FAIL: emergency brake candidate fails certification or boundary\nvalidation\nGuard: emergency_certification_failed or emergency_boundary_failed after\nexact request/execution owner recheck\nWrites: F_EXEC_RECOVERY, F_FAILURE_LATCH, F_TIMELINE\nEffect: publisher exposes rejected/terminal authorization status; PX4 mode\nthen chooses safety stop/handover through its own status/mission\npath"];
+T_EMERGENCY_FAIL [URL="../../tables/transitions.html#T_EMERGENCY_FAIL",tooltip="T_EMERGENCY_FAIL: runCycle emergency certification result -> recovery event + failClosedLocked"];
+T_EPOCH_RESET [shape=box,style="rounded,filled",fillcolor="#fff4d6",label="T_EPOCH_RESET: estimator epoch advances/reset\nGuard: epoch is nonzero, monotonic; reset path clears readiness and\ndrains/cancels old epoch data\nWrites: F_LOCALIZATION_EPOCH, F_DESIRED_GOAL, F_EXECUTING_GOAL,\nF_TIMELINE, F_EXEC_RECOVERY, F_FAILURE_LATCH, F_WORKER_QUEUE\nEffect: old result cannot regain command authority after epoch transition;\nno claim of total cross-callback order beyond epoch locks/identity\nchecks"];
+T_EPOCH_RESET [URL="../../tables/transitions.html#T_EPOCH_RESET",tooltip="T_EPOCH_RESET: onPropagatedOdometry/onEstimatorHealth -> localization epoch reset handler"];
+T_SAMPLE_BACKUP -> T_RECOVERY_STOP [style=invis,weight=10];
+T_RECOVERY_STOP -> T_EMERGENCY_FAIL [style=invis,weight=10];
+T_EMERGENCY_FAIL -> T_EPOCH_RESET [style=invis,weight=10];
+T_SAMPLE_BACKUP -> T_RECOVERY_STOP [style=dashed,color="#555555",label="sampled suffix may reach measured stop"];
+legend [shape=note,style="rounded,filled",fillcolor="#f5f5f5",label="Each box is one guarded transition. Dashed labeled edges show supported paths; invisible edges only arrange the page. Independent callbacks may interleave."];
+}

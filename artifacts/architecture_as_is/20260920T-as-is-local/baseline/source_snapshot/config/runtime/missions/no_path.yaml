@@ -1,0 +1,29 @@
+mission:
+  version: 1
+  id: external_mode_no_path
+  frame: lio_odom
+  waypoints:
+    - id: unreachable_first_waypoint
+      position: [3.0, 4.5, 3.0]
+      acceptance_radius_m: 0.7
+      hold_s: 0.2
+    - id: unreachable_second_waypoint
+      position: [5.0, 4.5, 3.0]
+      acceptance_radius_m: 0.7
+      hold_s: 0.2
+    - id: unreachable_third_waypoint
+      position: [5.0, 6.0, 3.0]
+      acceptance_radius_m: 0.7
+      hold_s: 0.2
+    - id: unreachable_fourth_waypoint
+      position: [3.0, 6.0, 3.0]
+      acceptance_radius_m: 0.7
+      hold_s: 0.2
+    - id: unreachable_finish
+      position: [3.0, 4.5, 3.0]
+      acceptance_radius_m: 0.7
+      hold_s: 0.2
+  planning:
+    requested_cruise_speed_mps: 1.0
+    unknown_policy: allow_unknown
+  control:

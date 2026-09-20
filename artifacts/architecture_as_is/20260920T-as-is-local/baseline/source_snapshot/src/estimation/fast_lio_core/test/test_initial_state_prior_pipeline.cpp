@@ -1,0 +1,381 @@
+#include <gtest/gtest.h>
+
+#include "fast_lio_core/pipeline/fast_lio_pipeline.hpp"
+
+namespace uav::nav::lio {
+namespace {
+
+ImuSample imu(std::int64_t time_ns) {
+  ImuSample sample;
+  sample.time = Timestamp(time_ns);
+  sample.linear_acceleration_imu_m_s2 = Eigen::Vector3d(0.0, 0.0, 9.80665);
+  sample.angular_velocity_imu_rad_s.setZero();
+  return sample;
+}
+
+LidarScan scan(std::int64_t time_ns) {
+  LidarScan value;
+  value.start_time = Timestamp(time_ns);
+  value.end_time = Timestamp(time_ns);
+  value.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  return value;
+}
+
+InitialStatePrior topicPrior(std::int64_t time_ns) {
+  InitialStatePrior prior;
+  prior.sample_time = Timestamp(time_ns);
+  prior.reference_frame = lioOdomFrame();
+  prior.body_frame = baseFrame();
+  prior.source = InitialStatePriorSource::kTopic;
+  prior.context = InitialStatePriorContext::kGroundStartup;
+  prior.mask = {true, false, PriorAttitudeMode::kNone};
+  prior.position_odom_base_m = Eigen::Vector3d(3.0, -2.0, 1.0);
+  prior.provenance = "test";
+  return prior;
+}
+
+EstimatorConfig topicConfig() {
+  EstimatorConfig config;
+  config.initialization.minimum_imu_samples = 3;
+  config.initialization.maximum_imu_samples = 20;
+  config.initialization.require_stationary = true;
+  config.deskew.mode = DeskewMode::kSimultaneousScan;
+  config.initial_prior.source = InitialStatePriorSource::kTopic;
+  config.initial_prior.context = InitialStatePriorContext::kGroundStartup;
+  config.initial_prior.mask = {true, false, PriorAttitudeMode::kNone};
+  config.initial_prior.topic_wait_timeout_ns = 1'000'000'000;
+  config.initial_prior.maximum_topic_prior_age_ns = 500'000'000;
+  config.initial_prior.ground_fallback = InitialPriorFallback::kReject;
+  config.insertion_policy.minimum_point_count = 1;
+  return config;
+}
+
+TEST(InitialStatePriorPipelineTest, PendingTopicPriorDoesNotConsumeQueuedLidar) {
+  FastLioPipeline pipeline(topicConfig());
+  ASSERT_TRUE(pipeline.pushImu(imu(100'000'000)).ok());
+  ASSERT_TRUE(pipeline.pushImu(imu(200'000'000)).ok());
+  ASSERT_TRUE(pipeline.pushImu(imu(300'000'000)).ok());
+  ASSERT_TRUE(pipeline.pushLidar(scan(400'000'000)).ok());
+  ASSERT_EQ(pipeline.status(), EstimatorStatus::kInitializingImu);
+  const std::size_t queued_before = pipeline.pendingLidarCount();
+  EXPECT_FALSE(pipeline.processNext().has_value());
+  EXPECT_EQ(pipeline.pendingLidarCount(), queued_before);
+  EXPECT_EQ(pipeline.diagnostics().initial_prior.status, InitialPriorStatus::kWaiting);
+}
+
+TEST(InitialStatePriorPipelineTest, ValidTopicPriorAppliesOnceBeforeMapBootstrap) {
+  FastLioPipeline pipeline(topicConfig());
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'000'000'000);
+  group.scan.end_time = Timestamp(1'000'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  group.propagation_start_time = Timestamp(800'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+
+  const ProcessResult pending = pipeline.process(group);
+  EXPECT_EQ(pending.rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  EXPECT_FALSE(pipeline.diagnostics().initial_prior.applied);
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(topicPrior(1'000'000'000)).ok());
+  const ProcessResult applied = pipeline.process(group);
+  ASSERT_EQ(applied.status_after, EstimatorStatus::kInitializingMap)
+      << applied.rejection_reason << " / " << applied.diagnostics.reason;
+  EXPECT_EQ(applied.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_EQ(applied.diagnostics.initial_prior.status, InitialPriorStatus::kClosed)
+      << applied.diagnostics.initial_prior.reason;
+  EXPECT_TRUE(applied.diagnostics.initial_prior.applied);
+  EXPECT_EQ(applied.diagnostics.initial_prior.candidate_count, 1U);
+  EXPECT_EQ(applied.diagnostics.initial_prior.accepted_count, 1U);
+  EXPECT_TRUE(applied.diagnostics.initial_prior.bootstrap_map_after_prior)
+      << applied.rejection_reason << " / " << applied.diagnostics.reason;
+  EXPECT_TRUE(pipeline.state().position_odom_imu_m().isApprox(
+      topicPrior(1'000'000'000).position_odom_base_m));
+
+  const Status late = pipeline.submitInitialStatePrior(topicPrior(1'100'000'000));
+  EXPECT_EQ(late.code(), StatusCode::kNotReady);
+  EXPECT_EQ(pipeline.diagnostics().initial_prior.late_rejected_count, 1U);
+  const Status ignored = pipeline.submitInitialStatePrior(
+      topicPrior(1'200'000'000), InitialStatePriorLateSubmissionPolicy::kIgnore);
+  EXPECT_EQ(ignored.code(), StatusCode::kNotReady);
+  EXPECT_EQ(pipeline.diagnostics().initial_prior.candidate_count, 2U);
+  EXPECT_EQ(pipeline.diagnostics().initial_prior.rejected_count, 1U);
+  EXPECT_EQ(pipeline.diagnostics().initial_prior.late_rejected_count, 1U);
+}
+
+TEST(InitialStatePriorPipelineTest, FutureTopicPriorWaitsForSensorEpoch) {
+  FastLioPipeline pipeline(topicConfig());
+  MeasurementGroup first;
+  first.scan.start_time = Timestamp(1'000'000'000);
+  first.scan.end_time = Timestamp(1'000'000'000);
+  first.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  first.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  first.propagation_start_time = Timestamp(800'000'000);
+  first.has_start_bracket = true;
+  first.has_end_bracket = true;
+  first.max_imu_gap_ns = 100'000'000;
+
+  EXPECT_EQ(pipeline.process(first).rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(topicPrior(1'100'000'000)).ok());
+  const ProcessResult waiting = pipeline.process(first);
+  EXPECT_EQ(waiting.rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  EXPECT_TRUE(waiting.diagnostics.initial_prior.waiting_for_sensor_time);
+  EXPECT_EQ(waiting.diagnostics.initial_prior.time_delta_ns, -100'000'000);
+  EXPECT_EQ(waiting.diagnostics.initial_prior.candidate_timestamp_ns, 1'100'000'000);
+
+  MeasurementGroup second = first;
+  second.scan.start_time = Timestamp(1'200'000'000);
+  second.scan.end_time = Timestamp(1'200'000'000);
+  second.imu_samples = {imu(1'000'000'000), imu(1'100'000'000), imu(1'200'000'000)};
+  second.propagation_start_time = Timestamp(1'000'000'000);
+  const ProcessResult applied = pipeline.process(second);
+  EXPECT_EQ(applied.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_EQ(applied.diagnostics.initial_prior.reason, "TOPIC_PRIOR_ACCEPTED");
+  EXPECT_FALSE(applied.diagnostics.initial_prior.fallback_applied);
+}
+
+TEST(InitialStatePriorPipelineTest, FutureTopicPriorSurvivesTimeoutUntilSensorCatchesUp) {
+  EstimatorConfig config = topicConfig();
+  config.initial_prior.topic_wait_timeout_ns = 1;
+  FastLioPipeline pipeline(config);
+  MeasurementGroup first;
+  first.scan.start_time = Timestamp(1'000'000'000);
+  first.scan.end_time = Timestamp(1'000'000'000);
+  first.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  first.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  first.propagation_start_time = Timestamp(800'000'000);
+  first.has_start_bracket = true;
+  first.has_end_bracket = true;
+  first.max_imu_gap_ns = 100'000'000;
+
+  EXPECT_EQ(pipeline.process(first).rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(topicPrior(2'000'000'000)).ok());
+
+  MeasurementGroup timeout = first;
+  timeout.scan.start_time = Timestamp(1'500'000'000);
+  timeout.scan.end_time = Timestamp(1'500'000'000);
+  timeout.imu_samples = {imu(1'000'000'000), imu(1'250'000'000), imu(1'500'000'000)};
+  timeout.propagation_start_time = Timestamp(1'000'000'000);
+  const ProcessResult waiting = pipeline.process(timeout);
+  EXPECT_EQ(waiting.rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  EXPECT_TRUE(waiting.diagnostics.initial_prior.waiting_for_sensor_time);
+  EXPECT_EQ(waiting.diagnostics.initial_prior.future_rejected_count, 0U);
+  EXPECT_FALSE(waiting.diagnostics.initial_prior.fallback_applied);
+
+  MeasurementGroup caught_up = timeout;
+  caught_up.scan.start_time = Timestamp(2'100'000'000);
+  caught_up.scan.end_time = Timestamp(2'100'000'000);
+  caught_up.imu_samples = {imu(1'500'000'000), imu(1'800'000'000), imu(2'100'000'000)};
+  caught_up.propagation_start_time = Timestamp(1'500'000'000);
+  const ProcessResult applied = pipeline.process(caught_up);
+  EXPECT_EQ(applied.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_EQ(applied.diagnostics.initial_prior.reason, "TOPIC_PRIOR_ACCEPTED");
+  EXPECT_FALSE(applied.diagnostics.initial_prior.fallback_applied);
+}
+
+TEST(InitialStatePriorPipelineTest, PredictsFromExactPriorEpochWithBracketedImu) {
+  auto config = topicConfig();
+  config.ikfom.maximum_integration_step_ns = 100'000'000;
+  FastLioPipeline pipeline(config);
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'200'000'000);
+  group.scan.end_time = Timestamp(1'200'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(1'000'000'000), imu(1'100'000'000), imu(1'200'000'000)};
+  group.propagation_start_time = Timestamp(1'000'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+  ASSERT_EQ(pipeline.process(group).rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(topicPrior(1'000'000'000)).ok());
+  const auto result = pipeline.process(group);
+  EXPECT_EQ(result.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_TRUE(result.diagnostics.initial_prior.propagated_to_application);
+  ASSERT_TRUE(pipeline.stateTime().has_value());
+  EXPECT_EQ(pipeline.stateTime()->nanoseconds(), 1'200'000'000);
+}
+
+TEST(InitialStatePriorPipelineTest,
+     PhysicalStatePredictionUsesPriorEpochWithoutSkippingOrDuplicatingImu) {
+  auto config = topicConfig();
+  config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  config.initial_prior.mask = {true, true, PriorAttitudeMode::kFull};
+  config.ikfom.maximum_integration_step_ns = 100'000'000;
+
+  constexpr std::int64_t t0_ns = 1'000'000'000;
+  constexpr std::int64_t tm_ns = 1'100'000'000;
+  constexpr std::int64_t t1_ns = 1'200'000'000;
+  constexpr double dt_s = 0.2;
+  constexpr double yaw_rate_rad_s = 1.5;
+  const Eigen::Vector3d initial_position(1.0, -2.0, 0.5);
+  const Eigen::Vector3d initial_velocity(2.0, -0.5, 0.25);
+  const Eigen::Quaterniond initial_orientation(
+      Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitZ()));
+
+  auto physicalImu = [=](std::int64_t time_ns) {
+    ImuSample sample = imu(time_ns);
+    sample.angular_velocity_imu_rad_s =
+        Eigen::Vector3d(0.0, 0.0, yaw_rate_rad_s);
+    return sample;
+  };
+
+  FastLioPipeline pipeline(config);
+  InitialStatePrior prior = topicPrior(t0_ns);
+  prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  prior.mask = {true, true, PriorAttitudeMode::kFull};
+  prior.position_odom_base_m = initial_position;
+  prior.orientation_odom_base = initial_orientation;
+  prior.linear_velocity_base_m_s = initial_orientation.inverse() * initial_velocity;
+  prior.angular_velocity_base_rad_s =
+      Eigen::Vector3d(0.0, 0.0, yaw_rate_rad_s);
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
+
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(t1_ns);
+  group.scan.end_time = Timestamp(t1_ns);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {physicalImu(t0_ns), physicalImu(tm_ns), physicalImu(t1_ns)};
+  group.propagation_start_time = Timestamp(t1_ns);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+
+  const ProcessResult result = pipeline.process(group);
+  ASSERT_EQ(result.status_after, EstimatorStatus::kInitializingMap)
+      << result.rejection_reason << " / " << result.diagnostics.reason;
+  ASSERT_TRUE(result.predicted_estimate.has_value());
+
+  const Eigen::Vector3d expected_position = initial_position + initial_velocity * dt_s;
+  const Eigen::Quaterniond expected_orientation =
+      Eigen::Quaterniond(Eigen::AngleAxisd(yaw_rate_rad_s * dt_s,
+                                           Eigen::Vector3d::UnitZ())) *
+      initial_orientation;
+  EXPECT_TRUE(result.predicted_estimate->state.position_odom_imu_m().isApprox(
+      expected_position, 1e-4))
+      << "actual=" << result.predicted_estimate->state.position_odom_imu_m().transpose()
+      << " expected=" << expected_position.transpose();
+  EXPECT_TRUE(result.predicted_estimate->state.velocity_odom_imu_m_s().isApprox(
+      initial_velocity, 1e-3))
+      << "actual=" << result.predicted_estimate->state.velocity_odom_imu_m_s().transpose()
+      << " expected=" << initial_velocity.transpose();
+  EXPECT_LT(result.predicted_estimate->state.orientation_odom_imu().angularDistance(
+                expected_orientation),
+            1e-6);
+  ASSERT_TRUE(pipeline.stateTime().has_value());
+  EXPECT_EQ(pipeline.stateTime()->nanoseconds(), t1_ns);
+  EXPECT_TRUE(result.diagnostics.initial_prior.propagated_to_application);
+  EXPECT_EQ(result.diagnostics.initial_prior.time_delta_ns, t1_ns - t0_ns);
+  EXPECT_TRUE(result.diagnostics.prediction.attempted);
+  EXPECT_TRUE(result.diagnostics.prediction.successful);
+  EXPECT_EQ(result.diagnostics.prediction.start_time_ns, t0_ns);
+  EXPECT_EQ(result.diagnostics.prediction.end_time_ns, t1_ns);
+  EXPECT_EQ(result.diagnostics.prediction.interval_ns, t1_ns - t0_ns);
+  EXPECT_EQ(result.diagnostics.prediction.imu_first_time_ns, t0_ns);
+  EXPECT_EQ(result.diagnostics.prediction.imu_last_time_ns, t1_ns);
+  EXPECT_EQ(result.diagnostics.prediction.imu_sample_count, 3U);
+  EXPECT_EQ(result.diagnostics.prediction.integration_interval_count, 2U);
+}
+
+TEST(InitialStatePriorPipelineTest, MissingPredictionBracketFailsClosed) {
+  auto config = topicConfig();
+  config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  config.initial_prior.mask = {true, true, PriorAttitudeMode::kFull};
+  FastLioPipeline pipeline(config);
+
+  InitialStatePrior prior = topicPrior(1'000'000'000);
+  prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  prior.mask = {true, true, PriorAttitudeMode::kFull};
+  prior.linear_velocity_base_m_s = Eigen::Vector3d::Zero();
+  prior.angular_velocity_base_rad_s = Eigen::Vector3d::Zero();
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
+
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'200'000'000);
+  group.scan.end_time = Timestamp(1'200'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(900'000'000), imu(1'000'000'000), imu(1'100'000'000)};
+  group.propagation_start_time = Timestamp(1'200'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+
+  const ProcessResult result = pipeline.process(group);
+  EXPECT_FALSE(result.predicted_estimate.has_value());
+  EXPECT_EQ(result.rejection_reason, "Prediction IMU end bracket is missing");
+  EXPECT_TRUE(result.diagnostics.prediction.attempted);
+  EXPECT_FALSE(result.diagnostics.prediction.successful);
+  EXPECT_EQ(result.diagnostics.prediction.rejection_reason,
+            "Prediction IMU end bracket is missing");
+}
+
+TEST(InitialStatePriorPipelineTest, InvalidPriorCovarianceDoesNotMutateFilter) {
+  auto config = topicConfig();
+  config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  config.initial_prior.mask = {true, true, PriorAttitudeMode::kFull};
+  FastLioPipeline pipeline(config);
+  const ManifoldState state_before = pipeline.state();
+  const ManifoldState::Covariance covariance_before = pipeline.covariance();
+
+  InitialStatePrior prior = topicPrior(1'000'000'000);
+  prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  prior.mask = {true, true, PriorAttitudeMode::kFull};
+  prior.linear_velocity_base_m_s = Eigen::Vector3d::Zero();
+  prior.angular_velocity_base_rad_s = Eigen::Vector3d::Zero();
+  prior.covariance = ManifoldState::Covariance::Identity();
+  (*prior.covariance)(0, 0) = -1.0;
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
+
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'000'000'000);
+  group.scan.end_time = Timestamp(1'000'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  group.propagation_start_time = Timestamp(800'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+
+  const ProcessResult result = pipeline.process(group);
+  EXPECT_FALSE(result.predicted_estimate.has_value());
+  EXPECT_EQ(result.diagnostics.initial_prior.reason,
+            "INITIAL_PRIOR_COVARIANCE_NOT_PSD");
+  EXPECT_TRUE(pipeline.state().position_odom_imu_m().isApprox(
+      state_before.position_odom_imu_m(), 1e-12));
+  EXPECT_LT(pipeline.state().orientation_odom_imu().angularDistance(
+                state_before.orientation_odom_imu()),
+            1e-12);
+  EXPECT_TRUE(pipeline.state().velocity_odom_imu_m_s().isApprox(
+      state_before.velocity_odom_imu_m_s(), 1e-12));
+  EXPECT_TRUE(pipeline.covariance().isApprox(covariance_before, 1e-12));
+}
+
+TEST(InitialStatePriorPipelineTest, InFlightPriorDoesNotUseStationaryInitializer) {
+  auto config = topicConfig();
+  config.initial_prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  config.initial_prior.ground_fallback = InitialPriorFallback::kReject;
+  config.initial_prior.mask.attitude = PriorAttitudeMode::kFull;
+  FastLioPipeline pipeline(config);
+  MeasurementGroup group;
+  group.scan.start_time = Timestamp(1'000'000'000);
+  group.scan.end_time = Timestamp(1'000'000'000);
+  group.scan.points.push_back({Eigen::Vector3f(1.0F, 0.0F, 0.0F), 0, 0, 0, 0});
+  group.imu_samples = {imu(800'000'000), imu(900'000'000), imu(1'000'000'000)};
+  group.imu_samples[1].linear_acceleration_imu_m_s2 = Eigen::Vector3d(2.0, 0.0, 8.0);
+  group.propagation_start_time = Timestamp(800'000'000);
+  group.has_start_bracket = true;
+  group.has_end_bracket = true;
+  group.max_imu_gap_ns = 100'000'000;
+  EXPECT_EQ(pipeline.process(group).rejection_reason, "INITIAL_STATE_PRIOR_PENDING");
+  auto prior = topicPrior(1'000'000'000);
+  prior.context = InitialStatePriorContext::kInFlightReinitialization;
+  prior.mask.attitude = PriorAttitudeMode::kFull;
+  ASSERT_TRUE(pipeline.submitInitialStatePrior(prior).ok());
+  const auto result = pipeline.process(group);
+  EXPECT_EQ(result.status_after, EstimatorStatus::kInitializingMap);
+  EXPECT_NE(result.diagnostics.initialization.initialization_status,
+            "IMU stationarity quality gate failed");
+}
+
+}  // namespace
+}  // namespace uav::nav::lio

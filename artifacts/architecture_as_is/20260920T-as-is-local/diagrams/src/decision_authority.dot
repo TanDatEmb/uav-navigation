@@ -1,0 +1,22 @@
+digraph G {
+ graph [rankdir=LR, bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.65", fontname="DejaVu Sans"];
+ node [fontname="DejaVu Sans",fontsize=10,margin="0.12,0.08"];
+ edge [fontname="DejaVu Sans",fontsize=9,arrowsize=0.75];
+goal [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Goal acceptance / deferral
+D_GOAL"];
+commit [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Candidate commit / activation / revoke
+D_COMMIT"];
+expose [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Sample and ROS command exposure
+D_EXPOSE"];
+admit [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="PX4 mode message admission
+D_ADMIT"];
+setpoint [shape=box,style="rounded,filled",fillcolor="#edf3fa",label="Setpoint / Hold request
+D_SETPOINT"];
+goal -> commit [label="desired request -> candidate guards",style=solid];
+commit -> expose [label="active timeline only",style=solid];
+expose -> admit [label="ROS NavigationCommand",style=dashed];
+admit -> setpoint [label="cached accepted message + state gates",style=solid];
+setpoint -> commit [label="next measured/request callback; async",style=dashed,constraint=false];
+note [shape=note,label="No edge means PX4 acceptance is not inferred. Process boundaries and leases create separate decisions."];
+goal -> note [style=invis];
+}

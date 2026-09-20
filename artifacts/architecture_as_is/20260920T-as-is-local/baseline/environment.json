@@ -1,0 +1,52 @@
+{
+  "captured_utc": "2026-09-20T13:02:50.229317+00:00",
+  "head": "9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2",
+  "branch": "codex/close-proven-findings",
+  "detached": false,
+  "baseline_is_local_worktree": true,
+  "upstream": "origin/codex/close-proven-findings",
+  "ahead_behind": [0, 0],
+  "remote_urls": [{"name": "origin", "url": "git@github.com:TanDatEmb/uav-navigation.git", "credentials_redacted": true}],
+  "staged_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "unstaged_diff_sha256": "b66befd802d529c7846f5523bf96ab4678b6b67b6f222a9134f3f71be1077b2a",
+  "unstaged_diff_bytes": 1815760,
+  "initial_porcelain_v2_status_file": "baseline/worktree_status.txt",
+  "initial_status_entry_count": 32,
+  "initial_status_note": "32 entries at capture, including pre-existing edits/deletions/untracked files; the only output created by this audit is artifacts/architecture_as_is/20260920T-as-is-local. No pre-existing path was edited by the audit.",
+  "submodules": [
+    {"path": "src/external/px4_msgs", "revision": "86d8239e962f6939e05c3737784f60c02fa884db", "description": "v1.17.0"},
+    {"path": "src/external/px4_ros2_interface_lib", "revision": "4a3370f084ac6f1ef001a4afa2b007845ffd0837", "description": "1.6.1-53-g4a3370f"}
+  ],
+  "tool_versions": {
+    "graphviz_dot": "2.43.0",
+    "mermaid_cli": "not installed; node/npm executables not found on PATH",
+    "clang++": "18.1.3",
+    "c++": "Ubuntu 13.3.0-6ubuntu2~24.04.1",
+    "cmake": "3.28.3",
+    "python": "3.12.3"
+  },
+  "compile_database": {
+    "path": "build/compile_commands.json",
+    "sha256": "32e3692ca5c79a3cab76266b502fe9996142e1494b39fdee6506a7e5e40fc2c1",
+    "entries": 57,
+    "scope_observed": "px4_ros2_interface_lib submodule and /opt/ros/jazzy gtest_vendor only; no first-party runtime source translation units",
+    "cmake_cache": "build/CMakeCache.txt absent",
+    "profile_match": "unverified; compile database does not match the product sources/profile in this checkout",
+    "ast_member_reference_audit": "not performed because no matching product compile database"
+  },
+  "build_profile_under_analysis": {
+    "available_evidence": ["launch defaults and source configuration", "CMake/package manifests", "checked-in config/runtime/mapping.yaml declares deployment_profile: sitl"],
+    "selected_running_profile": "unresolved; no launch invocation, active ROS graph, or matching build cache was available",
+    "effective_runtime_config": "unresolved; config/runtime/mapping.yaml is the source default and is installed as navigation_runtime.yaml by CMake",
+    "no_build_or_test_executed": true
+  },
+  "source_snapshot": {
+    "manifest": "baseline/source_manifest.json",
+    "snapshot_root": "baseline/source_snapshot",
+    "file_count": 596,
+    "scope": "first-party source/config/build/interface text under src and config; current safety contract/index; root agent contract; safety ledger validator; compile database",
+    "excluded": ["build products and logs", "runtime evidence/artifacts outside this report", "external submodule payloads", "credentials, .env and personal data"],
+    "generated_code_provenance": "No generated product code was compiled in the available compilation database. ROS interface generation is declared in package manifests/CMake; install/build generated headers present in the checkout are not used as evidence of a matching current build. Exact generated-header producer build is unresolved.",
+    "dependency_provenance": "57 compile entries were inspected; they build PX4 ROS2 interface library code and ROS Jazzy gtest vendor only. Product runtime dependency declarations are recorded from source manifests, not verified as actually built/linked in this profile."
+  }
+}

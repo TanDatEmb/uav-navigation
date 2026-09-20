@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <world name="long_cross_obstacles">
+    <physics type="ode"><max_step_size>0.004</max_step_size><real_time_factor>0.8</real_time_factor><real_time_update_rate>200</real_time_update_rate></physics>
+    <gravity>0 0 -9.8</gravity>
+    <scene><grid>true</grid><ambient>0.4 0.4 0.4 1</ambient><background>0.72 0.78 0.85 1</background><shadows>true</shadows></scene>
+    <model name="ground_plane"><static>true</static><link name="link"><collision name="collision"><geometry><plane><normal>0 0 1</normal><size>180 60</size></plane></geometry></collision><visual name="visual"><geometry><plane><normal>0 0 1</normal><size>180 60</size></plane></geometry><material><ambient>0.75 0.75 0.75 1</ambient><diffuse>0.75 0.75 0.75 1</diffuse></material></visual></link></model>
+
+    <!-- Each pillar is centred on a long diagonal waypoint leg.  The 40 m
+         spacing between checkpoint centres leaves room to accelerate, avoid,
+         recover speed, and expose continuity across separate commands. -->
+    <model name="cross_route_pillar_01"><static>true</static><pose>20.0 0.0 3.0 0 0 0</pose><link name="link"><collision name="collision"><geometry><cylinder><radius>1.40</radius><length>6.0</length></cylinder></geometry></collision><visual name="visual"><geometry><cylinder><radius>1.40</radius><length>6.0</length></cylinder></geometry><material><ambient>0.85 0.55 0.08 1</ambient><diffuse>0.95 0.70 0.10 1</diffuse></material></visual></link></model>
+    <model name="cross_route_pillar_02"><static>true</static><pose>60.0 0.0 3.0 0 0 0.14</pose><link name="link"><collision name="collision"><geometry><cylinder><radius>1.40</radius><length>6.0</length></cylinder></geometry></collision><visual name="visual"><geometry><cylinder><radius>1.40</radius><length>6.0</length></cylinder></geometry><material><ambient>0.10 0.65 0.50 1</ambient><diffuse>0.12 0.82 0.62 1</diffuse></material></visual></link></model>
+    <model name="cross_route_pillar_03"><static>true</static><pose>100.0 0.0 3.0 0 0 -0.14</pose><link name="link"><collision name="collision"><geometry><cylinder><radius>1.40</radius><length>6.0</length></cylinder></geometry></collision><visual name="visual"><geometry><cylinder><radius>1.40</radius><length>6.0</length></cylinder></geometry><material><ambient>0.75 0.20 0.48 1</ambient><diffuse>0.90 0.25 0.60 1</diffuse></material></visual></link></model>
+
+    <!-- Edge landmarks keep FAST-LIO observable over the wide map without
+         becoming route obstacles.  Their nearest edges remain well outside
+         the +/-10 m waypoint corridor. -->
+    <model name="cross_edge_feature_01"><static>true</static><pose>10.0 -18.0 2.0 0 0 0.2</pose><link name="link"><collision name="collision"><geometry><box><size>1.2 1.2 4.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>1.2 1.2 4.0</size></box></geometry></visual></link></model>
+    <model name="cross_edge_feature_02"><static>true</static><pose>35.0 18.0 2.5 0 0 -0.25</pose><link name="link"><collision name="collision"><geometry><box><size>1.8 0.8 5.0</size></box></geometry></collision><visual name="visual"><geometry><box><size>1.8 0.8 5.0</size></box></geometry></visual></link></model>
+    <model name="cross_edge_feature_03"><static>true</static><pose>75.0 -18.0 1.8 0 0 0.35</pose><link name="link"><collision name="collision"><geometry><cylinder><radius>0.7</radius><length>3.6</length></cylinder></geometry></collision><visual name="visual"><geometry><cylinder><radius>0.7</radius><length>3.6</length></cylinder></geometry></visual></link></model>
+    <model name="cross_edge_feature_04"><static>true</static><pose>115.0 18.0 2.2 0 0 -0.45</pose><link name="link"><collision name="collision"><geometry><box><size>1.4 1.0 4.4</size></box></geometry></collision><visual name="visual"><geometry><box><size>1.4 1.0 4.4</size></box></geometry></visual></link></model>
+
+    <light name="sunUTC" type="directional"><pose>0 0 500 0 0 0</pose><cast_shadows>true</cast_shadows><intensity>1</intensity><direction>0.001 0.625 -0.78</direction></light>
+    <spherical_coordinates><surface_model>EARTH_WGS84</surface_model><world_frame_orientation>ENU</world_frame_orientation><latitude_deg>10.8231</latitude_deg><longitude_deg>106.6297</longitude_deg><elevation>10</elevation></spherical_coordinates>
+    <include><uri>model://x500_mid360</uri><name>x500_mid360</name><pose>0 0 0.2 0 0 0</pose></include>
+  </world>
+</sdf>

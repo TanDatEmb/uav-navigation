@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant M as MissionController
+    participant N as NavigationMode
+    participant R as NavigationRuntimeNode
+    participant T as ExecutionTimelineStore
+    M->>M: measured pass-through crossing + current witness
+    M->>N: PublishGoal for next waypoint/request
+    N->>N: retain exact old command if certified and leased
+    N->>R: publish new NavigationGoal
+    R->>R: set desired goal; keep executing identity if handoff not committed
+    R->>T: stage successor under identity/version checks
+    T->>T: activate at declared boundary
+    T-->>R: execution identity cutover; consume matching pending goal
+    R-->>N: new identity NavigationCommand
+    Note over M,T: Distinct callbacks; no cross-process atomic transaction.

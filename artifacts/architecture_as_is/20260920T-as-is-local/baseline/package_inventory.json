@@ -1,0 +1,121 @@
+{
+  "count": 23,
+  "classification_basis": "package paths, package manifests, root CMake and launch files; not a proof of runtime reachability",
+  "packages": [
+    {
+      "name": "navigation_common",
+      "manifest": "src/common/navigation_common/package.xml",
+      "classification": "shared-production-dependency"
+    },
+    {
+      "name": "navigation_contracts",
+      "manifest": "src/contracts/navigation_contracts/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "navigation_mission",
+      "manifest": "src/contracts/navigation_mission/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "fast_lio_core",
+      "manifest": "src/estimation/fast_lio_core/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "fast_lio_ros",
+      "manifest": "src/estimation/fast_lio_ros/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "fast_lio_tools",
+      "manifest": "src/estimation/fast_lio_tools/package.xml",
+      "classification": "offline-support"
+    },
+    {
+      "name": "ikd_tree_vendor",
+      "manifest": "src/estimation/ikd_tree_vendor/package.xml",
+      "classification": "vendor-dependency"
+    },
+    {
+      "name": "ikfom_vendor",
+      "manifest": "src/estimation/ikfom_vendor/package.xml",
+      "classification": "vendor-dependency"
+    },
+    {
+      "name": "navigation_execution",
+      "manifest": "src/execution/navigation_execution/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "livox_ros_driver2",
+      "manifest": "src/external/livox_ros_driver2/package.xml",
+      "classification": "external-source-boundary"
+    },
+    {
+      "name": "px4_msgs",
+      "manifest": "src/external/px4_msgs/package.xml",
+      "classification": "PX4-vendored-message-boundary"
+    },
+    {
+      "name": "px4_ros2_cpp",
+      "manifest": "src/external/px4_ros2_interface_lib/px4_ros2_cpp/package.xml",
+      "classification": "PX4-ROS2-vendor-submodule"
+    },
+    {
+      "name": "navigation_mapping",
+      "manifest": "src/mapping/navigation_mapping/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "navigation_world_model",
+      "manifest": "src/mapping/navigation_world_model/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "rog_map_vendor",
+      "manifest": "src/mapping/rog_map_vendor/package.xml",
+      "classification": "vendor-dependency"
+    },
+    {
+      "name": "navigation_bringup",
+      "manifest": "src/navigation_bringup/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "navigation_planning",
+      "manifest": "src/planning/navigation_planning/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "navigation_planning_backend",
+      "manifest": "src/planning/navigation_planning_backend/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "px4_navigation_external_mode",
+      "manifest": "src/px4/px4_navigation_external_mode/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "px4_odometry_bridge",
+      "manifest": "src/px4/px4_odometry_bridge/package.xml",
+      "classification": "optional-bridge-default-disabled"
+    },
+    {
+      "name": "navigation_runtime",
+      "manifest": "src/runtime/navigation_runtime/package.xml",
+      "classification": "production-path-or-contract"
+    },
+    {
+      "name": "uav_description",
+      "manifest": "src/uav_description/package.xml",
+      "classification": "simulation-support"
+    },
+    {
+      "name": "uav_simulation",
+      "manifest": "src/uav_simulation/package.xml",
+      "classification": "simulation-only"
+    }
+  ]
+}

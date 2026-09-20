@@ -1,0 +1,992 @@
+#pragma once
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <iostream>
+#include <limits>
+#include <mutex>
+#include <optional>
+
+#include <navigation_contracts/msg/navigation_goal.hpp>
+#include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_planning/planner_status.hpp>
+#include <navigation_planning/planning_timing.hpp>
+#include "navigation_runtime/execution_recovery_state.hpp"
+
+namespace navigation_runtime {
+
+// Small sole-owner model for the runtime's single pending request. It makes
+// callback/handoff interleavings explicit: enqueue, snapshot and consume are
+// each linearizable operations under the caller's input/transition critical
+// section, and consumption removes the exact request exactly once.
+class PendingGoalHandoffOwner {
+ public:
+  using GoalConstPtr = navigation_contracts::msg::NavigationGoal::ConstSharedPtr;
+
+  // The owner stores one immutable message, not a parallel identity and
+  // message optional.  The caller must hold the runtime input/transition
+  // transaction while deciding suffix ownership and invoking this method.
+  bool enqueueGoal(const GoalConstPtr& candidate,
+                  const std::optional<navigation_contracts::msg::NavigationGoal>& active,
+                  bool safety_suffix_active) {
+    if (!safety_suffix_active || !candidate || !active.has_value() ||
+        candidate->mission_id != active->mission_id ||
+        !goalMessageNewer(*candidate, *active)) return false;
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    if (pending_goal_ && !goalMessageNewer(*candidate, *pending_goal_)) {
+      return false;
+    }
+    pending_goal_ = candidate;
+    return true;
+  }
+
+  [[nodiscard]] GoalConstPtr goalSnapshot() const {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    return pending_goal_;
+  }
+
+  // Peek and consume are separate so a stopped-suffix handoff can prepare a
+  // new candidate before the pending request is removed from its sole owner.
+  // The caller must consume the exact pointer only after the replacement
+  // command has committed successfully.
+  [[nodiscard]] bool consumeGoal(const GoalConstPtr& expected) {
+    if (!expected) return false;
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    if (!pending_goal_ || pending_goal_.get() != expected.get()) return false;
+    pending_goal_.reset();
+    return true;
+  }
+
+  [[nodiscard]] bool goalMatchesStatus(
+      const std::string& mission_id, std::uint32_t waypoint_index,
+      std::uint64_t request_id) const {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    return pending_goal_ && pending_goal_->mission_id == mission_id &&
+           pending_goal_->waypoint_index == waypoint_index &&
+           pending_goal_->request_id == request_id;
+  }
+
+  void clearGoal() {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    pending_goal_.reset();
+  }
+
+ private:
+  static bool goalMessageNewer(
+      const navigation_contracts::msg::NavigationGoal& candidate,
+      const navigation_contracts::msg::NavigationGoal& current) noexcept {
+    if (candidate.mission_id != current.mission_id) return false;
+    if (candidate.request_id != current.request_id) {
+      return candidate.request_id > current.request_id;
+    }
+    if (candidate.waypoint_index != current.waypoint_index) {
+      return candidate.waypoint_index > current.waypoint_index;
+    }
+    return candidate.route.route_revision > current.route.route_revision;
+  }
+
+  mutable std::mutex goal_mutex_;
+  GoalConstPtr pending_goal_;
+};
+
+inline bool canHotRetargetAtWaypointTransition(
+    bool same_logical_goal, bool previous_goal_was_pass_through,
+    bool command_available, bool planner_failure_latched, bool safety_suffix_active) {
+  // A committed safety suffix is a world-certified braking command, not a
+  // goal-geometry claim. It cannot be rebound to a new goal: doing so would
+  // let a new nominal solve relabel a moving BACKUP/EMERGENCY command as
+  // TrackMain before certified stop/handover. Defer the retarget until the
+  // suffix reaches a certified stop (or fail closed if it cannot).
+  return !same_logical_goal && previous_goal_was_pass_through && command_available &&
+         !planner_failure_latched && !safety_suffix_active;
+}
+
+// A terminal acknowledgement is not by itself permission to revoke the
+// executing command.  A PASS_THROUGH predecessor may bridge the callback
+// ordering boundary only when the next route leg and the immutable execution
+// certificate are both still present.  The caller supplies facts captured
+// under its lifecycle transaction; this predicate owns no mutable state.
+struct PassThroughTerminalAckFacts final {
+  bool successful_terminal_status{false};
+  bool status_matches_active_identity{false};
+  bool active_goal_is_pass_through{false};
+  bool outgoing_route_exists{false};
+  bool certified_main_command{false};
+  bool certified_continuation_boundary{false};
+  bool execution_identity_current{false};
+  bool failure_latched{false};
+  bool safety_suffix_active{false};
+  bool command_exposure_allowed{false};
+  bool command_lease_valid{false};
+};
+
+[[nodiscard]] inline bool passThroughTerminalAckMayRetainCommand(
+    const PassThroughTerminalAckFacts& facts) noexcept {
+  return facts.successful_terminal_status &&
+         facts.status_matches_active_identity &&
+         facts.active_goal_is_pass_through && facts.outgoing_route_exists &&
+         facts.certified_main_command && facts.certified_continuation_boundary &&
+         facts.execution_identity_current && !facts.failure_latched &&
+         !facts.safety_suffix_active && facts.command_exposure_allowed &&
+         facts.command_lease_valid;
+}
+
+inline bool watchdogTimeoutMayRetainSafetySuffix(
+    ExecutionRecoveryState state, bool command_available,
+    bool safety_suffix_active) noexcept {
+  const bool safety_state = state == ExecutionRecoveryState::kTrackBackup ||
+                            state == ExecutionRecoveryState::kEmergencyBrake;
+  return safety_state && command_available && safety_suffix_active;
+}
+
+// A stopped recovery endpoint is a bounded, known-free hold while a measured
+// state PlanFromRest solve is retried. This predicate only identifies when the
+// watchdog may retain that hold; the existing stopped-recovery timeout and its
+// failure handling remain the terminal authority.
+inline bool watchdogTimeoutMayRetainStoppedRecoveryHold(
+    ExecutionRecoveryState state, bool command_available,
+    bool restart_from_rest) noexcept {
+  return state == ExecutionRecoveryState::kStoppedRecovery &&
+         command_available && restart_from_rest;
+}
+
+// Projection of an expired analytic endpoint into the existing COMPLETED
+// hold command contract. Endpoint validation is owned by the publisher;
+// this projection never extends the trajectory lease or authorizes a hold.
+inline navigation_planning::CandidateRole stoppedHoldCommandRole(
+    navigation_planning::CandidateRole endpoint_role,
+    bool endpoint_valid) noexcept {
+  // Retain the certified BACKUP stop witness for measured mission progress.
+  // Invalid holds must keep the legacy MAIN -> REJECTED failure projection.
+  // EMERGENCY also keeps its existing MAIN hold projection: the wire contract
+  // has no COMPLETED/EMERGENCY variant, so changing it is a separate decision.
+  return endpoint_valid &&
+                 endpoint_role == navigation_planning::CandidateRole::kBackup
+      ? navigation_planning::CandidateRole::kBackup
+      : navigation_planning::CandidateRole::kMain;
+}
+
+inline bool pendingGoalTerminalStatusMayClear(
+    bool matches_pending, bool safety_suffix_active) noexcept {
+  // A queued request can report PAUSED/COMPLETED while the preceding
+  // BACKUP/EMERGENCY command is still moving. That status is not a certified
+  // handoff boundary; retain the request until the suffix-stop transaction
+  // promotes it.
+  return matches_pending && !safety_suffix_active;
+}
+
+// A hot-retarget flag authorizes exactly one forced solve for the new
+// checkpoint. Once either the measured-state or hot-stitch transition has
+// committed, leaving the flag set would bypass horizon-driven renewal on every
+// later timer tick and repeatedly move a future route-boundary junction away
+// from the executing vehicle.
+inline bool clearHotGoalTransitionAfterCommit(
+    bool measured_state_transition_committed,
+    bool hot_stitch_transition_committed) noexcept {
+  return measured_state_transition_committed || hot_stitch_transition_committed;
+}
+
+// A pass-through goal transition may reuse the committed future state only
+// while an available MAIN command has a finite anchor within the supplied
+// existing limit. Missing or invalid identity/anchor evidence makes the
+// runtime use measured-state planning or fail closed; this helper adds no
+// timing threshold and does not cover an expired command.
+inline bool hotRetargetUsesCommittedFutureState(
+    bool hot_goal_transition, bool command_available,
+    navigation_planning::CandidateRole command_role,
+    double command_anchor_error_m, double maximum_anchor_error_m) noexcept {
+  return hot_goal_transition && command_available &&
+         command_role == navigation_planning::CandidateRole::kMain &&
+         std::isfinite(command_anchor_error_m) &&
+         std::isfinite(maximum_anchor_error_m) && maximum_anchor_error_m > 0.0 &&
+         command_anchor_error_m <= maximum_anchor_error_m;
+}
+
+enum class PlannerResultDisposition {
+  CommandReady,
+  RestartFromRest,
+  RetryFromRest,
+  ValidateRetainedCommand,
+  RetainCommittedCommand,
+  FailClosed,
+};
+
+enum class RetainedValidationTransition {
+  PreserveExistingState,
+  FailClosed,
+};
+
+enum class PlannerRenewalReason : std::uint8_t {
+  kRetainCertifiedMain,
+  kForcedTransition,
+  kNoCommand,
+  kSafetyRecovery,
+  kInvalidHorizon,
+  kRenewalDue,
+  kQualityRefinement,
+};
+
+struct PlannerRenewalDecision {
+  bool run_optimizer{true};
+  PlannerRenewalReason reason{PlannerRenewalReason::kInvalidHorizon};
+  double remaining_main_horizon_s{std::numeric_limits<double>::quiet_NaN()};
+  double required_lead_time_s{std::numeric_limits<double>::quiet_NaN()};
+};
+
+// A replacement solve is scheduled by the command's continuation deadline,
+// not by crossing an arbitrary fraction of the tracking certificate.  The
+// latter used to start repeated nominal hot replans while the same command
+// was still valid; each failed attempt only consumed latency and made the
+// eventual projected-anchor emergency more likely.  The hard tracking
+// certificate remains enforced by the execution boundary below.
+inline bool commandAnchorRecoveryDue(
+    bool command_available, navigation_planning::CandidateRole command_role,
+    double command_anchor_error_m, double maximum_anchor_error_m) noexcept {
+  if (!command_available ||
+      command_role != navigation_planning::CandidateRole::kMain ||
+      !std::isfinite(command_anchor_error_m) ||
+      !std::isfinite(maximum_anchor_error_m) || maximum_anchor_error_m <= 0.0) {
+    return false;
+  }
+  return command_anchor_error_m >= maximum_anchor_error_m;
+}
+
+// A certified terminal STOP is already a finite, world-validated command
+// ending at rest. While it is still inside the unchanged tracking envelope,
+// an early anchor-pressure tick must not replace it with a shorter hot
+// replan. The hard anchor limit remains authoritative: once the measured
+// residual exceeds it, or a known-free projected validation boundary crosses
+// it, this exception is false and the normal emergency or PX4-Hold path owns
+// the decision.
+inline bool terminalStopMayDeferAnchorRecovery(
+    bool stop_waypoint, bool command_available, bool trajectory_metadata_valid,
+    bool terminal_stop, navigation_planning::CandidateRole command_role,
+    bool anchor_recovery_due, double anchor_error_m,
+    double maximum_anchor_error_m,
+    bool projected_tracking_certificate_exceeded = false) noexcept {
+  return stop_waypoint && command_available && trajectory_metadata_valid &&
+         terminal_stop && command_role == navigation_planning::CandidateRole::kMain &&
+         anchor_recovery_due && std::isfinite(anchor_error_m) &&
+         std::isfinite(maximum_anchor_error_m) && maximum_anchor_error_m > 0.0 &&
+         anchor_error_m <= maximum_anchor_error_m &&
+         !projected_tracking_certificate_exceeded;
+}
+
+// A terminal trajectory endpoint is not a mission completion witness by
+// itself. The vehicle must also be measured inside the waypoint acceptance
+// volume; otherwise the endpoint command can be repeatedly held while the
+// vehicle is already outside the mission gate and no same-request recovery is
+// scheduled. This predicate deliberately does not inspect speed: terminal
+// STOP settling remains owned by the mission acceptance gate.
+inline bool terminalStopCompletionObserved(
+    bool terminal_stop, bool nominal_main_terminal, bool endpoint_valid,
+    double endpoint_error_m,
+    double measured_error_m, double acceptance_tolerance_m) noexcept {
+  return terminal_stop && nominal_main_terminal && endpoint_valid &&
+         std::isfinite(endpoint_error_m) &&
+         std::isfinite(measured_error_m) &&
+         std::isfinite(acceptance_tolerance_m) && acceptance_tolerance_m >= 0.0 &&
+         endpoint_error_m <= acceptance_tolerance_m &&
+         measured_error_m <= acceptance_tolerance_m;
+}
+
+// A terminal STOP bundle may be a complete MAIN+BACKUP command. Its declared
+// endpoint is then emitted by the BACKUP role even though the immutable bundle
+// is owned by MAIN. The endpoint role is therefore not a completion veto. An
+// EMERGENCY endpoint is deliberately excluded: an emergency brake can stop
+// inside the acceptance ball by coincidence, but it never owns mission
+// completion.
+inline bool terminalStopEndpointContractValid(
+    bool terminal_stop, navigation_planning::CandidateBundleKind bundle_kind,
+    navigation_planning::CandidateRole bundle_role,
+    navigation_planning::CandidateRole endpoint_role) noexcept {
+  const bool terminal_bundle_kind =
+      bundle_kind == navigation_planning::CandidateBundleKind::kTerminalStop ||
+      bundle_kind == navigation_planning::CandidateBundleKind::kMainWithBackup;
+  const bool endpoint_role_valid =
+      endpoint_role == navigation_planning::CandidateRole::kMain ||
+      endpoint_role == navigation_planning::CandidateRole::kBackup;
+  return terminal_stop && terminal_bundle_kind &&
+         bundle_role == navigation_planning::CandidateRole::kMain &&
+         endpoint_role_valid;
+}
+
+// A completed terminal PASS_THROUGH bundle may also be the endpoint hold for
+// the immediately following coincident STOP waypoint. This is a bounded
+// identity handoff, not a new planning exception: every fact below must still
+// be true before the old finite endpoint can remain the command owner.
+inline bool terminalSuccessorHoldMayTransfer(
+    bool predecessor_terminal_stop, bool predecessor_pass_through,
+    bool successor_stop, bool coincident_route,
+    bool successor_identity_newer, bool predecessor_endpoint_valid,
+    bool endpoint_matches_successor, bool measured_inside_successor,
+    bool execution_identity_current, bool desired_identity_current,
+    bool command_exposure_allowed) noexcept {
+  return predecessor_terminal_stop && predecessor_pass_through && successor_stop &&
+         coincident_route && successor_identity_newer && predecessor_endpoint_valid &&
+         endpoint_matches_successor && measured_inside_successor &&
+         execution_identity_current && desired_identity_current &&
+         command_exposure_allowed;
+}
+
+
+// Return a conservative upper bound for the distance needed to stop from the
+// configured cruise speed. The jerk term deliberately over-approximates the
+// triangular/trapezoidal jerk-limited profile; it is only a phase-selection
+// condition and never replaces the planner's exact braking certificate.
+inline double plannerTerminalStopBrakingDistanceM(
+    double speed_mps, double acceleration_mps2, double jerk_mps3) noexcept {
+  if (!std::isfinite(speed_mps) || speed_mps <= 0.0 ||
+      !std::isfinite(acceleration_mps2) || acceleration_mps2 <= 0.0 ||
+      !std::isfinite(jerk_mps3) || jerk_mps3 <= 0.0) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const double distance = speed_mps * speed_mps / (2.0 * acceleration_mps2) +
+      speed_mps * acceleration_mps2 / jerk_mps3;
+  return std::isfinite(distance) && distance > 0.0
+      ? distance : std::numeric_limits<double>::infinity();
+}
+
+// A terminal STOP owns the reduced-speed approach envelope only when the
+// remaining route arc is inside the conservative stopping horizon. A distant
+// STOP is still a cruise leg; applying a terminal scale to the whole
+// PlanFromRest solve creates the observed half-speed/fast-replan oscillation.
+// Invalid route/dynamics evidence fails conservative by selecting the slower
+// phase, while candidate V/A/J and world certificates remain authoritative.
+inline bool plannerTerminalStopApproachDue(
+    bool terminal_stop, double remaining_route_m, double speed_mps,
+    double acceleration_mps2, double jerk_mps3) noexcept {
+  if (!terminal_stop) return false;
+  const double stopping_distance = plannerTerminalStopBrakingDistanceM(
+      speed_mps, acceleration_mps2, jerk_mps3);
+  if (!std::isfinite(stopping_distance)) return true;
+  if (!std::isfinite(remaining_route_m) || remaining_route_m < 0.0) return true;
+  return remaining_route_m <= stopping_distance;
+}
+
+// World recertification and command sampling remain active independently of
+// this gate. The expensive optimizer is deferred only while the exact MAIN
+// bundle still has enough certified time before its declared BACKUP switch (or
+// main-only endpoint) to cover one scheduling interval, one complete solve
+// deadline, and the future hot-stitch interval.
+inline PlannerRenewalDecision classifyPlannerRenewal(
+    bool forced_transition, bool command_available,
+    bool safety_suffix_active, navigation_planning::CandidateRole command_role,
+    bool trajectory_metadata_valid, double command_elapsed_s,
+    double backup_start_s, double solve_deadline_s,
+    double replan_forward_s, double scheduling_interval_s) noexcept {
+  if (forced_transition) {
+    return {true, PlannerRenewalReason::kForcedTransition};
+  }
+  if (!command_available) {
+    return {true, PlannerRenewalReason::kNoCommand};
+  }
+  if (safety_suffix_active ||
+      command_role != navigation_planning::CandidateRole::kMain) {
+    return {true, PlannerRenewalReason::kSafetyRecovery};
+  }
+  if (!trajectory_metadata_valid || !std::isfinite(command_elapsed_s) ||
+      command_elapsed_s < 0.0 || !std::isfinite(backup_start_s) ||
+      backup_start_s < 0.0 || !std::isfinite(solve_deadline_s) ||
+      solve_deadline_s <= 0.0 || !std::isfinite(replan_forward_s) ||
+      replan_forward_s <= 0.0 || !std::isfinite(scheduling_interval_s) ||
+      scheduling_interval_s <= 0.0) {
+    return {true, PlannerRenewalReason::kInvalidHorizon};
+  }
+
+  // Renew before the command enters its braking/backup phase.  The two
+  // forward intervals cover the committed future splice and solver timing.
+  // Candidate admission independently enforces its derived MAIN reserve
+  // contract; the scheduler must not invent a second reserve value here.
+  const long double lead_time =
+      static_cast<long double>(solve_deadline_s) +
+      2.0L * static_cast<long double>(replan_forward_s) +
+      static_cast<long double>(scheduling_interval_s) +
+      static_cast<long double>(
+          navigation_planning::PlanningTimingContract::kCommitGuardS);
+  const long double remaining =
+      static_cast<long double>(backup_start_s) -
+      static_cast<long double>(command_elapsed_s);
+  if (!std::isfinite(lead_time) || !std::isfinite(remaining) ||
+      lead_time <= 0.0L) {
+    return {true, PlannerRenewalReason::kInvalidHorizon};
+  }
+
+  const auto remaining_s = static_cast<double>(remaining);
+  const auto lead_time_s = static_cast<double>(lead_time);
+  if (!std::isfinite(remaining_s) || !std::isfinite(lead_time_s)) {
+    return {true, PlannerRenewalReason::kInvalidHorizon};
+  }
+  // Both elapsed and backup-start originate from a nanosecond command clock.
+  // At their exact boundary, decimal-to-binary rounding may differ by a few
+  // ulps; one nanosecond resolves that representation ambiguity only toward an
+  // earlier, conservative renewal.
+  constexpr long double kCommandClockResolutionSeconds = 1.0e-9L;
+  if (remaining <= lead_time + kCommandClockResolutionSeconds) {
+    return {true, PlannerRenewalReason::kRenewalDue,
+            remaining_s, lead_time_s};
+  }
+  return {false, PlannerRenewalReason::kRetainCertifiedMain,
+          remaining_s, lead_time_s};
+}
+
+// The legacy ordinary failure hook is a scheduler diagnostic, not a second
+// renewal policy. Arm it only on the first scheduler-period-sized window after
+// the normal lead-time boundary. The lower edge is derived from the scheduler
+// interval and the command-clock conversion tolerance; it deliberately does
+// not introduce an independent safety horizon.
+inline bool ordinaryRenewalFailureInjectionMayArm(
+    const PlannerRenewalDecision& decision,
+    const double scheduling_interval_s) noexcept {
+  if (decision.reason != PlannerRenewalReason::kRenewalDue ||
+      !std::isfinite(decision.remaining_main_horizon_s) ||
+      decision.remaining_main_horizon_s <= 0.0 ||
+      !std::isfinite(decision.required_lead_time_s) ||
+      decision.required_lead_time_s <= 0.0 ||
+      !std::isfinite(scheduling_interval_s) || scheduling_interval_s <= 0.0) {
+    return false;
+  }
+  constexpr double kCommandClockToleranceS = 1.0e-9;
+  return decision.remaining_main_horizon_s >=
+      decision.required_lead_time_s - scheduling_interval_s -
+      kCommandClockToleranceS;
+}
+
+inline RetainedValidationTransition retainedValidationTransition(bool usable) noexcept {
+  return usable ? RetainedValidationTransition::PreserveExistingState
+                : RetainedValidationTransition::FailClosed;
+}
+
+// Classify only the activation seam of an actual terminal MAIN. A missing
+// SOURCE sample is not proof of a tracking violation; raw pressure can only
+// request independently certified recovery, never authorize continued MAIN.
+inline bool terminalMainHasIndeterminatePreStartPressure(
+    const navigation_planning::CandidateBundle& bundle,
+    const bool source_sample_valid, const std::int64_t source_ns,
+    const std::int64_t now_ns, const double raw_error_m,
+    const double tracking_limit_m, const double command_anchor_limit_m) noexcept {
+  return bundle.kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+      bundle.terminal_stop && !bundle.backup_available &&
+      bundle.role == navigation_planning::CandidateRole::kMain &&
+      bundle.hasDeclaredEndpointMetadata() && !source_sample_valid &&
+      source_ns > 0 && source_ns < bundle.declared_start_ns &&
+      now_ns >= bundle.declared_start_ns && now_ns < bundle.declared_end_ns &&
+      now_ns >= bundle.valid_from_ns && now_ns <= bundle.valid_until_ns &&
+      std::isfinite(raw_error_m) && std::isfinite(tracking_limit_m) &&
+      std::isfinite(command_anchor_limit_m) && tracking_limit_m > 0.0 &&
+      command_anchor_limit_m >= tracking_limit_m && raw_error_m > tracking_limit_m &&
+      raw_error_m <= command_anchor_limit_m;
+}
+
+// A measured-state emergency brake is a one-way transition for one recovery
+// episode. If PX4 diverges far enough that this exact brake loses its tracking
+// certificate, constructing another brake from the newly drifting state every
+// planner tick resets deceleration indefinitely. A later certified MAIN may
+// start a new episode; an unusable emergency must fail closed to PX4 Hold.
+// When the conservative projected anchor bound crosses the unchanged hard
+// limit, a fresh measured state may trigger this same one-shot brake early,
+// but only while the current state is KNOWN_FREE in the inflated map. The
+// emergency candidate is still atomically world-certified; projection never
+// authorizes an unvalidated command or changes the tracking limit.
+inline bool measuredStateEmergencyMayReplaceCommittedCommand(
+    bool validate_without_new_commit, bool committed_suffix_usable,
+    bool fresh_vehicle_state, bool committed_command_available,
+    bool command_anchor_valid, bool tracking_certificate_exceeded,
+    ExecutionRecoveryState recovery_state,
+    navigation_planning::CandidateRole committed_role,
+    bool projected_tracking_certificate_exceeded = false,
+    bool current_vehicle_state_known_free = false,
+    bool safety_trajectory_available = false,
+    bool terminal_stop = false,
+    bool indeterminate_pre_start_tracking = false) noexcept {
+  // Terminal STOP is intentionally not exempt here: before measured waypoint
+  // acceptance it still owns the same tracking certificate as any MAIN.
+  const bool actual_anchor_recovery = !committed_suffix_usable &&
+      tracking_certificate_exceeded;
+  const bool projected_main_only_recovery =
+      projected_tracking_certificate_exceeded && !tracking_certificate_exceeded &&
+      current_vehicle_state_known_free && !safety_trajectory_available;
+  const bool indeterminate_terminal_main_recovery = terminal_stop &&
+      indeterminate_pre_start_tracking && current_vehicle_state_known_free &&
+      !safety_trajectory_available &&
+      committed_role == navigation_planning::CandidateRole::kMain;
+  return !validate_without_new_commit && fresh_vehicle_state &&
+         committed_command_available && command_anchor_valid &&
+         (actual_anchor_recovery || projected_main_only_recovery ||
+          indeterminate_terminal_main_recovery) &&
+         recovery_state == ExecutionRecoveryState::kTrackMain &&
+         committed_role != navigation_planning::CandidateRole::kEmergency;
+}
+
+// Propagated odometry currently carries acceleration and jerk only as runtime
+// finite-difference estimates. They are diagnostic values, not measured
+// command-boundary derivatives. A measured-state emergency handover must
+// preserve P/V and attitude while dropping estimated A/J; otherwise a noisy
+// derivative can make the command-continuous brake polynomial infeasible
+// before its independent dynamic certificate runs.
+inline navigation_planning::TrajectoryPoint makeMeasuredEmergencyBoundary(
+    const navigation_planning::TrajectoryPoint& source,
+    const bool acceleration_estimated, const bool jerk_estimated) noexcept {
+  auto boundary = source;
+  if (acceleration_estimated) boundary.acceleration_world.setZero();
+  if (jerk_estimated) boundary.jerk_world.setZero();
+  return boundary;
+}
+
+// Keep a measured-state emergency route-agnostic while preventing repeated
+// recoveries from ratcheting the terminal altitude toward a drifting
+// estimator. The command anchor is only a bounded reference: it is never
+// replaced by mission, GPS, or PX4 state, and the emergency trajectory must
+// still pass its normal dynamic and world certificates.
+inline double plannerEmergencyTerminalAltitude(
+    double measured_altitude_m, double command_anchor_altitude_m,
+    double correction_limit_m) noexcept {
+  if (!std::isfinite(measured_altitude_m)) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  if (!std::isfinite(command_anchor_altitude_m) ||
+      !std::isfinite(correction_limit_m) || correction_limit_m < 0.0) {
+    return measured_altitude_m;
+  }
+  const double bounded_correction = std::clamp(
+      command_anchor_altitude_m - measured_altitude_m,
+      -correction_limit_m, correction_limit_m);
+  return measured_altitude_m + bounded_correction;
+}
+
+// Only a STOP waypoint owns a terminal endpoint hold.  A PASS_THROUGH endpoint
+// inside its acceptance ball is a route boundary, not permission to stop
+// extending the executable trajectory.  The hold remains limited to the exact
+// STOP bundle generation and is still revalidated by the mapping publication
+// boundary.
+inline bool terminalHoldIsPending(
+    bool command_available, bool reaches_goal, bool stop_waypoint,
+    std::uint64_t terminal_bundle_generation) noexcept {
+  return command_available && reaches_goal && stop_waypoint &&
+         terminal_bundle_generation != 0U;
+}
+
+// The derived completion atomics are updated by the command publisher and the
+// planner timer independently. During that callback interleaving, the
+// immutable committed terminal bundle remains the authoritative hold owner.
+// This fallback is intentionally identity-bound; it does not turn an arbitrary
+// completed command into nominal waypoint completion.
+inline bool committedTerminalBundleHoldIsPending(
+    bool command_available, bool stop_waypoint, bool terminal_stop_bundle,
+    bool main_role, bool identity_matches, std::uint64_t bundle_generation) noexcept {
+  return command_available && stop_waypoint && terminal_stop_bundle && main_role &&
+         identity_matches && bundle_generation != 0U;
+}
+
+// A certified BACKUP suffix can end at a safe braking point that is still
+// outside the mission acceptance ball. That is a measured-stop boundary for
+// the same goal, not an emergency-certification failure. Record the restart
+// before the residual-velocity tick returns so the next cycle can wait and
+// then run PlanFromRest instead of treating the motion as an untransactioned
+// MotionObserved event.
+inline bool backupStopNeedsMeasuredRestart(
+    ExecutionRecoveryState state, bool completion_observed,
+    bool terminal_hold_pending) noexcept {
+  return state == ExecutionRecoveryState::kTrackBackup &&
+         completion_observed && !terminal_hold_pending;
+}
+
+// Once a finite PASS_THROUGH command has reached its declared endpoint, the
+// planner must continue from measured state while MissionController completes
+// the measured waypoint handoff.  STOP remains terminal and a frontier
+// trajectory follows the existing non-goal completion path.
+inline bool completedPassThroughRequiresContinuation(
+    bool trajectory_completed, bool endpoint_valid,
+    bool pass_through_waypoint, bool has_outgoing_route) noexcept {
+  return trajectory_completed && endpoint_valid && pass_through_waypoint &&
+         has_outgoing_route;
+}
+
+// A finite PASS_THROUGH waypoint is meaningful only when the immutable route
+// contains an outgoing leg. Treating a missing continuation as STOP silently
+// changes mission behavior and can commit a zero-velocity terminal state.
+inline bool waypointBehaviorContractValid(
+    bool pass_through_waypoint, bool has_next_waypoint) noexcept {
+  return !pass_through_waypoint || has_next_waypoint;
+}
+
+inline bool stoppedPlanningTimeoutMayFailClosed(
+    ExecutionRecoveryState state, bool stationary,
+    double elapsed_s, double timeout_s) noexcept {
+  const bool stopped_state = state == ExecutionRecoveryState::kInitialHold ||
+                             state == ExecutionRecoveryState::kStoppedRecovery;
+  return stopped_state && stationary && std::isfinite(elapsed_s) &&
+         std::isfinite(timeout_s) && timeout_s > 0.0 && elapsed_s >= timeout_s;
+}
+
+// A stale world snapshot suspends command publication but does not mutate the
+// immutable committed bundle. Publication may resume without a replacement
+// solve only when that exact generation has subsequently been recertified on
+// a fresh world and still belongs to the active localization/goal epochs.
+inline bool worldFreshnessSuspendedCommandMayResume(
+    std::uint64_t suspended_generation,
+    std::uint64_t recertified_generation,
+    std::uint64_t bundle_localization_epoch,
+    std::uint64_t bundle_goal_epoch,
+    std::uint64_t active_localization_epoch,
+    std::uint64_t active_goal_epoch,
+    std::int64_t valid_until_ns,
+    std::int64_t now_ns,
+    bool bundle_valid,
+    bool planner_failure_latched,
+    bool execution_lease_allows_command) noexcept {
+  return suspended_generation != 0U &&
+         recertified_generation == suspended_generation && bundle_valid &&
+         bundle_localization_epoch == active_localization_epoch &&
+         bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
+         !planner_failure_latched && execution_lease_allows_command;
+}
+
+// Mapping recertification replaces an immutable bundle with a certified copy.
+// A command timer that sampled the previous pointer must skip that one
+// publication, but it must not revoke the current command merely because the
+// pointer changed. The same rule covers a newer planner commit winning the
+// race. Continued availability is allowed only for a non-older, valid bundle
+// that still belongs to both active epochs and its declared time interval.
+inline bool supersedingBundleMayRemainAvailable(
+    std::uint64_t sampled_generation,
+    std::uint64_t current_generation,
+    std::uint64_t bundle_localization_epoch,
+    std::uint64_t bundle_goal_epoch,
+    std::uint64_t active_localization_epoch,
+    std::uint64_t active_goal_epoch,
+    std::int64_t valid_until_ns,
+    std::int64_t now_ns,
+    bool bundle_valid,
+    bool planner_failure_latched,
+    bool execution_lease_allows_command) noexcept {
+  return sampled_generation != 0U &&
+         current_generation >= sampled_generation && bundle_valid &&
+         bundle_localization_epoch == active_localization_epoch &&
+         bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
+         !planner_failure_latched && execution_lease_allows_command;
+}
+
+enum class StaleCommandPublicationDisposition : std::uint8_t {
+  // The callback no longer owns the execution identity. It must not mutate
+  // the newer execution, even when no replacement bundle is available yet.
+  kDropStale,
+  // A newer valid bundle still owns the same execution epochs. Keep it
+  // available for the next sampling callback without clearing the lease.
+  kRetainSuperseding,
+  // The callback still owns execution, but no valid successor remains. The
+  // current command must fail closed rather than silently continue.
+  kFailClosed,
+};
+
+[[nodiscard]] inline StaleCommandPublicationDisposition classifyStaleCommandPublication(
+    bool sampled_execution_still_current,
+    bool superseding_bundle_may_remain_available) noexcept {
+  if (!sampled_execution_still_current) {
+    return StaleCommandPublicationDisposition::kDropStale;
+  }
+  return superseding_bundle_may_remain_available
+      ? StaleCommandPublicationDisposition::kRetainSuperseding
+      : StaleCommandPublicationDisposition::kFailClosed;
+}
+
+inline PlannerResultDisposition classifyPlannerResult(
+    navigation_planning::PlannerStatus result, bool plan_from_rest, bool command_available,
+    bool commit_observed) {
+  if ((result == navigation_planning::PlannerStatus::kSuccess ||
+       result == navigation_planning::PlannerStatus::kFinished) && commit_observed) {
+    return PlannerResultDisposition::CommandReady;
+  }
+  if (result == navigation_planning::PlannerStatus::kNoNeed && command_available) {
+    return PlannerResultDisposition::ValidateRetainedCommand;
+  }
+  if (result == navigation_planning::PlannerStatus::kRestartFromRest) {
+    return PlannerResultDisposition::RestartFromRest;
+  }
+  // A failed replacement solve leaves the execution bundle untouched. This is
+  // true even when the planner has intentionally restarted from measured
+  // state: the existing immutable main-to-backup command remains the only
+  // certified source while the replacement is retried. Revalidate/retain it
+  // before applying the no-command PlanFromRest stopped-recovery deadline.
+  if (result == navigation_planning::PlannerStatus::kFailed && command_available) {
+    return PlannerResultDisposition::RetainCommittedCommand;
+  }
+  // A backend EMERGENCY result means that nominal hot replanning cannot
+  // continue. If a previously committed command still exists, route the
+  // result through the same retained-command validation and one-shot measured
+  // emergency-brake path. That path remains fail-closed when freshness,
+  // clearance, anchor, or brake certification is unavailable. Dropping
+  // directly to PX4 Hold here would skip the bounded recovery transition.
+  if (result == navigation_planning::PlannerStatus::kEmergency &&
+      command_available) {
+    return PlannerResultDisposition::RetainCommittedCommand;
+  }
+  // A failed rest-to-rest solve with no executable command is classified for
+  // retry. The runtime's existing stopped-recovery timeout and failure
+  // handling decide when retrying ends and the node fails closed.
+  if (result == navigation_planning::PlannerStatus::kFailed && plan_from_rest) {
+    return PlannerResultDisposition::RetryFromRest;
+  }
+  return PlannerResultDisposition::FailClosed;
+}
+
+inline bool committedSafetySuffixIsUsable(
+    bool safety_trajectory_available, double elapsed_s, double total_duration_s,
+    double safety_transition_s, double anchor_error_m, double maximum_anchor_error_m,
+    bool sampled_path_clear) {
+  const bool common_contract = std::isfinite(elapsed_s) &&
+                               std::isfinite(total_duration_s) &&
+                               std::isfinite(safety_transition_s) &&
+                               std::isfinite(anchor_error_m) &&
+                               std::isfinite(maximum_anchor_error_m) &&
+                               elapsed_s >= 0.0 && total_duration_s > elapsed_s &&
+                               maximum_anchor_error_m > 0.0 &&
+                               anchor_error_m <= maximum_anchor_error_m && sampled_path_clear;
+  if (!common_contract) return false;
+
+  // planner backend intentionally commits main-only when the complete EXP trajectory is
+  // visible and no braking branch is needed.  A transient optimizer miss must
+  // not invalidate that still-visible command.  With an explicit backup the
+  // main-to-backup transition remains part of the contract.
+  if (!safety_trajectory_available) {
+    return std::abs(safety_transition_s - elapsed_s) <= 1.0e-9;
+  }
+  return safety_transition_s >= elapsed_s && safety_transition_s <= total_duration_s;
+}
+
+// A retained bundle may contain a certified BACKUP suffix before the vehicle
+// reaches it. That future availability is not itself a recovery-state
+// transition: ordinary renewal must keep retrying while the current command
+// sample is still MAIN. Only the sampled role can transfer ownership to
+// BACKUP.
+inline bool retainedSafetyTransitionMayActivateBackup(
+    bool safety_suffix_usable, bool backup_available,
+    navigation_planning::CandidateRole sampled_role) noexcept {
+  return safety_suffix_usable && backup_available &&
+         sampled_role == navigation_planning::CandidateRole::kBackup;
+}
+
+// During a same-mission PASS_THROUGH handoff the desired goal epoch advances
+// before the successor is committed, while the predecessor command deliberately
+// keeps its own execution identity. Retained-command validation must therefore
+// compare the bundle with the executing predecessor, not the desired successor.
+inline bool retainedCommandMatchesExecutionIdentity(
+    bool bundle_present, bool bundle_has_trajectory_metadata,
+    std::uint64_t bundle_localization_epoch,
+    std::uint64_t execution_localization_epoch,
+    std::uint64_t bundle_goal_epoch, std::uint64_t command_goal_epoch,
+    std::uint64_t bundle_request_id, bool executing_goal_present,
+    std::uint64_t executing_request_id, bool same_mission_as_desired) noexcept {
+  return bundle_present && bundle_has_trajectory_metadata &&
+         executing_goal_present && same_mission_as_desired &&
+         command_goal_epoch != 0U &&
+         bundle_localization_epoch == execution_localization_epoch &&
+         bundle_goal_epoch == command_goal_epoch &&
+         bundle_request_id == executing_request_id;
+}
+
+// A retained bundle is still executing geometry certified with the planner's
+// tracking-error allowance. The broader execution anchor is a final rejection
+// boundary, not authority to consume clearance that was never included in the
+// world certificate.
+inline double retainedCommandTrackingLimit(
+    const double planner_tracking_budget_m,
+    const double execution_anchor_limit_m) noexcept {
+  if (!std::isfinite(planner_tracking_budget_m) ||
+      planner_tracking_budget_m < 0.0 ||
+      !std::isfinite(execution_anchor_limit_m) ||
+      execution_anchor_limit_m < 0.0) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  return std::min(planner_tracking_budget_m, execution_anchor_limit_m);
+}
+
+struct TimeAlignedRetainedTracking final {
+  bool support_valid{false};
+  bool within_limits{false};
+  double tracking_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double absolute_anchor_error_m{std::numeric_limits<double>::quiet_NaN()};
+};
+
+// A propagated execution state describes the vehicle at source_stamp, not at
+// the callback's evaluation time. Apply the planner's clearance-reserved tube
+// to the immutable command sample at that same source stamp. Keep the command
+// sampled at now as an independent outer divergence cap; temporal alignment
+// must never hide a runaway or an expired command stream.
+inline TimeAlignedRetainedTracking assessTimeAlignedRetainedTracking(
+    const double command_error_at_state_source_m,
+    const double command_error_at_now_m,
+    const double tracking_budget_m,
+    const double absolute_anchor_cap_m) noexcept {
+  TimeAlignedRetainedTracking result;
+  if (!std::isfinite(command_error_at_state_source_m) ||
+      command_error_at_state_source_m < 0.0 ||
+      !std::isfinite(command_error_at_now_m) || command_error_at_now_m < 0.0 ||
+      !std::isfinite(tracking_budget_m) || tracking_budget_m <= 0.0 ||
+      !std::isfinite(absolute_anchor_cap_m) || absolute_anchor_cap_m <= 0.0) {
+    return result;
+  }
+  result.support_valid = true;
+  result.tracking_error_m = command_error_at_state_source_m;
+  result.absolute_anchor_error_m = command_error_at_now_m;
+  result.within_limits = command_error_at_state_source_m <= tracking_budget_m &&
+      command_error_at_now_m <= absolute_anchor_cap_m;
+  return result;
+}
+
+enum class PhaseExecutionCertificateStatus : std::uint8_t {
+  kInvalid,
+  kAccepted,
+  kRejected,
+};
+
+struct PhaseExecutionCertificate final {
+  PhaseExecutionCertificateStatus status{PhaseExecutionCertificateStatus::kInvalid};
+  double phase_lag_s{std::numeric_limits<double>::quiet_NaN()};
+  double source_time_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double predicted_source_error_m{std::numeric_limits<double>::quiet_NaN()};
+  double raw_divergence_m{std::numeric_limits<double>::quiet_NaN()};
+  double source_speed_mps{std::numeric_limits<double>::quiet_NaN()};
+  double measured_speed_mps{std::numeric_limits<double>::quiet_NaN()};
+  double relative_velocity_mps{std::numeric_limits<double>::quiet_NaN()};
+
+  [[nodiscard]] bool accepted() const noexcept {
+    return status == PhaseExecutionCertificateStatus::kAccepted;
+  }
+};
+
+// A source-time phase witness is deliberately narrower than a nearest-point
+// path projection. It uses one ordered, locally adjacent pair of samples from
+// the same immutable MAIN bundle. The witness may replace the retained MAIN
+// tracking decision only when the measured state is inside the existing
+// tracking tube at its source time and the current command remains inside the
+// existing absolute command-anchor cap. No command time, lease, bundle, or
+// candidate ownership is changed by this predicate.
+inline PhaseExecutionCertificate assessPhaseExecutionCertificate(
+    const navigation_planning::CandidateBundle& bundle,
+    const Eigen::Vector3d& measured_position,
+    const Eigen::Vector3d& measured_velocity,
+    const std::int64_t now_ns,
+    const std::int64_t source_stamp_ns,
+    const std::int64_t maximum_phase_lag_ns,
+    const double validation_interval_s,
+    const double tracking_position_budget_m,
+    const double absolute_command_anchor_cap_m,
+    const bool measured_state_known_free,
+    const bool sampled_path_clear) noexcept {
+  PhaseExecutionCertificate result;
+  if (!bundle.valid() || bundle.kind != navigation_planning::CandidateBundleKind::kMainWithBackup ||
+      bundle.role != navigation_planning::CandidateRole::kMain || bundle.terminal_stop ||
+      !bundle.backup_available ||
+      !measured_position.allFinite() || !measured_velocity.allFinite() || now_ns <= 0 ||
+      source_stamp_ns <= 0 || maximum_phase_lag_ns <= 0 || source_stamp_ns > now_ns ||
+      !std::isfinite(validation_interval_s) || validation_interval_s <= 0.0 ||
+      !std::isfinite(tracking_position_budget_m) || tracking_position_budget_m <= 0.0 ||
+      !std::isfinite(absolute_command_anchor_cap_m) || absolute_command_anchor_cap_m <= 0.0 ||
+      !measured_state_known_free || !sampled_path_clear) {
+    return result;
+  }
+
+  // Bind both samples to the same immutable bundle and to its executable
+  // lease. The caller cannot substitute a point from another generation or
+  // sample the declared polynomial outside the current command interval.
+  if (now_ns < bundle.valid_from_ns || now_ns > bundle.valid_until_ns ||
+      source_stamp_ns < bundle.valid_from_ns || source_stamp_ns > bundle.valid_until_ns) {
+    return result;
+  }
+  const long double lease_remaining_s =
+      (static_cast<long double>(bundle.valid_until_ns) -
+       static_cast<long double>(now_ns)) * 1.0e-9L;
+  if (!std::isfinite(lease_remaining_s) ||
+      static_cast<long double>(validation_interval_s) > lease_remaining_s + 1.0e-12L) {
+    return result;
+  }
+  const auto command_now = bundle.sampleAtDeclaredStamp(now_ns);
+  const auto command_at_source = bundle.sampleAtDeclaredStamp(source_stamp_ns);
+  if (!command_now || !command_at_source ||
+      command_now->role != navigation_planning::CandidateRole::kMain ||
+      command_at_source->role != navigation_planning::CandidateRole::kMain) {
+    return result;
+  }
+
+  const auto phase_lag_ns = now_ns - source_stamp_ns;
+  if (phase_lag_ns <= 0 || phase_lag_ns > maximum_phase_lag_ns ||
+      command_at_source->trajectory_time_s > command_now->trajectory_time_s + 1.0e-9 ||
+      command_now->trajectory_time_s + validation_interval_s >
+          bundle.backup_start_time_s + 1.0e-9) {
+    return result;
+  }
+  result.phase_lag_s = static_cast<double>(phase_lag_ns) * 1.0e-9;
+  result.source_time_error_m =
+      (command_at_source->position_world - measured_position).norm();
+  result.raw_divergence_m = (command_now->position_world - measured_position).norm();
+  result.source_speed_mps = command_at_source->velocity_world.norm();
+  result.measured_speed_mps = measured_velocity.norm();
+  result.relative_velocity_mps =
+      (command_at_source->velocity_world - measured_velocity).norm();
+  result.predicted_source_error_m = result.source_time_error_m +
+      result.relative_velocity_mps * (result.phase_lag_s + validation_interval_s);
+  if (!std::isfinite(result.phase_lag_s) || !std::isfinite(result.source_time_error_m) ||
+      !std::isfinite(result.predicted_source_error_m) ||
+      !std::isfinite(result.raw_divergence_m) || !std::isfinite(result.source_speed_mps) ||
+      !std::isfinite(result.measured_speed_mps) ||
+      !std::isfinite(result.relative_velocity_mps) || result.source_speed_mps <= 1.0e-3 ||
+      result.measured_speed_mps <= 1.0e-3 ||
+      result.source_time_error_m > tracking_position_budget_m ||
+      result.predicted_source_error_m > tracking_position_budget_m ||
+      result.raw_divergence_m > absolute_command_anchor_cap_m ||
+      command_at_source->velocity_world.dot(measured_velocity) < 0.0) {
+    result.status = PhaseExecutionCertificateStatus::kRejected;
+    return result;
+  }
+  result.status = PhaseExecutionCertificateStatus::kAccepted;
+  return result;
+}
+
+// A phase witness can preserve only the current MAIN owner. It is not a
+// recovery transition, a BACKUP admission, or a lease extension. Keep these
+// owner/lifecycle checks together so the retained-command transaction cannot
+// accidentally turn a temporal measurement into new safety authority.
+inline bool phaseExecutionBridgeMayPreserveMain(
+    bool phase_certificate_accepted, bool committed, bool fresh_vehicle_state,
+    bool command_anchor_valid, bool plan_from_rest,
+    ExecutionRecoveryState recovery_state, std::uint64_t state_localization_epoch,
+    std::uint64_t bundle_localization_epoch, bool failure_latched,
+    std::int64_t now_ns, std::int64_t valid_until_ns,
+    std::int64_t validation_interval_ns) noexcept {
+  if (!phase_certificate_accepted || !committed || !fresh_vehicle_state ||
+      !command_anchor_valid || plan_from_rest ||
+      recovery_state != ExecutionRecoveryState::kTrackMain || failure_latched ||
+      state_localization_epoch == 0U ||
+      state_localization_epoch != bundle_localization_epoch || now_ns <= 0 ||
+      valid_until_ns < now_ns || validation_interval_ns <= 0) {
+    return false;
+  }
+  return static_cast<long double>(valid_until_ns) -
+             static_cast<long double>(now_ns) >=
+         static_cast<long double>(validation_interval_ns);
+}
+
+// A retained trajectory remains the command until the next planning
+// validation boundary.  Checking only the instantaneous anchor error can
+// consume the entire tracking allowance between two planner ticks.  The
+// triangle-inequality bound below projects the current relative velocity over
+// that interval; invalid inputs fail closed at the caller through NaN.
+inline double projectedRetainedAnchorErrorUpperBound(
+    const double anchor_error_m,
+    const double relative_speed_mps,
+    const double validation_interval_s) noexcept {
+  if (!std::isfinite(anchor_error_m) || anchor_error_m < 0.0 ||
+      !std::isfinite(relative_speed_mps) || relative_speed_mps < 0.0 ||
+      !std::isfinite(validation_interval_s) || validation_interval_s <= 0.0) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  const double projected_error_m =
+      anchor_error_m + relative_speed_mps * validation_interval_s;
+  return std::isfinite(projected_error_m)
+      ? projected_error_m
+      : std::numeric_limits<double>::quiet_NaN();
+}
+
+}  // namespace navigation_runtime

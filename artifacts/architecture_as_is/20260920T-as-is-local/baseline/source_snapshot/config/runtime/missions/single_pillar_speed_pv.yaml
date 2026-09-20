@@ -1,0 +1,20 @@
+mission:
+  version: 1
+  id: external_mode_single_pillar_speed_pv
+  frame: lio_odom
+  waypoints:
+    - id: single_pillar_pv_start
+      position: [0.0, 0.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: pass_through
+    - id: single_pillar_pv_finish
+      position: [60.0, 0.0, 3.0]
+      acceptance_radius_m: 0.9
+      behavior: stop
+      hold_s: 0.5
+  planning:
+    requested_cruise_speed_mps: 8.0
+    unknown_policy: allow_unknown
+  control:
+    acceptance_speed_mps: 0.15
+    acceptance_confirmation_s: 0.5

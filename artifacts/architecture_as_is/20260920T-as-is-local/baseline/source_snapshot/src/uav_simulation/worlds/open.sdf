@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <world name="open">
+    <physics type="ode"><max_step_size>0.004</max_step_size><real_time_factor>0.8</real_time_factor><real_time_update_rate>200</real_time_update_rate></physics>
+    <gravity>0 0 -9.8</gravity>
+    <scene><grid>true</grid><ambient>0.4 0.4 0.4 1</ambient><background>0.72 0.78 0.85 1</background><shadows>true</shadows></scene>
+    <model name="ground_plane"><static>true</static><link name="link"><collision name="collision"><geometry><plane><normal>0 0 1</normal><size>200 200</size></plane></geometry></collision><visual name="visual"><geometry><plane><normal>0 0 1</normal><size>200 200</size></plane></geometry><material><ambient>0.75 0.75 0.75 1</ambient><diffuse>0.75 0.75 0.75 1</diffuse></material></visual></link></model>
+    <model name="open_wall_east"><static>true</static><pose>10 0 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>0.25 20 5</size></box></geometry></collision><visual name="visual"><geometry><box><size>0.25 20 5</size></box></geometry><material><ambient>0.60 0.25 0.20 1</ambient><diffuse>0.75 0.30 0.22 1</diffuse></material></visual></link></model>
+    <model name="open_wall_north"><static>true</static><pose>0 10 2.5 0 0 0</pose><link name="link"><collision name="collision"><geometry><box><size>20 0.25 5</size></box></geometry></collision><visual name="visual"><geometry><box><size>20 0.25 5</size></box></geometry><material><ambient>0.20 0.35 0.65 1</ambient><diffuse>0.25 0.45 0.80 1</diffuse></material></visual></link></model>
+    <light name="sunUTC" type="directional"><pose>0 0 500 0 0 0</pose><cast_shadows>true</cast_shadows><intensity>1</intensity><direction>0.001 0.625 -0.78</direction></light>
+    <spherical_coordinates><surface_model>EARTH_WGS84</surface_model><world_frame_orientation>ENU</world_frame_orientation><latitude_deg>10.8231</latitude_deg><longitude_deg>106.6297</longitude_deg><elevation>10</elevation></spherical_coordinates>
+    <include><uri>model://x500_mid360</uri><name>x500_mid360</name><pose>0 0 0.2 0 0 0</pose></include>
+  </world>
+</sdf>
