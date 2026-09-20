@@ -19,6 +19,8 @@
 
 namespace navigation_execution {
 
+struct ExecutionTimelineStoreTestAccess;
+
 struct CommitToken {
   navigation_world_model::WorldSnapshotIdentity world_identity;
   std::uint64_t goal_epoch{0};
@@ -135,84 +137,30 @@ class ExecutionTimelineStore final {
         identity.revision == 0U || identity.observation_stamp_ns <= 0) {
       return navigation_world_model::WorldCommitDecision::kCandidateRejected;
     }
-    std::lock_guard lock(mutex_);
-    if (timeline_version_ != expected_timeline_version) {
-      return navigation_world_model::WorldCommitDecision::kSuperseded;
-    }
-    if (world_identity_ && !advances(*world_identity_, identity)) {
-      return navigation_world_model::WorldCommitDecision::kWorldAdvanced;
-    }
-
-    const bool active_matches = retain_validated_bundle && expected_bundle && committed_ &&
-        committed_.get() == expected_bundle.get() && world_identity_ &&
-        navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, expected_bundle->world_identity);
-    const bool exact_active_revoked = !active_matches && expected_bundle && committed_ &&
-        committed_.get() == expected_bundle.get() && world_identity_ &&
-        navigation_world_model::sameWorldSnapshotIdentity(
-            *world_identity_, expected_bundle->world_identity);
-    const auto revokeInvalidActive = [this]() {
-      if (committed_) ++active_lineage_version_;
-      committed_.reset();
-      pending_.reset();
-      pending_activation_ns_ = 0;
-      enforceInvariantLocked();
-      ++timeline_version_;
-      return navigation_world_model::WorldCommitDecision::kCandidateRejected;
-    };
-    if (active_matches) {
-      auto recertified = std::make_shared<navigation_planning::CandidateBundle>(*committed_);
-      recertified->world_identity = identity;
-      if (refreshed_valid_until_ns > recertified->valid_until_ns) {
-        auto renewed_until_ns = refreshed_valid_until_ns;
-        if (recertified->hasDeclaredEndpointMetadata()) {
+    const auto prepare = [](const navigation_planning::CandidateBundle& source,
+                            const navigation_world_model::WorldSnapshotIdentity& next,
+                            const std::int64_t refreshed_until_ns)
+        -> std::shared_ptr<const navigation_planning::CandidateBundle> {
+      auto copy = std::make_shared<navigation_planning::CandidateBundle>(source);
+      copy->world_identity = next;
+      if (refreshed_until_ns > copy->valid_until_ns) {
+        auto renewed_until_ns = refreshed_until_ns;
+        if (copy->hasDeclaredEndpointMetadata()) {
           const auto endpoint_ns = navigation_common::secondsSumToNanoseconds(
-              recertified->start_wall_time_s, recertified->duration_s);
-          if (!endpoint_ns || *endpoint_ns <= 0) {
-            return revokeInvalidActive();
-          }
+              copy->start_wall_time_s, copy->duration_s);
+          if (!endpoint_ns || *endpoint_ns <= 0) return {};
           renewed_until_ns = std::min(renewed_until_ns, *endpoint_ns);
         }
-        recertified->valid_until_ns = renewed_until_ns;
+        copy->valid_until_ns = renewed_until_ns;
       }
-      if (!recertified->valid()) {
-        return revokeInvalidActive();
-      }
-      committed_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
-          std::move(recertified));
-    } else {
-      if (committed_) ++active_lineage_version_;
-      committed_.reset();
-    }
-
-    // A pending successor is meaningful only as a handover from the active
-    // command retained above. If active recertification failed, revoke both
-    // pointers in this same store transaction.
-    const bool pending_matches = active_matches && retain_validated_pending && expected_pending && pending_ &&
-        pending_.get() == expected_pending.get() && pending_->valid() && world_identity_ &&
-        navigation_world_model::sameWorldSnapshotIdentity(
-            pending_->world_identity, *world_identity_);
-    if (pending_matches) {
-      auto recertified = std::make_shared<navigation_planning::CandidateBundle>(*pending_);
-      recertified->world_identity = identity;
-      if (!recertified->valid()) {
-        pending_.reset();
-        pending_activation_ns_ = 0;
-      } else {
-        pending_ = std::shared_ptr<const navigation_planning::CandidateBundle>(
-            std::move(recertified));
-      }
-    } else {
-      pending_.reset();
-      pending_activation_ns_ = 0;
-    }
-    enforceInvariantLocked();
-    world_identity_ = identity;
-    ++timeline_version_;
-    if (exact_active_revoked) {
-      std::invoke(finalize_revocation);
-    }
-    return navigation_world_model::WorldCommitDecision::kCommitted;
+      if (!copy->valid()) return {};
+      return std::shared_ptr<const navigation_planning::CandidateBundle>(
+          std::move(copy));
+    };
+    return publishWorldIdentityIfCurrentAndFinalizeRevocationImpl(
+        identity, expected_timeline_version, expected_bundle,
+        retain_validated_bundle, std::forward<FinalizeRevocation>(finalize_revocation),
+        refreshed_valid_until_ns, expected_pending, retain_validated_pending, prepare);
   }
 
   [[nodiscard]] std::shared_ptr<const navigation_planning::CandidateBundle> load()
@@ -616,6 +564,134 @@ class ExecutionTimelineStore final {
   }
 
  private:
+  friend struct ExecutionTimelineStoreTestAccess;
+
+  template <typename FinalizeRevocation, typename PrepareRecertification>
+  navigation_world_model::WorldCommitDecision
+  publishWorldIdentityIfCurrentAndFinalizeRevocationImpl(
+      const navigation_world_model::WorldSnapshotIdentity& identity,
+      const std::uint64_t expected_timeline_version,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_bundle,
+      const bool retain_validated_bundle,
+      FinalizeRevocation&& finalize_revocation,
+      const std::int64_t refreshed_valid_until_ns,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending,
+      const bool retain_validated_pending,
+      PrepareRecertification&& prepare) noexcept {
+    static_assert(std::is_nothrow_invocable_v<FinalizeRevocation&>);
+
+    // Pin and validate the exact optimistic snapshot before preparing copies.
+    // No candidate work or payload allocation runs under this lock.
+    std::optional<navigation_world_model::WorldSnapshotIdentity> prior_world;
+    std::shared_ptr<const navigation_planning::CandidateBundle> observed_active;
+    std::shared_ptr<const navigation_planning::CandidateBundle> observed_pending;
+    {
+      std::lock_guard lock(mutex_);
+      if (timeline_version_ != expected_timeline_version) {
+        return navigation_world_model::WorldCommitDecision::kSuperseded;
+      }
+      if (world_identity_ && !advances(*world_identity_, identity)) {
+        return navigation_world_model::WorldCommitDecision::kWorldAdvanced;
+      }
+      prior_world = world_identity_;
+      observed_active = committed_;
+      observed_pending = pending_;
+    }
+
+    const bool expected_active_matches = expected_bundle && observed_active &&
+        expected_bundle.get() == observed_active.get();
+    const bool expected_pending_matches = expected_pending && observed_pending &&
+        expected_pending.get() == observed_pending.get();
+    const bool exact_active_owner = expected_active_matches && prior_world &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            *prior_world, observed_active->world_identity);
+    const bool prepare_active = retain_validated_bundle && exact_active_owner;
+    const bool prepare_pending = prepare_active && retain_validated_pending &&
+        expected_pending_matches && prior_world &&
+        navigation_world_model::sameWorldSnapshotIdentity(
+            observed_pending->world_identity, *prior_world);
+    std::shared_ptr<const navigation_planning::CandidateBundle> recertified_active;
+    std::shared_ptr<const navigation_planning::CandidateBundle> recertified_pending;
+    bool active_preparation_failed = false;
+    if (prepare_active) {
+      try {
+        recertified_active = std::invoke(
+            prepare, *observed_active, identity, refreshed_valid_until_ns);
+        active_preparation_failed = !recertified_active;
+      } catch (...) {
+        active_preparation_failed = true;
+      }
+    }
+    if (prepare_pending && !active_preparation_failed) {
+      try {
+        recertified_pending = std::invoke(
+            prepare, *observed_pending, identity, std::int64_t{0});
+      } catch (...) {
+        // The successor is independently disposable; the validated active
+        // command remains eligible for recertification and execution.
+        recertified_pending.reset();
+      }
+    }
+
+    // These holders defer payload destruction until after unlocking. In
+    // particular, revocation must not run CandidateBundle/evaluator teardown
+    // inside the timeline critical section.
+    std::shared_ptr<const navigation_planning::CandidateBundle> retired_active;
+    std::shared_ptr<const navigation_planning::CandidateBundle> retired_pending;
+    std::lock_guard lock(mutex_);
+    const bool prior_world_still_current =
+        world_identity_.has_value() == prior_world.has_value() &&
+        (!world_identity_ || navigation_world_model::sameWorldSnapshotIdentity(
+            *world_identity_, *prior_world));
+    if (timeline_version_ != expected_timeline_version ||
+        committed_.get() != observed_active.get() ||
+        pending_.get() != observed_pending.get() ||
+        !prior_world_still_current) {
+      return navigation_world_model::WorldCommitDecision::kSuperseded;
+    }
+    if (world_identity_ && !advances(*world_identity_, identity)) {
+      return navigation_world_model::WorldCommitDecision::kWorldAdvanced;
+    }
+
+    const bool revoke_exact_active = exact_active_owner &&
+        (!prepare_active || active_preparation_failed);
+    if (active_preparation_failed) {
+      retired_active = std::move(committed_);
+      retired_pending = std::move(pending_);
+      pending_activation_ns_ = 0;
+      if (retired_active) ++active_lineage_version_;
+      ++timeline_version_;
+      if (revoke_exact_active) std::invoke(finalize_revocation);
+      // The world transaction is deliberately not consumed. A later refresh
+      // can retry publication without leaving a known-invalid command live.
+      return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+    }
+
+    if (prepare_active) {
+      retired_active = std::move(committed_);
+      committed_ = std::move(recertified_active);
+    } else {
+      retired_active = std::move(committed_);
+      if (retired_active) ++active_lineage_version_;
+    }
+
+    if (prepare_active && recertified_pending) {
+      retired_pending = std::move(pending_);
+      pending_ = std::move(recertified_pending);
+    } else {
+      retired_pending = std::move(pending_);
+      pending_activation_ns_ = 0;
+    }
+    if (!committed_) {
+      retired_pending = std::move(pending_);
+      pending_activation_ns_ = 0;
+    }
+    world_identity_ = identity;
+    ++timeline_version_;
+    if (revoke_exact_active) std::invoke(finalize_revocation);
+    return navigation_world_model::WorldCommitDecision::kCommitted;
+  }
+
   template <typename FinalizeFn>
   bool activatePendingIfDueAndFinalizeLocked(
       std::int64_t now_ns,
