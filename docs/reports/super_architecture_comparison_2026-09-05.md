@@ -51,7 +51,7 @@ the historical working tree. Mapping remains sensor-only; a stopped measured
 planning request may carry a request-local rigid-body witness whose UNKNOWN
 support is limited to a continuous prefix inside the current physical union.
 The current authority is the cutover entry in
-`docs/architecture/runtime_safety_decision_ledger.md`; the traversed-support
+`docs/safety/runtime_safety_current.md`; the traversed-support
 paragraphs in this historical comparison describe only the pinned snapshot.
 
 The certificate in that snapshot checked the initial point and then every curved tube

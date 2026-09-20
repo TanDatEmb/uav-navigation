@@ -222,14 +222,6 @@ void PlannerFacade::cancelActiveSolve() noexcept {
   if (impl_ && impl_->planner) impl_->planner->cancelActiveSolve();
 }
 
-void PlannerFacade::resetSolveCancellation() noexcept {
-  if (impl_ && impl_->planner) impl_->planner->resetSolveCancellation();
-}
-
-void PlannerFacade::resetOptimizationDiagnostics() noexcept {
-  if (impl_ && impl_->planner) impl_->planner->resetExpOptimizationDiagnostics();
-}
-
 void PlannerFacade::setCommandIdentity(
     const std::uint64_t localization_epoch,
     const std::uint64_t goal_epoch,
@@ -239,15 +231,6 @@ void PlannerFacade::setCommandIdentity(
   }
   impl_->planner->setCommandIdentity(
       CommandIdentity{localization_epoch, goal_epoch, request_id});
-}
-
-void PlannerFacade::setNominalProblemDiagnosticIdentity(
-    const std::uint64_t solve_generation,
-    const std::uint64_t planner_cycle) noexcept {
-  if (impl_ && impl_->planner) {
-    impl_->planner->setNominalProblemDiagnosticIdentity(
-        solve_generation, planner_cycle);
-  }
 }
 
 void PlannerFacade::discardCommandCandidate() noexcept {
@@ -330,11 +313,6 @@ PlannerFacade::buildImmediateHeadingRebindCandidate(
       goal_epoch, request_id, valid_from_ns, valid_until_ns);
 }
 
-void PlannerFacade::setPassThroughNextTarget(
-    const std::optional<Eigen::Vector3d>& next_target) noexcept {
-  if (impl_ && impl_->planner) impl_->planner->setPassThroughNextTarget(next_target);
-}
-
 bool PlannerFacade::setState(const navigation_planning::KinematicState& state) {
   return impl_->planner->setState(state);
 }
@@ -364,16 +342,6 @@ navigation_planning::PlanningOutcome PlannerFacade::plan(
   return impl_->planner->plan(request);
 }
 
-navigation_planning::PlannerStatus PlannerFacade::planFromRest(
-    const Eigen::Vector3d& target_world, const double target_yaw_rad, const bool new_goal) {
-  return planInitialFromStoppedState(target_world, target_yaw_rad, new_goal);
-}
-
-navigation_planning::PlannerStatus PlannerFacade::replanOnce(
-    const Eigen::Vector3d& target_world, const double target_yaw_rad, const bool new_goal) {
-  return planSuccessorFromExecutionAnchor(target_world, target_yaw_rad, new_goal);
-}
-
 std::optional<navigation_planning::CandidateBundle> PlannerFacade::exportCommandCandidate(
     const std::uint64_t localization_epoch,
     const std::uint64_t goal_epoch,
@@ -387,8 +355,12 @@ std::optional<navigation_planning::CandidateBundle> PlannerFacade::exportCommand
 bool PlannerFacade::commitEmergencyBrake(
     const navigation_planning::TrajectoryPoint& initial_command,
     const double start_wall_time_s,
+    const std::uint64_t localization_epoch,
+    const std::uint64_t goal_epoch,
+    const std::uint64_t request_id,
     const std::optional<double> terminal_altitude_m) {
-  if (!initial_command.finite()) return false;
+  if (!initial_command.finite() || localization_epoch == 0U ||
+      goal_epoch == 0U || request_id == 0U) return false;
   StatePVAJ state = StatePVAJ::Zero();
   state.col(0) = initial_command.position_world;
   state.col(1) = initial_command.velocity_world;
@@ -396,7 +368,8 @@ bool PlannerFacade::commitEmergencyBrake(
   state.col(3) = initial_command.jerk_world;
   return impl_->planner->commitEmergencyBrake(
       state, initial_command.yaw, initial_command.yaw_rate, start_wall_time_s,
-      terminal_altitude_m);
+      terminal_altitude_m,
+      CommandIdentity{localization_epoch, goal_epoch, request_id});
 }
 
 navigation_planning::CommittedTrajectorySnapshot PlannerFacade::committedSnapshot() const {

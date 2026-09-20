@@ -68,6 +68,8 @@ uint8 EMERGENCY_AUTHORIZATION_NONE=0
 uint8 EMERGENCY_AUTHORIZATION_ACTUAL_ANCHOR_CERTIFICATE_EXCEEDED=1
 uint8 EMERGENCY_AUTHORIZATION_PROJECTED_MAIN_ONLY_CERTIFICATE_EXCEEDED=2
 uint8 EMERGENCY_AUTHORIZATION_OTHER_INVALID=3
+# Independent brake attempt, not an actual/projected tracking violation witness.
+uint8 EMERGENCY_AUTHORIZATION_INDETERMINATE_PRE_START_TRACKING=4
 uint8 emergency_authorization_reason
 uint64 causal_planning_cycle_id
 uint64 causal_timestamp_ns

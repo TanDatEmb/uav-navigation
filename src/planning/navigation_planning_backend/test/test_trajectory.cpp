@@ -5,6 +5,7 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -474,6 +475,35 @@ geometry_utils::Trajectory offsetLinearTrajectory(
   return result;
 }
 
+navigation_planning_backend::CandidateCommandBundle ackHistoryTestCandidate(
+    const double start_wall_time, const bool emergency) {
+  navigation_planning_backend::CandidateCommandBundle candidate;
+  candidate.position = linearTrajectory(1.0, start_wall_time);
+  candidate.yaw = linearTrajectory(1.0, start_wall_time);
+  candidate.start_wall_time = start_wall_time;
+  candidate.roles = {{0.0, 1.0, emergency
+      ? navigation_planning_backend::CandidateTrajectoryRole::BACKUP
+      : navigation_planning_backend::CandidateTrajectoryRole::MAIN}};
+  candidate.backup_suffix_available = emergency;
+  candidate.backup_start_tt = emergency ? 0.0 : 1.0;
+  candidate.backup_disposition = emergency
+      ? navigation_planning_backend::BackupDisposition::EMERGENCY
+      : navigation_planning_backend::BackupDisposition::NO_NEED;
+  candidate.localization_epoch = 1U;
+  candidate.goal_epoch = 1U;
+  candidate.request_id = 1U;
+  return candidate;
+}
+
+navigation_planning_backend::CommandCertificate ackHistoryTestCertificate() {
+  navigation_planning_backend::CommandCertificate certificate;
+  certificate.pinned_world = {1U, 1U, 1U, 1};
+  certificate.validated_world = certificate.pinned_world;
+  certificate.protected_region.minimum = Eigen::Vector3d::Constant(-10.0);
+  certificate.protected_region.maximum = Eigen::Vector3d::Constant(10.0);
+  return certificate;
+}
+
 geometry_utils::Trajectory stationaryTrajectory(double duration, double start_wall_time) {
   Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
   coefficients(0, 7) = 2.0;
@@ -543,9 +573,6 @@ TEST(CiriGeometry, ObstacleSelectionPreservesSourceDomainAcrossPermutations) {
 }
 
 TEST(CiriGeometry, AcceptsFinitePointSeedForPointCorridorConstruction) {
-  navigation_planning_backend::CIRI ciri;
-  ciri.setupParams(0.35, 1);
-
   Eigen::MatrixX4d bounds(6, 4);
   bounds <<
       1.0, 0.0, 0.0, -2.0,
@@ -557,16 +584,18 @@ TEST(CiriGeometry, AcceptsFinitePointSeedForPointCorridorConstruction) {
   Eigen::Matrix3Xd obstacles(3, 1);
   obstacles.col(0) = Eigen::Vector3d(1.5, 1.5, 1.5);
 
-  EXPECT_EQ(ciri.convexDecomposition(
+  for (const int iterations : {1, 2}) {
+    SCOPED_TRACE(iterations);
+    navigation_planning_backend::CIRI ciri;
+    ciri.setupParams(0.35, iterations);
+    EXPECT_EQ(ciri.convexDecomposition(
                 bounds, obstacles, Eigen::Vector3d::Zero(),
                 Eigen::Vector3d::Zero()),
             navigation_math::SUCCESS);
+  }
 }
 
 TEST(CiriGeometry, RejectsObstacleAtClosedSeedClearanceBoundary) {
-  navigation_planning_backend::CIRI ciri;
-  ciri.setupParams(0.35, 1);
-
   Eigen::MatrixX4d bounds(6, 4);
   bounds <<
       1.0, 0.0, 0.0, -2.0,
@@ -578,10 +607,28 @@ TEST(CiriGeometry, RejectsObstacleAtClosedSeedClearanceBoundary) {
   Eigen::Matrix3Xd obstacles(3, 1);
   obstacles.col(0) = Eigen::Vector3d{0.0, 0.35 - 0.01, 0.0};
 
-  EXPECT_EQ(ciri.convexDecomposition(
+  for (const int iterations : {1, 2}) {
+    SCOPED_TRACE(iterations);
+    navigation_planning_backend::CIRI ciri;
+    ciri.setupParams(0.35, iterations);
+    EXPECT_EQ(ciri.convexDecomposition(
                 bounds, obstacles, Eigen::Vector3d{-1.0, 0.0, 0.0},
                 Eigen::Vector3d{1.0, 0.0, 0.0}),
             navigation_math::FAILED);
+  }
+}
+
+TEST(CiriGeometry, TwoPassReferenceKeepsAbsoluteDeadline) {
+  navigation_planning_backend::CIRI ciri;
+  ciri.setupParams(0.35, 2);
+  // An already-expired request-owned steady deadline must stop before any
+  // numerical work, independently of a simulation clock that has not moved.
+  const navigation_planning_backend::AbsoluteDeadline deadline(100.0, std::int64_t{1});
+  const Eigen::MatrixX4d bounds = Eigen::MatrixX4d::Zero(6, 4);
+  const Eigen::Matrix3Xd points = Eigen::Matrix3Xd::Zero(3, 1);
+  EXPECT_EQ(ciri.convexDecomposition(bounds, points, Eigen::Vector3d::Zero(),
+                                   Eigen::Vector3d::Zero(), &deadline),
+            navigation_math::TIME_OUT);
 }
 
 TEST(PlannerTrajectory, PartialSlicePreservesPieceLocalTimeAndContinuity) {
@@ -1630,6 +1677,139 @@ TEST(PlannerTrajectory, CommitDiagnosticsDescribeExactContinuousOldToNewSplice) 
   EXPECT_NEAR(second.diagnostics.yaw_residual, 0.0, 1.0e-12);
 }
 
+TEST(PlannerTrajectory, AckCanonicalStartEqualityPreservesTrajectoryOrigins) {
+  const auto certificate = ackHistoryTestCertificate();
+  for (const std::int64_t start_ns : {56'092'000'000LL, 83'716'000'000LL,
+                                    97'344'000'000LL}) {
+    const double product_start = static_cast<double>(start_ns) * 1.0e-9;
+    const double quotient_start = static_cast<double>(start_ns) / 1.0e9;
+    ASSERT_GT(product_start, quotient_start);
+    ASSERT_EQ(navigation_common::secondsToNanoseconds(product_start), start_ns);
+    ASSERT_EQ(navigation_common::secondsToNanoseconds(quotient_start), start_ns);
+    for (const bool previous_emergency : {false, true}) {
+      for (const bool next_emergency : {false, true}) {
+        navigation_planning_backend::CmdTraj command;
+        ASSERT_TRUE(command.commitCandidate(
+            ackHistoryTestCandidate(product_start, previous_emergency), certificate, 3U));
+        auto next = ackHistoryTestCandidate(quotient_start, next_emergency);
+        EXPECT_TRUE(command.canCommitCandidate(next));
+        ASSERT_TRUE(command.commitCandidate(std::move(next), certificate, 5U));
+        const auto committed = command.snapshot();
+        EXPECT_EQ(committed.generation, 5U);
+        EXPECT_DOUBLE_EQ(committed.position.start_WT, quotient_start);
+        EXPECT_DOUBLE_EQ(committed.yaw.start_WT, quotient_start);
+        EXPECT_EQ(committed.emergency_brake, next_emergency);
+      }
+    }
+  }
+}
+
+TEST(PlannerTrajectory, AckNanosecondOrderingAgreesAtPrecheckAndCommit) {
+  constexpr std::int64_t start_ns = 83'716'000'000LL;
+  const double current_start = static_cast<double>(start_ns) * 1.0e-9;
+  const auto certificate = ackHistoryTestCertificate();
+  for (const bool emergency : {false, true}) {
+    navigation_planning_backend::CmdTraj command;
+    ASSERT_TRUE(command.commitCandidate(
+        ackHistoryTestCandidate(current_start, emergency), certificate, 3U));
+    const auto before = command.snapshot();
+    auto earlier = ackHistoryTestCandidate(
+        static_cast<double>(start_ns - 1) / 1.0e9, emergency);
+    ASSERT_EQ(navigation_common::secondsToNanoseconds(earlier.position.start_WT),
+              start_ns - 1);
+    EXPECT_FALSE(command.canCommitCandidate(earlier));
+    EXPECT_FALSE(command.commitCandidate(std::move(earlier), certificate, 5U));
+    const auto unchanged = command.snapshot();
+    EXPECT_EQ(unchanged.generation, before.generation);
+    EXPECT_DOUBLE_EQ(unchanged.position.start_WT, before.position.start_WT);
+    EXPECT_DOUBLE_EQ(unchanged.yaw.start_WT, before.yaw.start_WT);
+    EXPECT_TRUE(unchanged.position.getState(0.25).isApprox(before.position.getState(0.25)));
+    EXPECT_EQ(unchanged.roles.size(), before.roles.size());
+    EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+        unchanged.certificate.validated_world, before.certificate.validated_world));
+    EXPECT_EQ(unchanged.diagnostics.generation, before.diagnostics.generation);
+    auto later = ackHistoryTestCandidate(
+        static_cast<double>(start_ns + 1) / 1.0e9, emergency);
+    ASSERT_EQ(navigation_common::secondsToNanoseconds(later.position.start_WT), start_ns + 1);
+    EXPECT_TRUE(command.canCommitCandidate(later));
+    EXPECT_TRUE(command.commitCandidate(std::move(later), certificate, 5U));
+    EXPECT_EQ(command.generationSnapshot(), 5U);
+  }
+}
+
+TEST(PlannerTrajectory, AckInvalidStartRejectedWithEmptyOrPopulatedHistory) {
+  const auto certificate = ackHistoryTestCertificate();
+  for (const bool populated : {false, true}) {
+    for (const bool emergency : {false, true}) {
+      for (const double invalid_start : {std::numeric_limits<double>::quiet_NaN(),
+              std::numeric_limits<double>::infinity(),
+              -std::numeric_limits<double>::infinity(), -1.0,
+              std::numeric_limits<double>::max()}) {
+        navigation_planning_backend::CmdTraj command;
+        if (populated) {
+          ASSERT_TRUE(command.commitCandidate(
+              ackHistoryTestCandidate(10.0, emergency), certificate, 3U));
+        }
+        const auto before = command.snapshot();
+        auto invalid = ackHistoryTestCandidate(invalid_start, emergency);
+        EXPECT_FALSE(command.canCommitCandidate(invalid));
+        EXPECT_FALSE(command.commitCandidate(std::move(invalid), certificate, 5U));
+        const auto unchanged = command.snapshot();
+        EXPECT_EQ(unchanged.empty, before.empty);
+        EXPECT_EQ(unchanged.generation, before.generation);
+        EXPECT_DOUBLE_EQ(unchanged.position.start_WT, before.position.start_WT);
+        EXPECT_DOUBLE_EQ(unchanged.yaw.start_WT, before.yaw.start_WT);
+        EXPECT_EQ(unchanged.roles.size(), before.roles.size());
+        EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+            unchanged.certificate.validated_world, before.certificate.validated_world));
+        EXPECT_EQ(unchanged.diagnostics.generation, before.diagnostics.generation);
+      }
+    }
+  }
+}
+
+TEST(PlannerTrajectory, AckMetadataCannotMaskOneNanosecondStartRegression) {
+  constexpr std::int64_t start_ns = 83'716'000'000LL;
+  const double current_start = static_cast<double>(start_ns) / 1.0e9;
+  const auto certificate = ackHistoryTestCertificate();
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.commitCandidate(ackHistoryTestCandidate(current_start, false),
+                                       certificate, 3U));
+  auto masked = ackHistoryTestCandidate(static_cast<double>(start_ns - 1) / 1.0e9, true);
+  masked.start_wall_time = current_start;
+  ASSERT_EQ(navigation_common::secondsToNanoseconds(masked.position.start_WT), start_ns - 1);
+  EXPECT_FALSE(command.canCommitCandidate(masked));
+  EXPECT_FALSE(command.commitCandidate(std::move(masked), certificate, 5U));
+  EXPECT_EQ(command.generationSnapshot(), 3U);
+  EXPECT_DOUBLE_EQ(command.snapshot().position.start_WT, current_start);
+}
+
+TEST(PlannerTrajectory, AckMetadataMayDifferOnlyWithinSameCanonicalStart) {
+  constexpr std::int64_t start_ns = 83'716'000'000LL;
+  const double product_start = static_cast<double>(start_ns) * 1.0e-9;
+  const double quotient_start = static_cast<double>(start_ns) / 1.0e9;
+  const auto certificate = ackHistoryTestCertificate();
+  navigation_planning_backend::CmdTraj command;
+  ASSERT_TRUE(command.commitCandidate(ackHistoryTestCandidate(product_start, false),
+                                       certificate, 3U));
+  auto same_start = ackHistoryTestCandidate(product_start, true);
+  same_start.start_wall_time = quotient_start;
+  EXPECT_TRUE(command.canCommitCandidate(same_start));
+  ASSERT_TRUE(command.commitCandidate(std::move(same_start), certificate, 5U));
+  EXPECT_DOUBLE_EQ(command.snapshot().position.start_WT, product_start);
+}
+
+TEST(PlannerTrajectory, AckLegacyZeroStartRemainsRepresentable) {
+  navigation_planning_backend::CmdTraj command;
+  const auto certificate = ackHistoryTestCertificate();
+  auto initial = ackHistoryTestCandidate(0.0, true);
+  EXPECT_TRUE(command.canCommitCandidate(initial));
+  ASSERT_TRUE(command.commitCandidate(std::move(initial), certificate, 3U));
+  auto equal = ackHistoryTestCandidate(0.0, false);
+  EXPECT_TRUE(command.canCommitCandidate(equal));
+  EXPECT_TRUE(command.commitCandidate(std::move(equal), certificate, 5U));
+}
+
 TEST(PlannerTrajectory, ExplicitProposalGenerationMayAdvanceWithGapsButNotRegress) {
   navigation_planning_backend::CmdTraj command;
   navigation_planning_backend::CommandCertificate certificate;
@@ -1964,9 +2144,12 @@ TEST(PlannerTrajectory, BackupFeasibilityDependsOnMainPrefixNotOnlyCruiseSpeed) 
     const auto stop = navigation_planning_backend::minimumSnapStopPiece(
         switch_state, seed.duration_s);
     EXPECT_TRUE(stop.getState(0.0).isApprox(switch_state, 1.0e-12));
-    EXPECT_LE(stop.getMaxVelRate(), config.back_traj_cfg.max_vel);
-    EXPECT_LE(stop.getMaxAccRate(), config.back_traj_cfg.max_acc);
-    EXPECT_LE(stop.getMaxJerRate(), config.back_traj_cfg.max_jerk);
+    EXPECT_TRUE(navigation_planning::withinNumericalDynamicLimit(
+        stop.getMaxVelRate(), config.back_traj_cfg.max_vel));
+    EXPECT_TRUE(navigation_planning::withinNumericalDynamicLimit(
+        stop.getMaxAccRate(), config.back_traj_cfg.max_acc));
+    EXPECT_TRUE(navigation_planning::withinNumericalDynamicLimit(
+        stop.getMaxJerRate(), config.back_traj_cfg.max_jerk));
     EXPECT_NEAR(stop.getVel(seed.duration_s).norm(), 0.0, 1.0e-9);
     EXPECT_NEAR(stop.getAcc(seed.duration_s).norm(), 0.0, 1.0e-9);
     EXPECT_NEAR(stop.getJer(seed.duration_s).norm(), 0.0, 1.0e-9);
@@ -4069,4 +4252,63 @@ TEST(PlannerTrajectory, SolveStagesHaveStableDecisionTraceNames) {
 TEST(PlannerTrajectory, UnknownReturnCodeHasDeterministicDiagnostic) {
   EXPECT_EQ(navigation_planning_backend::PlannerResultCode_STR(42),
             "Unknown planner return code (42)");
+}
+
+TEST(PlannerTrajectory, UnwrittenReplanLogFactsStayUnavailableAcrossCopy) {
+  navigation_planning_backend::LogOneReplan original;
+  auto copied = original;
+  const auto inspect = [](auto&... fields) {
+    static_assert(sizeof...(fields) == 34U);
+    const auto values = std::tie(fields...);
+    EXPECT_TRUE(std::get<0>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<1>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<2>(values).array().isNaN().all());
+    EXPECT_TRUE(std::isnan(std::get<3>(values)));
+    EXPECT_TRUE(std::isnan(std::get<4>(values)));
+    EXPECT_TRUE(std::get<5>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<9>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<10>(values).array().isNaN().all());
+    EXPECT_TRUE(std::isnan(std::get<15>(values)));
+    EXPECT_TRUE(std::isnan(std::get<16>(values)));
+    EXPECT_TRUE(std::isnan(std::get<17>(values)));
+    EXPECT_TRUE(std::get<20>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<21>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<13>(values).empty());
+    EXPECT_TRUE(std::get<14>(values).empty());
+    EXPECT_EQ(std::get<25>(values),
+              navigation_planning_backend::PLANNER_UNDEFINED);
+  };
+  copied.serialize(inspect);
+  original.serialize(inspect);
+}
+
+TEST(PlannerTrajectory, FinalNominalLogCopyDoesNotFabricateBackupFacts) {
+  navigation_planning_backend::LogOneReplan original;
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(3, 8);
+  coefficients.col(7) = Eigen::Vector3d{10.75, 0.0, 2.0};
+  coefficients.col(6) = Eigen::Vector3d{4.8, 0.0, 0.0};
+  geometry_utils::Trajectory main({1.0}, {coefficients});
+  main.start_WT = 12.0;
+  geometry_utils::Trajectory yaw({1.0}, {Eigen::MatrixXd::Zero(3, 8)});
+  yaw.start_WT = main.start_WT;
+  original.setExpTraj(main);
+  original.setExpYawTraj(yaw);
+  auto copied = original;
+  const auto inspect = [&](auto&... fields) {
+    static_assert(sizeof...(fields) == 34U);
+    const auto values = std::tie(fields...);
+    const auto& logged_main = std::get<13>(values);
+    const auto& logged_yaw = std::get<14>(values);
+    ASSERT_EQ(logged_main.getPieceNum(), 1);
+    ASSERT_EQ(logged_yaw.getPieceNum(), 1);
+    EXPECT_DOUBLE_EQ(logged_main.start_WT, main.start_WT);
+    EXPECT_DOUBLE_EQ(logged_main.getTotalDuration(), main.getTotalDuration());
+    EXPECT_TRUE(logged_main[0].getCoeffMat().isApprox(coefficients, 0.0));
+    EXPECT_TRUE(logged_yaw[0].getCoeffMat().isZero(0.0));
+    EXPECT_TRUE(std::isnan(std::get<4>(values)));  // No invented replan stamp.
+    EXPECT_TRUE(std::isnan(std::get<15>(values)));
+    EXPECT_TRUE(std::get<20>(values).array().isNaN().all());
+    EXPECT_TRUE(std::get<23>(values).empty());
+  };
+  copied.serialize(inspect);
 }

@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/baseline_refinement.hpp"
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
 #include "navigation_runtime/execution_episode.hpp"
@@ -288,7 +290,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       std::uint64_t generation) noexcept;
   void applyQueuedExecutionTimelineActivations(
       navigation_planning_backend::PlannerFacade& planner) noexcept;
-  void runCycle(const PlanningKey& scheduled_key);
+  void runCycle(const PlanningKey& scheduled_key, std::stop_token stop);
   [[nodiscard]] std::optional<PlanningKey> currentPlanningKey();
   enum class RetainedValidationPurpose {
     kAfterFailedReplacement,
@@ -338,6 +340,17 @@ class NavigationRuntimeNode final : public rclcpp::Node {
                              bool* candidate_admitted = nullptr,
                              const std::optional<TerminalMonitorBoundary>&
                                  terminal_monitor = std::nullopt);
+  // The one immediate execution cutover: canonical store + runtime identity
+  // are delivered under the same owners. Backend ACK never delivers authority.
+  navigation_execution::CommitDecision admitImmediateCandidate(
+      const navigation_contracts::msg::NavigationGoal& goal,
+      const navigation_execution::CommitToken& token,
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& candidate,
+      const navigation_execution::ExecutionTimelineSnapshot& predecessor,
+      const PlanningKey& key,
+      const std::shared_ptr<const navigation_execution::ExecutionStateLease>& measured_state,
+      std::int64_t maximum_world_age_ns,
+      const std::optional<TerminalMonitorBoundary>& terminal_monitor = std::nullopt);
   void suspendCommandForWorldFreshness();
   // Ingress serialization remains held while this temporarily releases the
   // lifecycle owner lock to drain old mapping work.
@@ -345,7 +358,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       std::uint64_t localization_epoch,
       std::unique_lock<std::mutex>& localization_lock);
   // Caller holds command_execution_lease_failure_latch_.transitionMutex().
-  void applyExecutionRecoveryEventLocked(ExecutionRecoveryEvent event) noexcept;
+  bool applyExecutionRecoveryEventLocked(
+      ExecutionRecoveryEvent event,
+      const navigation_planning::CandidateBundle& bundle) noexcept;
   // Caller holds command_execution_lease_failure_latch_.transitionMutex().
   // Command-store invalidation remains explicit at call sites because ordinary
   // planner failures must retain a still-certified active command.
@@ -463,6 +478,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // continuous command before the next horizon check. This mirror does not own
   // planner recovery state.
   std::atomic_bool skip_replan_once_{false};
+  // Accessed only by the serial planning worker, not sampler/mapping callbacks.
+  BaselineRefinementOpportunity baseline_refinement_opportunity_;
   std::int64_t plan_from_rest_first_failure_steady_ns_{0};
   std::atomic_uint64_t stale_input_count_{0};
   std::atomic_uint64_t stale_mapping_input_count_{0};

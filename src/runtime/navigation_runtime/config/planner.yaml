@@ -31,10 +31,8 @@ planner:
   # stopping/replan envelope when speed requires it, up to the 23 m product
   # cap. The immutable global route remains the long-range backbone.
   visibility_horizon_floor_m: 14.0
-  # One CIRI pass already separates every occupied point from the seed line.
-    # Additional passes only enlarge the inscribed volume and create an
-    # unbounded latency tail near dense obstacle surfaces.
-    # Temporary performance policy TB-003; dataset snapshot A/B is required.
+  # Keep the current single-pass setting. The two-pass reference remains an
+  # unpromoted TB-003 experiment pending matched feasibility/tail evidence.
   iris_iter_num: 1
   # Replan from a short future state to preserve PVA continuity without
   # committing the vehicle to a one-second blind prefix near obstacles.

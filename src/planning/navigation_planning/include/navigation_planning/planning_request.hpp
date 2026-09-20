@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <stop_token>
 #include <string>
 
 #include <Eigen/Core>
@@ -89,8 +90,16 @@ struct PlanningRequest {
   navigation_mission::ImmutableRouteSnapshot route_snapshot;
   navigation_world_model::WorldModelViewPtr world;
   navigation_world_model::CurrentBodySupportPtr current_body_support;
+  std::optional<Eigen::Vector3d> mission_start_position_world;
   DynamicLimits dynamics;
   PlanningBudget budget;
+  // Cancellation belongs to this solve transaction. The backend may adapt it
+  // to its optimizer's interrupt primitive, but no later request inherits it.
+  std::stop_token cancellation_token{};
+  // Correlation only: copied into optional nominal-problem snapshots and
+  // never used to admit, reject, or shape the solve.
+  std::uint64_t diagnostic_solve_generation{0U};
+  std::uint64_t diagnostic_planner_cycle{0U};
 
   [[nodiscard]] bool startModeContractValid() const noexcept {
     // The anchor identifies the currently executing predecessor bundle.  On
@@ -141,6 +150,8 @@ struct PlanningRequest {
            world->identity().revision == key.pinned_world_revision &&
            world->identity().observation_stamp_ns > 0 &&
            history.valid() && support_contract_valid &&
+           (!mission_start_position_world.has_value() ||
+            mission_start_position_world->allFinite()) &&
            dynamics.valid() &&
            !budget.exhausted();
   }

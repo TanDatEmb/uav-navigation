@@ -7,6 +7,8 @@
 #ifndef LOG_UTILS_HPP
 #define LOG_UTILS_HPP
 
+#include <limits>
+
 #include "planner_runtime_context/planner_runtime_context.hpp"
 
 namespace navigation_planning_backend {
@@ -34,31 +36,40 @@ namespace navigation_planning_backend {
             };
 
     class LogOneReplan {
+        // This log is copied even when a solve fails before populating every
+        // stage. Missing diagnostic facts must remain unavailable, not become
+        // indeterminate scalar/Eigen values or optimistic zero measurements.
+        static constexpr double unavailable =
+                std::numeric_limits<double>::quiet_NaN();
         // replan goal
-        Vec3f robot_p;
-        Vec4f robot_q;
-        Vec3f goal_p;
-        double goal_yaw;
-        double replan_stamp;
-        Vec3f local_start_p;
+        Vec3f robot_p{Vec3f::Constant(unavailable)};
+        Vec4f robot_q{Vec4f::Constant(unavailable)};
+        Vec3f goal_p{Vec3f::Constant(unavailable)};
+        double goal_yaw{unavailable};
+        double replan_stamp{unavailable};
+        Vec3f local_start_p{Vec3f::Constant(unavailable)};
         // for path search
         vec_Vec3f reference_path;
         vec_Vec3f pc_for_sfc;
         PolytopeVec exp_sfc;
 
         // for exp traj
-        StatePVAJ exp_init_state, exp_fina_state;
+        StatePVAJ exp_init_state{StatePVAJ::Constant(unavailable)};
+        StatePVAJ exp_fina_state{StatePVAJ::Constant(unavailable)};
         VecDf exp_init_t_vec;
         vec_Vec3f exp_init_ps;
         Trajectory exp_traj;
         Trajectory exp_yaw_traj;
 
         // for backup traj
-        double backup_init_ts, ts_max, ts_min;
+        double backup_init_ts{unavailable};
+        double ts_max{unavailable};
+        double ts_min{unavailable};
         VecDf backup_init_t_vec;
         // the last point is the init fina p
         vec_Vec3f backup_init_ps;
-        StatePVAJ backup_init_state, backup_fina_state;
+        StatePVAJ backup_init_state{StatePVAJ::Constant(unavailable)};
+        StatePVAJ backup_fina_state{StatePVAJ::Constant(unavailable)};
         Polytope backup_sfc;
         Trajectory backup_traj;
         Trajectory backup_yaw_traj;

@@ -40,8 +40,13 @@ constexpr std::uint8_t executionEpisodePhaseTelemetryCodeV1(
 
 struct ExecutionEpisodeSnapshot final {
   std::uint64_t localization_epoch{0U};
+  // Desired identity can advance during a hot retarget while the active
+  // command still belongs to the previous waypoint. Keep that execution
+  // identity until the successor bundle is actually committed.
   std::uint64_t goal_epoch{0U};
   std::uint64_t request_id{0U};
+  std::uint64_t active_command_goal_epoch{0U};
+  std::uint64_t active_command_request_id{0U};
   std::uint64_t active_generation{0U};
   ExecutionEpisodePhase phase{ExecutionEpisodePhase::kInitialHold};
   bool command_available{false};
@@ -75,32 +80,46 @@ class ExecutionEpisode final {
   void beginGoal(std::uint64_t localization_epoch, std::uint64_t goal_epoch,
                  std::uint64_t request_id, bool retain_command) noexcept {
     std::lock_guard lock(mutex_);
+    const bool retaining_active_command = retain_command && state_.command_available &&
+        state_.active_generation != 0U &&
+        state_.localization_epoch == localization_epoch;
     state_.localization_epoch = localization_epoch;
     state_.goal_epoch = goal_epoch;
     state_.request_id = request_id;
-    state_.phase = retain_command ? ExecutionEpisodePhase::kTrackingMain
-                                  : ExecutionEpisodePhase::kInitialHold;
-    state_.command_available = retain_command;
+    if (retaining_active_command) {
+      // A hot-retarget changes desired ownership, not the identity/role of the
+      // command still being sampled. Its observations remain valid until the
+      // replacement command wins timeline activation.
+      return;
+    }
+    state_.active_command_goal_epoch = 0U;
+    state_.active_command_request_id = 0U;
+    state_.phase = ExecutionEpisodePhase::kInitialHold;
+    state_.command_available = false;
     state_.failure_latched = false;
     state_.safety_suffix_active = false;
     state_.restart_from_rest = false;
-    state_.recovery_state = retain_command
-        ? ExecutionRecoveryState::kTrackMain
-        : ExecutionRecoveryState::kInitialHold;
-    if (!retain_command) state_.active_generation = 0U;
+    state_.recovery_state = ExecutionRecoveryState::kInitialHold;
+    state_.active_generation = 0U;
   }
 
   void commandCommitted(
       const navigation_planning::CandidateBundle& bundle) noexcept {
     std::lock_guard lock(mutex_);
-    if (state_.failure_latched) return;
+    if (state_.failure_latched || !bundleIdentityMatchesEpisode(bundle) ||
+        bundle.bundle_generation <= state_.active_generation) {
+      return;
+    }
+    state_.active_command_goal_epoch = bundle.goal_epoch;
+    state_.active_command_request_id = bundle.request_id;
     state_.active_generation = bundle.bundle_generation;
     state_.command_available = true;
     state_.failure_latched = false;
     state_.safety_suffix_active =
         bundle.role == navigation_planning::CandidateRole::kBackup ||
         bundle.role == navigation_planning::CandidateRole::kEmergency;
-    state_.phase = bundle.kind == navigation_planning::CandidateBundleKind::kEmergencyBrake
+    state_.phase = bundle.role == navigation_planning::CandidateRole::kEmergency ||
+        bundle.role == navigation_planning::CandidateRole::kBackup
         ? ExecutionEpisodePhase::kTrackingBackup
         : ExecutionEpisodePhase::kTrackingMain;
     const auto recovery_event = bundle.role == navigation_planning::CandidateRole::kEmergency
@@ -112,49 +131,60 @@ class ExecutionEpisode final {
         state_.recovery_state, recovery_event);
   }
 
-  void roleObserved(navigation_planning::CandidateRole role,
-                    std::uint64_t generation) noexcept {
+  bool observeRetainedCommand(
+      const navigation_planning::CandidateBundle& bundle,
+      bool safety_suffix_active) noexcept {
     std::lock_guard lock(mutex_);
-    if (state_.failure_latched) return;
-    state_.active_generation = generation;
+    if (state_.failure_latched || !activeBundleIdentityMatches(bundle)) {
+      return false;
+    }
     state_.command_available = true;
-    if (role == navigation_planning::CandidateRole::kEmergency ||
-        role == navigation_planning::CandidateRole::kBackup) {
+    state_.safety_suffix_active = safety_suffix_active;
+    if (bundle.role == navigation_planning::CandidateRole::kEmergency ||
+        bundle.role == navigation_planning::CandidateRole::kBackup) {
       state_.phase = ExecutionEpisodePhase::kTrackingBackup;
-      state_.safety_suffix_active = true;
     } else {
       state_.phase = ExecutionEpisodePhase::kTrackingMain;
     }
+    return true;
   }
 
-  void sampledSafetyRoleObserved(
-      navigation_planning::CandidateRole role,
-      std::uint64_t generation) noexcept {
+  bool observeSampledSafetyRole(
+      const navigation_planning::CandidateBundle& bundle,
+      navigation_planning::CandidateRole sampled_role) noexcept {
     std::lock_guard lock(mutex_);
-    if (state_.failure_latched || state_.active_generation != generation ||
-        (role != navigation_planning::CandidateRole::kBackup &&
-         role != navigation_planning::CandidateRole::kEmergency)) {
-      return;
+    if (state_.failure_latched || !activeBundleIdentityMatches(bundle) ||
+        (sampled_role != navigation_planning::CandidateRole::kBackup &&
+         sampled_role != navigation_planning::CandidateRole::kEmergency)) {
+      return false;
     }
     state_.phase = ExecutionEpisodePhase::kTrackingBackup;
     state_.safety_suffix_active = true;
-    const auto event = role == navigation_planning::CandidateRole::kEmergency
+    const auto event = sampled_role == navigation_planning::CandidateRole::kEmergency
         ? ExecutionRecoveryEvent::kEmergencyCommitted
         : ExecutionRecoveryEvent::kBackupActivated;
     state_.recovery_state = transitionExecutionRecovery(
         state_.recovery_state, event);
+    return true;
   }
 
-  void setSafetySuffix(bool active) noexcept {
+  bool preserveSafetySuffix(
+      const navigation_planning::CandidateBundle& bundle) noexcept {
     std::lock_guard lock(mutex_);
-    if (state_.failure_latched) return;
-    state_.safety_suffix_active = active;
+    if (state_.failure_latched || !state_.command_available ||
+        !activeBundleIdentityMatches(bundle)) {
+      return false;
+    }
+    state_.safety_suffix_active = true;
+    return true;
   }
 
-  void requestRestartFromRest() noexcept {
+  bool requestRestartFromRest(
+      const navigation_planning::CandidateBundle& bundle) noexcept {
     std::lock_guard lock(mutex_);
-    if (state_.failure_latched) return;
+    if (state_.failure_latched || !activeBundleIdentityMatches(bundle)) return false;
     state_.restart_from_rest = true;
+    return true;
   }
 
   void clearRestartFromRest() noexcept {
@@ -162,26 +192,32 @@ class ExecutionEpisode final {
     state_.restart_from_rest = false;
   }
 
-  void applyRecoveryEvent(ExecutionRecoveryEvent event) noexcept {
+  bool applyRecoveryEvent(
+      ExecutionRecoveryEvent event,
+      const navigation_planning::CandidateBundle& bundle) noexcept {
     std::lock_guard lock(mutex_);
+    if (state_.failure_latched || !activeBundleIdentityMatches(bundle)) return false;
     state_.recovery_state = transitionExecutionRecovery(
         state_.recovery_state, event);
+    return true;
   }
 
-  void stoppedHold(std::uint64_t generation) noexcept {
+  bool stoppedHold(
+      const navigation_planning::CandidateBundle& bundle) noexcept {
     std::lock_guard lock(mutex_);
-    if (state_.failure_latched) return;
+    if (state_.failure_latched || !activeBundleIdentityMatches(bundle)) return false;
     // A stopped hold is also the command publisher's representation while a
     // measured-state PlanFromRest retry is in flight.  Do not erase that
     // lifecycle request from the 50 Hz hold samples; otherwise the next
     // non-zero odometry sample is misclassified as motion without an
     // authorized recovery and the node falls through to PX4 Hold.
     const bool restart_requested = state_.restart_from_rest;
-    state_.active_generation = generation;
+    state_.active_generation = bundle.bundle_generation;
     state_.phase = ExecutionEpisodePhase::kStoppedHold;
     state_.command_available = true;
     state_.safety_suffix_active = false;
     state_.restart_from_rest = restart_requested;
+    return true;
   }
 
   void failClosed() noexcept {
@@ -208,6 +244,25 @@ class ExecutionEpisode final {
   }
 
  private:
+  [[nodiscard]] bool bundleIdentityMatchesEpisode(
+      const navigation_planning::CandidateBundle& bundle) const noexcept {
+    return bundle.localization_epoch != 0U && bundle.goal_epoch != 0U &&
+           bundle.request_id != 0U && bundle.bundle_generation != 0U &&
+           state_.localization_epoch == bundle.localization_epoch &&
+           state_.goal_epoch == bundle.goal_epoch &&
+           state_.request_id == bundle.request_id;
+  }
+
+  [[nodiscard]] bool activeBundleIdentityMatches(
+      const navigation_planning::CandidateBundle& bundle) const noexcept {
+    return bundle.localization_epoch != 0U && bundle.goal_epoch != 0U &&
+           bundle.request_id != 0U && bundle.bundle_generation != 0U &&
+           state_.localization_epoch == bundle.localization_epoch &&
+           state_.active_command_goal_epoch == bundle.goal_epoch &&
+           state_.active_command_request_id == bundle.request_id &&
+           state_.active_generation == bundle.bundle_generation;
+  }
+
   mutable std::mutex mutex_;
   ExecutionEpisodeSnapshot state_{};
 };

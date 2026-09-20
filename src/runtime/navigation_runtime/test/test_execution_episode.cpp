@@ -6,10 +6,21 @@ namespace {
 
 navigation_planning::CandidateBundle bundle(
     navigation_planning::CandidateBundleKind kind,
-    std::uint64_t generation) {
+    std::uint64_t generation,
+    std::uint64_t localization_epoch = 1U,
+    std::uint64_t goal_epoch = 2U,
+    std::uint64_t request_id = 3U) {
   navigation_planning::CandidateBundle value;
   value.kind = kind;
   value.bundle_generation = generation;
+  value.localization_epoch = localization_epoch;
+  value.goal_epoch = goal_epoch;
+  value.request_id = request_id;
+  value.role = kind == navigation_planning::CandidateBundleKind::kBackupOnly
+      ? navigation_planning::CandidateRole::kBackup
+      : kind == navigation_planning::CandidateBundleKind::kEmergencyBrake
+      ? navigation_planning::CandidateRole::kEmergency
+      : navigation_planning::CandidateRole::kMain;
   return value;
 }
 
@@ -27,7 +38,8 @@ TEST(ExecutionEpisode, KeepsOneAuthoritativeLifecycleSnapshot) {
   EXPECT_FALSE(initial.command_available);
 
   episode.commandCommitted(bundle(
-      navigation_planning::CandidateBundleKind::kMainWithBackup, 20U));
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 20U,
+      4U, 7U, 11U));
   auto tracking = episode.snapshot();
   EXPECT_EQ(tracking.phase, navigation_runtime::ExecutionEpisodePhase::kTrackingMain);
   EXPECT_EQ(tracking.recovery_state,
@@ -35,17 +47,22 @@ TEST(ExecutionEpisode, KeepsOneAuthoritativeLifecycleSnapshot) {
   EXPECT_TRUE(tracking.command_available);
   EXPECT_EQ(tracking.active_generation, 20U);
 
-  episode.sampledSafetyRoleObserved(
-      navigation_planning::CandidateRole::kBackup, 20U);
+  const auto active_main = bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup,
+      20U, 4U, 7U, 11U);
+  EXPECT_TRUE(episode.observeSampledSafetyRole(
+      active_main,
+      navigation_planning::CandidateRole::kBackup));
   const auto backup = episode.snapshot();
   EXPECT_EQ(backup.phase,
             navigation_runtime::ExecutionEpisodePhase::kTrackingBackup);
   EXPECT_EQ(backup.recovery_state,
             navigation_runtime::ExecutionRecoveryState::kTrackBackup);
   EXPECT_TRUE(backup.safety_suffix_active);
-  episode.stoppedHold(20U);
-  episode.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved);
+  EXPECT_TRUE(episode.stoppedHold(active_main));
+  EXPECT_TRUE(episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved,
+      active_main));
   const auto stopped = episode.snapshot();
   EXPECT_EQ(stopped.phase,
             navigation_runtime::ExecutionEpisodePhase::kStoppedHold);
@@ -59,8 +76,9 @@ TEST(ExecutionEpisode, SampledSafetyRoleCannotRewriteAnotherGeneration) {
   episode.commandCommitted(bundle(
       navigation_planning::CandidateBundleKind::kMainWithBackup, 4U));
 
-  episode.sampledSafetyRoleObserved(
-      navigation_planning::CandidateRole::kBackup, 5U);
+  EXPECT_FALSE(episode.observeSampledSafetyRole(
+      bundle(navigation_planning::CandidateBundleKind::kMainWithBackup, 5U),
+      navigation_planning::CandidateRole::kBackup));
   const auto state = episode.snapshot();
   EXPECT_EQ(state.active_generation, 4U);
   EXPECT_EQ(state.phase,
@@ -68,6 +86,76 @@ TEST(ExecutionEpisode, SampledSafetyRoleCannotRewriteAnotherGeneration) {
   EXPECT_EQ(state.recovery_state,
             navigation_runtime::ExecutionRecoveryState::kTrackMain);
   EXPECT_FALSE(state.safety_suffix_active);
+}
+
+TEST(ExecutionEpisode, LateRetainedRoleFromAStaleCandidateCannotRewriteSuccessor) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, false);
+  const auto candidate_a = bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 4U);
+  episode.commandCommitted(candidate_a);
+  episode.beginGoal(1U, 5U, 6U, true);
+  const auto candidate_b = bundle(
+      navigation_planning::CandidateBundleKind::kBackupOnly, 7U,
+      1U, 5U, 6U);
+  episode.commandCommitted(candidate_b);
+
+  EXPECT_FALSE(episode.observeRetainedCommand(candidate_a, true));
+  EXPECT_FALSE(episode.observeSampledSafetyRole(
+      candidate_a, navigation_planning::CandidateRole::kEmergency));
+  EXPECT_FALSE(episode.preserveSafetySuffix(candidate_a));
+  EXPECT_FALSE(episode.requestRestartFromRest(candidate_a));
+  const auto state = episode.snapshot();
+  EXPECT_EQ(state.goal_epoch, 5U);
+  EXPECT_EQ(state.request_id, 6U);
+  EXPECT_EQ(state.active_generation, candidate_b.bundle_generation);
+  EXPECT_EQ(state.phase,
+            navigation_runtime::ExecutionEpisodePhase::kTrackingBackup);
+  EXPECT_FALSE(state.restart_from_rest);
+  EXPECT_EQ(state.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kTrackBackup);
+}
+
+TEST(ExecutionEpisode, HotRetargetKeepsActiveBackupUntilSuccessorCommits) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, false);
+  const auto candidate_a = bundle(
+      navigation_planning::CandidateBundleKind::kBackupOnly, 4U);
+  episode.commandCommitted(candidate_a);
+
+  // Goal B is desired, but A still owns the moving command while B is being
+  // planned. A failed/stale B solve must not erase A's recovery phase.
+  episode.beginGoal(1U, 5U, 6U, true);
+  auto state = episode.snapshot();
+  EXPECT_EQ(state.goal_epoch, 5U);
+  EXPECT_EQ(state.request_id, 6U);
+  EXPECT_EQ(state.active_command_goal_epoch, 2U);
+  EXPECT_EQ(state.active_command_request_id, 3U);
+  EXPECT_EQ(state.active_generation, candidate_a.bundle_generation);
+  EXPECT_EQ(state.phase,
+            navigation_runtime::ExecutionEpisodePhase::kTrackingBackup);
+  EXPECT_TRUE(state.command_available);
+  EXPECT_TRUE(state.safety_suffix_active);
+  EXPECT_TRUE(episode.observeSampledSafetyRole(
+      candidate_a, navigation_planning::CandidateRole::kBackup));
+  EXPECT_TRUE(episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved,
+      candidate_a));
+
+  const auto candidate_b = bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 5U,
+      1U, 5U, 6U);
+  episode.commandCommitted(candidate_b);
+  state = episode.snapshot();
+  EXPECT_EQ(state.active_command_goal_epoch, 5U);
+  EXPECT_EQ(state.active_command_request_id, 6U);
+  EXPECT_EQ(state.active_generation, candidate_b.bundle_generation);
+  EXPECT_EQ(state.phase,
+            navigation_runtime::ExecutionEpisodePhase::kTrackingMain);
+  EXPECT_FALSE(state.safety_suffix_active);
+  EXPECT_FALSE(episode.observeSampledSafetyRole(
+      candidate_a, navigation_planning::CandidateRole::kBackup));
+  EXPECT_EQ(episode.snapshot().active_generation, candidate_b.bundle_generation);
 }
 
 TEST(ExecutionEpisode, CommitUpdatesLifecycleAndRecoveryInOneSnapshot) {
@@ -131,10 +219,13 @@ TEST(ExecutionEpisode, ObservationsCannotResurrectFailClosedEpisode) {
   episode.beginGoal(1U, 2U, 3U, true);
   episode.failClosed();
 
-  episode.roleObserved(navigation_planning::CandidateRole::kBackup, 7U);
-  episode.setSafetySuffix(true);
-  episode.requestRestartFromRest();
-  episode.stoppedHold(7U);
+  const auto stale = bundle(
+      navigation_planning::CandidateBundleKind::kBackupOnly, 7U);
+  EXPECT_FALSE(episode.observeRetainedCommand(
+      stale, true));
+  EXPECT_FALSE(episode.preserveSafetySuffix(stale));
+  EXPECT_FALSE(episode.requestRestartFromRest(stale));
+  EXPECT_FALSE(episode.stoppedHold(stale));
   episode.commandCommitted(bundle(
       navigation_planning::CandidateBundleKind::kMainWithBackup, 8U));
 
@@ -152,20 +243,67 @@ TEST(ExecutionEpisode, ObservationsCannotResurrectFailClosedEpisode) {
 TEST(ExecutionEpisode, StoppedHoldPreservesMeasuredRestartRequest) {
   navigation_runtime::ExecutionEpisode episode;
   episode.beginGoal(1U, 2U, 3U, true);
-  episode.requestRestartFromRest();
 
-  episode.stoppedHold(4U);
+  const auto active = bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 4U);
+  episode.commandCommitted(active);
+  EXPECT_TRUE(episode.requestRestartFromRest(active));
+  EXPECT_TRUE(episode.stoppedHold(active));
   const auto state = episode.snapshot();
   EXPECT_EQ(state.phase, navigation_runtime::ExecutionEpisodePhase::kStoppedHold);
   EXPECT_TRUE(state.command_available);
   EXPECT_TRUE(state.restart_from_rest);
 }
 
+TEST(ExecutionEpisode, LateCommitCannotRollbackSameRequestGeneration) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, false);
+  const auto candidate_a = bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 4U);
+  episode.commandCommitted(candidate_a);
+  const auto candidate_b = bundle(
+      navigation_planning::CandidateBundleKind::kBackupOnly, 5U);
+  episode.commandCommitted(candidate_b);
+
+  episode.commandCommitted(candidate_a);
+  const auto state = episode.snapshot();
+  EXPECT_EQ(state.active_generation, candidate_b.bundle_generation);
+  EXPECT_EQ(state.phase, navigation_runtime::ExecutionEpisodePhase::kTrackingBackup);
+  EXPECT_TRUE(state.safety_suffix_active);
+  EXPECT_EQ(state.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kTrackBackup);
+}
+
+TEST(ExecutionEpisode, SameGenerationForeignIdentityCannotMutateOwner) {
+  navigation_runtime::ExecutionEpisode episode;
+  episode.beginGoal(1U, 2U, 3U, false);
+  const auto active = bundle(
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 4U);
+  episode.commandCommitted(active);
+
+  auto foreign = active;
+  foreign.request_id = 99U;
+  EXPECT_FALSE(episode.observeRetainedCommand(foreign, true));
+  EXPECT_FALSE(episode.observeSampledSafetyRole(
+      foreign, navigation_planning::CandidateRole::kBackup));
+  EXPECT_FALSE(episode.preserveSafetySuffix(foreign));
+  EXPECT_FALSE(episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kEmergencyCommitted,
+      foreign));
+  const auto after = episode.snapshot();
+  EXPECT_EQ(after.request_id, active.request_id);
+  EXPECT_EQ(after.active_generation, active.bundle_generation);
+  EXPECT_EQ(after.recovery_state,
+            navigation_runtime::ExecutionRecoveryState::kTrackMain);
+  EXPECT_FALSE(after.safety_suffix_active);
+}
+
 TEST(ExecutionEpisode, SuspendAndClearDoNotRetainCommandIdentity) {
   navigation_runtime::ExecutionEpisode episode;
   episode.beginGoal(8U, 9U, 10U, true);
   episode.commandCommitted(bundle(
-      navigation_planning::CandidateBundleKind::kMainWithBackup, 31U));
+      navigation_planning::CandidateBundleKind::kMainWithBackup, 31U,
+      8U, 9U, 10U));
 
   episode.suspendCommand();
   auto suspended = episode.snapshot();
@@ -190,19 +328,25 @@ TEST(ExecutionEpisode, SuspendAndClearDoNotRetainCommandIdentity) {
 TEST(ExecutionEpisode, RecoveryEventsRemainOneWayInsideTheLifecycleRecord) {
   navigation_runtime::ExecutionEpisode episode;
   episode.beginGoal(1U, 2U, 3U, true);
-  episode.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kEmergencyCommitted);
-  episode.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kMainCommitted);
+  const auto active = bundle(
+      navigation_planning::CandidateBundleKind::kEmergencyBrake, 4U);
+  episode.commandCommitted(active);
+  EXPECT_TRUE(episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kEmergencyCommitted,
+      active));
+  EXPECT_TRUE(episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kMainCommitted,
+      active));
   EXPECT_EQ(episode.snapshot().recovery_state,
             navigation_runtime::ExecutionRecoveryState::kEmergencyBrake);
 
-  episode.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved);
+  EXPECT_TRUE(episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kCertifiedStopObserved,
+      active));
   EXPECT_EQ(episode.snapshot().recovery_state,
             navigation_runtime::ExecutionRecoveryState::kStoppedRecovery);
-  episode.applyRecoveryEvent(
-      navigation_runtime::ExecutionRecoveryEvent::kMainCommitted);
+  EXPECT_TRUE(episode.applyRecoveryEvent(
+      navigation_runtime::ExecutionRecoveryEvent::kMainCommitted, active));
   EXPECT_EQ(episode.snapshot().recovery_state,
             navigation_runtime::ExecutionRecoveryState::kTrackMain);
 }

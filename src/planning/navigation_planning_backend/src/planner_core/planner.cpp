@@ -627,7 +627,9 @@ double mainGuideSupport(
         cg_ptr_->setCurrentBodySupport(current_body_support_);
     }
 
-    bool Planner::authorizeAndStage(CandidateCommandBundle&& candidate) {
+    bool Planner::authorizeAndStage(
+            CandidateCommandBundle&& candidate,
+            const std::optional<CommandIdentity>& explicit_identity) {
         if (commit_authorizer_ == nullptr || !map_ptr_) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -658,7 +660,8 @@ double mainGuideSupport(
                 maximum_yaw_acceleration, cfg_.yaw_acceleration_max_rad_s2);
             return false;
         }
-        const auto command_identity = commandIdentitySnapshot();
+        const auto command_identity = explicit_identity.has_value()
+            ? *explicit_identity : commandIdentitySnapshot();
         if (!command_identity.valid()) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -1105,19 +1108,22 @@ double mainGuideSupport(
         if (candidate.valid_until_ns < candidate.valid_from_ns) {
             return {std::nullopt, CandidateExportFailure::kInvalidTimeWindow};
         }
-        candidate.evaluator = [position = command.position,
-                               yaw = command.yaw,
-                               roles = command.roles,
+        const auto execution_command =
+            std::make_shared<const CandidateCommandBundle>(command);
+        candidate.evaluator = [execution_command,
                                emergency_candidate,
                                start_ns = *start_ns,
                                end_ns = *declared_end_ns] (
                                   const std::int64_t stamp_ns,
                                   navigation_planning::TrajectoryPoint& point) {
             const auto command_time = commandTrajectoryTime(
-                stamp_ns, start_ns, end_ns, position.getTotalDuration());
+                stamp_ns, start_ns, end_ns,
+                execution_command->position.getTotalDuration());
             if (command_time.trajectory_time_s < 0.0) return false;
-            const auto state = position.getState(command_time.trajectory_time_s);
-            const auto yaw_state = yaw.getState(command_time.trajectory_time_s);
+            const auto state = execution_command->position.getState(
+                command_time.trajectory_time_s);
+            const auto yaw_state = execution_command->yaw.getState(
+                command_time.trajectory_time_s);
             if (!state.allFinite() || !yaw_state.allFinite()) return false;
             point.position_world = state.col(0);
             point.velocity_world = state.col(1);
@@ -1135,13 +1141,13 @@ double mainGuideSupport(
                                         static_cast<__int128>(start_ns);
             const __int128 duration_ns = static_cast<__int128>(end_ns) -
                                          static_cast<__int128>(start_ns);
-            for (const auto& interval : roles) {
+            for (const auto& interval : execution_command->roles) {
                 const auto begin_ns = static_cast<__int128>(std::llround(
                     static_cast<long double>(interval.begin_tt) * 1.0e9L));
                 const auto interval_end_ns = static_cast<__int128>(std::llround(
                     static_cast<long double>(interval.end_tt) * 1.0e9L));
                 const bool at_declared_endpoint = elapsed_ns == duration_ns &&
-                    &interval == &roles.back();
+                    &interval == &execution_command->roles.back();
                 if (elapsed_ns >= begin_ns &&
                     (elapsed_ns < interval_end_ns || at_declared_endpoint) &&
                     interval.role == CandidateTrajectoryRole::BACKUP) {
@@ -1150,6 +1156,27 @@ double mainGuideSupport(
                 }
             }
             return true;
+        };
+        const auto main_unknown_policy = unknownPolicy();
+        const auto backup_unknown_policy = backupPolicy();
+        candidate.world_validator = [execution_command, certificate, generation,
+                                     main_unknown_policy, backup_unknown_policy](
+            const navigation_world_model::WorldModelViewPtr& world,
+            const double authorization_wall_time_s) {
+          navigation_planning::TrajectoryValidationResult output;
+          output.pinned_world = certificate.pinned_world;
+          output.validated_world = world ? world->identity()
+                                         : navigation_world_model::WorldSnapshotIdentity{};
+          output.evaluated_generation = generation;
+          if (!world || world->identity().localization_epoch !=
+                            certificate.pinned_world.localization_epoch) {
+            return output;
+          }
+          const auto validation = validateExecutableCandidate(
+              *world, *execution_command, authorization_wall_time_s,
+              main_unknown_policy, {}, false, backup_unknown_policy);
+          copySweptValidationDiagnostics(validation, output);
+          return output;
         };
         bool route_boundary_required = false;
         // An emergency brake is a measured-state safety replacement, not a
@@ -2354,6 +2381,7 @@ double mainGuideSupport(
             current_body_support_admission_pending_ = false;
             current_body_support_matches_start_ = false;
             setCurrentBodySupport({});
+            request_deadline_ns_ = 0;
             outcome.trace.elapsed_steady_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now() - started).count();
@@ -2369,9 +2397,52 @@ double mainGuideSupport(
             current_body_support_admission_pending_ = false;
             current_body_support_matches_start_ = false;
             setCurrentBodySupport({});
+            request_deadline_ns_ = 0;
+            if (exp_traj_opt_) {
+                exp_traj_opt_->setMaximumVelocity(nominal_exp_max_velocity_mps_);
+            }
         };
         const ScopeExit cleanup_guard(cleanup);
+        solve_cancelled_.store(false, std::memory_order_release);
+        const std::stop_callback cancellation_callback(
+            request.cancellation_token, [this] {
+                solve_cancelled_.store(true, std::memory_order_release);
+            });
+        if (request.cancellation_token.stop_requested()) {
+            solve_cancelled_.store(true, std::memory_order_release);
+            return finish();
+        }
         if (!request.valid()) return finish();
+        const auto same_limit = [](const double lhs, const double rhs) {
+            return std::isfinite(lhs) && std::isfinite(rhs) &&
+                std::abs(lhs - rhs) <= 1.0e-9 * std::max({1.0, std::abs(lhs), std::abs(rhs)});
+        };
+        const auto request_unknown_policy =
+            request.dynamics.unknown_space_policy ==
+                    navigation_planning::UnknownSpacePolicy::kRequireKnownFree
+                ? navigation_world_model::UnknownPolicy::kRequireKnownFree
+                : navigation_world_model::UnknownPolicy::kAllowUnknown;
+        if (!same_limit(request.dynamics.vehicle.maximum_velocity_mps,
+                        cfg_.back_traj_cfg.max_vel) ||
+            !same_limit(request.dynamics.vehicle.maximum_acceleration_mps2,
+                        cfg_.back_traj_cfg.max_acc) ||
+            !same_limit(request.dynamics.vehicle.maximum_jerk_mps3,
+                        cfg_.back_traj_cfg.max_jerk) ||
+            request_unknown_policy != cfg_.unknown_space_policy) {
+            return finish();
+        }
+        // Cruise intent belongs to this solve, not to the planner instance's
+        // construction-time mission snapshot. Preserve the configured MAIN
+        // cap while allowing a request to ask for a lower speed. BACKUP and
+        // EMERGENCY continue to use their independent physical envelope.
+        const double request_nominal_velocity_mps = std::min(
+            request.dynamics.intent.requested_cruise_speed_mps,
+            cfg_.control_envelope.maximum_velocity_mps);
+        if (!std::isfinite(request_nominal_velocity_mps) ||
+            request_nominal_velocity_mps <= 0.0 || !exp_traj_opt_) {
+            return finish();
+        }
+        exp_traj_opt_->setMaximumVelocity(request_nominal_velocity_mps);
         request_deadline_ns_ = request.budget.steady_deadline_ns;
         {
             std::lock_guard<std::mutex> guard(planner_timeline_mutex_);
@@ -2380,6 +2451,7 @@ double mainGuideSupport(
 
         last_nominal_solve_status_ = traj_opt::NominalSolveStatus::kFailed;
         last_nominal_deadline_observed_ = false;
+        resetExpOptimizationDiagnostics();
 
         // The request owns the immutable solve inputs, including route
         // geometry. Bind that value inside the serialized solve boundary so
@@ -2388,9 +2460,12 @@ double mainGuideSupport(
             !setRouteSnapshot(request.route_snapshot)) {
             return finish();
         }
+        const auto& request_waypoint = request.route_snapshot.waypoints[
+            request.route_snapshot.active_waypoint_index];
+        setGoalAcceptanceRadius(request_waypoint.acceptance_radius_m);
+        setMissionStartPosition(request.mission_start_position_world);
         const Eigen::Vector3d& target_world =
-            request.route_snapshot.waypoints[request.route_snapshot.active_waypoint_index]
-                .position_enu;
+            request_waypoint.position_enu;
         setWorldModelView(request.world);
         const auto request_body_support =
             request.key.start_mode == navigation_planning::PlanningStartMode::kStoppedMeasuredState &&
@@ -2433,6 +2508,8 @@ double mainGuideSupport(
         setCommandIdentity(CommandIdentity{
             request.key.localization_epoch, request.key.goal_epoch,
             request.key.request_id});
+        diagnostic_solve_generation_ = request.diagnostic_solve_generation;
+        diagnostic_planner_cycle_ = request.diagnostic_planner_cycle;
         const auto result = request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kStoppedMeasuredState
             ? planInitialFromStoppedState(
@@ -2447,7 +2524,10 @@ double mainGuideSupport(
                 measured.col(3) = request.start_state.jerk_world;
                 return commitEmergencyBrake(
                     measured, request.start_state.yaw_rad, 0.0,
-                    planner_context_->getSimTime(), std::nullopt)
+                    planner_context_->getSimTime(), std::nullopt,
+                    CommandIdentity{request.key.localization_epoch,
+                                    request.key.goal_epoch,
+                                    request.key.request_id})
                     ? RET_CODE::SUCCESS : RET_CODE::EMER;
               })()
             : planSuccessorFromExecutionAnchorImpl(
@@ -2662,7 +2742,9 @@ double mainGuideSupport(
                                             const double initial_command_yaw_dot,
                                             const double start_WT,
                                             const std::optional<double>
-                                                terminal_altitude_override_m) {
+                                                terminal_altitude_override_m,
+                                            const std::optional<CommandIdentity>
+                                                explicit_identity) {
         if (!initial_command_state.allFinite() ||
             !std::isfinite(initial_command_yaw) ||
             !std::isfinite(initial_command_yaw_dot) || !std::isfinite(start_WT)) {
@@ -2691,13 +2773,19 @@ double mainGuideSupport(
                     std::isfinite(*terminal_altitude_override_m)
                 ? *terminal_altitude_override_m
                 : bounded_state.col(0).z();
-        const auto seed = makeBackupBrakingSeedWithTerminalAltitude(
+        const auto emergency_deadline = solveDeadlineForCurrentRequest();
+        const auto seed = makeBackupBrakingSeedWithTerminalAltitudeAndAbort(
                 0.0, bounded_state,
                 cfg_.back_traj_cfg.max_vel,
                 cfg_.back_traj_cfg.max_acc,
                 cfg_.back_traj_cfg.max_jerk,
                 cfg_.sample_traj_dt_s,
-                0.0, terminal_altitude_m);
+                0.0, terminal_altitude_m,
+                [this, &emergency_deadline] {
+                    return solve_cancelled_.load(std::memory_order_relaxed) ||
+                        emergency_deadline.expired(planner_context_->getSimTime()) ||
+                        emergency_deadline.steadyExpired();
+                });
         if (!seed.feasible || !seed.terminal_altitude_preserved ||
             !std::isfinite(seed.duration_s) || seed.duration_s <= 0.0) {
             planner_context_->error(
@@ -2772,7 +2860,7 @@ double mainGuideSupport(
 
         auto candidate = CmdTraj::buildEmergencyCandidate(
             position_trajectory, yaw_trajectory);
-        if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+        if (!candidate || !authorizeAndStage(std::move(*candidate), explicit_identity)) {
             planner_context_->error(" -- [planner] emergency brake atomic commit rejected");
             return false;
         }
@@ -4841,61 +4929,21 @@ double mainGuideSupport(
                     trajectoryTerminalIsRestWithinRoundoff(ref_exp_traj.posTraj()) ? 1 : 0);
             all_traj_visible = false;
         }
-        Vec3f invisible_p = eval_ps.back().second;
-        while (out_t > visibility_start_t) {
-            if (should_abort()) return FAILED;
-            out_t -= cfg_.sample_traj_dt_s;
-            Vec3f out_p = ref_exp_traj.getPos(out_t);
-            if ((out_p - invisible_p).norm() > cfg_.robot_r) {
-                break;
-            }
-        }
-
-        double seed_point_t = std::max(visibility_start_t, out_t);
-
-        // Seed the backup corridor at the latest point that remains within
-        // the visible command prefix and outside the robot-radius retreat
-        // band. Completion is decided above from the full visibility and
-        // terminal-rest checks; no historical backup timestamp may override
-        // this current-world result.
-        Vec3f seed_point = ref_exp_traj.getPos(seed_point_t);
-
-        // Do not re-snap this point through the Evidence grid.  The command
-        // boundary has already been selected by PlanFromRest/corridor
-        // generation and the Evidence-grid centre can move it back toward an
-        // obstacle or collapse the first CIRI line to zero length.  The
-        // command-boundary KNOWN_FREE check above plus the full candidate
-        // validator are the authority here.
-        const Vec3f backup_origin = back_traj_info.getRobotPos();
-        // The seed has already been truncated at the first sample that is not
-        // within the configured KNOWN_FREE visibility horizon. Do not apply
-        // corridor_segment_max_length_m here: that parameter subdivides sparse
-        // guide edges, but using it as a second backup-distance cap limits an
-        // open-space vehicle to a 3 m recovery prefix and forces a brake every
-        // few metres. The strict KNOWN_FREE ray above is the visibility
-        // certificate; the optimizer corridor is rebuilt later from each
-        // braking-hull candidate so a single long CIRI line cannot strand the
-        // visible command prefix.
-        if (!std::isfinite(seed_point_t) || !seed_point.allFinite() ||
-            (seed_point - backup_origin).norm() <= cfg_.resolution) {
-            planner_context_->warn(
-                    " -- [planner] backup visibility seed is too short "
-                    "after BACKUP-policy visibility selection length={}",
-                    (seed_point - backup_origin).norm());
-            return FAILED;
-        }
-        // The candidate samples were already certified by the same inflated
-        // grid BACKUP-policy ray oracle above. Do not construct a second long
-        // CIRI visibility polytope here: CIRI can fail numerically near an
-        // obstacle even when the ray certificate is valid. The optimizer SFC
-        // is tied to the executable braking hull below.
+        // Visibility bounds the switch search; it does not construct the
+        // braking corridor. The old visibility-SFC retreat was checked for
+        // length, then overwritten by eval_ps.back() before use. Keeping that
+        // unrelated construction precondition rejects a certified short stop.
+        // Actual candidates still need their own bounded corridor, full hull,
+        // role-policy swept-world, flatness and atomic authorization checks.
         if (eval_ps.size() <= 1U) {
             planner_context_->warn(
                     " -- [planner] backup visibility produced no certified seed before first invisible sample");
             return FAILED;
         }
-        seed_point = eval_ps.back().second;
-        seed_point_t = eval_ps.back().first;
+        const double seed_point_t = eval_ps.back().first;
+        if (!std::isfinite(seed_point_t) || !eval_ps.back().second.allFinite()) {
+            return FAILED;
+        }
 
         //        bool use_new{true};
         //        if (use_new) {
@@ -5105,10 +5153,12 @@ double mainGuideSupport(
                 return false;
             }
             Line braking_line{state.col(0), seed.endpoint};
-            if (!braking_line.first.allFinite() || !braking_line.second.allFinite() ||
-                (braking_line.second - braking_line.first).norm() <= cfg_.resolution) {
+            if (!braking_line.first.allFinite() || !braking_line.second.allFinite()) {
                 return false;
             }
+            // CorridorGenerator owns finite short/point seeds too. Endpoint
+            // displacement is not a minimum stopping distance or a proof of
+            // hull containment; certify the actual curve below in every case.
             if (!cg_ptr_->GeneratePolytopeFromLine(
                     braking_line, candidate_poly, &solve_deadline)) {
                 return false;
@@ -5151,11 +5201,11 @@ double mainGuideSupport(
                         std::isfinite(backup_altitude_target_m)
                     ? backup_altitude_target_m
                     : std::numeric_limits<double>::quiet_NaN();
-            braking_seed = makeBackupBrakingSeedWithTerminalAltitude(
-                candidate_ts, switch_state,
+            braking_seed = makeBackupBrakingSeedWithTerminalAltitudeAndAbort(
+                    candidate_ts, switch_state,
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt_s,
-                    0.0, backup_altitude_target);
+                    0.0, backup_altitude_target, should_abort);
             if (should_abort()) return FAILED;
             geometry_utils::Piece candidate_braking_piece;
             if (braking_seed.feasible &&

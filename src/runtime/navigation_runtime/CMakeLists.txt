@@ -156,7 +156,8 @@ if(BUILD_TESTING)
   target_include_directories(test_navigation_runtime_terminal_monitor PRIVATE
     ${navigation_contracts_INCLUDE_DIRS})
   target_compile_definitions(test_navigation_runtime_terminal_monitor PRIVATE
-    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml")
+    NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml"
+    NAVIGATION_REFINEMENT_MISSION_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/missions/long_open_featured_speed.yaml")
   target_link_libraries(test_navigation_runtime_terminal_monitor navigation_runtime_core)
   set_tests_properties(test_navigation_runtime_terminal_monitor PROPERTIES
     ENVIRONMENT

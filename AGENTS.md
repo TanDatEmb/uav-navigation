@@ -2,13 +2,20 @@
 
 Before changing estimation, mapping, planning, control, PX4 integration, runtime
 budgets, safety gates, or validation thresholds, read
-`docs/architecture/runtime_safety_decision_ledger.md`.
+`docs/safety/runtime_safety_current.md`. Retrieve targeted entries from
+`docs/safety/runtime_safety_index.md` and its archive when changing a referenced
+contract, investigating lineage, revisiting a rejected/reverted design,
+changing a temporary bypass, or auditing provenance. Do not full-read the
+archive for routine context.
 
 Any temporary bypass, relaxed gate, disabled validation, fallback-only path, or
-test-specific behavior must be recorded in that ledger in the same change. A
-record must name its owner, scope, safety impact, evidence, removal condition,
-and verification command. Never silently convert a workaround into product
-behavior.
+test-specific behavior must be recorded in the current contract and targeted
+history in the same change. A record must name its owner, scope, safety impact,
+evidence, removal condition, and verification command. Never silently convert a
+workaround into product behavior.
+
+When the safety-document set changes, run
+`python3 tools/validate_runtime_safety_ledger.py` and `git diff --check`.
 
 For every correctness or performance change, review three levels:
 

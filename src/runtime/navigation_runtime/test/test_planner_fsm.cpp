@@ -1,7 +1,9 @@
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/baseline_refinement.hpp"
 #include "navigation_runtime/commit_trace.hpp"
 #include "navigation_runtime/execution_episode.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
+#include <navigation_common/time.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
 
 #include <gtest/gtest.h>
@@ -200,6 +202,186 @@ TEST(PlannerFsm, UsesCoherentTenHertzTimingContract) {
           navigation_planning::PlanningTimingContract::kStitchDurationS +
           navigation_planning::PlanningTimingContract::kPlannerPeriodS +
           navigation_planning::PlanningTimingContract::kCommitGuardS);
+}
+
+navigation_planning::CandidateBundle baselineRefinementSchedulingCandidate() {
+  navigation_planning::CandidateBundle a;
+  a.localization_epoch = a.goal_epoch = a.request_id = 1U;
+  a.bundle_generation = 7U;
+  a.world_identity = a.pinned_world_identity = {1U, 2U, 3U, 10'000'000'000LL};
+  a.start_wall_time_s = 10.0;
+  a.duration_s = 6.0;
+  a.backup_start_time_s = 5.0;
+  a.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  a.backup_available = true;
+  a.certificates = {true, true, true, true};
+  a.valid_from_ns = a.activation_stamp_ns = a.declared_start_ns = 10'000'000'000LL;
+  a.declared_end_ns = a.valid_until_ns = 16'000'000'000LL;
+  a.protected_region.minimum = Eigen::Vector3d{-1.0, -1.0, -1.0};
+  a.protected_region.maximum = Eigen::Vector3d{1.0, 1.0, 1.0};
+  a.role_schedule = {{0.0, 5.0, navigation_planning::CandidateRole::kMain},
+                     {5.0, 6.0, navigation_planning::CandidateRole::kBackup}};
+  a.evaluator = [](std::int64_t, navigation_planning::TrajectoryPoint&) { return true; };
+  return a;  // Scheduling-only fixture; not numerical/world certificate evidence.
+}
+
+PlanningKey baselineRefinementInitialKey() {
+  return {1U, 1U, 1U, 4U, 0U, 2U, 3U,
+          PlanningStartMode::kStoppedMeasuredState, 10'000'000'000LL, 5U};
+}
+
+BaselineRefinementContext baselineRefinementContext(
+    const navigation_planning::CandidateBundle& a) {
+  auto key = baselineRefinementInitialKey();
+  key.start_mode = PlanningStartMode::kCommittedFutureState;
+  key.committed_bundle_generation = a.bundle_generation;
+  key.anchor_stamp_ns = 11'000'000'000LL;
+  ExecutionEpisode episode;
+  episode.beginGoal(1U, 1U, 1U, false);
+  episode.commandCommitted(a);
+  return {key, &a, episode.snapshot(), a.world_identity, a.bundle_generation,
+          11'000'000'000LL, navigation_planning::CandidateRole::kMain,
+          false, true, true, true};
+}
+
+PlannerRenewalDecision baselineRefinementOrdinaryDecision() {
+  return classifyPlannerRenewal(false, true, false,
+      navigation_planning::CandidateRole::kMain, true, 1.0, 5.0,
+      navigation_planning::PlanningTimingContract::kSolveDeadlineS,
+      navigation_planning::PlanningTimingContract::kStitchDurationS,
+      navigation_planning::PlanningTimingContract::kPlannerPeriodS);
+}
+
+TEST(PlannerFsm, InitialBaselineAckOpensOneEarlyRefinementWithoutForcedTransition) {
+  const auto a = baselineRefinementSchedulingCandidate();
+  ASSERT_TRUE(a.valid());
+  const auto ordinary = baselineRefinementOrdinaryDecision();
+  ASSERT_FALSE(ordinary.run_optimizer);
+  BaselineRefinementOpportunity opportunity;
+  auto c = baselineRefinementContext(a);
+  EXPECT_FALSE(opportunity.ready(ordinary, c));
+  opportunity.noteAdmission(baselineRefinementInitialKey(), a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  c.backend_generation = 0U;
+  EXPECT_FALSE(opportunity.ready(ordinary, c));  // Stage is not ACK.
+  c.backend_generation = a.bundle_generation + 1U;
+  EXPECT_FALSE(opportunity.ready(ordinary, c));  // Watermark/no-op ACK is insufficient.
+  c.backend_generation = a.bundle_generation;
+  ASSERT_TRUE(opportunity.ready(ordinary, c));
+  const auto quality = withBaselineRefinement(ordinary, opportunity.ready(ordinary, c));
+  EXPECT_TRUE(quality.run_optimizer);
+  EXPECT_EQ(quality.reason, PlannerRenewalReason::kQualityRefinement);
+  EXPECT_DOUBLE_EQ(quality.remaining_main_horizon_s, ordinary.remaining_main_horizon_s);
+  EXPECT_DOUBLE_EQ(quality.required_lead_time_s, ordinary.required_lead_time_s);
+  EXPECT_TRUE(opportunity.consume(ordinary, c));
+  EXPECT_FALSE(opportunity.consume(ordinary, c));
+  EXPECT_FALSE(opportunity.ready(ordinary, c));
+}
+
+TEST(PlannerFsm, BaselineRefinementNeverRearmsFromSeedSuccessorRecoveryOrRecertification) {
+  auto a = baselineRefinementSchedulingCandidate();
+  const auto key = baselineRefinementInitialKey();
+  const auto ordinary = baselineRefinementOrdinaryDecision();
+  BaselineRefinementOpportunity opportunity;
+  opportunity.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  ASSERT_TRUE(opportunity.consume(ordinary, baselineRefinementContext(a)));
+  ++a.world_identity.revision;
+  opportunity.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  EXPECT_FALSE(opportunity.ready(ordinary, baselineRefinementContext(a)));
+  auto replaced_route = key;
+  ++replaced_route.route_revision;
+  opportunity.noteAdmission(replaced_route, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  auto replaced_context = baselineRefinementContext(a);
+  replaced_context.key.route_revision = replaced_route.route_revision;
+  EXPECT_FALSE(opportunity.ready(ordinary, replaced_context));
+  ++a.bundle_generation;
+  opportunity.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, false);
+  EXPECT_FALSE(opportunity.ready(ordinary, baselineRefinementContext(a)));
+  opportunity.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  EXPECT_FALSE(opportunity.ready(ordinary, baselineRefinementContext(a)));
+  BaselineRefinementOpportunity recovery;
+  recovery.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, false);
+  recovery.noteAdmission(key, a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  EXPECT_FALSE(recovery.ready(ordinary, baselineRefinementContext(a)));
+}
+
+TEST(PlannerFsm, BaselineRefinementRequiresExactHealthyMainOwnership) {
+  const auto a = baselineRefinementSchedulingCandidate();
+  const auto ordinary = baselineRefinementOrdinaryDecision();
+  BaselineRefinementOpportunity opportunity;
+  opportunity.noteAdmission(baselineRefinementInitialKey(), a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  const auto valid = baselineRefinementContext(a);
+  ASSERT_TRUE(opportunity.ready(ordinary, valid));
+  const auto reject = [&](BaselineRefinementContext c) {
+    EXPECT_FALSE(opportunity.ready(ordinary, c));
+    EXPECT_FALSE(opportunity.consume(ordinary, c));
+  };
+  auto c = valid; ++c.key.localization_epoch; reject(c);
+  c = valid; ++c.key.goal_epoch; reject(c);
+  c = valid; ++c.key.request_id; reject(c);
+  c = valid; ++c.key.route_revision; reject(c);
+  c = valid; ++c.key.dynamics_hash; reject(c);
+  c = valid; ++c.key.committed_bundle_generation; reject(c);
+  c = valid; ++c.key.pinned_world_generation; reject(c);
+  c = valid; ++c.key.pinned_world_revision; reject(c);
+  c = valid; ++c.world.revision; reject(c);
+  c = valid; ++c.episode.active_generation; reject(c);
+  c = valid; ++c.episode.request_id; reject(c);
+  c = valid; c.episode.phase = ExecutionEpisodePhase::kStoppedHold; reject(c);
+  c = valid; c.episode.recovery_state = ExecutionRecoveryState::kEmergencyBrake; reject(c);
+  c = valid; c.episode.restart_from_rest = true; reject(c);
+  c = valid; c.episode.safety_suffix_active = true; reject(c);
+  c = valid; c.episode.failure_latched = true; reject(c);
+  c = valid; c.episode.command_available = false; reject(c);
+  c = valid; c.sampled_role = navigation_planning::CandidateRole::kBackup; reject(c);
+  c = valid; c.pending = true; reject(c);
+  c = valid; c.desired_matches_executing = false; reject(c);
+  c = valid; c.exposure_allowed = false; reject(c);
+  c = valid; c.tracking_supported = false; reject(c);
+  c = valid; c.now_ns = a.valid_until_ns + 1; reject(c);
+  ASSERT_TRUE(opportunity.ready(ordinary, valid));  // Rejected contexts did not consume.
+  // Same-G world recertification may update the revision, but the request
+  // must carry that current revision; the initial receipt is not rearmed.
+  auto recertified = a;
+  ++recertified.world_identity.revision;
+  auto refreshed = valid;
+  refreshed.active = &recertified;
+  refreshed.world = recertified.world_identity;
+  refreshed.key.pinned_world_revision = refreshed.world.revision;
+  ASSERT_TRUE(opportunity.ready(ordinary, refreshed));
+  ASSERT_TRUE(opportunity.consume(ordinary, refreshed));
+  EXPECT_FALSE(opportunity.ready(ordinary, refreshed));
+}
+
+TEST(PlannerFsm, BaselineRefinementCannotOverrideOrdinaryUrgencyOrSafetyDecisions) {
+  const auto a = baselineRefinementSchedulingCandidate();
+  const auto c = baselineRefinementContext(a);
+  BaselineRefinementOpportunity opportunity;
+  opportunity.noteAdmission(baselineRefinementInitialKey(), a,
+      navigation_planning::CompletePlanningOutcome::kBaselineCompleteBundle, true);
+  for (const auto reason : {PlannerRenewalReason::kForcedTransition,
+                           PlannerRenewalReason::kNoCommand,
+                           PlannerRenewalReason::kSafetyRecovery,
+                           PlannerRenewalReason::kInvalidHorizon,
+                           PlannerRenewalReason::kRenewalDue}) {
+    const PlannerRenewalDecision ordinary{true, reason, 0.8, 1.0};
+    EXPECT_FALSE(opportunity.ready(ordinary, c));
+    EXPECT_EQ(withBaselineRefinement(ordinary, true).reason, reason);
+  }
+  auto ordinary = baselineRefinementOrdinaryDecision();
+  ordinary.remaining_main_horizon_s =
+      navigation_planning::PlanningTimingContract::kUrgentBaselineThresholdS;
+  EXPECT_FALSE(opportunity.ready(ordinary, c));
+  ordinary.remaining_main_horizon_s = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(opportunity.ready(ordinary, c));
 }
 
 TEST(PlannerFsm, ProductionRenewalLeadIncludesTwoForwardIntervals) {
@@ -421,6 +603,88 @@ TEST(PlannerFsm, RetainedValidationPreservesValidStateAndFailsClosedOtherwise) {
             RetainedValidationTransition::FailClosed);
 }
 
+TEST(PlannerFsm, IndeterminatePreStartPressureIsNarrowAndUsesExistingBounds) {
+  // Classification fixture only: no factory/certificate/admission is claimed.
+  navigation_planning::CandidateBundle terminal;
+  terminal.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  terminal.terminal_stop = true;
+  terminal.role = navigation_planning::CandidateRole::kMain;
+  terminal.start_wall_time_s = 1.0;
+  terminal.duration_s = 1.0;
+  terminal.declared_start_ns = 1'000'000'000LL;
+  terminal.declared_end_ns = 2'000'000'000LL;
+  terminal.valid_from_ns = terminal.declared_start_ns;
+  terminal.valid_until_ns = 1'500'000'000LL;
+  const auto classify = [&](const navigation_planning::CandidateBundle& candidate,
+                            const bool source_valid = false,
+                            const std::int64_t source = 996'000'000LL,
+                            const std::int64_t now = 1'000'000'000LL,
+                            const double raw = 0.34,
+                            const double tracking = 0.25,
+                            const double cap = 0.75) {
+    return terminalMainHasIndeterminatePreStartPressure(
+        candidate, source_valid, source, now, raw, tracking, cap);
+  };
+  EXPECT_TRUE(classify(terminal));
+  EXPECT_FALSE(classify(terminal, true));
+  EXPECT_FALSE(classify(terminal, false, 0));
+  EXPECT_FALSE(classify(terminal, false, terminal.declared_start_ns));
+  EXPECT_FALSE(classify(terminal, false, terminal.declared_start_ns + 1));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, terminal.declared_start_ns - 1));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, terminal.declared_end_ns));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, terminal.valid_until_ns + 1));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.25));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.750001));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL,
+                        std::numeric_limits<double>::quiet_NaN()));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL,
+                        std::numeric_limits<double>::infinity()));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.34, 0.0));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.34,
+                        std::numeric_limits<double>::quiet_NaN()));
+  EXPECT_FALSE(classify(terminal, false, 996'000'000LL, 1'000'000'000LL, 0.34, 0.25, 0.2));
+  auto wrong_kind = terminal;
+  wrong_kind.kind = navigation_planning::CandidateBundleKind::kEmergencyBrake;
+  EXPECT_FALSE(classify(wrong_kind));
+  auto moving_endpoint = terminal;
+  moving_endpoint.terminal_stop = false;
+  EXPECT_FALSE(classify(moving_endpoint));
+  auto with_backup = terminal;
+  with_backup.backup_available = true;
+  EXPECT_FALSE(classify(with_backup));
+  auto wrong_role = terminal;
+  wrong_role.role = navigation_planning::CandidateRole::kEmergency;
+  EXPECT_FALSE(classify(wrong_role));
+}
+
+TEST(PlannerFsm, IndeterminateSupportCannotBypassFreshnessRoleOrRecovery) {
+  const auto attempt = [](bool fresh = true, bool committed = true,
+                          bool anchor = true, bool known_free = true,
+                          bool backup = false, bool terminal = true,
+                          ExecutionRecoveryState recovery = ExecutionRecoveryState::kTrackMain,
+                          navigation_planning::CandidateRole role = navigation_planning::CandidateRole::kMain,
+                          bool validation_only = false) {
+    return measuredStateEmergencyMayReplaceCommittedCommand(
+        validation_only, false, fresh, committed, anchor, false, recovery,
+        role, false, known_free, backup, terminal, true);
+  };
+  EXPECT_TRUE(attempt());
+  EXPECT_FALSE(attempt(false));
+  EXPECT_FALSE(attempt(true, false));
+  EXPECT_FALSE(attempt(true, true, false));
+  EXPECT_FALSE(attempt(true, true, true, false));
+  EXPECT_FALSE(attempt(true, true, true, true, true));
+  EXPECT_FALSE(attempt(true, true, true, true, false, false));
+  EXPECT_FALSE(attempt(true, true, true, true, false, true,
+                       ExecutionRecoveryState::kEmergencyBrake));
+  EXPECT_FALSE(attempt(true, true, true, true, false, true,
+                       ExecutionRecoveryState::kTrackMain,
+                       navigation_planning::CandidateRole::kEmergency));
+  EXPECT_FALSE(attempt(true, true, true, true, false, true,
+                       ExecutionRecoveryState::kTrackMain,
+                       navigation_planning::CandidateRole::kMain, true));
+}
+
 TEST(PlannerFsm, EmergencyBrakeCannotBeRearmedFromADriftingEmergency) {
   EXPECT_TRUE(measuredStateEmergencyMayReplaceCommittedCommand(
       false, false, true, true, true, true,
@@ -512,6 +776,14 @@ TEST(PlannerFsm, EmergencyTerminalAltitudeUsesBoundedCertifiedAnchor) {
 }
 
 TEST(PlannerFsm, BackupAndEmergencyAreOneWayUntilCertifiedStop) {
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kInitialHold,
+                ExecutionRecoveryEvent::kBackupActivated),
+            ExecutionRecoveryState::kTrackBackup);
+  EXPECT_EQ(transitionExecutionRecovery(
+                ExecutionRecoveryState::kInitialHold,
+                ExecutionRecoveryEvent::kEmergencyCommitted),
+            ExecutionRecoveryState::kEmergencyBrake);
   EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kTrackBackup));
   EXPECT_FALSE(nominalPlanningAllowed(ExecutionRecoveryState::kEmergencyBrake));
   EXPECT_EQ(transitionExecutionRecovery(
@@ -543,14 +815,22 @@ TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
 TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
   ExecutionEpisode episode;
   episode.beginGoal(1U, 1U, 1U, true);
+  navigation_planning::CandidateBundle active;
+  active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  active.role = navigation_planning::CandidateRole::kMain;
+  active.localization_epoch = 1U;
+  active.goal_epoch = 1U;
+  active.request_id = 1U;
+  active.bundle_generation = 1U;
+  episode.commandCommitted(active);
   std::barrier rendezvous(3);
   std::thread backup([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated);
+    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated, active);
   });
   std::thread emergency([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kEmergencyCommitted);
+    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kEmergencyCommitted, active);
   });
   rendezvous.arrive_and_wait();
   backup.join();
@@ -564,10 +844,18 @@ TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
 TEST(PlannerFsm, SerializedFailClosedCannotBeResurrectedByNominalEvent) {
   ExecutionEpisode episode;
   episode.beginGoal(1U, 1U, 1U, true);
+  navigation_planning::CandidateBundle active;
+  active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
+  active.role = navigation_planning::CandidateRole::kMain;
+  active.localization_epoch = 1U;
+  active.goal_epoch = 1U;
+  active.request_id = 1U;
+  active.bundle_generation = 1U;
+  episode.commandCommitted(active);
   std::barrier rendezvous(3);
   std::thread nominal([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated);
+    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated, active);
   });
   std::thread fail_closed([&] {
     rendezvous.arrive_and_wait();
@@ -1142,6 +1430,24 @@ TEST(PlannerFsm, AcceptsOnlyAContinuousValidCommittedSafetySuffix) {
       true, 1.0, 4.0, 2.0, 0.2, 0.75, false));
   EXPECT_FALSE(committedSafetySuffixIsUsable(
       true, 4.0, 4.0, 4.0, 0.2, 0.75, true));
+}
+
+TEST(PlannerFsm, CanonicalIntegerElapsedPreservesFutureAndExpirySemantics) {
+  constexpr std::int64_t start_ns = 56'092'000'000LL;
+  for (const std::int64_t offset_ns :
+       {-1LL, 0LL, 1LL, 20'000'000LL, 1'000'000'000LL, 1'000'000'001LL}) {
+    const auto elapsed_ns = navigation_common::checkedDifference(start_ns + offset_ns, start_ns);
+    ASSERT_TRUE(elapsed_ns);
+    const double elapsed_s = static_cast<double>(*elapsed_ns) * 1.0e-9;
+    EXPECT_EQ(committedSafetySuffixIsUsable(
+                  false, elapsed_s, 1.0, std::max(0.0, elapsed_s), 0.1, 0.25, true),
+              offset_ns >= 0 && offset_ns < 1'000'000'000LL);
+  }
+  EXPECT_FALSE(navigation_common::checkedDifference(
+      std::numeric_limits<std::int64_t>::min(),
+      std::numeric_limits<std::int64_t>::max()));
+  EXPECT_FALSE(committedSafetySuffixIsUsable(
+      false, std::numeric_limits<double>::infinity(), 1.0, 0.0, 0.1, 0.25, true));
 }
 
 TEST(PlannerFsm, RetainedCommandCannotConsumeUncertifiedTrackingClearance) {

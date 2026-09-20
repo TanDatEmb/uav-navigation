@@ -58,8 +58,16 @@ enum class ExecutionRecoveryEvent : std::uint8_t {
   }
   switch (state) {
     case ExecutionRecoveryState::kInitialHold:
-      return event == ExecutionRecoveryEvent::kMainCommitted
-          ? ExecutionRecoveryState::kTrackMain : state;
+      if (event == ExecutionRecoveryEvent::kMainCommitted) {
+        return ExecutionRecoveryState::kTrackMain;
+      }
+      if (event == ExecutionRecoveryEvent::kBackupActivated) {
+        return ExecutionRecoveryState::kTrackBackup;
+      }
+      if (event == ExecutionRecoveryEvent::kEmergencyCommitted) {
+        return ExecutionRecoveryState::kEmergencyBrake;
+      }
+      return state;
     case ExecutionRecoveryState::kTrackMain:
       if (event == ExecutionRecoveryEvent::kBackupActivated) {
         return ExecutionRecoveryState::kTrackBackup;

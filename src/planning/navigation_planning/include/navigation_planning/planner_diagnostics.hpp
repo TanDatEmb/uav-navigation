@@ -148,37 +148,6 @@ struct CommittedTrajectoryMetadata {
   CommitDiagnostics diagnostics{};
 };
 
-struct TrajectoryValidationResult {
-  bool valid{false};
-  // True only when immutable changed-region provenance proved that the
-  // previous full certificate remains valid. This is observability for the
-  // mapping fast path; it is never a certificate without that proof.
-  bool reused_unchanged_certificate{false};
-  navigation_world_model::WorldSnapshotIdentity pinned_world{};
-  navigation_world_model::WorldSnapshotIdentity validated_world{};
-  double begin_time_s{0.0};
-  double first_blocked_time_s{0.0};
-  Eigen::Vector3d first_blocked_position{Eigen::Vector3d::Constant(
-      std::numeric_limits<double>::quiet_NaN())};
-  int first_blocked_cell_state{0};
-  // Product-facing copy of the swept validator reason.  Keeping the reason
-  // here makes world-recertification failures diagnosable without weakening
-  // the fail-closed decision.
-  int failure_code{0};
-  int blocked_role{0};
-  std::size_t sample_count{0};
-  std::size_t segment_count{0};
-  // Attribution only; these fields never grant or extend execution authority.
-  // A fallback centreline position is not evidence of a blocking cell.
-  bool blocking_cell_observed{false};
-  int tube_failure_code{0};
-  int evaluated_unknown_policy{-1};
-  std::uint64_t evaluated_generation{0};
-  double unsafe_interval_end_time_s{std::numeric_limits<double>::quiet_NaN()};
-  double curve_deviation_bound_m{std::numeric_limits<double>::quiet_NaN()};
-  double curve_deviation_tolerance_m{std::numeric_limits<double>::quiet_NaN()};
-};
-
 // Diagnostics for the planner-owned BACKUP certificate search.  These fields
 // are observability only: the corresponding safety gates remain unchanged and
 // a zero/unknown value must never be interpreted as a certificate pass.

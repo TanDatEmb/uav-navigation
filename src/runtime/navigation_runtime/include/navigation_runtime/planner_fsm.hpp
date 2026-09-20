@@ -224,6 +224,7 @@ enum class PlannerRenewalReason : std::uint8_t {
   kSafetyRecovery,
   kInvalidHorizon,
   kRenewalDue,
+  kQualityRefinement,
 };
 
 struct PlannerRenewalDecision {
@@ -457,6 +458,27 @@ inline RetainedValidationTransition retainedValidationTransition(bool usable) no
                 : RetainedValidationTransition::FailClosed;
 }
 
+// Classify only the activation seam of an actual terminal MAIN. A missing
+// SOURCE sample is not proof of a tracking violation; raw pressure can only
+// request independently certified recovery, never authorize continued MAIN.
+inline bool terminalMainHasIndeterminatePreStartPressure(
+    const navigation_planning::CandidateBundle& bundle,
+    const bool source_sample_valid, const std::int64_t source_ns,
+    const std::int64_t now_ns, const double raw_error_m,
+    const double tracking_limit_m, const double command_anchor_limit_m) noexcept {
+  return bundle.kind == navigation_planning::CandidateBundleKind::kTerminalStop &&
+      bundle.terminal_stop && !bundle.backup_available &&
+      bundle.role == navigation_planning::CandidateRole::kMain &&
+      bundle.hasDeclaredEndpointMetadata() && !source_sample_valid &&
+      source_ns > 0 && source_ns < bundle.declared_start_ns &&
+      now_ns >= bundle.declared_start_ns && now_ns < bundle.declared_end_ns &&
+      now_ns >= bundle.valid_from_ns && now_ns <= bundle.valid_until_ns &&
+      std::isfinite(raw_error_m) && std::isfinite(tracking_limit_m) &&
+      std::isfinite(command_anchor_limit_m) && tracking_limit_m > 0.0 &&
+      command_anchor_limit_m >= tracking_limit_m && raw_error_m > tracking_limit_m &&
+      raw_error_m <= command_anchor_limit_m;
+}
+
 // A measured-state emergency brake is a one-way transition for one recovery
 // episode. If PX4 diverges far enough that this exact brake loses its tracking
 // certificate, constructing another brake from the newly drifting state every
@@ -476,18 +498,23 @@ inline bool measuredStateEmergencyMayReplaceCommittedCommand(
     bool projected_tracking_certificate_exceeded = false,
     bool current_vehicle_state_known_free = false,
     bool safety_trajectory_available = false,
-    bool terminal_stop = false) noexcept {
+    bool terminal_stop = false,
+    bool indeterminate_pre_start_tracking = false) noexcept {
   // Terminal STOP is intentionally not exempt here: before measured waypoint
   // acceptance it still owns the same tracking certificate as any MAIN.
-  (void)terminal_stop;
   const bool actual_anchor_recovery = !committed_suffix_usable &&
       tracking_certificate_exceeded;
   const bool projected_main_only_recovery =
       projected_tracking_certificate_exceeded && !tracking_certificate_exceeded &&
       current_vehicle_state_known_free && !safety_trajectory_available;
+  const bool indeterminate_terminal_main_recovery = terminal_stop &&
+      indeterminate_pre_start_tracking && current_vehicle_state_known_free &&
+      !safety_trajectory_available &&
+      committed_role == navigation_planning::CandidateRole::kMain;
   return !validate_without_new_commit && fresh_vehicle_state &&
          committed_command_available && command_anchor_valid &&
-         (actual_anchor_recovery || projected_main_only_recovery) &&
+         (actual_anchor_recovery || projected_main_only_recovery ||
+          indeterminate_terminal_main_recovery) &&
          recovery_state == ExecutionRecoveryState::kTrackMain &&
          committed_role != navigation_planning::CandidateRole::kEmergency;
 }
