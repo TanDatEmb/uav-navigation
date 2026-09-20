@@ -19,6 +19,7 @@ enum class StopFailureReason : std::uint8_t {
   kInsufficientSupport,
   kOutsideRecoveryEnvelope,
   kSynthesisFailed,
+  kBudgetExhausted,
 };
 
 struct StopReachability {
@@ -31,8 +32,8 @@ struct StopReachability {
   StopFailureReason failure{StopFailureReason::kNone};
 };
 
-// Conservative full-state estimate used only to seed bounded polynomial
-// duration search. It is not a stop certificate or authorization input.
+// Heuristic full-state estimate used only to seed bounded polynomial duration
+// search. It is neither a conservative stop bound nor authorization evidence.
 struct StopKinematicEnvelope {
   double effective_speed_mps{0.0};
   double acceleration_release_s{0.0};
@@ -246,6 +247,98 @@ inline double minimumSnapStopSupportBound(
   return bound_m;
 }
 
+[[nodiscard]] inline bool isSteadyStopBoundary(
+    const navigation_math::StatePVAJ& state) noexcept {
+  return state.col(2).isZero(0.0) && state.col(3).isZero(0.0);
+}
+
+// Closed-form duration for the current minimum-snap family when the boundary
+// acceleration and jerk are exactly zero. The hull bound and dynamic extrema
+// are independently checked on the constructed Piece before authorization.
+[[nodiscard]] inline double minimumSnapSteadyCruiseStopDuration(
+    const double speed_mps, const double max_acceleration_mps2,
+    const double max_jerk_mps3, const double sample_traj_dt_s) noexcept {
+  if (!std::isfinite(speed_mps) || speed_mps < 0.0 ||
+      !std::isfinite(max_acceleration_mps2) || max_acceleration_mps2 <= 0.0 ||
+      !std::isfinite(max_jerk_mps3) || max_jerk_mps3 <= 0.0 ||
+      !std::isfinite(sample_traj_dt_s) || sample_traj_dt_s <= 0.0) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const long double speed = static_cast<long double>(speed_mps);
+  const long double acceleration =
+      static_cast<long double>(max_acceleration_mps2);
+  const long double jerk = static_cast<long double>(max_jerk_mps3);
+  const long double sample_dt = static_cast<long double>(sample_traj_dt_s);
+  const long double duration = std::max(
+      4.0L * sample_dt,
+      std::max(15.0L * speed / (8.0L * acceleration),
+               std::sqrt(10.0L * speed / (std::sqrt(3.0L) * jerk))));
+  if (!std::isfinite(duration) || duration <= 0.0L ||
+      duration > static_cast<long double>(
+                     std::numeric_limits<double>::max())) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const double converted = static_cast<double>(duration);
+  return std::isfinite(converted) && converted > 0.0
+      ? converted : std::numeric_limits<double>::infinity();
+}
+
+// Exact support cap for a prospective steady cruise under this polynomial
+// family. This proposal is only valid when a0=j0=0; callers must still run the
+// concrete polynomial extrema and independent world/corridor validators.
+[[nodiscard]] inline double minimumSnapSteadyCruiseSpeedCap(
+    const double requested_speed_mps, const double max_velocity_mps,
+    const double max_acceleration_mps2, const double max_jerk_mps3,
+    const double support_m, const double sample_traj_dt_s) noexcept {
+  if (!std::isfinite(requested_speed_mps) || requested_speed_mps <= 0.0 ||
+      !std::isfinite(max_velocity_mps) || max_velocity_mps <= 0.0 ||
+      !std::isfinite(max_acceleration_mps2) || max_acceleration_mps2 <= 0.0 ||
+      !std::isfinite(max_jerk_mps3) || max_jerk_mps3 <= 0.0 ||
+      !std::isfinite(support_m) || support_m <= 0.0 ||
+      !std::isfinite(sample_traj_dt_s) || sample_traj_dt_s <= 0.0) {
+    return 0.0;
+  }
+  const long double support = static_cast<long double>(support_m);
+  const long double sample_floor =
+      4.0L * static_cast<long double>(sample_traj_dt_s);
+  const long double acceleration =
+      static_cast<long double>(max_acceleration_mps2);
+  const long double jerk = static_cast<long double>(max_jerk_mps3);
+  const long double velocity_cap = static_cast<long double>(max_velocity_mps);
+  const long double requested =
+      static_cast<long double>(requested_speed_mps);
+  const long double support_time_cap = 2.0L * support / sample_floor;
+  const long double support_acceleration_cap =
+      std::sqrt(16.0L * acceleration * support / 15.0L);
+  const long double support_jerk_cap = std::cbrt(
+      2.0L * std::sqrt(3.0L) * jerk * support * support / 5.0L);
+  const long double speed_cap = std::min(
+      requested,
+      std::min(velocity_cap,
+          std::min(support_time_cap,
+              std::min(support_acceleration_cap, support_jerk_cap))));
+  if (!std::isfinite(speed_cap) || speed_cap <= 0.0L ||
+      speed_cap > static_cast<long double>(
+                      std::numeric_limits<double>::max())) {
+    return 0.0;
+  }
+  const double converted = static_cast<double>(speed_cap);
+  return std::isfinite(converted) && converted > 0.0 ? converted : 0.0;
+}
+
+namespace braking_detail {
+
+template <typename ShouldAbort>
+[[nodiscard]] inline bool abortRequested(ShouldAbort& should_abort) noexcept {
+  try {
+    return static_cast<bool>(should_abort());
+  } catch (...) {
+    return true;
+  }
+}
+
+}  // namespace braking_detail
+
 inline double unavoidablePeakSpeedLowerBound(
     const navigation_math::StatePVAJ& state,
     const double max_jerk_mps3) noexcept {
@@ -262,10 +355,12 @@ inline double unavoidablePeakSpeedLowerBound(
       (2.0 * max_jerk_mps3);
 }
 
+template <typename ShouldAbort>
 inline BackupBrakingSeed makeBackupBrakingSeed(
     double switch_time_s, const navigation_math::StatePVAJ &switch_state,
     double max_velocity_mps, double max_acc_mps2, double max_jerk_mps3,
-    double sample_traj_dt_s, double feasibility_margin) {
+    double sample_traj_dt_s, double feasibility_margin,
+    ShouldAbort&& should_abort) {
   BackupBrakingSeed result;
   result.switch_time_s = switch_time_s;
   if (!switch_state.allFinite()) {
@@ -300,6 +395,53 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
     result.failure = StopFailureReason::kOutsideRecoveryEnvelope;
     return result;
   }
+
+  if (isSteadyStopBoundary(switch_state)) {
+    if (braking_detail::abortRequested(should_abort)) {
+      result.failure = StopFailureReason::kBudgetExhausted;
+      return result;
+    }
+    const double steady_duration_s = minimumSnapSteadyCruiseStopDuration(
+        speed_mps, max_acc_mps2, max_jerk_mps3, sample_traj_dt_s);
+    if (!std::isfinite(steady_duration_s) || steady_duration_s <= 0.0) {
+      result.failure = StopFailureReason::kSynthesisFailed;
+      return result;
+    }
+    const auto piece = minimumSnapStopPiece(switch_state, steady_duration_s);
+    result.duration_s = steady_duration_s;
+    result.endpoint = piece.getPos(steady_duration_s);
+    result.maximum_velocity_mps = piece.getMaxVelRate();
+    result.maximum_acceleration_mps2 = piece.getMaxAccRate();
+    result.maximum_jerk_mps3 = piece.getMaxJerRate();
+    const bool finite_extrema = result.endpoint.allFinite() &&
+        std::isfinite(result.maximum_velocity_mps) &&
+        std::isfinite(result.maximum_acceleration_mps2) &&
+        std::isfinite(result.maximum_jerk_mps3);
+    const bool dynamic_limits_satisfied = finite_extrema &&
+        navigation_planning::withinNumericalDynamicLimit(
+            result.maximum_velocity_mps, gate * result.allowed_peak_velocity_mps) &&
+        navigation_planning::withinNumericalDynamicLimit(
+            result.maximum_acceleration_mps2, gate * max_acc_mps2) &&
+        navigation_planning::withinNumericalDynamicLimit(
+            result.maximum_jerk_mps3, gate * max_jerk_mps3);
+    if (dynamic_limits_satisfied) {
+      result.support_bound_m = minimumSnapStopSupportBound(
+          piece, switch_state.col(0));
+    }
+    if (braking_detail::abortRequested(should_abort)) {
+      result.feasible = false;
+      result.failure = StopFailureReason::kBudgetExhausted;
+      return result;
+    }
+    if (!dynamic_limits_satisfied || !std::isfinite(result.support_bound_m)) {
+      result.failure = StopFailureReason::kSynthesisFailed;
+      return result;
+    }
+    result.feasible = true;
+    result.failure = StopFailureReason::kNone;
+    return result;
+  }
+
   // Keep speed authorization and BACKUP construction on the same full-state
   // PVAJ envelope. The polynomial certificate below remains authoritative for
   // the exact vector extrema.
@@ -314,6 +456,11 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
   // larger velocity overshoot.
   duration_s = std::max(4.0 * sample_traj_dt_s, duration_s * 0.5);
   for (int attempt = 0; attempt < 24; ++attempt) {
+    if (braking_detail::abortRequested(should_abort)) {
+      result.failure = StopFailureReason::kBudgetExhausted;
+      return result;
+    }
+    if (!std::isfinite(duration_s) || duration_s <= 0.0) break;
     const auto piece = minimumSnapStopPiece(switch_state, duration_s);
     result.duration_s = duration_s;
     result.endpoint = piece.getPos(duration_s);
@@ -334,11 +481,15 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
       result.support_bound_m = minimumSnapStopSupportBound(
           piece, switch_state.col(0));
       result.feasible = std::isfinite(result.support_bound_m);
-      if (result.feasible && std::isfinite(result.support_bound_m)) {
-        result.failure = StopFailureReason::kNone;
-        return result;
-      }
+    }
+    if (braking_detail::abortRequested(should_abort)) {
       result.feasible = false;
+      result.failure = StopFailureReason::kBudgetExhausted;
+      return result;
+    }
+    if (result.feasible) {
+      result.failure = StopFailureReason::kNone;
+      return result;
     }
     duration_s *= 1.15;
   }
@@ -346,15 +497,29 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
   return result;
 }
 
+inline BackupBrakingSeed makeBackupBrakingSeed(
+    const double switch_time_s,
+    const navigation_math::StatePVAJ& switch_state,
+    const double max_velocity_mps, const double max_acc_mps2,
+    const double max_jerk_mps3, const double sample_traj_dt_s,
+    const double feasibility_margin) {
+  auto never_abort = []() noexcept { return false; };
+  return makeBackupBrakingSeed(
+      switch_time_s, switch_state, max_velocity_mps, max_acc_mps2,
+      max_jerk_mps3, sample_traj_dt_s, feasibility_margin, never_abort);
+}
+
 // Authorization is tied to a concrete minimum-snap continuation produced by
 // the BACKUP seed builder. The returned scalar is a conservative Bezier-hull
 // excursion bound, not a substitute for the independent corridor/world gate.
+template <typename ShouldAbort>
 inline StopReachability evaluateStopReachability(
     const navigation_math::StatePVAJ& state,
     const navigation_planning::DynamicLimits& dynamics,
     const double known_free_support_m,
-    const double sample_traj_dt_s = 0.05,
-    const double feasibility_margin = 0.0) noexcept {
+    const double sample_traj_dt_s,
+    const double feasibility_margin,
+    ShouldAbort&& should_abort) noexcept {
   StopReachability result;
   if (state.allFinite()) {
     result.stop_position = state.col(0);
@@ -374,37 +539,68 @@ inline StopReachability evaluateStopReachability(
     result.failure = StopFailureReason::kInsufficientSupport;
     return result;
   }
-  const auto estimate = stopKinematicEnvelope(
-      state, dynamics.vehicle.maximum_acceleration_mps2,
-      dynamics.vehicle.maximum_jerk_mps3);
-  result.estimated_entry_speed_mps = estimate.effective_speed_mps;
-  const auto seed = makeBackupBrakingSeed(
-      0.0, state, dynamics.vehicle.maximum_velocity_mps,
-      dynamics.vehicle.maximum_acceleration_mps2,
-      dynamics.vehicle.maximum_jerk_mps3, sample_traj_dt_s,
-      feasibility_margin);
-  result.stopping_time_s = seed.duration_s;
-  result.stopping_distance_m = seed.support_bound_m;
-  if (seed.feasible) result.stop_position = seed.endpoint.cast<double>();
-  if (!seed.feasible) {
-    result.failure = seed.failure == StopFailureReason::kNone
-        ? StopFailureReason::kSynthesisFailed : seed.failure;
+  try {
+    if (braking_detail::abortRequested(should_abort)) {
+      result.failure = StopFailureReason::kBudgetExhausted;
+      return result;
+    }
+    const auto estimate = stopKinematicEnvelope(
+        state, dynamics.vehicle.maximum_acceleration_mps2,
+        dynamics.vehicle.maximum_jerk_mps3);
+    result.estimated_entry_speed_mps = estimate.effective_speed_mps;
+    const auto seed = makeBackupBrakingSeed(
+        0.0, state, dynamics.vehicle.maximum_velocity_mps,
+        dynamics.vehicle.maximum_acceleration_mps2,
+        dynamics.vehicle.maximum_jerk_mps3, sample_traj_dt_s,
+        feasibility_margin, should_abort);
+    result.stopping_time_s = seed.duration_s;
+    result.stopping_distance_m = seed.support_bound_m;
+    if (seed.feasible) {
+      result.stop_position = seed.endpoint.template cast<double>();
+    }
+    if (!seed.feasible) {
+      result.failure = seed.failure == StopFailureReason::kNone
+          ? StopFailureReason::kSynthesisFailed : seed.failure;
+      return result;
+    }
+    if (braking_detail::abortRequested(should_abort)) {
+      result.failure = StopFailureReason::kBudgetExhausted;
+      return result;
+    }
+    result.feasible = seed.support_bound_m <= known_free_support_m;
+    result.failure = result.feasible ? StopFailureReason::kNone
+                                     : StopFailureReason::kInsufficientSupport;
+    return result;
+  } catch (...) {
+    // Piece extrema allocate inside the existing polynomial root solver.
+    // Keep this noexcept API fail-closed if allocation or evaluation throws.
+    result.feasible = false;
+    result.failure = StopFailureReason::kSynthesisFailed;
     return result;
   }
-  result.feasible = seed.support_bound_m <= known_free_support_m;
-  result.failure = result.feasible ? StopFailureReason::kNone
-                                   : StopFailureReason::kInsufficientSupport;
-  return result;
 }
 
+inline StopReachability evaluateStopReachability(
+    const navigation_math::StatePVAJ& state,
+    const navigation_planning::DynamicLimits& dynamics,
+    const double known_free_support_m,
+    const double sample_traj_dt_s = 0.05,
+    const double feasibility_margin = 0.0) noexcept {
+  auto never_abort = []() noexcept { return false; };
+  return evaluateStopReachability(
+      state, dynamics, known_free_support_m, sample_traj_dt_s,
+      feasibility_margin, never_abort);
+}
+
+template <typename ShouldAbort>
 inline BackupBrakingSeed makeBackupBrakingSeedWithTerminalAltitude(
     double switch_time_s, const navigation_math::StatePVAJ &switch_state,
     double max_velocity_mps, double max_acc_mps2, double max_jerk_mps3,
     double sample_traj_dt_s, double feasibility_margin,
-    double terminal_altitude_m) {
+    double terminal_altitude_m, ShouldAbort&& should_abort) {
   BackupBrakingSeed result = makeBackupBrakingSeed(
       switch_time_s, switch_state, max_velocity_mps, max_acc_mps2,
-      max_jerk_mps3, sample_traj_dt_s, feasibility_margin);
+      max_jerk_mps3, sample_traj_dt_s, feasibility_margin, should_abort);
   if (!result.feasible || !std::isfinite(terminal_altitude_m)) {
     return result;
   }
@@ -416,29 +612,39 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithTerminalAltitude(
   // exact V/A/J limits remain unchanged and a failure retains the free-end
   // certificate returned above.
   for (int attempt = 0; attempt < 12; ++attempt) {
+    if (braking_detail::abortRequested(should_abort)) {
+      result.feasible = false;
+      result.failure = StopFailureReason::kBudgetExhausted;
+      return result;
+    }
     const auto altitude_piece = minimumSnapStopPieceWithTerminalAltitude(
         switch_state, duration_s, terminal_altitude_m);
     const double maximum_velocity_mps = altitude_piece.getMaxVelRate();
     const double maximum_acceleration_mps2 = altitude_piece.getMaxAccRate();
     const double maximum_jerk_mps3 = altitude_piece.getMaxJerRate();
-    if (altitude_piece.getPos(duration_s).allFinite() &&
+    const auto endpoint = altitude_piece.getPos(duration_s);
+    const bool finite_extrema = endpoint.allFinite() &&
         std::isfinite(maximum_velocity_mps) &&
         std::isfinite(maximum_acceleration_mps2) &&
-        std::isfinite(maximum_jerk_mps3) &&
+        std::isfinite(maximum_jerk_mps3);
+    const bool dynamic_limits_satisfied = finite_extrema &&
         navigation_planning::withinNumericalDynamicLimit(
             maximum_velocity_mps, gate * result.allowed_peak_velocity_mps) &&
         navigation_planning::withinNumericalDynamicLimit(
             maximum_acceleration_mps2, gate * max_acc_mps2) &&
-      navigation_planning::withinNumericalDynamicLimit(
-            maximum_jerk_mps3, gate * max_jerk_mps3)) {
-      const double support_bound_m = minimumSnapStopSupportBound(
-          altitude_piece, switch_state.col(0));
-      if (!std::isfinite(support_bound_m)) {
-        duration_s *= 1.15;
-        continue;
-      }
+        navigation_planning::withinNumericalDynamicLimit(
+            maximum_jerk_mps3, gate * max_jerk_mps3);
+    const double support_bound_m = dynamic_limits_satisfied
+        ? minimumSnapStopSupportBound(altitude_piece, switch_state.col(0))
+        : std::numeric_limits<double>::infinity();
+    if (braking_detail::abortRequested(should_abort)) {
+      result.feasible = false;
+      result.failure = StopFailureReason::kBudgetExhausted;
+      return result;
+    }
+    if (dynamic_limits_satisfied && std::isfinite(support_bound_m)) {
       result.duration_s = duration_s;
-      result.endpoint = altitude_piece.getPos(duration_s);
+      result.endpoint = endpoint;
       result.maximum_velocity_mps = maximum_velocity_mps;
       result.maximum_acceleration_mps2 = maximum_acceleration_mps2;
       result.maximum_jerk_mps3 = maximum_jerk_mps3;
@@ -452,6 +658,19 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithTerminalAltitude(
     }
   }
   return result;
+}
+
+inline BackupBrakingSeed makeBackupBrakingSeedWithTerminalAltitude(
+    const double switch_time_s,
+    const navigation_math::StatePVAJ& switch_state,
+    const double max_velocity_mps, const double max_acc_mps2,
+    const double max_jerk_mps3, const double sample_traj_dt_s,
+    const double feasibility_margin, const double terminal_altitude_m) {
+  auto never_abort = []() noexcept { return false; };
+  return makeBackupBrakingSeedWithTerminalAltitude(
+      switch_time_s, switch_state, max_velocity_mps, max_acc_mps2,
+      max_jerk_mps3, sample_traj_dt_s, feasibility_margin,
+      terminal_altitude_m, never_abort);
 }
 
 // A non-terminal pass-through BACKUP may stop before its active waypoint, but

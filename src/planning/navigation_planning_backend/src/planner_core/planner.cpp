@@ -1740,10 +1740,15 @@ double mainGuideSupport(
         // below rejects the candidate and this request fails closed.
         const auto initial_state = makeCommandBoundaryPVAJ(
             solve_state_, solve_acceleration_estimated_, solve_jerk_estimated_);
+        const auto stop_seed_should_abort = [this, &solve_deadline] {
+            return solve_cancelled_.load(std::memory_order_relaxed) ||
+                solve_deadline.expired(planner_context_->getSimTime()) ||
+                solve_deadline.steadyExpired();
+        };
         const auto seed = makeBackupBrakingSeed(
             0.0, initial_state, cfg_.exp_traj_cfg.max_vel,
             cfg_.exp_traj_cfg.max_acc, cfg_.exp_traj_cfg.max_jerk,
-            cfg_.sample_traj_dt_s, 0.0);
+            cfg_.sample_traj_dt_s, 0.0, stop_seed_should_abort);
         if (!seed.feasible || !std::isfinite(seed.duration_s) ||
             seed.duration_s <= 0.0 || solve_deadline.expired(
                 planner_context_->getSimTime()) || solve_deadline.steadyExpired()) {
@@ -5155,7 +5160,7 @@ double mainGuideSupport(
                 candidate_ts, switch_state,
                     cfg_.back_traj_cfg.max_vel, cfg_.back_traj_cfg.max_acc,
                     cfg_.back_traj_cfg.max_jerk, cfg_.sample_traj_dt_s,
-                    0.0, backup_altitude_target);
+                    0.0, backup_altitude_target, should_abort);
             if (should_abort()) return FAILED;
             geometry_utils::Piece candidate_braking_piece;
             if (braking_seed.feasible &&

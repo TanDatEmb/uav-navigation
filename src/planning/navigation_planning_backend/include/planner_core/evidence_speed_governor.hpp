@@ -43,6 +43,8 @@ inline EvidenceSpeedFailure stopFailureToSpeedFailure(
       return EvidenceSpeedFailure::kInsufficientSupport;
     case StopFailureReason::kSynthesisFailed:
       return EvidenceSpeedFailure::kStopSynthesisFailed;
+    case StopFailureReason::kBudgetExhausted:
+      return EvidenceSpeedFailure::kBudgetExhausted;
   }
   return EvidenceSpeedFailure::kInvalidInput;
 }
@@ -73,7 +75,22 @@ template <typename ShouldAbort>
   // recovery model. Reducing desired cruise speed does not reduce current
   // measured velocity, acceleration, or jerk.
   const auto current_stop = evaluateStopReachability(
-      state, dynamics, result.support_m, sample_traj_dt_s);
+      state, dynamics, result.support_m, sample_traj_dt_s, 0.0,
+      should_abort);
+  if (current_stop.failure == StopFailureReason::kBudgetExhausted) {
+    result.failure = EvidenceSpeedFailure::kBudgetExhausted;
+    return result;
+  }
+  bool abort = false;
+  try {
+    abort = static_cast<bool>(should_abort());
+  } catch (...) {
+    abort = true;
+  }
+  if (abort) {
+    result.failure = EvidenceSpeedFailure::kBudgetExhausted;
+    return result;
+  }
   if (!current_stop.feasible) {
     result.failure = stopFailureToSpeedFailure(current_stop.failure);
     return result;
@@ -82,13 +99,24 @@ template <typename ShouldAbort>
   const Eigen::Vector3d velocity = state.col(1);
   const Eigen::Vector3d direction = velocity.norm() > 1.0e-9
       ? velocity.normalized() : Eigen::Vector3d::UnitX();
-  const double upper = dynamics.intent.requested_cruise_speed_mps;
-  // Feasibility of this polynomial family is not assumed monotone in duration
-  // or entry speed. Inspect a fixed descending grid instead of bisection; each
-  // accepted value has its own concrete stop-polynomial support certificate.
-  constexpr std::size_t kBoundedSpeedSamples = 16U;
-  for (std::size_t sample = kBoundedSpeedSamples; sample > 0U; --sample) {
-    bool abort = false;
+  double candidate_speed_mps = minimumSnapSteadyCruiseSpeedCap(
+      dynamics.intent.requested_cruise_speed_mps,
+      dynamics.vehicle.maximum_velocity_mps,
+      dynamics.vehicle.maximum_acceleration_mps2,
+      dynamics.vehicle.maximum_jerk_mps3, result.support_m, sample_traj_dt_s);
+  if (!std::isfinite(candidate_speed_mps) || candidate_speed_mps <= 0.0) {
+    result.failure = EvidenceSpeedFailure::kInsufficientSupport;
+    return result;
+  }
+
+  // The closed-form cap is exact for this minimum-snap family only for a
+  // prospective steady cruise. Certify the concrete polynomial/extrema once;
+  // if floating-point construction misses the support boundary by a few ulps,
+  // perform a strictly bounded nextafter correction, never a speed grid.
+  constexpr int kMaximumRoundoffCorrections = 8;
+  for (int correction = 0; correction <= kMaximumRoundoffCorrections;
+       ++correction) {
+    abort = false;
     try {
       abort = static_cast<bool>(should_abort());
     } catch (...) {
@@ -98,32 +126,50 @@ template <typename ShouldAbort>
       result.failure = EvidenceSpeedFailure::kBudgetExhausted;
       return result;
     }
-    const double candidate_speed =
-        upper * static_cast<double>(sample) /
-        static_cast<double>(kBoundedSpeedSamples);
     navigation_math::StatePVAJ candidate_state;
     candidate_state.setZero();
     candidate_state.col(0) = state.col(0);
-    candidate_state.col(1) = direction * candidate_speed;
-    // Cruise is a future steady-state proposal. Actual non-zero boundary
-    // derivatives were independently included in current_stop above.
+    candidate_state.col(1) = direction * candidate_speed_mps;
     const auto candidate_stop = evaluateStopReachability(
-        candidate_state, dynamics, result.support_m, sample_traj_dt_s);
+        candidate_state, dynamics, result.support_m, sample_traj_dt_s, 0.0,
+        should_abort);
+    try {
+      abort = static_cast<bool>(should_abort());
+    } catch (...) {
+      abort = true;
+    }
+    if (abort) {
+      result.failure = EvidenceSpeedFailure::kBudgetExhausted;
+      return result;
+    }
     if (candidate_stop.feasible) {
-      result.speed_mps = candidate_speed;
+      result.speed_mps = candidate_speed_mps;
       result.sufficient = true;
       result.failure = EvidenceSpeedFailure::kNone;
       return result;
     }
-    if (candidate_stop.failure == StopFailureReason::kOutsideRecoveryEnvelope) {
-      result.failure = EvidenceSpeedFailure::kOutsideRecoveryEnvelope;
-    } else if (candidate_stop.failure == StopFailureReason::kSynthesisFailed) {
-      result.failure = EvidenceSpeedFailure::kStopSynthesisFailed;
+    if (candidate_stop.failure != StopFailureReason::kInsufficientSupport ||
+        !std::isfinite(candidate_stop.stopping_distance_m) ||
+        candidate_stop.stopping_distance_m <= result.support_m ||
+        correction == kMaximumRoundoffCorrections) {
+      result.failure = stopFailureToSpeedFailure(candidate_stop.failure);
+      if (result.failure == EvidenceSpeedFailure::kInvalidInput) {
+        result.failure = candidate_stop.failure ==
+                StopFailureReason::kInsufficientSupport
+            ? EvidenceSpeedFailure::kInsufficientSupport
+            : EvidenceSpeedFailure::kStopSynthesisFailed;
+      }
+      return result;
     }
+    const double corrected_speed = std::nextafter(candidate_speed_mps, 0.0);
+    if (!std::isfinite(corrected_speed) || corrected_speed <= 0.0 ||
+        corrected_speed >= candidate_speed_mps) {
+      result.failure = EvidenceSpeedFailure::kInsufficientSupport;
+      return result;
+    }
+    candidate_speed_mps = corrected_speed;
   }
-  if (result.failure == EvidenceSpeedFailure::kInvalidInput) {
-    result.failure = EvidenceSpeedFailure::kInsufficientSupport;
-  }
+  result.failure = EvidenceSpeedFailure::kInsufficientSupport;
   return result;
 }
 
