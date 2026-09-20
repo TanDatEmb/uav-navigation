@@ -401,44 +401,72 @@ inline BackupBrakingSeed makeBackupBrakingSeed(
       result.failure = StopFailureReason::kBudgetExhausted;
       return result;
     }
-    const double steady_duration_s = minimumSnapSteadyCruiseStopDuration(
+    double steady_duration_s = minimumSnapSteadyCruiseStopDuration(
         speed_mps, max_acc_mps2, max_jerk_mps3, sample_traj_dt_s);
     if (!std::isfinite(steady_duration_s) || steady_duration_s <= 0.0) {
       result.failure = StopFailureReason::kSynthesisFailed;
       return result;
     }
-    const auto piece = minimumSnapStopPiece(switch_state, steady_duration_s);
-    result.duration_s = steady_duration_s;
-    result.endpoint = piece.getPos(steady_duration_s);
-    result.maximum_velocity_mps = piece.getMaxVelRate();
-    result.maximum_acceleration_mps2 = piece.getMaxAccRate();
-    result.maximum_jerk_mps3 = piece.getMaxJerRate();
-    const bool finite_extrema = result.endpoint.allFinite() &&
-        std::isfinite(result.maximum_velocity_mps) &&
-        std::isfinite(result.maximum_acceleration_mps2) &&
-        std::isfinite(result.maximum_jerk_mps3);
-    const bool dynamic_limits_satisfied = finite_extrema &&
-        navigation_planning::withinNumericalDynamicLimit(
-            result.maximum_velocity_mps, gate * result.allowed_peak_velocity_mps) &&
-        navigation_planning::withinNumericalDynamicLimit(
-            result.maximum_acceleration_mps2, gate * max_acc_mps2) &&
-        navigation_planning::withinNumericalDynamicLimit(
-            result.maximum_jerk_mps3, gate * max_jerk_mps3);
-    if (dynamic_limits_satisfied) {
-      result.support_bound_m = minimumSnapStopSupportBound(
-          piece, switch_state.col(0));
+    // The closed-form active V/A/J constraint can round a few ULPs below the
+    // exact boundary. Correct only that numerical boundary by a bounded
+    // nextafter walk; do not inflate a physical limit or accept an extremum
+    // merely because it falls inside the wider numerical comparison contract.
+    constexpr int kMaximumSteadyRoundoffCorrections = 32;
+    for (int correction = 0;
+         correction <= kMaximumSteadyRoundoffCorrections; ++correction) {
+      if (braking_detail::abortRequested(should_abort)) {
+        result.failure = StopFailureReason::kBudgetExhausted;
+        return result;
+      }
+      const auto piece = minimumSnapStopPiece(switch_state, steady_duration_s);
+      result.duration_s = steady_duration_s;
+      result.endpoint = piece.getPos(steady_duration_s);
+      result.maximum_velocity_mps = piece.getMaxVelRate();
+      result.maximum_acceleration_mps2 = piece.getMaxAccRate();
+      result.maximum_jerk_mps3 = piece.getMaxJerRate();
+      const bool finite_extrema = result.endpoint.allFinite() &&
+          std::isfinite(result.maximum_velocity_mps) &&
+          std::isfinite(result.maximum_acceleration_mps2) &&
+          std::isfinite(result.maximum_jerk_mps3);
+      const bool dynamic_limits_satisfied = finite_extrema &&
+          navigation_planning::withinNumericalDynamicLimit(
+              result.maximum_velocity_mps,
+              gate * result.allowed_peak_velocity_mps) &&
+          navigation_planning::withinNumericalDynamicLimit(
+              result.maximum_acceleration_mps2, gate * max_acc_mps2) &&
+          navigation_planning::withinNumericalDynamicLimit(
+              result.maximum_jerk_mps3, gate * max_jerk_mps3);
+      const bool exact_derivative_limits_satisfied =
+          result.maximum_acceleration_mps2 <= gate * max_acc_mps2 &&
+          result.maximum_jerk_mps3 <= gate * max_jerk_mps3;
+      if (dynamic_limits_satisfied && exact_derivative_limits_satisfied) {
+        result.support_bound_m = minimumSnapStopSupportBound(
+            piece, switch_state.col(0));
+        if (braking_detail::abortRequested(should_abort)) {
+          result.failure = StopFailureReason::kBudgetExhausted;
+          return result;
+        }
+        if (!std::isfinite(result.support_bound_m)) {
+          result.failure = StopFailureReason::kSynthesisFailed;
+          return result;
+        }
+        result.feasible = true;
+        result.failure = StopFailureReason::kNone;
+        return result;
+      }
+      if (!dynamic_limits_satisfied || correction ==
+              kMaximumSteadyRoundoffCorrections) {
+        result.failure = StopFailureReason::kSynthesisFailed;
+        return result;
+      }
+      steady_duration_s = std::nextafter(
+          steady_duration_s, std::numeric_limits<double>::infinity());
+      if (!std::isfinite(steady_duration_s)) {
+        result.failure = StopFailureReason::kSynthesisFailed;
+        return result;
+      }
     }
-    if (braking_detail::abortRequested(should_abort)) {
-      result.feasible = false;
-      result.failure = StopFailureReason::kBudgetExhausted;
-      return result;
-    }
-    if (!dynamic_limits_satisfied || !std::isfinite(result.support_bound_m)) {
-      result.failure = StopFailureReason::kSynthesisFailed;
-      return result;
-    }
-    result.feasible = true;
-    result.failure = StopFailureReason::kNone;
+    result.failure = StopFailureReason::kSynthesisFailed;
     return result;
   }
 
