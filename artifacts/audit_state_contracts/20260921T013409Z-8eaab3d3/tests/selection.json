@@ -1,0 +1,139 @@
+{
+  "target_sha": "8eaab3d33db36e9e636ad4005ed91b8f055f4d68",
+  "binary_provenance": "freshly built from TARGET_SHA in scratch directories listed in provenance.json; no stale binary used",
+  "status": "TEST_EXECUTED for selected groups only",
+  "test_groups": [
+    {
+      "id": "test-episode",
+      "command": "${BUILD_DIR}/navigation_runtime/test_execution_episode --gtest_filter=ExecutionEpisode.HotRetargetKeepsActiveBackupUntilSuccessorCommits:ExecutionEpisode.LateRetainedRoleFromAStaleCandidateCannotRewriteSuccessor:ExecutionEpisode.SuspendAndClearDoNotRetainCommandIdentity:ExecutionEpisode.CommitUpdatesLifecycleAndRecoveryInOneSnapshot:ExecutionEpisode.FailClosedClearsCommandExposure",
+      "result": "PASS",
+      "tests": 5,
+      "log": "validation/logs/episode.log.gz",
+      "scope": "production ExecutionEpisode; synthetic bundle identity",
+      "binary": "navigation_runtime/test_execution_episode",
+      "filter": "ExecutionEpisode.HotRetargetKeepsActiveBackupUntilSuccessorCommits:ExecutionEpisode.LateRetainedRoleFromAStaleCandidateCannotRewriteSuccessor:ExecutionEpisode.SuspendAndClearDoNotRetainCommandIdentity:ExecutionEpisode.CommitUpdatesLifecycleAndRecoveryInOneSnapshot:ExecutionEpisode.FailClosedClearsCommandExposure",
+      "ros_local_only": false
+    },
+    {
+      "id": "test-fsm",
+      "command": "${BUILD_DIR}/navigation_runtime/test_planner_fsm --gtest_filter=PlannerFsm.ResumesOnlyExactFreshWorldRecertifiedGeneration:PlannerFsm.StoppedRecoveryFailureRemainsRetryableWithoutCommand:PlannerFsm.FiveSecondTimeoutExistsOnlyWhileStationary:PlannerFsm.WatchdogKeepsBoundedStoppedRecoveryHoldForRetry:PlannerFsm.PendingGoalOwnerLinearizesSupersedeAndExactConsumption:PlannerFsm.BackupOutsideAcceptanceSchedulesMeasuredRestart:PlannerFsm.RetainsPendingStatusWhileSafetySuffixDrains:PlannerFsm.PreservesObservedTerminalHoldAcrossRestRetry",
+      "result": "PASS",
+      "tests": 8,
+      "log": "validation/logs/runtime_fsm.log.gz",
+      "scope": "production helper/owner tests; not mapping callback to adapter end-to-end",
+      "binary": "navigation_runtime/test_planner_fsm",
+      "filter": "PlannerFsm.ResumesOnlyExactFreshWorldRecertifiedGeneration:PlannerFsm.StoppedRecoveryFailureRemainsRetryableWithoutCommand:PlannerFsm.FiveSecondTimeoutExistsOnlyWhileStationary:PlannerFsm.WatchdogKeepsBoundedStoppedRecoveryHoldForRetry:PlannerFsm.PendingGoalOwnerLinearizesSupersedeAndExactConsumption:PlannerFsm.BackupOutsideAcceptanceSchedulesMeasuredRestart:PlannerFsm.RetainsPendingStatusWhileSafetySuffixDrains:PlannerFsm.PreservesObservedTerminalHoldAcrossRestRetry",
+      "ros_local_only": false
+    },
+    {
+      "id": "test-continuation",
+      "command": "${BUILD_DIR}/navigation_runtime/test_certified_continuation --gtest_filter=CertifiedContinuation.*",
+      "result": "PASS",
+      "tests": 8,
+      "log": "validation/logs/continuation.log.gz",
+      "scope": "production reserve helper; not candidate producer",
+      "binary": "navigation_runtime/test_certified_continuation",
+      "filter": "CertifiedContinuation.*",
+      "ros_local_only": false
+    },
+    {
+      "id": "test-adapter-progress",
+      "command": "${BUILD_DIR}/px4_navigation_external_mode/test_navigation_mode_progression",
+      "result": "PASS",
+      "tests": 23,
+      "log": "validation/logs/mission_adapter.log.gz",
+      "scope": "production NavigationMode/MissionController with synthetic accepted command",
+      "binary": "px4_navigation_external_mode/test_navigation_mode_progression",
+      "filter": null,
+      "ros_local_only": true
+    },
+    {
+      "id": "test-mission",
+      "command": "${BUILD_DIR}/px4_navigation_external_mode/test_mission --gtest_filter=MissionController.PassThroughRequiresPerUpdateMainContinuationWitness:MissionController.PassThroughAcceptsRecentMeasuredSegmentCrossingAtCruiseSpeed:MissionController.PassThroughRejectsCrossingAcrossStaleMeasuredGap:MissionController.CoincidentPassThroughStopRestoresTerminalReadiness:MissionController.TerminalStopRequiresMeasuredPositionInsideAcceptanceRadius:MissionController.TerminalStopRequiresLowMeasuredSpeed:MissionController.NativeReadinessCannotClearPendingTerminalStopHold:MissionController.CertifiedPassThroughSuffixStopAllowsMeasuredProgression:MissionController.SafetyTrajectoryCannotAdvancePassThroughUntilCertifiedStop",
+      "result": "PASS",
+      "tests": 9,
+      "log": "validation/logs/mission_semantics.log.gz",
+      "scope": "production mission controller and route helper with synthetic inputs",
+      "binary": "px4_navigation_external_mode/test_mission",
+      "filter": "MissionController.PassThroughRequiresPerUpdateMainContinuationWitness:MissionController.PassThroughAcceptsRecentMeasuredSegmentCrossingAtCruiseSpeed:MissionController.PassThroughRejectsCrossingAcrossStaleMeasuredGap:MissionController.CoincidentPassThroughStopRestoresTerminalReadiness:MissionController.TerminalStopRequiresMeasuredPositionInsideAcceptanceRadius:MissionController.TerminalStopRequiresLowMeasuredSpeed:MissionController.NativeReadinessCannotClearPendingTerminalStopHold:MissionController.CertifiedPassThroughSuffixStopAllowsMeasuredProgression:MissionController.SafetyTrajectoryCannotAdvancePassThroughUntilCertifiedStop",
+      "ros_local_only": false
+    },
+    {
+      "id": "test-command-contract",
+      "command": "${BUILD_DIR}/px4_navigation_external_mode/test_navigation_command --gtest_filter=NavigationCommandContract.*",
+      "result": "PASS",
+      "tests": 24,
+      "log": "validation/logs/command_contract.log.gz",
+      "scope": "contract tests; not PX4 acceptance",
+      "binary": "px4_navigation_external_mode/test_navigation_command",
+      "filter": "NavigationCommandContract.*",
+      "ros_local_only": false
+    },
+    {
+      "id": "test-governor",
+      "command": "${BUILD_DIR}/navigation_planning_backend/test_planner_config --gtest_filter=PlannerSpeedGovernor.*:PlannerBackupBraking.AbortIsObservedBetweenBoundedDurationTrials:PlannerBackupBraking.AbortIsObservedInsideTerminalAltitudeAdjustment",
+      "result": "PASS",
+      "tests": 8,
+      "log": "validation/logs/governor.log.gz",
+      "scope": "production helpers/builders with synthetic inputs",
+      "binary": "navigation_planning_backend/test_planner_config",
+      "filter": "PlannerSpeedGovernor.*:PlannerBackupBraking.AbortIsObservedBetweenBoundedDurationTrials:PlannerBackupBraking.AbortIsObservedInsideTerminalAltitudeAdjustment",
+      "ros_local_only": false
+    },
+    {
+      "id": "test-terminal-monitor",
+      "command": "${BUILD_DIR}/navigation_runtime/test_navigation_runtime_terminal_monitor --gtest_filter=NavigationRuntimeTerminalMonitorStrict.AdmissionAtOriginalMainEndPreservesItsEpisode:NavigationRuntimeTerminalMonitorStrict.AdmissionRejectsWrongEpochFrameAndReceiveStaleness:NavigationRuntimeTerminalMonitorStrict.ImmediatePreparedEpochResetCannotCommit:NavigationRuntimeTerminalMonitorStrict.ImmediatePreparedFailureCannotCommit:NavigationRuntimeTerminalMonitorStrict.ImmediatePreparedGoalChangeCannotCommit:NavigationRuntimeTerminalMonitorStrict.EmergencyEpisodeCutoverPrecedesAckAndWorldCopy:NavigationRuntimeTerminalMonitor.ExactNativeStartPreservesFreshMainOnlyOwner:NavigationRuntimeTerminalMonitorStrict.ExactNativeStartPreservesFreshMainOnlyOwner:NavigationRuntimeTerminalMonitor.PendingAndGoalTransitionDoNotOpenTerminalMonitor",
+      "result": "PASS",
+      "tests": 9,
+      "log": "validation/logs/runtime_terminal.log.gz",
+      "scope": "production node/facade fixture; fake inputs",
+      "binary": "navigation_runtime/test_navigation_runtime_terminal_monitor",
+      "filter": "NavigationRuntimeTerminalMonitorStrict.AdmissionAtOriginalMainEndPreservesItsEpisode:NavigationRuntimeTerminalMonitorStrict.AdmissionRejectsWrongEpochFrameAndReceiveStaleness:NavigationRuntimeTerminalMonitorStrict.ImmediatePreparedEpochResetCannotCommit:NavigationRuntimeTerminalMonitorStrict.ImmediatePreparedFailureCannotCommit:NavigationRuntimeTerminalMonitorStrict.ImmediatePreparedGoalChangeCannotCommit:NavigationRuntimeTerminalMonitorStrict.EmergencyEpisodeCutoverPrecedesAckAndWorldCopy:NavigationRuntimeTerminalMonitor.ExactNativeStartPreservesFreshMainOnlyOwner:NavigationRuntimeTerminalMonitorStrict.ExactNativeStartPreservesFreshMainOnlyOwner:NavigationRuntimeTerminalMonitor.PendingAndGoalTransitionDoNotOpenTerminalMonitor",
+      "ros_local_only": true
+    },
+    {
+      "id": "test-timeline-store",
+      "command": "${BUILD_DIR}/navigation_execution/test_committed_bundle_store --gtest_filter=ExecutionTimelineStore.WorldAdvanceInvalidatesPendingSuccessor:ExecutionTimelineStore.RecertifiedPredecessorKeepsSuccessorActivationValid:CommittedBundleStore.RecertifiesOnlyTheValidatedBundleOnWorldAdvance:CommittedBundleStore.RecertificationMismatchOrGoalChangeClearsBundle:CommittedBundleStore.ExposureMustRecheckFreshnessAfterWaitingForStoreLock",
+      "result": "PASS",
+      "tests": 5,
+      "log": "validation/logs/timeline_store.log.gz",
+      "scope": "production store; synthetic timeline",
+      "binary": "navigation_execution/test_committed_bundle_store",
+      "filter": "ExecutionTimelineStore.WorldAdvanceInvalidatesPendingSuccessor:ExecutionTimelineStore.RecertifiedPredecessorKeepsSuccessorActivationValid:CommittedBundleStore.RecertifiesOnlyTheValidatedBundleOnWorldAdvance:CommittedBundleStore.RecertificationMismatchOrGoalChangeClearsBundle:CommittedBundleStore.ExposureMustRecheckFreshnessAfterWaitingForStoreLock",
+      "ros_local_only": false
+    },
+    {
+      "id": "test-world-store",
+      "command": "${BUILD_DIR}/navigation_runtime/test_world_snapshot_store --gtest_filter=WorldSnapshotStore.AuthorizationRejectsStaleIdentityWithoutInvokingCommit:WorldSnapshotStore.PublicationCannotInterleaveAnAuthorizedCommit:WorldSnapshotStore.PublishAndFinalizeKeepsDependentStateOrdered:WorldSnapshotStore.WorldAdvanceAfterCandidateValidationCannotCommitCommand:WorldSnapshotStore.AllowsStaleCertificateWhenChangeProvenanceIsDisjoint",
+      "result": "PASS",
+      "tests": 5,
+      "log": "validation/logs/world_store.log.gz",
+      "scope": "production store; synthetic worlds",
+      "binary": "navigation_runtime/test_world_snapshot_store",
+      "filter": "WorldSnapshotStore.AuthorizationRejectsStaleIdentityWithoutInvokingCommit:WorldSnapshotStore.PublicationCannotInterleaveAnAuthorizedCommit:WorldSnapshotStore.PublishAndFinalizeKeepsDependentStateOrdered:WorldSnapshotStore.WorldAdvanceAfterCandidateValidationCannotCommitCommand:WorldSnapshotStore.AllowsStaleCertificateWhenChangeProvenanceIsDisjoint",
+      "ros_local_only": false
+    },
+    {
+      "id": "test-runtime-handover",
+      "command": "${BUILD_DIR}/navigation_runtime/test_navigation_runtime_shutdown --gtest_filter=NavigationRuntimeHandover.DispatchesNewStopAfterCompletedTerminalCommand",
+      "result": "PASS",
+      "tests": 1,
+      "log": "validation/logs/actual_handover.log.gz",
+      "scope": "production runtime node/local fake transport; no PX4",
+      "binary": "navigation_runtime/test_navigation_runtime_shutdown",
+      "filter": "NavigationRuntimeHandover.DispatchesNewStopAfterCompletedTerminalCommand",
+      "ros_local_only": true
+    },
+    {
+      "id": "test-facade-candidate",
+      "command": "${BUILD_DIR}/navigation_planning_backend/test_planner_facade --gtest_filter=PlannerFacade.CoincidentPassToStopPreservesCertifiedTerminalBackup",
+      "result": "PASS",
+      "tests": 1,
+      "log": "validation/logs/backend_candidate.log.gz",
+      "scope": "production facade; synthetic immutable world",
+      "binary": "navigation_planning_backend/test_planner_facade",
+      "filter": "PlannerFacade.CoincidentPassToStopPreservesCertifiedTerminalBackup",
+      "ros_local_only": false
+    }
+  ]
+}

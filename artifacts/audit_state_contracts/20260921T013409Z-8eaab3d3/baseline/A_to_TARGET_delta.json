@@ -1,0 +1,184 @@
+{
+  "as_is_artifact_commit": "f2bd3f46f9936d622377ea4761f733f988273b66",
+  "as_is_artifact_root": "artifacts/architecture_as_is/20260920T-as-is-local",
+  "as_is_HEAD_at_capture": "9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2",
+  "as_is_source_manifest_sha256": "f9481b2f7312556ae91a8bff590cbc412de8d7e3e068fc98d4c85bb34c730413",
+  "as_is_source_count": 596,
+  "claim_validation_commit": "f2ed429bef80b2c7a2964b3b32d3c00e8089e55f",
+  "target_sha": "8eaab3d33db36e9e636ad4005ed91b8f055f4d68",
+  "target_tree": "e82a074eee5703f0fde2acafd22381fa53020d39",
+  "changed_or_missing_count": 17,
+  "changed_or_missing": [
+    {
+      "path": "docs/safety/runtime_safety_current.md",
+      "status": "changed",
+      "A_sha256": "7fbb5bd9ed47e1447db34a573221bc9cf5b2c7e683133dd4237c872310a5c1fb",
+      "TARGET_sha256": "2fd459121d8609d01e85136f344c2bf58130197d4bba14d97cac976b496143f3",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "docs/safety/runtime_safety_index.md",
+      "status": "changed",
+      "A_sha256": "d079896204d467e2cb7dac9906ee753e91ee0b6a8df5259633ffb590f42412dd",
+      "TARGET_sha256": "c0ac1695f741b397ba266253de518f05f35cae407f2755c7688237823e954b71",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/backup_braking.hpp",
+      "status": "changed",
+      "A_sha256": "ba277fe7650a9315e6c8fa22b691d1a9260544eafb33a2f786fb4601badd395e",
+      "TARGET_sha256": "e8934fffade33d577a588e5b25f840965bcc22c392f2d865480df4adb56528d3",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/config.hpp",
+      "status": "changed",
+      "A_sha256": "bc2fdfda6ecc26694bb0aaaa8a2547288bf7caf6215cb918a91f339c647a4ce4",
+      "TARGET_sha256": "116443721bf9cc2551c68a4c09c9855973deef845925253e9dde74d7d49ec5b8",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp",
+      "status": "changed",
+      "A_sha256": "19aba9503a8036d2f83fe02c23f1de35e6b6af51d43abd44675a1c4f5d750896",
+      "TARGET_sha256": "2cbc43c79d0c1de414d8758246eba74ca3d7a25e9b42a8345c32f89484352213",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/include/traj_opt/trajectory_dynamics.hpp",
+      "status": "changed",
+      "A_sha256": "b0a9f9ff8dc46f22d32a6e95cf36dd20ccf9caecea265fe0bc2f1b67d47278e2",
+      "TARGET_sha256": "523cfc025af027dc632be17245cd4ae78e7a684c1e6fe57851b00e66919d3d22",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/src/planner_core/planner.cpp",
+      "status": "changed",
+      "A_sha256": "590e5c517ff1c8d7e889b2b4d91fef090a387bdc4225b6a57096bf3e3ba62a30",
+      "TARGET_sha256": "e74fe904093e3f56f2c7abe10665557a68d71ae79a72092c35352ec355795adc",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_planner_config.cpp",
+      "status": "changed",
+      "A_sha256": "cb0a94a5f8ade99a8de65b18da70b79f1643852b1ba7b4d42f4beacf909e988a",
+      "TARGET_sha256": "e96181a27df4984931859af6df05307ed7146fb97a1f98979866832c3ccfee10",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/planning/navigation_planning_backend/test/test_trajectory.cpp",
+      "status": "changed",
+      "A_sha256": "b13b2486982fda0d0694102a0c4f800ad643360619d94db8b7507db3bd4d0caa",
+      "TARGET_sha256": "303fcd02c5d46193190d0adadebe922d31bb3dbe2b32ebb413a533769aa4c3a7",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/config/planner.yaml",
+      "status": "changed",
+      "A_sha256": "67f36a1d969118862b787c4edad2447549d02008797f94417c2fbd2bb6775811",
+      "TARGET_sha256": "840fc0aceceaa52a6ba047b059e4ea146290f7d4e670c8a663a215c66a41582b",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "status": "changed",
+      "A_sha256": "d5b8e00684e40c223c69272fd418e44a03bddf2c4c61f820ac13ccb1d2da836f",
+      "TARGET_sha256": "ff8c82241f1ca6a39bb52203323c5f25d41d7a681f705b074876d95d5e1ae508",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp",
+      "status": "changed",
+      "A_sha256": "d8c587725bbdc8b789e4914a3e7c070d93128cb0e21760c2d289afebb11f1c14",
+      "TARGET_sha256": "5d8dcffa06a249ce54b4246f31f152ab2508dd6fa163f322ce0e694f9a254674",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "status": "changed",
+      "A_sha256": "61653ae02500e04614de1c6777f41937c97d19d3cb115088babaa6acf14e0e70",
+      "TARGET_sha256": "6ff9e28b4b9ab3028b49c982a11aeb0620a68f50426d8220116e1bebadc86d29",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_execution_episode.cpp",
+      "status": "changed",
+      "A_sha256": "c93e811bd2647376842e8ed65bbe28d4eb03dcd64f52ae965d3bf1f4600c948a",
+      "TARGET_sha256": "e26e6e4a5fd2aaaa2947786871093458d3a122ba281805f0fa73fd6eb9cd9eca",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "src/runtime/navigation_runtime/test/test_planner_fsm.cpp",
+      "status": "changed",
+      "A_sha256": "3beb53b3b718431795b5f06486dac79f457788cac7f3121c0a603c0af00be57d",
+      "TARGET_sha256": "81cd927be74fa1ff2dddae3ab4608e37696f81d2da46852723b833cebd89a8ea",
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "symlink_install_manifest.txt",
+      "status": "missing_from_target",
+      "A_sha256": "c3b448c2437f15d6ec48aafe74def8e97d767dc4281cc1b4c188aa704ea4cdfa",
+      "TARGET_sha256": null,
+      "A_source_kind": "working_tree"
+    },
+    {
+      "path": "build/compile_commands.json",
+      "status": "missing_from_target",
+      "A_sha256": "32e3692ca5c79a3cab76266b502fe9996142e1494b39fdee6506a7e5e40fc2c1",
+      "TARGET_sha256": null,
+      "A_source_kind": "generated_build_metadata_unverified"
+    }
+  ],
+  "audited_package_membership": [
+    {
+      "prefix": "src/planning/navigation_planning_backend/",
+      "A_files": 108,
+      "TARGET_files": 108,
+      "removed": [],
+      "added": []
+    },
+    {
+      "prefix": "src/planning/navigation_planning/",
+      "A_files": 16,
+      "TARGET_files": 16,
+      "removed": [],
+      "added": []
+    },
+    {
+      "prefix": "src/runtime/navigation_runtime/",
+      "A_files": 45,
+      "TARGET_files": 45,
+      "removed": [],
+      "added": []
+    },
+    {
+      "prefix": "src/px4/px4_navigation_external_mode/",
+      "A_files": 29,
+      "TARGET_files": 29,
+      "removed": [],
+      "added": []
+    },
+    {
+      "prefix": "src/contracts/navigation_mission/",
+      "A_files": 8,
+      "TARGET_files": 8,
+      "removed": [],
+      "added": []
+    },
+    {
+      "prefix": "src/contracts/navigation_contracts/",
+      "A_files": 17,
+      "TARGET_files": 17,
+      "removed": [],
+      "added": []
+    },
+    {
+      "prefix": "src/execution/navigation_execution/",
+      "A_files": 11,
+      "TARGET_files": 11,
+      "removed": [],
+      "added": []
+    }
+  ],
+  "note": "A source snapshot came from a dirty working tree at HEAD 9534d8dc; comparison reads A manifest hashes and TARGET git object bytes. A broad path-prefix additions list is not used to infer vendor changes in the focused package comparison."
+}

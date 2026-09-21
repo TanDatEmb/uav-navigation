@@ -1,0 +1,99 @@
+{
+  "logs": [
+    {
+      "file": "logs/build.log.gz",
+      "raw_bytes": 52186,
+      "raw_sha256": "d692b3ebb2e823dc15d130a47f79b65ec95e20fbf4eb6c1d078002f2ee38eac1",
+      "gzip_sha256": "3d260306fe11409bc486ea29c6d7f323e47f925b18f2c1285747d9849d7e87bc"
+    },
+    {
+      "file": "logs/episode.log.gz",
+      "raw_bytes": 1523,
+      "raw_sha256": "1de3b5262ad20509dcdd355ad2a2cc1137ef55ee3da1f0a5f65c40c6a414235d",
+      "gzip_sha256": "9563faefa76662e38f2dbb9a0b96cfc2b4c03f369396fafbe79dddef408130cf"
+    },
+    {
+      "file": "logs/runtime_fsm.log.gz",
+      "raw_bytes": 2084,
+      "raw_sha256": "3c74dc584ed2236424a8e8ae235fe8c7466754416d9be45420e80506b05f5044",
+      "gzip_sha256": "42763fdb780cf9dd7c7cabd290ac8b857df0be20f964deab18990d765a693b7c"
+    },
+    {
+      "file": "logs/continuation.log.gz",
+      "raw_bytes": 1750,
+      "raw_sha256": "6650bfd5ed9112267968789fdc23a439064c0e261736be91b4ac402e66188a82",
+      "gzip_sha256": "6e5684fdc997c1e4cda7760286c0fcd76e7e1f624b0dae61c26bc529e8ce5ded"
+    },
+    {
+      "file": "logs/mission_adapter.log.gz",
+      "raw_bytes": 31839,
+      "raw_sha256": "6023fcd1cc5ce9d641eaeb27982bcff844d2dac2d50074411122b777fe3a1dab",
+      "gzip_sha256": "c70ecdc7fb2bcc933283d1c5be42ad46e8e01e46c85d759c2de4f8b038f416c5"
+    },
+    {
+      "file": "logs/mission_semantics.log.gz",
+      "raw_bytes": 2623,
+      "raw_sha256": "d97ba5d20cfe39572d36f5041b4987f5d6dbe46d323a06019eae12b932cd3072",
+      "gzip_sha256": "02087c9b1bc6858fc552cb36febe1b9861487350a78c78f0586ddd1f34b28610"
+    },
+    {
+      "file": "logs/command_contract.log.gz",
+      "raw_bytes": 4713,
+      "raw_sha256": "70a5718461ad098d4626c3f011ec2bbab916975f2f4e5dd3a88704303388007d",
+      "gzip_sha256": "b7ef9f5529de38e1503b68eef4ec95ae708586ebe9b68e9b000f2d3ac0184d0d"
+    },
+    {
+      "file": "logs/governor.log.gz",
+      "raw_bytes": 2021,
+      "raw_sha256": "03d6b7c3421d5c60b6e9d6fcb7abed9376347ef51dde6103f95828d6fb159e12",
+      "gzip_sha256": "c6c83e7083c350f2cb2e250d3c8cdb4aee1818d74f5fe0ece752a31a194b4d41"
+    },
+    {
+      "file": "logs/runtime_terminal.log.gz",
+      "raw_bytes": 145420,
+      "raw_sha256": "49ae8202b11f6b1eff59cf265eb1c998ada27d1436924f8b144e1ca51e47f2af",
+      "gzip_sha256": "3059b68a9733264e208c271fbb877b479756528302bd6f4abee3185f849149b1"
+    },
+    {
+      "file": "logs/timeline_store.log.gz",
+      "raw_bytes": 1753,
+      "raw_sha256": "6982c52b72a4bf9588c11ecef36b6094ab27d8a7c51716b360ca8c6817029ada",
+      "gzip_sha256": "0db8a34aa87c972a19273c36fc5b5742d3c0532247f9224d15615e80049a0d7f"
+    },
+    {
+      "file": "logs/world_store.log.gz",
+      "raw_bytes": 1635,
+      "raw_sha256": "534a105f51b62b6876a189ef8f867467444aff1509d13a745621786a566e5726",
+      "gzip_sha256": "d737e2f4cce5e097889f24a41f402f99c9cf8f138ee640b4ac8dd5a19815c869"
+    },
+    {
+      "file": "logs/actual_handover.log.gz",
+      "raw_bytes": 37714,
+      "raw_sha256": "ae713b21ded5711aa1e48b22bd5d7cd2173da5a9db1068a876cd6c7a083af77c",
+      "gzip_sha256": "5ee9d5fa0f946ea56aea8ecb5b01703e9d6a9260676d9d70b7a87a35ad57df69"
+    },
+    {
+      "file": "logs/backend_candidate.log.gz",
+      "raw_bytes": 9630,
+      "raw_sha256": "707f626d94e2d4444beaf5a7d692a76bc6d5529a91903d4cf1ef8e2d22b83841",
+      "gzip_sha256": "51652c722a926a1cd08a894c8cdbf46cbc7bac08af32c831d75a69bd7d1605f8"
+    }
+  ],
+  "command_history": [
+    {
+      "command": "colcon build with --log-base placed after build verb",
+      "exit_code": 2,
+      "note": "CLI option placement error; no product effect."
+    },
+    {
+      "command": "colcon build without ROS Jazzy underlay sourced",
+      "exit_code": 1,
+      "note": "Environment setup error, corrected."
+    },
+    {
+      "command": "source /opt/ros/jazzy/setup.bash && colcon --log-base /tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/log build --base-paths src --build-base /tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build --install-base /tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/install --packages-up-to navigation_runtime px4_navigation_external_mode --cmake-args -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+      "exit_code": 0,
+      "packages_built": 13
+    }
+  ]
+}

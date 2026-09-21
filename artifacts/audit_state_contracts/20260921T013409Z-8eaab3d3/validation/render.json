@@ -1,0 +1,16 @@
+{
+  "dot_version": "dot - graphviz version 2.43.0",
+  "mmdc": "not installed; not installed globally",
+  "commands": [
+    "dot -Tsvg diagrams/src/ownership.dot -o diagrams/svg/ownership.svg",
+    "dot -Tsvg diagrams/src/pass_through_handoff.dot -o diagrams/svg/pass_through_handoff.svg",
+    "dot -Tsvg diagrams/src/world_suspension.dot -o diagrams/svg/world_suspension.svg",
+    "dot -Tsvg diagrams/src/stopped_recovery.dot -o diagrams/svg/stopped_recovery.svg"
+  ],
+  "result": "all four commands exited 0",
+  "visual_review": "PNG previews generated from each DOT source were inspected at high detail after render; world-suspension guard/labels were shortened and margin added after detecting edge-label crowding. Nodes, branches and arrows remain readable; no intentional font shrink or poster layout.",
+  "limits": [
+    "No Mermaid CLI output because mmdc was unavailable.",
+    "Visual review covers diagram readability only, not semantic completeness."
+  ]
+}

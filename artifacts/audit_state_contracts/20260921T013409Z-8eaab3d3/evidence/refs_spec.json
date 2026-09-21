@@ -1,0 +1,392 @@
+{
+  "target_sha": "8eaab3d33db36e9e636ad4005ed91b8f055f4d68",
+  "refs": [
+    {
+      "id": "ev-episode-snapshot",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "requested_lines": [
+        41,
+        78
+      ],
+      "symbol": "ExecutionEpisodeSnapshot, mutex and reset"
+    },
+    {
+      "id": "ev-episode-goal-commit",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "requested_lines": [
+        80,
+        132
+      ],
+      "symbol": "beginGoal retention and commandCommitted cutover"
+    },
+    {
+      "id": "ev-episode-observe",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "requested_lines": [
+        134,
+        220
+      ],
+      "symbol": "retained and sampled safety role observations"
+    },
+    {
+      "id": "ev-episode-suspend-stop",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp",
+      "requested_lines": [
+        221,
+        320
+      ],
+      "symbol": "suspend, stopped hold and failure mutations"
+    },
+    {
+      "id": "ev-pending-goal",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp",
+      "requested_lines": [
+        19,
+        91
+      ],
+      "symbol": "PendingGoalHandoffOwner queue ordering and exact consume"
+    },
+    {
+      "id": "ev-hot-retarget-guard",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp",
+      "requested_lines": [
+        93,
+        145
+      ],
+      "symbol": "hot retarget eligibility"
+    },
+    {
+      "id": "ev-goal-input",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        2038,
+        2285
+      ],
+      "symbol": "goal acceptance and handoff"
+    },
+    {
+      "id": "ev-goal-commit",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        2410,
+        2505
+      ],
+      "symbol": "desired identity and reset"
+    },
+    {
+      "id": "ev-world-suspend",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        2983,
+        3004
+      ],
+      "symbol": "exact generation suspension"
+    },
+    {
+      "id": "ev-world-resume",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        3500,
+        3735
+      ],
+      "symbol": "recertification/resume transaction"
+    },
+    {
+      "id": "ev-recovery-failure",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        5395,
+        5447
+      ],
+      "symbol": "PlanFromRest failure timer"
+    },
+    {
+      "id": "ev-recovery-clear",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        5595,
+        5625
+      ],
+      "symbol": "successful candidate clears timer"
+    },
+    {
+      "id": "ev-publish-world-gate",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        7696,
+        7735
+      ],
+      "symbol": "world stale no-publish gate"
+    },
+    {
+      "id": "ev-continuation-predicate",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/certified_continuation.hpp",
+      "requested_lines": [
+        43,
+        98
+      ],
+      "symbol": "continuation reserve/guards"
+    },
+    {
+      "id": "ev-planning-timing",
+      "path": "src/planning/navigation_planning/include/navigation_planning/planning_timing.hpp",
+      "requested_lines": [
+        1,
+        60
+      ],
+      "symbol": "stopped-recovery timeout constants"
+    },
+    {
+      "id": "ev-mission-update",
+      "path": "src/px4/px4_navigation_external_mode/src/mission_controller.cpp",
+      "requested_lines": [
+        247,
+        410
+      ],
+      "symbol": "measured update and history"
+    },
+    {
+      "id": "ev-mission-stop",
+      "path": "src/px4/px4_navigation_external_mode/src/mission_controller.cpp",
+      "requested_lines": [
+        410,
+        690
+      ],
+      "symbol": "STOP settle/dwell"
+    },
+    {
+      "id": "ev-route-crossing",
+      "path": "src/contracts/navigation_mission/src/route_progress.cpp",
+      "requested_lines": [
+        420,
+        500
+      ],
+      "symbol": "measured crossing geometry"
+    },
+    {
+      "id": "ev-adapter-command",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "requested_lines": [
+        850,
+        1160
+      ],
+      "symbol": "accepted command cache and guards"
+    },
+    {
+      "id": "ev-adapter-mission",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "requested_lines": [
+        1330,
+        1535
+      ],
+      "symbol": "mission update/handoff"
+    },
+    {
+      "id": "ev-adapter-deadline",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "requested_lines": [
+        2570,
+        2860
+      ],
+      "symbol": "lease/recovery/safety stop"
+    },
+    {
+      "id": "ev-adapter-hold",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "requested_lines": [
+        2830,
+        2960
+      ],
+      "symbol": "PX4 Hold callbacks/status"
+    },
+    {
+      "id": "ev-episode-test",
+      "path": "src/runtime/navigation_runtime/test/test_execution_episode.cpp",
+      "requested_lines": [
+        110,
+        210
+      ],
+      "symbol": "hot retarget episode test"
+    },
+    {
+      "id": "ev-fsm-test",
+      "path": "src/runtime/navigation_runtime/test/test_planner_fsm.cpp",
+      "requested_lines": [
+        1000,
+        1245
+      ],
+      "symbol": "recertification, stopped recovery and pending tests"
+    },
+    {
+      "id": "ev-continuation-test",
+      "path": "src/runtime/navigation_runtime/test/test_certified_continuation.cpp",
+      "requested_lines": [
+        1,
+        145
+      ],
+      "symbol": "continuation helper tests"
+    },
+    {
+      "id": "ev-adapter-test",
+      "path": "src/px4/px4_navigation_external_mode/test/test_navigation_mode_progression.cpp",
+      "requested_lines": [
+        1,
+        430
+      ],
+      "symbol": "production adapter progression tests"
+    },
+    {
+      "id": "ev-mission-test",
+      "path": "src/px4/px4_navigation_external_mode/test/test_mission.cpp",
+      "requested_lines": [
+        1,
+        340
+      ],
+      "symbol": "mission crossing/STOP tests"
+    },
+    {
+      "id": "ev-command-test",
+      "path": "src/px4/px4_navigation_external_mode/test/test_navigation_command.cpp",
+      "requested_lines": [
+        1,
+        420
+      ],
+      "symbol": "command contract tests"
+    },
+    {
+      "id": "ev-governor-delta",
+      "path": "src/planning/navigation_planning_backend/include/planner_core/evidence_speed_governor.hpp",
+      "requested_lines": [
+        1,
+        360
+      ],
+      "symbol": "TARGET governor"
+    },
+    {
+      "id": "ev-backup-delta",
+      "path": "src/planning/navigation_planning_backend/include/planner_core/backup_braking.hpp",
+      "requested_lines": [
+        1,
+        440
+      ],
+      "symbol": "TARGET braking budget/cancellation"
+    },
+    {
+      "id": "ev-planner-delta",
+      "path": "src/planning/navigation_planning_backend/src/planner_core/planner.cpp",
+      "requested_lines": [
+        1,
+        240
+      ],
+      "symbol": "TARGET planner config/integration"
+    },
+    {
+      "id": "ev-runtime-fields",
+      "path": "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
+      "requested_lines": [
+        450,
+        510
+      ],
+      "symbol": "runtime timer and suspension fields"
+    },
+    {
+      "id": "ev-adapter-fields",
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/navigation_mode.hpp",
+      "requested_lines": [
+        130,
+        310
+      ],
+      "symbol": "adapter owner fields"
+    },
+    {
+      "id": "ev-runtime-config",
+      "path": "src/runtime/navigation_runtime/config/planner.yaml",
+      "requested_lines": [
+        1,
+        220
+      ],
+      "symbol": "effective planner/world freshness config defaults"
+    },
+    {
+      "id": "ev-runtime-admission",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        5100,
+        5394
+      ],
+      "symbol": "planner result validation and immediate candidate admission"
+    },
+    {
+      "id": "ev-external-test",
+      "path": "src/px4/px4_navigation_external_mode/test/test_navigation_command.cpp",
+      "requested_lines": [
+        1,
+        420
+      ],
+      "symbol": "command contract tests"
+    },
+    {
+      "id": "ev-safety-current",
+      "path": "docs/safety/runtime_safety_current.md",
+      "requested_lines": [
+        100,
+        140
+      ],
+      "symbol": "HG-012/HG-017/HG-028/TB-003 current contract"
+    },
+    {
+      "id": "ev-safety-index",
+      "path": "docs/safety/runtime_safety_index.md",
+      "requested_lines": [
+        32,
+        63
+      ],
+      "symbol": "targeted safety index entries HG-017/HG-028/TB-003"
+    },
+    {
+      "id": "ev-runtime-timing-params",
+      "path": "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
+      "requested_lines": [
+        678,
+        760
+      ],
+      "symbol": "runtime data_freshness_window_s default/parameter and effective ns validation"
+    },
+    {
+      "id": "ev-adapter-timing-params",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "requested_lines": [
+        105,
+        170
+      ],
+      "symbol": "adapter lease/state/recovery parameter declarations and constructor-enforced values"
+    },
+    {
+      "id": "ev-adapter-hold-callback",
+      "path": "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp",
+      "requested_lines": [
+        2846,
+        2940
+      ],
+      "symbol": "VehicleStatus AUTO_LOITER and scheduleMode result writers"
+    },
+    {
+      "id": "ev-mission-fields",
+      "path": "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp",
+      "requested_lines": [
+        108,
+        129
+      ],
+      "symbol": "MissionController owned field declarations and types"
+    },
+    {
+      "id": "ev-timeline-fields",
+      "path": "src/execution/navigation_execution/include/navigation_execution/committed_bundle_store.hpp",
+      "requested_lines": [
+        28,
+        42
+      ],
+      "symbol": "ExecutionTimelineSnapshot fields and storage identity"
+    }
+  ]
+}

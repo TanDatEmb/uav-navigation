@@ -1,0 +1,1677 @@
+{
+  "schema_version": 1,
+  "model_kind": "AS-IS evidence index; not runtime FSM or formal proof",
+  "target_sha": "8eaab3d33db36e9e636ad4005ed91b8f055f4d68",
+  "objects": [
+    {
+      "id": "O-EP",
+      "symbol": "navigation_runtime::ExecutionEpisode",
+      "instance": "NavigationRuntimeNode::execution_episode_ per runtime node",
+      "protection": "internal mutex; runtime transition locks coordinate cross-object commit",
+      "evidence": [
+        "ev-episode-snapshot",
+        "ev-episode-goal-commit",
+        "ev-episode-observe",
+        "ev-episode-suspend-stop"
+      ],
+      "fields": [
+        {
+          "id": "F-GOAL-EPOCH",
+          "name": "goal_epoch",
+          "type": "uint64",
+          "role": "desired identity/version",
+          "init": "0",
+          "writer": "beginGoal/reset",
+          "reader": "desiredPlanningKey and bundleIdentityMatchesEpisode",
+          "meaning": "desired goal epoch may advance before active command changes",
+          "clear": "reset/clear or next goal",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-REQUEST-ID",
+          "name": "request_id",
+          "type": "uint64",
+          "role": "desired identity/version",
+          "init": "0",
+          "writer": "beginGoal/reset",
+          "reader": "desiredPlanningKey and bundleIdentityMatchesEpisode",
+          "meaning": "desired request may be newer than active command",
+          "clear": "reset/clear or next goal",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-ACTIVE-GOAL-EPOCH",
+          "name": "active_command_goal_epoch",
+          "type": "uint64",
+          "role": "active execution identity",
+          "init": "0 until commit",
+          "writer": "commandCommitted; nonretaining beginGoal/reset clears",
+          "reader": "activeBundleIdentityMatches and retained/sample handlers",
+          "meaning": "goal epoch of command actually active",
+          "clear": "reset/nonretaining beginGoal",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-ACTIVE-REQUEST-ID",
+          "name": "active_command_request_id",
+          "type": "uint64",
+          "role": "active execution identity",
+          "init": "0 until commit",
+          "writer": "commandCommitted; nonretaining beginGoal/reset clears",
+          "reader": "activeBundleIdentityMatches and retained/sample handlers",
+          "meaning": "request id of command actually active",
+          "clear": "reset/nonretaining beginGoal",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-ACTIVE-GENERATION",
+          "name": "active_generation",
+          "type": "uint64",
+          "role": "active execution identity/version",
+          "init": "0 until commit",
+          "writer": "commandCommitted; nonretaining beginGoal/reset clears",
+          "reader": "active bundle generation and observation guards",
+          "meaning": "bundle generation actually active",
+          "clear": "reset/nonretaining beginGoal",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-AVAILABLE",
+          "name": "command_available",
+          "type": "bool",
+          "role": "command exposure gate/latch",
+          "init": "false",
+          "writer": "commit true; suspend/fail/reset false",
+          "reader": "sample and retention/admission",
+          "meaning": "runtime episode permission to expose/sample active command; does not mean adapter accepted it or PX4 applied it",
+          "clear": "suspend, fail-close, reset",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-FAIL",
+          "name": "failure_latched",
+          "type": "bool",
+          "role": "fail-closed latch",
+          "init": "false",
+          "writer": "failClosed true; eligible commit/reset clear",
+          "reader": "commit/retention gates",
+          "meaning": "runtime episode has failed closed",
+          "clear": "eligible commit/reset",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-SUFFIX",
+          "name": "safety_suffix_active",
+          "type": "bool",
+          "role": "safety-role latch/decision input",
+          "init": "false",
+          "writer": "commit/sampled role/preserve; stop/reset clears",
+          "reader": "pending goal, retarget and nominal gates",
+          "meaning": "BACKUP/EMERGENCY suffix owns handoff",
+          "clear": "nominal/stop/reset",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-RECOVERY",
+          "name": "recovery_state",
+          "type": "ExecutionRecoveryState",
+          "role": "recovery policy authority",
+          "init": "InitialHold",
+          "writer": "role/recovery event/stopped/fail/reset",
+          "reader": "planning/timeout/admission",
+          "meaning": "runtime recovery policy distinct from sampled phase and adapter mission state",
+          "clear": "reset/new nonretained goal",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-EP-PHASE",
+          "name": "phase",
+          "type": "ExecutionEpisodePhase",
+          "role": "sampled phase",
+          "init": "InitialHold",
+          "writer": "commit/retained/sample role/stopped/fail/reset",
+          "reader": "planning phase guards",
+          "meaning": "sampled runtime phase, distinct from recovery_state",
+          "clear": "reset/new nonretained goal",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-EP-RESTART",
+          "name": "restart_from_rest",
+          "type": "bool",
+          "role": "recovery request latch",
+          "init": "false",
+          "writer": "requestRestartFromRest/clearRestartFromRest/fail/reset",
+          "reader": "currentPlanningKey and PlanFromRest selection",
+          "meaning": "requests restart from measured stopped state",
+          "clear": "success/fail/reset/new goal",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        },
+        {
+          "id": "F-EP-LOCALIZATION",
+          "name": "localization_epoch",
+          "type": "uint64",
+          "role": "identity/version",
+          "init": "0/reset",
+          "writer": "reset and localization activation",
+          "reader": "planning key and active bundle gates",
+          "meaning": "localization identity for execution episode",
+          "clear": "reset/new localization epoch",
+          "evidence": [
+            "ev-episode-snapshot",
+            "ev-episode-goal-commit",
+            "ev-episode-observe",
+            "ev-episode-suspend-stop"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O-PENDING",
+      "symbol": "navigation_runtime::PendingGoalHandoffOwner",
+      "instance": "NavigationRuntimeNode::pending_goal_owner_",
+      "protection": "goal_mutex_; caller serializes ownership decision in input/transition transaction",
+      "evidence": [
+        "ev-pending-goal",
+        "ev-goal-input",
+        "ev-episode-test",
+        "ev-fsm-test"
+      ],
+      "fields": [
+        {
+          "id": "F-PENDING",
+          "name": "pending_goal_",
+          "type": "nullable immutable NavigationGoal pointer",
+          "role": "pending payload authority/identity",
+          "init": "empty",
+          "writer": "strictly newer same-mission enqueue or clear",
+          "reader": "recovery planning/status/exact consume",
+          "meaning": "one successor waiting for suffix stop and replacement commit",
+          "clear": "exact pointer consumed after successful commit or explicit clear",
+          "evidence": [
+            "ev-pending-goal",
+            "ev-goal-input",
+            "ev-episode-test",
+            "ev-fsm-test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O-STORE",
+      "symbol": "navigation_execution::CommittedBundleStore",
+      "instance": "owned by each NavigationRuntimeNode",
+      "protection": "store synchronization plus runtime transaction locks",
+      "evidence": [
+        "ev-timeline-fields",
+        "ev-world-resume",
+        "ev-publish-world-gate"
+      ],
+      "fields": [
+        {
+          "id": "F-TIMELINE-VERSION",
+          "name": "ExecutionTimelineSnapshot::version",
+          "type": "uint64",
+          "role": "transaction version",
+          "init": "0",
+          "writer": "stage/commit/activate/world update/revoke",
+          "reader": "compare/finalizer rechecks",
+          "meaning": "store transaction version",
+          "clear": "store advances/reinitializes",
+          "evidence": [
+            "ev-timeline-fields",
+            "ev-world-resume",
+            "ev-publish-world-gate"
+          ]
+        },
+        {
+          "id": "F-TIMELINE-WORLD",
+          "name": "ExecutionTimelineSnapshot::world_identity",
+          "type": "optional WorldSnapshotIdentity",
+          "role": "identity/version",
+          "init": "empty",
+          "writer": "validated commit/world update/reset",
+          "reader": "admission/recertification guards",
+          "meaning": "world certificate identity associated with timeline",
+          "clear": "replacement/invalidation",
+          "evidence": [
+            "ev-timeline-fields",
+            "ev-world-resume",
+            "ev-publish-world-gate"
+          ]
+        },
+        {
+          "id": "F-ACTIVE-BUNDLE",
+          "name": "ExecutionTimelineSnapshot::active",
+          "type": "shared_ptr<const CandidateBundle>",
+          "role": "active payload authority",
+          "init": "empty",
+          "writer": "commit/activation/world retain/invalidate",
+          "reader": "publishCommand/active identity/recertification",
+          "meaning": "currently active immutable bundle",
+          "clear": "replace/invalidate/revoke/reset",
+          "evidence": [
+            "ev-timeline-fields",
+            "ev-world-resume",
+            "ev-publish-world-gate"
+          ]
+        },
+        {
+          "id": "F-PENDING-BUNDLE",
+          "name": "ExecutionTimelineSnapshot::pending",
+          "type": "shared_ptr<const CandidateBundle>",
+          "role": "staged successor payload",
+          "init": "empty",
+          "writer": "stage/activate/cancel/invalidate",
+          "reader": "activation finalizer and timeline validation",
+          "meaning": "successor can be staged while active command remains sampleable",
+          "clear": "activate/cancel/revoke/reset",
+          "evidence": [
+            "ev-timeline-fields",
+            "ev-world-resume",
+            "ev-publish-world-gate"
+          ]
+        },
+        {
+          "id": "F-PENDING-ACTIVATION",
+          "name": "pending_activation_ns",
+          "type": "int64 ns; activation clock nanoseconds",
+          "role": "activation deadline",
+          "init": "0",
+          "writer": "stage/activation/reset",
+          "reader": "publish tick and activation finalizer",
+          "meaning": "producer-declared successor activation boundary",
+          "clear": "activate/cancel/reset",
+          "evidence": [
+            "ev-timeline-fields",
+            "ev-world-resume",
+            "ev-publish-world-gate"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O-WORLD-LATCH",
+      "symbol": "NavigationRuntimeNode world freshness suspension owner",
+      "instance": "one per runtime node",
+      "protection": "atomics + transition mutex; canonical locks on resume",
+      "evidence": [
+        "ev-runtime-fields",
+        "ev-world-suspend",
+        "ev-world-resume",
+        "ev-publish-world-gate"
+      ],
+      "fields": [
+        {
+          "id": "F-SUSPENDED",
+          "name": "world_freshness_suspended_bundle_generation_",
+          "type": "atomic uint64; zero means none; 0 means no generation latched",
+          "role": "resume latch/identity version",
+          "init": "0",
+          "writer": "stale world stores exact active generation; exact resume/revoke clears",
+          "reader": "mapping recertification guard",
+          "meaning": "resume witness, not a second payload owner",
+          "clear": "resume/fail/revoke/reset",
+          "evidence": [
+            "ev-runtime-fields",
+            "ev-world-suspend",
+            "ev-world-resume",
+            "ev-publish-world-gate"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O-RUNTIME-TIMER",
+      "symbol": "NavigationRuntimeNode stopped retry timer",
+      "instance": "one per runtime node",
+      "protection": "identity-checked runtime critical section",
+      "evidence": [
+        "ev-runtime-fields",
+        "ev-recovery-failure",
+        "ev-recovery-clear",
+        "ev-planning-timing",
+        "ev-fsm-test"
+      ],
+      "fields": [
+        {
+          "id": "F-RETRY-START",
+          "name": "plan_from_rest_first_failure_steady_ns_",
+          "type": "int64 steady-clock nanoseconds",
+          "role": "deadline/counter",
+          "init": "0",
+          "writer": "first failed current PlanFromRest; new goal/lifecycle/success clears",
+          "reader": "same result handler computes elapsed/stopped timeout",
+          "meaning": "retry starts at first failed result, not stop or first solve",
+          "clear": "eligible success/new episode",
+          "evidence": [
+            "ev-runtime-fields",
+            "ev-recovery-failure",
+            "ev-recovery-clear",
+            "ev-planning-timing",
+            "ev-fsm-test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O-ADAPTER",
+      "symbol": "px4_navigation_external_mode::NavigationMode",
+      "instance": "one lifecycle-owned NavigationMode adapter instance",
+      "protection": "mutually exclusive command/timer group; MissionController mutex; trajectory_mutex for cache",
+      "evidence": [
+        "ev-adapter-fields",
+        "ev-adapter-command",
+        "ev-adapter-mission",
+        "ev-adapter-deadline",
+        "ev-adapter-test",
+        "ev-mission-test"
+      ],
+      "fields": [
+        {
+          "id": "F-COMMAND-CACHE",
+          "name": "navigation_command_",
+          "type": "optional NavigationCommand",
+          "role": "transport snapshot/cache",
+          "init": "empty",
+          "writer": "accepted command callback under trajectory_mutex",
+          "reader": "updateMission/updateSetpoint/safety stop",
+          "meaning": "last adapter-accepted command, not PX4-applied state",
+          "clear": "replacement/expiry/lifecycle/safety stop",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-COMMAND-RECEIVE",
+          "name": "last_command_receive_ns_",
+          "type": "int64 adapter ROS-clock nanoseconds",
+          "role": "receive time/deadline",
+          "init": "0",
+          "writer": "accepted command callback",
+          "reader": "lease/freshness checks",
+          "meaning": "adapter receive time distinct from header/source time",
+          "clear": "lifecycle/cache invalidation",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-RECOVERY-PENDING",
+          "name": "planner_recovery_pending_",
+          "type": "bool",
+          "role": "endpoint recovery latch",
+          "init": "false",
+          "writer": "completed endpoint accepted; READY/STOP/lifecycle clears",
+          "reader": "updateMission/updateSetpoint and expiry",
+          "meaning": "adapter endpoint recovery episode active",
+          "clear": "timeout/replacement/goal/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-RECOVERY-DEADLINE",
+          "name": "planner_recovery_deadline_ns_",
+          "type": "int64 adapter ROS-clock nanoseconds",
+          "role": "deadline",
+          "init": "0",
+          "writer": "completed endpoint starts; clear helper resets",
+          "reader": "plannerRecoveryWaitExpired and terminal hold allowance",
+          "meaning": "end time in adapter ROS clock",
+          "clear": "timeout/replacement/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-RECOVERY-MISSION",
+          "name": "planner_recovery_mission_id_",
+          "type": "string",
+          "role": "episode identity",
+          "init": "empty",
+          "writer": "completed endpoint identity; clear helper",
+          "reader": "plannerRecoveryEpisodeMatchesLocked",
+          "meaning": "mission identity for endpoint exception",
+          "clear": "clear helper/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-RECOVERY-WAYPOINT",
+          "name": "planner_recovery_waypoint_index_",
+          "type": "uint32",
+          "role": "episode identity",
+          "init": "0",
+          "writer": "completed endpoint identity; clear helper",
+          "reader": "plannerRecoveryEpisodeMatchesLocked",
+          "meaning": "waypoint identity for endpoint exception",
+          "clear": "clear helper/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-RECOVERY-REQUEST",
+          "name": "planner_recovery_request_id_",
+          "type": "uint64",
+          "role": "episode identity",
+          "init": "0",
+          "writer": "completed endpoint identity; clear helper",
+          "reader": "plannerRecoveryEpisodeMatchesLocked",
+          "meaning": "request identity for endpoint exception",
+          "clear": "clear helper/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-RECOVERY-GENERATION",
+          "name": "planner_recovery_bundle_generation_",
+          "type": "uint64",
+          "role": "episode identity/version",
+          "init": "0",
+          "writer": "completed endpoint identity; clear helper",
+          "reader": "plannerRecoveryEpisodeMatchesLocked",
+          "meaning": "bundle generation for endpoint exception",
+          "clear": "clear helper/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-FAILURE-REPORTED",
+          "name": "failure_reported_",
+          "type": "bool",
+          "role": "adapter fail latch",
+          "init": "false",
+          "writer": "command/health/lease failure; lifecycle reset",
+          "reader": "command/mission early-return gates",
+          "meaning": "adapter safety failure was reported",
+          "clear": "activation/reset",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-MODE-ACTIVE",
+          "name": "mode_active_",
+          "type": "bool",
+          "role": "lifecycle authority",
+          "init": "false",
+          "writer": "onActivate/onDeactivate",
+          "reader": "command/mission/setpoint ownership",
+          "meaning": "adapter mode lifecycle active",
+          "clear": "deactivation",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-MISSION-TERMINAL",
+          "name": "mission_terminal_",
+          "type": "bool",
+          "role": "mission terminal latch",
+          "init": "false",
+          "writer": "mission completion/handover; activation reset",
+          "reader": "mission update and command acceptance",
+          "meaning": "adapter mission terminal latch; separate from MissionController::state_ == Complete and PX4 Hold confirmation",
+          "clear": "new activation/reset",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-HANDOVER-REQUESTED",
+          "name": "handover_requested_",
+          "type": "bool",
+          "role": "authority handover latch",
+          "init": "false",
+          "writer": "safetyStopNavigation/terminal transition; lifecycle reset",
+          "reader": "command/updateMission early return and Hold request",
+          "meaning": "PX4 Hold handover requested",
+          "clear": "lifecycle/operator/mode reset",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-SUFFIX-HANDOFF",
+          "name": "safety_suffix_handoff_pending_",
+          "type": "bool",
+          "role": "handoff latch",
+          "init": "false",
+          "writer": "eligible retained BACKUP goal transition; clear on current command/stop/lifecycle",
+          "reader": "command identity and suffix lease guard",
+          "meaning": "exact prior BACKUP may bridge mission waypoint advance",
+          "clear": "first current command/safety handover/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-SUFFIX-WAYPOINT",
+          "name": "safety_suffix_waypoint_index_",
+          "type": "uint32",
+          "role": "handoff identity",
+          "init": "0",
+          "writer": "set with retained BACKUP; clear helper",
+          "reader": "command transition guard",
+          "meaning": "waypoint key of retained suffix",
+          "clear": "clear helper",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-SUFFIX-REQUEST",
+          "name": "safety_suffix_request_id_",
+          "type": "uint64",
+          "role": "handoff identity",
+          "init": "0",
+          "writer": "set with retained BACKUP; clear helper",
+          "reader": "command transition guard",
+          "meaning": "request key of retained suffix",
+          "clear": "clear helper",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-command",
+            "ev-adapter-mission",
+            "ev-adapter-deadline",
+            "ev-adapter-test",
+            "ev-mission-test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O-HOLD",
+      "symbol": "px4_navigation_external_mode::NavigationModeExecutor",
+      "instance": "executor-owned mode executor",
+      "protection": "owned-mode callback/timer/status path",
+      "evidence": [
+        "ev-adapter-fields",
+        "ev-adapter-hold",
+        "ev-adapter-hold-callback",
+        "ev-external-test"
+      ],
+      "fields": [
+        {
+          "id": "F-HOLD-CONFIRMED",
+          "name": "px4_hold_confirmed_",
+          "type": "bool",
+          "role": "external status observation",
+          "init": "false",
+          "writer": "VehicleStatus AUTO_LOITER only; lifecycle clears",
+          "reader": "retry guard and authority view",
+          "meaning": "observed PX4 AUTO_LOITER, not API result",
+          "clear": "activation/deactivation",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-hold",
+            "ev-adapter-hold-callback",
+            "ev-external-test"
+          ]
+        },
+        {
+          "id": "F-HOLD-PENDING",
+          "name": "hold_handover_pending_",
+          "type": "bool",
+          "role": "handover request latch",
+          "init": "false",
+          "writer": "schedulePx4Hold sets; Success/Deactivated clears; Failure keeps",
+          "reader": "checkHoldHandover",
+          "meaning": "Hold request awaits disposition",
+          "clear": "Success/Deactivated/VehicleStatus/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-hold",
+            "ev-adapter-hold-callback",
+            "ev-external-test"
+          ]
+        },
+        {
+          "id": "F-HOLD-IN-FLIGHT",
+          "name": "hold_handover_in_flight_",
+          "type": "bool",
+          "role": "operation lifecycle",
+          "init": "false",
+          "writer": "schedulePx4Hold sets; callback/status/lifecycle clears",
+          "reader": "prevents duplicate scheduled request",
+          "meaning": "one scheduleMode operation awaits callback",
+          "clear": "callback/status/lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-hold",
+            "ev-adapter-hold-callback",
+            "ev-external-test"
+          ]
+        },
+        {
+          "id": "F-HOLD-FAILURE-CONTEXT",
+          "name": "hold_handover_complete_navigation_failure_",
+          "type": "bool",
+          "role": "operation context latch",
+          "init": "false",
+          "writer": "request accumulates failure reason; lifecycle clears",
+          "reader": "hold completion handling",
+          "meaning": "records completion follows navigation failure",
+          "clear": "lifecycle",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-hold",
+            "ev-adapter-hold-callback",
+            "ev-external-test"
+          ]
+        },
+        {
+          "id": "F-HOLD-ATTEMPTS",
+          "name": "hold_handover_attempts_",
+          "type": "uint32",
+          "role": "counter",
+          "init": "0",
+          "writer": "each schedulePx4Hold; lifecycle clears",
+          "reader": "diagnostic logging",
+          "meaning": "number of adapter Hold scheduling attempts",
+          "clear": "activation/deactivation",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-hold",
+            "ev-adapter-hold-callback",
+            "ev-external-test"
+          ]
+        },
+        {
+          "id": "F-HOLD-RETRY",
+          "name": "hold_handover_next_retry_steady_ns_",
+          "type": "int64 steady ns",
+          "role": "deadline",
+          "init": "0",
+          "writer": "Failure callback sets now+250ms; lifecycle clears",
+          "reader": "checkHoldHandover",
+          "meaning": "next retry time after failed API result",
+          "clear": "activation/deactivation/new attempt",
+          "evidence": [
+            "ev-adapter-fields",
+            "ev-adapter-hold",
+            "ev-adapter-hold-callback",
+            "ev-external-test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O-MISSION",
+      "symbol": "px4_navigation_external_mode::MissionController",
+      "instance": "NavigationMode-owned controller for loaded mission",
+      "protection": "internal mutex; update and trajectory/status callbacks serialize state",
+      "evidence": [
+        "ev-mission-fields",
+        "ev-mission-update",
+        "ev-mission-stop",
+        "ev-route-crossing",
+        "ev-mission-test"
+      ],
+      "fields": [
+        {
+          "id": "F-MISSION-STATE",
+          "name": "state_",
+          "type": "MissionControllerState",
+          "role": "mission progress authority",
+          "init": "Idle",
+          "writer": "activate/update/onTrajectory/stop/recovery",
+          "reader": "state switch and mission event output",
+          "meaning": "mission phase distinct from runtime ExecutionEpisode phase",
+          "clear": "activate/deactivate/terminal transitions",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-ACTIVE-WAYPOINT",
+          "name": "active_waypoint_index_",
+          "type": "size_t",
+          "role": "mission progress authority",
+          "init": "0",
+          "writer": "advance on guarded measured acceptance",
+          "reader": "activeWaypoint/update/route snapshot",
+          "meaning": "measured mission waypoint",
+          "clear": "activate/reset/mission completion",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-MISSION-REQUEST",
+          "name": "request_id_",
+          "type": "uint64",
+          "role": "mission identity/version",
+          "init": "0",
+          "writer": "advanceRequestId on accepted waypoint/goal",
+          "reader": "mission events and adapter goal publishing",
+          "meaning": "current mission-side request id",
+          "clear": "activate/reset/new mission",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-NEXT-GOAL-TIME",
+          "name": "next_goal_time_s_",
+          "type": "double adapter ROS seconds; seconds",
+          "role": "goal schedule time",
+          "init": "0",
+          "writer": "goal scheduling/event path",
+          "reader": "mission update scheduling guard",
+          "meaning": "next eligible goal/publication time",
+          "clear": "activate/reset/advance",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-HOLD-START",
+          "name": "hold_start_time_s_",
+          "type": "double adapter ROS seconds; seconds",
+          "role": "dwell timer",
+          "init": "0",
+          "writer": "measured STOP enters Holding",
+          "reader": "Holding dwell guard",
+          "meaning": "terminal/waypoint dwell start",
+          "clear": "leave holding/reset",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-ARRIVAL-START",
+          "name": "arrival_start_time_s_",
+          "type": "optional adapter ROS seconds; seconds",
+          "role": "confirmation timer",
+          "init": "empty",
+          "writer": "measured STOP acceptance observation",
+          "reader": "terminal confirmation window guard",
+          "meaning": "measured terminal arrival confirmation start",
+          "clear": "gate lost/reset/terminal transition",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-POSITION-CONTROL",
+          "name": "pending_position_control_",
+          "type": "bool",
+          "role": "output request latch",
+          "init": "false",
+          "writer": "trajectory failure/stop paths set; update consumes",
+          "reader": "mission update emits position-control event",
+          "meaning": "deferred position-hold/control request",
+          "clear": "emit/clear/activate/deactivate",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-CHECKPOINT-VALID",
+          "name": "checkpoint_valid_",
+          "type": "bool",
+          "role": "checkpoint latch",
+          "init": "false",
+          "writer": "mission/trajectory validation",
+          "reader": "route/progress acceptance guards",
+          "meaning": "route checkpoint may be used",
+          "clear": "reset/rejected route/lifecycle",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-TRAJECTORY-READY",
+          "name": "trajectory_ready_",
+          "type": "bool",
+          "role": "readiness latch",
+          "init": "false",
+          "writer": "accepted trajectory/status; safety/replacement/STOP resets",
+          "reader": "progression acceptance guard",
+          "meaning": "readiness for current trajectory role, not waypoint acceptance",
+          "clear": "replacement/failure/reset/lifecycle",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-TERMINAL-HOLD",
+          "name": "terminal_hold_pending_",
+          "type": "bool",
+          "role": "terminal STOP latch",
+          "init": "false",
+          "writer": "native terminal hold observation/STOP update; measured acceptance clears",
+          "reader": "STOP/coincident PASS-to-STOP guard",
+          "meaning": "terminal hold requires measured confirmation, not mission complete or Hold confirmed",
+          "clear": "confirmation/reset/lifecycle",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-PREV-POSITION",
+          "name": "previous_position_",
+          "type": "optional Eigen::Vector3d",
+          "role": "measured history cache",
+          "init": "empty",
+          "writer": "each finite MissionController::update",
+          "reader": "PASS_THROUGH segment crossing",
+          "meaning": "previous measured point in mission update sequence",
+          "clear": "activate/deactivate/history reset",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-PREV-TIME",
+          "name": "previous_position_time_s_",
+          "type": "double seconds on adapter update clock",
+          "role": "measurement time/cache",
+          "init": "0",
+          "writer": "each finite MissionController::update",
+          "reader": "maximum gap/crossing guard",
+          "meaning": "adapter update time for prior point, not odometry source stamp",
+          "clear": "activate/deactivate/history reset",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-BRAKING-START",
+          "name": "braking_start_time_s_",
+          "type": "optional double adapter-clock seconds; seconds",
+          "role": "phase timer",
+          "init": "empty",
+          "writer": "safety trajectory/stop entry",
+          "reader": "Braking update duration/timeout",
+          "meaning": "start of measured safety braking phase",
+          "clear": "stop complete/cancel/reset",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-BRAKING-END",
+          "name": "braking_end_time_s_",
+          "type": "optional double adapter-clock seconds; seconds",
+          "role": "phase timer",
+          "init": "empty",
+          "writer": "safety trajectory/stop entry",
+          "reader": "Braking update endpoint guard",
+          "meaning": "expected end of safety braking phase",
+          "clear": "stop complete/cancel/reset",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        },
+        {
+          "id": "F-STOPPED-START",
+          "name": "stopped_start_time_s_",
+          "type": "optional double adapter-clock seconds; seconds",
+          "role": "settling timer",
+          "init": "empty",
+          "writer": "measured stopped recovery state",
+          "reader": "stopped confirmation/dwell guard",
+          "meaning": "time stationary recovery began",
+          "clear": "movement/reset/acceptance",
+          "evidence": [
+            "ev-mission-fields",
+            "ev-mission-update",
+            "ev-mission-stop",
+            "ev-route-crossing",
+            "ev-mission-test"
+          ]
+        }
+      ]
+    }
+  ],
+  "guards": [
+    {
+      "id": "G-HOT",
+      "expr": "same logical goal && previous PASS_THROUGH && command_available && !failure_latched && !safety_suffix_active; store retention succeeds",
+      "evidence": [
+        "ev-hot-retarget-guard",
+        "ev-goal-input"
+      ]
+    },
+    {
+      "id": "G-CONT",
+      "expr": "PASS_THROUGH && !coincident terminal STOP && !finished && matching epoch/request/junction && MAIN boundary reserve >= minimumMainContinuationReserveNs()",
+      "evidence": [
+        "ev-continuation-predicate"
+      ]
+    },
+    {
+      "id": "G-WORLD-RESUME",
+      "expr": "suspended generation equals active bundle; owner epochs match; latest world validates; valid_until >= now; no failure latch; recheck at commit",
+      "evidence": [
+        "ev-world-resume"
+      ]
+    },
+    {
+      "id": "G-STOP-TIMEOUT",
+      "expr": "recovery InitialHold or StoppedRecovery && finite measured speed <= 0.15 m/s && elapsed since first failed current PlanFromRest >= 5 s",
+      "evidence": [
+        "ev-recovery-failure",
+        "ev-planning-timing"
+      ]
+    }
+  ],
+  "transitions": [
+    {
+      "id": "T-RETARGET",
+      "object": "O-EP",
+      "event": "newer same-scope PASS_THROUGH successor accepted",
+      "guard": "G-HOT",
+      "writes": [
+        "desired identity advances",
+        "active identity/generation stays predecessor",
+        "executing goal and command epoch stay predecessor",
+        "successor planning starts"
+      ],
+      "effect": "predecessor remains sampleable during successor planning",
+      "evidence": [
+        "ev-hot-retarget-guard",
+        "ev-goal-input",
+        "ev-episode-goal-commit"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-EP",
+          "field": "F-EP-LOCALIZATION"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-GOAL-EPOCH"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-REQUEST-ID"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-EP-RESTART"
+        },
+        {
+          "object": "O-RUNTIME-TIMER",
+          "field": "F-RETRY-START"
+        }
+      ]
+    },
+    {
+      "id": "T-QUEUE-SUFFIX-GOAL",
+      "object": "O-PENDING",
+      "event": "new goal while BACKUP/EMERGENCY suffix active",
+      "guard": "same mission; active goal; strictly newer by request/waypoint/route revision",
+      "writes": [
+        "replace one pending immutable goal only if newer; else no-op"
+      ],
+      "effect": "suffix not rebound; exact pending pointer consumed only after commit",
+      "evidence": [
+        "ev-pending-goal",
+        "ev-goal-input"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-PENDING",
+          "field": "F-PENDING"
+        }
+      ]
+    },
+    {
+      "id": "T-COMMIT-SUCCESSOR",
+      "object": "O-EP",
+      "event": "validated successor activated/committed",
+      "guard": "identity, route/world, state/frame/freshness, lease, generation and validity pass",
+      "writes": [
+        "timeline advances",
+        "active identity/generation/role/recovery update",
+        "availability true",
+        "executing goal/command epoch swap",
+        "pending exact pointer consumed after commit"
+      ],
+      "effect": "ownership cutover; late wrong-key result rejected",
+      "evidence": [
+        "ev-episode-goal-commit",
+        "ev-goal-commit",
+        "ev-publish-world-gate"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-STORE",
+          "field": "F-TIMELINE-VERSION"
+        },
+        {
+          "object": "O-STORE",
+          "field": "F-ACTIVE-BUNDLE"
+        },
+        {
+          "object": "O-STORE",
+          "field": "F-PENDING-BUNDLE"
+        },
+        {
+          "object": "O-STORE",
+          "field": "F-PENDING-ACTIVATION"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-ACTIVE-GOAL-EPOCH"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-ACTIVE-REQUEST-ID"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-ACTIVE-GENERATION"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-AVAILABLE"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-FAIL"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-SUFFIX"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-EP-PHASE"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-RECOVERY"
+        },
+        {
+          "object": "O-PENDING",
+          "field": "F-PENDING"
+        }
+      ]
+    },
+    {
+      "id": "T-SUSPEND-WORLD",
+      "object": "O-WORLD-LATCH",
+      "event": "sample tick sees world freshness != VALID",
+      "guard": "world timestamp fails configured freshness classification",
+      "writes": [
+        "cancel planner",
+        "store exact active generation if identity matches",
+        "store suffix witness",
+        "command_available=false",
+        "return without publishing this tick"
+      ],
+      "effect": "adapter cache remains under original lease",
+      "evidence": [
+        "ev-publish-world-gate",
+        "ev-world-suspend"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-WORLD-LATCH",
+          "field": "F-SUSPENDED"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-AVAILABLE"
+        }
+      ]
+    },
+    {
+      "id": "T-RESUME-WORLD",
+      "object": "O-WORLD-LATCH",
+      "event": "fresh map callback recertifies active bundle",
+      "guard": "exact generation/identity/epochs; valid_until; latest world validates; no fail latch; recheck commit",
+      "writes": [
+        "world/timeline transaction",
+        "availability restored",
+        "suspension witness cleared"
+      ],
+      "effect": "later sample tick may publish",
+      "evidence": [
+        "ev-world-resume"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-WORLD-LATCH",
+          "field": "F-SUSPENDED"
+        },
+        {
+          "object": "O-STORE",
+          "field": "F-TIMELINE-WORLD"
+        },
+        {
+          "object": "O-STORE",
+          "field": "F-TIMELINE-VERSION"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-AVAILABLE"
+        }
+      ]
+    },
+    {
+      "id": "T-PLAN-FAIL",
+      "object": "O-RUNTIME-TIMER",
+      "event": "current PlanFromRest result fails",
+      "guard": "identity current; fail-close only if G-STOP-TIMEOUT",
+      "writes": [
+        "set first failure time once",
+        "recompute elapsed",
+        "optionally fail closed"
+      ],
+      "effect": "retry before timeout; discard stale identity result",
+      "evidence": [
+        "ev-recovery-failure",
+        "ev-planning-timing"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-RUNTIME-TIMER",
+          "field": "F-RETRY-START"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-FAIL"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-RECOVERY"
+        }
+      ]
+    },
+    {
+      "id": "T-PLAN-SUCCESS",
+      "object": "O-RUNTIME-TIMER",
+      "event": "eligible PlanFromRest candidate succeeds",
+      "guard": "identity and admission/commit pass",
+      "writes": [
+        "retry time zero",
+        "active episode command update",
+        "consume pending only after commit"
+      ],
+      "effect": "runtime retry window ends",
+      "evidence": [
+        "ev-recovery-clear",
+        "ev-episode-goal-commit"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-RUNTIME-TIMER",
+          "field": "F-RETRY-START"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-ACTIVE-GENERATION"
+        },
+        {
+          "object": "O-EP",
+          "field": "F-AVAILABLE"
+        },
+        {
+          "object": "O-PENDING",
+          "field": "F-PENDING"
+        }
+      ]
+    },
+    {
+      "id": "T-ADAPTER-EXPIRY",
+      "object": "O-ADAPTER",
+      "event": "adapter command lease/freshness expires",
+      "guard": "receive/header/valid_until/state/health fails unless exact endpoint recovery exception",
+      "writes": [
+        "invalidate cache",
+        "latch failure/handover",
+        "deactivate mission",
+        "publish status"
+      ],
+      "effect": "request Hold; request differs from VehicleStatus confirmation",
+      "evidence": [
+        "ev-adapter-command",
+        "ev-adapter-deadline",
+        "ev-adapter-hold"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-ADAPTER",
+          "field": "F-COMMAND-CACHE"
+        },
+        {
+          "object": "O-ADAPTER",
+          "field": "F-COMMAND-RECEIVE"
+        },
+        {
+          "object": "O-ADAPTER",
+          "field": "F-FAILURE-REPORTED"
+        },
+        {
+          "object": "O-ADAPTER",
+          "field": "F-HANDOVER-REQUESTED"
+        },
+        {
+          "object": "O-HOLD",
+          "field": "F-HOLD-PENDING"
+        }
+      ]
+    },
+    {
+      "id": "T-MEASURED-CROSSING",
+      "object": "O-MISSION",
+      "event": "finite measured update enters PASS ball or segment crosses",
+      "guard": "route order, forward tangent, segment geometry, sample gap, identity/witness or safety exception",
+      "writes": [
+        "update previous point/time",
+        "advance waypoint/request once on acceptance",
+        "emit successor goal"
+      ],
+      "effect": "trajectory endpoint is not waypoint acceptance",
+      "evidence": [
+        "ev-mission-update",
+        "ev-route-crossing",
+        "ev-adapter-mission"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-MISSION",
+          "field": "F-PREV-POSITION"
+        },
+        {
+          "object": "O-MISSION",
+          "field": "F-PREV-TIME"
+        },
+        {
+          "object": "O-MISSION",
+          "field": "F-ACTIVE-WAYPOINT"
+        },
+        {
+          "object": "O-MISSION",
+          "field": "F-MISSION-REQUEST"
+        }
+      ]
+    },
+    {
+      "id": "T-STOP-SETTLE",
+      "object": "O-MISSION",
+      "event": "measured STOP settling and dwell complete",
+      "guard": "position acceptance, finite slow velocity, confirmation window and dwell",
+      "writes": [
+        "MissionController holding/acceptance/completion event"
+      ],
+      "effect": "trajectory ended, safety stop observed, waypoint accepted, mission complete, Hold requested and Hold confirmed are distinct",
+      "evidence": [
+        "ev-mission-stop",
+        "ev-adapter-mission",
+        "ev-adapter-hold"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-MISSION",
+          "field": "F-MISSION-STATE"
+        },
+        {
+          "object": "O-MISSION",
+          "field": "F-ARRIVAL-START"
+        },
+        {
+          "object": "O-MISSION",
+          "field": "F-TERMINAL-HOLD"
+        }
+      ]
+    },
+    {
+      "id": "T-ADAPTER-CONSUME-CROSSING",
+      "object": "O-ADAPTER",
+      "event": "MissionController::update returns waypoint-accepted / PublishGoal event",
+      "guard": "callback receives event for current mission/waypoint/request; adapter performs its own continuation/suffix identity checks",
+      "writes": [
+        "adapter publishes successor goal or retains exact suffix identity as dictated by branch"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-ADAPTER",
+          "field": "F-SUFFIX-HANDOFF"
+        },
+        {
+          "object": "O-ADAPTER",
+          "field": "F-SUFFIX-WAYPOINT"
+        },
+        {
+          "object": "O-ADAPTER",
+          "field": "F-SUFFIX-REQUEST"
+        }
+      ],
+      "effect": "separate callback step after MissionController update; not atomic with mission field mutation",
+      "evidence": [
+        "ev-adapter-mission",
+        "ev-adapter-command"
+      ]
+    },
+    {
+      "id": "T-ADAPTER-CONSUME-STOP",
+      "object": "O-ADAPTER",
+      "event": "MissionController::update returns RequestPositionControl / Complete event",
+      "guard": "event identity remains current; executor/adapter selects command-exposure or terminal handover branch",
+      "writes": [
+        "publish status / completion effect; request PX4 Hold through executor callback where selected"
+      ],
+      "key_field_writes": [
+        {
+          "object": "O-ADAPTER",
+          "field": "F-HANDOVER-REQUESTED"
+        },
+        {
+          "object": "O-ADAPTER",
+          "field": "F-MISSION-TERMINAL"
+        }
+      ],
+      "effect": "Mission event consumption and PX4 Hold request/confirmation are later steps",
+      "evidence": [
+        "ev-adapter-mission",
+        "ev-adapter-hold"
+      ]
+    }
+  ],
+  "contracts": [
+    {
+      "id": "C1-PASS-HANDOFF",
+      "verdict": "CONDITIONAL",
+      "statement": "Desired successor identity differs from active predecessor. Eligible retarget retains predecessor until successor commit; active safety suffix queues one newer goal and exact-consumes after commit.",
+      "reachability": "Static path and production owner/adapter tests; producer-created full admission not joined in one test.",
+      "counterevidence": "Admitted continuation command immediately calls updateMission.",
+      "open": "Product reachability of crossing after witness loss and target occurrence unknown."
+    },
+    {
+      "id": "C2-WORLD-SUSPEND",
+      "verdict": "CONDITIONAL",
+      "statement": "Stale world returns without publish and suspends exact active generation. Fresh world recertifies exact owner/rechecks commit. Adapter cache expires independently and can request Hold.",
+      "reachability": "Static path plus production helper/store/node fixture tests; no mapping callback to receiver/handover integration test.",
+      "counterevidence": "Exact generation/identity/world gates allow resume before receiver lease expiry.",
+      "open": "Live profile/timestamps, remaining receiver lease and PX4 acceptance unknown. Adapter source fixes command lease at 0.10 s and state age at 0.20 s; actual remaining lease at suspend depends on the last accepted message timestamps."
+    },
+    {
+      "id": "C3-STOPPED-RECOVERY",
+      "verdict": "CONDITIONAL",
+      "statement": "Runtime 5 s steady timer starts on first failed current PlanFromRest and fail-closes only stationary in InitialHold/StoppedRecovery. Adapter 5 s ROS deadline starts on completed endpoint needing recovery.",
+      "reachability": "Runtime and adapter portions separately covered by selected production tests.",
+      "counterevidence": "Different owner, clock, start event, scope and consumer; equal duration alone proves no conflict.",
+      "open": "No shared-budget specification or joint fake-clock test. Adapter 5 s endpoint deadline uses ROS time while runtime retry uses steady time."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "S-PASS",
+      "status": "CONTROLLED_COMPONENT_REPRODUCTION",
+      "prestate": "predecessor active; newer same-scope PASS request; no suffix",
+      "events": [
+        "accept goal",
+        "desired identity advances while predecessor retained",
+        "solve/admission overlaps predecessor sampling",
+        "commit swaps active identity",
+        "adapter receives/rechecks"
+      ],
+      "result": "Production episode/adapter tests pass; full producer/admission/PX4 chain not in one test."
+    },
+    {
+      "id": "S-WORLD",
+      "status": "STATIC_PATH_AND_COMPONENT_TESTS",
+      "prestate": "active committed bundle; command_available; world stale",
+      "events": [
+        "sample rejects world",
+        "cancel work and latch generation",
+        "return without publish",
+        "map validates world and owner",
+        "resume or remain suspended",
+        "later sample or receiver expiry"
+      ],
+      "result": "Recoverable resume and fail-closed receiver expiry exist; end-to-end ordering/timing unmeasured."
+    },
+    {
+      "id": "S-STOPPED",
+      "status": "CONTROLLED_COMPONENT_REPRODUCTION",
+      "prestate": "InitialHold/StoppedRecovery; current identity; finite speed <=0.15",
+      "events": [
+        "failure starts steady timer",
+        "retry before 5 s",
+        "eligible success clears or timeout fail-closes",
+        "adapter timer separately starts on completed message"
+      ],
+      "result": "Runtime guard tested; cross-owner clock relation untested."
+    },
+    {
+      "id": "S-PROFILE",
+      "status": "UNRESOLVED",
+      "prestate": "no target parameter dump/workload identity",
+      "events": [],
+      "result": "Live profile and PX4 application not established."
+    }
+  ],
+  "coverage": {
+    "scope": "3 requested state contracts; 8 object owners; 56 individually listed fields; 12 transitions; 4 scenarios",
+    "objects": {
+      "scoped": 8,
+      "documented": 8
+    },
+    "fields": {
+      "scoped": 56,
+      "documented": 56,
+      "writer_reader_closed_for_selected_paths": 56,
+      "cross_boundary_runtime_unobserved": 8,
+      "cross_boundary_field_ids": [
+        "F-AVAILABLE",
+        "F-COMMAND-CACHE",
+        "F-COMMAND-RECEIVE",
+        "F-HOLD-CONFIRMED",
+        "F-HOLD-IN-FLIGHT",
+        "F-MODE-ACTIVE",
+        "F-RECOVERY-DEADLINE",
+        "F-SUSPENDED"
+      ],
+      "note": "Writer/reader sites are enumerated for selected source paths; these eight still lack the live profile, downstream PX4 application, or workload timing needed to close runtime outcome."
+    },
+    "transitions": {
+      "scoped": 12,
+      "documented": 12,
+      "related_test_groups": 8,
+      "end_to_end_unjoined": 3
+    },
+    "scenarios": {
+      "scoped": 4,
+      "documented": 4,
+      "runtime_observed": 0
+    },
+    "limitations": [
+      "Claim-focused slice, not whole-repository exhaustive writer inventory.",
+      "No live parameter dump, matched target-workload trace, or PX4 applied-state observation.",
+      "Selected production class/helper tests use synthetic clocks/world/transport and do not demonstrate field behavior in a target workload."
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+digraph recovery {
+  graph [rankdir=LR, fontname="DejaVu Sans", labelloc=t, label="Two stopped-recovery clocks: distinct owner, event and clock"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans"]; edge [fontname="DejaVu Sans", fontsize=9];
+  stop [label="Measured stopped / recovery state\nnot runtime retry timer start"];
+  solve [label="PlanFromRest attempts\ncurrent identity checked"];
+  fail [label="first current failed result\nset steady_clock start if zero"];
+  retry [label="retry while <5s OR moving\nInitialHold/StoppedRecovery"];
+  runtime_exp [label=">=5s AND finite speed <=0.15m/s\nfail closed"];
+  success [label="eligible candidate succeeds\nclear runtime timer"];
+  endpoint [label="Adapter accepts completed endpoint\nthat needs recovery"];
+  deadline [label="start 5s deadline on ROS clock\nmission/wp/request/generation identity"];
+  ready [label="READY replacement / terminal acceptance\nclear adapter timer"];
+  adapter_exp [label="deadline expires\nsafety stop + Hold request"];
+  stop -> solve -> fail;
+  fail -> retry;
+  retry -> fail [label="next failed result"];
+  retry -> runtime_exp [label="timeout guard true"];
+  retry -> success [label="candidate accepted"];
+  endpoint -> deadline;
+  deadline -> ready [label="eligible replacement"];
+  deadline -> adapter_exp [label="now >= ROS deadline"];
+  note [shape=note,label="Same 5.0 s does not make a shared budget.\nRuntime steady clock vs adapter ROS clock; distinct starts, owners, reset and consumers.\nNo joint two-clock fake-time test; relationship unspecified."];
+  fail -> note [style=dotted];
+  deadline -> note [style=dotted];
+}

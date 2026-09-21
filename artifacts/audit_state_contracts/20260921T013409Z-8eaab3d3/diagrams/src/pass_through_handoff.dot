@@ -1,0 +1,25 @@
+digraph handoff {
+  graph [rankdir=TB, fontname="DejaVu Sans", labelloc=t, label="PASS_THROUGH desired identity → active command cutover"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans"]; edge [fontname="DejaVu Sans", fontsize=9];
+  a [label="T0 predecessor MAIN active\nactive=(epoch e, request r, gen g)\ncommand_available=true"];
+  b [label="T-RETARGET newer same-scope PASS successor\ndesired=(e+1,r+1)\nactive remains (e,r,g)\nG-HOT passes"];
+  c [label="Concurrent planning\nsuccessor key; predecessor still sampleable\nwrong-key late result rejected"];
+  d [shape=diamond,label="Candidate admission / commit\nidentity + world + state/frame + lease + generation"];
+  e [label="reject / wait\npredecessor remains if its lease/authority valid"];
+  f [label="T-COMMIT-SUCCESSOR\nactive=(e+1,r+1,g+1)\nexecuting goal swaps\npending exact consume after commit"];
+  g [label="Adapter receives exact command\nrechecks identity/lease\nPX4 application not implied"];
+  a -> b [label="accepted successor goal"];
+  b -> c [label="solve starts"];
+  c -> d [label="candidate returned"];
+  d -> e [label="guard false"];
+  e -> c [label="retry / replacement"];
+  d -> f [label="all guards pass"];
+  f -> g [style=dashed,label="async message"];
+  x [label="safety suffix active\nG-HOT fails"];
+  y [label="T-QUEUE-SUFFIX-GOAL\none newer same-mission pending goal\nexact consume only after replacement commit"];
+  b -> x [style=dashed,label="if BACKUP/EMERGENCY"];
+  x -> y [label="queue; suffix keeps ownership"];
+  y -> f [label="stopped recovery then commit"];
+  ev [shape=note,label="Source: ev-goal-input, ev-episode-goal-commit, ev-pending-goal, ev-adapter-mission\nTests: test-episode, test-fsm, test-adapter-progress\nControlled component path; no target runtime trace"];
+  f -> ev [style=dotted];
+}

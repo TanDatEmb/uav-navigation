@@ -1,0 +1,103 @@
+{
+  "target_sha": "8eaab3d33db36e9e636ad4005ed91b8f055f4d68",
+  "target_tree": "e82a074eee5703f0fde2acafd22381fa53020d39",
+  "branch": "codex/audit-state-contracts-20260921T013409Z-8eaab3d3",
+  "worktree": "/home/letandat/Dev/uav-navigation-audit-20260921T013409Z-8eaab3d3",
+  "submodules": {
+    "src/external/px4_msgs": "86d8239e962f6939e05c3737784f60c02fa884db",
+    "src/external/px4_ros2_interface_lib": "4a3370f084ac6f1ef001a4afa2b007845ffd0837"
+  },
+  "environment": {
+    "ros_underlay": "/opt/ros/jazzy",
+    "compiler": "GCC 13.3.0",
+    "cmake": "3.28.3",
+    "colcon_core": "0.21.3",
+    "build_type": "Release",
+    "compile_database": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/*/compile_commands.json",
+    "build_output": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build",
+    "install_output": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/install",
+    "dot": "Graphviz 2.43.0",
+    "mmdc": "unavailable; no external/global install attempted"
+  },
+  "safety": {
+    "flight_stack": false,
+    "SITL_Gazebo": false,
+    "device_control": false,
+    "ROS_LOCALHOST_ONLY": true,
+    "ROS_DOMAIN_ID": 218,
+    "rmw": "rmw_fastrtps_cpp",
+    "isolation_limit": "No target runtime/FC/MicroXRCE/Gazebo/rosbag process or target ports found before tests; unshare -n denied; ROS tests local loopback only."
+  },
+  "compile_databases": [
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/compile_commands.json",
+      "sha256": "513161f57dbc9ef3ec7559ed1c931ea173a129291a0e67e44689a8569cad38f4",
+      "bytes": 3787796
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/navigation_common/compile_commands.json",
+      "sha256": "87c6b00e9b1daca771ff1b098424d7f63e3fd5e7d71338eff65d434bf2d441e9",
+      "bytes": 2407
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/navigation_contracts/compile_commands.json",
+      "sha256": "ff14cab2d094da2aca07fa97f3522a96bc96be11d854d1410eefae1c200f7c75",
+      "bytes": 147166
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/navigation_execution/compile_commands.json",
+      "sha256": "dd9a763a01ba82d0b2336f3bff0163a6b40fdff4c8c735e97bde7791ff8d7322",
+      "bytes": 4940
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/navigation_mapping/compile_commands.json",
+      "sha256": "72110ddcc904a210b13b737894cc26b859975a903399a2892dfbec061d5a787d",
+      "bytes": 7615
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/navigation_mission/compile_commands.json",
+      "sha256": "d934da9788a5ceca4287efbe1cb97b594bfa7b802f58795c5c6b0bd603d118c8",
+      "bytes": 3462
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/navigation_planning/compile_commands.json",
+      "sha256": "eebadfb2b257476fbdbb86d71f736bad7562d136c3f1a444edde3a45a3eb13d1",
+      "bytes": 2741
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/navigation_planning_backend/compile_commands.json",
+      "sha256": "9cae56f12f12d7899938e49631167927823a8785c6d26826e6c426500d44acb9",
+      "bytes": 77114
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/navigation_runtime/compile_commands.json",
+      "sha256": "22f12581bd522d912b6dcbeda904bd2377b06e54284eeb173eecff6fadbebee7",
+      "bytes": 48934
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/px4_msgs/compile_commands.json",
+      "sha256": "ac42f4f2668dac9435817bfacbae8ea038f3dd6f24b64f52d3e2a81d47343451",
+      "bytes": 3321509
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/px4_navigation_external_mode/compile_commands.json",
+      "sha256": "70ce71da10d529ceed309b46b98dd4fcbeb41bf741fd96070a2e03f5e389756d",
+      "bytes": 21760
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/px4_ros2_cpp/compile_commands.json",
+      "sha256": "94e057bd3638a31df9ce83cc08f9e685a8646a2c3eb7da7a969cbd6afedd00ae",
+      "bytes": 137736
+    },
+    {
+      "path": "/tmp/uav-state-contracts-20260921T013409Z-8eaab3d3/build/rog_map_vendor/compile_commands.json",
+      "sha256": "fcb39d8b0ad419f963f4d6cbfa4fb0ffa97b44de53498cd4b6a0c253ccdee5ef",
+      "bytes": 12422
+    }
+  ],
+  "source_review_limits": [
+    "C++ compile database used for exact Release build; no full AST/reference index was available or claimed. Critical fields were traced by implementation, surrounding guards, callers and consumers.",
+    "Selected owner/path review only; no exhaustive cross-package alias/writer closure."
+  ],
+  "live_profile": "UNRESOLVED: no target parameter dump/workload identity"
+}

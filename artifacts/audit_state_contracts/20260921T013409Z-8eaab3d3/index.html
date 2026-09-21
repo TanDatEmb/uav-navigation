@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'none'; connect-src 'none';">
+  <title>Audit state contracts — uav-navigation</title>
+  <style>
+    body { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; color: #17212b; font: 16px/1.5 system-ui, sans-serif; }
+    h1, h2 { line-height: 1.2; } nav ul { columns: 2; } li { margin: .35rem 0; }
+    .status { padding: .8rem 1rem; border-left: 5px solid #ad7b00; background: #fff6d5; }
+    .diagrams { display: grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap: 1rem; }
+    .diagrams a { display:block; padding: .8rem; border: 1px solid #ccd3da; border-radius: .4rem; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>State contract audit — uav-navigation</h1>
+  <p><strong>TARGET_SHA:</strong> <code>8eaab3d33db36e9e636ad4005ed91b8f055f4d68</code></p>
+  <p><strong>Audit branch:</strong> <code>codex/audit-state-contracts-20260921T013409Z-8eaab3d3</code></p>
+  <div class="status"><strong>PARTIAL_AS_IS.</strong> Source-backed review and selected production-class tests cover PASS_THROUGH handoff, world suspension and stopped recovery. No target workload or PX4 application observation; performance is not characterized.</div>
+  <nav>
+    <h2>Reports and evidence</h2>
+    <ul>
+      <li><a href="README.md">README — baseline and reproduce</a></li>
+      <li><a href="AUDIT_VERDICT.md">Verdicts and limits</a></li>
+      <li><a href="DELTA_REVIEW.md">Frozen A → TARGET delta</a></li>
+      <li><a href="STATE_AUTHORITY_MATRIX.md">State owner / writer / reader / authority</a></li>
+      <li><a href="CONTRACTS_AS_IS.md">Three AS-IS contracts</a></li>
+      <li><a href="DECISIONS_REQUIRED.md">Remaining decisions and evidence</a></li>
+      <li><a href="tables/state_inventory.csv">Machine-generated field inventory</a></li>
+      <li><a href="tables/transitions.md">Machine-generated transition table</a></li>
+      <li><a href="tables/contracts.md">Machine-generated contract verdicts</a></li>
+      <li><a href="tables/coverage.md">Coverage limits</a></li>
+      <li><a href="model/architecture.json">Canonical model</a></li>
+      <li><a href="evidence/index.md">Field-linked source evidence index</a></li>
+      <li><a href="evidence/refs.jsonl">Source refs, line excerpts, blob and SHA-256</a></li>
+      <li><a href="tests/selection.json">Executed tests and scope</a></li>
+      <li><a href="validation/commands.json">Build and test commands</a></li>
+      <li><a href="validation/log_manifest.json">Raw compressed log hashes</a></li>
+    </ul>
+  </nav>
+  <h2>Rendered diagrams</h2>
+  <div class="diagrams">
+    <a href="diagrams/svg/ownership.svg">Ownership and command authority</a>
+    <a href="diagrams/svg/pass_through_handoff.svg">PASS_THROUGH identity handoff</a>
+    <a href="diagrams/svg/world_suspension.svg">World suspension and adapter lease</a>
+    <a href="diagrams/svg/stopped_recovery.svg">Runtime and adapter recovery clocks</a>
+  </div>
+  <h2>Baseline integrity</h2>
+  <p>Frozen AS-IS source manifest SHA-256: <code>f9481b2f7312556ae91a8bff590cbc412de8d7e3e068fc98d4c85bb34c730413</code>. A was captured from a dirty worktree at HEAD <code>9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2</code>; it is not a clean snapshot of that commit.</p>
+  <p>Local HTML index only; no remote scripts, fonts or visualization service.</p>
+</body>
+</html>

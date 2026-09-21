@@ -1,0 +1,28 @@
+digraph world {
+  graph [rankdir=TB, fontname="DejaVu Sans", labelloc=t, margin=0.35, nodesep=0.45, ranksep=0.55, label="World freshness suspension and independent adapter lease"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans"]; edge [fontname="DejaVu Sans", fontsize=9];
+  tick [label="Runtime publishCommand tick\nlatest world freshness invalid"];
+  suspend [label="T-SUSPEND-WORLD\ncancel planner; latch exact generation\nEpisode command_available=false"];
+  no_pub [label="Return without publish\nno message renewal on this tick"];
+  map [label="Async fresh mapping snapshot\nworker validates immutable bundle"];
+  guard [shape=diamond,label="Same suspended generation and owner epochs?\nLatest world and validity pass?\nCommit recheck succeeds?"];
+  resume [label="T-RESUME-WORLD\nrestore availability; clear latch"];
+  reject [label="do not resume / remain suspended or invalidate"];
+  next [label="later runtime tick may sample/publish\nnot guaranteed in map callback"];
+  recv [label="Adapter cached command remains\nreceive/header/valid_until + state/health age"];
+  expiry [label="T-ADAPTER-EXPIRY\ncache invalidated; safety stop + Hold request"];
+  status [label="PX4 VehicleStatus confirmation\nseparate external observation"];
+  tick -> suspend -> no_pub;
+  no_pub -> map [label="later callback"];
+  map -> guard;
+  guard -> resume [label="true"];
+  guard -> reject [label="false"];
+  resume -> next;
+  next -> recv [style=dashed,label="publication/receive may be delayed"];
+  no_pub -> recv [style=dotted,constraint=false];
+  recv -> expiry [label="lease expires before useful command"];
+  recv -> next [label="valid command arrives in time"];
+  expiry -> status [label="request != confirmation"];
+  note [shape=note,label="Live profile, timestamps and remaining lease unknown.\nNo joined test or PX4 acceptance trace."];
+  guard -> note [style=dotted];
+}

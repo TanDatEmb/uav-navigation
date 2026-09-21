@@ -1,0 +1,26 @@
+digraph ownership {
+  graph [rankdir=LR, compound=true, fontname="DejaVu Sans", labelloc=t, label="State and authority ownership — TARGET source paths"];
+  node [shape=box, style="rounded", fontname="DejaVu Sans"]; edge [fontname="DejaVu Sans", fontsize=9];
+  runtime [label="NavigationRuntimeNode\n(object/lifetime owner)"];
+  episode [label="ExecutionEpisode\ndesired identity / active identity\ncommand_available / failure / suffix / recovery"];
+  pending [label="PendingGoalHandoffOwner\none immutable pending goal"];
+  store [label="CommittedBundleStore\nactive + pending bundle/generation"];
+  world [label="WorldSnapshotStore\ncurrent immutable snapshot"];
+  adapter [label="NavigationMode\naccepted command cache + lease"];
+  mission [label="MissionController\nmeasured history + waypoint state"];
+  executor [label="NavigationModeExecutor\nHold request/in-flight/status-confirmed"];
+  px4 [label="PX4 VehicleStatus / setpoint consumer\nexternal observation boundary"];
+  runtime -> episode [label="sync read/write\n[ev-episode-goal-commit]"];
+  runtime -> pending [label="sync queue/exact consume\n[ev-pending-goal]"];
+  runtime -> store [label="commit/suspend/recertify\n[ev-world-resume]"];
+  world -> runtime [style=dashed,label="async mapping callback\n[ev-world-resume]"];
+  store -> runtime [label="sample active bundle\n[ev-publish-world-gate]"];
+  runtime -> adapter [style=dashed,label="ROS NavigationCommand\npublication != receive ack\n[ev-adapter-command]"];
+  adapter -> mission [label="serialized command/timer update\n[ev-adapter-mission]"];
+  mission -> adapter [label="measured progress / goal event\n[ev-mission-update]"];
+  adapter -> executor [label="Hold request\n[ev-adapter-hold]"];
+  executor -> px4 [style=dashed,label="mode request\n[ev-adapter-hold]"];
+  px4 -> executor [style=dotted,label="VehicleStatus observed\n[ev-adapter-hold]"];
+  legend [shape=note,label="Solid = direct call or guarded state access\nDashed = async transport/event\nDotted = external observation/feedback"];
+  runtime -> legend [style=invis];
+}
