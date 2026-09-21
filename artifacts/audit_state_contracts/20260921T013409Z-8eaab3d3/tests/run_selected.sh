@@ -7,9 +7,11 @@ fi
 BUILD_DIR="$1"
 LOG_DIR="$2"
 mkdir -p "$LOG_DIR"
+set +u  # ROS setup scripts may reference unset trace variables.
 source /opt/ros/jazzy/setup.bash
 SCRATCH_DIR="$(dirname "$BUILD_DIR")"
 source "$SCRATCH_DIR/install/setup.bash"
+set -u
 export ROS_LOCALHOST_ONLY=1
 export ROS_DOMAIN_ID=218
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp

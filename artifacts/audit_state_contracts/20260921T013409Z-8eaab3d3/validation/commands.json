@@ -149,6 +149,10 @@
     {
       "exit_code": 1,
       "cause": "ROS Jazzy underlay was not initially sourced; corrected."
+    },
+    {
+      "exit_code": 1,
+      "cause": "First clean verification invocation hit ROS Jazzy setup under set -u: AMENT_TRACE_SETUP_FILES was unset. Audit runner now disables nounset only while sourcing underlay/overlay, then restores it."
     }
   ],
   "limitations": [
