@@ -23,6 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PropagatedOdometry.msg"
   "msg/EstimatorHealth.msg"
   "msg/NavigationCommand.msg"
+  "msg/AuditEvent.msg"
   DEPENDENCIES builtin_interfaces nav_msgs std_msgs geometry_msgs sensor_msgs)
 
 install(DIRECTORY include/ DESTINATION include)
@@ -39,6 +40,8 @@ if(BUILD_TESTING)
     ${PROJECT_NAME} "rosidl_typesupport_cpp")
   target_link_libraries(test_typed_interfaces
     "${navigation_contracts_typesupport_target}")
+  ament_add_gtest(test_audit_event test/test_audit_event.cpp)
+  target_link_libraries(test_audit_event "${navigation_contracts_typesupport_target}")
 endif()
 
 ament_package()
