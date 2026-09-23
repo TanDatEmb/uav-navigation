@@ -25,9 +25,16 @@ health, frame, lease, monotonic identity and tracking checks commit the
 command. Core joins that receipt to the issued command, current mission gate,
 localization epoch and mode activation before accepting a continuation
 witness. A missing or late receipt cannot grant mission progress. The adapter
+also rejects any command from an earlier External Mode activation, including
+one still inside its 100 ms lease after reentry. The adapter
 continues to own PX4 status, measured local state, command receive lease,
 tracking response and Hold/takeover. Core's terminal progress receipt is
 read-only presentation at the adapter boundary.
+
+Core requires a fresh ACTIVE/airborne status source and receive observation
+within the 200 ms mode-boundary lease before starting a mission gate or
+consuming an admission receipt. This is a new cross-process liveness bound;
+its scheduling tails require focused SITL evidence and are not flight-qualified.
 
 The existing 100 ms adapter command lease, 500 ms runtime state freshness,
 planner budgets, world/UNKNOWN rules, MAIN/BACKUP certificates and PX4 Hold

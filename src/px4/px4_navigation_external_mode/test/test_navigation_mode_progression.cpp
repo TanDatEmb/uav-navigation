@@ -80,6 +80,7 @@ class NavigationModeProgressionTest : public ::testing::Test {
     result->header.stamp = stamp(now_ns_);
     result->localization_epoch = 7U;
     result->goal_epoch = goal_epoch;
+    result->mode_activation_id = mode_->mode_activation_id_;
     result->mission_id = std::move(mission_id);
     result->waypoint_index = waypoint;
     result->request_id = request;
@@ -108,6 +109,11 @@ class NavigationModeProgressionTest : public ::testing::Test {
   }
   bool completed() const { return mode_->mission_completion_receipt_.has_value(); }
   bool handingOver() const { return mode_->handover_requested_; }
+  void restartBoundaryForTest() {
+    std::lock_guard<std::mutex> lock(mode_->trajectory_mutex_);
+    mode_->navigation_command_.reset();
+    mode_->mode_activation_id_ = 2U;
+  }
 
   std::shared_ptr<rclcpp::Node> node_;
   std::unique_ptr<NavigationMode> mode_;
@@ -155,6 +161,25 @@ TEST_F(NavigationModeProgressionTest, ForeignMissionCannotReplaceSession) {
   odometry();
   admit(command(3U, 1U, 2U, "foreign"));
   EXPECT_EQ(acceptedSample(), first->sample_id);
+}
+
+TEST_F(NavigationModeProgressionTest, OldActivationCommandCannotReplayAfterModeReentry) {
+  const auto first = command(2U, 0U, 1U);
+  admit(first);
+  ASSERT_EQ(acceptedSample(), first->sample_id);
+  restartBoundaryForTest();
+  setNow(now_ns_ + 20'000'000);
+  health();
+  odometry();
+  const auto old_activation = std::make_shared<Command>(*first);
+  old_activation->sample_id = ++sample_;
+  old_activation->header.stamp = stamp(now_ns_);
+  old_activation->valid_until = stamp(now_ns_ + 100'000'000);
+  admit(old_activation);
+  EXPECT_EQ(acceptedSample(), 0U);
+  const auto current = command(3U, 0U, 2U);
+  admit(current);
+  EXPECT_EQ(acceptedSample(), current->sample_id);
 }
 
 TEST_F(NavigationModeProgressionTest, StaleCompletionReceiptCannotCompleteNewActivation) {

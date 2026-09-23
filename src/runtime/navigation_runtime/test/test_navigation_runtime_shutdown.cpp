@@ -62,6 +62,8 @@ class NavigationRuntimeEpochResetTestPeer {
   static void terminal(NavigationRuntimeNode& node,
                        const navigation_contracts::msg::NavigationGoal& goal) {
     auto message = std::make_shared<navigation_contracts::msg::NavigationModeStatus>();
+    message->header.frame_id = "lio_odom";
+    message->header.stamp = node.now();
     message->mission_id = goal.mission_id;
     message->waypoint_index = goal.waypoint_index;
     message->request_id = goal.request_id;
@@ -103,6 +105,7 @@ class NavigationRuntimeEpochResetTestPeer {
   }
   static void missionActive(NavigationRuntimeNode& node) {
     auto status = std::make_shared<navigation_contracts::msg::NavigationModeStatus>();
+    status->header.frame_id = "lio_odom";
     status->header.stamp = node.now();
     status->state = navigation_contracts::msg::NavigationModeStatus::ACTIVE;
     status->activation_id = 1U;
@@ -111,6 +114,7 @@ class NavigationRuntimeEpochResetTestPeer {
   }
   static void missionPaused(NavigationRuntimeNode& node) {
     auto status = std::make_shared<navigation_contracts::msg::NavigationModeStatus>();
+    status->header.frame_id = "lio_odom";
     status->header.stamp = node.now();
     status->state = navigation_contracts::msg::NavigationModeStatus::PAUSED;
     status->activation_id = 1U;
@@ -540,6 +544,7 @@ TEST(NavigationRuntimeMissionCut, InitialMeasuredPassCreatesSuccessorInsideCore)
   issued.mission_id = "external_mode_open_route";
   issued.localization_epoch = 1U;
   issued.goal_epoch = 2U;
+  issued.mode_activation_id = 1U;
   issued.waypoint_index = 1U;
   issued.request_id = 2U;
   issued.bundle_generation = 4U;
@@ -566,6 +571,12 @@ TEST(NavigationRuntimeMissionCut, InitialMeasuredPassCreatesSuccessorInsideCore)
   admitted.request_id = issued.request_id;
   admitted.bundle_generation = issued.bundle_generation;
   admitted.sample_id = issued.sample_id;
+  auto foreign_activation = admitted;
+  foreign_activation.mode_activation_id = 2U;
+  NavigationRuntimeEpochResetTestPeer::missionCommandAdmitted(*node, foreign_activation);
+  EXPECT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 1U);
+  NavigationRuntimeEpochResetTestPeer::missionCommandAdmitted(*node, admitted);
+  EXPECT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 2U);
   NavigationRuntimeEpochResetTestPeer::missionCommandAdmitted(*node, admitted);
   EXPECT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 2U);
   const auto request_before_takeover =

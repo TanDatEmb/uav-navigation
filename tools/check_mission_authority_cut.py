@@ -52,6 +52,9 @@ def main() -> int:
     require("onNavigationCommand(" in adapter_text and
             "command_admission_publisher_->publish(receipt)" in adapter_text,
             "adapter does not report admitted command identity")
+    require("message->mode_activation_id == mode_activation_id_" in adapter_text and
+            "command.mode_activation_id = mission_progress_" in runtime_text,
+            "command transport does not fence a prior mode activation")
     require("external NavigationGoal rejected: Core owns mission" in runtime_text,
             "external goal path can supersede Core mission")
     cmake = (ADAPTER / "CMakeLists.txt").read_text()

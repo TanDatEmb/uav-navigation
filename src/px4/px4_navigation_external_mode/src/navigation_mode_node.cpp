@@ -896,8 +896,10 @@ void NavigationMode::onNavigationCommand(
     // The accepted command itself is the authenticated Core execution identity.
     // The adapter checks a monotonic session and never reconstructs waypoint
     // policy from its own mission definition.
-    const bool same_core_session = !navigation_command_ ||
-        message->mission_id == navigation_command_->mission_id;
+    const bool activation_matches = mode_activation_id_ == 0U ||
+        message->mode_activation_id == mode_activation_id_;
+    const bool same_core_session = activation_matches && (!navigation_command_ ||
+        message->mission_id == navigation_command_->mission_id);
     const bool request_nonregressing = !navigation_command_ ||
         (message->goal_epoch == navigation_command_->goal_epoch
             ? (message->waypoint_index == navigation_command_->waypoint_index &&

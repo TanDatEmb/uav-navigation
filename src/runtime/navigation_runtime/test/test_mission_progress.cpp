@@ -188,6 +188,22 @@ TEST(MissionProgressTest, ExistingCrossingIsInvalidatedByOdometryGap) {
   EXPECT_EQ(progress.currentGate().waypoint_index, 0U);
 }
 
+TEST(MissionProgressTest, RepeatedImmutableStateLeaseDoesNotEraseCrossing) {
+  auto definition = mission();
+  definition.waypoints[0].position_enu.x() = 1.0;
+  MissionProgress progress(definition);
+  progress.resetIdentity(1U, 1U);
+  (void)observe(progress, measured(0.0, 100, 1));
+  (void)progress.activate();
+  const auto crossing_sample = measured(1.0, 150, 2);
+  (void)observe(progress, crossing_sample);
+  ASSERT_TRUE(progress.crossing().has_value());
+  (void)observe(progress, crossing_sample);
+  ASSERT_TRUE(progress.crossing().has_value());
+  EXPECT_EQ(progress.observeContinuation(mainWitness(progress), 160'000'000).kind,
+            MissionProgressDecision::Kind::Goal);
+}
+
 TEST(MissionProgressTest, WrongRequestAndDuplicateWitnessDoNotAdvanceGate) {
   MissionProgress progress(threeGateMission());
   progress.resetIdentity(1U, 1U);
@@ -290,6 +306,16 @@ TEST(MissionProgressTest, NearbyParallelLegCannotJumpPastConnectingTurn) {
             MissionProgressDecision::Kind::None);
   EXPECT_EQ(progress.currentGate().waypoint_index, 1U);
   EXPECT_EQ(progress.routeSnapshot().measured_progress.projection.segment_index, 0U);
+  const MissionMeasuredSample turn{
+      Eigen::Vector3d{5.0, 0.15, 3}, Eigen::Vector3d{0, 2, 0},
+      190'000'000, 4U, 1U};
+  (void)observe(progress, turn);
+  EXPECT_EQ(progress.routeSnapshot().measured_progress.projection.segment_index, 1U);
+  const MissionMeasuredSample outgoing{
+      Eigen::Vector3d{4.8, 0.3, 3}, Eigen::Vector3d{-2, 0, 0},
+      230'000'000, 5U, 1U};
+  (void)observe(progress, outgoing);
+  EXPECT_EQ(progress.routeSnapshot().measured_progress.projection.segment_index, 2U);
 }
 }  // namespace
 }  // namespace navigation_runtime

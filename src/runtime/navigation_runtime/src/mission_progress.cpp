@@ -142,6 +142,13 @@ MissionProgressDecision MissionProgress::observeMeasured(
     return {};
   }
   if (previous_.has_value() &&
+      sample.source_stamp_ns == previous_->source_stamp_ns &&
+      sample.sequence == previous_->sequence) {
+    // The Core timer may read the same immutable state lease twice. A repeat
+    // is not a new measurement and cannot erase a physical crossing.
+    return {};
+  }
+  if (previous_.has_value() &&
       (sample.source_stamp_ns <= previous_->source_stamp_ns ||
        sample.sequence <= previous_->sequence)) {
     // An unorderable stream cannot extend the physical crossing witness.

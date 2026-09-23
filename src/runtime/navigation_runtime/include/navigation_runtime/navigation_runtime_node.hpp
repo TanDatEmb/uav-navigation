@@ -459,6 +459,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
     bool airborne{false};
   };
   std::optional<ModeMissionBoundary> mode_mission_boundary_;
+  std::atomic_uint64_t mode_activation_id_seen_{0U};
   // A delayed ACTIVE heartbeat from a terminal PX4 activation cannot restart
   // the same mission after takeover, failure or completion.
   std::uint64_t last_terminal_mode_activation_id_{0U};

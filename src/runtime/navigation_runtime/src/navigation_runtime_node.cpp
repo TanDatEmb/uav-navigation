@@ -2315,6 +2315,14 @@ void NavigationRuntimeNode::onModeStatus(
     RCLCPP_ERROR(get_logger(), "rejected null navigation mode status");
     return;
   }
+  if (message->header.frame_id != planning_frame_) return;
+  if (message->state == navigation_contracts::msg::NavigationModeStatus::ACTIVE &&
+      message->activation_id > 0U) {
+    auto observed = mode_activation_id_seen_.load(std::memory_order_acquire);
+    while (observed < message->activation_id &&
+           !mode_activation_id_seen_.compare_exchange_weak(
+               observed, message->activation_id, std::memory_order_acq_rel)) {}
+  }
   if (mission_progress_) {
     const auto source_ns = navigation_common::rosTimeToNanoseconds(
         message->header.stamp).value_or(0);
@@ -2620,11 +2628,19 @@ void NavigationRuntimeNode::onCommandAdmission(
   const auto admission_ns = navigation_common::rosTimeToNanoseconds(
       message->header.stamp).value_or(0);
   const auto now_ns = now().nanoseconds();
-  if (admission_ns <= 0 || admission_ns > now_ns) return;
+  const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  if (admission_ns <= 0 || admission_ns > now_ns ||
+      !mode_mission_boundary_ || !mode_mission_boundary_->airborne ||
+      mode_mission_boundary_->activation_id != message->mode_activation_id ||
+      mode_mission_boundary_->source_stamp_ns > now_ns ||
+      now_ns - mode_mission_boundary_->source_stamp_ns > 200'000'000 ||
+      now_steady_ns < mode_mission_boundary_->receive_steady_ns ||
+      now_steady_ns - mode_mission_boundary_->receive_steady_ns > 200'000'000) return;
   const auto it = std::find_if(issued_mission_commands_.begin(),
                                issued_mission_commands_.end(),
                                [&](const auto& command) {
     return command.mission_id == message->mission_id &&
+        command.mode_activation_id == message->mode_activation_id &&
         command.localization_epoch == message->localization_epoch &&
         command.goal_epoch == message->goal_epoch &&
         command.waypoint_index == message->waypoint_index &&
@@ -8937,6 +8953,9 @@ void NavigationRuntimeNode::publishCommand() {
                   final_episode.safety_suffix_active;
               command.execution_recovery_state = static_cast<std::uint8_t>(
                   final_episode.recovery_state);
+              command.mode_activation_id = mission_progress_
+                  ? mission_activation_applied_.value_or(0U)
+                  : mode_activation_id_seen_.load(std::memory_order_acquire);
               rememberMissionCommandIssued(command);
               publish_ros_command();
               return true;

@@ -2,6 +2,9 @@ std_msgs/Header header
 
 uint64 localization_epoch
 uint64 goal_epoch
+# PX4 External Mode activation that this Core command is authorized for.
+# A prior activation's still-live command cannot be replayed after reentry.
+uint64 mode_activation_id
 string mission_id
 uint32 waypoint_index
 uint64 request_id
