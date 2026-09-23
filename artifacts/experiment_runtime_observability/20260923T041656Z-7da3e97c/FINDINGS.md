@@ -1,0 +1,14 @@
+# Findings and evidence limits
+
+No new **runtime-reproduced safety defect** was established in this diagnostic experiment. The following are kept separate by evidence class.
+
+| ID | Class | Evidence | Disposition |
+|---|---|---|---|
+| O1-SOURCE-01 | `FACT_FROM_TARGET_CODE` / conditional counterexample | PASS crossing is recomputed from current/previous samples within `MissionController::update()`; no crossing observation persists after an update with continuation false. A later continuation cannot consume that earlier local result. | Runtime `CROSS_BEFORE_READY` and lost crossing were **not reproduced** in 10 captured completed episodes. A targeted ordering harness is still needed before calling this a runtime defect. Do not add a product latch on this branch. |
+| O2-TRACE-01 | `FACT_FROM_RUNTIME_TRACE` | C has 4 runtime queue drops, 3 internal runtime sequence gaps, initial recorder startup gaps, and 21 ambiguous/unpaired publish keys. | Those individual intervals are `INSUFFICIENT_TRACE`; no missing event is interpolated. The 2680 exact keys remain valid local observations with their common ROS-clock proof. |
+| O3-SOURCE-01 | `FACT_FROM_TARGET_CODE` / conditional counterexample | `onPx4HoldHandoverCompleted(Success or Deactivated)` clears pending/in-flight even if `px4_hold_confirmed_` remains false; retry tests `pending && !confirmed`. | Six Hold runs did **not** produce a LOITER completion callback, so callback-before-status/retry termination was **not runtime-reproduced**. The policy and external contract need a focused event-order test. |
+| O3-RUNTIME-01 | `FACT_FROM_RUNTIME_TRACE` | Six requested Hold episodes each show raw command/ACK and later `AUTO_LOITER` status; zero `ModeCompleted(LOITER)`. W3/W5 prior `mode_exit` deactivations precede their later Hold requests. | Do not equate ACK, callback and status. No pilot/failsafe takeover was observed. |
+| O4-RUNTIME-01 | `FACT_FROM_RUNTIME_TRACE` | W2–W5 each show stale reject/suspend, one adapter receive-lease expiry, Hold request, later AUTO_LOITER, fresh world recertification with active bundle 0, and no command resume after Hold. | Observed product fencing in these four cases. This does not prove every interleaving or a timing safety bound. |
+| PERF-GAP-01 | `SPECIFICATION_GAP` / measurement gap | A/B/C provide command cadence and mapping/planner distributions, but no OFF/B direct MissionController, adapter receive or publish-call duration. C's mapping maximum exceeds A/B. | Instrumentation timing neutrality is bounded only by the observed cadence and tests; no race-timing or flight deadline qualification is claimed. |
+
+There is therefore no `FINDING_<id>.md` with a runtime defect reproduction in this branch. A conditional source hazard is documented here and in the exact-event reports without silently promoting it to a demonstrated flight failure.

@@ -1,0 +1,17 @@
+run,metric,unit,n,p50,p95,p99,max,source,limitations
+A_OFF,command_header_gap,ms,3592,16.0,16.000001,16.000001,32.000001,product rosbag /navigation/navigation_command,source-stamp cadence proxy not callback duration
+B_ON_NO_RECORDER,command_header_gap,ms,4044,16.0,16.000001,16.000001,16.000001,product rosbag /navigation/navigation_command,source-stamp cadence proxy not callback duration
+C_ON_RECORDER,command_header_gap,ms,3438,16.0,16.000001,16.000001,32.0,product rosbag /navigation/navigation_command,source-stamp cadence proxy not callback duration
+A_OFF,mapping_callback_total,us,714,35134,46562,53670,66393,report.json navigation_mapping.timing_distributions,
+B_ON_NO_RECORDER,mapping_callback_total,us,782,34871,46106,51415,63138,report.json navigation_mapping.timing_distributions,
+C_ON_RECORDER,mapping_callback_total,us,691,34053,44862,52382,78419,report.json navigation_mapping.timing_distributions,
+A_OFF,planning_scheduling_gap,us,582,0,141,400042,400173,report.json planning.planning_scheduling_gap_us,includes planned period gaps
+B_ON_NO_RECORDER,planning_scheduling_gap,us,668,0,137,399977,400131,report.json planning.planning_scheduling_gap_us,includes planned period gaps
+C_ON_RECORDER,planning_scheduling_gap,us,590,2,110,399982,400050,report.json planning.planning_scheduling_gap_us,includes planned period gaps
+C_ON_RECORDER,mission_controller_update,us,1467,5.284,14.06,52.78,67.172,audit O1 callback steady start/end,no OFF/B equivalent
+C_ON_RECORDER,command_publish_call,us,2701,54.493,90.487,116.392,288.042,audit O2 publish steady start/end,no OFF/B equivalent
+C_ON_RECORDER,adapter_receive_callback,us,2683,10.608,22.512,46.909,150.938,audit O2 receive steady start/end,no OFF/B equivalent
+C_ON_RECORDER,runtime_producer_enqueue,ns,4750,157,477,778,6999,audit producer 1 enqueue measurements,
+C_ON_RECORDER,adapter_producer_enqueue,ns,4239,271,525,909,5437,audit producer 2 enqueue measurements,
+C_ON_RECORDER,runtime_consumer_publish_call_window_p99_upper,ns,,,,286276,286276,queue accounting,maximum over per-window p99 and max; serialization not isolated
+C_ON_RECORDER,adapter_consumer_publish_call_window_p99_upper,ns,,,,91991,652731,queue accounting,maximum over per-window p99 and max; serialization not isolated

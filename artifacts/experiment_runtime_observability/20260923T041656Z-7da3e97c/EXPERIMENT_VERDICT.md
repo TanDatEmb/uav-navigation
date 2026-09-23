@@ -1,0 +1,19 @@
+# Diagnostic instrumentation experiment verdict
+
+**EXPERIMENT_DELIVERY: COMPLETE WITH EXPLICIT RUNTIME GAPS.** Product target `7da3e97cb399c2e39d62cfe60213a45e8a92300e`; experiment branch `codex/experiment-runtime-observability-instrumentation-20260923`. This branch changes product translation units only through compile-guarded audit hooks and adds an optional external input-fault harness. It does **not** change acceptance, planner admission, safety thresholds, leases, PX4 setpoint selection or recovery policy. Default build switch is `NAVIGATION_AUDIT_INSTRUMENTATION=OFF`. The final commit and remote SHA are recorded at delivery, not inferred here.
+
+| Gate | Verdict | Basis / limit |
+|---|---|---|
+| Default OFF / ON Release | PASS | 23 packages each; 86 OFF and 87 ON test groups, all zero failures. Final manifest refresh and tests are indexed. |
+| Diagnostic non-authority | PASS with static-review limit | Guard finds no audit control subscriber or unguarded hook. Sink is `void noexcept`, producer uses `try_lock`, fixed 1024 ring, no producer disk I/O; local audit loss cannot grant authority. This is source/test evidence, not formal information-flow proof. |
+| Overhead | MEASURED, NOT QUALIFIED | One A/B/C episode per arm. No new ≥100 ms command-header gap, producer enqueue sub-µs p99; C has four runtime audit drops and higher mapping maximum. Direct OFF/B callback durations and serialization-only cost are unavailable. |
+| O1 PASS_THROUGH | CLOSED FOR DIAGNOSTIC SHADOW | 10 completed observed episodes, 39 exact PASS crossing/accept events, all readiness-before-cross and same-update acceptance. Crossing-first, skipped-ball and re-entry are **not observed**; source counterexample remains conditional. |
+| O2 command pairing | CLOSED FOR DIAGNOSTIC SHADOW | C: 2680 one-to-one publish/receive pairs under a verified common `/clock`; 2340 exact-key first-use witnesses. 21 ambiguous/unpaired keys remain insufficient trace. Quantiles use simulated-clock ticks, not microsecond transport time. |
+| O3 Hold protocol | CLOSED FOR EVENT-MODEL SHADOW | Six request/command/ACK/AUTO_LOITER episodes; zero LOITER completion callbacks. Distinct audit/raw events can represent unconfirmed Hold. Callback-before-status, repeated Hold, operator/failsafe takeover remain runtime-unverified. |
+| O4 world/lease | CLOSED FOR OBSERVED FAULT TIMELINE | W1 control stays fresh; W2–W5 show stale reject/suspend → adapter lease expiry → Hold status → fresh-world recertification with no active bundle/resume. Four observed fences do not prove every interleaving. |
+
+`OBSERVABILITY_SUFFICIENT = YES_FOR_DIAGNOSTIC_SHADOW`. This means the high-criticality raw facts, identities, event owners, and clock domains are exposed well enough for a **write-only comparison model** that reports `Unknown`/`INSUFFICIENT_TRACE` where facts are absent. It is **not** a declaration that all protocol orderings or timing tails were exercised. Do not use audit records to decide flight behavior, and do not convert missing events into negative evidence.
+
+`SHADOW_REDUCER_READY = YES, DIAGNOSTIC_ONLY`. The next branch may implement an isolated observer/reducer that consumes copies of these events and compares predicted state with current product outcomes. It must have no path to mission/planner/PX4 authority, and its output may remain unresolved. No shadow reducer is implemented here. The native braking API E2 decision and PX4 retry policy may remain explicit `Unknown` in that shadow; neither is silently decided by architecture preference.
+
+`AUTHORITY_MIGRATION_READY = NO`. A/B/C are single SITL runs; O1 crossing-first and O3 takeover/callback order were not reproduced; world/lease tails, transport semantics and flight qualification are not established. No authority cutover, threshold change or product repair is recommended from this experiment alone. See `FINDINGS.md` and `DECISIONS_REQUIRED.md` for exact unresolved work.
