@@ -34,7 +34,9 @@ target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic
 add_library(${PROJECT_NAME}_adapter STATIC
   src/navigation_mode_node.cpp)
 if(NAVIGATION_AUDIT_INSTRUMENTATION)
-  target_compile_definitions(${PROJECT_NAME}_adapter PRIVATE NAVIGATION_AUDIT_INSTRUMENTATION=1)
+  # The public NavigationMode/Executor headers have conditional diagnostic
+  # members. All translation units that instantiate them need the same layout.
+  target_compile_definitions(${PROJECT_NAME}_adapter PUBLIC NAVIGATION_AUDIT_INSTRUMENTATION=1)
   target_compile_definitions(${PROJECT_NAME}_contract PUBLIC NAVIGATION_AUDIT_INSTRUMENTATION=1)
 endif()
 target_include_directories(${PROJECT_NAME}_adapter PRIVATE
