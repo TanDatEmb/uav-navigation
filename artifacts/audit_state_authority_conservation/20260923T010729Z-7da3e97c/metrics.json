@@ -1,0 +1,31 @@
+{
+  "scope": "16 selected C++ owner types, 3 identity-source files, one command message; not whole product",
+  "behavioral_candidate_fields": 240,
+  "dispositions": {
+    "UNRESOLVED": 215,
+    "KEEP": 22,
+    "MOVE": 3
+  },
+  "selected_writer_reader_rows": 44,
+  "diagnostic_or_test_candidate_declarations": 78,
+  "bool_like_behavioral_candidates": 60,
+  "optional_like_behavioral_candidates": 26,
+  "mutex_declarations_in_scanned_types": 16,
+  "identity_helper_occurrences_selected_sources": {
+    "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp": 33,
+    "src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp": 0,
+    "src/execution/navigation_execution/include/navigation_execution/committed_bundle_store.hpp": 19
+  },
+  "identity_helper_occurrence_total": 52,
+  "navigation_command_nonconstant_fields": 73,
+  "navigation_command_preliminary_classes": {
+    "CONTROL_REQUIRED": 6,
+    "SAFETY_ADMISSION_REQUIRED": 13,
+    "PROVENANCE_REQUIRED": 7,
+    "DIAGNOSTIC_ONLY": 47
+  },
+  "verified_nested_runtime_lock_depth_lower_bound": 4,
+  "whole_product_manual_comparison_sites": "UNRESOLVED",
+  "whole_product_cross_owner_atomic_transitions": "UNRESOLVED",
+  "whole_product_authority_owners": "UNRESOLVED"
+}

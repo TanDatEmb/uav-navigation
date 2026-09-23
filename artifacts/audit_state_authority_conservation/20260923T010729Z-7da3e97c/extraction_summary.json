@@ -1,0 +1,23 @@
+{
+  "target_sha": "7da3e97cb399c2e39d62cfe60213a45e8a92300e",
+  "scoped_declarations": 368,
+  "behavioral_candidates": 240,
+  "diagnostic_candidates": 78,
+  "file_blobs": {
+    "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp": "bcd4235d7abe5dcef8730a751760b130f745cac2",
+    "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp": "9e1d62d9fcafef4f9cf56775ee263ef3cef908dc",
+    "src/execution/navigation_execution/include/navigation_execution/committed_bundle_store.hpp": "43047ecc7f7da8027860bcf42c2d807c2e555885",
+    "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp": "775422f25c2ac9288c5ee25625dba1cb16befb59",
+    "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/navigation_mode.hpp": "0bf4112406a2d859486aded7c8d85ca06adcc526",
+    "src/runtime/navigation_runtime/include/navigation_runtime/planning_worker.hpp": "a927210c7b63a5b830a930f968b647874e38cc48",
+    "src/runtime/navigation_runtime/include/navigation_runtime/planner_fsm.hpp": "02e6c81da01277f6c762732c94710e94f7580ed0",
+    "src/mapping/navigation_mapping/include/navigation_mapping/world_snapshot_store.hpp": "59c12f8a71da3c9c1b62fc4763f1efe9ea493eee",
+    "src/contracts/navigation_mission/include/navigation_mission/route_progress.hpp": "73300370022ff78d81c743602420759271c57845",
+    "src/execution/navigation_execution/include/navigation_execution/execution_state_store.hpp": "0ecb073af0b5b99862571d3d50d093eaeeb88e07",
+    "src/runtime/navigation_runtime/include/navigation_runtime/kinematic_derivative_estimator.hpp": "810cbbd28da840c5d63502f5b0848dee15271cc5",
+    "src/runtime/navigation_runtime/include/navigation_runtime/heading_rebind_worker.hpp": "d6854a2d4049048698dfa8807fb561ccca2a6223",
+    "src/runtime/navigation_runtime/include/navigation_runtime/baseline_refinement.hpp": "56418c95b38ddaf007145d9737e81c676af6b078",
+    "src/mapping/navigation_mapping/include/navigation_mapping/mapping_worker.hpp": "94f14cc9812bb483f8e81e81818a0ec73fcae9ba",
+    "src/runtime/navigation_runtime/include/navigation_runtime/execution_trace_snapshot.hpp": "a107cdc015948fe4461ddff16199e04ef5d4e835"
+  }
+}

@@ -1,0 +1,6 @@
+digraph pass {
+  graph [label="PASS_THROUGH: observation and readiness order", labelloc=t, rankdir=LR];
+  node [shape=box, style=rounded];
+  subgraph cluster_old { label="TARGET AS-IS"; crossing [label="measured segment crosses"]; witness [label="current continuation? "]; accept [label="accept gate"]; overwrite [label="next sample replaces previous"]; crossing -> witness; witness -> accept [label="yes"]; witness -> overwrite [label="no"]; }
+  subgraph cluster_new { label="CANDIDATE"; observation [label="measured crossing event\nroute/epoch/time bound"]; ready [label="successor readiness"]; policy [label="policy acceptance\nseparate decision"]; observation -> policy; ready -> policy; }
+}

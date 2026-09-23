@@ -1,0 +1,14 @@
+digraph hold {
+  graph [label="PX4 Hold: independent API and VehicleStatus observations", labelloc=t, rankdir=LR];
+  node [shape=box, style=rounded];
+  req [label="Hold requested"];
+  flight [label="scheduleMode in flight"];
+  api [label="API Success / Deactivated"];
+  status [label="VehicleStatus AUTO_LOITER"];
+  retry [label="API Failure -> retry deadline"];
+  req -> flight;
+  flight -> api;
+  flight -> retry -> flight;
+  api -> status [style=dashed, label="not guaranteed by code"];
+  req -> status [style=dotted, label="status can arrive separately"];
+}

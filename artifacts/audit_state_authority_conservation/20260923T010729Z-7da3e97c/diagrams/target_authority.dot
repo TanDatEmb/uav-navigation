@@ -1,0 +1,18 @@
+digraph target {
+  graph [label="CANDIDATE target: decisions single writer, independent safety boundary", labelloc=t, rankdir=LR];
+  node [shape=box, style=rounded];
+  ingress [label="Validated immutable events\nbounded priority queues"];
+  core [label="NavigationCore reducer\nmission + execution decisions"];
+  mapping [label="Mapping worker\nimmutable world result"];
+  planning [label="Planning worker\nimmutable candidate result"];
+  store [label="ExecutionAuthority\nactive / staged / certificate"];
+  px4 [label="PX4 boundary\nlocal veto / frame / lease / Hold"];
+  status [label="VehicleStatus / operator\nindependent observation"];
+  ingress -> core;
+  mapping -> ingress;
+  planning -> ingress;
+  core -> store [label="sole commit"];
+  store -> px4 [label="reference + witnesses"];
+  status -> px4;
+  px4 -> ingress [label="protocol events"];
+}

@@ -1,0 +1,14 @@
+digraph cutover {
+  graph [label="Future cutover: predecessor remains authority until exact activation", labelloc=t, rankdir=LR];
+  node [shape=box, style=rounded];
+  old [label="AS-IS Store active A"];
+  staged [label="AS-IS pending B\nactivation time + predecessor key"];
+  timer [label="command timer exact rechecks"];
+  new [label="AS-IS active B"];
+  old -> staged -> timer -> new;
+  core [label="Target reducer decision"];
+  targetA [label="Target active A + staged B"];
+  targetB [label="Target active B"];
+  core -> targetA [label="stage"];
+  targetA -> targetB [label="atomic due cutover\ncertificate + lease"];
+}

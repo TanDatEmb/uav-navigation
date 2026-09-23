@@ -1,0 +1,20 @@
+digraph as_is {
+  graph [label="TARGET AS-IS: distinct facts, distributed decisions", labelloc=t, rankdir=LR];
+  node [shape=box, style=rounded];
+  mission [label="MissionController\naccepted gate / route cursor"];
+  mode [label="NavigationMode\nlocal admission / frame / recovery cache"];
+  executor [label="ModeExecutor\nHold API / VehicleStatus"];
+  runtime [label="NavigationRuntimeNode\ndesired and executing goals"];
+  episode [label="ExecutionEpisode\nphase / recovery / latches"];
+  store [label="ExecutionTimelineStore\nactive + staged bundles"];
+  world [label="WorldSnapshotStore\nlatest world"];
+  worker [label="PlanningWorker\nsolve result only"];
+  mission -> mode [label="goal event"];
+  mode -> runtime [label="NavigationGoal"];
+  runtime -> episode [label="decision writes"];
+  runtime -> store [label="stage / commit / sample"];
+  world -> runtime [label="latest identity"];
+  worker -> runtime [label="candidate"];
+  store -> mode [label="NavigationCommand via runtime"];
+  mode -> executor [label="Hold request"];
+}
