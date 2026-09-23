@@ -3189,6 +3189,25 @@ def _run_sim_unlocked(
             raycasting_enabled=bool(backup_evidence["raycasting_enabled"]),
             backup_allow_unknown=bool(backup_evidence["backup_allow_unknown"]),
         )
+        # Input-boundary fault for the removable observability experiment.
+        # The canonical product YAML is untouched; only this session's copy
+        # receives the sidecar output topic. No control/safety threshold moves.
+        audit_fault_ms_text = os.environ.get("UAV_NAV_AUDIT_WORLD_FAULT_MS", "")
+        audit_fault_ms = None
+        audit_fault_ready_count = None
+        if audit_fault_ms_text:
+            audit_fault_ms = int(audit_fault_ms_text)
+            audit_fault_ready_count = int(os.environ.get("UAV_NAV_AUDIT_FAULT_READY_COUNT", "20"))
+            if not 1 <= audit_fault_ms <= 20_000 or audit_fault_ready_count < 1:
+                raise ValueError("invalid audit world fault duration or ready count")
+            if mapping_config is None:
+                raise ValueError("audit world fault requires navigation runtime mapping")
+            audit_mapping_document = yaml.safe_load(mapping_config.read_text(encoding="utf-8"))
+            audit_mapping_params = audit_mapping_document["navigation_runtime_node"]["ros__parameters"]
+            audit_mapping_params["navigation_runtime"]["registered_scan_topic"] = (
+                "/navigation/audit_registered_scan")
+            mapping_config.write_text(
+                yaml.safe_dump(audit_mapping_document, sort_keys=False), encoding="utf-8")
         external_mode_config: Path | None = None
         if control_interface == "external_mode":
             external_mode_config = _external_mode_params(
@@ -3337,6 +3356,13 @@ def _run_sim_unlocked(
                 "ros2", "run", "px4_odometry_bridge", "px4_odometry_bridge_node", "--ros-args",
                 "--params-file", str(ros_config), "-p", "use_sim_time:=true",
             ], enable_rviz=not headless), cwd=ROOT)
+        if audit_fault_ms is not None:
+            session.start("audit_scan_gate", _ros_shell([
+                str(CANONICAL_PYTHON), str(ROOT / "tools/audit_observability/registered_scan_gate.py"),
+                "--output", str(session.directory / "audit_world_fault.jsonl"),
+                "--fault-ms", str(audit_fault_ms),
+                "--ready-count", str(audit_fault_ready_count),
+            ], enable_rviz=False), cwd=ROOT)
         if not characterization_profile:
             session.start(
                 "mapping",

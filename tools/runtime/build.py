@@ -229,6 +229,14 @@ def _main_unlocked() -> int:
             "--cmake-args",
             f"-DCMAKE_BUILD_TYPE={spec['build_type']}",
         ]
+        # Removable observability experiment: compile-time only, default OFF.
+        # This environment selector is recorded in the build command/manifest;
+        # it never becomes a runtime or safety parameter.
+        audit_switch = os.environ.get("NAVIGATION_AUDIT_INSTRUMENTATION", "OFF").upper()
+        if audit_switch not in {"ON", "OFF"}:
+            print("NAVIGATION_AUDIT_INSTRUMENTATION must be ON or OFF", file=sys.stderr)
+            return 2
+        command.append(f"-DNAVIGATION_AUDIT_INSTRUMENTATION={audit_switch}")
         if compile_flags:
             command.extend(
                 [
