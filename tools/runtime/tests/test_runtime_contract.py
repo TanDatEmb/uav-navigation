@@ -26,6 +26,7 @@ import monitor
 from monitor import StreamStats
 import build_provenance
 import dataset_shadow_planning
+import external_mode_scenario
 import gazebo_native_observer
 import report
 import runner
@@ -71,6 +72,28 @@ def _mapping_outcomes(updated: int, **overrides: int) -> dict[str, int]:
 
 
 class RuntimeContractTest(unittest.TestCase):
+    def test_mission_scenario_reads_core_progress_receipt(self) -> None:
+        scenario = external_mode_scenario.ExternalModeScenario.__new__(
+            external_mode_scenario.ExternalModeScenario)
+        scenario.execution = "mission"
+        scenario.goal_indices = []
+        scenario.waypoint_acceptance_events = []
+        scenario.NavigationMissionProgress = SimpleNamespace(GOAL=0)
+        recorded = []
+        scenario._record = lambda kind, payload: recorded.append((kind, payload))
+        receipt = SimpleNamespace(
+            mission_id="mission", route_revision=1, localization_epoch=7,
+            mode_activation_id=2, waypoint_index=1, request_id=3,
+            event=0, waypoint_accepted=True, accepted_waypoint_index=0,
+            acceptance_position_error_m=0.2, acceptance_speed_mps=0.7)
+        scenario._mission_progress(receipt)
+        self.assertEqual(scenario.goal_indices, [1])
+        self.assertEqual(
+            [event["accepted_waypoint_index"] for event in scenario.waypoint_acceptance_events],
+            [0])
+        self.assertEqual([kind for kind, _ in recorded],
+                         ["goal", "waypoint_accepted", "mission_progress"])
+
     def test_visibility_range_overlay_is_session_local_and_exact(self) -> None:
         source = ROOT / "src/uav_simulation/models/lidar_mid360/model.sdf"
         with tempfile.TemporaryDirectory() as temporary:

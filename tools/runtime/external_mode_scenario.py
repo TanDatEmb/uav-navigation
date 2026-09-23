@@ -314,6 +314,7 @@ class ExternalModeScenario:
         from diagnostic_msgs.msg import DiagnosticArray
         from navigation_contracts.msg import (
             NavigationGoal,
+            NavigationMissionProgress,
             NavigationModeStatus,
             PropagatedOdometry,
         )
@@ -339,6 +340,7 @@ class ExternalModeScenario:
         self.NavigationGoal = NavigationGoal
         self.Point = Point
         self.NavigationModeStatus = NavigationModeStatus
+        self.NavigationMissionProgress = NavigationMissionProgress
         self.VehicleCommand = VehicleCommand
         self.OffboardControlMode = OffboardControlMode
         self.TrajectorySetpoint = TrajectorySetpoint
@@ -535,6 +537,9 @@ class ExternalModeScenario:
             NavigationCommand, "/navigation/navigation_command", self._navigation_command, reliable_qos
         )
         self.node.create_subscription(NavigationGoal, "/navigation/goal", self._goal, reliable_qos)
+        self.node.create_subscription(
+            NavigationMissionProgress, "/navigation/mission_progress",
+            self._mission_progress, reliable_qos)
         self.node.create_subscription(Bool, "/navigation/mission_complete", self._mission_complete, reliable_qos)
         self.node.create_subscription(
             NavigationModeStatus, "/navigation/mode_status", self._mode_status, reliable_qos)
@@ -1586,10 +1591,37 @@ class ExternalModeScenario:
             if self.safety_stop_sim_ns is None:
                 self.safety_stop_sim_ns = self.sim_now_ns
             self.safety_stop_reason_name = record["reason_name"]
-        if record["waypoint_accepted"]:
+        if record["waypoint_accepted"] and self.execution != "mission":
             self.waypoint_acceptance_events.append(record)
             self._record("waypoint_accepted", record)
         self._record("navigation_mode_status", record)
+
+    def _mission_progress(self, message: Any) -> None:
+        """Observe Core's immutable mission decision, not adapter status echoes."""
+        if self.execution != "mission":
+            return
+        record = {
+            "mission_id": str(message.mission_id),
+            "route_revision": int(message.route_revision),
+            "localization_epoch": int(message.localization_epoch),
+            "mode_activation_id": int(message.mode_activation_id),
+            "waypoint_index": int(message.waypoint_index),
+            "request_id": int(message.request_id),
+            "event": int(message.event),
+            "waypoint_accepted": bool(message.waypoint_accepted),
+            "accepted_waypoint_index": int(message.accepted_waypoint_index),
+            "acceptance_position_error_m": float(message.acceptance_position_error_m),
+            "acceptance_speed_mps": float(message.acceptance_speed_mps),
+        }
+        if record["event"] == int(self.NavigationMissionProgress.GOAL):
+            index = record["waypoint_index"]
+            if not self.goal_indices or self.goal_indices[-1] != index:
+                self.goal_indices.append(index)
+            self._record("goal", record)
+        if record["waypoint_accepted"]:
+            self.waypoint_acceptance_events.append(record)
+            self._record("waypoint_accepted", record)
+        self._record("mission_progress", record)
 
     def _mode_completed(self, message: Any) -> None:
         if self.external_mode_id is None or int(message.nav_state) != self.external_mode_id:
