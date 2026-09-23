@@ -1165,7 +1165,7 @@ class RuntimeContractTest(unittest.TestCase):
         mapping_actor = (
             ROOT / "src/mapping/navigation_mapping/src/mapping_actor.cpp"
         ).read_text(encoding="utf-8")
-        run_cycle = "void NavigationRuntimeNode::runCycle(const PlanningKey& scheduled_key)"
+        run_cycle = "void NavigationRuntimeNode::runCycle("
         cycle = source[
             source.index(run_cycle):
             source.index("void NavigationRuntimeNode::publishCommand()")]

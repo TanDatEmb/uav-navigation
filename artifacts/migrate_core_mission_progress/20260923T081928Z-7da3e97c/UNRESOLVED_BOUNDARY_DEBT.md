@@ -1,0 +1,11 @@
+# Named boundary debt
+
+The `long_featured` completion differential in `SITL_RESULTS.md` is an unresolved **migration blocker**, not boundary debt. It must be corrected and rechecked before this cut can be accepted. The items below remain bounded architectural/qualification debt independent of that failure.
+
+1. **PX4 firmware completion/takeover semantics.** This cut leaves the existing Hold scheduler and executor callback protocol unchanged. The pinned interface dependency supports source inspection, but exact PX4 firmware callback/status ordering remains an external contract; no callback success is promoted to observed AUTO_LOITER.
+2. **Legacy public E2 ABI.** `MissionController::onTrajectory()` has no in-repository product caller after adapter unlinking, so it is `INTERNAL_DEAD/LEGACY` for this product path. External binary/source clients were not enumerated. A dedicated compatibility cut should remove or adapt the exported API after consumer inventory, without reintroducing a second waypoint writer.
+3. **Adapter process restart identity.** Activation IDs are monotonic within one adapter process; a restart resets that counter. Core fences old activations, so a restarted adapter may require a coordinated Core restart or a future boot/session identity. It fails closed rather than silently accepting an old session.
+4. **Cross-process scheduling tails.** The new admission receipt and 200 ms mode-status observation lease are component-tested. Representative transport/CPU tails and physical route motion require repeated SITL and recorded sensor data before qualification. A missing receipt can delay progress but cannot fabricate it. The observed mission completion differential requires direct root-cause work in this cut.
+5. **Route replacement.** This first cut loads one immutable mission; route revision is presently fixed to one for that definition. Hot route replacement is outside scope. Revision/localization crossing invalidation is component-tested and must remain if replacement is added later.
+
+None of these is an alternative mission writer in the active product path. No safety gate was relaxed to compensate for them. The existing zero-coefficient simulated tracking bypass made these SITL runs qualification-ineligible and was not changed by this branch.
