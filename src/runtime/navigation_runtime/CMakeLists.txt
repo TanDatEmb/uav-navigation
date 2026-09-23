@@ -118,9 +118,11 @@ ament_export_include_directories(include)
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_mission_progress test/test_mission_progress.cpp)
-  target_include_directories(test_mission_progress PRIVATE include)
+  target_include_directories(test_mission_progress PRIVATE include
+    ${navigation_contracts_INCLUDE_DIRS})
   target_link_libraries(test_mission_progress navigation_runtime_core)
-  ament_target_dependencies(test_mission_progress navigation_mission)
+  ament_target_dependencies(test_mission_progress
+    navigation_mission navigation_contracts navigation_execution)
   ament_add_gtest(test_world_snapshot_store test/test_world_snapshot_store.cpp)
   target_include_directories(test_world_snapshot_store PRIVATE include)
   target_link_libraries(test_world_snapshot_store

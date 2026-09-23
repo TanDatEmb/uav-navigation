@@ -590,6 +590,82 @@ TEST(NavigationRuntimeMissionCut, InitialMeasuredPassCreatesSuccessorInsideCore)
   context->shutdown("mission cut component test complete");
 }
 
+TEST(NavigationRuntimeMissionCut,
+     EstablishedActivationKeepsMeasuredCrossingWhenModeHeartbeatIsLate) {
+  auto context = std::make_shared<rclcpp::Context>();
+  context->init(0, nullptr);
+  rclcpp::NodeOptions options;
+  options.context(context);
+  options.parameter_overrides({
+      rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
+      rclcpp::Parameter("navigation_runtime.body_frame_id", "base_link"),
+      rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
+      rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
+      rclcpp::Parameter("navigation_runtime.mission_file",
+                        NAVIGATION_HANDOVER_MISSION_FILE_PATH),
+  });
+  auto node = std::make_shared<NavigationRuntimeNode>(options);
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  NavigationRuntimeEpochResetTestPeer::missionState(*node, 0.0,
+                                                    node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionActive(*node);
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  std::this_thread::sleep_for(2ms);
+  NavigationRuntimeEpochResetTestPeer::missionState(*node, 0.0,
+                                                    node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  ASSERT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 1U);
+
+  // The adapter may continue accepting 100 ms leased commands while one
+  // ModeStatus heartbeat is delayed. Keep the source-time crossing pair
+  // observed by Core; the fresh exact admission receipt still gates acceptance.
+  std::this_thread::sleep_for(100ms);
+  NavigationRuntimeEpochResetTestPeer::missionState(*node, 0.0,
+                                                    node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  std::this_thread::sleep_for(125ms);
+  NavigationRuntimeEpochResetTestPeer::missionState(*node, 2.8,
+                                                    node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  ASSERT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 1U);
+  navigation_contracts::msg::NavigationCommand issued;
+  issued.header.frame_id = "lio_odom";
+  issued.header.stamp = node->now();
+  issued.valid_until = rclcpp::Time(node->now().nanoseconds() + 100'000'000,
+                                    RCL_SYSTEM_TIME);
+  issued.execution_authorization = navigation_contracts::msg::NavigationCommand::
+      EXECUTION_AUTHORIZATION_GRANTED;
+  issued.mission_id = "external_mode_open_route";
+  issued.localization_epoch = 1U;
+  issued.goal_epoch = 2U;
+  issued.mode_activation_id = 1U;
+  issued.waypoint_index = 1U;
+  issued.request_id = 2U;
+  issued.bundle_generation = 4U;
+  issued.sample_id = 11U;
+  issued.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  issued.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  issued.certified_main_continuation = true;
+  issued.continuation_boundary_stamp_ns =
+      static_cast<std::uint64_t>(node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionCommandIssued(*node, issued);
+  navigation_contracts::msg::NavigationCommandAdmission receipt;
+  receipt.header.frame_id = "lio_odom";
+  receipt.header.stamp = node->now();
+  receipt.mode_activation_id = 1U;
+  receipt.mission_id = issued.mission_id;
+  receipt.localization_epoch = issued.localization_epoch;
+  receipt.goal_epoch = issued.goal_epoch;
+  receipt.waypoint_index = issued.waypoint_index;
+  receipt.request_id = issued.request_id;
+  receipt.bundle_generation = issued.bundle_generation;
+  receipt.sample_id = issued.sample_id;
+  NavigationRuntimeEpochResetTestPeer::missionCommandAdmitted(*node, receipt);
+  EXPECT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 2U);
+  node.reset();
+  context->shutdown("late mode heartbeat mission test complete");
+}
+
 TEST(NavigationRuntimeEpochReset, TerminalDuringDrainCannotBeResurrectedByNewWorld) {
   ASSERT_EXIT(exerciseEpochDrainWithConcurrentGoal(true), testing::ExitedWithCode(0), "");
 }

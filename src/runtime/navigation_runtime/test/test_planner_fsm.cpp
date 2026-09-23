@@ -62,6 +62,25 @@ TEST(PlannerFsm, ClassifiesDesiredAndExecutingIdentityTransitions) {
                "same_route_waypoint_advance");
 }
 
+TEST(PlannerFsm, DesiredPassGateAdvanceCannotRevokeInFlightPredecessorSample) {
+  const std::optional predecessor{goal("mission", 2U, 3U, 7U)};
+  const std::optional successor{goal("mission", 3U, 4U, 7U)};
+  ASSERT_EQ(classifyGoalTransition(successor, predecessor),
+            GoalTransitionKind::kSameRouteWaypointAdvance);
+  // Mission acceptance changes desired intent; the old certified execution
+  // still owns a sample captured just before that event.
+  EXPECT_TRUE(sameExecutionPublicationIdentity(
+      predecessor, predecessor, 9U, 9U, 5U, 5U));
+  // Once successor activation changes execution authority, the late old
+  // sample must lose the final publication gate.
+  EXPECT_FALSE(sameExecutionPublicationIdentity(
+      predecessor, successor, 9U, 10U, 5U, 5U));
+  EXPECT_FALSE(sameExecutionPublicationIdentity(
+      predecessor, predecessor, 9U, 9U, 5U, 6U));
+  EXPECT_FALSE(sameExecutionPublicationIdentity(
+      predecessor, goal("other", 2U, 3U, 7U), 9U, 9U, 5U, 5U));
+}
+
 TEST(PlannerFsm, PlannerSolveActivityDisarmsOnlyItsOwnedGeneration) {
   std::int64_t started_ns{0};
   std::uint64_t active_generation{0};

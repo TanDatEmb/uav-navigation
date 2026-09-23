@@ -35,6 +35,25 @@ enum class GoalTransitionKind : std::uint8_t {
          lhs->request_id == rhs->request_id;
 }
 
+// An in-flight sample belongs to the executing trajectory, not the desired
+// mission gate. During a PASS_THROUGH handoff the desired goal may advance
+// while the predecessor remains the certified execution owner. The caller
+// still checks the exact bundle pointer, world, state and finite leases at
+// the final publication transaction.
+[[nodiscard]] inline bool sameExecutionPublicationIdentity(
+    const std::optional<navigation_contracts::msg::NavigationGoal>& sampled_execution,
+    const std::optional<navigation_contracts::msg::NavigationGoal>& current_execution,
+    std::uint64_t sampled_command_goal_epoch,
+    std::uint64_t current_command_goal_epoch,
+    std::uint64_t sampled_localization_epoch,
+    std::uint64_t current_localization_epoch) noexcept {
+  return sampled_command_goal_epoch != 0U &&
+         sampled_command_goal_epoch == current_command_goal_epoch &&
+         sampled_localization_epoch != 0U &&
+         sampled_localization_epoch == current_localization_epoch &&
+         sameGoalIdentity(sampled_execution, current_execution);
+}
+
 [[nodiscard]] constexpr const char* goalTransitionKindName(
     const GoalTransitionKind kind) noexcept {
   switch (kind) {

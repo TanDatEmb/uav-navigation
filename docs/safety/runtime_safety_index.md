@@ -780,3 +780,26 @@ with lineage DEC-20260901-053/054/055, DEC-20260902-041,
 DEC-20260906-001 and DEC-20260909-021. This is not a relaxed safety gate,
 new certificate authority or qualification claim; all full Release/native
 verification is required before promotion.
+
+## 2026-09-23 Core mission handoff repair
+
+The [current contract](runtime_safety_current.md) records the focused
+first-cut repair. Owner/scope: Core `NavigationRuntimeNode` retains sole
+mission progress and command publication authority; the PX4 adapter retains
+local command, state, tracking and receive-lease admission. Safety impact:
+desired mission gate advance does not revoke an exact still-certified
+predecessor execution. Once an ACTIVE mode activation is established, a
+delayed recurring ModeStatus heartbeat alone does not erase measured crossing;
+the same activation, airborne status and exact fresh adapter admission receipt
+are still required. Adapter-local 100 ms command and 200 ms state/mode
+boundaries, 500 ms runtime freshness, world/certificate/localization checks and
+Hold remain fail-closed. No numeric threshold changed. Evidence: pre-fix H4/H5
+and `publishCommand()` stack, component tests and diagnostic SITL in
+`artifacts/repair_core_mission_liveness/20260923T102222Z-db5880a0/`; source
+lineage is failed migration `db5880a05ffbb82f3f528bc18934af0cb0390bab`.
+Removal condition: revert if final publication cannot prove exact execution
+identity, an adapter-local admission can be fabricated by stale/foreign data,
+or predecessor exposure can outlive its certificate/lease. Verify with Release
+build, focused package/Python tests, static mission-authority guard, SITL
+parity and world/command lease fence, `python3 tools/validate_runtime_safety_ledger.py`
+and `git diff --check`. SITL is diagnostic, not flight qualification.

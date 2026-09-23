@@ -1,4 +1,11 @@
 #include "navigation_runtime/mission_progress.hpp"
+#include "navigation_runtime/mission_goal.hpp"
+#include "navigation_runtime/execution_episode.hpp"
+#include "navigation_runtime/runtime_boundaries.hpp"
+
+#include <navigation_contracts/navigation_command_contract.hpp>
+#include <navigation_execution/command_sampler.hpp>
+#include <navigation_execution/execution_anchor.hpp>
 
 #include <gtest/gtest.h>
 #include <tuple>
@@ -60,6 +67,213 @@ void acceptInitialPass(MissionProgress& progress) {
   EXPECT_EQ(observe(progress, measured(0.0, 110, 2, 0.0)).kind,
             MissionProgressDecision::Kind::Goal);
   EXPECT_EQ(progress.currentGate().waypoint_index, 1U);
+}
+
+navigation_planning::CandidateBundle handoffCandidate(
+    const navigation_world_model::WorldSnapshotIdentity& world,
+    std::uint64_t goal_epoch, std::uint64_t request,
+    std::uint64_t generation, std::int64_t start_ns,
+    double position_offset_m = 0.0) {
+  navigation_planning::CandidateBundle candidate;
+  candidate.world_identity = world;
+  candidate.pinned_world_identity = world;
+  candidate.localization_epoch = 1U;
+  candidate.goal_epoch = goal_epoch;
+  candidate.request_id = request;
+  candidate.bundle_generation = generation;
+  candidate.valid_from_ns = start_ns;
+  candidate.valid_until_ns = start_ns + 900'000'000;
+  candidate.activation_stamp_ns = start_ns;
+  candidate.declared_start_ns = start_ns;
+  candidate.declared_end_ns = start_ns + 900'000'000;
+  candidate.start_wall_time_s = static_cast<double>(start_ns) * 1.0e-9;
+  candidate.duration_s = 0.9;
+  candidate.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  candidate.certificates = {true, true, true, true};
+  candidate.protected_region.minimum = Eigen::Vector3d{0.0, -1.0, 2.0};
+  candidate.protected_region.maximum = Eigen::Vector3d{6.0, 1.0, 4.0};
+  candidate.role_schedule = {{0.0, 0.9, navigation_planning::CandidateRole::kMain}};
+  candidate.evaluator = [start_ns, position_offset_m](std::int64_t stamp,
+                                   navigation_planning::TrajectoryPoint& point) {
+    point.position_world = Eigen::Vector3d{
+        position_offset_m + static_cast<double>(stamp - start_ns) * 1.0e-9,
+        0.0, 3.0};
+    point.velocity_world = Eigen::Vector3d{1.0, 0.0, 0.0};
+    point.trajectory_time_s = static_cast<double>(stamp - start_ns) * 1.0e-9;
+    return true;
+  };
+  return candidate;
+}
+
+struct HandoffAdapterIdentityModel {
+  std::optional<navigation_contracts::msg::NavigationCommand> last;
+
+  bool admit(const navigation_contracts::msg::NavigationCommand& command,
+             std::int64_t now_ns) {
+    if (!navigation_contracts::commandValidAt(command, now_ns) ||
+        command.mode_activation_id != 1U ||
+        (last && (command.mission_id != last->mission_id ||
+                  command.sample_id <= last->sample_id ||
+                  command.request_id < last->request_id ||
+                  !navigation_contracts::commandWorldIdentityNonRegressing(
+                      command, *last)))) {
+      return false;
+    }
+    last = command;
+    return true;
+  }
+};
+
+TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover) {
+  MissionProgress progress(threeGateMission());
+  progress.resetIdentity(1U, 1U);
+  (void)observe(progress, measured(0.0, 100, 1, 0.0));
+  ASSERT_EQ(progress.activate().kind, MissionProgressDecision::Kind::Goal);
+  ASSERT_EQ(observe(progress, measured(0.0, 110, 2, 0.0)).kind,
+            MissionProgressDecision::Kind::Goal);
+  ASSERT_EQ(progress.currentGate().waypoint_index, 1U);
+  const auto predecessor_goal = makeMissionGoal(
+      progress, *navigation_common::nanosecondsToRosTime(110'000'000));
+  ASSERT_TRUE(predecessor_goal);
+
+  navigation_execution::ExecutionTimelineStore timeline;
+  const navigation_world_model::WorldSnapshotIdentity world{
+      1U, 4U, 1U, 100'000'000};
+  const auto empty = timeline.snapshot();
+  ASSERT_EQ(timeline.publishWorldIdentityIfCurrent(
+                world, empty.version, {}, false),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+  ASSERT_TRUE(timeline.setActiveGoalEpoch(9U));
+  const auto predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
+      handoffCandidate(world, 9U, 2U, 4U, 100'000'000));
+  ASSERT_TRUE(predecessor->valid());
+  ASSERT_EQ(timeline.tryCommit({world, 9U, 1U}, predecessor),
+            navigation_execution::CommitDecision::kCommitted);
+  ExecutionEpisode episode;
+  episode.beginGoal(1U, 9U, 2U, false);
+  episode.commandCommitted(*predecessor);
+  navigation_execution::CommandSampler sampler(timeline);
+
+  // Crossing arrives before the downstream receipt. Neither the crossing nor
+  // an unacknowledged sampled command fabricates mission acceptance.
+  ASSERT_EQ(observe(progress, measured(1.5, 150, 3)).kind,
+            MissionProgressDecision::Kind::None);
+  ASSERT_TRUE(progress.crossing());
+  ASSERT_EQ(progress.currentGate().request_id, 2U);
+  const MissionContinuationWitness admitted_predecessor{
+      progress.routeIdentity(), progress.currentGate(),
+      MissionContinuationWitness::Kind::Main, 4U, 150'000'000, 1'000'000'000};
+  ASSERT_EQ(progress.observeContinuation(admitted_predecessor, 170'000'000).kind,
+            MissionProgressDecision::Kind::Goal);
+  ASSERT_EQ(progress.currentGate().waypoint_index, 2U);
+  const auto successor_goal = makeMissionGoal(
+      progress, *navigation_common::nanosecondsToRosTime(170'000'000));
+  ASSERT_TRUE(successor_goal);
+  ASSERT_EQ(successor_goal->request_id, 3U);
+  ASSERT_TRUE(timeline.setActiveGoalEpoch(10U, true));
+  episode.beginGoal(1U, 10U, 3U, true);
+  EXPECT_EQ(timeline.load(), predecessor);
+  EXPECT_EQ(episode.snapshot().active_generation, 4U);
+  EXPECT_EQ(episode.snapshot().goal_epoch, 10U);
+  EXPECT_EQ(episode.snapshot().active_command_goal_epoch, 9U);
+
+  HandoffAdapterIdentityModel adapter;
+  std::uint64_t sample_id = 1U;
+  const auto commandFor = [&](const navigation_contracts::msg::NavigationGoal& goal,
+                              std::uint64_t goal_epoch,
+                              std::uint64_t generation,
+                              std::int64_t stamp_ns) {
+    navigation_contracts::msg::NavigationCommand command;
+    command.header.stamp = *navigation_common::nanosecondsToRosTime(stamp_ns);
+    command.valid_until = *navigation_common::nanosecondsToRosTime(
+        stamp_ns + 100'000'000);
+    command.world_observation_stamp = *navigation_common::nanosecondsToRosTime(
+        world.observation_stamp_ns);
+    command.state_source_stamp = command.header.stamp;
+    command.mode_activation_id = 1U;
+    command.mission_id = goal.mission_id;
+    command.localization_epoch = 1U;
+    command.goal_epoch = goal_epoch;
+    command.waypoint_index = goal.waypoint_index;
+    command.request_id = goal.request_id;
+    command.bundle_generation = generation;
+    command.sample_id = sample_id++;
+    command.world_generation = world.generation;
+    command.world_revision = world.revision;
+    return command;
+  };
+  for (const auto stamp_ns : {220'000'000LL, 270'000'000LL,
+                              320'000'000LL, 390'000'000LL}) {
+    ASSERT_TRUE(sampler.sample(stamp_ns, 9U));
+    EXPECT_TRUE(sameExecutionPublicationIdentity(
+        predecessor_goal, predecessor_goal, 9U, 9U, 1U, 1U));
+    EXPECT_TRUE(adapter.admit(commandFor(*predecessor_goal, 9U, 4U, stamp_ns),
+                              stamp_ns));
+  }
+  const auto lease_boundary_command =
+      commandFor(*predecessor_goal, 9U, 4U, 390'000'000);
+  EXPECT_TRUE(navigation_contracts::commandValidAt(
+      lease_boundary_command, 490'000'000));
+  EXPECT_FALSE(navigation_contracts::commandValidAt(
+      lease_boundary_command, 490'000'001));
+  // Failed planning/certificate admission leaves the exact predecessor in
+  // place. It cannot turn a desired gate change into execution cutover.
+  auto invalid_world = world;
+  invalid_world.revision = 2U;
+  invalid_world.observation_stamp_ns = 200'000'000;
+  const auto failed_successor =
+      std::make_shared<const navigation_planning::CandidateBundle>(
+          handoffCandidate(invalid_world, 10U, 3U, 5U, 400'000'000));
+  ASSERT_EQ(timeline.tryCommit({invalid_world, 10U, 2U}, failed_successor),
+            navigation_execution::CommitDecision::kWorldAdvanced);
+  EXPECT_EQ(timeline.load(), predecessor);
+  const auto anchor = timeline.reserveAnchor(390'000'000, 400'000'000);
+  ASSERT_TRUE(anchor);
+  const auto discontinuous_successor =
+      handoffCandidate(world, 10U, 3U, 5U, 400'000'000);
+  EXPECT_EQ(navigation_execution::candidateMatchesAnchor(
+                discontinuous_successor, *anchor),
+            navigation_execution::AnchorMatchResult::kPositionMismatch);
+  EXPECT_EQ(timeline.load(), predecessor);
+  const auto continuous_successor =
+      handoffCandidate(world, 10U, 3U, 5U, 400'000'000, 0.3);
+  for (const auto mismatch : {
+           navigation_execution::AnchorMatchResult::kVelocityMismatch,
+           navigation_execution::AnchorMatchResult::kAccelerationMismatch,
+           navigation_execution::AnchorMatchResult::kJerkMismatch}) {
+    auto bad = continuous_successor;
+    const auto evaluator = bad.evaluator;
+    bad.evaluator = [evaluator, mismatch](std::int64_t stamp,
+                                          navigation_planning::TrajectoryPoint& point) {
+      if (!evaluator(stamp, point)) return false;
+      if (mismatch == navigation_execution::AnchorMatchResult::kVelocityMismatch) {
+        point.velocity_world.x() += 0.1;
+      } else if (mismatch ==
+                 navigation_execution::AnchorMatchResult::kAccelerationMismatch) {
+        point.acceleration_world.x() += 0.1;
+      } else {
+        point.jerk_world.x() += 0.1;
+      }
+      return true;
+    };
+    EXPECT_EQ(navigation_execution::candidateMatchesAnchor(bad, *anchor), mismatch);
+    EXPECT_EQ(timeline.load(), predecessor);
+  }
+  const auto successor = std::make_shared<const navigation_planning::CandidateBundle>(
+      continuous_successor);
+  ASSERT_EQ(navigation_execution::candidateMatchesAnchor(*successor, *anchor),
+            navigation_execution::AnchorMatchResult::kMatch);
+  ASSERT_EQ(timeline.tryCommit({world, 10U, 3U}, successor),
+            navigation_execution::CommitDecision::kCommitted);
+  episode.commandCommitted(*successor);
+  ASSERT_TRUE(sampler.sample(400'000'000, 10U));
+  EXPECT_FALSE(sameExecutionPublicationIdentity(
+      predecessor_goal, successor_goal, 9U, 10U, 1U, 1U));
+  EXPECT_TRUE(adapter.admit(commandFor(*successor_goal, 10U, 5U, 400'000'000),
+                            400'000'000));
+  EXPECT_FALSE(adapter.admit(commandFor(*predecessor_goal, 9U, 4U, 410'000'000),
+                             410'000'000));
+  EXPECT_EQ(progress.currentGate().waypoint_index, 2U);
 }
 
 TEST(MissionProgressTest, CrossingBeforeContinuationSurvivesLeavingBall) {
