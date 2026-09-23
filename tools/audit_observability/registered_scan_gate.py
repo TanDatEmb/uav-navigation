@@ -7,7 +7,9 @@ from pathlib import Path
 import time
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from navigation_contracts.msg import NavigationCommand, RegisteredScan
 
@@ -19,7 +21,8 @@ def stamp_ns(stamp):
 class Gate(Node):
     def __init__(self, output: Path, fault_ms: int, ready_count: int):
         super().__init__("audit_registered_scan_gate")
-        self.declare_parameter("use_sim_time", True)
+        # Jazzy's Node time source declares this parameter itself.
+        self.set_parameters([Parameter("use_sim_time", Parameter.Type.BOOL, True)])
         self.output = output.open("w", encoding="utf-8", buffering=1)
         self.fault_ns = fault_ms * 1_000_000
         self.ready_target = ready_count
@@ -94,10 +97,12 @@ def main():
     gate = Gate(args.output, args.fault_ms, args.ready_count)
     try:
         rclpy.spin(gate)
+    except (ExternalShutdownException, KeyboardInterrupt):
+        pass
     finally:
         gate.close()
         gate.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":
