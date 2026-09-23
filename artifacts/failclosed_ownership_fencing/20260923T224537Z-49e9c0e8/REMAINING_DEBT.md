@@ -4,4 +4,4 @@
 2. Isolated world source-time stale and world/command temporal policy require their own boundary evidence; this repair only fences stale callback mutation and retains current world policy.
 3. PX4 Hold callback ordering/emergency runtime evidence remains separate; no Hold protocol or emergency planner algorithm was changed.
 
-If the focused fault harness cannot force the exact `OptimizationFailed` status without a product-only test mode, record component proof and runtime gap separately in `SITL_RESULTS.md`. Do not call the branch merge-ready solely from a model test.
+4. The two existing one-shot failure hooks did not arm during matched long-featured sessions. The repeated hook emitted `kFailed`, while the exact hot-retarget `OptimizationFailed` path has deterministic component proof only. A separately controlled runtime injection of that exact status would close this evidence gap; no product-only test mode or safety bypass was added here. The branch verdict relies on the full source/owner proof, deterministic race tests, nominal parity and independent safety-fault runs, not on a non-injected hook attempt.
