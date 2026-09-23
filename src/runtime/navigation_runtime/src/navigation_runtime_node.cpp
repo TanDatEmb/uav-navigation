@@ -819,6 +819,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                           epoch_ready = &localization_epoch_ready_]
       (PendingRegisteredScan&& pending) mutable {
     const auto callback_started = std::chrono::steady_clock::now();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    const auto mapping_callback_start_ns = navigation_contracts::audit::steadyNowNs();
+#endif
     try {
       if (!pending.message) {
         throw std::invalid_argument("mapping worker received a null RegisteredScan");
@@ -866,6 +869,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         lifecycle_observer->onMutableMapUpdated(observation.stamp_ns);
       }
       MappingTelemetrySnapshot next = telemetry->snapshot();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      const auto audit_fast_before = next.command_revalidation_fast_path_count;
+      const auto audit_full_before = next.command_revalidation_full_count;
+#endif
       next.map = result.diagnostics;
       next.last_update_attempt_stamp_ns = observation.stamp_ns;
       next.snapshot_export_us = result.snapshot_export_us;
@@ -890,6 +897,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       next.reused_snapshot_bytes = result.reused_snapshot_bytes;
       next.world_snapshot_published = static_cast<bool>(result.snapshot);
       if (result.snapshot) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+        emitWorldAudit(2U, result.snapshot->identity(), 0U, 1U, 0U,
+                       mapping_callback_start_ns);
+#endif
         // Recertification consumes only the immutable CandidateBundle snapshot
         // and the immutable WorldModelView published above.  Never hold the
         // PlanningWorker/backend mutex across this callback: map ingestion
@@ -901,6 +912,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         const auto execution_timeline = command_store->snapshot();
         const auto expected_bundle = execution_timeline.active;
         const auto expected_pending = execution_timeline.pending;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+        emitWorldAudit(5U, result.snapshot->identity(),
+                       expected_bundle ? expected_bundle->bundle_generation : 0U,
+                       0U, static_cast<std::uint64_t>(expected_pending != nullptr),
+                       mapping_callback_start_ns);
+#endif
         std::optional<navigation_contracts::msg::NavigationGoal> expected_goal;
         if (expected_bundle) {
           std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
@@ -1130,6 +1147,15 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         next.active_revalidation_us =
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - active_revalidation_started).count();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+        emitWorldAudit(6U, result.snapshot->identity(),
+                       expected_bundle ? expected_bundle->bundle_generation : 0U,
+                       retain_validated_bundle ? 1U : 2U,
+                       (static_cast<std::uint64_t>(retain_validated_pending) << 0) |
+                       (static_cast<std::uint64_t>(next.command_revalidation_fast_path_count > audit_fast_before) << 1) |
+                       (static_cast<std::uint64_t>(next.command_revalidation_full_count > audit_full_before) << 2),
+                       mapping_callback_start_ns);
+#endif
         // The immutable world publication and the dependent execution
         // certificate transition share one gate.  A retained bundle is copied
         // with the new identity only when the exact pointer was validated on
@@ -1207,6 +1233,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         next.world_publication_finalize_us =
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - publication_finalize_started).count();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+        emitWorldAudit(7U, result.snapshot->identity(),
+                       expected_bundle ? expected_bundle->bundle_generation : 0U,
+                       static_cast<std::uint8_t>(publication_decision),
+                       (static_cast<std::uint64_t>(retain_validated_bundle) << 0) |
+                       (static_cast<std::uint64_t>(invalidated_current) << 1),
+                       mapping_callback_start_ns);
+#endif
         if (publication_decision == navigation_world_model::WorldCommitDecision::kSuperseded) {
           next.map_update_us = result.map_update_us;
           next.mapping_callback_total_us =
@@ -1234,6 +1268,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               "world snapshot publication could not finalize its execution certificate");
         }
         if (expected_bundle && retain_validated_bundle) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+          bool audit_command_resumed = false;
+#endif
           const auto recertified_bundle = command_store->load();
           const auto now_ns = ros_clock->now().nanoseconds();
           const auto episode = execution_episode_.snapshot();
@@ -1286,6 +1323,9 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               world_freshness_suspended_safety_suffix_active_.store(
                   false, std::memory_order_release);
               ++world_freshness_command_recovery_count_;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+              audit_command_resumed = true;
+#endif
               RCLCPP_INFO(
                   this->get_logger(),
                   "fresh world recertified suspended command generation=%lu; "
@@ -1293,6 +1333,13 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                   static_cast<unsigned long>(recertified_bundle->bundle_generation));
             }
           }
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+          if (audit_command_resumed) {
+            emitWorldAudit(8U, result.snapshot->identity(),
+                           recertified_bundle->bundle_generation, 1U, 0U,
+                           mapping_callback_start_ns);
+          }
+#endif
         }
         if (expected_bundle && !retain_validated_bundle) {
           if (invalidated_current) {
@@ -1612,6 +1659,13 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           std::bind(&NavigationRuntimeNode::onModeStatus, this, std::placeholders::_1));
   command_publisher_ = create_publisher<navigation_contracts::msg::NavigationCommand>(
       command_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  try {
+    audit_sink_ = std::make_unique<navigation_contracts::audit::Sink>(*this, 1U);
+  } catch (...) {
+    // Diagnostic transport failure cannot prevent runtime startup.
+  }
+#endif
   end_to_end_samples_ms_.reserve(256);
 
   // The timer is a non-blocking scheduler. Mutable solve execution is owned by
@@ -1942,6 +1996,19 @@ void NavigationRuntimeNode::onRegisteredScan(
   last_registered_scan_epoch_.store(message->localization_epoch, std::memory_order_release);
   last_registered_scan_sequence_.store(message->scan_sequence, std::memory_order_release);
   observation_accounting_.recordAcceptedToInbox();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  if (audit_sink_) {
+    navigation_contracts::audit::Event audit{};
+    audit.event_type = navigation_contracts::audit::Event::WORLD_TRANSITION;
+    audit.phase = 1U;
+    audit.steady_ns = navigation_contracts::audit::steadyNowNs();
+    audit.ros_now_ns = now().nanoseconds();
+    audit.localization_epoch = message->localization_epoch;
+    audit.source_stamp_ns = observation_stamp_ns;
+    audit.sample_id = message->scan_sequence;
+    audit_sink_->emit(audit);
+  }
+#endif
   (void)mapping_worker_->submitFromWaiting(PendingRegisteredScan{
       message, observation_stamp_ns, message->localization_epoch,
       message->scan_sequence});
@@ -7693,6 +7760,34 @@ void NavigationRuntimeNode::validateRetainedCommand(
 }
 
 
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+void NavigationRuntimeNode::emitWorldAudit(
+    const std::uint8_t phase,
+    const navigation_world_model::WorldSnapshotIdentity& identity,
+    const std::uint64_t bundle_generation, const std::uint8_t outcome,
+    const std::uint64_t flags,
+    const std::int64_t callback_start_steady_ns) noexcept {
+  if (!audit_sink_) return;
+  try {
+    navigation_contracts::audit::Event event{};
+    event.event_type = navigation_contracts::audit::Event::WORLD_TRANSITION;
+    event.phase = phase;  // 1=received, 2=snapshot, 3=stale, 4=suspend,
+                          // 5=recert start, 6=recert end, 7=commit, 8=resume.
+    event.outcome = outcome;
+    event.flags = flags;
+    event.steady_ns = navigation_contracts::audit::steadyNowNs();
+    event.callback_start_steady_ns = callback_start_steady_ns;
+    event.ros_now_ns = now().nanoseconds();
+    event.localization_epoch = identity.localization_epoch;
+    event.world_generation = identity.generation;
+    event.world_revision = identity.revision;
+    event.source_stamp_ns = identity.observation_stamp_ns;
+    event.bundle_generation = bundle_generation;
+    audit_sink_->emit(event);
+  } catch (...) {}
+}
+#endif
+
 void NavigationRuntimeNode::publishCommand() {
   const auto command_ros_time = now();
   const double now_seconds = command_ros_time.seconds();
@@ -7711,11 +7806,19 @@ void NavigationRuntimeNode::publishCommand() {
             data_freshness_window_ns_)
       : navigation_execution::TimestampFreshness::INVALID;
   if (world_freshness != navigation_execution::TimestampFreshness::VALID) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    emitWorldAudit(3U, latest_world.identity, 0U,
+                   static_cast<std::uint8_t>(world_freshness));
+#endif
     ++world_snapshot_freshness_rejection_count_;
     if (planning_worker_) planning_worker_->cancelActive();
     // No command is published from this callback. A later fresh snapshot may
     // resume only this exact bundle after successful world recertification.
     suspendCommandForWorldFreshness();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    emitWorldAudit(4U, latest_world.identity,
+                   world_freshness_suspended_bundle_generation_.load(std::memory_order_relaxed));
+#endif
     return;
   }
 
@@ -8558,7 +8661,52 @@ void NavigationRuntimeNode::publishCommand() {
   command.yaw_rate = yaw_dot;
   const auto publish_ros_command = [this, &command] {
     const auto publish_started = std::chrono::steady_clock::now();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    const auto audit_publish_enter = navigation_contracts::audit::steadyNowNs();
+    const auto audit_publish_enter_ros = now().nanoseconds();
+#endif
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    const auto emit_publish_audit = [this, &command, audit_publish_enter,
+                                     audit_publish_enter_ros](const std::uint8_t outcome) noexcept {
+      if (!audit_sink_) return;
+      try {
+      navigation_contracts::audit::Event audit{};
+      audit.event_type = navigation_contracts::audit::Event::COMMAND_PUBLISH;
+      audit.outcome = outcome;  // 1 returned, 2 threw; neither proves DDS delivery.
+      audit.steady_ns = audit_publish_enter;
+      audit.callback_start_steady_ns = audit_publish_enter;
+      audit.callback_end_steady_ns = navigation_contracts::audit::steadyNowNs();
+      audit.ros_now_ns = audit_publish_enter_ros;
+      audit.ros_return_ns = now().nanoseconds();
+      audit.source_stamp_ns = navigation_common::rosTimeToNanoseconds(
+          command.state_source_stamp).value_or(0);
+      audit.aux_stamp_ns = navigation_common::rosTimeToNanoseconds(
+          command.header.stamp).value_or(0);
+      audit.valid_until_ns = navigation_common::rosTimeToNanoseconds(
+          command.valid_until).value_or(0);
+      audit.localization_epoch = command.localization_epoch;
+      audit.goal_epoch = command.goal_epoch;
+      audit.mission_hash = navigation_contracts::audit::missionHash(command.mission_id);
+      audit.waypoint_index = command.waypoint_index;
+      audit.request_id = command.request_id;
+      audit.bundle_generation = command.bundle_generation;
+      audit.sample_id = command.sample_id;
+      audit.world_generation = command.world_generation;
+      audit.world_revision = command.world_revision;
+      audit.flags = command.execution_authorization;
+      audit_sink_->emit(audit);
+      } catch (...) {}
+    };
+    try {
+      command_publisher_->publish(command);
+    } catch (...) {
+      emit_publish_audit(2U);
+      throw;
+    }
+    emit_publish_audit(1U);
+#else
     command_publisher_->publish(command);
+#endif
     last_publish_us_.store(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - publish_started).count(),

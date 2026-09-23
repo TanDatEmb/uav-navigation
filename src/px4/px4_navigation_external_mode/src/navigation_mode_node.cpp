@@ -118,6 +118,13 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
           "navigation.trajectory_wait_timeout_s", 5.0)),
       planner_recovery_wait_timeout_s_(node.declare_parameter<double>(
           "navigation.planner_recovery_wait_timeout_s", 5.0)) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  try {
+    audit_sink_ = std::make_shared<navigation_contracts::audit::Sink>(node_, 2U);
+  } catch (...) {
+    // Diagnostic transport failure cannot prevent External Mode startup.
+  }
+#endif
   tracking_experiment_ = navigation_contracts::loadTrackingExperimentPolicy(node);
   if (tracking_experiment_.enabled) {
     RCLCPP_WARN(node.get_logger(),
@@ -728,6 +735,11 @@ void NavigationMode::onActivate() {
     stale_state_failure_count_ = 0U;
     last_goal_publish_ns_ = 0;
     last_command_receive_ns_ = 0;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    last_command_receive_steady_ns_audit_ = 0;
+    previous_mission_sample_sequence_ = 0U;
+    previous_mission_sample_stamp_ns_ = 0;
+#endif
     maximum_odometry_callback_gap_us_ = 0;
     last_setpoint_update_ns_ = 0;
     maximum_setpoint_callback_gap_us_ = 0;
@@ -787,6 +799,11 @@ void NavigationMode::onDeactivate() {
     velocity_only_last_reason_.clear();
     last_goal_publish_ns_ = 0;
     last_command_receive_ns_ = 0;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    last_command_receive_steady_ns_audit_ = 0;
+    previous_mission_sample_sequence_ = 0U;
+    previous_mission_sample_stamp_ns_ = 0;
+#endif
     px4_local_frame_aligned_ = false;
     lio_to_px4_local_translation_ned_.reset();
     last_completed_waypoint_index_ = 0U;
@@ -855,11 +872,43 @@ void NavigationMode::checkArmingAndRunConditions(
 
 void NavigationMode::onNavigationCommand(
     const navigation_contracts::msg::NavigationCommand::ConstSharedPtr& message) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  navigation_contracts::audit::Event receive_audit{};
+  receive_audit.event_type = navigation_contracts::audit::Event::COMMAND_RECEIVE;
+  receive_audit.callback_start_steady_ns = navigation_contracts::audit::steadyNowNs();
+  receive_audit.steady_ns = receive_audit.callback_start_steady_ns;
+  receive_audit.ros_now_ns = node().get_clock()->now().nanoseconds();
+  receive_audit.outcome = 2U;  // Rejected unless commit path marks admitted.
+  if (message) {
+    receive_audit.localization_epoch = message->localization_epoch;
+    receive_audit.goal_epoch = message->goal_epoch;
+    receive_audit.mission_hash = navigation_contracts::audit::missionHash(message->mission_id);
+    receive_audit.waypoint_index = message->waypoint_index;
+    receive_audit.request_id = message->request_id;
+    receive_audit.bundle_generation = message->bundle_generation;
+    receive_audit.sample_id = message->sample_id;
+    receive_audit.world_generation = message->world_generation;
+    receive_audit.world_revision = message->world_revision;
+    receive_audit.source_stamp_ns = navigation_common::rosTimeToNanoseconds(
+        message->state_source_stamp).value_or(0);
+    receive_audit.aux_stamp_ns = navigation_common::rosTimeToNanoseconds(
+        message->header.stamp).value_or(0);
+    receive_audit.valid_until_ns = navigation_common::rosTimeToNanoseconds(
+        message->valid_until).value_or(0);
+  }
+  const navigation_contracts::audit::ScopeExit receive_audit_exit{[&]() noexcept {
+    receive_audit.callback_end_steady_ns = navigation_contracts::audit::steadyNowNs();
+    if (audit_sink_) audit_sink_->emit(receive_audit);
+  }};
+#endif
   const bool valid = message != nullptr &&
                      navigation_contracts::commandContractValid(*message, planning_frame_) &&
                      navigation_contracts::commandValidAt(
                          *message, node().get_clock()->now().nanoseconds());
   if (!valid) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    receive_audit.reason = 1U;
+#endif
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     ++trajectory_rejected_count_;
     // A malformed replacement does not revoke the independently accepted
@@ -879,7 +928,12 @@ void NavigationMode::onNavigationCommand(
     // Once control has entered a terminal/handover stream, later planner
     // samples cannot restore command ownership. Ignore them before running
     // identity/tracking gates so one terminal transition has one causal log.
-    if (failure_reported_ || mission_terminal_ || handover_requested_) return;
+    if (failure_reported_ || mission_terminal_ || handover_requested_) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      receive_audit.reason = 2U;
+#endif
+      return;
+    }
   }
 
   bool accepted = false;
@@ -941,6 +995,9 @@ void NavigationMode::onNavigationCommand(
         (!mission_identity_matches && !prior_safety_suffix_command &&
          !prior_pass_through_command) ||
         !command_identity_monotonic) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      receive_audit.reason = 3U;
+#endif
       ++trajectory_rejected_count_;
       navigation_command_ = transitionCertifiedCommand(
           navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
@@ -973,9 +1030,15 @@ void NavigationMode::onNavigationCommand(
         navigation_command_ ? navigation_command_->sample_id : 0U);
     odometry_stale = acceptance_gate == CommandAcceptanceGate::kOdometryStale;
     if (odometry_stale) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      receive_audit.reason = 4U;
+#endif
       ++trajectory_rejected_count_;
       if (!failure_reported_) ++stale_state_failure_count_;
     } else if (acceptance_gate == CommandAcceptanceGate::kNonIncreasingMessageId) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      receive_audit.reason = 5U;
+#endif
       ++trajectory_rejected_count_;
       return;
     }
@@ -1122,6 +1185,9 @@ void NavigationMode::onNavigationCommand(
         tracking_envelope.valid = true;
       }
       if (anchor_invalid) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+        receive_audit.reason = 6U;
+#endif
         reject_provenance = buildRejectProvenance(
             node().get_clock()->now().nanoseconds(), last_odometry_receive_ns_,
             *odometry_, *message, navigation_command_);
@@ -1139,6 +1205,12 @@ void NavigationMode::onNavigationCommand(
       ++trajectory_received_count_;
       ++trajectory_accepted_count_;
       last_command_receive_ns_ = node().get_clock()->now().nanoseconds();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      last_command_receive_steady_ns_audit_ = navigation_contracts::audit::steadyNowNs();
+      receive_audit.lease_origin_ros_ns = last_command_receive_ns_;
+      receive_audit.lease_origin_steady_ns = last_command_receive_steady_ns_audit_;
+      receive_audit.outcome = 1U;
+#endif
       failure_reported_ = false;
       accepted = true;
       if (completed_command) completed_command_odometry = odometry_;
@@ -1361,6 +1433,14 @@ void NavigationMode::updateMission() {
   std::optional<CertifiedContinuation> continuation;
   bool certified_suffix_stop = false;
   MissionControllerEvent event{};
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  navigation_contracts::audit::Event mission_audit{};
+  mission_audit.event_type = navigation_contracts::audit::Event::MISSION_GATE;
+  mission_audit.callback_start_steady_ns = navigation_contracts::audit::steadyNowNs();
+  mission_audit.steady_ns = mission_audit.callback_start_steady_ns;
+  mission_audit.ros_now_ns = now_ns;
+  MissionGateAudit gate_audit{};
+#endif
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     // Recheck lifecycle ownership after the recovery-window probe. A failure
@@ -1375,6 +1455,26 @@ void NavigationMode::updateMission() {
     }
     const auto odometry_source_ns = odometry_
         ? navigation_common::rosTimeToNanoseconds(odometry_->header.stamp).value_or(0) : 0;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    mission_audit.attempt_generation = ++mission_audit_invocation_;
+    mission_audit.source_stamp_ns = odometry_source_ns;
+    mission_audit.current_sample_stamp_ns = odometry_source_ns;
+    mission_audit.current_sample_sequence = last_propagated_state_sequence_;
+    mission_audit.previous_sample_stamp_ns = previous_mission_sample_stamp_ns_;
+    mission_audit.previous_sample_sequence = previous_mission_sample_sequence_;
+    mission_audit.localization_epoch = lio_localization_epoch_;
+    mission_audit.mission_hash = mission_ ? navigation_contracts::audit::missionHash(mission_->id) : 0;
+    mission_audit.waypoint_index = static_cast<std::uint32_t>(mission_controller_->activeWaypointIndex());
+    mission_audit.request_id = mission_controller_->activeRequestId();
+    mission_audit.route_revision = 1U;  // Current MissionController snapshot revision.
+    if (navigation_command_) {
+      mission_audit.goal_epoch = navigation_command_->goal_epoch;
+      mission_audit.bundle_generation = navigation_command_->bundle_generation;
+      mission_audit.sample_id = navigation_command_->sample_id;
+      mission_audit.aux_stamp_ns = static_cast<std::int64_t>(
+          navigation_command_->continuation_boundary_stamp_ns);
+    }
+#endif
     const auto odometry_freshness = navigation_contracts::evaluateExecutionStateFreshness(
         now_ns, odometry_source_ns, navigation_common::steadyClockNowNanoseconds(),
         last_odometry_receive_steady_ns_, state_stale_after_s_);
@@ -1461,7 +1561,39 @@ void NavigationMode::updateMission() {
         mission_controller_->acceptanceSpeedMps(), airborne ? "true" : "false",
         native_ready ? "true" : "false", terminal_hold_pending ? "true" : "false");
     event = mission_controller_->update(
-        now_s, position, airborne, velocity, continuation, certified_suffix_stop);
+        now_s, position, airborne, velocity, continuation, certified_suffix_stop
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+        , &gate_audit
+#endif
+        );
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    mission_audit.callback_end_steady_ns = navigation_contracts::audit::steadyNowNs();
+    mission_audit.phase = gate_audit.crossing_valid
+        ? (position_error >= 0.0 && active_waypoint &&
+           position_error <= active_waypoint->acceptance_radius_m ? 1U : 2U)
+        : 0U;  // 1=current in ball, 2=two-sample segment.
+    mission_audit.crossing_error_m = gate_audit.crossing_error_m;
+    mission_audit.sample_gap_s = gate_audit.sample_gap_s;
+    mission_audit.outcome = static_cast<std::uint8_t>(event.type);
+    mission_audit.next_waypoint_index = static_cast<std::uint32_t>(event.waypoint_index);
+    mission_audit.next_request_id = event.request_id;
+    mission_audit.flags =
+        (static_cast<std::uint64_t>(gate_audit.crossing_evaluated) << 0) |
+        (static_cast<std::uint64_t>(gate_audit.crossing_valid) << 1) |
+        (static_cast<std::uint64_t>(continuation.has_value()) << 2) |
+        (static_cast<std::uint64_t>(gate_audit.continuation_valid) << 3) |
+        (static_cast<std::uint64_t>(certified_suffix_stop) << 4) |
+        (static_cast<std::uint64_t>(gate_audit.coincident_terminal_hold_ready) << 5) |
+        (static_cast<std::uint64_t>(gate_audit.immediate_pass_through) << 6) |
+        (static_cast<std::uint64_t>(gate_audit.progression_ready) << 7) |
+        (static_cast<std::uint64_t>(gate_audit.acceptance_ready) << 8) |
+        (static_cast<std::uint64_t>(event.waypoint_accepted) << 9) |
+        (static_cast<std::uint64_t>(gate_audit.pass_through) << 10);
+    if (position.has_value()) {
+      previous_mission_sample_stamp_ns_ = odometry_source_ns;
+      previous_mission_sample_sequence_ = last_propagated_state_sequence_;
+    }
+#endif
     if (event.waypoint_accepted) {
       RCLCPP_INFO(node().get_logger(),
                   "Mission waypoint accepted: wp=%zu position_error_m=%.3f speed_mps=%.3f "
@@ -1471,6 +1603,9 @@ void NavigationMode::updateMission() {
                   static_cast<unsigned long>(event.request_id));
     }
   }
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  if (audit_sink_) audit_sink_->emit(mission_audit);
+#endif
   handleMissionEvent(event, now_s);
 }
 
@@ -1853,6 +1988,11 @@ void NavigationMode::onEstimatorHealth(
     safety_suffix_waypoint_index_ = 0U;
     safety_suffix_request_id_ = 0U;
     last_command_receive_ns_ = 0;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    last_command_receive_steady_ns_audit_ = 0;
+    previous_mission_sample_sequence_ = 0U;
+    previous_mission_sample_stamp_ns_ = 0;
+#endif
     odometry_.reset();
     last_odometry_receive_ns_ = 0;
     last_odometry_receive_steady_ns_ = 0;
@@ -2235,6 +2375,43 @@ void NavigationMode::safetyStopNavigation(const char* reason) {
   }
 }
 
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+void NavigationMode::emitLeaseAudit(
+    const std::uint16_t reason,
+    const navigation_contracts::msg::NavigationCommand* command,
+    const std::int64_t receive_ros_ns,
+    const std::int64_t receive_steady_ns,
+    const std::int64_t now_ros_ns,
+    const std::int64_t observed_source_ns) noexcept {
+  if (!audit_sink_) return;
+  navigation_contracts::audit::Event event{};
+  event.event_type = navigation_contracts::audit::Event::LEASE_DISPOSITION;
+  event.reason = reason;  // 1=receive lease, 2=source stamp, 3=valid_until.
+  event.steady_ns = navigation_contracts::audit::steadyNowNs();
+  event.ros_now_ns = now_ros_ns;
+  event.lease_origin_ros_ns = receive_ros_ns;
+  event.lease_origin_steady_ns = receive_steady_ns;
+  event.flags = 1U;  // Existing safetyStopNavigation call was invoked.
+  if (command) {
+    event.localization_epoch = command->localization_epoch;
+    event.goal_epoch = command->goal_epoch;
+    event.mission_hash = navigation_contracts::audit::missionHash(command->mission_id);
+    event.waypoint_index = command->waypoint_index;
+    event.request_id = command->request_id;
+    event.bundle_generation = command->bundle_generation;
+    event.sample_id = command->sample_id;
+    event.source_stamp_ns = navigation_common::rosTimeToNanoseconds(
+        command->state_source_stamp).value_or(0);
+    event.aux_stamp_ns = navigation_common::rosTimeToNanoseconds(
+        command->header.stamp).value_or(0);
+    event.valid_until_ns = navigation_common::rosTimeToNanoseconds(
+        command->valid_until).value_or(0);
+  }
+  if (observed_source_ns > 0) event.source_stamp_ns = observed_source_ns;
+  audit_sink_->emit(event);
+}
+#endif
+
 void NavigationMode::failNavigation(const char* reason) {
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
@@ -2272,6 +2449,10 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
   std::string trace_velocity_only_reason;
   std::uint64_t trace_velocity_only_limited_count = 0U;
   std::int64_t odometry_receive_steady_ns = 0;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  std::int64_t last_command_receive_steady_audit = 0;
+  std::int64_t last_command_receive_ros_audit = 0;
+#endif
   Px4InputStateTrace state_input_trace;
   std::optional<Eigen::Vector3d> lio_to_px4_local_translation_ned;
   const auto now = node().get_clock()->now();
@@ -2285,6 +2466,10 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
     trace_velocity_only_reason = velocity_only_last_reason_;
     trace_velocity_only_limited_count = velocity_only_limited_count_;
     odometry_receive_steady_ns = last_odometry_receive_steady_ns_;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    last_command_receive_steady_audit = last_command_receive_steady_ns_audit_;
+    last_command_receive_ros_audit = last_command_receive_ns_;
+#endif
     if (tracking_experiment_.velocity_only_enabled && odometry_.has_value()) {
       VelocityOnlySnapshot snapshot;
       snapshot.odometry = *odometry_;
@@ -2519,6 +2704,11 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
                        odometry_freshness.reason),
                    odometry_freshness.source_age_ms, odometry_freshness.receive_age_ms);
       failNavigation("navigation odometry stale before setpoint update");
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      emitLeaseAudit(4U, navigation_command ? &*navigation_command : nullptr,
+                     last_command_receive_ros_audit, last_command_receive_steady_audit,
+                     now.nanoseconds(), odometry_source_ns);
+#endif
       return;
     }
   }
@@ -2610,6 +2800,11 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
                  health_propagation_valid ? "true" : "false",
                  static_cast<long>(health_source_stamp_ns));
     failNavigation("FAST-LIO navigation health invalid or stale");
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    emitLeaseAudit(5U, navigation_command ? &*navigation_command : nullptr,
+                   last_command_receive_ros_audit, last_command_receive_steady_audit,
+                   now.nanoseconds(), health_source_stamp_ns);
+#endif
     return;
   }
   if (suppress_fresh_typed_unhealthy) {
@@ -2644,6 +2839,10 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
         now.nanoseconds() - receive_ns > stale_after_ns_ &&
         !terminal_recovery_window_open) {
       safetyStopNavigation("planner backend PVA command stale");
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      emitLeaseAudit(1U, &*navigation_command, receive_ns,
+                     last_command_receive_steady_audit, now.nanoseconds());
+#endif
       return;
     }
     const auto& command = *navigation_command;
@@ -2654,11 +2853,19 @@ void NavigationMode::updateSetpoint(float /*dt_s*/) {
          now.nanoseconds() - command_stamp_ns > stale_after_ns_ &&
          !terminal_recovery_window_open)) {
       safetyStopNavigation("planner backend PVA command timestamp invalid or stale");
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      emitLeaseAudit(2U, &command, receive_ns,
+                     last_command_receive_steady_audit, now.nanoseconds());
+#endif
       return;
     }
     if (!terminal_recovery_window_open &&
         !navigation_contracts::commandValidAt(command, now.nanoseconds())) {
       safetyStopNavigation("planner backend command validity window expired");
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+      emitLeaseAudit(3U, &command, receive_ns,
+                     last_command_receive_steady_audit, now.nanoseconds());
+#endif
       return;
     }
     const Eigen::Vector3d position_enu{command.position.x, command.position.y,
@@ -2828,6 +3035,9 @@ NavigationModeExecutor::NavigationModeExecutor(px4_ros2::ModeBase& owned_mode)
     : ModeExecutorBase(px4_ros2::ModeExecutorBase::Settings{}, owned_mode),
       node_(owned_mode.node()),
       navigation_mode_(dynamic_cast<NavigationMode&>(owned_mode)) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  audit_sink_ = navigation_mode_.auditSink();
+#endif
   navigation_mode_.setPx4HoldHandover([this]() {
     RCLCPP_WARN(node_.get_logger(), "Avoidance Mission requesting PX4 Hold handover");
     schedulePx4Hold(true);
@@ -2843,6 +3053,37 @@ NavigationModeExecutor::NavigationModeExecutor(px4_ros2::ModeBase& owned_mode)
       std::chrono::milliseconds{50}, [this]() { checkHoldHandover(); });
 }
 
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+void NavigationModeExecutor::emitHoldAudit(
+    const std::uint8_t phase, const std::uint8_t outcome,
+    const px4_msgs::msg::VehicleStatus* status) noexcept {
+  if (!audit_sink_) return;
+  try {
+    navigation_contracts::audit::Event event{};
+    event.event_type = navigation_contracts::audit::Event::HOLD_TRANSFER;
+    event.phase = phase;  // 1=request, 2=attempt, 3=retry, 4=callback,
+                          // 5=status, 6=deactivate, 7=failsafe deferred.
+    event.outcome = outcome;
+    event.steady_ns = navigation_contracts::audit::steadyNowNs();
+    event.ros_now_ns = node_.get_clock()->now().nanoseconds();
+    event.attempt_generation = hold_handover_attempts_;
+    event.retry_deadline_steady_ns = hold_handover_next_retry_steady_ns_;
+    event.flags = static_cast<std::uint64_t>(hold_handover_pending_) |
+                  (static_cast<std::uint64_t>(hold_handover_in_flight_) << 1) |
+                  (static_cast<std::uint64_t>(px4_hold_confirmed_) << 2) |
+                  (static_cast<std::uint64_t>(hold_handover_complete_navigation_failure_) << 3);
+    if (status) {
+      event.source_stamp_ns = static_cast<std::int64_t>(status->timestamp) * 1000;
+      event.reason = status->nav_state;
+      event.aux_stamp_ns = status->executor_in_charge;
+      event.flags |= (static_cast<std::uint64_t>(status->failsafe) << 4) |
+                     (static_cast<std::uint64_t>(status->failsafe_and_user_took_over) << 5);
+    }
+    audit_sink_->emit(event);
+  } catch (...) {}
+}
+#endif
+
 void NavigationModeExecutor::onVehicleStatus(
     const px4_msgs::msg::VehicleStatus::UniquePtr& message) {
   if (!message) return;
@@ -2852,11 +3093,17 @@ void NavigationModeExecutor::onVehicleStatus(
     hold_handover_pending_ = false;
     hold_handover_in_flight_ = false;
   }
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  emitHoldAudit(5U, px4_hold_confirmed_ ? 1U : 0U, message.get());
+#endif
 }
 
 void NavigationModeExecutor::checkHoldHandover() {
   const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
   if (hold_handover_pending_ && !px4_hold_confirmed_) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    emitHoldAudit(3U);
+#endif
     if (!hold_handover_in_flight_ && now_steady_ns >= hold_handover_next_retry_steady_ns_) {
       schedulePx4Hold(hold_handover_complete_navigation_failure_);
     }
@@ -2870,6 +3117,9 @@ void NavigationModeExecutor::onActivate() {
   hold_handover_complete_navigation_failure_ = false;
   hold_handover_attempts_ = 0U;
   hold_handover_next_retry_steady_ns_ = 0;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  emitHoldAudit(8U);
+#endif
   RCLCPP_INFO(node_.get_logger(), "Avoidance Mission executor activated");
   scheduleMode(ownedMode().id(), [this](px4_ros2::Result result) {
     onOwnedModeCompleted(result);
@@ -2895,9 +3145,15 @@ void NavigationModeExecutor::schedulePx4Hold(bool complete_navigation_failure) {
   hold_handover_pending_ = true;
   hold_handover_complete_navigation_failure_ =
       hold_handover_complete_navigation_failure_ || complete_navigation_failure;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  emitHoldAudit(1U);
+#endif
   if (px4_hold_confirmed_ || hold_handover_in_flight_) return;
   hold_handover_in_flight_ = true;
   ++hold_handover_attempts_;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  emitHoldAudit(2U);
+#endif
   scheduleMode(px4_ros2::ModeBase::kModeIDLoiter,
                [this](px4_ros2::Result hold_result) {
     onPx4HoldHandoverCompleted(hold_result, hold_handover_complete_navigation_failure_);
@@ -2909,6 +3165,9 @@ void NavigationModeExecutor::onPx4HoldHandoverCompleted(
   if (result == px4_ros2::Result::Success || result == px4_ros2::Result::Deactivated) {
     hold_handover_in_flight_ = false;
     hold_handover_pending_ = false;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    emitHoldAudit(4U, static_cast<std::uint8_t>(result));
+#endif
     RCLCPP_INFO(node_.get_logger(), "PX4 Hold handover completed with result=%s",
                 px4_ros2::resultToString(result));
     return;
@@ -2921,6 +3180,9 @@ void NavigationModeExecutor::onPx4HoldHandoverCompleted(
   constexpr std::int64_t kHoldRetryPeriodNs = 250'000'000LL;
   hold_handover_next_retry_steady_ns_ =
       navigation_common::steadyClockNowNanoseconds() + kHoldRetryPeriodNs;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  emitHoldAudit(4U, static_cast<std::uint8_t>(result));
+#endif
   RCLCPP_ERROR_THROTTLE(
       node_.get_logger(), *node_.get_clock(), 5000,
       "PX4 Hold handover attempt=%u failed with result=%s; keeping the explicit "
@@ -2929,6 +3191,9 @@ void NavigationModeExecutor::onPx4HoldHandoverCompleted(
 }
 
 void NavigationModeExecutor::onDeactivate(DeactivateReason reason) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  emitHoldAudit(6U, reason == DeactivateReason::FailsafeActivated ? 1U : 2U);
+#endif
   px4_hold_confirmed_ = false;
   hold_handover_pending_ = false;
   hold_handover_in_flight_ = false;
@@ -2940,6 +3205,9 @@ void NavigationModeExecutor::onDeactivate(DeactivateReason reason) {
 }
 
 void NavigationModeExecutor::onFailsafeDeferred() {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  emitHoldAudit(7U);
+#endif
   RCLCPP_WARN(node_.get_logger(), "PX4 requested a deferred failsafe; no failsafe is deferred");
 }
 

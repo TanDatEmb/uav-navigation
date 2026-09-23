@@ -48,6 +48,24 @@ struct CertifiedContinuation {
   }
 };
 
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+// Callback-local observation of the existing calculation; never read by the
+// controller or retained between updates.
+struct MissionGateAudit {
+  bool crossing_evaluated{false};
+  bool crossing_valid{false};
+  double crossing_error_m{0.0};
+  double sample_gap_s{0.0};
+  bool pass_through{false};
+  bool inside{false};
+  bool acceptance_ready{false};
+  bool continuation_valid{false};
+  bool progression_ready{false};
+  bool coincident_terminal_hold_ready{false};
+  bool immediate_pass_through{false};
+};
+#endif
+
 class MissionController final {
  public:
   explicit MissionController(Mission mission);
@@ -81,7 +99,11 @@ class MissionController final {
                                                    std::nullopt,
                                                const std::optional<CertifiedContinuation>&
                                                    continuation = std::nullopt,
-                                               bool certified_suffix_stop = false);
+                                               bool certified_suffix_stop = false
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+                                               , MissionGateAudit* audit = nullptr
+#endif
+                                               );
   [[nodiscard]] MissionControllerState state() const;
   [[nodiscard]] bool holding() const;
   [[nodiscard]] bool waitingForAirborne() const;

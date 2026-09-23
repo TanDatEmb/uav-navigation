@@ -37,6 +37,9 @@
 #include "px4_navigation_external_mode/px4_input_trace.hpp"
 #include "px4_navigation_external_mode/px4_tracking_adapter.hpp"
 #include <navigation_common/bounded_spsc_queue.hpp>
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+#include <navigation_contracts/audit_event_sink.hpp>
+#endif
 
 #include "px4_navigation_external_mode/velocity_only_continuity.hpp"
 
@@ -48,6 +51,11 @@ class NavigationMode final : public px4_ros2::ModeBase {
   ~NavigationMode() override;
 
   void setPx4HoldHandover(std::function<void()> callback);
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  [[nodiscard]] std::shared_ptr<navigation_contracts::audit::Sink> auditSink() const noexcept {
+    return audit_sink_;
+  }
+#endif
   void attachStateInputNode(rclcpp::Node& state_input_node);
   void onActivate() override;
   void onDeactivate() override;
@@ -92,6 +100,14 @@ class NavigationMode final : public px4_ros2::ModeBase {
   [[nodiscard]] bool plannerRecoveryEpisodeMatchesLocked(
       const navigation_contracts::msg::NavigationCommand& command) const noexcept;
   void safetyStopNavigation(const char* reason);
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  void emitLeaseAudit(std::uint16_t reason,
+                      const navigation_contracts::msg::NavigationCommand* command,
+                      std::int64_t receive_ros_ns,
+                      std::int64_t receive_steady_ns,
+                      std::int64_t now_ros_ns,
+                      std::int64_t observed_source_ns = 0) noexcept;
+#endif
   void failNavigation(const char* reason);
   void logRuntimeMetrics(const rclcpp::Time& now);
   [[nodiscard]] Px4InputTraceRecord makePx4InputTraceRecord(
@@ -259,6 +275,13 @@ class NavigationMode final : public px4_ros2::ModeBase {
   bool velocity_only_reset_counters_seen_{false};
   std::string velocity_only_last_reason_;
   std::uint64_t velocity_only_limited_count_{0U};
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  std::shared_ptr<navigation_contracts::audit::Sink> audit_sink_;
+  std::uint64_t mission_audit_invocation_{0U};
+  std::uint64_t previous_mission_sample_sequence_{0U};
+  std::int64_t previous_mission_sample_stamp_ns_{0};
+  std::int64_t last_command_receive_steady_ns_audit_{0};
+#endif
 
 };
 
@@ -277,6 +300,10 @@ class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {
                                   bool complete_navigation_failure);
   void onVehicleStatus(const px4_msgs::msg::VehicleStatus::UniquePtr& message);
   void checkHoldHandover();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  void emitHoldAudit(std::uint8_t phase, std::uint8_t outcome = 0U,
+                     const px4_msgs::msg::VehicleStatus* status = nullptr) noexcept;
+#endif
 
   rclcpp::Node& node_;
   NavigationMode& navigation_mode_;
@@ -288,6 +315,9 @@ class NavigationModeExecutor final : public px4_ros2::ModeExecutorBase {
   bool hold_handover_complete_navigation_failure_{false};
   std::uint32_t hold_handover_attempts_{0U};
   std::int64_t hold_handover_next_retry_steady_ns_{0};
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  std::shared_ptr<navigation_contracts::audit::Sink> audit_sink_;
+#endif
 };
 
 }  // namespace px4_navigation_external_mode

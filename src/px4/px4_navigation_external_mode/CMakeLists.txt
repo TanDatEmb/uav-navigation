@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(px4_navigation_external_mode LANGUAGES CXX)
+option(NAVIGATION_AUDIT_INSTRUMENTATION "Build removable diagnostic audit witnesses" OFF)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 20)
@@ -32,6 +33,10 @@ target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic
 
 add_library(${PROJECT_NAME}_adapter STATIC
   src/navigation_mode_node.cpp)
+if(NAVIGATION_AUDIT_INSTRUMENTATION)
+  target_compile_definitions(${PROJECT_NAME}_adapter PRIVATE NAVIGATION_AUDIT_INSTRUMENTATION=1)
+  target_compile_definitions(${PROJECT_NAME}_contract PUBLIC NAVIGATION_AUDIT_INSTRUMENTATION=1)
+endif()
 target_include_directories(${PROJECT_NAME}_adapter PRIVATE
   include ${navigation_contracts_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}_adapter
@@ -43,8 +48,9 @@ ament_target_dependencies(${PROJECT_NAME}_adapter navigation_common diagnostic_m
 target_compile_options(${PROJECT_NAME}_adapter PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(${PROJECT_NAME}_node src/main.cpp)
+target_include_directories(${PROJECT_NAME}_node PRIVATE ${navigation_contracts_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}_node ${PROJECT_NAME}_adapter)
-ament_target_dependencies(${PROJECT_NAME}_node px4_ros2_cpp rclcpp)
+ament_target_dependencies(${PROJECT_NAME}_node navigation_contracts px4_ros2_cpp rclcpp)
 target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
 
 install(DIRECTORY include/ DESTINATION include)
@@ -69,8 +75,9 @@ if(BUILD_TESTING)
   target_link_libraries(test_mission ${PROJECT_NAME}_contract)
   ament_target_dependencies(test_mission geometry_msgs navigation_contracts navigation_mission nav_msgs)
   ament_add_gtest(test_navigation_mode_progression test/test_navigation_mode_progression.cpp)
+  target_include_directories(test_navigation_mode_progression PRIVATE ${navigation_contracts_INCLUDE_DIRS})
   target_link_libraries(test_navigation_mode_progression ${PROJECT_NAME}_adapter)
-  ament_target_dependencies(test_navigation_mode_progression px4_ros2_cpp rclcpp)
+  ament_target_dependencies(test_navigation_mode_progression navigation_contracts px4_ros2_cpp rclcpp)
   ament_add_gtest(test_navigation_command test/test_navigation_command.cpp)
   target_include_directories(test_navigation_command PRIVATE
     include ${navigation_contracts_INCLUDE_DIRS})

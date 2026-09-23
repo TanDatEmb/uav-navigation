@@ -22,6 +22,9 @@
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
 #include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/registered_scan.hpp>
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+#include <navigation_contracts/audit_event_sink.hpp>
+#endif
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
@@ -325,6 +328,14 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const ExecutionTraceSnapshot& trace,
       const RetainedDecisionObservation& decision) noexcept;
   void publishCommand();
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  void emitWorldAudit(std::uint8_t phase,
+                      const navigation_world_model::WorldSnapshotIdentity& identity,
+                      std::uint64_t bundle_generation = 0U,
+                      std::uint8_t outcome = 0U,
+                      std::uint64_t flags = 0U,
+                      std::int64_t callback_start_steady_ns = 0) noexcept;
+#endif
   [[nodiscard]] bool clearCommandForCurrentIdentity(
       const navigation_contracts::msg::NavigationGoal& command_goal,
       std::uint64_t goal_epoch_at_command,
@@ -592,6 +603,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::unique_ptr<HeadingRebindWorker> heading_rebind_worker_;
   mutable std::mutex heading_rebind_mutex_;
   std::optional<PendingHeadingRebind> pending_heading_rebind_;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  std::unique_ptr<navigation_contracts::audit::Sink> audit_sink_;
+#endif
 };
 
 }  // namespace navigation_runtime

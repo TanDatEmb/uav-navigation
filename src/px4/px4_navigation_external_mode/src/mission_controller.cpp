@@ -341,7 +341,14 @@ MissionControllerEvent MissionController::update(
     double now_s, const std::optional<Eigen::Vector3d>& position, bool airborne,
     const std::optional<Eigen::Vector3d>& velocity,
     const std::optional<CertifiedContinuation>& continuation,
-    const bool certified_suffix_stop) {
+    const bool certified_suffix_stop
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    , MissionGateAudit* audit
+#endif
+    ) {
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+  if (audit) *audit = {};
+#endif
   std::lock_guard<std::mutex> lock(mutex_);
   if (!std::isfinite(now_s) || state_ == MissionControllerState::Idle ||
       state_ == MissionControllerState::Complete || state_ == MissionControllerState::Failed) {
@@ -472,9 +479,18 @@ MissionControllerEvent MissionController::update(
                                     now_s >= previous_position_time_s
         ? now_s - previous_position_time_s
         : std::numeric_limits<double>::quiet_NaN();
-    return route_progress_.measuredWaypointCrossingError(
+    const auto error = route_progress_.measuredWaypointCrossingError(
         active_waypoint_index_, *position, previous_position, sample_gap_s,
         kMaximumPassThroughSampleGapS);
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    if (audit) {
+      audit->crossing_evaluated = true;
+      audit->crossing_valid = error.has_value();
+      audit->crossing_error_m = error.value_or(0.0);
+      audit->sample_gap_s = sample_gap_s;
+    }
+#endif
+    return error;
   };
   const auto passThroughAcceptance = [&]() {
     return passThroughAcceptanceError().has_value();
@@ -576,6 +592,17 @@ MissionControllerEvent MissionController::update(
         ? (certified_main_continuation || certified_suffix_stop ||
            coincident_terminal_hold_ready || immediate_pass_through)
         : trajectory_ready_;
+#ifdef NAVIGATION_AUDIT_INSTRUMENTATION
+    if (audit) {
+      audit->pass_through = pass_through;
+      audit->inside = inside;
+      audit->acceptance_ready = acceptance_ready;
+      audit->continuation_valid = certified_main_continuation;
+      audit->progression_ready = progression_ready;
+      audit->coincident_terminal_hold_ready = coincident_terminal_hold_ready;
+      audit->immediate_pass_through = immediate_pass_through;
+    }
+#endif
     if (progression_ready && inside && acceptance_ready) {
       if (pass_through) {
         const auto acceptance_error = passThroughAcceptanceError();

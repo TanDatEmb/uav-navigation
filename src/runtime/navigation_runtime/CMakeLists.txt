@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(navigation_runtime LANGUAGES CXX)
+option(NAVIGATION_AUDIT_INSTRUMENTATION "Build removable diagnostic audit witnesses" OFF)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 20)
@@ -44,12 +45,15 @@ add_library(navigation_runtime_core
   src/navigation_runtime_node.cpp
 )
 target_compile_features(navigation_runtime_core PUBLIC cxx_std_20)
+if(NAVIGATION_AUDIT_INSTRUMENTATION)
+  target_compile_definitions(navigation_runtime_core PUBLIC NAVIGATION_AUDIT_INSTRUMENTATION=1)
+endif()
 target_compile_options(navigation_runtime_core PRIVATE -Wall -Wextra -O3)
 target_include_directories(navigation_runtime_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_include_directories(navigation_runtime_core PRIVATE
+target_include_directories(navigation_runtime_core PUBLIC
   ${navigation_contracts_INCLUDE_DIRS})
 target_link_libraries(navigation_runtime_core PUBLIC
   navigation_planning_backend::navigation_planning_backend
@@ -73,6 +77,7 @@ add_executable(navigation_runtime_node src/navigation_runtime_main.cpp)
 target_compile_features(navigation_runtime_node PUBLIC cxx_std_20)
 target_compile_options(navigation_runtime_node PRIVATE -Wall -Wextra -O3)
 target_link_libraries(navigation_runtime_node PRIVATE navigation_runtime_core)
+target_include_directories(navigation_runtime_node PRIVATE ${navigation_contracts_INCLUDE_DIRS})
 
 install(DIRECTORY include/ DESTINATION include)
 install(TARGETS navigation_runtime_core
@@ -112,6 +117,11 @@ ament_export_include_directories(include)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  if(NAVIGATION_AUDIT_INSTRUMENTATION)
+    ament_add_gtest(test_audit_sink test/test_audit_sink.cpp)
+    target_include_directories(test_audit_sink PRIVATE ${navigation_contracts_INCLUDE_DIRS})
+    ament_target_dependencies(test_audit_sink navigation_contracts rclcpp)
+  endif()
   ament_add_gtest(test_world_snapshot_store test/test_world_snapshot_store.cpp)
   target_include_directories(test_world_snapshot_store PRIVATE include)
   target_link_libraries(test_world_snapshot_store
@@ -137,6 +147,8 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_mission_dynamics navigation_mission)
   ament_add_gtest(test_navigation_runtime_shutdown
     test/test_navigation_runtime_shutdown.cpp)
+  target_include_directories(test_navigation_runtime_shutdown PRIVATE
+    ${navigation_contracts_INCLUDE_DIRS})
   target_compile_definitions(test_navigation_runtime_shutdown PRIVATE
     NAVIGATION_PLANNER_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml"
     NAVIGATION_HANDOVER_MISSION_FILE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../../config/runtime/missions/open.yaml")
