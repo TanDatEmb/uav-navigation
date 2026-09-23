@@ -19,7 +19,7 @@ def require(condition: bool, message: str) -> None:
 def main() -> int:
     node_h = (RUNTIME / "include/navigation_runtime/navigation_runtime_node.hpp").read_text()
     node_cpp = (RUNTIME / "src/navigation_runtime_node.cpp").read_text()
-    owner = (EXECUTION / "include/navigation_execution/committed_bundle_store.hpp").read_text()
+    owner = (EXECUTION / "include/navigation_execution/execution_authority.hpp").read_text()
     product = "\n".join((RUNTIME / "include/navigation_runtime" / p).read_text()
                         for p in ("execution_lifecycle_view.hpp", "navigation_runtime_node.hpp"))
 

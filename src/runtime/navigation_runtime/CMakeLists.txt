@@ -180,10 +180,20 @@ if(BUILD_TESTING)
   target_include_directories(test_kinematic_derivative_estimator PRIVATE include)
   target_link_libraries(test_kinematic_derivative_estimator
     navigation_planning::navigation_planning)
-  ament_add_gtest(test_execution_episode
-    test/test_execution_episode.cpp)
-  target_include_directories(test_execution_episode PRIVATE include)
-  ament_target_dependencies(test_execution_episode navigation_planning navigation_execution builtin_interfaces)
+  ament_add_gtest(test_execution_lifecycle
+    test/test_execution_lifecycle.cpp)
+  target_include_directories(test_execution_lifecycle PRIVATE include)
+  ament_target_dependencies(test_execution_lifecycle navigation_planning navigation_execution builtin_interfaces)
+  ament_add_gtest(test_desired_planning_intent
+    test/test_desired_planning_intent.cpp)
+  target_include_directories(test_desired_planning_intent PRIVATE include)
+  ament_target_dependencies(test_desired_planning_intent
+    navigation_contracts builtin_interfaces)
+  ament_add_gtest(test_desired_execution_boundary
+    test/test_desired_execution_boundary.cpp)
+  target_include_directories(test_desired_execution_boundary PRIVATE include)
+  ament_target_dependencies(test_desired_execution_boundary
+    navigation_execution navigation_planning navigation_contracts builtin_interfaces)
   ament_add_gtest(test_execution_trace_snapshot
     test/test_execution_trace_snapshot.cpp)
   target_include_directories(test_execution_trace_snapshot PRIVATE include)

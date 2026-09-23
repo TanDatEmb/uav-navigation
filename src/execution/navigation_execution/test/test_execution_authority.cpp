@@ -37,7 +37,7 @@ class TestExecutionAuthority : public ExecutionAuthority {
 
   template <typename AdmissionFn>
   CommitDecision tryCommitIfCurrent(
-      const CommitToken& token, const ExecutionTimelineSnapshot& predecessor,
+      const CommitToken& token, const ExecutionAuthoritySnapshot& predecessor,
       std::shared_ptr<const navigation_planning::CandidateBundle> bundle,
       AdmissionFn&& admit) noexcept {
     auto goal = goalFor(bundle);
@@ -77,12 +77,12 @@ class TestExecutionAuthority : public ExecutionAuthority {
   }
 };
 
-struct ExecutionTimelineStoreTestAccess {
+struct ExecutionAuthorityTestAccess {
   template <typename Finalize, typename Prepare>
   static navigation_world_model::WorldCommitDecision publish(
       TestExecutionAuthority& store,
       const navigation_world_model::WorldSnapshotIdentity& identity,
-      const ExecutionTimelineSnapshot& expected,
+      const ExecutionAuthoritySnapshot& expected,
       const bool retain_active, const std::int64_t refreshed_until_ns,
       const bool retain_pending, Finalize&& finalize, Prepare&& prepare) {
     return store.publishWorldIdentityIfCurrentAndFinalizeRevocationImpl(
@@ -188,6 +188,108 @@ TEST(TestExecutionAuthority, RevokedExecutionRequiresNewAdmissionBeforeCommit) {
   EXPECT_FALSE(store.load());
 }
 
+TEST(TestExecutionAuthority, MatchesExactActiveCommandIdentity) {
+  navigation_execution::TestExecutionAuthority store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  const auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+            navigation_execution::CommitDecision::kCommitted);
+
+  navigation_contracts::msg::NavigationGoal goal;
+  goal.mission_id = "test_mission";
+  goal.request_id = candidate->request_id;
+  EXPECT_TRUE(store.matchesActive(
+      goal, candidate->goal_epoch, candidate->localization_epoch,
+      candidate->bundle_generation));
+  EXPECT_TRUE(store.matchesActive(
+      goal, candidate->goal_epoch, candidate->localization_epoch));
+
+  auto mismatch = goal;
+  mismatch.mission_id = "foreign_mission";
+  EXPECT_FALSE(store.matchesActive(
+      mismatch, candidate->goal_epoch, candidate->localization_epoch));
+  mismatch = goal;
+  ++mismatch.waypoint_index;
+  EXPECT_FALSE(store.matchesActive(
+      mismatch, candidate->goal_epoch, candidate->localization_epoch));
+  mismatch = goal;
+  ++mismatch.request_id;
+  EXPECT_FALSE(store.matchesActive(
+      mismatch, candidate->goal_epoch, candidate->localization_epoch));
+  EXPECT_FALSE(store.matchesActive(
+      goal, candidate->goal_epoch + 1U, candidate->localization_epoch));
+  EXPECT_FALSE(store.matchesActive(
+      goal, candidate->goal_epoch, candidate->localization_epoch + 1U));
+  EXPECT_FALSE(store.matchesActive(
+      goal, candidate->goal_epoch, candidate->localization_epoch,
+      candidate->bundle_generation + 1U));
+}
+
+TEST(TestExecutionAuthority, ActiveSnapshotTokenRejectsCutoverAndRevocation) {
+  navigation_execution::TestExecutionAuthority store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  auto predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, predecessor),
+            navigation_execution::CommitDecision::kCommitted);
+
+  const auto captured = store.snapshot();
+  EXPECT_TRUE(store.matchesActiveSnapshot(captured));
+
+  auto successor_candidate = candidateFor(7, 1);
+  successor_candidate.bundle_generation = predecessor->bundle_generation + 1U;
+  auto successor = std::make_shared<const navigation_planning::CandidateBundle>(
+      std::move(successor_candidate));
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, successor),
+            navigation_execution::CommitDecision::kCommitted);
+  EXPECT_FALSE(store.matchesActiveSnapshot(captured));
+
+  const auto successor_snapshot = store.snapshot();
+  EXPECT_TRUE(store.matchesActiveSnapshot(successor_snapshot));
+  store.invalidate();
+  EXPECT_FALSE(store.matchesActiveSnapshot(successor_snapshot));
+}
+
+TEST(TestExecutionAuthority, StaleActiveSnapshotCannotFailCloseSuccessor) {
+  navigation_execution::TestExecutionAuthority store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  auto predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, predecessor),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto stale = store.snapshot();
+
+  auto successor_candidate = candidateFor(7, 1);
+  successor_candidate.bundle_generation = predecessor->bundle_generation + 1U;
+  auto successor = std::make_shared<const navigation_planning::CandidateBundle>(
+      std::move(successor_candidate));
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, successor),
+            navigation_execution::CommitDecision::kCommitted);
+
+  EXPECT_FALSE(store.failClosedIfActiveSnapshot(stale));
+  EXPECT_EQ(store.snapshot().active.get(), successor.get());
+  EXPECT_EQ(store.snapshot().lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kAvailable);
+}
+
+TEST(TestExecutionAuthority, EmptyActiveSnapshotCanFailCloseWhileStillEmpty) {
+  navigation_execution::TestExecutionAuthority store;
+  const auto empty_snapshot = store.snapshot();
+  ASSERT_FALSE(empty_snapshot.active);
+  ASSERT_FALSE(empty_snapshot.active_goal);
+
+  EXPECT_TRUE(store.failClosedIfActiveSnapshot(empty_snapshot));
+  EXPECT_EQ(store.snapshot().lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kFailed);
+}
+
 TEST(TestExecutionAuthority, RejectsOutOfOrderTransactionIdentity) {
   navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
@@ -220,7 +322,7 @@ class ConditionalCommit : public ::testing::Test {
   }
 
   void expectUnchanged(
-      const navigation_execution::ExecutionTimelineSnapshot& before) const {
+      const navigation_execution::ExecutionAuthoritySnapshot& before) const {
     const auto after = store.snapshot();
     EXPECT_EQ(after.version, before.version);
     EXPECT_EQ(after.active, before.active);
@@ -1543,7 +1645,7 @@ TEST(TestExecutionAuthority, PreparationFailureRevokesExactActiveAndRetriesWorld
     throw std::bad_alloc();
   };
 
-  EXPECT_EQ(navigation_execution::ExecutionTimelineStoreTestAccess::publish(
+  EXPECT_EQ(navigation_execution::ExecutionAuthorityTestAccess::publish(
                 store, next_world, expected, true, 0, false,
                 [&]() noexcept { ++finalized; }, fail_preparation),
             navigation_world_model::WorldCommitDecision::kCandidateRejected);
@@ -1590,7 +1692,7 @@ TEST(TestExecutionAuthority, PendingPreparationFailureDoesNotRevokeActive) {
     return copy;
   };
 
-  EXPECT_EQ(navigation_execution::ExecutionTimelineStoreTestAccess::publish(
+  EXPECT_EQ(navigation_execution::ExecutionAuthorityTestAccess::publish(
                 store, next_world, expected, true, 0, true,
                 [&]() noexcept { ++finalized; }, fail_pending_preparation),
             navigation_world_model::WorldCommitDecision::kCommitted);
@@ -1630,7 +1732,7 @@ TEST(TestExecutionAuthority, SnapshotSupersededDuringPreparationIsNoOp) {
     return copy;
   };
 
-  EXPECT_EQ(navigation_execution::ExecutionTimelineStoreTestAccess::publish(
+  EXPECT_EQ(navigation_execution::ExecutionAuthorityTestAccess::publish(
                 store, next_world, expected, true, 0, false,
                 [&]() noexcept { ++finalized; }, superseding_prepare),
             navigation_world_model::WorldCommitDecision::kSuperseded);

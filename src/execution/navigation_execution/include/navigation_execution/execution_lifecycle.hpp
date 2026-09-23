@@ -5,7 +5,7 @@
 
 namespace navigation_execution {
 
-enum class ExecutionEpisodePhase : std::uint8_t {
+enum class ExecutionPhase : std::uint8_t {
   // Internal physical execution lifecycle. Planning-worker activity remains
   // orthogonal to this episode.
   kInitialHold = 0,
@@ -18,44 +18,22 @@ enum class ExecutionEpisodePhase : std::uint8_t {
 // The diagnostic key execution_episode_phase is a v1 telemetry field. Keep
 // its historical wire codes at this publication boundary while the internal
 // lifecycle enum remains contiguous and free to evolve independently.
-constexpr std::uint8_t executionEpisodePhaseTelemetryCodeV1(
-    ExecutionEpisodePhase phase) noexcept {
+constexpr std::uint8_t executionPhaseTelemetryCodeV1(
+    ExecutionPhase phase) noexcept {
   switch (phase) {
-    case ExecutionEpisodePhase::kInitialHold:
+    case ExecutionPhase::kInitialHold:
       return 0U;
-    case ExecutionEpisodePhase::kTrackingMain:
+    case ExecutionPhase::kTrackingMain:
       return 2U;
-    case ExecutionEpisodePhase::kTrackingBackup:
+    case ExecutionPhase::kTrackingBackup:
       return 3U;
-    case ExecutionEpisodePhase::kStoppedHold:
+    case ExecutionPhase::kStoppedHold:
       return 4U;
-    case ExecutionEpisodePhase::kPx4Hold:
+    case ExecutionPhase::kPx4Hold:
       return 5U;
   }
   return 0xFFU;
 }
-
-struct ExecutionEpisodeSnapshot final {
-  std::uint64_t localization_epoch{0U};
-  // Desired identity can advance during a hot retarget while the active
-  // command still belongs to the previous waypoint. Keep that execution
-  // identity until the successor bundle is actually committed.
-  std::uint64_t goal_epoch{0U};
-  std::uint64_t request_id{0U};
-  std::uint64_t active_command_goal_epoch{0U};
-  std::uint64_t active_command_request_id{0U};
-  std::uint64_t active_generation{0U};
-  ExecutionEpisodePhase phase{ExecutionEpisodePhase::kInitialHold};
-  bool command_available{false};
-  bool failure_latched{false};
-  bool safety_suffix_active{false};
-  bool restart_from_rest{false};
-  // Recovery policy is part of this same physical-execution snapshot. It is
-  // intentionally distinct from sampled phase (for example, a terminal MAIN
-  // can already be emitting STOPPED_HOLD while completion is still pending),
-  // but it no longer has an independently mutable owner.
-  ExecutionRecoveryState recovery_state{ExecutionRecoveryState::kInitialHold};
-};
 
 // These are independent execution facts. A frozen safety suffix may sample
 // MAIN before its BACKUP switch, and analytic hold can precede measured stop.
@@ -77,7 +55,7 @@ enum class ExecutionRestartRequest : std::uint8_t {
 };
 
 struct ExecutionLifecycleState final {
-  ExecutionEpisodePhase phase{ExecutionEpisodePhase::kInitialHold};
+  ExecutionPhase phase{ExecutionPhase::kInitialHold};
   ExecutionRecoveryState recovery{ExecutionRecoveryState::kInitialHold};
   ExecutionExposure exposure{ExecutionExposure::kUnavailable};
   ExecutionSafetyOwnership safety{ExecutionSafetyOwnership::kNominal};

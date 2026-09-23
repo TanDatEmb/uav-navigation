@@ -4032,7 +4032,8 @@ class RuntimeContractTest(unittest.TestCase):
         source = (
             ROOT / "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp"
         ).read_text(encoding="utf-8")
-        self.assertIn("new_goal_", source)
+        self.assertIn("desired_intent_.transition()", source)
+        self.assertIn("PlanningIntentTransition::kNewIntent", source)
         self.assertIn("planSuccessorFromExecutionAnchor", source)
 
     def test_candidate_exposure_retains_pre_activation_lease(self) -> None:

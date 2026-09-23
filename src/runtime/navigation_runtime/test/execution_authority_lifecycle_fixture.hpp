@@ -2,18 +2,18 @@
 
 #include <memory>
 
-#include <navigation_execution/committed_bundle_store.hpp>
+#include <navigation_execution/execution_authority.hpp>
 #include <navigation_runtime/execution_lifecycle_view.hpp>
 #include <navigation_runtime/execution_recovery_state.hpp>
 
 namespace navigation_runtime {
 
-// Test-only adapter for the former Episode cases. Every transition reaches
-// the product ExecutionAuthority; there is no second mutable lifecycle.
+// Test fixture whose every transition reaches the product
+// ExecutionAuthority; it has no second mutable lifecycle.
 class ExecutionLifecycleFixture final {
  public:
-  [[nodiscard]] navigation_execution::ExecutionEpisodeSnapshot snapshot() const noexcept {
-    return authority_.episodeSnapshot();
+  [[nodiscard]] navigation_execution::ExecutionAuthoritySnapshot snapshot() const noexcept {
+    return authority_.snapshot();
   }
 
   void reset(std::uint64_t localization_epoch) noexcept {

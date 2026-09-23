@@ -4559,7 +4559,7 @@ double mainGuideSupport(
 
         // Successor candidates are suffix-only.  Their first polynomial is
         // solved from the immutable future anchor and begins at the exact
-        // activation timestamp selected by ExecutionTimelineStore; the old
+        // activation timestamp selected by ExecutionAuthority; the old
         // command remains active until that timestamp.
         const double new_traj_WT = std::isfinite(requested_activation_wall_time_s)
             ? requested_activation_wall_time_s : replan_process_start_WT;

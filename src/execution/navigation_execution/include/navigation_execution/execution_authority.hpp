@@ -23,7 +23,7 @@
 
 namespace navigation_execution {
 
-struct ExecutionTimelineStoreTestAccess;
+struct ExecutionAuthorityTestAccess;
 
 struct CommitToken {
   navigation_world_model::WorldSnapshotIdentity world_identity;
@@ -46,9 +46,33 @@ struct ExecutionAuthoritySnapshot {
   std::uint64_t admission_goal_epoch{0};
   std::uint64_t admission_localization_epoch{0};
   ExecutionLifecycleState lifecycle{};
-};
 
-using ExecutionTimelineSnapshot = ExecutionAuthoritySnapshot;
+  [[nodiscard]] bool commandAvailable() const noexcept {
+    return lifecycle.exposure == ExecutionExposure::kAvailable;
+  }
+  [[nodiscard]] bool failed() const noexcept {
+    return lifecycle.exposure == ExecutionExposure::kFailed;
+  }
+  [[nodiscard]] bool safetySuffixActive() const noexcept {
+    return lifecycle.safety == ExecutionSafetyOwnership::kSafetySuffix;
+  }
+  [[nodiscard]] bool restartFromRest() const noexcept {
+    return lifecycle.restart == ExecutionRestartRequest::kFromRest;
+  }
+  [[nodiscard]] std::uint64_t activeGeneration() const noexcept {
+    return active ? active->bundle_generation : 0U;
+  }
+  [[nodiscard]] std::uint64_t activeGoalEpoch() const noexcept {
+    return active ? active->goal_epoch : 0U;
+  }
+  [[nodiscard]] std::uint64_t activeRequestId() const noexcept {
+    return active ? active->request_id : 0U;
+  }
+  [[nodiscard]] std::uint64_t admissionRequestId() const noexcept {
+    return active && active->goal_epoch == admission_goal_epoch
+               ? active->request_id : 0U;
+  }
+};
 
 enum class CommitDecision : std::uint8_t {
   kCommitted,
@@ -185,8 +209,8 @@ class ExecutionAuthority {
         : ExecutionSafetyOwnership::kNominal;
     lifecycle_.phase = bundle.role == navigation_planning::CandidateRole::kEmergency ||
                        bundle.role == navigation_planning::CandidateRole::kBackup
-        ? ExecutionEpisodePhase::kTrackingBackup
-        : ExecutionEpisodePhase::kTrackingMain;
+        ? ExecutionPhase::kTrackingBackup
+        : ExecutionPhase::kTrackingMain;
     noteLifecycleChangeLocked(before);
     return true;
   }
@@ -200,7 +224,7 @@ class ExecutionAuthority {
         (sampled_role != navigation_planning::CandidateRole::kBackup &&
          sampled_role != navigation_planning::CandidateRole::kEmergency)) return false;
     const auto before = lifecycle_;
-    lifecycle_.phase = ExecutionEpisodePhase::kTrackingBackup;
+    lifecycle_.phase = ExecutionPhase::kTrackingBackup;
     lifecycle_.safety = ExecutionSafetyOwnership::kSafetySuffix;
     lifecycle_.recovery = transitionExecutionRecovery(
         lifecycle_.recovery,
@@ -259,7 +283,7 @@ class ExecutionAuthority {
     if (lifecycle_.exposure == ExecutionExposure::kFailed ||
         !activeBundleIdentityMatchesLocked(bundle)) return false;
     const auto before = lifecycle_;
-    lifecycle_.phase = ExecutionEpisodePhase::kStoppedHold;
+    lifecycle_.phase = ExecutionPhase::kStoppedHold;
     lifecycle_.exposure = ExecutionExposure::kAvailable;
     lifecycle_.safety = ExecutionSafetyOwnership::kNominal;
     // Deliberately preserve restart request and recovery policy.
@@ -345,15 +369,52 @@ class ExecutionAuthority {
             admission_localization_epoch_, lifecycle_};
   }
 
-  [[nodiscard]] ExecutionEpisodeSnapshot episodeSnapshot() const noexcept {
-    std::lock_guard lock(mutex_);
-    return episodeSnapshotLocked();
-  }
-
   [[nodiscard]] std::shared_ptr<const navigation_contracts::msg::NavigationGoal>
   executingGoal() const noexcept {
     std::lock_guard lock(mutex_);
     return active_.goal;
+  }
+
+  [[nodiscard]] bool matchesActive(
+      const navigation_contracts::msg::NavigationGoal& goal,
+      const std::uint64_t goal_epoch,
+      const std::uint64_t localization_epoch,
+      const std::uint64_t bundle_generation = 0U) const noexcept {
+    std::lock_guard lock(mutex_);
+    if (!active_.goal || !active_.bundle ||
+        active_.goal->mission_id != goal.mission_id ||
+        active_.goal->waypoint_index != goal.waypoint_index ||
+        active_.goal->request_id != goal.request_id ||
+        active_.bundle->goal_epoch != goal_epoch ||
+        active_.bundle->localization_epoch != localization_epoch ||
+        active_.bundle->request_id != goal.request_id) {
+      return false;
+    }
+    return bundle_generation == 0U ||
+           active_.bundle->bundle_generation == bundle_generation;
+  }
+
+  [[nodiscard]] bool matchesActiveSnapshot(
+      const ExecutionAuthoritySnapshot& expected) const noexcept {
+    std::lock_guard lock(mutex_);
+    return expected.active && expected.active_goal && active_.bundle && active_.goal &&
+           active_.bundle.get() == expected.active.get() &&
+           active_.goal.get() == expected.active_goal.get() &&
+           active_lineage_version_ == expected.active_lineage;
+  }
+
+  bool failClosedIfActiveSnapshot(
+      const ExecutionAuthoritySnapshot& expected) noexcept {
+    std::lock_guard lock(mutex_);
+    if (active_.bundle.get() != expected.active.get() ||
+        active_.goal.get() != expected.active_goal.get() ||
+        active_lineage_version_ != expected.active_lineage) {
+      return false;
+    }
+    const auto before = lifecycle_;
+    failClosedLifecycleLocked();
+    noteLifecycleChangeLocked(before);
+    return true;
   }
 
   [[nodiscard]] std::uint64_t executingGoalEpoch() const noexcept {
@@ -546,7 +607,7 @@ class ExecutionAuthority {
   // the store mutex before any activation or rollback is attempted.
   template <typename FinalizeFn>
   bool activatePendingIfDueAndFinalize(
-      std::int64_t now_ns, const ExecutionTimelineSnapshot& expected,
+      std::int64_t now_ns, const ExecutionAuthoritySnapshot& expected,
       FinalizeFn&& finalize) const noexcept {
     std::lock_guard lock(mutex_);
     return activatePendingIfDueAndFinalizeLocked(
@@ -602,7 +663,7 @@ class ExecutionAuthority {
   // Revoke the exact timeline observed by an execution owner. A changed
   // version means a commit, activation, recertification or pending mutation
   // won the race; preserve that newer timeline rather than clearing it.
-  bool invalidateIfCurrent(const ExecutionTimelineSnapshot& expected) const noexcept {
+  bool invalidateIfCurrent(const ExecutionAuthoritySnapshot& expected) const noexcept {
     std::lock_guard lock(mutex_);
     if (timeline_version_ != expected.version ||
         active_.bundle.get() != expected.active.get()) {
@@ -674,7 +735,7 @@ class ExecutionAuthority {
   template <typename AdmissionFn>
   CommitDecision tryCommitIfCurrent(
       const CommitToken& expected,
-      const ExecutionTimelineSnapshot& predecessor,
+      const ExecutionAuthoritySnapshot& predecessor,
       std::shared_ptr<const navigation_contracts::msg::NavigationGoal> goal,
       std::shared_ptr<const navigation_planning::CandidateBundle> candidate,
       AdmissionFn&& admit) noexcept {
@@ -819,34 +880,11 @@ class ExecutionAuthority {
   }
 
  private:
-  friend struct ExecutionTimelineStoreTestAccess;
+  friend struct ExecutionAuthorityTestAccess;
 
   void noteLifecycleChangeLocked(
       const ExecutionLifecycleState& before) const noexcept {
     if (!(lifecycle_ == before)) ++timeline_version_;
-  }
-
-  [[nodiscard]] ExecutionEpisodeSnapshot episodeSnapshotLocked() const noexcept {
-    ExecutionEpisodeSnapshot view;
-    view.localization_epoch = admission_localization_epoch_;
-    view.goal_epoch = admission_goal_epoch_;
-    if (active_.bundle) {
-      view.active_command_goal_epoch = active_.bundle->goal_epoch;
-      view.active_command_request_id = active_.bundle->request_id;
-      view.active_generation = active_.bundle->bundle_generation;
-      if (active_.bundle->goal_epoch == admission_goal_epoch_) {
-        view.request_id = active_.bundle->request_id;
-      }
-    }
-    view.phase = lifecycle_.phase;
-    view.command_available = lifecycle_.exposure == ExecutionExposure::kAvailable;
-    view.failure_latched = lifecycle_.exposure == ExecutionExposure::kFailed;
-    view.safety_suffix_active =
-        lifecycle_.safety == ExecutionSafetyOwnership::kSafetySuffix;
-    view.restart_from_rest =
-        lifecycle_.restart == ExecutionRestartRequest::kFromRest;
-    view.recovery_state = lifecycle_.recovery;
-    return view;
   }
 
   [[nodiscard]] bool activeBundleIdentityMatchesLocked(
@@ -861,7 +899,7 @@ class ExecutionAuthority {
   }
 
   void failClosedLifecycleLocked() const noexcept {
-    lifecycle_.phase = ExecutionEpisodePhase::kPx4Hold;
+    lifecycle_.phase = ExecutionPhase::kPx4Hold;
     lifecycle_.recovery = ExecutionRecoveryState::kPx4Hold;
     lifecycle_.exposure = ExecutionExposure::kFailed;
     lifecycle_.safety = ExecutionSafetyOwnership::kNominal;
@@ -887,8 +925,8 @@ class ExecutionAuthority {
     lifecycle_.phase =
         bundle.role == navigation_planning::CandidateRole::kBackup ||
         bundle.role == navigation_planning::CandidateRole::kEmergency
-            ? ExecutionEpisodePhase::kTrackingBackup
-            : ExecutionEpisodePhase::kTrackingMain;
+            ? ExecutionPhase::kTrackingBackup
+            : ExecutionPhase::kTrackingMain;
     lifecycle_.recovery = transitionExecutionRecovery(
         lifecycle_.recovery,
         bundle.role == navigation_planning::CandidateRole::kEmergency
@@ -1216,7 +1254,5 @@ class ExecutionAuthority {
 };
 
 // Compatibility name for code that only consumes the active-command API.
-using ExecutionTimelineStore = ExecutionAuthority;
-using CommittedBundleStore = ExecutionAuthority;
 
 }  // namespace navigation_execution

@@ -136,23 +136,23 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
       progress, *navigation_common::nanosecondsToRosTime(110'000'000));
   ASSERT_TRUE(predecessor_goal);
 
-  navigation_execution::ExecutionTimelineStore timeline;
+  navigation_execution::ExecutionAuthority execution_authority;
   const navigation_world_model::WorldSnapshotIdentity world{
       1U, 4U, 1U, 100'000'000};
-  const auto empty = timeline.snapshot();
-  ASSERT_EQ(timeline.publishWorldIdentityIfCurrent(
+  const auto empty = execution_authority.snapshot();
+  ASSERT_EQ(execution_authority.publishWorldIdentityIfCurrent(
                 world, empty.version, {}, false),
             navigation_world_model::WorldCommitDecision::kCommitted);
-  ASSERT_TRUE(timeline.setAdmissionGoalEpoch(9U));
+  ASSERT_TRUE(execution_authority.setAdmissionGoalEpoch(9U));
   const auto predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
       handoffCandidate(world, 9U, 2U, 4U, 100'000'000));
   ASSERT_TRUE(predecessor->valid());
-  ASSERT_EQ(timeline.tryCommit(
+  ASSERT_EQ(execution_authority.tryCommit(
                 {world, 9U, 1U},
                 std::make_shared<const navigation_contracts::msg::NavigationGoal>(
                     *predecessor_goal), predecessor),
             navigation_execution::CommitDecision::kCommitted);
-  navigation_execution::CommandSampler sampler(timeline);
+  navigation_execution::CommandSampler sampler(execution_authority);
 
   // Crossing arrives before the downstream receipt. Neither the crossing nor
   // an unacknowledged sampled command fabricates mission acceptance.
@@ -170,11 +170,12 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
       progress, *navigation_common::nanosecondsToRosTime(170'000'000));
   ASSERT_TRUE(successor_goal);
   ASSERT_EQ(successor_goal->request_id, 3U);
-  ASSERT_TRUE(timeline.setAdmissionGoalEpoch(10U, true));
-  EXPECT_EQ(timeline.load(), predecessor);
-  EXPECT_EQ(timeline.episodeSnapshot().active_generation, 4U);
-  EXPECT_EQ(timeline.episodeSnapshot().goal_epoch, 10U);
-  EXPECT_EQ(timeline.episodeSnapshot().active_command_goal_epoch, 9U);
+  ASSERT_TRUE(execution_authority.setAdmissionGoalEpoch(10U, true));
+  EXPECT_EQ(execution_authority.load(), predecessor);
+  const auto execution = execution_authority.snapshot();
+  EXPECT_EQ(execution.activeGeneration(), 4U);
+  EXPECT_EQ(execution.admission_goal_epoch, 10U);
+  EXPECT_EQ(execution.activeGoalEpoch(), 9U);
 
   HandoffAdapterIdentityModel adapter;
   std::uint64_t sample_id = 1U;
@@ -223,20 +224,20 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
   const auto failed_successor =
       std::make_shared<const navigation_planning::CandidateBundle>(
           handoffCandidate(invalid_world, 10U, 3U, 5U, 400'000'000));
-  ASSERT_EQ(timeline.tryCommit(
+  ASSERT_EQ(execution_authority.tryCommit(
                 {invalid_world, 10U, 2U},
                 std::make_shared<const navigation_contracts::msg::NavigationGoal>(
                     *successor_goal), failed_successor),
             navigation_execution::CommitDecision::kWorldAdvanced);
-  EXPECT_EQ(timeline.load(), predecessor);
-  const auto anchor = timeline.reserveAnchor(390'000'000, 400'000'000);
+  EXPECT_EQ(execution_authority.load(), predecessor);
+  const auto anchor = execution_authority.reserveAnchor(390'000'000, 400'000'000);
   ASSERT_TRUE(anchor);
   const auto discontinuous_successor =
       handoffCandidate(world, 10U, 3U, 5U, 400'000'000);
   EXPECT_EQ(navigation_execution::candidateMatchesAnchor(
                 discontinuous_successor, *anchor),
             navigation_execution::AnchorMatchResult::kPositionMismatch);
-  EXPECT_EQ(timeline.load(), predecessor);
+  EXPECT_EQ(execution_authority.load(), predecessor);
   const auto continuous_successor =
       handoffCandidate(world, 10U, 3U, 5U, 400'000'000, 0.3);
   for (const auto mismatch : {
@@ -259,13 +260,13 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
       return true;
     };
     EXPECT_EQ(navigation_execution::candidateMatchesAnchor(bad, *anchor), mismatch);
-    EXPECT_EQ(timeline.load(), predecessor);
+    EXPECT_EQ(execution_authority.load(), predecessor);
   }
   const auto successor = std::make_shared<const navigation_planning::CandidateBundle>(
       continuous_successor);
   ASSERT_EQ(navigation_execution::candidateMatchesAnchor(*successor, *anchor),
             navigation_execution::AnchorMatchResult::kMatch);
-  ASSERT_EQ(timeline.tryCommit(
+  ASSERT_EQ(execution_authority.tryCommit(
                 {world, 10U, 3U},
                 std::make_shared<const navigation_contracts::msg::NavigationGoal>(
                     *successor_goal), successor),

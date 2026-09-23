@@ -47,7 +47,8 @@
 #include "navigation_runtime/retained_decision_observation.hpp"
 #include <navigation_execution/execution_state_gate.hpp>
 #include <navigation_execution/execution_state_store.hpp>
-#include <navigation_execution/committed_bundle_store.hpp>
+#include <navigation_execution/execution_authority.hpp>
+#include "navigation_runtime/desired_planning_intent.hpp"
 #include <navigation_execution/command_sampler.hpp>
 #include <navigation_mapping/world_snapshot_store.hpp>
 #include <navigation_planning/planning_limits.hpp>
@@ -313,10 +314,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   };
   // Callback-local compare token, not a second active/pending owner. Both the
   // store cutover and late-failure delivery must still belong to this exact
-  // pre-END execution episode.
+  // pre-END execution authority snapshot.
   struct TerminalMonitorBoundary {
-    navigation_execution::ExecutionTimelineSnapshot timeline;
-    ExecutionEpisodeSnapshot episode;
+    navigation_execution::ExecutionAuthoritySnapshot snapshot;
   };
   // Callback-local facts only, never another execution owner. The worker
   // prepares its backend identity/world/cancellation before this transaction;
@@ -343,7 +343,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const navigation_contracts::msg::NavigationGoal& command_goal,
       std::uint64_t goal_epoch_at_command,
       std::uint64_t localization_epoch_at_command,
-      const navigation_execution::ExecutionTimelineSnapshot& expected);
+      const navigation_execution::ExecutionAuthoritySnapshot& expected);
   bool commitPlannerCandidate(const navigation_contracts::msg::NavigationGoal& goal,
                              std::uint64_t goal_epoch,
                              std::uint64_t localization_epoch,
@@ -360,7 +360,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const navigation_contracts::msg::NavigationGoal& goal,
       const navigation_execution::CommitToken& token,
       const std::shared_ptr<const navigation_planning::CandidateBundle>& candidate,
-      const navigation_execution::ExecutionTimelineSnapshot& predecessor,
+      const navigation_execution::ExecutionAuthoritySnapshot& predecessor,
       const PlanningKey& key,
       const std::shared_ptr<const navigation_execution::ExecutionStateLease>& measured_state,
       std::int64_t maximum_world_age_ns,
@@ -379,19 +379,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // Command-store invalidation remains explicit at call sites because ordinary
   // planner failures must retain a still-certified active command.
   void failClosedLocked() noexcept;
-  // Caller holds localization_transition_mutex_, input_mutex_, and the
-  // execution transition mutex. A nonzero generation requires the active
-  // immutable bundle to match the event producer's identity.
-  [[nodiscard]] bool desiredGoalIdentityMatchesLocked(
-      const navigation_contracts::msg::NavigationGoal& goal,
-      std::uint64_t goal_epoch, std::uint64_t localization_epoch,
-      std::uint64_t bundle_generation = 0U) const noexcept;
-  // The execution identity is the immutable command owner. It may differ from
-  // active_goal_ during a hot retarget until the pending successor activates.
-  [[nodiscard]] bool executingCommandIdentityMatchesLocked(
-      const navigation_contracts::msg::NavigationGoal& goal,
-      std::uint64_t goal_epoch, std::uint64_t localization_epoch,
-      std::uint64_t bundle_generation = 0U) const noexcept;
   // Read-only projections from the sole active execution record. Callers
   // needing a coherent bundle/goal pair use execution_authority_.snapshot().
   [[nodiscard]] std::optional<navigation_contracts::msg::NavigationGoal>
@@ -474,7 +461,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::deque<navigation_contracts::msg::NavigationCommand>
       issued_mission_commands_;
   navigation_execution::ExecutionStateStore execution_state_store_;
-  std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;
+  DesiredPlanningIntent desired_intent_;
   // Mission-start anchor for the planner's first-leg route heading. It is
   // latched per mission/route/localization scope and is never recaptured on a
   // normal waypoint/request handoff.
@@ -496,7 +483,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::uint64_t foreign_cancel_target_epoch_{0U};
   std::uint64_t foreign_cancel_transition_epoch_{0U};
   std::uint64_t foreign_cancel_localization_epoch_{0U};
-  std::atomic_uint64_t active_goal_epoch_{0};
   std::atomic_uint64_t active_localization_epoch_{1U};
   std::atomic_bool localization_epoch_ready_{true};
   std::atomic_uint64_t last_registered_scan_epoch_{1U};
@@ -505,11 +491,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t last_propagated_state_sequence_{0U};
   std::mutex propagated_derivative_mutex_;
   KinematicDerivativeEstimator propagated_derivative_estimator_;
-  bool new_goal_{false};
-  // PASS_THROUGH waypoint transitions retarget planner backend through the
-  // execution-anchor successor path so the
-  // committed polynomial supplies the future PVA initial state.
-  bool hot_goal_transition_{false};
+  // PASS_THROUGH retarget disposition is a single typed fact in desired_intent_.
   // The ROS adapter suppresses one scheduler renewal after a successful
   // stopped-state plan, allowing the committed trajectory to establish its
   // continuous command before the next horizon check. This mirror does not own
@@ -539,7 +521,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_int last_execution_boundary_rejection_{0};
   // These fields describe the latest command-timer activation attempt. They
   // are diagnostic witnesses only; activation authority remains in the
-  // execution timeline store. A nonzero generation is required before a
+  // execution authority. A nonzero generation is required before a
   // consumer may correlate the event with a candidate.
   std::atomic_uint64_t last_execution_activation_generation_{0U};
   std::atomic_int64_t last_execution_activation_started_steady_ns_{0};

@@ -45,12 +45,10 @@ class NavigationRuntimeTerminalMonitorTestPeer {
       std::lock_guard input_lock(node.input_mutex_);
       std::lock_guard command_lock(
           node.command_execution_lease_failure_latch_.transitionMutex());
-      node.active_goal_ = goal;
+      if (node.desired_intent_.advanceRevision() != 1U) return false;
+      node.desired_intent_.install(goal, PlanningIntentTransition::kNewIntent);
       node.active_localization_epoch_.store(1U);
       node.localization_epoch_ready_.store(true);
-      node.active_goal_epoch_.store(1U);
-      node.new_goal_ = true;
-      node.hot_goal_transition_ = false;
       node.mission_start_position_world_ = initial_position;
       node.mission_start_mission_id_ = goal.mission_id;
       node.mission_start_localization_epoch_ = 1U;
@@ -123,12 +121,13 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     std::lock_guard input_lock(node.input_mutex_);
     std::lock_guard command_lock(
         node.command_execution_lease_failure_latch_.transitionMutex());
-    node.active_goal_ = goal;
+    while (node.desired_intent_.revision() < command->goal_epoch) {
+      if (!node.desired_intent_.advanceRevision()) return false;
+    }
+    if (node.desired_intent_.revision() != command->goal_epoch) return false;
+    node.desired_intent_.install(goal, PlanningIntentTransition::kNone);
     node.active_localization_epoch_.store(command->localization_epoch);
     node.localization_epoch_ready_.store(true);
-    node.active_goal_epoch_.store(command->goal_epoch);
-    node.new_goal_ = false;
-    node.hot_goal_transition_ = false;
     node.execution_transaction_id_.store(1U);
     node.trajectory_completion_witness_.reset();
     node.trajectory_reaches_goal_.store(false);
@@ -191,12 +190,12 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static auto reserveFutureAnchor(NavigationRuntimeNode& node, std::int64_t stamp_ns) {
     return node.execution_authority_.reserveAnchor(stamp_ns, stamp_ns + 400'000'000LL);
   }
-  static auto episode(NavigationRuntimeNode& node) { return node.execution_authority_.episodeSnapshot(); }
-  static auto ownerTimelineAndEpisode(NavigationRuntimeNode& node) {
+  static auto execution(NavigationRuntimeNode& node) { return node.execution_authority_.snapshot(); }
+  static auto ownerSnapshot(NavigationRuntimeNode& node) {
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
     std::lock_guard command_lock(node.command_execution_lease_failure_latch_.transitionMutex());
-    return std::pair(node.execution_authority_.snapshot(), node.execution_authority_.episodeSnapshot());
+    return node.execution_authority_.snapshot();
   }
   static auto holdActivationQueue(NavigationRuntimeNode& node) {
     return std::unique_lock(node.planner_timeline_activation_mutex_);
@@ -224,7 +223,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static auto admitPreparedImmediate(
       NavigationRuntimeNode& node, const navigation_contracts::msg::NavigationGoal& goal,
       const PlanningKey& key, const navigation_planning::CandidateBundle& candidate,
-      const navigation_execution::ExecutionTimelineSnapshot& predecessor,
+      const navigation_execution::ExecutionAuthoritySnapshot& predecessor,
       const std::shared_ptr<const navigation_execution::ExecutionStateLease>& measured) {
     const auto transaction = node.execution_transaction_id_.fetch_add(1U) + 1U;
     return node.admitImmediateCandidate(
@@ -267,11 +266,11 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static void cycle(NavigationRuntimeNode& node, const PlanningKey& key) {
     node.runCycle(key, {});
   }
-  static void transitionFlags(NavigationRuntimeNode& node, bool new_goal, bool hot_goal) {
+  static void planningTransition(NavigationRuntimeNode& node, PlanningIntentTransition transition) {
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
-    node.new_goal_ = new_goal;
-    node.hot_goal_transition_ = hot_goal;
+    const auto& goal = node.desired_intent_.goal();
+    if (goal) node.desired_intent_.install(*goal, transition);
   }
   static bool stagePending(NavigationRuntimeNode& node) {
     const auto active = node.execution_authority_.load();
@@ -289,15 +288,14 @@ class NavigationRuntimeTerminalMonitorTestPeer {
         navigation_execution::StageDecision::kStaged;
   }
   static void monitor(NavigationRuntimeNode& node, const PlanningKey& key) {
-    const auto timeline = node.execution_authority_.snapshot();
-    const auto episode = node.execution_authority_.episodeSnapshot();
+    const auto snapshot = node.execution_authority_.snapshot();
     const NavigationRuntimeNode::RetainedValidationContext context{
         NavigationRuntimeNode::RetainedValidationPurpose::kTerminalMainMonitor,
         false, true, 0U, std::nullopt,
         retainedCommandTrackingLimit(node.planner_->trackingErrorBudgetMeters(),
                                     navigation_contracts::kCommandAnchorErrorLimitM),
-        NavigationRuntimeNode::TerminalMonitorBoundary{timeline, episode}};
-    node.validateRetainedCommand(node.active_goal_, key.goal_epoch,
+        NavigationRuntimeNode::TerminalMonitorBoundary{snapshot}};
+    node.validateRetainedCommand(node.desired_intent_.goal(), key.goal_epoch,
                                  key.localization_epoch, key, context);
   }
   static navigation_planning::PlanningRequest realTerminalRequest(
@@ -402,22 +400,22 @@ class NavigationRuntimeTerminalMonitorTestPeer {
       return std::optional<navigation_planning::CandidateBundle>{};
     }
     return node.planner_->exportCommandCandidate(
-        lease->state.localization_epoch, node.active_goal_epoch_.load(),
-        node.active_goal_->request_id, node.now().nanoseconds(),
+        lease->state.localization_epoch, node.desired_intent_.revision(),
+        node.desired_intent_.goal()->request_id, node.now().nanoseconds(),
         node.now().nanoseconds() + node.data_freshness_window_ns_);
   }
   static auto admitPreparedEmergency(NavigationRuntimeNode& node,
                                      const navigation_planning::CandidateBundle& candidate,
                                      std::shared_ptr<const navigation_execution::ExecutionStateLease> measured = {}) {
     const NavigationRuntimeNode::TerminalMonitorBoundary boundary{
-        node.execution_authority_.snapshot(), node.execution_authority_.episodeSnapshot()};
+        node.execution_authority_.snapshot()};
     const auto transaction = node.execution_transaction_id_.fetch_add(1U) + 1U;
     const auto key = node.currentPlanningKey();
     if (!key) return navigation_execution::CommitDecision::kAdmissionRejected;
     return node.admitImmediateCandidate(
-        *node.active_goal_, {candidate.world_identity, candidate.goal_epoch, transaction},
+        *node.desired_intent_.goal(), {candidate.world_identity, candidate.goal_epoch, transaction},
         std::make_shared<const navigation_planning::CandidateBundle>(candidate),
-        boundary.timeline, *key, measured ? measured : node.execution_state_store_.load(),
+        boundary.snapshot, *key, measured ? measured : node.execution_state_store_.load(),
         node.data_freshness_window_ns_, boundary);
   }
   static auto stateLease(NavigationRuntimeNode& node) {
@@ -817,7 +815,7 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     ASSERT_EQ(activated.active->bundle_generation, successor.candidate->bundle_generation);
     ASSERT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
               activated.active->bundle_generation);
-    ASSERT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).active_generation,
+    ASSERT_EQ(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).activeGeneration(),
               activated.active->bundle_generation);
 
     const auto monitor_stamp_ns = anchor->activation_stamp_ns + monitor_offset_ns;
@@ -889,11 +887,11 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
         EXPECT_NE(after.active->bundle_generation, activated.active->bundle_generation);
         EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
                   after.active->bundle_generation);
-        const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
-        EXPECT_EQ(episode.active_generation, after.active->bundle_generation);
-        EXPECT_EQ(episode.recovery_state, ExecutionRecoveryState::kEmergencyBrake);
-        EXPECT_FALSE(episode.failure_latched);
-        EXPECT_TRUE(episode.command_available);
+        const auto execution = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
+        EXPECT_EQ(execution.activeGeneration(), after.active->bundle_generation);
+        EXPECT_EQ(execution.lifecycle.recovery, ExecutionRecoveryState::kEmergencyBrake);
+        EXPECT_FALSE(execution.failed());
+        EXPECT_TRUE(execution.commandAvailable());
       } else if (trackingBaseMeters() > 0.0) {
         EXPECT_NEAR(trace->anchor_error_time_aligned_m, measured_offset.norm(), 1.0e-12);
         EXPECT_TRUE(trace->tracking_certificate_exceeded);
@@ -905,9 +903,9 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
         EXPECT_NE(after.active->bundle_generation, activated.active->bundle_generation);
         EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
                   after.active->bundle_generation);
-        EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).recovery_state,
+        EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).lifecycle.recovery,
                   ExecutionRecoveryState::kEmergencyBrake);
-        EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+        EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
       } else {
         EXPECT_NEAR(trace->anchor_error_time_aligned_m, measured_offset.norm(), 1.0e-12);
         EXPECT_TRUE(trace->experimental_tracking_bridge_usable);
@@ -915,10 +913,10 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
         EXPECT_FALSE(trace->projected_tracking_certificate_exceeded);
         EXPECT_EQ(trace->emergency_candidate_commit_result, 0);
         EXPECT_EQ(after.active, activated.active);
-        const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
-        EXPECT_EQ(episode.recovery_state, ExecutionRecoveryState::kTrackMain);
-        EXPECT_TRUE(episode.command_available);
-        EXPECT_FALSE(episode.failure_latched);
+        const auto execution = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
+        EXPECT_EQ(execution.lifecycle.recovery, ExecutionRecoveryState::kTrackMain);
+        EXPECT_TRUE(execution.commandAvailable());
+        EXPECT_FALSE(execution.failed());
       }
       return;
     }
@@ -929,11 +927,11 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
     EXPECT_EQ(after.active->declared_end_ns, activated.active->declared_end_ns);
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
               activated.active->bundle_generation);
-    const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
-    EXPECT_EQ(episode.active_generation, activated.active->bundle_generation);
-    EXPECT_EQ(episode.recovery_state, ExecutionRecoveryState::kTrackMain);
-    EXPECT_FALSE(episode.failure_latched);
-    EXPECT_FALSE(episode.safety_suffix_active);
+    const auto execution = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
+    EXPECT_EQ(execution.activeGeneration(), activated.active->bundle_generation);
+    EXPECT_EQ(execution.lifecycle.recovery, ExecutionRecoveryState::kTrackMain);
+    EXPECT_FALSE(execution.failed());
+    EXPECT_FALSE(execution.safetySuffixActive());
     EXPECT_TRUE(trace->committed_suffix_usable);
     EXPECT_EQ(trace->emergency_candidate_commit_result, 0);
     if (source_before_start) {
@@ -992,10 +990,10 @@ class NavigationRuntimeTerminalMonitorStrict : public NavigationRuntimeTerminalM
     } while (std::chrono::steady_clock::now() < watchdog);
     ASSERT_TRUE(cutover) << "FIXTURE_BLOCKED: worker did not reach actual store cutover";
     ASSERT_EQ(cutover->bundle_generation, planned.candidate->bundle_generation);
-    const auto coherent = NavigationRuntimeTerminalMonitorTestPeer::ownerTimelineAndEpisode(*node_);
-    ASSERT_EQ(coherent.first.active, cutover);
-    EXPECT_EQ(coherent.second.active_generation,
-              cutover->bundle_generation) << "owner reader must not observe store H / Episode G";
+    const auto coherent = NavigationRuntimeTerminalMonitorTestPeer::ownerSnapshot(*node_);
+    ASSERT_EQ(coherent.active, cutover);
+    EXPECT_EQ(coherent.activeGeneration(),
+              cutover->bundle_generation) << "owner reader must not observe store H / Execution G";
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::commandGoalEpoch(*node_), key->goal_epoch);
     if (recertify_world) {
       // Production staged validator, followed by the actual store's immutable
@@ -1014,10 +1012,10 @@ class NavigationRuntimeTerminalMonitorStrict : public NavigationRuntimeTerminalM
     EXPECT_TRUE(admitted);
     const auto active = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active;
     ASSERT_TRUE(active);
-    const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
-    EXPECT_EQ(episode.active_generation, active->bundle_generation);
-    EXPECT_TRUE(episode.command_available);
-    EXPECT_FALSE(episode.failure_latched);
+    const auto execution = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
+    EXPECT_EQ(execution.activeGeneration(), active->bundle_generation);
+    EXPECT_TRUE(execution.commandAvailable());
+    EXPECT_FALSE(execution.failed());
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::commandGoalEpoch(*node_), key->goal_epoch);
     const auto executing = NavigationRuntimeTerminalMonitorTestPeer::executingGoal(*node_);
     ASSERT_TRUE(executing);
@@ -1026,7 +1024,7 @@ class NavigationRuntimeTerminalMonitorStrict : public NavigationRuntimeTerminalM
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
               active->bundle_generation);
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active, active);
-    EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).command_available);
+    EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).commandAvailable());
   }
   enum class ImmediateInvalidation { kClockExpiry, kGoalChange, kEpochReset, kFailure };
   void checkPreparedImmediateInvalidation(ImmediateInvalidation invalidation) {
@@ -1061,19 +1059,19 @@ class NavigationRuntimeTerminalMonitorStrict : public NavigationRuntimeTerminalM
         NavigationRuntimeTerminalMonitorTestPeer::failExecution(*node_);
         break;
     }
-    const auto before = NavigationRuntimeTerminalMonitorTestPeer::ownerTimelineAndEpisode(*node_);
+    const auto before = NavigationRuntimeTerminalMonitorTestPeer::ownerSnapshot(*node_);
     const auto before_executing = NavigationRuntimeTerminalMonitorTestPeer::executingGoal(*node_);
     const auto before_command_epoch = NavigationRuntimeTerminalMonitorTestPeer::commandGoalEpoch(*node_);
     EXPECT_NE(NavigationRuntimeTerminalMonitorTestPeer::admitPreparedImmediate(
                   *node_, goal, *key, *planned.candidate, predecessor, measured),
               navigation_execution::CommitDecision::kCommitted);
-    const auto after = NavigationRuntimeTerminalMonitorTestPeer::ownerTimelineAndEpisode(*node_);
-    EXPECT_EQ(after.first.version, before.first.version);
-    EXPECT_EQ(after.first.active, before.first.active);
-    EXPECT_EQ(after.first.pending, before.first.pending);
-    EXPECT_EQ(after.second.active_generation, before.second.active_generation);
-    EXPECT_EQ(after.second.command_available, before.second.command_available);
-    EXPECT_EQ(after.second.failure_latched, before.second.failure_latched);
+    const auto after = NavigationRuntimeTerminalMonitorTestPeer::ownerSnapshot(*node_);
+    EXPECT_EQ(after.version, before.version);
+    EXPECT_EQ(after.active, before.active);
+    EXPECT_EQ(after.pending, before.pending);
+    EXPECT_EQ(after.activeGeneration(), before.activeGeneration());
+    EXPECT_EQ(after.commandAvailable(), before.commandAvailable());
+    EXPECT_EQ(after.failed(), before.failed());
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::executingGoal(*node_), before_executing);
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::commandGoalEpoch(*node_), before_command_epoch);
   }
@@ -1278,7 +1276,7 @@ TEST_F(NavigationRuntimeBaselineRefinement, InputRefreshCannotRebaseOwnership) {
     const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
     EXPECT_EQ(after.active, before.active);
     EXPECT_EQ(after.pending, before.pending);
-    EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+    EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
   }
 }
 
@@ -1410,10 +1408,10 @@ TEST_F(NavigationRuntimeBaselineRefinementFailed, FailedEarlyReplacementRetainsV
             navigation_planning::CompletePlanningOutcome::kNoCompleteBundle);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active, retained);
   EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).pending);
-  const auto after_failure = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
-  EXPECT_TRUE(after_failure.command_available);
-  EXPECT_FALSE(after_failure.failure_latched);
-  EXPECT_EQ(after_failure.recovery_state, ExecutionRecoveryState::kTrackMain);
+  const auto after_failure = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
+  EXPECT_TRUE(after_failure.commandAvailable());
+  EXPECT_FALSE(after_failure.failed());
+  EXPECT_EQ(after_failure.lifecycle.recovery, ExecutionRecoveryState::kTrackMain);
   setTime(kStartNs + 300'000'000LL);
   ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishState(
       *node_, kStartNs + 300'000'000LL));
@@ -1553,7 +1551,7 @@ TEST_F(NavigationRuntimeTerminalMonitorObserverOff,
   ASSERT_NO_FATAL_FAILURE(checkRealFutureHandoff(false, true));
 }
 
-TEST_F(NavigationRuntimeTerminalMonitorStrict, ImmediateEpisodeCutoverPrecedesAck) {
+TEST_F(NavigationRuntimeTerminalMonitorStrict, ImmediateExecutionCutoverPrecedesAck) {
   ASSERT_NO_FATAL_FAILURE(checkImmediateCutoverBeforeAck(false));
 }
 
@@ -1577,7 +1575,7 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, ImmediatePreparedFailureCannotCom
   ASSERT_NO_FATAL_FAILURE(checkPreparedImmediateInvalidation(ImmediateInvalidation::kFailure));
 }
 
-TEST_F(NavigationRuntimeTerminalMonitorStrict, EmergencyEpisodeCutoverPrecedesAckAndWorldCopy) {
+TEST_F(NavigationRuntimeTerminalMonitorStrict, EmergencyExecutionCutoverPrecedesAckAndWorldCopy) {
   ASSERT_NO_FATAL_FAILURE(installReal({}, Eigen::Vector3d{3.0, 0.0, 0.0}));
   const auto predecessor = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active;
   ASSERT_TRUE(predecessor);
@@ -1591,9 +1589,9 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, EmergencyEpisodeCutoverPrecedesAc
   const auto admitted = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active;
   ASSERT_TRUE(admitted);
   ASSERT_EQ(admitted->bundle_generation, emergency->bundle_generation);
-  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).active_generation,
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).activeGeneration(),
             admitted->bundle_generation);
-  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).recovery_state,
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).lifecycle.recovery,
             ExecutionRecoveryState::kEmergencyBrake);
   // Deliberately leave the real backend ACK pending. Mapping's core schedule
   // can validate the staged H and publish a same-generation immutable copy.
@@ -1607,30 +1605,30 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, EmergencyEpisodeCutoverPrecedesAc
   EXPECT_EQ(refreshed->bundle_generation, admitted->bundle_generation);
   EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
       refreshed->world_identity, new_world->identity()));
-  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).active_generation,
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).activeGeneration(),
             refreshed->bundle_generation);
   NavigationRuntimeTerminalMonitorTestPeer::acknowledge(*node_);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
             refreshed->bundle_generation);
   NavigationRuntimeTerminalMonitorTestPeer::publishCommandAndApplyQueuedActivations(*node_);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active, refreshed);
-  EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).command_available);
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).commandAvailable());
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
 }
 
-TEST_F(NavigationRuntimeTerminalMonitorStrict, AdmissionAtOriginalMainEndPreservesItsEpisode) {
+TEST_F(NavigationRuntimeTerminalMonitorStrict, AdmissionAtOriginalMainEndPreservesItsExecution) {
   ASSERT_NO_FATAL_FAILURE(installReal({}, Eigen::Vector3d{3.0, 0.0, 0.0}));
   const auto before = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
-  const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
+  const auto execution = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
   const auto emergency = NavigationRuntimeTerminalMonitorTestPeer::prepareRealEmergency(*node_);
   ASSERT_TRUE(emergency);
   setTime(before.active->declared_end_ns);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::admitPreparedEmergency(*node_, *emergency),
             navigation_execution::CommitDecision::kAdmissionRejected);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).version, before.version);
-  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).active_generation,
-            episode.active_generation);
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).activeGeneration(),
+            execution.activeGeneration());
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
 }
 
 TEST_F(NavigationRuntimeTerminalMonitorStrict, AdmissionRejectsWrongEpochFrameAndReceiveStaleness) {
@@ -1650,9 +1648,9 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, AdmissionRejectsWrongEpochFrameAn
                   *node_, *emergency, std::move(lease)),
               navigation_execution::CommitDecision::kAdmissionRejected);
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).version, before.version);
-    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).active_generation,
+    EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).activeGeneration(),
               before.active->bundle_generation);
-    EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+    EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
   }
 }
 
@@ -1683,11 +1681,14 @@ TEST_F(NavigationRuntimeTerminalMonitor, TerminalEndpointSuppressesKeyWithoutDer
 
 TEST_F(NavigationRuntimeTerminalMonitor, PendingAndGoalTransitionDoNotOpenTerminalMonitor) {
   install(true, kStartNs);
-  NavigationRuntimeTerminalMonitorTestPeer::transitionFlags(*node_, true, false);
+  NavigationRuntimeTerminalMonitorTestPeer::planningTransition(
+      *node_, PlanningIntentTransition::kNewIntent);
   EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::key(*node_));
-  NavigationRuntimeTerminalMonitorTestPeer::transitionFlags(*node_, false, true);
+  NavigationRuntimeTerminalMonitorTestPeer::planningTransition(
+      *node_, PlanningIntentTransition::kHotRetarget);
   EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::key(*node_));
-  NavigationRuntimeTerminalMonitorTestPeer::transitionFlags(*node_, false, false);
+  NavigationRuntimeTerminalMonitorTestPeer::planningTransition(
+      *node_, PlanningIntentTransition::kNone);
   ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::stagePending(*node_));
   EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::key(*node_));
 }
@@ -1741,10 +1742,10 @@ TEST_F(NavigationRuntimeTerminalMonitor, RealBackendHealthyTailMonitorsWithoutNo
   EXPECT_EQ(after.version, before.version);
   EXPECT_EQ(after.active, before.active);
   EXPECT_EQ(after.active->declared_end_ns, before.active->declared_end_ns);
-  const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
-  EXPECT_EQ(episode.recovery_state, ExecutionRecoveryState::kTrackMain);
-  EXPECT_FALSE(episode.safety_suffix_active);
-  EXPECT_FALSE(episode.failure_latched);
+  const auto execution = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
+  EXPECT_EQ(execution.lifecycle.recovery, ExecutionRecoveryState::kTrackMain);
+  EXPECT_FALSE(execution.safetySuffixActive());
+  EXPECT_FALSE(execution.failed());
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::optimization(*node_).lbfgs_attempt_count, 0);
   const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
@@ -1779,26 +1780,26 @@ TEST_F(NavigationRuntimeTerminalMonitor, QueuedMonitorAtEndCannotFallThroughToNo
   NavigationRuntimeTerminalMonitorTestPeer::cycle(*node_, *key);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).version, before.version);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
 }
 
 TEST_F(NavigationRuntimeTerminalMonitorStrict, QueuedMonitorAfterBackwardClockCannotMutateOwner) {
   ASSERT_NO_FATAL_FAILURE(installReal());
   const auto before = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
-  const auto episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
+  const auto execution = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
   const auto key = NavigationRuntimeTerminalMonitorTestPeer::key(*node_);
   ASSERT_TRUE(key);
   const auto solve_generation = NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_);
   setTime(before.active->declared_start_ns - 1LL);
   NavigationRuntimeTerminalMonitorTestPeer::monitor(*node_, *key);
   const auto after = NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_);
-  const auto after_episode = NavigationRuntimeTerminalMonitorTestPeer::episode(*node_);
+  const auto after_execution = NavigationRuntimeTerminalMonitorTestPeer::execution(*node_);
   EXPECT_EQ(after.version, before.version);
   EXPECT_EQ(after.active, before.active);
-  EXPECT_EQ(after_episode.active_generation, episode.active_generation);
-  EXPECT_EQ(after_episode.command_available, episode.command_available);
-  EXPECT_EQ(after_episode.failure_latched, episode.failure_latched);
-  EXPECT_EQ(after_episode.recovery_state, episode.recovery_state);
+  EXPECT_EQ(after_execution.activeGeneration(), execution.activeGeneration());
+  EXPECT_EQ(after_execution.commandAvailable(), execution.commandAvailable());
+  EXPECT_EQ(after_execution.failed(), execution.failed());
+  EXPECT_EQ(after_execution.lifecycle.recovery, execution.lifecycle.recovery);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::solveGeneration(*node_), solve_generation);
 }
 
@@ -1817,7 +1818,7 @@ TEST_F(NavigationRuntimeTerminalMonitor, RelaxedProfileSuppressesPressureBeforeF
   EXPECT_EQ(trace->emergency_candidate_commit_result, 0);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).version, before.version);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).active, before.active);
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
 }
 
 TEST_F(NavigationRuntimeTerminalMonitor, RelaxedProfileStillAllowsPressureInsideFinalLeaseWindow) {
@@ -1843,7 +1844,7 @@ TEST_F(NavigationRuntimeTerminalMonitor, RelaxedProfileStillAllowsPressureInside
   EXPECT_NE(after.active->bundle_generation, before.active->bundle_generation);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
             after.active->bundle_generation);  // actual activated store receipt
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
 }
 
 TEST_F(NavigationRuntimeTerminalMonitorStrict, ProjectedPressureCanAdmitRealBrakeWithoutFutureAnchor) {
@@ -1857,9 +1858,9 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, ProjectedPressureCanAdmitRealBrak
   EXPECT_EQ(after.active->kind, navigation_planning::CandidateBundleKind::kEmergencyBrake);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
             after.active->bundle_generation);
-  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).recovery_state,
+  EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).lifecycle.recovery,
             ExecutionRecoveryState::kEmergencyBrake);
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
 }
 
 TEST_F(NavigationRuntimeTerminalMonitorStrict, StartedBeforeEndBrakePreparedLateIsDiscardOnlyWithoutPublisher) {
@@ -1884,7 +1885,7 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, StartedBeforeEndBrakePreparedLate
   EXPECT_EQ(after.active, before.active);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::backendGeneration(*node_),
             before.active->bundle_generation);
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
   const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
   ASSERT_TRUE(trace);
   EXPECT_TRUE(trace->projected_tracking_certificate_exceeded);
@@ -1910,7 +1911,7 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, FailedBrakePreparationAcrossEndCa
   monitor.get();
   ASSERT_TRUE(entered);
   EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::timeline(*node_).version, before.version);
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
   const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
   ASSERT_TRUE(trace);
   EXPECT_EQ(trace->emergency_candidate_commit_result, 2);
@@ -1925,8 +1926,8 @@ TEST_F(NavigationRuntimeTerminalMonitorStrict, FailedBrakePreparationBeforeEndSt
   const auto trace = NavigationRuntimeTerminalMonitorTestPeer::trace(*node_);
   ASSERT_TRUE(trace);
   EXPECT_EQ(trace->emergency_candidate_commit_result, 2);
-  EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).failure_latched);
-  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::episode(*node_).command_available);
+  EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).failed());
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::execution(*node_).commandAvailable());
   const auto accounting = NavigationRuntimeTerminalMonitorTestPeer::observationAccounting(*node_);
   EXPECT_EQ(accounting.attempted, 1U);  // record survives actual fail-closed delivery
   EXPECT_EQ(accounting.published, 1U);  // ROS call receipt, not evidence capture

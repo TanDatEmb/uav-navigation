@@ -110,7 +110,7 @@ inline bool canHotRetargetAtWaypointTransition(
 struct PassThroughTerminalAckFacts final {
   bool successful_terminal_status{false};
   bool status_matches_active_identity{false};
-  bool active_goal_is_pass_through{false};
+  bool desired_goal_is_pass_through{false};
   bool outgoing_route_exists{false};
   bool certified_main_command{false};
   bool certified_continuation_boundary{false};
@@ -125,7 +125,7 @@ struct PassThroughTerminalAckFacts final {
     const PassThroughTerminalAckFacts& facts) noexcept {
   return facts.successful_terminal_status &&
          facts.status_matches_active_identity &&
-         facts.active_goal_is_pass_through && facts.outgoing_route_exists &&
+         facts.desired_goal_is_pass_through && facts.outgoing_route_exists &&
          facts.certified_main_command && facts.certified_continuation_boundary &&
          facts.execution_identity_current && !facts.failure_latched &&
          !facts.safety_suffix_active && facts.command_exposure_allowed &&
@@ -480,10 +480,10 @@ inline bool terminalMainHasIndeterminatePreStartPressure(
 }
 
 // A measured-state emergency brake is a one-way transition for one recovery
-// episode. If PX4 diverges far enough that this exact brake loses its tracking
+// cycle. If PX4 diverges far enough that this exact brake loses its tracking
 // certificate, constructing another brake from the newly drifting state every
 // planner tick resets deceleration indefinitely. A later certified MAIN may
-// start a new episode; an unusable emergency must fail closed to PX4 Hold.
+// start a new recovery cycle; an unusable emergency must fail closed to PX4 Hold.
 // When the conservative projected anchor bound crosses the unchanged hard
 // limit, a fresh measured state may trigger this same one-shot brake early,
 // but only while the current state is KNOWN_FREE in the inflated map. The
@@ -630,7 +630,7 @@ inline bool worldFreshnessSuspendedCommandMayResume(
     std::uint64_t bundle_localization_epoch,
     std::uint64_t bundle_goal_epoch,
     std::uint64_t active_localization_epoch,
-    std::uint64_t active_goal_epoch,
+    std::uint64_t executing_goal_epoch,
     std::int64_t valid_until_ns,
     std::int64_t now_ns,
     bool bundle_valid,
@@ -639,7 +639,7 @@ inline bool worldFreshnessSuspendedCommandMayResume(
   return suspended_generation != 0U &&
          recertified_generation == suspended_generation && bundle_valid &&
          bundle_localization_epoch == active_localization_epoch &&
-         bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
+         bundle_goal_epoch == executing_goal_epoch && valid_until_ns >= now_ns &&
          !planner_failure_latched && execution_lease_allows_command;
 }
 
@@ -655,7 +655,7 @@ inline bool supersedingBundleMayRemainAvailable(
     std::uint64_t bundle_localization_epoch,
     std::uint64_t bundle_goal_epoch,
     std::uint64_t active_localization_epoch,
-    std::uint64_t active_goal_epoch,
+    std::uint64_t executing_goal_epoch,
     std::int64_t valid_until_ns,
     std::int64_t now_ns,
     bool bundle_valid,
@@ -664,7 +664,7 @@ inline bool supersedingBundleMayRemainAvailable(
   return sampled_generation != 0U &&
          current_generation >= sampled_generation && bundle_valid &&
          bundle_localization_epoch == active_localization_epoch &&
-         bundle_goal_epoch == active_goal_epoch && valid_until_ns >= now_ns &&
+         bundle_goal_epoch == executing_goal_epoch && valid_until_ns >= now_ns &&
          !planner_failure_latched && execution_lease_allows_command;
 }
 

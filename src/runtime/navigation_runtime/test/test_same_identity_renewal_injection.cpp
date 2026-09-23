@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 
-#include <navigation_execution/committed_bundle_store.hpp>
+#include <navigation_execution/execution_authority.hpp>
 #include <navigation_runtime/execution_lifecycle_view.hpp>
 
 namespace navigation_runtime {
@@ -70,7 +70,7 @@ std::shared_ptr<const navigation_planning::CandidateBundle> successorFor(
 }
 
 bool publishWorldIdentityForTest(
-    navigation_execution::ExecutionTimelineStore& store,
+    navigation_execution::ExecutionAuthority& store,
     const navigation_world_model::WorldSnapshotIdentity& identity) {
   const auto snapshot = store.snapshot();
   return store.publishWorldIdentityIfCurrent(
@@ -84,7 +84,7 @@ SameIdentityRenewalFacts eligibleFacts() {
   facts.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
   facts.transition_kind = GoalTransitionKind::kSteady;
   facts.recovery_state = ExecutionRecoveryState::kTrackMain;
-  facts.execution_phase = ExecutionEpisodePhase::kTrackingMain;
+  facts.execution_phase = ExecutionPhase::kTrackingMain;
   facts.desired_goal_valid = true;
   facts.executing_goal_valid = true;
   facts.desired_identity_matches_executing = true;
@@ -106,7 +106,7 @@ SameIdentityRenewalFacts eligibleFacts() {
 }
 
 TEST(WorldRevocationDelivery, FinalizesLifecycleBeforePublicationReturns) {
-  navigation_execution::ExecutionTimelineStore store;
+  navigation_execution::ExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
@@ -127,10 +127,10 @@ TEST(WorldRevocationDelivery, FinalizesLifecycleBeforePublicationReturns) {
   EXPECT_FALSE(store.load());
   EXPECT_FALSE(store.invalidateIfCurrent(before));
   EXPECT_EQ(finalized, 1U);
-  const auto after = store.episodeSnapshot();
-  EXPECT_TRUE(after.failure_latched);
-  EXPECT_FALSE(after.command_available);
-  EXPECT_EQ(after.phase, ExecutionEpisodePhase::kPx4Hold);
+  const auto after = store.snapshot();
+  EXPECT_TRUE(after.failed());
+  EXPECT_FALSE(after.commandAvailable());
+  EXPECT_EQ(after.lifecycle.phase, ExecutionPhase::kPx4Hold);
 }
 
 class WorldRevocationFixture : public testing::Test {
@@ -144,7 +144,7 @@ class WorldRevocationFixture : public testing::Test {
               navigation_execution::CommitDecision::kCommitted);
   }
 
-  navigation_execution::ExecutionTimelineStore store;
+  navigation_execution::ExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
   std::shared_ptr<const navigation_planning::CandidateBundle> predecessor;
@@ -164,8 +164,8 @@ TEST_F(WorldRevocationFixture, SupersededRevocationPreservesNewerExecution) {
             navigation_world_model::WorldCommitDecision::kSuperseded);
   EXPECT_EQ(finalized, 0U);
   EXPECT_EQ(store.load(), newer);
-  EXPECT_FALSE(store.episodeSnapshot().failure_latched);
-  EXPECT_EQ(store.episodeSnapshot().active_generation, newer->bundle_generation);
+  EXPECT_FALSE(store.snapshot().failed());
+  EXPECT_EQ(store.snapshot().activeGeneration(), newer->bundle_generation);
 }
 
 TEST_F(WorldRevocationFixture, PendingOnlyRejectionKeepsActiveLifecycle) {
@@ -186,8 +186,8 @@ TEST_F(WorldRevocationFixture, PendingOnlyRejectionKeepsActiveLifecycle) {
   ASSERT_TRUE(store.load());
   EXPECT_EQ(store.load()->bundle_generation, predecessor->bundle_generation);
   EXPECT_FALSE(store.snapshot().pending);
-  EXPECT_TRUE(store.episodeSnapshot().command_available);
-  EXPECT_FALSE(store.episodeSnapshot().failure_latched);
+  EXPECT_TRUE(store.snapshot().commandAvailable());
+  EXPECT_FALSE(store.snapshot().failed());
 }
 
 TEST_F(WorldRevocationFixture, RejectedIdentityCannotFinalizeCurrentExecution) {
@@ -205,7 +205,7 @@ TEST_F(WorldRevocationFixture, RejectedIdentityCannotFinalizeCurrentExecution) {
             navigation_world_model::WorldCommitDecision::kWorldAdvanced);
   EXPECT_EQ(finalized, 0U);
   EXPECT_EQ(store.load(), predecessor);
-  EXPECT_FALSE(store.episodeSnapshot().failure_latched);
+  EXPECT_FALSE(store.snapshot().failed());
 }
 
 TEST_F(WorldRevocationFixture, RepeatedPublicationDoesNotRedeliverRevocation) {
@@ -219,7 +219,7 @@ TEST_F(WorldRevocationFixture, RepeatedPublicationDoesNotRedeliverRevocation) {
                 next_world, before.version, before.active, false, finalize),
             navigation_world_model::WorldCommitDecision::kSuperseded);
   EXPECT_EQ(finalized, 1U);
-  EXPECT_TRUE(store.episodeSnapshot().failure_latched);
+  EXPECT_TRUE(store.snapshot().failed());
 }
 
 TEST_F(WorldRevocationFixture, ConcurrentCommitCannotSplitRevocationAndLifecycle) {
@@ -256,8 +256,8 @@ TEST_F(WorldRevocationFixture, ConcurrentCommitCannotSplitRevocationAndLifecycle
   EXPECT_TRUE(commit_result.second);
   EXPECT_FALSE(commit_seen_inside_finalizer);
   // A later candidate cannot replace or resurrect failed execution authority.
-  EXPECT_FALSE(store.episodeSnapshot().command_available);
-  EXPECT_TRUE(store.episodeSnapshot().failure_latched);
+  EXPECT_FALSE(store.snapshot().commandAvailable());
+  EXPECT_TRUE(store.snapshot().failed());
 }
 
 TEST(SameIdentityRenewalInjection, H1EligibleOrdinaryRenewal) {
@@ -364,51 +364,51 @@ TEST(SameIdentityRenewalInjection,
   const auto ordinal = controller.observe(facts);
   ASSERT_TRUE(controller.shouldInject(ordinal));
 
-  navigation_execution::ExecutionTimelineStore timeline;
+  navigation_execution::ExecutionAuthority execution_authority;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
-  ASSERT_TRUE(publishWorldIdentityForTest(timeline, world));
-  ASSERT_TRUE(timeline.setAdmissionGoalEpoch(7U));
+  ASSERT_TRUE(publishWorldIdentityForTest(execution_authority, world));
+  ASSERT_TRUE(execution_authority.setAdmissionGoalEpoch(7U));
   const auto predecessor =
       std::make_shared<const navigation_planning::CandidateBundle>(candidateFor(7U, 1U));
-  ASSERT_EQ(timeline.tryCommit({world, 7U, 1U}, goalFor(predecessor), predecessor),
+  ASSERT_EQ(execution_authority.tryCommit({world, 7U, 1U}, goalFor(predecessor), predecessor),
             navigation_execution::CommitDecision::kCommitted);
 
 
   // The diagnostic failure is exposed after the real solve, so it must not
-  // mutate any execution-owned predecessor state or episode identity.
+  // mutate any execution-owned predecessor state or identity.
   controller.markInjected();
-  EXPECT_EQ(timeline.load(), predecessor);
-  const auto after_failed_renewal = timeline.snapshot();
+  EXPECT_EQ(execution_authority.load(), predecessor);
+  const auto after_failed_renewal = execution_authority.snapshot();
   EXPECT_EQ(after_failed_renewal.active, predecessor);
   EXPECT_FALSE(after_failed_renewal.pending);
-  const auto predecessor_episode = timeline.episodeSnapshot();
-  EXPECT_EQ(predecessor_episode.active_generation, predecessor->bundle_generation);
-  EXPECT_TRUE(predecessor_episode.command_available);
-  EXPECT_EQ(predecessor_episode.goal_epoch, predecessor->goal_epoch);
-  EXPECT_EQ(predecessor_episode.request_id, predecessor->request_id);
+  const auto predecessor_execution = execution_authority.snapshot();
+  EXPECT_EQ(predecessor_execution.activeGeneration(), predecessor->bundle_generation);
+  EXPECT_TRUE(predecessor_execution.commandAvailable());
+  EXPECT_EQ(predecessor_execution.admission_goal_epoch, predecessor->goal_epoch);
+  EXPECT_EQ(predecessor_execution.admissionRequestId(), predecessor->request_id);
 
   const auto later_ordinal = controller.observe(facts);
   EXPECT_FALSE(controller.shouldInject(later_ordinal));
 
-  const auto anchor = timeline.reserveAnchor(50, 50);
+  const auto anchor = execution_authority.reserveAnchor(50, 50);
   ASSERT_TRUE(anchor);
   const auto successor = successorFor(*anchor, 7U);
-  ASSERT_EQ(timeline.stagePending(
+  ASSERT_EQ(execution_authority.stagePending(
                 {world, 7U, 2U}, *anchor, goalFor(successor), successor),
             navigation_execution::StageDecision::kStaged);
-  EXPECT_EQ(timeline.load(), predecessor);
-  const auto pending_snapshot = timeline.snapshot();
+  EXPECT_EQ(execution_authority.load(), predecessor);
+  const auto pending_snapshot = execution_authority.snapshot();
   ASSERT_EQ(pending_snapshot.pending, successor);
 
-  ASSERT_TRUE(timeline.activatePendingIfDueAndFinalize(
+  ASSERT_TRUE(execution_authority.activatePendingIfDueAndFinalize(
       50, pending_snapshot, [](std::uint64_t) { return true; }));
-  EXPECT_EQ(timeline.load(), successor);
-  const auto after_activation = timeline.episodeSnapshot();
-  const auto successor_episode = timeline.episodeSnapshot();
-  EXPECT_EQ(after_activation.active_generation, successor->bundle_generation);
-  EXPECT_EQ(successor_episode.active_generation, successor->bundle_generation);
-  EXPECT_TRUE(successor_episode.command_available);
-  EXPECT_FALSE(timeline.snapshot().pending);
+  EXPECT_EQ(execution_authority.load(), successor);
+  const auto after_activation_snapshot = execution_authority.snapshot();
+  const auto successor_execution = execution_authority.snapshot();
+  EXPECT_EQ(after_activation_snapshot.activeGeneration(), successor->bundle_generation);
+  EXPECT_EQ(successor_execution.activeGeneration(), successor->bundle_generation);
+  EXPECT_TRUE(successor_execution.commandAvailable());
+  EXPECT_FALSE(execution_authority.snapshot().pending);
 }
 
 }  // namespace

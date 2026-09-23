@@ -83,11 +83,12 @@ class NavigationRuntimeEpochResetTestPeer {
                            bool expect_goal) {
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
+    const auto& desired_goal = node.desired_intent_.goal();
     return node.active_localization_epoch_.load() == 2U &&
-        (expect_goal ? node.active_goal_ && node.active_goal_->request_id == request
-                     : !node.active_goal_) &&
+        (expect_goal ? desired_goal && desired_goal->request_id == request
+                     : !desired_goal) &&
         !node.execution_authority_.load() &&
-        !node.execution_authority_.episodeSnapshot().command_available &&
+        !node.execution_authority_.snapshot().commandAvailable() &&
         node.execution_authority_.executingGoalEpoch() == 0U;
   }
   static void missionState(NavigationRuntimeNode& node, double x,
@@ -131,8 +132,9 @@ class NavigationRuntimeEpochResetTestPeer {
                                  std::uint32_t waypoint, std::uint64_t request) {
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
-    return (node.active_goal_ && node.active_goal_->waypoint_index == waypoint &&
-            node.active_goal_->request_id == request) ||
+    const auto& desired_goal = node.desired_intent_.goal();
+    return (desired_goal && desired_goal->waypoint_index == waypoint &&
+            desired_goal->request_id == request) ||
            node.pending_goal_owner_.goalMatchesStatus(
                node.mission_progress_->routeIdentity().mission_id, waypoint, request);
   }

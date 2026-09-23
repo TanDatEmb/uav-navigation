@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include <navigation_execution/execution_authority.hpp>
 #include <navigation_planning/planning_outcome.hpp>
 #include "navigation_runtime/execution_lifecycle_view.hpp"
 #include "navigation_runtime/planner_fsm.hpp"
@@ -12,7 +13,7 @@ namespace navigation_runtime {
 struct BaselineRefinementContext final {
   PlanningKey key{};
   const navigation_planning::CandidateBundle* active{nullptr};
-  ExecutionEpisodeSnapshot episode{};
+  navigation_execution::ExecutionAuthoritySnapshot execution{};
   navigation_world_model::WorldSnapshotIdentity world{};
   std::uint64_t backend_generation{0U};
   std::int64_t now_ns{0};
@@ -62,7 +63,8 @@ class BaselineRefinementOpportunity final {
         owner_->pinned_world_generation != c.key.pinned_world_generation ||
         owner_->dynamics_hash != c.key.dynamics_hash) return false;
     const auto& a = *c.active;
-    const auto& e = c.episode;
+    const auto& execution = c.execution;
+    const auto& lifecycle = execution.lifecycle;
     return a.valid() && a.kind == navigation_planning::CandidateBundleKind::kMainWithBackup &&
         a.hasTrajectoryMetadata() && a.bundle_generation == generation_ &&
         c.key.start_mode == PlanningStartMode::kCommittedFutureState &&
@@ -75,12 +77,16 @@ class BaselineRefinementOpportunity final {
         c.world.revision == c.key.pinned_world_revision &&
         c.now_ns >= a.valid_from_ns && c.now_ns <= a.valid_until_ns &&
         c.sampled_role == navigation_planning::CandidateRole::kMain &&
-        e.localization_epoch == a.localization_epoch && e.goal_epoch == a.goal_epoch &&
-        e.request_id == a.request_id && e.active_generation == generation_ &&
-        e.phase == ExecutionEpisodePhase::kTrackingMain &&
-        e.recovery_state == ExecutionRecoveryState::kTrackMain &&
-        e.command_available && !e.failure_latched && !e.safety_suffix_active &&
-        !e.restart_from_rest && !c.pending && c.desired_matches_executing &&
+        execution.active &&
+        execution.active->localization_epoch == a.localization_epoch &&
+        execution.activeGoalEpoch() == a.goal_epoch &&
+        execution.activeRequestId() == a.request_id &&
+        execution.activeGeneration() == generation_ &&
+        lifecycle.phase == ExecutionPhase::kTrackingMain &&
+        lifecycle.recovery == ExecutionRecoveryState::kTrackMain &&
+        execution.commandAvailable() && !execution.failed() &&
+        !execution.safetySuffixActive() && !execution.restartFromRest() &&
+        !c.pending && c.desired_matches_executing &&
         c.exposure_allowed && c.tracking_supported;
   }
 

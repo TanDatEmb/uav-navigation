@@ -41,10 +41,10 @@ if(BUILD_TESTING)
   target_compile_features(test_execution_state PRIVATE cxx_std_20)
   ament_target_dependencies(test_execution_state navigation_contracts)
 
-  ament_add_gtest(test_committed_bundle_store test/test_committed_bundle_store.cpp)
-  target_compile_features(test_committed_bundle_store PRIVATE cxx_std_20)
-  target_link_libraries(test_committed_bundle_store ${PROJECT_NAME})
-  ament_target_dependencies(test_committed_bundle_store
+  ament_add_gtest(test_execution_authority test/test_execution_authority.cpp)
+  target_compile_features(test_execution_authority PRIVATE cxx_std_20)
+  target_link_libraries(test_execution_authority ${PROJECT_NAME})
+  ament_target_dependencies(test_execution_authority
     builtin_interfaces navigation_common navigation_planning navigation_world_model)
 endif()
 

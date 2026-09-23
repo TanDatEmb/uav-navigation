@@ -161,7 +161,7 @@ TEST(PlannerFsm, RetainsOnlyCertifiedPassThroughTerminalAcknowledgement) {
   facts.status_matches_active_identity = false;
   EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
   facts = valid;
-  facts.active_goal_is_pass_through = false;
+  facts.desired_goal_is_pass_through = false;
   EXPECT_FALSE(passThroughTerminalAckMayRetainCommand(facts));
   facts = valid;
   facts.outgoing_route_exists = false;
@@ -255,10 +255,10 @@ BaselineRefinementContext baselineRefinementContext(
   key.start_mode = PlanningStartMode::kCommittedFutureState;
   key.committed_bundle_generation = a.bundle_generation;
   key.anchor_stamp_ns = 11'000'000'000LL;
-  ExecutionLifecycleFixture episode;
-  episode.beginGoal(1U, 1U, 1U, false);
-  episode.commandCommitted(a);
-  return {key, &a, episode.snapshot(), a.world_identity, a.bundle_generation,
+  ExecutionLifecycleFixture execution_fixture;
+  execution_fixture.beginGoal(1U, 1U, 1U, false);
+  execution_fixture.commandCommitted(a);
+  return {key, &a, execution_fixture.snapshot(), a.world_identity, a.bundle_generation,
           11'000'000'000LL, navigation_planning::CandidateRole::kMain,
           false, true, true, true};
 }
@@ -352,14 +352,32 @@ TEST(PlannerFsm, BaselineRefinementRequiresExactHealthyMainOwnership) {
   c = valid; ++c.key.pinned_world_generation; reject(c);
   c = valid; ++c.key.pinned_world_revision; reject(c);
   c = valid; ++c.world.revision; reject(c);
-  c = valid; ++c.episode.active_generation; reject(c);
-  c = valid; ++c.episode.request_id; reject(c);
-  c = valid; c.episode.phase = ExecutionEpisodePhase::kStoppedHold; reject(c);
-  c = valid; c.episode.recovery_state = ExecutionRecoveryState::kEmergencyBrake; reject(c);
-  c = valid; c.episode.restart_from_rest = true; reject(c);
-  c = valid; c.episode.safety_suffix_active = true; reject(c);
-  c = valid; c.episode.failure_latched = true; reject(c);
-  c = valid; c.episode.command_available = false; reject(c);
+  c = valid;
+  auto changed_generation =
+      std::make_shared<navigation_planning::CandidateBundle>(*c.execution.active);
+  ++changed_generation->bundle_generation;
+  c.execution.active = changed_generation;
+  reject(c);
+  c = valid;
+  auto changed_request =
+      std::make_shared<navigation_planning::CandidateBundle>(*c.execution.active);
+  ++changed_request->request_id;
+  c.execution.active = changed_request;
+  reject(c);
+  c = valid; c.execution.lifecycle.phase = ExecutionPhase::kStoppedHold; reject(c);
+  c = valid; c.execution.lifecycle.recovery = ExecutionRecoveryState::kEmergencyBrake; reject(c);
+  c = valid;
+  c.execution.lifecycle.restart = navigation_execution::ExecutionRestartRequest::kFromRest;
+  reject(c);
+  c = valid;
+  c.execution.lifecycle.safety = navigation_execution::ExecutionSafetyOwnership::kSafetySuffix;
+  reject(c);
+  c = valid;
+  c.execution.lifecycle.exposure = navigation_execution::ExecutionExposure::kFailed;
+  reject(c);
+  c = valid;
+  c.execution.lifecycle.exposure = navigation_execution::ExecutionExposure::kUnavailable;
+  reject(c);
   c = valid; c.sampled_role = navigation_planning::CandidateRole::kBackup; reject(c);
   c = valid; c.pending = true; reject(c);
   c = valid; c.desired_matches_executing = false; reject(c);
@@ -832,8 +850,8 @@ TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
 }
 
 TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
-  ExecutionLifecycleFixture episode;
-  episode.beginGoal(1U, 1U, 1U, true);
+  ExecutionLifecycleFixture execution_fixture;
+  execution_fixture.beginGoal(1U, 1U, 1U, true);
   navigation_planning::CandidateBundle active;
   active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
   active.role = navigation_planning::CandidateRole::kMain;
@@ -841,28 +859,28 @@ TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
   active.goal_epoch = 1U;
   active.request_id = 1U;
   active.bundle_generation = 1U;
-  episode.commandCommitted(active);
+  execution_fixture.commandCommitted(active);
   std::barrier rendezvous(3);
   std::thread backup([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated, active);
+    execution_fixture.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated, active);
   });
   std::thread emergency([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kEmergencyCommitted, active);
+    execution_fixture.applyRecoveryEvent(ExecutionRecoveryEvent::kEmergencyCommitted, active);
   });
   rendezvous.arrive_and_wait();
   backup.join();
   emergency.join();
 
-  const auto result = episode.snapshot().recovery_state;
+  const auto result = execution_fixture.snapshot().lifecycle.recovery;
   EXPECT_TRUE(result == ExecutionRecoveryState::kTrackBackup ||
               result == ExecutionRecoveryState::kEmergencyBrake);
 }
 
 TEST(PlannerFsm, SerializedFailClosedCannotBeResurrectedByNominalEvent) {
-  ExecutionLifecycleFixture episode;
-  episode.beginGoal(1U, 1U, 1U, true);
+  ExecutionLifecycleFixture execution_fixture;
+  execution_fixture.beginGoal(1U, 1U, 1U, true);
   navigation_planning::CandidateBundle active;
   active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
   active.role = navigation_planning::CandidateRole::kMain;
@@ -870,21 +888,21 @@ TEST(PlannerFsm, SerializedFailClosedCannotBeResurrectedByNominalEvent) {
   active.goal_epoch = 1U;
   active.request_id = 1U;
   active.bundle_generation = 1U;
-  episode.commandCommitted(active);
+  execution_fixture.commandCommitted(active);
   std::barrier rendezvous(3);
   std::thread nominal([&] {
     rendezvous.arrive_and_wait();
-    episode.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated, active);
+    execution_fixture.applyRecoveryEvent(ExecutionRecoveryEvent::kBackupActivated, active);
   });
   std::thread fail_closed([&] {
     rendezvous.arrive_and_wait();
-    episode.failClosed();
+    execution_fixture.failClosed();
   });
   rendezvous.arrive_and_wait();
   nominal.join();
   fail_closed.join();
 
-  EXPECT_EQ(episode.snapshot().recovery_state,
+  EXPECT_EQ(execution_fixture.snapshot().lifecycle.recovery,
             ExecutionRecoveryState::kPx4Hold);
 }
 

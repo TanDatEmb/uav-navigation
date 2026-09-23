@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <optional>
 
-#include <navigation_execution/committed_bundle_store.hpp>
+#include <navigation_execution/execution_authority.hpp>
 
 namespace navigation_execution {
 
