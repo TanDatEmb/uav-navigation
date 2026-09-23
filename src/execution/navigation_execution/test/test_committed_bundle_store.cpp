@@ -13,10 +13,73 @@
 
 namespace navigation_execution {
 
+// Existing timeline cases exercise the same product authority with a complete
+// immutable goal paired to each synthetic bundle. The adapter is test-local:
+// production commits must supply their independently validated full goal.
+class TestExecutionAuthority : public ExecutionAuthority {
+ public:
+  static std::shared_ptr<const navigation_contracts::msg::NavigationGoal> goalFor(
+      const std::shared_ptr<const navigation_planning::CandidateBundle>& bundle) {
+    if (!bundle) return {};
+    auto goal = std::make_shared<navigation_contracts::msg::NavigationGoal>();
+    goal->mission_id = "test_mission";
+    goal->request_id = bundle->request_id;
+    return goal;
+  }
+
+  CommitDecision tryCommit(
+      const CommitToken& token,
+      std::shared_ptr<const navigation_planning::CandidateBundle> bundle) noexcept {
+    auto goal = goalFor(bundle);
+    return ExecutionAuthority::tryCommit(token, std::move(goal), std::move(bundle));
+  }
+
+  template <typename AdmissionFn>
+  CommitDecision tryCommitIfCurrent(
+      const CommitToken& token, const ExecutionTimelineSnapshot& predecessor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> bundle,
+      AdmissionFn&& admit) noexcept {
+    auto goal = goalFor(bundle);
+    return ExecutionAuthority::tryCommitIfCurrent(
+        token, predecessor, std::move(goal), std::move(bundle),
+        std::forward<AdmissionFn>(admit));
+  }
+
+  template <typename FinalizeFn>
+  CommitDecision tryCommitAndFinalize(
+      const CommitToken& token,
+      std::shared_ptr<const navigation_planning::CandidateBundle> bundle,
+      FinalizeFn&& finalize) noexcept {
+    auto goal = goalFor(bundle);
+    return ExecutionAuthority::tryCommitAndFinalize(
+        token, std::move(goal), std::move(bundle),
+        std::forward<FinalizeFn>(finalize));
+  }
+
+  StageDecision stagePending(
+      const CommitToken& token, const ExecutionAnchor& anchor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> bundle) noexcept {
+    auto goal = goalFor(bundle);
+    return ExecutionAuthority::stagePending(
+        token, anchor, std::move(goal), std::move(bundle));
+  }
+
+  template <typename FinalizeFn>
+  StageDecision stagePendingAndFinalize(
+      const CommitToken& token, const ExecutionAnchor& anchor,
+      std::shared_ptr<const navigation_planning::CandidateBundle> bundle,
+      FinalizeFn&& finalize) noexcept {
+    auto goal = goalFor(bundle);
+    return ExecutionAuthority::stagePendingAndFinalize(
+        token, anchor, std::move(goal), std::move(bundle),
+        std::forward<FinalizeFn>(finalize));
+  }
+};
+
 struct ExecutionTimelineStoreTestAccess {
   template <typename Finalize, typename Prepare>
   static navigation_world_model::WorldCommitDecision publish(
-      ExecutionTimelineStore& store,
+      TestExecutionAuthority& store,
       const navigation_world_model::WorldSnapshotIdentity& identity,
       const ExecutionTimelineSnapshot& expected,
       const bool retain_active, const std::int64_t refreshed_until_ns,
@@ -82,7 +145,7 @@ std::shared_ptr<const navigation_planning::CandidateBundle> successorFor(
 }
 
 bool publishWorldIdentityForTest(
-    navigation_execution::ExecutionTimelineStore& store,
+    navigation_execution::TestExecutionAuthority& store,
     const navigation_world_model::WorldSnapshotIdentity& identity,
     std::shared_ptr<const navigation_planning::CandidateBundle> expected_bundle = {},
     bool retain_validated_bundle = false,
@@ -99,8 +162,8 @@ bool publishWorldIdentityForTest(
          navigation_world_model::WorldCommitDecision::kCommitted;
 }
 
-TEST(CommittedBundleStore, CommitRequiresCurrentWorldAndGoal) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, CommitRequiresCurrentWorldAndGoal) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -124,8 +187,8 @@ TEST(CommittedBundleStore, CommitRequiresCurrentWorldAndGoal) {
   EXPECT_TRUE(store.load());
 }
 
-TEST(CommittedBundleStore, RejectsOutOfOrderTransactionIdentity) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, RejectsOutOfOrderTransactionIdentity) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -169,7 +232,7 @@ class ConditionalCommit : public ::testing::Test {
     }
   }
 
-  navigation_execution::ExecutionTimelineStore store;
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   std::shared_ptr<const navigation_planning::CandidateBundle> active;
 };
@@ -391,8 +454,8 @@ TEST_F(ConditionalCommit, LegacyImmediateCommitHasNoPredecessorOrDeadlineFence) 
   EXPECT_EQ(store.load(), late);
 }
 
-TEST(CommittedBundleStore, FinalizerFailureRestoresPreviousExecutionPointer) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, FinalizerFailureRestoresPreviousExecutionPointer) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -417,8 +480,8 @@ TEST(CommittedBundleStore, FinalizerFailureRestoresPreviousExecutionPointer) {
   EXPECT_EQ(store.load(), after_rollback);
 }
 
-TEST(CommittedBundleStore, SuccessfulFinalizerKeepsReplacementPointer) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, SuccessfulFinalizerKeepsReplacementPointer) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -436,8 +499,8 @@ TEST(CommittedBundleStore, SuccessfulFinalizerKeepsReplacementPointer) {
   EXPECT_EQ(store.load(), replacement);
 }
 
-TEST(CommittedBundleStore, GoalReplacementInvalidatesAndSamplerDoesNotLockWorld) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, GoalReplacementInvalidatesAndSamplerDoesNotLockWorld) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -453,7 +516,7 @@ TEST(CommittedBundleStore, GoalReplacementInvalidatesAndSamplerDoesNotLockWorld)
 }
 
 TEST(CommandSampler, RejectsRetainedBundleFromPreviousGoal) {
-  navigation_execution::CommittedBundleStore store;
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -469,8 +532,8 @@ TEST(CommandSampler, RejectsRetainedBundleFromPreviousGoal) {
   EXPECT_FALSE(static_cast<bool>(sampler.sample(50, 8)));
 }
 
-TEST(CommittedBundleStore, RetainedCommandStaysOldUntilSuccessorActivation) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, RetainedCommandStaysOldUntilSuccessorActivation) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -512,7 +575,7 @@ TEST(CommittedBundleStore, RetainedCommandStaysOldUntilSuccessorActivation) {
 }
 
 TEST(ExecutionAnchor, CandidateMatchConvertsEvaluatorExceptionToNoSample) {
-  navigation_execution::ExecutionTimelineStore store;
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -536,8 +599,8 @@ TEST(ExecutionAnchor, CandidateMatchConvertsEvaluatorExceptionToNoSample) {
             navigation_execution::AnchorMatchResult::kNoSample);
 }
 
-TEST(ExecutionTimelineStore, RejectsSuccessorWhenPredecessorAdvanced) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, RejectsSuccessorWhenPredecessorAdvanced) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -561,8 +624,8 @@ TEST(ExecutionTimelineStore, RejectsSuccessorWhenPredecessorAdvanced) {
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
-TEST(ExecutionTimelineStore, RejectsSuccessorAfterSameIdentityPredecessorReplacement) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, RejectsSuccessorAfterSameIdentityPredecessorReplacement) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -592,8 +655,8 @@ TEST(ExecutionTimelineStore, RejectsSuccessorAfterSameIdentityPredecessorReplace
   EXPECT_FALSE(store.snapshot().pending);
 }
 
-TEST(ExecutionTimelineStore, RevokedAnchorCannotBeRevivedByRecommittingSamePointer) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, RevokedAnchorCannotBeRevivedByRecommittingSamePointer) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -614,8 +677,8 @@ TEST(ExecutionTimelineStore, RevokedAnchorCannotBeRevivedByRecommittingSamePoint
   EXPECT_FALSE(store.snapshot().pending);
 }
 
-TEST(ExecutionTimelineStore, RejectsFinalizedSuccessorWhenPredecessorAdvanced) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, RejectsFinalizedSuccessorWhenPredecessorAdvanced) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -646,8 +709,8 @@ TEST(ExecutionTimelineStore, RejectsFinalizedSuccessorWhenPredecessorAdvanced) {
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
-TEST(ExecutionTimelineStore, FailedPendingFinalizationRestoresPriorPending) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, FailedPendingFinalizationRestoresPriorPending) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -677,8 +740,8 @@ TEST(ExecutionTimelineStore, FailedPendingFinalizationRestoresPriorPending) {
   EXPECT_EQ(store.load(), first_pending);
 }
 
-TEST(ExecutionTimelineStore, AcceptsAnchorAtExactMainBackupBoundary) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, AcceptsAnchorAtExactMainBackupBoundary) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -708,8 +771,8 @@ TEST(ExecutionTimelineStore, AcceptsAnchorAtExactMainBackupBoundary) {
             navigation_execution::StageDecision::kStaged);
 }
 
-TEST(ExecutionTimelineStore, RecertifiedPredecessorKeepsSuccessorActivationValid) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, RecertifiedPredecessorKeepsSuccessorActivationValid) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -737,8 +800,8 @@ TEST(ExecutionTimelineStore, RecertifiedPredecessorKeepsSuccessorActivationValid
   EXPECT_EQ(store.load()->bundle_generation, successor->bundle_generation);
 }
 
-TEST(ExecutionTimelineStore, ActiveInvalidPendingValidImmediatelyFailsClosed) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, ActiveInvalidPendingValidImmediatelyFailsClosed) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -767,8 +830,8 @@ TEST(ExecutionTimelineStore, ActiveInvalidPendingValidImmediatelyFailsClosed) {
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
-TEST(ExecutionTimelineStore, PendingImpliesActiveAfterEveryStoreMutation) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, PendingImpliesActiveAfterEveryStoreMutation) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   const navigation_world_model::WorldSnapshotIdentity next_world{3, 4, 2, 2};
   const auto assert_invariant = [&store] {
@@ -807,7 +870,7 @@ TEST(ExecutionTimelineStore, PendingImpliesActiveAfterEveryStoreMutation) {
 }
 
 TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
-  navigation_execution::CommittedBundleStore store;
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -866,7 +929,7 @@ TEST(CommandSampler, RetainsFutureBundleUntilItsSampleValidityBoundary) {
 }
 
 TEST(CommandSampler, SamplesDeclaredMainToBackupBundleAcrossRoleBoundary) {
-  navigation_execution::CommittedBundleStore store;
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -907,7 +970,7 @@ TEST(CommandSampler, SamplesDeclaredMainToBackupBundleAcrossRoleBoundary) {
 }
 
 TEST(CommandSampler, ExpiredEndpointCannotForgeBackupRoleAgainstSchedule) {
-  navigation_execution::CommittedBundleStore store;
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -931,8 +994,8 @@ TEST(CommandSampler, ExpiredEndpointCannotForgeBackupRoleAgainstSchedule) {
   EXPECT_FALSE(hold.planned_stop_hold);
 }
 
-TEST(ExecutionTimelineStore, StagesSuccessorUntilFutureAnchorActivation) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, StagesSuccessorUntilFutureAnchorActivation) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -967,8 +1030,8 @@ TEST(ExecutionTimelineStore, StagesSuccessorUntilFutureAnchorActivation) {
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
-TEST(ExecutionTimelineStore, RenewsSuccessorsWithoutAnExecutionPointerGap) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, RenewsSuccessorsWithoutAnExecutionPointerGap) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1021,8 +1084,8 @@ TEST(ExecutionTimelineStore, RenewsSuccessorsWithoutAnExecutionPointerGap) {
   EXPECT_EQ(sampled.point->position_world.x(), 70.0);
 }
 
-TEST(ExecutionTimelineStore, WorldAdvanceInvalidatesPendingSuccessor) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, WorldAdvanceInvalidatesPendingSuccessor) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1047,8 +1110,8 @@ TEST(ExecutionTimelineStore, WorldAdvanceInvalidatesPendingSuccessor) {
   EXPECT_FALSE(store.load());
 }
 
-TEST(ExecutionTimelineStore, RejectsPendingRecertificationWithoutRetainedActive) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, RejectsPendingRecertificationWithoutRetainedActive) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1079,8 +1142,8 @@ TEST(ExecutionTimelineStore, RejectsPendingRecertificationWithoutRetainedActive)
   EXPECT_TRUE(store.invariantHolds());
 }
 
-TEST(ExecutionTimelineStore, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1111,9 +1174,9 @@ TEST(ExecutionTimelineStore, ActivationFinalizesPlannerOnlyAtSwapBoundary) {
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
-TEST(ExecutionTimelineStore,
+TEST(TestExecutionAuthority,
      ActivationRejectsStaleExpectedPendingWithoutDroppingNewerCandidate) {
-  navigation_execution::ExecutionTimelineStore store;
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1164,8 +1227,8 @@ TEST(ExecutionTimelineStore,
   EXPECT_EQ(store.snapshot().pending, newer_ptr);
 }
 
-TEST(ExecutionTimelineStore, ActivationFinalizerFailureKeepsOldAndDropsPending) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, ActivationFinalizerFailureKeepsOldAndDropsPending) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1191,8 +1254,8 @@ TEST(ExecutionTimelineStore, ActivationFinalizerFailureKeepsOldAndDropsPending) 
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
-TEST(ExecutionTimelineStore, MissedActivationKeepsActiveCommandAndDropsSuccessor) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, MissedActivationKeepsActiveCommandAndDropsSuccessor) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1224,8 +1287,8 @@ TEST(ExecutionTimelineStore, MissedActivationKeepsActiveCommandAndDropsSuccessor
   EXPECT_FALSE(static_cast<bool>(store.snapshot().pending));
 }
 
-TEST(ExecutionTimelineStore, FinalizerFailureRestoresPendingTransactionWatermark) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, FinalizerFailureRestoresPendingTransactionWatermark) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1251,8 +1314,8 @@ TEST(ExecutionTimelineStore, FinalizerFailureRestoresPendingTransactionWatermark
             navigation_execution::StageDecision::kStaged);
 }
 
-TEST(CommittedBundleStore, ExposureRejectsBundleInvalidatedAfterSampling) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, ExposureRejectsBundleInvalidatedAfterSampling) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1276,8 +1339,8 @@ TEST(CommittedBundleStore, ExposureRejectsBundleInvalidatedAfterSampling) {
   EXPECT_FALSE(exposed);
 }
 
-TEST(CommittedBundleStore, ExposureKeepsRetainedExecutionBundleUntilActivation) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, ExposureKeepsRetainedExecutionBundleUntilActivation) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1296,8 +1359,8 @@ TEST(CommittedBundleStore, ExposureKeepsRetainedExecutionBundleUntilActivation) 
   EXPECT_TRUE(exposed);
 }
 
-TEST(CommittedBundleStore, ExposureMustRecheckFreshnessAfterWaitingForStoreLock) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, ExposureMustRecheckFreshnessAfterWaitingForStoreLock) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1343,8 +1406,8 @@ TEST(CommittedBundleStore, ExposureMustRecheckFreshnessAfterWaitingForStoreLock)
   EXPECT_FALSE(exposed.load());
 }
 
-TEST(CommittedBundleStore, RecertifiesOnlyTheValidatedBundleOnWorldAdvance) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, RecertifiesOnlyTheValidatedBundleOnWorldAdvance) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1363,8 +1426,8 @@ TEST(CommittedBundleStore, RecertifiesOnlyTheValidatedBundleOnWorldAdvance) {
   EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] { return true; }));
 }
 
-TEST(CommittedBundleStore, RecertificationRenewsOnlyTheValidatedExecutionWindow) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, RecertificationRenewsOnlyTheValidatedExecutionWindow) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1382,8 +1445,8 @@ TEST(CommittedBundleStore, RecertificationRenewsOnlyTheValidatedExecutionWindow)
   EXPECT_TRUE(store.publishIfCurrent(recertified, 7, [] { return true; }));
 }
 
-TEST(CommittedBundleStore, RecertificationMismatchOrGoalChangeClearsBundle) {
-  navigation_execution::CommittedBundleStore store;
+TEST(TestExecutionAuthority, RecertificationMismatchOrGoalChangeClearsBundle) {
+  navigation_execution::TestExecutionAuthority store;
   navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1400,8 +1463,8 @@ TEST(CommittedBundleStore, RecertificationMismatchOrGoalChangeClearsBundle) {
   EXPECT_FALSE(store.load());
 }
 
-TEST(ExecutionTimelineStore, SupersededWorldRefreshPreservesNewCommit) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, SupersededWorldRefreshPreservesNewCommit) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1428,8 +1491,8 @@ TEST(ExecutionTimelineStore, SupersededWorldRefreshPreservesNewCommit) {
   EXPECT_EQ(store.snapshot().world_identity->revision, world.revision);
 }
 
-TEST(ExecutionTimelineStore, ActiveValidPendingInvalidKeepsActive) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, ActiveValidPendingInvalidKeepsActive) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1460,8 +1523,8 @@ TEST(ExecutionTimelineStore, ActiveValidPendingInvalidKeepsActive) {
   EXPECT_EQ(store.snapshot().world_identity->revision, next_world.revision);
 }
 
-TEST(ExecutionTimelineStore, PreparationFailureRevokesExactActiveAndRetriesWorld) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, PreparationFailureRevokesExactActiveAndRetriesWorld) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1499,8 +1562,8 @@ TEST(ExecutionTimelineStore, PreparationFailureRevokesExactActiveAndRetriesWorld
       *store.snapshot().world_identity, next_world));
 }
 
-TEST(ExecutionTimelineStore, PendingPreparationFailureDoesNotRevokeActive) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, PendingPreparationFailureDoesNotRevokeActive) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1539,8 +1602,8 @@ TEST(ExecutionTimelineStore, PendingPreparationFailureDoesNotRevokeActive) {
   EXPECT_FALSE(after.pending);
 }
 
-TEST(ExecutionTimelineStore, SnapshotSupersededDuringPreparationIsNoOp) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, SnapshotSupersededDuringPreparationIsNoOp) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1576,8 +1639,8 @@ TEST(ExecutionTimelineStore, SnapshotSupersededDuringPreparationIsNoOp) {
       *store.snapshot().world_identity, world));
 }
 
-TEST(ExecutionTimelineStore, StaleRevokePreservesReplacementActiveBundle) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, StaleRevokePreservesReplacementActiveBundle) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1597,8 +1660,8 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesReplacementActiveBundle) {
   EXPECT_EQ(store.load(), replacement);
 }
 
-TEST(ExecutionTimelineStore, StaleRevokePreservesNewPendingSuccessor) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, StaleRevokePreservesNewPendingSuccessor) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1618,8 +1681,8 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesNewPendingSuccessor) {
   EXPECT_EQ(store.snapshot().pending, pending);
 }
 
-TEST(ExecutionTimelineStore, ActivationWinsAgainstStaleWorldRefresh) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, ActivationWinsAgainstStaleWorldRefresh) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1641,8 +1704,8 @@ TEST(ExecutionTimelineStore, ActivationWinsAgainstStaleWorldRefresh) {
   EXPECT_EQ(store.load(), pending);
 }
 
-TEST(ExecutionTimelineStore, RevokeWinsAndBlocksPendingReexposure) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, RevokeWinsAndBlocksPendingReexposure) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1664,8 +1727,8 @@ TEST(ExecutionTimelineStore, RevokeWinsAndBlocksPendingReexposure) {
       50, store.snapshot(), [](std::uint64_t) { return true; }));
 }
 
-TEST(ExecutionTimelineStore, StaleRevokePreservesRecertifiedPendingSuccessor) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, StaleRevokePreservesRecertifiedPendingSuccessor) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1692,8 +1755,8 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesRecertifiedPendingSuccessor) {
   EXPECT_EQ(pending_snapshot.pending->world_identity.revision, next_world.revision);
 }
 
-TEST(ExecutionTimelineStore, StaleRevokePreservesActiveAfterExpiredPendingIsDropped) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, StaleRevokePreservesActiveAfterExpiredPendingIsDropped) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1718,9 +1781,9 @@ TEST(ExecutionTimelineStore, StaleRevokePreservesActiveAfterExpiredPendingIsDrop
   EXPECT_FALSE(store.snapshot().pending);
 }
 
-TEST(ExecutionTimelineStore, ReserveAnchorDoesNotHoldStoreLockDuringEvaluation) {
+TEST(TestExecutionAuthority, ReserveAnchorDoesNotHoldStoreLockDuringEvaluation) {
   using namespace std::chrono_literals;
-  navigation_execution::ExecutionTimelineStore store;
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
@@ -1777,8 +1840,8 @@ TEST(ExecutionTimelineStore, ReserveAnchorDoesNotHoldStoreLockDuringEvaluation) 
   EXPECT_FALSE(anchor);
 }
 
-TEST(ExecutionTimelineStore, ReserveAnchorConvertsEvaluatorExceptionToFailure) {
-  navigation_execution::ExecutionTimelineStore store;
+TEST(TestExecutionAuthority, ReserveAnchorConvertsEvaluatorExceptionToFailure) {
+  navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
   ASSERT_TRUE(publishWorldIdentityForTest(store, world));
   ASSERT_TRUE(store.setActiveGoalEpoch(7));

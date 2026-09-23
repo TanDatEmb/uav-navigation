@@ -87,7 +87,7 @@ class NavigationRuntimeEpochResetTestPeer {
         (expect_goal ? node.active_goal_ && node.active_goal_->request_id == request
                      : !node.active_goal_) &&
         !node.command_bundle_store_.load() &&
-        !node.execution_episode_.snapshot().command_available &&
+        !node.command_bundle_store_.episodeSnapshot().command_available &&
         node.command_goal_epoch_.load() == 0U;
   }
   static void missionState(NavigationRuntimeNode& node, double x,

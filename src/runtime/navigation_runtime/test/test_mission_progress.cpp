@@ -147,7 +147,10 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
   const auto predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
       handoffCandidate(world, 9U, 2U, 4U, 100'000'000));
   ASSERT_TRUE(predecessor->valid());
-  ASSERT_EQ(timeline.tryCommit({world, 9U, 1U}, predecessor),
+  ASSERT_EQ(timeline.tryCommit(
+                {world, 9U, 1U},
+                std::make_shared<const navigation_contracts::msg::NavigationGoal>(
+                    *predecessor_goal), predecessor),
             navigation_execution::CommitDecision::kCommitted);
   ExecutionEpisode episode;
   episode.beginGoal(1U, 9U, 2U, false);
@@ -224,7 +227,10 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
   const auto failed_successor =
       std::make_shared<const navigation_planning::CandidateBundle>(
           handoffCandidate(invalid_world, 10U, 3U, 5U, 400'000'000));
-  ASSERT_EQ(timeline.tryCommit({invalid_world, 10U, 2U}, failed_successor),
+  ASSERT_EQ(timeline.tryCommit(
+                {invalid_world, 10U, 2U},
+                std::make_shared<const navigation_contracts::msg::NavigationGoal>(
+                    *successor_goal), failed_successor),
             navigation_execution::CommitDecision::kWorldAdvanced);
   EXPECT_EQ(timeline.load(), predecessor);
   const auto anchor = timeline.reserveAnchor(390'000'000, 400'000'000);
@@ -263,7 +269,10 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
       continuous_successor);
   ASSERT_EQ(navigation_execution::candidateMatchesAnchor(*successor, *anchor),
             navigation_execution::AnchorMatchResult::kMatch);
-  ASSERT_EQ(timeline.tryCommit({world, 10U, 3U}, successor),
+  ASSERT_EQ(timeline.tryCommit(
+                {world, 10U, 3U},
+                std::make_shared<const navigation_contracts::msg::NavigationGoal>(
+                    *successor_goal), successor),
             navigation_execution::CommitDecision::kCommitted);
   episode.commandCommitted(*successor);
   ASSERT_TRUE(sampler.sample(400'000'000, 10U));

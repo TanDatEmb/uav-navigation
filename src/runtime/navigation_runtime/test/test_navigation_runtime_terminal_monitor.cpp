@@ -39,7 +39,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
             world->identity(), before.version, {}, false) !=
         navigation_world_model::WorldCommitDecision::kCommitted ||
-        !node.command_bundle_store_.setActiveGoalEpoch(1U)) return false;
+        !node.command_bundle_store_.beginGoal(1U, 1U, false)) return false;
     {
       std::lock_guard localization_lock(node.localization_transition_mutex_);
       std::lock_guard input_lock(node.input_mutex_);
@@ -53,7 +53,6 @@ class NavigationRuntimeTerminalMonitorTestPeer {
       node.command_goal_epoch_.store(0U);
       node.new_goal_ = true;
       node.hot_goal_transition_ = false;
-      node.execution_episode_.beginGoal(1U, 1U, goal.request_id, false);
       node.mission_start_position_world_ = initial_position;
       node.mission_start_mission_id_ = goal.mission_id;
       node.mission_start_localization_epoch_ = 1U;
@@ -113,11 +112,14 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
             identity, before.version, {}, false) !=
         navigation_world_model::WorldCommitDecision::kCommitted) return false;
-    if (!node.command_bundle_store_.setActiveGoalEpoch(candidate.goal_epoch)) return false;
+    if (!node.command_bundle_store_.beginGoal(
+            candidate.localization_epoch, candidate.goal_epoch, false)) return false;
     const auto command = std::make_shared<const navigation_planning::CandidateBundle>(
         std::move(candidate));
     if (node.command_bundle_store_.tryCommit(
-            {identity, command->goal_epoch, 1U}, command) !=
+            {identity, command->goal_epoch, 1U},
+            std::make_shared<const navigation_contracts::msg::NavigationGoal>(goal),
+            command) !=
         navigation_execution::CommitDecision::kCommitted) return false;
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
@@ -132,9 +134,6 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     node.new_goal_ = false;
     node.hot_goal_transition_ = false;
     node.execution_transaction_id_.store(1U);
-    node.execution_episode_.beginGoal(command->localization_epoch, command->goal_epoch,
-                                      command->request_id, false);
-    node.execution_episode_.commandCommitted(*command);
     node.trajectory_completion_witness_.reset();
     node.trajectory_reaches_goal_.store(false);
     node.terminal_bundle_generation_.store(0U);
@@ -196,12 +195,12 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static auto reserveFutureAnchor(NavigationRuntimeNode& node, std::int64_t stamp_ns) {
     return node.command_bundle_store_.reserveAnchor(stamp_ns, stamp_ns + 400'000'000LL);
   }
-  static auto episode(NavigationRuntimeNode& node) { return node.execution_episode_.snapshot(); }
+  static auto episode(NavigationRuntimeNode& node) { return node.command_bundle_store_.episodeSnapshot(); }
   static auto ownerTimelineAndEpisode(NavigationRuntimeNode& node) {
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
     std::lock_guard command_lock(node.command_execution_lease_failure_latch_.transitionMutex());
-    return std::pair(node.command_bundle_store_.snapshot(), node.execution_episode_.snapshot());
+    return std::pair(node.command_bundle_store_.snapshot(), node.command_bundle_store_.episodeSnapshot());
   }
   static auto holdActivationQueue(NavigationRuntimeNode& node) {
     return std::unique_lock(node.planner_timeline_activation_mutex_);
@@ -290,12 +289,13 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     successor.activation_stamp_ns = anchor->activation_stamp_ns;
     return node.command_bundle_store_.stagePending(
                {active->world_identity, active->goal_epoch, 2U}, *anchor,
+               node.command_bundle_store_.executingGoal(),
                std::make_shared<const navigation_planning::CandidateBundle>(successor)) ==
         navigation_execution::StageDecision::kStaged;
   }
   static void monitor(NavigationRuntimeNode& node, const PlanningKey& key) {
     const auto timeline = node.command_bundle_store_.snapshot();
-    const auto episode = node.execution_episode_.snapshot();
+    const auto episode = node.command_bundle_store_.episodeSnapshot();
     const NavigationRuntimeNode::RetainedValidationContext context{
         NavigationRuntimeNode::RetainedValidationPurpose::kTerminalMainMonitor,
         false, true, 0U, std::nullopt,
@@ -415,7 +415,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
                                      const navigation_planning::CandidateBundle& candidate,
                                      std::shared_ptr<const navigation_execution::ExecutionStateLease> measured = {}) {
     const NavigationRuntimeNode::TerminalMonitorBoundary boundary{
-        node.command_bundle_store_.snapshot(), node.execution_episode_.snapshot()};
+        node.command_bundle_store_.snapshot(), node.command_bundle_store_.episodeSnapshot()};
     const auto transaction = node.execution_transaction_id_.fetch_add(1U) + 1U;
     const auto key = node.currentPlanningKey();
     if (!key) return navigation_execution::CommitDecision::kAdmissionRejected;

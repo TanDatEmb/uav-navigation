@@ -57,4 +57,33 @@ struct ExecutionEpisodeSnapshot final {
   ExecutionRecoveryState recovery_state{ExecutionRecoveryState::kInitialHold};
 };
 
+// These are independent execution facts. A frozen safety suffix may sample
+// MAIN before its BACKUP switch, and analytic hold can precede measured stop.
+enum class ExecutionExposure : std::uint8_t {
+  kUnavailable,
+  kAvailable,
+  kSuspended,
+  kFailed,
+};
+
+enum class ExecutionSafetyOwnership : std::uint8_t {
+  kNominal,
+  kSafetySuffix,
+};
+
+enum class ExecutionRestartRequest : std::uint8_t {
+  kNone,
+  kFromRest,
+};
+
+struct ExecutionLifecycleState final {
+  ExecutionEpisodePhase phase{ExecutionEpisodePhase::kInitialHold};
+  ExecutionRecoveryState recovery{ExecutionRecoveryState::kInitialHold};
+  ExecutionExposure exposure{ExecutionExposure::kUnavailable};
+  ExecutionSafetyOwnership safety{ExecutionSafetyOwnership::kNominal};
+  ExecutionRestartRequest restart{ExecutionRestartRequest::kNone};
+
+  bool operator==(const ExecutionLifecycleState&) const = default;
+};
+
 }  // namespace navigation_execution

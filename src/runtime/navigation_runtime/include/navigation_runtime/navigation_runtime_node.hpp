@@ -469,7 +469,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::deque<navigation_contracts::msg::NavigationCommand>
       issued_mission_commands_;
   navigation_execution::ExecutionStateStore execution_state_store_;
-  ExecutionEpisode execution_episode_;
   std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;
   // Mission-start anchor for the planner's first-leg route heading. It is
   // latched per mission/route/localization scope and is never recaptured on a

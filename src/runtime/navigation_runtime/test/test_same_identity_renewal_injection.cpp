@@ -13,6 +13,14 @@
 namespace navigation_runtime {
 namespace {
 
+std::shared_ptr<const navigation_contracts::msg::NavigationGoal> goalFor(
+    const std::shared_ptr<const navigation_planning::CandidateBundle>& bundle) {
+  auto goal = std::make_shared<navigation_contracts::msg::NavigationGoal>();
+  goal->mission_id = "test_mission";
+  goal->request_id = bundle->request_id;
+  return goal;
+}
+
 navigation_planning::CandidateBundle candidateFor(
     std::uint64_t goal_epoch, std::uint64_t revision) {
   navigation_planning::CandidateBundle candidate;
@@ -104,7 +112,7 @@ TEST(WorldRevocationDelivery, FinalizesLifecycleBeforePublicationReturns) {
   ASSERT_TRUE(store.setActiveGoalEpoch(7));
   const auto candidate = std::make_shared<const navigation_planning::CandidateBundle>(
       candidateFor(7, 1));
-  ASSERT_EQ(store.tryCommit({world, 7, 1}, candidate),
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, goalFor(candidate), candidate),
             navigation_execution::CommitDecision::kCommitted);
   ExecutionEpisode episode;
   episode.beginGoal(3, 7, candidate->request_id, false);
@@ -135,7 +143,7 @@ class WorldRevocationFixture : public testing::Test {
     ASSERT_TRUE(store.setActiveGoalEpoch(7));
     predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
         candidateFor(7, 1));
-    ASSERT_EQ(store.tryCommit({world, 7, 1}, predecessor),
+    ASSERT_EQ(store.tryCommit({world, 7, 1}, goalFor(predecessor), predecessor),
               navigation_execution::CommitDecision::kCommitted);
     episode.beginGoal(3, 7, predecessor->request_id, false);
     episode.commandCommitted(*predecessor);
@@ -153,7 +161,7 @@ TEST_F(WorldRevocationFixture, SupersededRevocationPreservesNewerExecution) {
   auto replacement = candidateFor(7, 1);
   ++replacement.bundle_generation;
   const auto newer = std::make_shared<const navigation_planning::CandidateBundle>(replacement);
-  ASSERT_EQ(store.tryCommit({world, 7, 2}, newer),
+  ASSERT_EQ(store.tryCommit({world, 7, 2}, goalFor(newer), newer),
             navigation_execution::CommitDecision::kCommitted);
   episode.commandCommitted(*newer);
   unsigned int finalized = 0;
@@ -171,7 +179,7 @@ TEST_F(WorldRevocationFixture, PendingOnlyRejectionKeepsActiveLifecycle) {
   const auto anchor = store.reserveAnchor(50, 50);
   ASSERT_TRUE(anchor);
   const auto successor = successorFor(*anchor, 7);
-  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, successor),
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, goalFor(successor), successor),
             navigation_execution::StageDecision::kStaged);
   const auto before = store.snapshot();
   ASSERT_TRUE(before.pending);
@@ -245,7 +253,7 @@ TEST_F(WorldRevocationFixture, ConcurrentCommitCannotSplitRevocationAndLifecycle
   finalizer_entered.wait();
   auto commit = std::async(std::launch::async, [&] {
     commit_attempted.count_down();
-    const auto result = store.tryCommit({next_world, 7, 2}, newer);
+    const auto result = store.tryCommit({next_world, 7, 2}, goalFor(newer), newer);
     committed.store(true);
     const bool finalized_before_commit = finalized.load();
     episode.commandCommitted(*newer);
@@ -371,7 +379,7 @@ TEST(SameIdentityRenewalInjection,
   ASSERT_TRUE(timeline.setActiveGoalEpoch(7U));
   const auto predecessor =
       std::make_shared<const navigation_planning::CandidateBundle>(candidateFor(7U, 1U));
-  ASSERT_EQ(timeline.tryCommit({world, 7U, 1U}, predecessor),
+  ASSERT_EQ(timeline.tryCommit({world, 7U, 1U}, goalFor(predecessor), predecessor),
             navigation_execution::CommitDecision::kCommitted);
 
   ExecutionEpisode episode;
@@ -397,7 +405,8 @@ TEST(SameIdentityRenewalInjection,
   const auto anchor = timeline.reserveAnchor(50, 50);
   ASSERT_TRUE(anchor);
   const auto successor = successorFor(*anchor, 7U);
-  ASSERT_EQ(timeline.stagePending({world, 7U, 2U}, *anchor, successor),
+  ASSERT_EQ(timeline.stagePending(
+                {world, 7U, 2U}, *anchor, goalFor(successor), successor),
             navigation_execution::StageDecision::kStaged);
   EXPECT_EQ(timeline.load(), predecessor);
   const auto pending_snapshot = timeline.snapshot();
