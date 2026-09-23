@@ -139,6 +139,8 @@ RUNTIME_EVIDENCE_TOPICS = (
     "/lio/diagnostics",
     "/navigation/diagnostics",
     "/navigation/navigation_command",
+    "/navigation/command_admission",
+    "/navigation/mission_progress",
     "/navigation/mode_status",
     "/navigation/goal",
     "/navigation/mission_complete",
@@ -1926,14 +1928,11 @@ def _external_mode_params(
     return target
 
 
-def _external_mode_launch_command(config_file: Path, mission_file: Path | None) -> list[str]:
-    command = [
+def _external_mode_launch_command(config_file: Path) -> list[str]:
+    return [
         "ros2", "launch", "navigation_bringup", "px4_external_mode.launch.py",
         f"config_file:={config_file}", "use_sim_time:=true",
     ]
-    if mission_file is not None:
-        command.append(f"mission_file:={mission_file}")
-    return command
 
 
 def _navigation_runtime_launch_command(
@@ -3360,7 +3359,6 @@ def _run_sim_unlocked(
                 _ros_shell(
                     _external_mode_launch_command(
                         external_mode_config,
-                        mission_file,
                     ),
                     enable_rviz=True,
                 ),
@@ -3415,7 +3413,6 @@ def _run_sim_unlocked(
             if control_interface == "external_mode":
                 external_mode_args = _external_mode_launch_command(
                     external_mode_config,
-                    mission_file,
                 )
                 session.start("external_mode", _ros_shell([
                     *external_mode_args,

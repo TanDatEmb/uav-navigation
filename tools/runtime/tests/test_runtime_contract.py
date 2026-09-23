@@ -2663,13 +2663,15 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertIn("reasons.extend(_mapping_integrity_reasons(navigation_mapping))",
                       sim_body)
 
-    def test_external_mode_gui_launch_passes_static_mission_file(self) -> None:
+    def test_external_mode_launch_has_no_mission_policy_input(self) -> None:
         command = runner._external_mode_launch_command(
             Path("/tmp/external_mode_params.yaml"),
-            Path("/tmp/mission.yaml"),
         )
         self.assertIn("use_sim_time:=true", command)
-        self.assertIn("mission_file:=/tmp/mission.yaml", command)
+        self.assertFalse(any(part.startswith("mission_file:=") for part in command))
+        runtime_command = runner._navigation_runtime_launch_command(
+            Path("/tmp/runtime_params.yaml"), Path("/tmp/mission.yaml"))
+        self.assertIn("mission_file:=/tmp/mission.yaml", runtime_command)
 
     def test_static_sensor_tf_is_derived_from_each_estimator_extrinsic(self) -> None:
         expected = {
