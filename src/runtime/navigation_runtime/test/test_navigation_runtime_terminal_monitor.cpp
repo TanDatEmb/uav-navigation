@@ -35,22 +35,20 @@ class NavigationRuntimeTerminalMonitorTestPeer {
       const navigation_world_model::WorldModelViewPtr& world, std::int64_t stamp_ns,
       const Eigen::Vector3d& initial_position = Eigen::Vector3d{0.0, 0.0, 3.0}) {
     node.world_snapshot_store_.publish(world);
-    const auto before = node.command_bundle_store_.snapshot();
-    if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
+    const auto before = node.execution_authority_.snapshot();
+    if (node.execution_authority_.publishWorldIdentityIfCurrent(
             world->identity(), before.version, {}, false) !=
         navigation_world_model::WorldCommitDecision::kCommitted ||
-        !node.command_bundle_store_.beginGoal(1U, 1U, false)) return false;
+        !node.execution_authority_.beginGoal(1U, 1U, false)) return false;
     {
       std::lock_guard localization_lock(node.localization_transition_mutex_);
       std::lock_guard input_lock(node.input_mutex_);
       std::lock_guard command_lock(
           node.command_execution_lease_failure_latch_.transitionMutex());
       node.active_goal_ = goal;
-      node.executing_goal_.reset();
       node.active_localization_epoch_.store(1U);
       node.localization_epoch_ready_.store(true);
       node.active_goal_epoch_.store(1U);
-      node.command_goal_epoch_.store(0U);
       node.new_goal_ = true;
       node.hot_goal_transition_ = false;
       node.mission_start_position_world_ = initial_position;
@@ -81,9 +79,9 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static bool advanceInitialWorld(
       NavigationRuntimeNode& node,
       const navigation_world_model::WorldModelViewPtr& world) {
-    const auto before = node.command_bundle_store_.snapshot();
+    const auto before = node.execution_authority_.snapshot();
     if (before.active || before.pending) return false;
-    if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
+    if (node.execution_authority_.publishWorldIdentityIfCurrent(
             world->identity(), before.version, {}, false) !=
         navigation_world_model::WorldCommitDecision::kCommitted) return false;
     node.world_snapshot_store_.publish(world);
@@ -108,15 +106,15 @@ class NavigationRuntimeTerminalMonitorTestPeer {
       node.world_snapshot_store_.publish(std::move(world));
     }
     const auto identity = node.world_snapshot_store_.load().identity;
-    const auto before = node.command_bundle_store_.snapshot();
-    if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
+    const auto before = node.execution_authority_.snapshot();
+    if (node.execution_authority_.publishWorldIdentityIfCurrent(
             identity, before.version, {}, false) !=
         navigation_world_model::WorldCommitDecision::kCommitted) return false;
-    if (!node.command_bundle_store_.beginGoal(
+    if (!node.execution_authority_.beginGoal(
             candidate.localization_epoch, candidate.goal_epoch, false)) return false;
     const auto command = std::make_shared<const navigation_planning::CandidateBundle>(
         std::move(candidate));
-    if (node.command_bundle_store_.tryCommit(
+    if (node.execution_authority_.tryCommit(
             {identity, command->goal_epoch, 1U},
             std::make_shared<const navigation_contracts::msg::NavigationGoal>(goal),
             command) !=
@@ -126,11 +124,9 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     std::lock_guard command_lock(
         node.command_execution_lease_failure_latch_.transitionMutex());
     node.active_goal_ = goal;
-    node.executing_goal_ = goal;
     node.active_localization_epoch_.store(command->localization_epoch);
     node.localization_epoch_ready_.store(true);
     node.active_goal_epoch_.store(command->goal_epoch);
-    node.command_goal_epoch_.store(command->goal_epoch);
     node.new_goal_ = false;
     node.hot_goal_transition_ = false;
     node.execution_transaction_id_.store(1U);
@@ -145,7 +141,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
       const Eigen::Vector3d& offset = Eigen::Vector3d::Zero(),
       const Eigen::Vector3d& velocity_residual = Eigen::Vector3d::Zero(),
       const std::optional<Eigen::Vector3d>& measured_acceleration = std::nullopt) {
-    const auto bundle = node.command_bundle_store_.load();
+    const auto bundle = node.execution_authority_.load();
     const auto sample = bundle ? bundle->sampleAtDeclaredStamp(stamp_ns) : std::nullopt;
     if (!sample) return false;
     navigation_planning::KinematicState state;
@@ -190,27 +186,26 @@ class NavigationRuntimeTerminalMonitorTestPeer {
 
   static auto key(NavigationRuntimeNode& node) { return node.currentPlanningKey(); }
   static auto timeline(const NavigationRuntimeNode& node) {
-    return node.command_bundle_store_.snapshot();
+    return node.execution_authority_.snapshot();
   }
   static auto reserveFutureAnchor(NavigationRuntimeNode& node, std::int64_t stamp_ns) {
-    return node.command_bundle_store_.reserveAnchor(stamp_ns, stamp_ns + 400'000'000LL);
+    return node.execution_authority_.reserveAnchor(stamp_ns, stamp_ns + 400'000'000LL);
   }
-  static auto episode(NavigationRuntimeNode& node) { return node.command_bundle_store_.episodeSnapshot(); }
+  static auto episode(NavigationRuntimeNode& node) { return node.execution_authority_.episodeSnapshot(); }
   static auto ownerTimelineAndEpisode(NavigationRuntimeNode& node) {
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
     std::lock_guard command_lock(node.command_execution_lease_failure_latch_.transitionMutex());
-    return std::pair(node.command_bundle_store_.snapshot(), node.command_bundle_store_.episodeSnapshot());
+    return std::pair(node.execution_authority_.snapshot(), node.execution_authority_.episodeSnapshot());
   }
   static auto holdActivationQueue(NavigationRuntimeNode& node) {
     return std::unique_lock(node.planner_timeline_activation_mutex_);
   }
   static auto commandGoalEpoch(NavigationRuntimeNode& node) {
-    return node.command_goal_epoch_.load();
+    return node.execution_authority_.executingGoalEpoch();
   }
   static auto executingGoal(NavigationRuntimeNode& node) {
-    std::lock_guard lock(node.input_mutex_);
-    return node.executing_goal_;
+    return node.executingGoalSnapshot();
   }
   static void changeGoal(NavigationRuntimeNode& node,
                          const navigation_contracts::msg::NavigationGoal& goal) {
@@ -254,7 +249,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     return node.planner_->trackingErrorBudgetMeters();
   }
   static bool seedPriorNominalTrace(NavigationRuntimeNode& node) {
-    const auto active = node.command_bundle_store_.load();
+    const auto active = node.execution_authority_.load();
     if (!active) return false;
     ExecutionTraceSnapshot trace;
     trace.planning_cycle_id = node.cycle_count_;
@@ -279,23 +274,23 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     node.hot_goal_transition_ = hot_goal;
   }
   static bool stagePending(NavigationRuntimeNode& node) {
-    const auto active = node.command_bundle_store_.load();
-    const auto anchor = node.command_bundle_store_.reserveAnchor(
+    const auto active = node.execution_authority_.load();
+    const auto anchor = node.execution_authority_.reserveAnchor(
         active->declared_start_ns, active->declared_start_ns + 400'000'000LL);
     if (!anchor) return false;
     auto successor = *active;
     ++successor.bundle_generation;
     successor.valid_from_ns = anchor->activation_stamp_ns;
     successor.activation_stamp_ns = anchor->activation_stamp_ns;
-    return node.command_bundle_store_.stagePending(
+    return node.execution_authority_.stagePending(
                {active->world_identity, active->goal_epoch, 2U}, *anchor,
-               node.command_bundle_store_.executingGoal(),
+               node.execution_authority_.executingGoal(),
                std::make_shared<const navigation_planning::CandidateBundle>(successor)) ==
         navigation_execution::StageDecision::kStaged;
   }
   static void monitor(NavigationRuntimeNode& node, const PlanningKey& key) {
-    const auto timeline = node.command_bundle_store_.snapshot();
-    const auto episode = node.command_bundle_store_.episodeSnapshot();
+    const auto timeline = node.execution_authority_.snapshot();
+    const auto episode = node.execution_authority_.episodeSnapshot();
     const NavigationRuntimeNode::RetainedValidationContext context{
         NavigationRuntimeNode::RetainedValidationPurpose::kTerminalMainMonitor,
         false, true, 0U, std::nullopt,
@@ -383,7 +378,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     node.applyQueuedExecutionTimelineActivations(*node.planner_);
   }
   static void acknowledge(NavigationRuntimeNode& node) {
-    const auto active = node.command_bundle_store_.load();
+    const auto active = node.execution_authority_.load();
     node.planner_->onExecutionTimelineActivated(active->bundle_generation);
   }
   static auto prepareRealEmergency(NavigationRuntimeNode& node) {
@@ -415,7 +410,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
                                      const navigation_planning::CandidateBundle& candidate,
                                      std::shared_ptr<const navigation_execution::ExecutionStateLease> measured = {}) {
     const NavigationRuntimeNode::TerminalMonitorBoundary boundary{
-        node.command_bundle_store_.snapshot(), node.command_bundle_store_.episodeSnapshot()};
+        node.execution_authority_.snapshot(), node.execution_authority_.episodeSnapshot()};
     const auto transaction = node.execution_transaction_id_.fetch_add(1U) + 1U;
     const auto key = node.currentPlanningKey();
     if (!key) return navigation_execution::CommitDecision::kAdmissionRejected;
@@ -430,10 +425,10 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   }
   static bool refreshStagedWorldBeforeAck(
       NavigationRuntimeNode& node, const navigation_world_model::WorldModelViewPtr& world) {
-    const auto timeline = node.command_bundle_store_.snapshot();
+    const auto timeline = node.execution_authority_.snapshot();
     if (!timeline.active ||
         !timeline.active->validateWorld(world, node.now().seconds()).valid) return false;
-    if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
+    if (node.execution_authority_.publishWorldIdentityIfCurrent(
             world->identity(), timeline.version, timeline.active, true,
             node.now().nanoseconds() + node.data_freshness_window_ns_) !=
         navigation_world_model::WorldCommitDecision::kCommitted) return false;
@@ -443,11 +438,11 @@ class NavigationRuntimeTerminalMonitorTestPeer {
   static bool refreshWorld(NavigationRuntimeNode& node,
                           const navigation_world_model::WorldModelViewPtr& world,
                           std::int64_t stamp_ns) {
-    const auto timeline = node.command_bundle_store_.snapshot();
+    const auto timeline = node.execution_authority_.snapshot();
     if (!timeline.active ||
         !timeline.active->validateWorld(
             world, static_cast<double>(stamp_ns) * 1.0e-9).valid) return false;
-    if (node.command_bundle_store_.publishWorldIdentityIfCurrent(
+    if (node.execution_authority_.publishWorldIdentityIfCurrent(
             world->identity(), timeline.version, timeline.active, true,
             stamp_ns + node.data_freshness_window_ns_) !=
         navigation_world_model::WorldCommitDecision::kCommitted) return false;

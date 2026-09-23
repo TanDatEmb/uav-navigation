@@ -1,7 +1,7 @@
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/baseline_refinement.hpp"
 #include "navigation_runtime/commit_trace.hpp"
-#include "navigation_runtime/execution_episode.hpp"
+#include "execution_authority_lifecycle_fixture.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include <navigation_common/time.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
@@ -255,7 +255,7 @@ BaselineRefinementContext baselineRefinementContext(
   key.start_mode = PlanningStartMode::kCommittedFutureState;
   key.committed_bundle_generation = a.bundle_generation;
   key.anchor_stamp_ns = 11'000'000'000LL;
-  ExecutionEpisode episode;
+  ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 1U, 1U, false);
   episode.commandCommitted(a);
   return {key, &a, episode.snapshot(), a.world_identity, a.bundle_generation,
@@ -832,7 +832,7 @@ TEST(PlannerFsm, EmergencyCertificationFailureGoesDirectlyToPx4Hold) {
 }
 
 TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
-  ExecutionEpisode episode;
+  ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 1U, 1U, true);
   navigation_planning::CandidateBundle active;
   active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;
@@ -861,7 +861,7 @@ TEST(PlannerFsm, SerializedRecoveryEventsHaveOneLinearOrder) {
 }
 
 TEST(PlannerFsm, SerializedFailClosedCannotBeResurrectedByNominalEvent) {
-  ExecutionEpisode episode;
+  ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 1U, 1U, true);
   navigation_planning::CandidateBundle active;
   active.kind = navigation_planning::CandidateBundleKind::kMainWithBackup;

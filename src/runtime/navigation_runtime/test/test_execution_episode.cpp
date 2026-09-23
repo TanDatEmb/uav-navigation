@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <navigation_runtime/execution_episode.hpp>
+#include "execution_authority_lifecycle_fixture.hpp"
 
 namespace {
 
@@ -25,13 +25,14 @@ navigation_planning::CandidateBundle bundle(
 }
 
 TEST(ExecutionEpisode, KeepsOneAuthoritativeLifecycleSnapshot) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.reset(4U);
   episode.beginGoal(4U, 7U, 11U, false);
   auto initial = episode.snapshot();
   EXPECT_EQ(initial.localization_epoch, 4U);
   EXPECT_EQ(initial.goal_epoch, 7U);
-  EXPECT_EQ(initial.request_id, 11U);
+  // Desired request lives in MissionProgress; no active bundle exists yet.
+  EXPECT_EQ(initial.request_id, 0U);
   EXPECT_EQ(initial.phase, navigation_runtime::ExecutionEpisodePhase::kInitialHold);
   EXPECT_EQ(initial.recovery_state,
             navigation_runtime::ExecutionRecoveryState::kInitialHold);
@@ -71,7 +72,7 @@ TEST(ExecutionEpisode, KeepsOneAuthoritativeLifecycleSnapshot) {
 }
 
 TEST(ExecutionEpisode, SampledSafetyRoleCannotRewriteAnotherGeneration) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, false);
   episode.commandCommitted(bundle(
       navigation_planning::CandidateBundleKind::kMainWithBackup, 4U));
@@ -89,7 +90,7 @@ TEST(ExecutionEpisode, SampledSafetyRoleCannotRewriteAnotherGeneration) {
 }
 
 TEST(ExecutionEpisode, LateRetainedRoleFromAStaleCandidateCannotRewriteSuccessor) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, false);
   const auto candidate_a = bundle(
       navigation_planning::CandidateBundleKind::kMainWithBackup, 4U);
@@ -98,7 +99,8 @@ TEST(ExecutionEpisode, LateRetainedRoleFromAStaleCandidateCannotRewriteSuccessor
   const auto candidate_b = bundle(
       navigation_planning::CandidateBundleKind::kBackupOnly, 7U,
       1U, 5U, 6U);
-  episode.commandCommitted(candidate_b);
+  EXPECT_EQ(episode.commandCommitted(candidate_b),
+            navigation_execution::CommitDecision::kCommitted);
 
   EXPECT_FALSE(episode.observeRetainedCommand(candidate_a, true));
   EXPECT_FALSE(episode.observeSampledSafetyRole(
@@ -117,7 +119,7 @@ TEST(ExecutionEpisode, LateRetainedRoleFromAStaleCandidateCannotRewriteSuccessor
 }
 
 TEST(ExecutionEpisode, HotRetargetKeepsActiveBackupUntilSuccessorCommits) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, false);
   const auto candidate_a = bundle(
       navigation_planning::CandidateBundleKind::kBackupOnly, 4U);
@@ -128,7 +130,8 @@ TEST(ExecutionEpisode, HotRetargetKeepsActiveBackupUntilSuccessorCommits) {
   episode.beginGoal(1U, 5U, 6U, true);
   auto state = episode.snapshot();
   EXPECT_EQ(state.goal_epoch, 5U);
-  EXPECT_EQ(state.request_id, 6U);
+  // Admission revision advanced, while the active request remains 3.
+  EXPECT_EQ(state.request_id, 0U);
   EXPECT_EQ(state.active_command_goal_epoch, 2U);
   EXPECT_EQ(state.active_command_request_id, 3U);
   EXPECT_EQ(state.active_generation, candidate_a.bundle_generation);
@@ -159,7 +162,7 @@ TEST(ExecutionEpisode, HotRetargetKeepsActiveBackupUntilSuccessorCommits) {
 }
 
 TEST(ExecutionEpisode, CommitUpdatesLifecycleAndRecoveryInOneSnapshot) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, false);
 
   auto main = bundle(
@@ -203,7 +206,7 @@ TEST(ExecutionEpisode, UsesContiguousInternalPhasesAndVersionedTelemetryConversi
 }
 
 TEST(ExecutionEpisode, FailClosedClearsCommandExposure) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, true);
   episode.failClosed();
   const auto state = episode.snapshot();
@@ -215,7 +218,7 @@ TEST(ExecutionEpisode, FailClosedClearsCommandExposure) {
 }
 
 TEST(ExecutionEpisode, ObservationsCannotResurrectFailClosedEpisode) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, true);
   episode.failClosed();
 
@@ -241,7 +244,7 @@ TEST(ExecutionEpisode, ObservationsCannotResurrectFailClosedEpisode) {
 }
 
 TEST(ExecutionEpisode, StoppedHoldPreservesMeasuredRestartRequest) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, true);
 
   const auto active = bundle(
@@ -256,14 +259,15 @@ TEST(ExecutionEpisode, StoppedHoldPreservesMeasuredRestartRequest) {
 }
 
 TEST(ExecutionEpisode, LateCommitCannotRollbackSameRequestGeneration) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, false);
   const auto candidate_a = bundle(
       navigation_planning::CandidateBundleKind::kMainWithBackup, 4U);
   episode.commandCommitted(candidate_a);
   const auto candidate_b = bundle(
       navigation_planning::CandidateBundleKind::kBackupOnly, 5U);
-  episode.commandCommitted(candidate_b);
+  EXPECT_EQ(episode.commandCommitted(candidate_b),
+            navigation_execution::CommitDecision::kCommitted);
 
   episode.commandCommitted(candidate_a);
   const auto state = episode.snapshot();
@@ -275,7 +279,7 @@ TEST(ExecutionEpisode, LateCommitCannotRollbackSameRequestGeneration) {
 }
 
 TEST(ExecutionEpisode, SameGenerationForeignIdentityCannotMutateOwner) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, false);
   const auto active = bundle(
       navigation_planning::CandidateBundleKind::kMainWithBackup, 4U);
@@ -299,7 +303,7 @@ TEST(ExecutionEpisode, SameGenerationForeignIdentityCannotMutateOwner) {
 }
 
 TEST(ExecutionEpisode, SuspendAndClearDoNotRetainCommandIdentity) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(8U, 9U, 10U, true);
   episode.commandCommitted(bundle(
       navigation_planning::CandidateBundleKind::kMainWithBackup, 31U,
@@ -326,7 +330,7 @@ TEST(ExecutionEpisode, SuspendAndClearDoNotRetainCommandIdentity) {
 }
 
 TEST(ExecutionEpisode, RecoveryEventsRemainOneWayInsideTheLifecycleRecord) {
-  navigation_runtime::ExecutionEpisode episode;
+  navigation_runtime::ExecutionLifecycleFixture episode;
   episode.beginGoal(1U, 2U, 3U, true);
   const auto active = bundle(
       navigation_planning::CandidateBundleKind::kEmergencyBrake, 4U);

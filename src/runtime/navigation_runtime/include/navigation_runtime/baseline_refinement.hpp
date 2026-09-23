@@ -3,7 +3,7 @@
 #include <optional>
 
 #include <navigation_planning/planning_outcome.hpp>
-#include "navigation_runtime/execution_episode.hpp"
+#include "navigation_runtime/execution_lifecycle_view.hpp"
 #include "navigation_runtime/planner_fsm.hpp"
 #include "navigation_runtime/planning_key.hpp"
 

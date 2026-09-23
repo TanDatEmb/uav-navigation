@@ -4,7 +4,7 @@
 
 #include <navigation_planning/planning_request.hpp>
 
-#include "navigation_runtime/execution_episode.hpp"
+#include "navigation_runtime/execution_lifecycle_view.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 

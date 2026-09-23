@@ -1,6 +1,6 @@
 #include "navigation_runtime/mission_progress.hpp"
 #include "navigation_runtime/mission_goal.hpp"
-#include "navigation_runtime/execution_episode.hpp"
+#include "navigation_runtime/execution_lifecycle_view.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 
 #include <navigation_contracts/navigation_command_contract.hpp>
@@ -143,7 +143,7 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
   ASSERT_EQ(timeline.publishWorldIdentityIfCurrent(
                 world, empty.version, {}, false),
             navigation_world_model::WorldCommitDecision::kCommitted);
-  ASSERT_TRUE(timeline.setActiveGoalEpoch(9U));
+  ASSERT_TRUE(timeline.setAdmissionGoalEpoch(9U));
   const auto predecessor = std::make_shared<const navigation_planning::CandidateBundle>(
       handoffCandidate(world, 9U, 2U, 4U, 100'000'000));
   ASSERT_TRUE(predecessor->valid());
@@ -152,9 +152,6 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
                 std::make_shared<const navigation_contracts::msg::NavigationGoal>(
                     *predecessor_goal), predecessor),
             navigation_execution::CommitDecision::kCommitted);
-  ExecutionEpisode episode;
-  episode.beginGoal(1U, 9U, 2U, false);
-  episode.commandCommitted(*predecessor);
   navigation_execution::CommandSampler sampler(timeline);
 
   // Crossing arrives before the downstream receipt. Neither the crossing nor
@@ -173,12 +170,11 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
       progress, *navigation_common::nanosecondsToRosTime(170'000'000));
   ASSERT_TRUE(successor_goal);
   ASSERT_EQ(successor_goal->request_id, 3U);
-  ASSERT_TRUE(timeline.setActiveGoalEpoch(10U, true));
-  episode.beginGoal(1U, 10U, 3U, true);
+  ASSERT_TRUE(timeline.setAdmissionGoalEpoch(10U, true));
   EXPECT_EQ(timeline.load(), predecessor);
-  EXPECT_EQ(episode.snapshot().active_generation, 4U);
-  EXPECT_EQ(episode.snapshot().goal_epoch, 10U);
-  EXPECT_EQ(episode.snapshot().active_command_goal_epoch, 9U);
+  EXPECT_EQ(timeline.episodeSnapshot().active_generation, 4U);
+  EXPECT_EQ(timeline.episodeSnapshot().goal_epoch, 10U);
+  EXPECT_EQ(timeline.episodeSnapshot().active_command_goal_epoch, 9U);
 
   HandoffAdapterIdentityModel adapter;
   std::uint64_t sample_id = 1U;
@@ -274,7 +270,6 @@ TEST(MissionProgressTest, EndToEndHotHandoffRetainsPredecessorUntilAtomicCutover
                 std::make_shared<const navigation_contracts::msg::NavigationGoal>(
                     *successor_goal), successor),
             navigation_execution::CommitDecision::kCommitted);
-  episode.commandCommitted(*successor);
   ASSERT_TRUE(sampler.sample(400'000'000, 10U));
   EXPECT_FALSE(sameExecutionPublicationIdentity(
       predecessor_goal, successor_goal, 9U, 10U, 1U, 1U));

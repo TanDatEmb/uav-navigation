@@ -86,9 +86,9 @@ class NavigationRuntimeEpochResetTestPeer {
     return node.active_localization_epoch_.load() == 2U &&
         (expect_goal ? node.active_goal_ && node.active_goal_->request_id == request
                      : !node.active_goal_) &&
-        !node.command_bundle_store_.load() &&
-        !node.command_bundle_store_.episodeSnapshot().command_available &&
-        node.command_goal_epoch_.load() == 0U;
+        !node.execution_authority_.load() &&
+        !node.execution_authority_.episodeSnapshot().command_available &&
+        node.execution_authority_.executingGoalEpoch() == 0U;
   }
   static void missionState(NavigationRuntimeNode& node, double x,
                            std::int64_t source_stamp_ns) {

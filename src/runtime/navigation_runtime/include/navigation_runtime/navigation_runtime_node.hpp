@@ -39,7 +39,7 @@
 #include "navigation_runtime/baseline_refinement.hpp"
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
-#include "navigation_runtime/execution_episode.hpp"
+#include "navigation_runtime/execution_lifecycle_view.hpp"
 #include "navigation_runtime/trajectory_completion.hpp"
 #include "navigation_runtime/planning_worker.hpp"
 #include "navigation_runtime/heading_rebind_worker.hpp"
@@ -392,6 +392,11 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const navigation_contracts::msg::NavigationGoal& goal,
       std::uint64_t goal_epoch, std::uint64_t localization_epoch,
       std::uint64_t bundle_generation = 0U) const noexcept;
+  // Read-only projections from the sole active execution record. Callers
+  // needing a coherent bundle/goal pair use execution_authority_.snapshot().
+  [[nodiscard]] std::optional<navigation_contracts::msg::NavigationGoal>
+  executingGoalSnapshot() const;
+  [[nodiscard]] std::uint64_t executionGoalEpoch() const noexcept;
   static bool decodeCloud(const sensor_msgs::msg::PointCloud2& message,
                           navigation_mapping::PointCloud& output,
                           bool require_nonempty = true);
@@ -477,10 +482,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::string mission_start_mission_id_;
   std::uint64_t mission_start_route_revision_{0U};
   std::uint64_t mission_start_localization_epoch_{0U};
-  // Desired mission identity may advance before a pass-through successor is
-  // activated.  Keep the physical command identity separate until the
-  // execution timeline performs that atomic cutover.
-  std::optional<navigation_contracts::msg::NavigationGoal> executing_goal_;
   // Sole runtime owner for a goal published while a moving BACKUP/EMERGENCY
   // suffix owns execution.  Do not add another pending optional.
   PendingGoalHandoffOwner pending_goal_owner_;
@@ -527,8 +528,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t world_snapshot_freshness_rejection_count_{0};
   std::atomic_uint64_t world_freshness_command_suspend_count_{0};
   std::atomic_uint64_t world_freshness_command_recovery_count_{0};
-  std::atomic_uint64_t world_freshness_suspended_bundle_generation_{0};
-  std::atomic_bool world_freshness_suspended_safety_suffix_active_{false};
   std::atomic_uint64_t command_execution_lease_rejection_count_{0};
   std::atomic_uint64_t command_execution_lease_terminal_latch_count_{0};
   std::atomic_uint64_t command_publication_deadline_miss_count_{0};
@@ -558,7 +557,6 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t map_update_exception_count_{0};
   std::atomic_uint64_t command_id_{0};
   std::atomic_uint64_t execution_transaction_id_{0};
-  std::atomic_uint64_t command_goal_epoch_{0};
   std::atomic_bool accepting_observations_{true};
   // Diagnostic-only retained-command causal evidence is published as one
   // immutable record. It is copied into the command stream and never
@@ -618,7 +616,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::vector<double> end_to_end_samples_ms_;
 
   navigation_mapping::WorldSnapshotStore world_snapshot_store_;
-  navigation_execution::ExecutionTimelineStore command_bundle_store_;
+  navigation_execution::ExecutionAuthority execution_authority_;
   navigation_execution::CommandSampler command_sampler_;
   std::shared_ptr<MappingTelemetry> mapping_telemetry_;
   std::shared_ptr<MappingLifecycleObserver> mapping_lifecycle_observer_;

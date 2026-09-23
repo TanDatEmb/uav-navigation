@@ -29,7 +29,7 @@ struct CommitToken {
   std::uint64_t transaction_id{0};
 };
 
-struct ExecutionTimelineSnapshot {
+struct ExecutionAuthoritySnapshot {
   std::uint64_t version{0};
   std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity;
   std::shared_ptr<const navigation_planning::CandidateBundle> active;
@@ -40,7 +40,13 @@ struct ExecutionTimelineSnapshot {
   std::shared_ptr<const navigation_contracts::msg::NavigationGoal> active_goal;
   std::shared_ptr<const navigation_contracts::msg::NavigationGoal> pending_goal;
   std::uint64_t active_lineage{0};
+  // Admission scope is deliberately separate from the active bundle epoch.
+  std::uint64_t admission_goal_epoch{0};
+  std::uint64_t admission_localization_epoch{0};
+  ExecutionLifecycleState lifecycle{};
 };
+
+using ExecutionTimelineSnapshot = ExecutionAuthoritySnapshot;
 
 enum class CommitDecision : std::uint8_t {
   kCommitted,
@@ -89,7 +95,7 @@ class ExecutionAuthority {
   ExecutionAuthority(const ExecutionAuthority&) = delete;
   ExecutionAuthority& operator=(const ExecutionAuthority&) = delete;
 
-  bool setActiveGoalEpoch(std::uint64_t goal_epoch,
+  bool setAdmissionGoalEpoch(std::uint64_t goal_epoch,
                           bool retain_committed_bundle = false) noexcept {
     if (goal_epoch == 0) return false;
     std::lock_guard lock(mutex_);
@@ -329,11 +335,12 @@ class ExecutionAuthority {
     return active_.bundle;
   }
 
-  [[nodiscard]] ExecutionTimelineSnapshot snapshot() const noexcept {
+  [[nodiscard]] ExecutionAuthoritySnapshot snapshot() const noexcept {
     std::lock_guard lock(mutex_);
     return {timeline_version_, world_identity_, active_.bundle, staged_.bundle,
             staged_.activation_ns, active_.goal, staged_.goal,
-            active_lineage_version_};
+            active_lineage_version_, admission_goal_epoch_,
+            admission_localization_epoch_, lifecycle_};
   }
 
   [[nodiscard]] ExecutionEpisodeSnapshot episodeSnapshot() const noexcept {
@@ -449,6 +456,7 @@ class ExecutionAuthority {
     }
     std::lock_guard lock(mutex_);
     if (admission_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;
+    if (lifecycle_.exposure == ExecutionExposure::kFailed) return StageDecision::kCancelled;
     if (admission_goal_epoch_ != expected.goal_epoch ||
         candidate->goal_epoch != expected.goal_epoch) return StageDecision::kGoalAdvanced;
     if (!world_identity_ ||
@@ -488,6 +496,7 @@ class ExecutionAuthority {
       return StageDecision::kInvalidAnchor;
     }
     if (admission_goal_epoch_ == 0U) return StageDecision::kNoActiveGoal;
+    if (lifecycle_.exposure == ExecutionExposure::kFailed) return StageDecision::kCancelled;
     if (admission_goal_epoch_ != expected.goal_epoch ||
         candidate->goal_epoch != expected.goal_epoch) return StageDecision::kGoalAdvanced;
     if (!world_identity_ ||
@@ -560,13 +569,19 @@ class ExecutionAuthority {
       ExposureFn&& expose) noexcept {
     std::lock_guard lock(mutex_);
     if (!expected || !active_.bundle || active_.bundle.get() != expected.get() ||
+        lifecycle_.exposure != ExecutionExposure::kAvailable ||
         active_.bundle->goal_epoch != expected_goal_epoch || !world_identity_ ||
         !navigation_world_model::sameWorldSnapshotIdentity(
             *world_identity_, expected->world_identity)) {
       return false;
     }
     try {
-      if (!static_cast<bool>(std::forward<ExposureFn>(expose)())) return false;
+      if constexpr (std::is_invocable_v<ExposureFn&,
+                                        const ExecutionLifecycleState&>) {
+        if (!static_cast<bool>(std::invoke(expose, lifecycle_))) return false;
+      } else {
+        if (!static_cast<bool>(std::invoke(expose))) return false;
+      }
     } catch (...) {
       return false;
     }
@@ -600,6 +615,7 @@ class ExecutionAuthority {
     }
     std::lock_guard lock(mutex_);
     if (admission_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;
+    if (lifecycle_.exposure == ExecutionExposure::kFailed) return CommitDecision::kCancelled;
     if (admission_goal_epoch_ != expected.goal_epoch ||
         candidate->goal_epoch != expected.goal_epoch) {
       return CommitDecision::kGoalAdvanced;
@@ -613,6 +629,13 @@ class ExecutionAuthority {
     }
     if (expected.transaction_id <= last_transaction_id_) {
       return CommitDecision::kCancelled;
+    }
+    // Planner generations are monotonic. A late result may never replace the
+    // active record with an older generation using a newer queue ID. Exact
+    // same-generation identity-preserving replacements remain legal.
+    if (active_.bundle &&
+        candidate->bundle_generation < active_.bundle->bundle_generation) {
+      return CommitDecision::kPredecessorAdvanced;
     }
     const auto prior_generation = active_.bundle
         ? active_.bundle->bundle_generation : 0U;
@@ -650,6 +673,7 @@ class ExecutionAuthority {
     }
     std::lock_guard lock(mutex_);
     if (admission_goal_epoch_ == 0U) return CommitDecision::kNoActiveGoal;
+    if (lifecycle_.exposure == ExecutionExposure::kFailed) return CommitDecision::kCancelled;
     if (admission_goal_epoch_ != expected.goal_epoch ||
         candidate->goal_epoch != expected.goal_epoch) {
       return CommitDecision::kGoalAdvanced;
@@ -663,6 +687,13 @@ class ExecutionAuthority {
     }
     if (expected.transaction_id <= last_transaction_id_) {
       return CommitDecision::kCancelled;
+    }
+    // Planner generations are monotonic. A late result may never replace the
+    // active record with an older generation using a newer queue ID. Exact
+    // same-generation identity-preserving replacements remain legal.
+    if (active_.bundle &&
+        candidate->bundle_generation < active_.bundle->bundle_generation) {
+      return CommitDecision::kPredecessorAdvanced;
     }
     if (timeline_version_ != predecessor.version ||
         active_.bundle.get() != predecessor.active.get() ||
@@ -707,6 +738,7 @@ class ExecutionAuthority {
     }
     std::lock_guard lock(mutex_);
     if (admission_goal_epoch_ == 0) return CommitDecision::kNoActiveGoal;
+    if (lifecycle_.exposure == ExecutionExposure::kFailed) return CommitDecision::kCancelled;
     if (admission_goal_epoch_ != expected.goal_epoch ||
         candidate->goal_epoch != expected.goal_epoch) {
       return CommitDecision::kGoalAdvanced;
@@ -720,6 +752,13 @@ class ExecutionAuthority {
     }
     if (expected.transaction_id <= last_transaction_id_) {
       return CommitDecision::kCancelled;
+    }
+    // Planner generations are monotonic. A late result may never replace the
+    // active record with an older generation using a newer queue ID. Exact
+    // same-generation identity-preserving replacements remain legal.
+    if (active_.bundle &&
+        candidate->bundle_generation < active_.bundle->bundle_generation) {
+      return CommitDecision::kPredecessorAdvanced;
     }
 
     const auto previous_lifecycle = lifecycle_;
@@ -1010,6 +1049,7 @@ class ExecutionAuthority {
       const std::shared_ptr<const navigation_planning::CandidateBundle>& expected_pending,
       std::uint64_t expected_version, std::int64_t expected_activation_ns,
       bool require_exact_token, FinalizeFn&& finalize) const noexcept {
+    if (lifecycle_.exposure == ExecutionExposure::kFailed) return false;
     if (staged_.bundle && !active_.bundle) {
       clearStagedLocked();
       staged_.activation_ns = 0;
