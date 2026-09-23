@@ -1,0 +1,7 @@
+# E2 exported braking API
+
+`FACT_FROM_TARGET_CODE`: `MissionController::onTrajectory()` remains installed through the contract library and its `Braking→ExecutingWaypoint` transition on a successful non-stop trajectory remains test-covered. The native adapter calls `onNativeSafetyTrajectoryObserved()` and `onNativeTrajectoryReady()`, not this callback. A source search of the pinned target found no non-test producer of `onTrajectory()` after the native SUPER path replaced the subscribed trajectory callback.
+
+`FACT_FROM_PREVIOUS_AUDIT`: `E2_BRAKING_API_HISTORY.md` at audit commit `84abeeb2` traced the historical producer introduction (`eb63af16`), recovery extension (`7ac87c3c`), native-path replacement (`16613868`), and later public API hardening (`0930a8d5`). Its search of current refs and GitHub found no separate public consumer; this is absence of evidence, not proof that installed/private downstream users do not exist.
+
+Classification: **`API_POLICY_OWNER_DECISION_REQUIRED`**. The current native execution trace may be modeled as one-way committed BACKUP/emergency until measured stop, while retained MAIN on failed replacement remains a distinct path. Do not remove or silently reinterpret the exported callback in this experiment. The product owner still must decide whether this API is compatibility-only/deprecated or a required future recoverable-braking capability. This E2 decision does not itself grant or block diagnostic shadow observation of current native facts.
