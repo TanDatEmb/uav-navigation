@@ -1,0 +1,15 @@
+run,command,goal,odom,px4_status,status,monitor_odom,selected_source,crossing_opportunities
+external-mode-check-20260922T012707-197705,1258,2,1870,79,4,1849,rosbag_recorder,0
+external-mode-gui-20260922T013029-201643,3308,5,9,146,7,3422,runner_monitor_wall_arrival,3
+external-mode-gui-20260922T013317-205860,2116,5,8,107,6,2526,runner_monitor_wall_arrival,4
+external-mode-gui-20260922T013610-212855,2884,8,5790,249,18,5790,rosbag_recorder,0
+external-mode-gui-20260922T014008-217087,3358,3,8,148,5,3604,runner_monitor_wall_arrival,2
+external-mode-gui-20260922T014226-221089,4260,4,4231,179,8,4167,rosbag_recorder,2
+external-mode-gui-20260922T014501-225072,4833,6,10,200,10,4721,runner_monitor_wall_arrival,4
+external-mode-gui-20260922T014758-229248,0,1,616,164,3,616,rosbag_recorder,0
+external-mode-gui-20260922T015008-233245,4162,7,9,241,13,4874,runner_monitor_wall_arrival,37
+external-mode-gui-20260922T015333-237627,5412,5,9,216,7,5163,runner_monitor_wall_arrival,4
+external-mode-gui-20260922T015649-241674,10737,3,10,401,7,9811,runner_monitor_wall_arrival,1
+external-mode-gui-20260922T020310-247206,14565,9,13614,548,13,13532,rosbag_recorder,8
+external-mode-gui-20260922T021353-252477,6942,2,7110,289,4,7036,rosbag_recorder,0
+external-mode-gui-20260922T021832-256944,20951,5,10,721,12,17636,runner_monitor_wall_arrival,0

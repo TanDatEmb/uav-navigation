@@ -1,0 +1,17 @@
+# E3 — observed Hold-related runtime order
+
+`FACT_FROM_EXISTING_RUNTIME_ARTIFACT` `E3_PX4_HOLD_EVENT_ORDER.csv` normalizes 14 TARGET runs without merging clock domains: adapter log has wall/ROS log seconds, runner status has simulation source time, PX4 boot microseconds and observer steady time. Across these **different scenarios**, runner recorded 120 vehicle-status changes: 40 external `nav_state=26,executor=1`, 23 `AUTO_LOITER=4,executor=1`, 42 `AUTO_LOITER=4,executor=0`, 14 takeoff `17,executor=0`, and one failsafe `12,executor=0`. Adapter logs contain 16 Hold request lines and 13 Hold callback lines; **all 13 callbacks say `Deactivated`**, none `Success`. These are occurrences, not a controlled repeated H1/H2 test. The runner's seven `px4_hold_handover_requested` events can be a *monitor reaction to observed unexpected external-mode exit*; they are not necessarily the adapter's `scheduleMode` call and must not be used as its timestamp.
+
+`FACT_FROM_RUNTIME_TRACE` In `...020310-247206`, runner observes `AUTO_LOITER=4,executor=1,failsafe=false` at 259.532 s after the external mission. This directly falsifies a proposed “executor charge must be zero” Hold witness for the captured run. In `...013610-212855`, log repeatedly shows Hold request followed by callback `Deactivated` and executor deactivation, while status records `AUTO_LOITER=4,executor=1`; the run is `INFRASTRUCTURE_INVALID` due a simulation-clock wall lease violation, so exact timing/order/severity claims from it are excluded. `...014758-229248` records a later `nav_state=12,executor=0,failsafe=true`, demonstrating a distinct takeover observation, not requested-Hold success. A status `AUTO_LOITER=4,executor=0` may be preflight, pilot selection or later takeover; without request linkage, do not relabel it as successful Hold.
+
+The captured ROS bags **do not contain** `/fmu/in/vehicle_command`, `/fmu/out/vehicle_command_ack`, or `/fmu/out/mode_completed`; runner `command_ack` events are its own scenario commands and cannot be correlated to the adapter's Hold request. Adapter logs do not include a request generation, PX4 boot timestamp or ModeCompleted payload. Thus no exact `ACK→Status→ModeCompleted→callback` or `Status→callback` ordering is established from these runs. In particular, `Deactivated` could follow later charge loss or cancellation; log text “handover completed” is not an authority witness.
+
+| Scenario | Coverage |
+|---|---|
+| H1 normal requested Hold / H2 while external mode active | Hold log and status occur, but command/ACK/completion linkage missing. `PARTIAL`. |
+| H3 operator takeover | No explicit pilot command and causal status trace. `EVIDENCE_NOT_AVAILABLE`. |
+| H4 failsafe | One failsafe status in run `...229248`; injection cause/sequence not controlled. `PARTIAL`. |
+| H5 repeat/retry | Multiple requests across activation episodes; no request IDs, so callback retry count not proven. |
+| H6 delayed/lost status | No controlled injection. `EVIDENCE_NOT_AVAILABLE`. |
+
+A focused capture must record the three omitted PX4 topics, `VehicleStatus` including boot source stamp and executor charge, adapter request generation + callback result + deactivation reason, and owned-mode active state. Use distinct source/receive/steady clocks and deliberately exercise pilot/failsafe and status loss in a safe SITL harness. Do not loosen Hold or lease gates for this experiment. Until firmware build is globally pinned and this event chain is observed, `E3_BLOCKED`; no flight qualification is claimed.

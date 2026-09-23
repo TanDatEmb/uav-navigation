@@ -1,0 +1,238 @@
+run,source,event,sim_time_ns,observer_steady_ns,px4_boot_us,log_wall_s,nav_state,executor_in_charge,failsafe,result,detail
+external-mode-check-20260922T012707-197705,adapter_log,hold_request_log,,,,1790040486.718883176,,,,,[WARN] [1790040486.718883176] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-check-20260922T012707-197705,runner_vehicle_status_change,vehicle_status_change,8512000000,89321194047086,8524000,,4,0,False,,
+external-mode-check-20260922T012707-197705,runner_vehicle_status_change,vehicle_status_change,8716000000,89321452738254,8596000,,26,1,False,,
+external-mode-check-20260922T012707-197705,runner_vehicle_status_change,vehicle_status_change,8916000000,89321700546560,8836000,,4,0,False,,
+external-mode-check-20260922T012707-197705,runner_vehicle_status_change,vehicle_status_change,9856000000,89322836099660,9856000,,17,0,False,,
+external-mode-check-20260922T012707-197705,runner_vehicle_status_change,vehicle_status_change,16648000000,89331326607383,16648000,,4,0,False,,
+external-mode-check-20260922T012707-197705,runner_vehicle_status_change,vehicle_status_change,20880000000,89336616591971,20800000,,26,1,False,,
+external-mode-check-20260922T012707-197705,runner_event,external_mode_entered,8716000000,89321452696839,,,,,,,{}
+external-mode-check-20260922T012707-197705,runner_event,external_mode_exit_observed,8916000000,89321700486302,,,,,,,{}
+external-mode-check-20260922T012707-197705,runner_event,external_mode_entered,20880000000,89336616556235,,,,,,,{}
+external-mode-gui-20260922T013029-201643,adapter_log,mission_completed_log,,,,1790040718.673665130,,,,,[INFO] [1790040718.673665130] [px4_navigation_external_mode]: Avoidance Mission completed; handing over to PX4 Hold
+external-mode-gui-20260922T013029-201643,runner_vehicle_status_change,vehicle_status_change,9036000000,89521431111507,9036000,,4,0,False,,
+external-mode-gui-20260922T013029-201643,runner_vehicle_status_change,vehicle_status_change,9236000000,89521681838439,9072000,,26,1,False,,
+external-mode-gui-20260922T013029-201643,runner_vehicle_status_change,vehicle_status_change,9372000000,89522429698747,9312000,,4,0,False,,
+external-mode-gui-20260922T013029-201643,runner_vehicle_status_change,vehicle_status_change,10316000000,89523087404791,10320000,,17,0,False,,
+external-mode-gui-20260922T013029-201643,runner_vehicle_status_change,vehicle_status_change,17088000000,89531496113309,17088000,,4,0,False,,
+external-mode-gui-20260922T013029-201643,runner_vehicle_status_change,vehicle_status_change,21320000000,89536786713492,21312000,,26,1,False,,
+external-mode-gui-20260922T013029-201643,runner_vehicle_status_change,vehicle_status_change,62328000000,89588089686587,62196000,,4,1,False,,
+external-mode-gui-20260922T013029-201643,runner_event,external_mode_entered,9236000000,89521681776656,,,,,,,{}
+external-mode-gui-20260922T013029-201643,runner_event,external_mode_exit_observed,9372000000,89522429662084,,,,,,,{}
+external-mode-gui-20260922T013029-201643,runner_event,external_mode_entered,21320000000,89536786643646,,,,,,,{}
+external-mode-gui-20260922T013029-201643,runner_event,external_mode_exit_observed,62328000000,89588089629669,,,,,,,{}
+external-mode-gui-20260922T013317-205860,runner_vehicle_status_change,vehicle_status_change,0,89690451558658,9584000,,4,0,False,,
+external-mode-gui-20260922T013317-205860,runner_vehicle_status_change,vehicle_status_change,9800000000,89690721297201,9800000,,26,1,False,,
+external-mode-gui-20260922T013317-205860,runner_vehicle_status_change,vehicle_status_change,9988000000,89690956613600,9872000,,4,0,False,,
+external-mode-gui-20260922T013317-205860,runner_vehicle_status_change,vehicle_status_change,10880000000,89692070918022,10880000,,17,0,False,,
+external-mode-gui-20260922T013317-205860,runner_vehicle_status_change,vehicle_status_change,17660000000,89700546726962,17660000,,4,0,False,,
+external-mode-gui-20260922T013317-205860,runner_vehicle_status_change,vehicle_status_change,21892000000,89705836136640,21800000,,26,1,False,,
+external-mode-gui-20260922T013317-205860,runner_event,external_mode_entered,9800000000,89690721238707,,,,,,,{}
+external-mode-gui-20260922T013317-205860,runner_event,external_mode_exit_observed,9988000000,89690956530345,,,,,,,{}
+external-mode-gui-20260922T013317-205860,runner_event,external_mode_entered,21892000000,89705836091967,,,,,,,{}
+external-mode-gui-20260922T013610-212855,adapter_log,hold_request_log,,,,1790041023.216381628,,,,,[WARN] [1790041023.216381628] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T013610-212855,adapter_log,hold_completion_callback_log,,,,1790041030.432018545,,,,Deactivated,[INFO] [1790041030.432018545] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T013610-212855,adapter_log,executor_deactivated_log,,,,1790041030.432031580,,,,,[INFO] [1790041030.432031580] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T013610-212855,adapter_log,hold_request_log,,,,1790041065.028369920,,,,,[WARN] [1790041065.028369920] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T013610-212855,adapter_log,hold_completion_callback_log,,,,1790041072.942277534,,,,Deactivated,[INFO] [1790041072.942277534] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T013610-212855,adapter_log,executor_deactivated_log,,,,1790041072.942291497,,,,,[INFO] [1790041072.942291497] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T013610-212855,adapter_log,hold_request_log,,,,1790041079.218099762,,,,,[WARN] [1790041079.218099762] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T013610-212855,adapter_log,hold_completion_callback_log,,,,1790041083.903102819,,,,Deactivated,[INFO] [1790041083.903102819] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T013610-212855,adapter_log,executor_deactivated_log,,,,1790041083.903113999,,,,,[INFO] [1790041083.903113999] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T013610-212855,adapter_log,hold_request_log,,,,1790041090.183701655,,,,,[WARN] [1790041090.183701655] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T013610-212855,adapter_log,hold_completion_callback_log,,,,1790041108.416882717,,,,Deactivated,[INFO] [1790041108.416882717] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T013610-212855,adapter_log,executor_deactivated_log,,,,1790041108.416893713,,,,,[INFO] [1790041108.416893713] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T013610-212855,adapter_log,hold_request_log,,,,1790041119.552999104,,,,,[WARN] [1790041119.552999104] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,9196000000,89862596175387,9196000,,4,0,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,10216000000,89863870690694,10216000,,26,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,10404000000,89864105937525,10300000,,4,0,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,11412000000,89865365220564,11296000,,17,0,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,18100000000,89873726286642,18100000,,4,0,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,22324000000,89879055883609,22180000,,26,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,33132000000,89892516160404,33052000,,4,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,38800000000,89899601321468,38800000,,26,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,66496000000,89934220190912,66496000,,4,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,72808000000,89942110860951,72808000,,26,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,77840000000,89948456483275,77848000,,4,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,81576000000,89953071556814,81412000,,26,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,86620000000,89959376481302,86620000,,4,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,105076000000,89982445513598,105076000,,26,1,False,,
+external-mode-gui-20260922T013610-212855,runner_vehicle_status_change,vehicle_status_change,110128000000,89988760836454,110128000,,4,1,False,,
+external-mode-gui-20260922T013610-212855,runner_event,external_mode_entered,10216000000,89863870629790,,,,,,,{}
+external-mode-gui-20260922T013610-212855,runner_event,external_mode_exit_observed,10404000000,89864105896254,,,,,,,{}
+external-mode-gui-20260922T013610-212855,runner_event,external_mode_entered,22324000000,89879055822772,,,,,,,{}
+external-mode-gui-20260922T013610-212855,runner_event,external_mode_exit_observed,33132000000,89892516055466,,,,,,,{}
+external-mode-gui-20260922T013610-212855,runner_event,px4_hold_handover_requested,33132000000,89892516135465,,,,,,,"{""executor_in_charge"": 1, ""nav_state"": 4}"
+external-mode-gui-20260922T013610-212855,runner_event,external_mode_entered,38800000000,89899601269672,,,,,,,{}
+external-mode-gui-20260922T014008-217087,adapter_log,mission_completed_log,,,,1790041305.172712999,,,,,[INFO] [1790041305.172712999] [px4_navigation_external_mode]: Avoidance Mission completed; handing over to PX4 Hold
+external-mode-gui-20260922T014008-217087,runner_vehicle_status_change,vehicle_status_change,11296000000,90104861227003,11296000,,4,0,False,,
+external-mode-gui-20260922T014008-217087,runner_vehicle_status_change,vehicle_status_change,11500000000,90105117081540,11368000,,26,1,False,,
+external-mode-gui-20260922T014008-217087,runner_vehicle_status_change,vehicle_status_change,11696000000,90105688741663,11620000,,4,0,False,,
+external-mode-gui-20260922T014008-217087,runner_vehicle_status_change,vehicle_status_change,12604000000,90106495757638,12604000,,17,0,False,,
+external-mode-gui-20260922T014008-217087,runner_vehicle_status_change,vehicle_status_change,19408000000,90114999943163,19408000,,4,0,False,,
+external-mode-gui-20260922T014008-217087,runner_vehicle_status_change,vehicle_status_change,23624000000,90120313199244,23584000,,26,1,False,,
+external-mode-gui-20260922T014008-217087,runner_vehicle_status_change,vehicle_status_change,66904000000,90174370692606,66904000,,4,1,False,,
+external-mode-gui-20260922T014008-217087,runner_event,external_mode_entered,11500000000,90105116994152,,,,,,,{}
+external-mode-gui-20260922T014008-217087,runner_event,external_mode_exit_observed,11696000000,90105688660852,,,,,,,{}
+external-mode-gui-20260922T014008-217087,runner_event,external_mode_entered,23624000000,90120313151604,,,,,,,{}
+external-mode-gui-20260922T014008-217087,runner_event,external_mode_exit_observed,66904000000,90174370645953,,,,,,,{}
+external-mode-gui-20260922T014226-221089,adapter_log,mission_completed_log,,,,1790041443.183534642,,,,,[INFO] [1790041443.183534642] [px4_navigation_external_mode]: Avoidance Mission completed; handing over to PX4 Hold
+external-mode-gui-20260922T014226-221089,adapter_log,hold_completion_callback_log,,,,1790041460.623090547,,,,Deactivated,[INFO] [1790041460.623090547] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T014226-221089,adapter_log,executor_deactivated_log,,,,1790041460.623109713,,,,,[INFO] [1790041460.623109713] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T014226-221089,adapter_log,hold_request_log,,,,1790041466.899332967,,,,,[WARN] [1790041466.899332967] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,0,90240796526925,9536000,,4,0,False,,
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,9932000000,90241291944526,9932000,,26,1,False,,
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,10120000000,90241527503469,10004000,,4,0,False,,
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,11000000000,90242628218847,11000000,,17,0,False,,
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,16916000000,90250022456385,16916000,,4,0,False,,
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,21200000000,90255377959989,21200000,,26,1,False,,
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,66800000000,90312377420975,66800000,,4,1,False,,
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,80732000000,90329791795488,80732000,,26,1,False,,
+external-mode-gui-20260922T014226-221089,runner_vehicle_status_change,vehicle_status_change,85772000000,90336091426476,85772000,,4,1,False,,
+external-mode-gui-20260922T014226-221089,runner_event,external_mode_entered,9932000000,90241291882014,,,,,,,{}
+external-mode-gui-20260922T014226-221089,runner_event,external_mode_exit_observed,10120000000,90241527444074,,,,,,,{}
+external-mode-gui-20260922T014226-221089,runner_event,external_mode_entered,21200000000,90255377909950,,,,,,,{}
+external-mode-gui-20260922T014226-221089,runner_event,external_mode_exit_observed,66800000000,90312377345839,,,,,,,{}
+external-mode-gui-20260922T014226-221089,runner_event,external_mode_entered,80732000000,90329791728141,,,,,,,{}
+external-mode-gui-20260922T014501-225072,adapter_log,mission_completed_log,,,,1790041623.494466584,,,,,[INFO] [1790041623.494466584] [px4_navigation_external_mode]: Avoidance Mission completed; handing over to PX4 Hold
+external-mode-gui-20260922T014501-225072,adapter_log,hold_completion_callback_log,,,,1790041628.839901255,,,,Deactivated,[INFO] [1790041628.839901255] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T014501-225072,adapter_log,executor_deactivated_log,,,,1790041628.839907940,,,,,[INFO] [1790041628.839907940] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T014501-225072,adapter_log,hold_request_log,,,,1790041635.115181465,,,,,[WARN] [1790041635.115181465] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,10324000000,90396989276852,10332000,,4,0,False,,
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,10532000000,90397202587955,10416000,,26,1,False,,
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,10728000000,90397491567090,10680000,,4,0,False,,
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,11676000000,90398631683584,11676000,,17,0,False,,
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,18492000000,90407151977912,18492000,,4,0,False,,
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,22724000000,90412495606951,22656000,,26,1,False,,
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,86928000000,90492736714852,86928000,,4,1,False,,
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,91148000000,90498015919325,91176000,,26,1,False,,
+external-mode-gui-20260922T014501-225072,runner_vehicle_status_change,vehicle_status_change,96216000000,90504307122763,96216000,,4,1,False,,
+external-mode-gui-20260922T014501-225072,runner_event,external_mode_entered,10532000000,90397202521580,,,,,,,{}
+external-mode-gui-20260922T014501-225072,runner_event,external_mode_exit_observed,10728000000,90397491503955,,,,,,,{}
+external-mode-gui-20260922T014501-225072,runner_event,external_mode_entered,22724000000,90412495540126,,,,,,,{}
+external-mode-gui-20260922T014501-225072,runner_event,external_mode_exit_observed,86928000000,90492736651326,,,,,,,{}
+external-mode-gui-20260922T014501-225072,runner_event,external_mode_entered,91148000000,90498015869809,,,,,,,{}
+external-mode-gui-20260922T014758-229248,adapter_log,hold_request_log,,,,1790041747.560522380,,,,,[WARN] [1790041747.560522380] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T014758-229248,adapter_log,hold_completion_callback_log,,,,1790041784.459158162,,,,Deactivated,[INFO] [1790041784.459158162] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T014758-229248,adapter_log,executor_deactivated_log,,,,1790041784.459172829,,,,,[INFO] [1790041784.459172829] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (failsafe)
+external-mode-gui-20260922T014758-229248,runner_vehicle_status_change,vehicle_status_change,24112000000,90592451281607,24160000,,4,0,False,,
+external-mode-gui-20260922T014758-229248,runner_vehicle_status_change,vehicle_status_change,25368000000,90593923085279,25216000,,26,1,False,,
+external-mode-gui-20260922T014758-229248,runner_vehicle_status_change,vehicle_status_change,25568000000,90594172778762,25492000,,4,0,False,,
+external-mode-gui-20260922T014758-229248,runner_vehicle_status_change,vehicle_status_change,26500000000,90595337213503,26500000,,17,0,False,,
+external-mode-gui-20260922T014758-229248,runner_vehicle_status_change,vehicle_status_change,33316000000,90603857520900,33316000,,4,0,False,,
+external-mode-gui-20260922T014758-229248,runner_vehicle_status_change,vehicle_status_change,43596000000,90616708249830,43432000,,26,1,False,,
+external-mode-gui-20260922T014758-229248,runner_vehicle_status_change,vehicle_status_change,43796000000,90616958987473,43636000,,4,1,False,,
+external-mode-gui-20260922T014758-229248,runner_vehicle_status_change,vehicle_status_change,73128000000,90653664506365,73132000,,12,0,True,,
+external-mode-gui-20260922T014758-229248,runner_event,external_mode_entered,25368000000,90593923024883,,,,,,,{}
+external-mode-gui-20260922T014758-229248,runner_event,external_mode_exit_observed,25568000000,90594172705740,,,,,,,{}
+external-mode-gui-20260922T014758-229248,runner_event,external_mode_entered,43596000000,90616708200794,,,,,,,{}
+external-mode-gui-20260922T014758-229248,runner_event,px4_hold_handover_requested,48928000000,90623433527341,,,,,,,"{""position_residual_m"": 3.5845565708149447, ""velocity_residual_m_s"": 2.2472401959696935}"
+external-mode-gui-20260922T015008-233245,adapter_log,hold_request_log,,,,1790041891.442024600,,,,,[WARN] [1790041891.442024600] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T015008-233245,adapter_log,hold_completion_callback_log,,,,1790041903.287664654,,,,Deactivated,[INFO] [1790041903.287664654] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T015008-233245,adapter_log,executor_deactivated_log,,,,1790041903.287676024,,,,,[INFO] [1790041903.287676024] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T015008-233245,adapter_log,hold_request_log,,,,1790041916.244096499,,,,,[WARN] [1790041916.244096499] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T015008-233245,adapter_log,hold_completion_callback_log,,,,1790041921.568263001,,,,Deactivated,[INFO] [1790041921.568263001] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T015008-233245,adapter_log,executor_deactivated_log,,,,1790041921.568270313,,,,,[INFO] [1790041921.568270313] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T015008-233245,adapter_log,mission_completed_log,,,,1790041965.102941841,,,,,[INFO] [1790041965.102941841] [px4_navigation_external_mode]: Avoidance Mission completed; handing over to PX4 Hold
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,24756000000,90722956579280,24756000,,4,0,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,25928000000,90724486129754,25800000,,26,1,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,26124000000,90724719739031,26124000,,4,0,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,27116000000,90725949841582,27120000,,17,0,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,33916000000,90734453028726,33936000,,4,0,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,38196000000,90739757270212,38196000,,26,1,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,55020000000,90760836071811,54900000,,4,1,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,64324000000,90772456145150,64356000,,26,1,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,74720000000,90785461850726,74748000,,4,1,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,78948000000,90790738159801,78888000,,26,1,False,,
+external-mode-gui-20260922T015008-233245,runner_vehicle_status_change,vehicle_status_change,113936000000,90834478282627,113832000,,4,1,False,,
+external-mode-gui-20260922T015008-233245,runner_event,external_mode_entered,25928000000,90724486082298,,,,,,,{}
+external-mode-gui-20260922T015008-233245,runner_event,external_mode_exit_observed,26124000000,90724719678682,,,,,,,{}
+external-mode-gui-20260922T015008-233245,runner_event,external_mode_entered,38196000000,90739757185945,,,,,,,{}
+external-mode-gui-20260922T015008-233245,runner_event,external_mode_exit_observed,55020000000,90760835987461,,,,,,,{}
+external-mode-gui-20260922T015008-233245,runner_event,px4_hold_handover_requested,55020000000,90760836055266,,,,,,,"{""executor_in_charge"": 1, ""nav_state"": 4}"
+external-mode-gui-20260922T015008-233245,runner_event,external_mode_entered,64324000000,90772456071547,,,,,,,{}
+external-mode-gui-20260922T015333-237627,adapter_log,mission_completed_log,,,,1790042154.137871530,,,,,[INFO] [1790042154.137871530] [px4_navigation_external_mode]: Avoidance Mission completed; handing over to PX4 Hold
+external-mode-gui-20260922T015333-237627,runner_vehicle_status_change,vehicle_status_change,9996000000,90908725418805,9996000,,4,0,False,,
+external-mode-gui-20260922T015333-237627,runner_vehicle_status_change,vehicle_status_change,10200000000,90908980346414,10092000,,26,1,False,,
+external-mode-gui-20260922T015333-237627,runner_vehicle_status_change,vehicle_status_change,10396000000,90909224721455,10296000,,4,0,False,,
+external-mode-gui-20260922T015333-237627,runner_vehicle_status_change,vehicle_status_change,11304000000,90910361357363,11304000,,17,0,False,,
+external-mode-gui-20260922T015333-237627,runner_vehicle_status_change,vehicle_status_change,18072000000,90918819966874,18072000,,4,0,False,,
+external-mode-gui-20260922T015333-237627,runner_vehicle_status_change,vehicle_status_change,22304000000,90924109852642,22224000,,26,1,False,,
+external-mode-gui-20260922T015333-237627,runner_vehicle_status_change,vehicle_status_change,101688000000,91023340760142,101688000,,4,1,False,,
+external-mode-gui-20260922T015333-237627,runner_event,external_mode_entered,10200000000,90908980266611,,,,,,,{}
+external-mode-gui-20260922T015333-237627,runner_event,external_mode_exit_observed,10396000000,90909224680568,,,,,,,{}
+external-mode-gui-20260922T015333-237627,runner_event,external_mode_entered,22304000000,90924109801609,,,,,,,{}
+external-mode-gui-20260922T015333-237627,runner_event,external_mode_exit_observed,101688000000,91023340704327,,,,,,,{}
+external-mode-gui-20260922T015649-241674,adapter_log,hold_request_log,,,,1790042350.640361796,,,,,[WARN] [1790042350.640361796] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T015649-241674,adapter_log,hold_completion_callback_log,,,,1790042359.745450825,,,,Deactivated,[INFO] [1790042359.745450825] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T015649-241674,adapter_log,executor_deactivated_log,,,,1790042359.745461968,,,,,[INFO] [1790042359.745461968] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T015649-241674,adapter_log,mission_completed_log,,,,1790042469.315147789,,,,,[INFO] [1790042469.315147789] [px4_navigation_external_mode]: Avoidance Mission completed; handing over to PX4 Hold
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,9924000000,91105618013322,9924000,,4,0,False,,
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,10124000000,91105867803848,9984000,,26,1,False,,
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,10324000000,91106118313728,10212000,,4,0,False,,
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,11220000000,91107238581547,11220000,,17,0,False,,
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,18012000000,91115727824153,18012000,,4,0,False,,
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,22416000000,91121233262601,22416000,,26,1,False,,
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,101304000000,91219843115101,101304000,,4,1,False,,
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,108524000000,91228922099175,108504000,,26,1,False,,
+external-mode-gui-20260922T015649-241674,runner_vehicle_status_change,vehicle_status_change,196228000000,91338537271312,196236000,,4,1,False,,
+external-mode-gui-20260922T015649-241674,runner_event,external_mode_entered,10124000000,91105867737937,,,,,,,{}
+external-mode-gui-20260922T015649-241674,runner_event,external_mode_exit_observed,10324000000,91106118251473,,,,,,,{}
+external-mode-gui-20260922T015649-241674,runner_event,external_mode_entered,22416000000,91121233174595,,,,,,,{}
+external-mode-gui-20260922T015649-241674,runner_event,external_mode_exit_observed,101304000000,91219843043421,,,,,,,{}
+external-mode-gui-20260922T015649-241674,runner_event,px4_hold_handover_requested,101304000000,91219843099855,,,,,,,"{""executor_in_charge"": 1, ""nav_state"": 4}"
+external-mode-gui-20260922T015649-241674,runner_event,external_mode_entered,108524000000,91228922036982,,,,,,,{}
+external-mode-gui-20260922T020310-247206,adapter_log,executor_deactivated_log,,,,1790042623.887336694,,,,,[INFO] [1790042623.887336694] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T020310-247206,adapter_log,hold_request_log,,,,1790042930.303581708,,,,,[WARN] [1790042930.303581708] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T020310-247206,runner_vehicle_status_change,vehicle_status_change,0,91486109973863,8828000,,4,0,False,,
+external-mode-gui-20260922T020310-247206,runner_vehicle_status_change,vehicle_status_change,9096000000,91486445302273,8948000,,26,1,False,,
+external-mode-gui-20260922T020310-247206,runner_vehicle_status_change,vehicle_status_change,14384000000,91493055612124,14228000,,4,0,False,,
+external-mode-gui-20260922T020310-247206,runner_vehicle_status_change,vehicle_status_change,15220000000,91494143492666,15224000,,17,0,False,,
+external-mode-gui-20260922T020310-247206,runner_vehicle_status_change,vehicle_status_change,21980000000,91502551084927,21980000,,4,0,False,,
+external-mode-gui-20260922T020310-247206,runner_vehicle_status_change,vehicle_status_change,26384000000,91508054906100,26384000,,26,1,False,,
+external-mode-gui-20260922T020310-247206,runner_vehicle_status_change,vehicle_status_change,259532000000,91799523980644,259556000,,4,1,False,,
+external-mode-gui-20260922T020310-247206,runner_event,external_mode_entered,9096000000,91486445234446,,,,,,,{}
+external-mode-gui-20260922T020310-247206,runner_event,external_mode_exit_observed,14384000000,91493055534802,,,,,,,{}
+external-mode-gui-20260922T020310-247206,runner_event,external_mode_entered,26384000000,91508054812668,,,,,,,{}
+external-mode-gui-20260922T020310-247206,runner_event,external_mode_exit_observed,259532000000,91799523841973,,,,,,,{}
+external-mode-gui-20260922T020310-247206,runner_event,px4_hold_handover_requested,259532000000,91799523951041,,,,,,,"{""executor_in_charge"": 1, ""nav_state"": 4}"
+external-mode-gui-20260922T021353-252477,adapter_log,hold_request_log,,,,1790043419.291784352,,,,,[WARN] [1790043419.291784352] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T021353-252477,runner_vehicle_status_change,vehicle_status_change,11712000000,92134148402459,11712000,,4,0,False,,
+external-mode-gui-20260922T021353-252477,runner_vehicle_status_change,vehicle_status_change,11912000000,92134398087304,11808000,,26,1,False,,
+external-mode-gui-20260922T021353-252477,runner_vehicle_status_change,vehicle_status_change,12112000000,92134647583842,12012000,,4,0,False,,
+external-mode-gui-20260922T021353-252477,runner_vehicle_status_change,vehicle_status_change,13008000000,92135767088175,13008000,,17,0,False,,
+external-mode-gui-20260922T021353-252477,runner_vehicle_status_change,vehicle_status_change,19748000000,92144233116819,19776000,,4,0,False,,
+external-mode-gui-20260922T021353-252477,runner_vehicle_status_change,vehicle_status_change,24012000000,92149522637633,24012000,,26,1,False,,
+external-mode-gui-20260922T021353-252477,runner_vehicle_status_change,vehicle_status_change,135192000000,92288497463266,135192000,,4,1,False,,
+external-mode-gui-20260922T021353-252477,runner_event,external_mode_entered,11912000000,92134398010421,,,,,,,{}
+external-mode-gui-20260922T021353-252477,runner_event,external_mode_exit_observed,12112000000,92134647539626,,,,,,,{}
+external-mode-gui-20260922T021353-252477,runner_event,external_mode_entered,24012000000,92149522566239,,,,,,,{}
+external-mode-gui-20260922T021353-252477,runner_event,px4_hold_handover_requested,127596000000,92279004688450,,,,,,,"{""position_residual_m"": 2.968744496209321, ""velocity_residual_m_s"": 1.0306341817292013}"
+external-mode-gui-20260922T021353-252477,runner_event,external_mode_exit_observed,135192000000,92288497372797,,,,,,,{}
+external-mode-gui-20260922T021353-252477,runner_event,px4_hold_handover_requested,135192000000,92288497441433,,,,,,,"{""executor_in_charge"": 1, ""nav_state"": 4}"
+external-mode-gui-20260922T021832-256944,adapter_log,mission_completed_log,,,,1790043645.205866664,,,,,[INFO] [1790043645.205866664] [px4_navigation_external_mode]: Avoidance Mission completed; handing over to PX4 Hold
+external-mode-gui-20260922T021832-256944,adapter_log,hold_completion_callback_log,,,,1790043786.075028993,,,,Deactivated,[INFO] [1790043786.075028993] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T021832-256944,adapter_log,executor_deactivated_log,,,,1790043786.075051073,,,,,[INFO] [1790043786.075051073] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T021832-256944,adapter_log,hold_request_log,,,,1790043792.355711993,,,,,[WARN] [1790043792.355711993] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T021832-256944,adapter_log,hold_completion_callback_log,,,,1790043800.854780238,,,,Deactivated,[INFO] [1790043800.854780238] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T021832-256944,adapter_log,executor_deactivated_log,,,,1790043800.854794044,,,,,[INFO] [1790043800.854794044] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T021832-256944,adapter_log,hold_request_log,,,,1790043807.130443018,,,,,[WARN] [1790043807.130443018] [px4_navigation_external_mode]: Avoidance Mission requesting PX4 Hold handover
+external-mode-gui-20260922T021832-256944,adapter_log,hold_completion_callback_log,,,,1790043813.199451997,,,,Deactivated,[INFO] [1790043813.199451997] [px4_navigation_external_mode]: PX4 Hold handover completed with result=Deactivated
+external-mode-gui-20260922T021832-256944,adapter_log,executor_deactivated_log,,,,1790043813.199461977,,,,,[INFO] [1790043813.199461977] [px4_navigation_external_mode]: Avoidance Mission executor deactivated (mode_exit)
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,9904000000,92409138186787,9904000,,4,0,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,10108000000,92409394754839,10012000,,26,1,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,10308000000,92409644698067,10204000,,4,0,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,11200000000,92410759551755,11200000,,17,0,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,18004000000,92419263370200,18004000,,4,0,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,22236000000,92424588715911,22120000,,26,1,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,94116000000,92514450717952,94120000,,4,1,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,206712000000,92655242973719,206644000,,26,1,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,211728000000,92661555144097,211756000,,4,1,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,218532000000,92670047865049,218536000,,26,1,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,223576000000,92676323369928,223576000,,4,1,False,,
+external-mode-gui-20260922T021832-256944,runner_vehicle_status_change,vehicle_status_change,231796000000,92686597825522,231796000,,26,1,False,,
+external-mode-gui-20260922T021832-256944,runner_event,external_mode_entered,10108000000,92409394686230,,,,,,,{}
+external-mode-gui-20260922T021832-256944,runner_event,external_mode_exit_observed,10308000000,92409644624718,,,,,,,{}
+external-mode-gui-20260922T021832-256944,runner_event,external_mode_entered,22236000000,92424588674596,,,,,,,{}
+external-mode-gui-20260922T021832-256944,runner_event,external_mode_exit_observed,94116000000,92514450655884,,,,,,,{}
+external-mode-gui-20260922T021832-256944,runner_event,external_mode_entered,206712000000,92655242924520,,,,,,,{}

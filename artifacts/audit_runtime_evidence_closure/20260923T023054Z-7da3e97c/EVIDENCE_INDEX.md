@@ -1,0 +1,26 @@
+# Evidence index and claim discipline
+
+All relative source references below are from immutable PRODUCT_TARGET `7da3e97cb399c2e39d62cfe60213a45e8a92300e`; the pinned dependency gitlink is `4a3370f…`. Firmware references are only to the **run-specific captured revision** `deaff86e…` with dirty/binary provenance in `PROVENANCE.md`. No generic local checkout is silently treated as the product firmware.
+
+| ID / evidence type | Claim and exact anchor | Scope / limit |
+|---|---|---|
+| P1 `FACT_FROM_PINNED_PRODUCT_SOURCE` | `src/px4/px4_navigation_external_mode/src/mission_controller.cpp:367-371,451-477,569-579`; `src/contracts/navigation_mission/src/route_progress.cpp:254-345,430-490` | Current same-update PASS geometry/readiness; no runtime reachability proof. |
+| P2 `FACT_FROM_PINNED_PRODUCT_SOURCE` | `src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1328-1436` | Native command→continuation→mission callback and exact identity/freshness. |
+| P3 `FACT_FROM_PINNED_PRODUCT_SOURCE` | `src/runtime/navigation_runtime/include/navigation_runtime/execution_recovery_state.hpp:28-88`; `src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:3792-3865,8180-8235` | Native BACKUP/emergency one-way source path until measured stop. |
+| P4 `FACT_FROM_PINNED_PRODUCT_SOURCE` | `src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp:57-65`; package `CMakeLists.txt:50-58`; `mission_controller.cpp:101-227`; adapter `navigation_mode_node.cpp:1272-1287` | Public API recoverable branch exists, no current repository product call. No external ABI guarantee proved. |
+| H1 `FACT_FROM_GIT_HISTORY` | `eb63af169…`, `7ac87c3c…`, `166138688…`, `0930a8d55…`; see `E2_BRAKING_API_PROVENANCE.md` | Historical producer and comment rationale; history is not a current product call. |
+| P5 `FACT_FROM_PINNED_PRODUCT_SOURCE` | `navigation_mode_node.cpp:2846-2939`; runtime `navigation_runtime_node.cpp:2983-3004`; `planning_timing.hpp:9-21` | Hold local retry and world silence; code-level mechanism only. |
+| D1 `FACT_FROM_PINNED_DEPENDENCY` | `src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:125-260,361-419,484-519`; `mode.cpp:112-188` at gitlink `4a3370f…` | ACK, ScheduledMode, callback, status and owned-mode activation semantics. |
+| F1 `FACT_FROM_PINNED_FIRMWARE` | Captured PX4 `src/modules/commander/Commander.cpp:936-946,1559-1593,2367-2373`; `ModeManagement.cpp:415-435`; `src/modules/navigator/navigator_main.cpp:768-783,1602-1608`; `loiter.cpp:51-74` | Run-specific firmware only; no global product pin, dirty bridge inputs. |
+| R1 `FACT_FROM_EXISTING_RUNTIME_ARTIFACT` | 14 run `metadata.json`/`report.json`, exact product SHA/clean product; raw root in `PROVENANCE.md`; `E1_RUN_COVERAGE.csv` | Different profiles and FAIL/BLOCKED verdicts, no flight qualification. |
+| R2 `FACT_FROM_RUNTIME_TRACE` | `E1_PASS_THROUGH_TIMELINE.csv` from ROSbag/runner monitor; run `...233245` waypoint 3 source 95.732→96.972→97.912→97.916 s | Producer/physical ordering and re-entry; not adapter/MissionController callback order. |
+| M1 `FACT_FROM_AUDIT_MODEL` | `tools/route_crossing_replay.cpp`, compiled with pinned TARGET `mission.cpp`/`route_progress.cpp`; `tools/analyze_e1.py`; V2 `PASS_THROUGH_EVENT_MODEL.md` | Replayed sample opportunities and abstract order; no runtime defect or retention approval. |
+| R3 `FACT_FROM_RUNTIME_TRACE` | `E3_PX4_HOLD_EVENT_ORDER.csv`, raw adapter logs/runner status, `...247206` AUTO_LOITER with executor=1 | Mode occupancy observation, no VehicleCommand/ACK/ModeCompleted causal chain. |
+| R4 `FACT_FROM_RUNTIME_TRACE` | `E4_LATENCY_SAMPLES.csv` from run bag/timelines; `tools/analyze_e4.py` | Per-profile source/observer/diagnostic timing only, not end-to-end transport/WCET. |
+| T1 `FACT_FROM_COMPONENT_TEST` | Existing `src/px4/px4_navigation_external_mode/test/test_mission.cpp:369-415,500-~800,1449-1557`; V2 audit model tests | Existing local semantics; not rerun as product qualification here. |
+| I1 `INFERENCE` | A typed crossing observation and source/age/identity rule might preserve physical fact; native sampled safety and API callback are different domains | Conditional architecture interpretation; unapproved. |
+| G1 `SPECIFICATION_GAP` | E1 retention/departure, E2 public API policy, E3 retry/freshness, E4 reserve | No invented threshold or binary policy decision. |
+| G2 `RUNTIME_UNVERIFIED` | E1 exact consumer callback, E3 omitted protocol topics, E4 adapter receipt and stale-world event | New focused capture required; repeating same capture cannot close. |
+| G3 `EXTERNAL_CONTRACT_UNRESOLVED` | No global PX4 product firmware pin/build closure; request→status attribution/takeover policy | E3 cannot be fully closed from local source. |
+
+Reproduction: `tools/extract_bag_events.py` and `tools/extract_monitor_odom.py` create ignored raw CSVs; `route_crossing_replay.cpp` must compile against TARGET source; `tools/analyze_e1.py`, `tools/analyze_e3.py`, `tools/analyze_e4.py` emit the compact committed CSVs. See script docstrings for clock domains. An `EVIDENCE_NOT_AVAILABLE` or `UNOBSERVABLE_WITH_CURRENT_TARGET` entry is a result, not a zero measurement.
