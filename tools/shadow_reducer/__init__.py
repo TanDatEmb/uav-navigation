@@ -1,0 +1,1 @@
+"""Offline diagnostic shadow reducer."""

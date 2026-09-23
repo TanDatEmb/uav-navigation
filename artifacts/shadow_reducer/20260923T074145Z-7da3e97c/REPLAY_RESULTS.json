@@ -1,0 +1,412 @@
+{
+  "runs": [
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 21,
+        "command_exact_pair": 2680,
+        "events": 9095,
+        "first_use_exact": 2340,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 11,
+        "integrity_sequence_gap_ranges": 5,
+        "internal_gap_ranges": 3,
+        "observer_order_inversion": 22,
+        "pass_MATCH": 3,
+        "publish_after_fence_upstream_only": 360,
+        "queue_drops_reported": 4,
+        "receive_rejected_after_fence": 340,
+        "startup_gap_ranges": 2,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "C"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 22,
+        "command_exact_pair": 0,
+        "events": 12305,
+        "first_use_exact": 2883,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 11,
+        "integrity_sequence_gap_ranges": 3,
+        "internal_gap_ranges": 1,
+        "observer_order_inversion": 26,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 355,
+        "queue_drops_reported": 1,
+        "receive_rejected_after_fence": 334,
+        "startup_gap_ranges": 2,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "O1-F1"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 21,
+        "command_exact_pair": 0,
+        "events": 10422,
+        "first_use_exact": 2529,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 11,
+        "integrity_sequence_gap_ranges": 3,
+        "internal_gap_ranges": 1,
+        "observer_order_inversion": 23,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 357,
+        "queue_drops_reported": 1,
+        "receive_rejected_after_fence": 336,
+        "startup_gap_ranges": 2,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "O1-F2"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 21,
+        "command_exact_pair": 0,
+        "events": 12026,
+        "first_use_exact": 2859,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 11,
+        "integrity_sequence_gap_ranges": 3,
+        "internal_gap_ranges": 1,
+        "observer_order_inversion": 27,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 348,
+        "queue_drops_reported": 1,
+        "receive_rejected_after_fence": 327,
+        "startup_gap_ranges": 2,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "O1-R03"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 23,
+        "command_exact_pair": 0,
+        "events": 12049,
+        "first_use_exact": 2736,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 12,
+        "integrity_sequence_gap_ranges": 1,
+        "internal_gap_ranges": 0,
+        "observer_order_inversion": 26,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 385,
+        "queue_drops_reported": 0,
+        "receive_rejected_after_fence": 362,
+        "startup_gap_ranges": 1,
+        "stop_MATCH": 1,
+        "world_suspend_observed": 2
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "O1-R04"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 21,
+        "command_exact_pair": 0,
+        "events": 13151,
+        "first_use_exact": 3234,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 9,
+        "integrity_sequence_gap_ranges": 3,
+        "internal_gap_ranges": 1,
+        "observer_order_inversion": 25,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 305,
+        "queue_drops_reported": 1,
+        "receive_rejected_after_fence": 283,
+        "startup_gap_ranges": 2,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "O1-R05"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 21,
+        "command_exact_pair": 0,
+        "events": 13525,
+        "first_use_exact": 3223,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 11,
+        "integrity_sequence_gap_ranges": 3,
+        "internal_gap_ranges": 1,
+        "observer_order_inversion": 43,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 360,
+        "queue_drops_reported": 1,
+        "receive_rejected_after_fence": 339,
+        "startup_gap_ranges": 2,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "O1-R06"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 22,
+        "command_exact_pair": 0,
+        "events": 14255,
+        "first_use_exact": 3530,
+        "hold_callback_observed": 1,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 2,
+        "hold_status_after_request": 11,
+        "integrity_sequence_gap_ranges": 4,
+        "internal_gap_ranges": 2,
+        "observer_order_inversion": 35,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 340,
+        "queue_drops_reported": 2,
+        "receive_rejected_after_fence": 318,
+        "startup_gap_ranges": 2,
+        "startup_rearm_boundary_INSUFFICIENT_TRACE": 1,
+        "startup_rearm_inferred": 1,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "O1-R09"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 21,
+        "command_exact_pair": 0,
+        "events": 11737,
+        "first_use_exact": 2656,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 11,
+        "integrity_sequence_gap_ranges": 3,
+        "internal_gap_ranges": 1,
+        "observer_order_inversion": 18,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 353,
+        "queue_drops_reported": 1,
+        "receive_rejected_after_fence": 332,
+        "startup_gap_ranges": 2,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "O1-R10"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 21,
+        "command_exact_pair": 3530,
+        "events": 13341,
+        "first_use_exact": 3164,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 12,
+        "integrity_sequence_gap_ranges": 3,
+        "internal_gap_ranges": 1,
+        "observer_order_inversion": 30,
+        "pass_MATCH": 4,
+        "publish_after_fence_upstream_only": 387,
+        "queue_drops_reported": 1,
+        "receive_rejected_after_fence": 367,
+        "startup_gap_ranges": 2,
+        "stop_MATCH": 1
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "W1-fixed"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 0,
+        "command_exact_pair": 47,
+        "events": 1574,
+        "first_use_exact": 47,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 9,
+        "integrity_sequence_gap_ranges": 1,
+        "internal_gap_ranges": 0,
+        "lease_expiry_observed": 1,
+        "queue_drops_reported": 0,
+        "startup_gap_ranges": 1,
+        "world_suspend_observed": 28
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "W2"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 0,
+        "command_exact_pair": 45,
+        "events": 1720,
+        "first_use_exact": 45,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 14,
+        "integrity_sequence_gap_ranges": 2,
+        "internal_gap_ranges": 0,
+        "lease_expiry_observed": 1,
+        "queue_drops_reported": 0,
+        "startup_gap_ranges": 2,
+        "world_suspend_observed": 21
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "W3"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 0,
+        "command_exact_pair": 48,
+        "events": 1255,
+        "first_use_exact": 48,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 14,
+        "integrity_sequence_gap_ranges": 2,
+        "internal_gap_ranges": 0,
+        "lease_expiry_observed": 1,
+        "queue_drops_reported": 0,
+        "startup_gap_ranges": 2,
+        "world_suspend_observed": 172
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "W4"
+    },
+    {
+      "counts": {
+        "command_INSUFFICIENT_TRACE": 0,
+        "command_exact_pair": 48,
+        "events": 2091,
+        "first_use_exact": 48,
+        "hold_callback_without_status_end": 0,
+        "hold_confirmed_end": 1,
+        "hold_request_observed": 1,
+        "hold_status_after_request": 14,
+        "integrity_sequence_gap_ranges": 2,
+        "internal_gap_ranges": 0,
+        "lease_expiry_observed": 1,
+        "queue_drops_reported": 0,
+        "startup_gap_ranges": 2,
+        "world_suspend_observed": 290
+      },
+      "evidence_limits": [
+        "observer order does not prove cross-process happens-before",
+        "route geometry and physical stop samples unavailable in audit event",
+        "command pair gaps marked insufficient by trace_integrity"
+      ],
+      "issues": [],
+      "run": "W5"
+    }
+  ],
+  "schema": 1,
+  "totals": {
+    "command_INSUFFICIENT_TRACE": 214,
+    "command_exact_pair": 6398,
+    "events": 128546,
+    "first_use_exact": 29342,
+    "hold_callback_observed": 1,
+    "hold_confirmed_end": 14,
+    "hold_request_observed": 15,
+    "hold_status_after_request": 161,
+    "integrity_sequence_gap_ranges": 38,
+    "internal_gap_ranges": 12,
+    "lease_expiry_observed": 4,
+    "observer_order_inversion": 275,
+    "pass_MATCH": 39,
+    "publish_after_fence_upstream_only": 3550,
+    "queue_drops_reported": 13,
+    "receive_rejected_after_fence": 3338,
+    "startup_gap_ranges": 26,
+    "startup_rearm_boundary_INSUFFICIENT_TRACE": 1,
+    "startup_rearm_inferred": 1,
+    "stop_MATCH": 10,
+    "world_suspend_observed": 513
+  }
+}
