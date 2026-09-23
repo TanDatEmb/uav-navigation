@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -567,7 +569,12 @@ class ExecutionAuthority {
       const std::shared_ptr<const navigation_planning::CandidateBundle>& expected,
       std::uint64_t expected_goal_epoch,
       ExposureFn&& expose) noexcept {
+    const auto lock_wait_started = std::chrono::steady_clock::now();
     std::lock_guard lock(mutex_);
+    publish_lock_wait_us_.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - lock_wait_started).count(),
+        std::memory_order_relaxed);
     if (!expected || !active_.bundle || active_.bundle.get() != expected.get() ||
         lifecycle_.exposure != ExecutionExposure::kAvailable ||
         active_.bundle->goal_epoch != expected_goal_epoch || !world_identity_ ||
@@ -586,6 +593,10 @@ class ExecutionAuthority {
       return false;
     }
     return true;
+  }
+
+  [[nodiscard]] std::int64_t lastPublishLockWaitUs() const noexcept {
+    return publish_lock_wait_us_.load(std::memory_order_relaxed);
   }
 
   // Revoke the exact timeline observed by an execution owner. A changed
@@ -1191,6 +1202,8 @@ class ExecutionAuthority {
   };
 
   mutable std::mutex mutex_;
+  // Diagnostic observation only; never admitted into command policy.
+  mutable std::atomic_int64_t publish_lock_wait_us_{0};
   std::uint64_t admission_goal_epoch_{0};
   std::uint64_t admission_localization_epoch_{0};
   mutable std::uint64_t timeline_version_{0};

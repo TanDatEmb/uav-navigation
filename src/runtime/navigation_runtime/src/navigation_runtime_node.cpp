@@ -3942,6 +3942,8 @@ void NavigationRuntimeNode::runCycle(
                last_command_transition_lock_wait_us_.load(std::memory_order_acquire));
   add_duration("command_store_publish_us",
                last_command_store_publish_us_.load(std::memory_order_acquire));
+  add_duration("execution_owner_publish_lock_wait_us",
+               execution_authority_.lastPublishLockWaitUs());
   add_duration("command_transport_publish_us",
                last_publish_us_.load(std::memory_order_acquire));
   add_duration("planning_scheduling_gap_us", last_planning_scheduling_gap_us_);
