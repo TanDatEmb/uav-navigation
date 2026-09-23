@@ -9,5 +9,6 @@
 | delete Hold flags | API callback/status could derive them if event log retained | in-flight operation, retry deadline, external nav-state observation | tagged Hold protocol state + status witness |
 | world stale → immediate brake | simple stop decision | last certified world freshness and still-valid lease window | explicit certificate expiry and one-way stopping transition once expiry occurs |
 | callback-only crossing | latest position retained | measured segment crossing when successor witness arrives later | event-sourced measured crossing/cursor with bounded validity and identity, subject to route/epoch reset |
+| collapse mission latches into `MissionControllerState` | current phase | deactivation checkpoint, pending POSCTL output, certified terminal hold, continuous measured arrival time | explicit resume checkpoint, output event/ack state and terminal hold/arrival interval in separate domains or a proven equivalent tagged state |
 
 No currently audited behavioral field is approved for `DELETE`. A renamed flag without an information/owner reduction does not count as architectural simplification. Capability loss from a target policy change, including braking one-way behavior, must be called out and tested rather than hidden as refactor.

@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
 OUT = Path(__file__).resolve().parents[1] / "EVIDENCE_INDEX.md"
+TARGET_SHA = "7da3e97cb399c2e39d62cfe60213a45e8a92300e"
 REFS = [
  ("Safety contract", "docs/safety/runtime_safety_current.md", "40-69,84-130"),
  ("Safety index targeted", "docs/safety/runtime_safety_index.md", "37,43,55,77,766"),
@@ -15,6 +16,7 @@ REFS = [
  ("Waypoint design", "docs/architecture/continuous_waypoint_trajectory_plan.md", "193-225,294-325"),
  ("Mission fields", "src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp", "110-130"),
  ("Mission crossing", "src/px4/px4_navigation_external_mode/src/mission_controller.cpp", "340-371,465-590"),
+ ("Mission lifecycle, checkpoint, readiness and temporal gates", "src/px4/px4_navigation_external_mode/src/mission_controller.cpp", "28-89,101-338,374-445,520-680"),
  ("Pre-stop nominal recovery", "src/px4/px4_navigation_external_mode/src/mission_controller.cpp", "144-165"),
  ("Route cursor/tie", "src/contracts/navigation_mission/src/route_progress.cpp", "256-345"),
  ("Episode", "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp", "41-260"),
@@ -47,13 +49,25 @@ def cmd(*args):
  return subprocess.check_output(args, cwd=ROOT, text=True).strip()
 
 def main():
- assert cmd("git", "rev-parse", "HEAD") == "7da3e97cb399c2e39d62cfe60213a45e8a92300e"
  lines = ["# Evidence index", "", "All source facts below are from TARGET `7da3e97cb399c2e39d62cfe60213a45e8a92300e`. Blob IDs allow verification after branch movement. Line spans are source locations, not executed behavior.", "", "| Fact | TARGET path and lines | Git blob |", "|---|---|---|"]
  for name, path, span in REFS:
   line_count = len((ROOT / path).read_text().splitlines())
   assert max(int(n) for n in re.findall(r"\d+", span)) <= line_count, (path, span, line_count)
   blob = cmd("git", "hash-object", str(ROOT / path))
+  if blob != cmd("git", "rev-parse", f"{TARGET_SHA}:{path}"):
+   raise RuntimeError(f"input differs from pinned TARGET: {path}")
   lines.append(f"| {name} | `{path}:{span}` | `{blob}` |")
+ gitlink = cmd("git", "ls-tree", TARGET_SHA, "src/external/px4_ros2_interface_lib")
+ submodule_sha = "4a3370f084ac6f1ef001a4afa2b007845ffd0837"
+ if not gitlink.startswith(f"160000 commit {submodule_sha}\t"):
+  raise RuntimeError("PX4 interface library gitlink differs from pinned TARGET")
+ common_git_dir = Path(cmd("git", "rev-parse", "--git-common-dir"))
+ submodule_git_dir = common_git_dir / "modules/src/external/px4_ros2_interface_lib"
+ lib_blob = subprocess.check_output([
+  "git", f"--git-dir={submodule_git_dir}", "rev-parse",
+  f"{submodule_sha}:px4_ros2_cpp/src/components/mode_executor.cpp",
+ ], text=True).strip()
+ lines.append(f"| PX4 library `scheduleMode` and completion callback | `src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:225-260,484-519` at gitlink `{submodule_sha}` | `{lib_blob}` |")
  lines += ["", "## Prior-artifact provenance and TARGET revalidation", "",
   "- AS-IS artifact `f2bd3f46f9936d622377ea4761f733f988273b66`: local dirty snapshot at recorded HEAD `9534d8dc`; used as hypothesis only. Its own report was `PARTIAL_AS_IS`.",
   "- H0-H7 artifact `f2ed429bef80b2c7a2964b3b32d3c00e8089e55f`: previous local counterexamples and source scope, not TARGET product-path proof.",
@@ -65,7 +79,7 @@ def main():
   "| H3 publish lock | CONFIRMED_WITH_SCOPE | TARGET still nests localization/input/command and Store publication; no workload bottleneck distribution. |",
   "| H4 recovery timers | SPECIFICATION_GAP | TARGET runtime steady failure timer and adapter ROS deadline still differ; no cross-process equivalence trace. |",
   "| H5 fixed 16-speed grid | REFUTED on TARGET | TARGET governor changed; no performance/completeness proof. |",
-  "| H6 Hold order | CONDITIONAL | TARGET adapter separates API callback from VehicleStatus; pinned library/status timing not rerun. |",
+  "| H6 Hold order | CONDITIONAL | TARGET adapter separates `scheduleMode` completion from VehicleStatus; pinned library shows the callback can be a ModeCompleted result, not merely command ACK. Ordering was not run. |",
   "| H7 bottleneck ranking | UNRESOLVED | No matched target workload trace. |", "",
   "`FACT_FROM_EXISTING_TEST` means test source or earlier run only. This audit executed only its independent abstract model and structural scripts; no TARGET product binary, ROS pair, SITL or hardware run. Therefore all target runtime behavior and performance claims are `RUNTIME_UNVERIFIED`.", ""]
  OUT.write_text("\n".join(lines))

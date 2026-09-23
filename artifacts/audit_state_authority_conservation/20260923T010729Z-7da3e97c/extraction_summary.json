@@ -1,8 +1,8 @@
 {
   "target_sha": "7da3e97cb399c2e39d62cfe60213a45e8a92300e",
   "scoped_declarations": 368,
-  "behavioral_candidates": 240,
-  "diagnostic_candidates": 78,
+  "behavioral_candidates": 239,
+  "diagnostic_candidates": 79,
   "file_blobs": {
     "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp": "bcd4235d7abe5dcef8730a751760b130f745cac2",
     "src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp": "9e1d62d9fcafef4f9cf56775ee263ef3cef908dc",

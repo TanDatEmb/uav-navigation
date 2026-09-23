@@ -10,6 +10,6 @@
 | WorldSnapshotStore | latest world evidence | WorldModel owner | independent immutable publication and provenance |
 | PlanningWorker | pending/active solve, cancellation | PlanningWorker | result only; never execution commit |
 | NavigationMode | local command/state/frame admission | PX4Boundary | independently reject invalid producer, no planner recovery policy mirror |
-| NavigationModeExecutor | Hold API/status | PX4Boundary protocol owner | preserve request/API/status/deactivation ordering |
+| NavigationModeExecutor | Hold request/command ACK/ModeCompleted/VehicleStatus | PX4Boundary protocol owner | preserve all four observations and deactivation ordering |
 
 The table is a **candidate** mapping. `NavigationCore` would be sole writer for mission/execution decisions while workers and PX4 retain distinct independent facts. It must not become sole thread for computations or erase PX4 veto authority.

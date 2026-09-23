@@ -12,6 +12,8 @@ A single writer for **mission/execution decisions** can remove cross-object goal
 
 The receiver should reject replayed/reordered/expired/wrong-frame or old-epoch references without consulting planner state. It must retain command receive time, sample sequence, state/health source and receive times, PX4 reset counters, frame alignment, External Mode ownership and Hold lifecycle. Moving `planner_recovery_pending_` or suffix/request mirrors out is possible only if a typed protocol event expresses their remaining safety meaning and current command lease; otherwise `NavigationMode` would lose a local fail-closed decision.
 
+The pinned PX4 library separates VehicleCommand ACK, `ModeCompleted` callback and `VehicleStatus` observation. TARGET clears Hold pending on callback `Success` even without a local AUTO_LOITER witness, stopping its retry timer. This is a source-derived ordering counterexample, not an observed flight failure. A target Hold protocol must define that ordering, status loss and operator takeover before it consolidates flags (`PX4_HOLD_ORDERING.md`).
+
 `tracking_experiment` remains diagnostic-only under the current safety contract. TARGET loader still derives suppression from `use_sim_time` and a disabled tracking gate (`tracking_experiment.hpp:58-88`), so reducer migration must not silently promote a simulated diagnostic policy to product authority. A live profile is unverified.
 
 ## CandidateBundle verdict: REFACTOR LATER
@@ -26,7 +28,7 @@ Target admission must preserve current contract: immutable world identity, stric
 
 | Metric | Scoped AS-IS evidence | Target gate |
 |---|---:|---|
-| behavioral candidate fields | 240 across sixteen selected types (60 bool-like, 26 optional-like, 31 atomic-like); 215 unresolved | every old fact mapped, no absolute count target |
+| behavioral candidate fields | 239 across sixteen selected types (60 bool-like, 26 optional-like, 31 atomic-like); 214 unresolved | every old fact mapped, no absolute count target |
 | scoped owner types | 16 in AS-IS model; seven decision/protocol owners, other state/evidence/worker/trace owners | one mission/execution decision writer; independent world/PX4/worker owners retained |
 | control-message fields | 73 non-constant fields in `CONTROL_PROTOCOL_FIELD_AUDIT.csv`: 6 control, 13 preliminary safety, 7 provenance, 47 diagnostic candidates | zero diagnostic fields read by admission; preserve all safety witnesses |
 | cross-owner transitions | present in goal/episode/store and mission/adapter handoffs; exact count unverified | each decision has one commit owner, protocol events explicit |

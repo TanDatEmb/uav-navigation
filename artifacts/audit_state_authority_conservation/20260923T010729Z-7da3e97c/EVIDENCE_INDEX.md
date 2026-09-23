@@ -12,6 +12,7 @@ All source facts below are from TARGET `7da3e97cb399c2e39d62cfe60213a45e8a92300e
 | Waypoint design | `docs/architecture/continuous_waypoint_trajectory_plan.md:193-225,294-325` | `0e1e45b482f8d2b4518f941d9605382fafa7f299` |
 | Mission fields | `src/px4/px4_navigation_external_mode/include/px4_navigation_external_mode/mission_controller.hpp:110-130` | `775422f25c2ac9288c5ee25625dba1cb16befb59` |
 | Mission crossing | `src/px4/px4_navigation_external_mode/src/mission_controller.cpp:340-371,465-590` | `eb576715484edd5db156417b284806afd91df7ac` |
+| Mission lifecycle, checkpoint, readiness and temporal gates | `src/px4/px4_navigation_external_mode/src/mission_controller.cpp:28-89,101-338,374-445,520-680` | `eb576715484edd5db156417b284806afd91df7ac` |
 | Pre-stop nominal recovery | `src/px4/px4_navigation_external_mode/src/mission_controller.cpp:144-165` | `eb576715484edd5db156417b284806afd91df7ac` |
 | Route cursor/tie | `src/contracts/navigation_mission/src/route_progress.cpp:256-345` | `9f3c9f41446270f3beaabeb3e43e886b7d0a5fa1` |
 | Episode | `src/runtime/navigation_runtime/include/navigation_runtime/execution_episode.hpp:41-260` | `9e1d62d9fcafef4f9cf56775ee263ef3cef908dc` |
@@ -38,6 +39,7 @@ All source facts below are from TARGET `7da3e97cb399c2e39d62cfe60213a45e8a92300e
 | Tracking experiment loader | `src/contracts/navigation_contracts/include/navigation_contracts/tracking_experiment.hpp:58-88,147` | `4c267b5ce352c60181a9a75a659c21e4f1c821f1` |
 | Runtime rest-recovery timer | `src/runtime/navigation_runtime/src/navigation_runtime_node.cpp:5400-5425` | `0d3ebe7253b3e3cfb0877ef0265ab734e3af9b9e` |
 | Adapter recovery timer | `src/px4/px4_navigation_external_mode/src/navigation_mode_node.cpp:1220-1250,1340-1355` | `00588a8a5eeac921651f5a00153e3388557d5cdc` |
+| PX4 library `scheduleMode` and completion callback | `src/external/px4_ros2_interface_lib/px4_ros2_cpp/src/components/mode_executor.cpp:225-260,484-519` at gitlink `4a3370f084ac6f1ef001a4afa2b007845ffd0837` | `d8f23a6ccfb25d6f5943140cc44b1a85be44598d` |
 
 ## Prior-artifact provenance and TARGET revalidation
 
@@ -53,7 +55,7 @@ All source facts below are from TARGET `7da3e97cb399c2e39d62cfe60213a45e8a92300e
 | H3 publish lock | CONFIRMED_WITH_SCOPE | TARGET still nests localization/input/command and Store publication; no workload bottleneck distribution. |
 | H4 recovery timers | SPECIFICATION_GAP | TARGET runtime steady failure timer and adapter ROS deadline still differ; no cross-process equivalence trace. |
 | H5 fixed 16-speed grid | REFUTED on TARGET | TARGET governor changed; no performance/completeness proof. |
-| H6 Hold order | CONDITIONAL | TARGET adapter separates API callback from VehicleStatus; pinned library/status timing not rerun. |
+| H6 Hold order | CONDITIONAL | TARGET adapter separates `scheduleMode` completion from VehicleStatus; pinned library shows the callback can be a ModeCompleted result, not merely command ACK. Ordering was not run. |
 | H7 bottleneck ranking | UNRESOLVED | No matched target workload trace. |
 
 `FACT_FROM_EXISTING_TEST` means test source or earlier run only. This audit executed only its independent abstract model and structural scripts; no TARGET product binary, ROS pair, SITL or hardware run. Therefore all target runtime behavior and performance claims are `RUNTIME_UNVERIFIED`.

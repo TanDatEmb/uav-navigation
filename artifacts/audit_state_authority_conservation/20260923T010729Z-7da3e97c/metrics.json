@@ -1,13 +1,13 @@
 {
   "scope": "16 selected C++ owner types, 3 identity-source files, one command message; not whole product",
-  "behavioral_candidate_fields": 240,
+  "behavioral_candidate_fields": 239,
   "dispositions": {
-    "UNRESOLVED": 215,
+    "UNRESOLVED": 214,
     "KEEP": 22,
     "MOVE": 3
   },
-  "selected_writer_reader_rows": 44,
-  "diagnostic_or_test_candidate_declarations": 78,
+  "selected_writer_reader_rows": 68,
+  "diagnostic_or_test_candidate_declarations": 79,
   "bool_like_behavioral_candidates": 60,
   "optional_like_behavioral_candidates": 26,
   "mutex_declarations_in_scanned_types": 16,
