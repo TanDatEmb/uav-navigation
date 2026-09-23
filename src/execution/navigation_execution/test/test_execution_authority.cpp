@@ -1,9 +1,11 @@
 #include <atomic>
+#include <barrier>
 #include <chrono>
 #include <future>
 #include <latch>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <new>
 
 #include <gtest/gtest.h>
@@ -273,10 +275,47 @@ TEST(TestExecutionAuthority, StaleActiveSnapshotCannotFailCloseSuccessor) {
   ASSERT_EQ(store.tryCommit({world, 7, 2}, successor),
             navigation_execution::CommitDecision::kCommitted);
 
-  EXPECT_FALSE(store.failClosedIfActiveSnapshot(stale));
+  EXPECT_EQ(store.failClosedIfCurrentSnapshot(stale),
+            navigation_execution::ConditionalExecutionMutation::kStale);
+  EXPECT_FALSE(store.suspendIfCurrentSnapshot(stale));
   EXPECT_EQ(store.snapshot().active.get(), successor.get());
   EXPECT_EQ(store.snapshot().lifecycle.exposure,
             navigation_execution::ExecutionExposure::kAvailable);
+}
+
+TEST(TestExecutionAuthority, DelayedFailureCannotRevokeActivatedSuccessor) {
+  navigation_execution::TestExecutionAuthority store;
+  navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  auto first = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, first),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto captured = store.snapshot();
+  std::barrier failure_observed(2);
+  std::barrier successor_activated(2);
+  std::atomic<navigation_execution::ConditionalExecutionMutation> result{
+      navigation_execution::ConditionalExecutionMutation::kApplied};
+  std::thread delayed_failure([&] {
+    failure_observed.arrive_and_wait();
+    successor_activated.arrive_and_wait();
+    result.store(store.failClosedIfCurrentSnapshot(captured),
+                 std::memory_order_release);
+  });
+  failure_observed.arrive_and_wait();
+  auto next_candidate = candidateFor(7, 1);
+  next_candidate.bundle_generation = first->bundle_generation + 1U;
+  auto next = std::make_shared<const navigation_planning::CandidateBundle>(
+      std::move(next_candidate));
+  const auto commit = store.tryCommit({world, 7, 2}, next);
+  successor_activated.arrive_and_wait();
+  delayed_failure.join();
+  ASSERT_EQ(commit, navigation_execution::CommitDecision::kCommitted);
+  EXPECT_EQ(result.load(std::memory_order_acquire),
+            navigation_execution::ConditionalExecutionMutation::kStale);
+  EXPECT_EQ(store.snapshot().active.get(), next.get());
+  EXPECT_TRUE(store.snapshot().commandAvailable());
 }
 
 TEST(TestExecutionAuthority, EmptyActiveSnapshotCanFailCloseWhileStillEmpty) {
@@ -285,8 +324,21 @@ TEST(TestExecutionAuthority, EmptyActiveSnapshotCanFailCloseWhileStillEmpty) {
   ASSERT_FALSE(empty_snapshot.active);
   ASSERT_FALSE(empty_snapshot.active_goal);
 
-  EXPECT_TRUE(store.failClosedIfActiveSnapshot(empty_snapshot));
+  EXPECT_EQ(store.failClosedIfCurrentSnapshot(empty_snapshot),
+            navigation_execution::ConditionalExecutionMutation::kApplied);
   EXPECT_EQ(store.snapshot().lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kFailed);
+  EXPECT_EQ(store.failClosedIfCurrentSnapshot(store.snapshot()),
+            navigation_execution::ConditionalExecutionMutation::kAlreadyFailed);
+}
+
+TEST(TestExecutionAuthority, EmptySnapshotCannotFailCloseNewAdmissionContext) {
+  navigation_execution::TestExecutionAuthority store;
+  const auto stale_empty = store.snapshot();
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(8));
+  EXPECT_EQ(store.failClosedIfCurrentSnapshot(stale_empty),
+            navigation_execution::ConditionalExecutionMutation::kStale);
+  EXPECT_NE(store.snapshot().lifecycle.exposure,
             navigation_execution::ExecutionExposure::kFailed);
 }
 

@@ -5,12 +5,17 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <utility>
 
 #include <navigation_contracts/msg/navigation_goal.hpp>
+#include <navigation_execution/execution_authority.hpp>
+#include <navigation_execution/execution_state_lease.hpp>
 #include <navigation_planning/planning_timing.hpp>
+#include "navigation_runtime/planning_key.hpp"
 
 namespace navigation_runtime {
 
@@ -109,6 +114,24 @@ inline std::optional<std::uint64_t> advanceMonotonicId(
   return std::nullopt;
 }
 
+// Ephemeral solve provenance, never an authority mirror. The watchdog may
+// cancel this solve, but may mutate execution only while this exact desired,
+// pending, world and execution context is still current.
+struct PlannerSolveFailureWitness final {
+  PlanningKey key;
+  navigation_execution::ExecutionAuthoritySnapshot execution;
+  navigation_contracts::msg::NavigationGoal::ConstSharedPtr pending_goal;
+};
+
+// Pointer identity is the immutable ingress witness. A later lease with a
+// newer source timestamp cannot be revoked by a callback that examined L1.
+[[nodiscard]] inline bool failedExecutionLeaseIsCurrent(
+    const std::shared_ptr<const navigation_execution::ExecutionStateLease>& failed,
+    const std::shared_ptr<const navigation_execution::ExecutionStateLease>& current)
+    noexcept {
+  return failed.get() == current.get();
+}
+
 // Own the watchdog marker for exactly the backend solve scope.  A late scope
 // destructor must not clear a newer solve that has reused the same node.
 class PlannerSolveActivityScope final {
@@ -118,14 +141,18 @@ class PlannerSolveActivityScope final {
       std::int64_t& started_steady_ns,
       std::uint64_t& active_generation,
       const std::uint64_t generation,
-      const std::int64_t started_ns) noexcept
+      const std::int64_t started_ns,
+      std::optional<PlannerSolveFailureWitness>* witness_slot = nullptr,
+      std::optional<PlannerSolveFailureWitness> witness = std::nullopt) noexcept
       : activity_mutex_(activity_mutex),
         started_steady_ns_(started_steady_ns),
         active_generation_(active_generation),
-        generation_(generation) {
+        generation_(generation),
+        witness_slot_(witness_slot) {
     std::lock_guard<std::mutex> lock(activity_mutex_);
     started_steady_ns_ = started_ns;
     active_generation_ = generation_;
+    if (witness_slot_) *witness_slot_ = std::move(witness);
   }
 
   PlannerSolveActivityScope(const PlannerSolveActivityScope&) = delete;
@@ -136,6 +163,7 @@ class PlannerSolveActivityScope final {
     if (active_generation_ == generation_) {
       active_generation_ = 0U;
       started_steady_ns_ = 0;
+      if (witness_slot_) witness_slot_->reset();
     }
   }
 
@@ -144,6 +172,7 @@ class PlannerSolveActivityScope final {
   std::int64_t& started_steady_ns_;
   std::uint64_t& active_generation_;
   std::uint64_t generation_;
+  std::optional<PlannerSolveFailureWitness>* witness_slot_;
 };
 
 inline std::optional<std::chrono::nanoseconds> ratePeriodNanoseconds(

@@ -16,6 +16,7 @@
 #include <rcl/time.h>
 #include <navigation_common/time.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
+#include <navigation_contracts/execution_state_freshness.hpp>
 #include <navigation_planning_backend/planner_facade.hpp>
 
 #include "navigation_runtime/navigation_runtime_node.hpp"
@@ -29,6 +30,30 @@ namespace navigation_runtime {
 // FAST5-r3 / generation 16 in the diagnostic matrix report.
 class NavigationRuntimeTerminalMonitorTestPeer {
  public:
+  static std::unique_lock<std::mutex> holdCommandTransition(
+      NavigationRuntimeNode& node) {
+    return std::unique_lock<std::mutex>(
+        node.command_execution_lease_failure_latch_.transitionMutex());
+  }
+  static bool publishLeaseWithReceive(
+      NavigationRuntimeNode& node, std::int64_t source_stamp_ns,
+      std::int64_t receive_steady_ns) {
+    const auto prior = node.execution_state_store_.load();
+    if (!prior || source_stamp_ns <= prior->state.source_stamp_ns) return false;
+    auto state = prior->state;
+    state.source_stamp_ns = source_stamp_ns;
+    state.receive_stamp_ns = receive_steady_ns;
+    return node.execution_state_store_.publish(std::move(state));
+  }
+  static int leaseReason(const NavigationRuntimeNode& node) {
+    return node.command_execution_lease_reason_.load(std::memory_order_acquire);
+  }
+  static bool leaseAllowsCommand(const NavigationRuntimeNode& node) {
+    return node.command_execution_lease_failure_latch_.allowsCommandExposure();
+  }
+  static void publishCommand(NavigationRuntimeNode& node) {
+    node.publishCommand();
+  }
   static bool prepareInitialBaseline(
       NavigationRuntimeNode& node,
       const navigation_contracts::msg::NavigationGoal& goal,
@@ -1076,6 +1101,51 @@ class NavigationRuntimeTerminalMonitorStrict : public NavigationRuntimeTerminalM
     EXPECT_EQ(NavigationRuntimeTerminalMonitorTestPeer::commandGoalEpoch(*node_), before_command_epoch);
   }
 };
+
+TEST_F(NavigationRuntimeTerminalMonitor, SupersededStaleLeaseCannotFailCloseActiveExecution) {
+  install(false, kStartNs);
+  const auto before = NavigationRuntimeTerminalMonitorTestPeer::ownerSnapshot(*node_);
+  ASSERT_TRUE(before.commandAvailable());
+  setTime(kStartNs + 20'000'000LL);
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishLeaseWithReceive(
+      *node_, kStartNs + 20'000'000LL,
+      navigation_common::steadyClockNowNanoseconds() - 1'000'000'000LL));
+  auto transition = NavigationRuntimeTerminalMonitorTestPeer::holdCommandTransition(*node_);
+  std::thread callback([&] {
+    NavigationRuntimeTerminalMonitorTestPeer::publishCommand(*node_);
+  });
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  const auto stale_reason = static_cast<int>(
+      navigation_contracts::ExecutionStateFreshnessReason::kReceiveStale);
+  while (NavigationRuntimeTerminalMonitorTestPeer::leaseReason(*node_) != stale_reason &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  const bool observed_l1 =
+      NavigationRuntimeTerminalMonitorTestPeer::leaseReason(*node_) == stale_reason;
+  const bool published_l2 = NavigationRuntimeTerminalMonitorTestPeer::publishLeaseWithReceive(
+      *node_, kStartNs + 21'000'000LL,
+      navigation_common::steadyClockNowNanoseconds());
+  transition.unlock();
+  callback.join();
+  ASSERT_TRUE(observed_l1) << "callback never evaluated stale L1 before transition lock";
+  ASSERT_TRUE(published_l2);
+  const auto after = NavigationRuntimeTerminalMonitorTestPeer::ownerSnapshot(*node_);
+  EXPECT_EQ(after.active.get(), before.active.get());
+  EXPECT_TRUE(after.commandAvailable());
+  EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::leaseAllowsCommand(*node_));
+}
+
+TEST_F(NavigationRuntimeTerminalMonitor, CurrentStaleLeaseStillFailsClosed) {
+  install(false, kStartNs);
+  setTime(kStartNs + 20'000'000LL);
+  ASSERT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::publishLeaseWithReceive(
+      *node_, kStartNs + 20'000'000LL,
+      navigation_common::steadyClockNowNanoseconds() - 1'000'000'000LL));
+  NavigationRuntimeTerminalMonitorTestPeer::publishCommand(*node_);
+  EXPECT_TRUE(NavigationRuntimeTerminalMonitorTestPeer::ownerSnapshot(*node_).failed());
+  EXPECT_FALSE(NavigationRuntimeTerminalMonitorTestPeer::leaseAllowsCommand(*node_));
+}
 
 class NavigationRuntimeTerminalMonitorObserverOff : public NavigationRuntimeTerminalMonitor {
  protected:

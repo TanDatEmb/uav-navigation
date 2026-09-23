@@ -3,8 +3,10 @@
 #include "navigation_runtime/commit_trace.hpp"
 #include "execution_authority_lifecycle_fixture.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
+#include "navigation_runtime/desired_planning_intent.hpp"
 #include <navigation_common/time.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
+#include <navigation_execution/execution_state_store.hpp>
 
 #include <gtest/gtest.h>
 #include <barrier>
@@ -102,6 +104,61 @@ TEST(PlannerFsm, PlannerSolveActivityDisarmsOnlyItsOwnedGeneration) {
   }
   EXPECT_EQ(active_generation, 9U);
   EXPECT_EQ(started_ns, 3000);
+}
+
+TEST(PlannerFsm, PlannerSolveActivityRetainsOnlyCurrentFailureWitness) {
+  std::int64_t started_ns{0};
+  std::uint64_t active_generation{0};
+  std::mutex activity_mutex;
+  std::optional<PlannerSolveFailureWitness> current;
+  PlannerSolveFailureWitness first;
+  first.key.goal_epoch = 7U;
+  {
+    const PlannerSolveActivityScope activity(
+        activity_mutex, started_ns, active_generation, 11U, 1234,
+        &current, first);
+    ASSERT_TRUE(current);
+    EXPECT_EQ(current->key.goal_epoch, 7U);
+    // A newer solve owns the slot before the old destructor runs.
+    active_generation = 12U;
+    current->key.goal_epoch = 8U;
+  }
+  ASSERT_TRUE(current);
+  EXPECT_EQ(current->key.goal_epoch, 8U);
+  active_generation = 0U;
+  current.reset();
+}
+
+TEST(PlannerFsm, SupersededStateLeaseCannotAuthorizeFailure) {
+  navigation_execution::ExecutionStateStore states;
+  navigation_planning::KinematicState first;
+  first.source_stamp_ns = 100U;
+  first.receive_stamp_ns = 100U;
+  first.localization_epoch = 1U;
+  first.world_frame_id = "lio_odom";
+  first.body_frame_id = "base_link";
+  ASSERT_TRUE(states.publish(first));
+  const auto failed_l1 = states.load();
+  std::barrier observed(2);
+  std::barrier replacement_installed(2);
+  std::atomic_bool may_fail_close{true};
+  std::thread callback([&] {
+    observed.arrive_and_wait();
+    replacement_installed.arrive_and_wait();
+    may_fail_close.store(
+        failedExecutionLeaseIsCurrent(failed_l1, states.load()),
+        std::memory_order_release);
+  });
+  observed.arrive_and_wait();
+  first.source_stamp_ns = 200U;
+  first.receive_stamp_ns = 200U;
+  const bool replacement_published = states.publish(first);
+  replacement_installed.arrive_and_wait();
+  callback.join();
+  ASSERT_TRUE(replacement_published);
+  EXPECT_FALSE(may_fail_close.load(std::memory_order_acquire));
+  const auto failed_l2 = states.load();
+  EXPECT_TRUE(failedExecutionLeaseIsCurrent(failed_l2, states.load()));
 }
 
 TEST(PlannerFsm, PlannerSolveActivityBlocksScopeExitDuringWatchdogDecision) {
@@ -1005,6 +1062,40 @@ TEST(PlannerFsm, PendingGoalOwnerConcurrentSupersedeKeepsNewestOnly) {
   EXPECT_EQ(pending->request_id, 12U);
 }
 
+TEST(PlannerFsm, OldTimeoutCannotClearNewPendingGoal) {
+  PendingGoalHandoffOwner owner;
+  navigation_contracts::msg::NavigationGoal active;
+  active.mission_id = "mission";
+  active.request_id = 10U;
+  active.waypoint_index = 1U;
+  active.route.route_revision = 1U;
+  auto make_goal = [](std::uint64_t request) {
+    auto next = std::make_shared<navigation_contracts::msg::NavigationGoal>();
+    next->mission_id = "mission";
+    next->request_id = request;
+    next->waypoint_index = static_cast<std::uint32_t>(request - 9U);
+    next->route.route_revision = request;
+    return std::shared_ptr<const navigation_contracts::msg::NavigationGoal>(next);
+  };
+  ASSERT_TRUE(owner.enqueueGoal(make_goal(11U), active, true));
+  const auto stale = owner.goalSnapshot();
+  std::barrier captured(2);
+  std::barrier superseded(2);
+  std::atomic_bool stale_cleared{true};
+  std::thread old_timeout([&] {
+    captured.arrive_and_wait();
+    superseded.arrive_and_wait();
+    stale_cleared.store(owner.clearIfCurrent(stale), std::memory_order_release);
+  });
+  captured.arrive_and_wait();
+  ASSERT_TRUE(owner.enqueueGoal(make_goal(12U), active, true));
+  superseded.arrive_and_wait();
+  old_timeout.join();
+  EXPECT_FALSE(stale_cleared.load(std::memory_order_acquire));
+  ASSERT_TRUE(owner.goalSnapshot());
+  EXPECT_EQ(owner.goalSnapshot()->request_id, 12U);
+}
+
 TEST(PlannerFsm, ContinuesOnlyCompletedPassThroughGoalEndpoints) {
   EXPECT_TRUE(completedPassThroughRequiresContinuation(true, true, true, true));
   EXPECT_FALSE(completedPassThroughRequiresContinuation(false, true, true, true));
@@ -1099,9 +1190,9 @@ TEST(PlannerFsm, StaleCommandPublicationCannotMutateNewExecution) {
       StaleCommandPublicationDisposition::kFailClosed);
 }
 
-TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationFailsClosed) {
+TEST(PlannerFsm, SuccessWithoutNewCommittedGenerationRetainsCertifiedIncumbent) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kSuccess, false, true, false),
-            PlannerResultDisposition::FailClosed);
+            PlannerResultDisposition::RetainCommittedCommand);
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFinished, true, false, false),
             PlannerResultDisposition::FailClosed);
 }
@@ -1443,6 +1534,63 @@ TEST(PlannerFsm, MeasuredStateRestartRetainsCurrentCertifiedCommandOnSolveFailur
             PlannerResultDisposition::RetainCommittedCommand);
 }
 
+TEST(PlannerFsm, HotRetargetOptimizationFailureDoesNotRevokePredecessor) {
+  ExecutionLifecycleFixture execution;
+  execution.beginGoal(1U, 1U, 1U, false);
+  const auto predecessor = baselineRefinementSchedulingCandidate();
+  ASSERT_EQ(execution.commandCommitted(predecessor),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto before = execution.snapshot();
+  ASSERT_TRUE(before.commandAvailable());
+  ASSERT_TRUE(before.active);
+  // Desired successor N+1 can coexist with active execution N. A failed
+  // replacement is routed to the full retained-command validator, not to
+  // an immediate fail-close of N.
+  EXPECT_EQ(classifyPlannerResult(
+                navigation_planning::PlannerStatus::kOptimizationFailed,
+                false, before.commandAvailable(), false),
+            PlannerResultDisposition::RetainCommittedCommand);
+  EXPECT_EQ(execution.snapshot().active.get(), before.active.get());
+  EXPECT_TRUE(execution.snapshot().commandAvailable());
+}
+
+TEST(PlannerFsm, StoppedTimeoutNeedsCurrentDesiredAndStoppedExecution) {
+  ExecutionLifecycleFixture execution;
+  execution.beginGoal(1U, 1U, 1U, false);
+  auto terminal = baselineRefinementSchedulingCandidate();
+  terminal.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  terminal.terminal_stop = true;
+  terminal.backup_available = false;
+  ASSERT_EQ(execution.commandCommitted(terminal),
+            navigation_execution::CommitDecision::kCommitted);
+  ASSERT_TRUE(execution.applyRecoveryEvent(
+      ExecutionRecoveryEvent::kTerminalStopCompleted, terminal));
+  ASSERT_TRUE(execution.stoppedHold(terminal));
+  const auto stopped = execution.snapshot();
+  ASSERT_EQ(stopped.lifecycle.recovery, ExecutionRecoveryState::kStoppedRecovery);
+  ASSERT_TRUE(stoppedPlanningTimeoutMayFailClosed(
+      stopped.lifecycle.recovery, true, 5.1, 5.0));
+
+  DesiredPlanningIntent desired;
+  const auto desired_goal = goal("mission", 2U, 3U, 7U);
+  ASSERT_EQ(desired.advanceRevision(), 1U);
+  desired.install(desired_goal, PlanningIntentTransition::kNewIntent);
+  ASSERT_TRUE(desired.matches(desired_goal, 1U));
+  ASSERT_EQ(desired.advanceRevision(), 2U);
+  EXPECT_FALSE(desired.matches(desired_goal, 1U));
+  EXPECT_TRUE(execution.snapshot().commandAvailable());
+  // A fresh desired attempt with the exact stopped owner still permits the
+  // original timeout policy; changing desired alone does not revoke it.
+  EXPECT_EQ(execution.snapshot().active.get(), stopped.active.get());
+  EXPECT_EQ(execution.snapshot().lifecycle.recovery,
+            ExecutionRecoveryState::kStoppedRecovery);
+  desired.install(desired_goal, PlanningIntentTransition::kNewIntent);
+  ASSERT_TRUE(desired.matches(desired_goal, 2U));
+  EXPECT_EQ(execution.failClosedIfCurrentSnapshot(stopped),
+            navigation_execution::ConditionalExecutionMutation::kApplied);
+  EXPECT_TRUE(execution.snapshot().failed());
+}
+
 TEST(PlannerFsm, FailsClosedForEmergencyOrUnrecoverableFailures) {
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kFailed, false, false, false),
             PlannerResultDisposition::FailClosed);
@@ -1452,6 +1600,10 @@ TEST(PlannerFsm, FailsClosedForEmergencyOrUnrecoverableFailures) {
             PlannerResultDisposition::FailClosed);
   EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kOptimizationFailed, true, false, false),
             PlannerResultDisposition::FailClosed);
+  EXPECT_EQ(classifyPlannerResult(navigation_planning::PlannerStatus::kOptimizationFailed, false, true, false),
+            PlannerResultDisposition::RetainCommittedCommand);
+  EXPECT_EQ(classifyPlannerResult(static_cast<navigation_planning::PlannerStatus>(255), false, true, false),
+            PlannerResultDisposition::RetainCommittedCommand);
 }
 
 TEST(PlannerFsm, AcceptsOnlyAContinuousValidCommittedSafetySuffix) {

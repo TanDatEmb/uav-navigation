@@ -72,6 +72,15 @@ class PendingGoalHandoffOwner {
     pending_goal_.reset();
   }
 
+  [[nodiscard]] bool clearIfCurrent(const GoalConstPtr& expected) {
+    std::lock_guard<std::mutex> lock(goal_mutex_);
+    if (!expected || !pending_goal_ || pending_goal_.get() != expected.get()) {
+      return false;
+    }
+    pending_goal_.reset();
+    return true;
+  }
+
  private:
   static bool goalMessageNewer(
       const navigation_contracts::msg::NavigationGoal& candidate,
@@ -694,40 +703,39 @@ enum class StaleCommandPublicationDisposition : std::uint8_t {
 inline PlannerResultDisposition classifyPlannerResult(
     navigation_planning::PlannerStatus result, bool plan_from_rest, bool command_available,
     bool commit_observed) {
-  if ((result == navigation_planning::PlannerStatus::kSuccess ||
-       result == navigation_planning::PlannerStatus::kFinished) && commit_observed) {
-    return PlannerResultDisposition::CommandReady;
+  using Status = navigation_planning::PlannerStatus;
+  switch (result) {
+    case Status::kSuccess:
+    case Status::kFinished:
+      if (commit_observed) return PlannerResultDisposition::CommandReady;
+      // A completed replacement without an admitted candidate did not revoke
+      // the incumbent. Validate it through the normal retained-command path.
+      if (command_available) return PlannerResultDisposition::RetainCommittedCommand;
+      return PlannerResultDisposition::FailClosed;
+    case Status::kNoNeed:
+      return command_available ? PlannerResultDisposition::ValidateRetainedCommand
+                               : PlannerResultDisposition::FailClosed;
+    case Status::kRestartFromRest:
+      return PlannerResultDisposition::RestartFromRest;
+    case Status::kFailed:
+      // HG-023 applies to every failed replacement status, including the
+      // backend's typed optimizer failure below. Retention still requires the full
+      // latest-world/anchor/suffix/lease validation in RuntimeNode.
+      if (command_available) return PlannerResultDisposition::RetainCommittedCommand;
+      return plan_from_rest ? PlannerResultDisposition::RetryFromRest
+                            : PlannerResultDisposition::FailClosed;
+    case Status::kOptimizationFailed:
+      return command_available ? PlannerResultDisposition::RetainCommittedCommand
+                               : PlannerResultDisposition::FailClosed;
+    case Status::kEmergency:
+      // The retained-command path attempts the existing one-shot measured
+      // emergency transition; it still fails closed if certification fails.
+      return command_available ? PlannerResultDisposition::RetainCommittedCommand
+                               : PlannerResultDisposition::FailClosed;
   }
-  if (result == navigation_planning::PlannerStatus::kNoNeed && command_available) {
-    return PlannerResultDisposition::ValidateRetainedCommand;
-  }
-  if (result == navigation_planning::PlannerStatus::kRestartFromRest) {
-    return PlannerResultDisposition::RestartFromRest;
-  }
-  // A failed replacement solve leaves the execution bundle untouched. This is
-  // true even when the planner has intentionally restarted from measured
-  // state: the existing immutable main-to-backup command remains the only
-  // certified source while the replacement is retried. Revalidate/retain it
-  // before applying the no-command PlanFromRest stopped-recovery deadline.
-  if (result == navigation_planning::PlannerStatus::kFailed && command_available) {
-    return PlannerResultDisposition::RetainCommittedCommand;
-  }
-  // A backend EMERGENCY result means that nominal hot replanning cannot
-  // continue. If a previously committed command still exists, route the
-  // result through the same retained-command validation and one-shot measured
-  // emergency-brake path. That path remains fail-closed when freshness,
-  // clearance, anchor, or brake certification is unavailable. Dropping
-  // directly to PX4 Hold here would skip the bounded recovery transition.
-  if (result == navigation_planning::PlannerStatus::kEmergency &&
-      command_available) {
-    return PlannerResultDisposition::RetainCommittedCommand;
-  }
-  // A failed rest-to-rest solve with no executable command is classified for
-  // retry. The runtime's existing stopped-recovery timeout and failure
-  // handling decide when retrying ends and the node fails closed.
-  if (result == navigation_planning::PlannerStatus::kFailed && plan_from_rest) {
-    return PlannerResultDisposition::RetryFromRest;
-  }
+  // An unknown future status cannot gain authority to revoke a certified
+  // incumbent by falling through a destructive default.
+  if (command_available) return PlannerResultDisposition::RetainCommittedCommand;
   return PlannerResultDisposition::FailClosed;
 }
 

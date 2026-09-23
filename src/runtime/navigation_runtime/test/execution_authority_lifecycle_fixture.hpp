@@ -68,6 +68,10 @@ class ExecutionLifecycleFixture final {
     return authority_.stoppedHold(bundle);
   }
   void failClosed() noexcept { authority_.failClosed(); }
+  navigation_execution::ConditionalExecutionMutation failClosedIfCurrentSnapshot(
+      const navigation_execution::ExecutionAuthoritySnapshot& expected) noexcept {
+    return authority_.failClosedIfCurrentSnapshot(expected);
+  }
   void suspendCommand() noexcept { authority_.suspendCommand(); }
   void clearGoal(std::uint64_t localization_epoch) noexcept {
     authority_.clearGoal(localization_epoch);

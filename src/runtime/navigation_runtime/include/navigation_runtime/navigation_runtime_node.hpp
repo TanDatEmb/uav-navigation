@@ -36,6 +36,7 @@
 #include <navigation_planning/planning_outcome.hpp>
 #include <navigation_planning/candidate_bundle.hpp>
 #include "navigation_runtime/planner_fsm.hpp"
+#include "navigation_runtime/runtime_boundaries.hpp"
 #include "navigation_runtime/baseline_refinement.hpp"
 #include "navigation_runtime/same_identity_renewal_injection.hpp"
 #include "navigation_runtime/execution_recovery_state.hpp"
@@ -329,6 +330,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
     std::optional<navigation_planning::PlannerStatus> planner_result;
     double tracking_limit_m;
     std::optional<TerminalMonitorBoundary> terminal_monitor = std::nullopt;
+    std::optional<navigation_execution::ExecutionAuthoritySnapshot>
+        expected_execution = std::nullopt;
   };
   void validateRetainedCommand(
       const std::optional<navigation_contracts::msg::NavigationGoal>& goal,
@@ -365,7 +368,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const std::shared_ptr<const navigation_execution::ExecutionStateLease>& measured_state,
       std::int64_t maximum_world_age_ns,
       const std::optional<TerminalMonitorBoundary>& terminal_monitor = std::nullopt);
-  void suspendCommandForWorldFreshness();
+  void suspendCommandForWorldFreshness(
+      const navigation_execution::ExecutionAuthoritySnapshot& expected);
   // Ingress serialization remains held while this temporarily releases the
   // lifecycle owner lock to drain old mapping work.
   void resetForLocalizationEpochLocked(
@@ -550,6 +554,9 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   RetainedObservationAccounting retained_decision_accounting_;
   std::atomic_uint64_t planner_solve_generation_{0U};
   std::uint64_t active_planner_solve_generation_{0U};
+  // Provenance of the one in-flight solve, guarded by planner_solve_activity_mutex_.
+  // This is an ephemeral callback witness, not a second execution owner.
+  std::optional<PlannerSolveFailureWitness> active_planner_solve_witness_;
   std::atomic_uint64_t timed_out_planner_solve_generation_{0U};
   std::atomic_uint64_t planner_timeline_activation_generation_{0U};
   mutable std::mutex planner_timeline_activation_mutex_;

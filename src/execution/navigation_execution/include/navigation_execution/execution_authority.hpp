@@ -31,6 +31,12 @@ struct CommitToken {
   std::uint64_t transaction_id{0};
 };
 
+enum class ConditionalExecutionMutation : std::uint8_t {
+  kApplied,
+  kStale,
+  kAlreadyFailed,
+};
+
 struct ExecutionAuthoritySnapshot {
   std::uint64_t version{0};
   std::optional<navigation_world_model::WorldSnapshotIdentity> world_identity;
@@ -403,16 +409,61 @@ class ExecutionAuthority {
            active_lineage_version_ == expected.active_lineage;
   }
 
-  bool failClosedIfActiveSnapshot(
+  [[nodiscard]] bool matchesAuthorityIdentity(
+      const ExecutionAuthoritySnapshot& expected) const noexcept {
+    std::lock_guard lock(mutex_);
+    return active_.bundle.get() == expected.active.get() &&
+           active_.goal.get() == expected.active_goal.get() &&
+           active_lineage_version_ == expected.active_lineage &&
+           admission_goal_epoch_ == expected.admission_goal_epoch &&
+           admission_localization_epoch_ == expected.admission_localization_epoch;
+  }
+
+  [[nodiscard]] bool isCurrentSnapshot(
+      const ExecutionAuthoritySnapshot& expected) const noexcept {
+    std::lock_guard lock(mutex_);
+    return timeline_version_ == expected.version &&
+           active_.bundle.get() == expected.active.get() &&
+           active_.goal.get() == expected.active_goal.get() &&
+           active_lineage_version_ == expected.active_lineage &&
+           admission_goal_epoch_ == expected.admission_goal_epoch &&
+           admission_localization_epoch_ == expected.admission_localization_epoch;
+  }
+
+  // The caller owns failure policy and causal evidence. This operation only
+  // linearizes the mutation against the exact authority snapshot that the
+  // asynchronous work observed, including an explicitly empty execution.
+  [[nodiscard]] ConditionalExecutionMutation failClosedIfCurrentSnapshot(
       const ExecutionAuthoritySnapshot& expected) noexcept {
     std::lock_guard lock(mutex_);
-    if (active_.bundle.get() != expected.active.get() ||
+    if (timeline_version_ != expected.version ||
+        active_.bundle.get() != expected.active.get() ||
         active_.goal.get() != expected.active_goal.get() ||
-        active_lineage_version_ != expected.active_lineage) {
-      return false;
+        active_lineage_version_ != expected.active_lineage ||
+        admission_goal_epoch_ != expected.admission_goal_epoch ||
+        admission_localization_epoch_ != expected.admission_localization_epoch) {
+      return ConditionalExecutionMutation::kStale;
+    }
+    if (lifecycle_.exposure == ExecutionExposure::kFailed) {
+      return ConditionalExecutionMutation::kAlreadyFailed;
     }
     const auto before = lifecycle_;
     failClosedLifecycleLocked();
+    noteLifecycleChangeLocked(before);
+    return ConditionalExecutionMutation::kApplied;
+  }
+
+  [[nodiscard]] bool suspendIfCurrentSnapshot(
+      const ExecutionAuthoritySnapshot& expected) noexcept {
+    std::lock_guard lock(mutex_);
+    if (!expected.active || !expected.active_goal ||
+        timeline_version_ != expected.version ||
+        active_.bundle.get() != expected.active.get() ||
+        active_.goal.get() != expected.active_goal.get() ||
+        active_lineage_version_ != expected.active_lineage ||
+        lifecycle_.exposure == ExecutionExposure::kFailed) return false;
+    const auto before = lifecycle_;
+    lifecycle_.exposure = ExecutionExposure::kSuspended;
     noteLifecycleChangeLocked(before);
     return true;
   }
