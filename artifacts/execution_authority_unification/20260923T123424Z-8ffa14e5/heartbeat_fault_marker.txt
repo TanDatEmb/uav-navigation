@@ -1,0 +1,5 @@
+pid=424736
+session=external-mode-check-20260923T135502-422343
+stop_wall_ns=1790171781054982054
+continue_wall_ns=1790171781405093594
+pause_ms=350.112
