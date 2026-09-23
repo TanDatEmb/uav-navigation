@@ -8,7 +8,7 @@ it does not replace historical evidence. Ownership remains:
 certified BACKUP -> immutable committed bundle -> trajectory controller/OMMPC
 -> PX4 ROS 2 External Mode`.
 Registration is not a planning map; WorldModel owns UNKNOWN/OUT_OF_MAP semantics.
-A failed candidate never mutates the committed generation.
+A failed candidate never mutates the committed generation. Core mission-progress ownership is specified in [the authority cut](mission_authority_cut.md).
 
 Source snapshot for this migration: `HEAD 82ef05ca161a18cf4d0e0dfd40ad257ec6a87509`.
 The original ledger remains byte-identical in the archive; migration metadata

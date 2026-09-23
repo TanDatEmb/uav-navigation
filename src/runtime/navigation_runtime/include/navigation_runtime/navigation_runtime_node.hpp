@@ -18,11 +18,14 @@
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <tracking_experiment.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
+#include <navigation_contracts/msg/navigation_command_admission.hpp>
 #include <navigation_contracts/msg/navigation_goal.hpp>
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
+#include <navigation_contracts/msg/navigation_mission_progress.hpp>
 #include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/registered_scan.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include <navigation_mapping/mapping_worker.hpp>
@@ -49,6 +52,7 @@
 #include <navigation_mapping/world_snapshot_store.hpp>
 #include <navigation_planning/planning_limits.hpp>
 #include "navigation_runtime/kinematic_derivative_estimator.hpp"
+#include "navigation_runtime/mission_progress.hpp"
 
 namespace navigation_planning_backend {
 class PlannerFacade;
@@ -282,6 +286,16 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   bool consumeForeignMissionCancelIfCurrent();
   void onModeStatus(
       const navigation_contracts::msg::NavigationModeStatus::ConstSharedPtr& message);
+  void tickMissionProgress();
+  // Caller holds localization_transition_mutex_ and input_mutex_. Record the
+  // exact authorized command before it can be delivered to the adapter.
+  void rememberMissionCommandIssued(
+      const navigation_contracts::msg::NavigationCommand& command);
+  void onCommandAdmission(
+      const navigation_contracts::msg::NavigationCommandAdmission::ConstSharedPtr& message);
+  // Caller holds localization_transition_mutex_ and input_mutex_. The
+  // decision and internal goal transition share this owner transaction.
+  void applyMissionDecisionLocked(const MissionProgressDecision& decision);
   void schedulePlanningCycle();
   void scheduleHeadingRebind(const PlanningKey& key);
   void consumeHeadingRebind(std::int64_t now_ns);
@@ -419,9 +433,15 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   rclcpp::Subscription<navigation_contracts::msg::NavigationModeStatus>::SharedPtr
       status_subscription_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationCommand>::SharedPtr command_publisher_;
+  rclcpp::Subscription<navigation_contracts::msg::NavigationCommandAdmission>::SharedPtr
+      command_admission_subscription_;
+  rclcpp::Publisher<navigation_contracts::msg::NavigationMissionProgress>::SharedPtr
+      mission_progress_publisher_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr mission_complete_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_publisher_;
   rclcpp::TimerBase::SharedPtr planning_timer_;
   rclcpp::TimerBase::SharedPtr command_timer_;
+  rclcpp::TimerBase::SharedPtr mission_timer_;
   rclcpp::CallbackGroup::SharedPtr planning_callback_group_;
   rclcpp::CallbackGroup::SharedPtr command_callback_group_;
   rclcpp::CallbackGroup::SharedPtr propagated_state_callback_group_;
@@ -431,6 +451,22 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // Mapping never takes ingress: it must finish while an epoch reset drains.
   std::mutex localization_epoch_ingress_mutex_;
   std::mutex localization_transition_mutex_;
+  std::optional<MissionProgress> mission_progress_;
+  struct ModeMissionBoundary {
+    std::uint64_t activation_id{0U};
+    std::int64_t source_stamp_ns{0};
+    std::int64_t receive_steady_ns{0};
+    bool airborne{false};
+  };
+  std::optional<ModeMissionBoundary> mode_mission_boundary_;
+  // A delayed ACTIVE heartbeat from a terminal PX4 activation cannot restart
+  // the same mission after takeover, failure or completion.
+  std::uint64_t last_terminal_mode_activation_id_{0U};
+  std::optional<std::uint64_t> mission_activation_applied_;
+  // Commands awaiting a PX4-local admission receipt. The command's finite
+  // lease bounds retention; no received receipt can create Core intent.
+  std::deque<navigation_contracts::msg::NavigationCommand>
+      issued_mission_commands_;
   navigation_execution::ExecutionStateStore execution_state_store_;
   ExecutionEpisode execution_episode_;
   std::optional<navigation_contracts::msg::NavigationGoal> active_goal_;

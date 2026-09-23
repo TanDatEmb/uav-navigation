@@ -44,7 +44,6 @@ def generate_launch_description():
                 ),
                 launch_arguments={
                     "config_file": config_file,
-                    "mission_file": mission_file,
                     "use_sim_time": use_sim_time,
                 }.items(),
             ),

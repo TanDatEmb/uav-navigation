@@ -32,10 +32,12 @@ target_compile_options(${PROJECT_NAME}_contract PRIVATE -Wall -Wextra -Wpedantic
 
 add_library(${PROJECT_NAME}_adapter STATIC
   src/navigation_mode_node.cpp)
+target_include_directories(${PROJECT_NAME}_adapter PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
 target_include_directories(${PROJECT_NAME}_adapter PRIVATE
-  include ${navigation_contracts_INCLUDE_DIRS})
+  ${navigation_contracts_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}_adapter
-  ${PROJECT_NAME}_contract
   Eigen3::Eigen
   px4_ros2_cpp::px4_ros2_cpp
   rclcpp::rclcpp)
@@ -64,6 +66,10 @@ ament_export_targets(${PROJECT_NAME}Targets HAS_LIBRARY_TARGET)
 ament_export_dependencies(navigation_common navigation_mission Eigen3 diagnostic_msgs geometry_msgs navigation_contracts nav_msgs px4_msgs px4_ros2_cpp rclcpp std_msgs)
 
 if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME test_mission_authority_static
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../../tools/check_mission_authority_cut.py)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_mission test/test_mission.cpp)
   target_link_libraries(test_mission ${PROJECT_NAME}_contract)

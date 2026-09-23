@@ -50,6 +50,15 @@ class NavigationRuntimeEpochResetTestPeer {
     node.onGoal(std::make_shared<const
         navigation_contracts::msg::NavigationGoal>(message));
   }
+  static void internalGoal(NavigationRuntimeNode& node,
+                           const navigation_contracts::msg::NavigationGoal& message) {
+    // Execution-only harness: use the same validated transition that Core
+    // mission progression invokes, without publishing an external goal.
+    std::lock_guard localization_lock(node.localization_transition_mutex_);
+    std::lock_guard input_lock(node.input_mutex_);
+    node.applyValidatedGoalLocked(std::make_shared<const
+        navigation_contracts::msg::NavigationGoal>(message));
+  }
   static void terminal(NavigationRuntimeNode& node,
                        const navigation_contracts::msg::NavigationGoal& goal) {
     auto message = std::make_shared<navigation_contracts::msg::NavigationModeStatus>();
@@ -78,6 +87,62 @@ class NavigationRuntimeEpochResetTestPeer {
         !node.command_bundle_store_.load() &&
         !node.execution_episode_.snapshot().command_available &&
         node.command_goal_epoch_.load() == 0U;
+  }
+  static void missionState(NavigationRuntimeNode& node, double x,
+                           std::int64_t source_stamp_ns) {
+    navigation_planning::KinematicState state;
+    state.position_world = Eigen::Vector3d{x, 0.0, 3.0};
+    state.velocity_world.setZero();
+    state.source_stamp_ns = source_stamp_ns;
+    state.receive_stamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    state.localization_epoch = 1U;
+    state.world_frame_id = "lio_odom";
+    state.body_frame_id = "base_link";
+    ASSERT_TRUE(node.execution_state_store_.publish(std::move(state)));
+  }
+  static void missionActive(NavigationRuntimeNode& node) {
+    auto status = std::make_shared<navigation_contracts::msg::NavigationModeStatus>();
+    status->header.stamp = node.now();
+    status->state = navigation_contracts::msg::NavigationModeStatus::ACTIVE;
+    status->activation_id = 1U;
+    status->airborne = true;
+    node.onModeStatus(status);
+  }
+  static void missionPaused(NavigationRuntimeNode& node) {
+    auto status = std::make_shared<navigation_contracts::msg::NavigationModeStatus>();
+    status->header.stamp = node.now();
+    status->state = navigation_contracts::msg::NavigationModeStatus::PAUSED;
+    status->activation_id = 1U;
+    status->reason = navigation_contracts::msg::NavigationModeStatus::OPERATOR_TAKEOVER;
+    node.onModeStatus(status);
+  }
+  static void missionTick(NavigationRuntimeNode& node) { node.tickMissionProgress(); }
+  static MissionGateIdentity missionGate(NavigationRuntimeNode& node) {
+    std::lock_guard localization_lock(node.localization_transition_mutex_);
+    std::lock_guard input_lock(node.input_mutex_);
+    return node.mission_progress_->currentGate();
+  }
+  static bool missionGoalMatches(NavigationRuntimeNode& node,
+                                 std::uint32_t waypoint, std::uint64_t request) {
+    std::lock_guard localization_lock(node.localization_transition_mutex_);
+    std::lock_guard input_lock(node.input_mutex_);
+    return (node.active_goal_ && node.active_goal_->waypoint_index == waypoint &&
+            node.active_goal_->request_id == request) ||
+           node.pending_goal_owner_.goalMatchesStatus(
+               node.mission_progress_->routeIdentity().mission_id, waypoint, request);
+  }
+  static void missionCommandIssued(NavigationRuntimeNode& node,
+                                   const navigation_contracts::msg::NavigationCommand& command) {
+    std::lock_guard localization_lock(node.localization_transition_mutex_);
+    std::lock_guard input_lock(node.input_mutex_);
+    node.rememberMissionCommandIssued(command);
+  }
+  static void missionCommandAdmitted(
+      NavigationRuntimeNode& node,
+      const navigation_contracts::msg::NavigationCommandAdmission& receipt) {
+    node.onCommandAdmission(std::make_shared<const
+        navigation_contracts::msg::NavigationCommandAdmission>(receipt));
   }
 };
 
@@ -440,6 +505,80 @@ TEST(NavigationRuntimeEpochReset, GoalAcceptedDuringDrainSurvivesOldMappingCallb
   ASSERT_EXIT(exerciseEpochDrainWithConcurrentGoal(false), testing::ExitedWithCode(0), "");
 }
 
+TEST(NavigationRuntimeMissionCut, InitialMeasuredPassCreatesSuccessorInsideCore) {
+  auto context = std::make_shared<rclcpp::Context>();
+  context->init(0, nullptr);
+  rclcpp::NodeOptions options;
+  options.context(context);
+  options.parameter_overrides({
+      rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
+      rclcpp::Parameter("navigation_runtime.body_frame_id", "base_link"),
+      rclcpp::Parameter("navigation_runtime.deployment_profile", "sitl"),
+      rclcpp::Parameter("navigation_runtime.config_path", NAVIGATION_PLANNER_CONFIG_PATH),
+      rclcpp::Parameter("navigation_runtime.mission_file",
+                        NAVIGATION_HANDOVER_MISSION_FILE_PATH),
+  });
+  auto node = std::make_shared<NavigationRuntimeNode>(options);
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);  // Bind localization epoch.
+  NavigationRuntimeEpochResetTestPeer::missionState(*node, 0.0,
+                                                    node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionActive(*node);
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  EXPECT_TRUE(NavigationRuntimeEpochResetTestPeer::missionGoalMatches(*node, 0U, 1U));
+  std::this_thread::sleep_for(2ms);
+  NavigationRuntimeEpochResetTestPeer::missionState(*node, 0.0,
+                                                    node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  EXPECT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 1U);
+  EXPECT_TRUE(NavigationRuntimeEpochResetTestPeer::missionGoalMatches(*node, 1U, 2U));
+  navigation_contracts::msg::NavigationCommand issued;
+  issued.header.frame_id = "lio_odom";
+  issued.header.stamp = node->now();
+  issued.valid_until = rclcpp::Time(node->now().nanoseconds() + 100'000'000, RCL_SYSTEM_TIME);
+  issued.execution_authorization = navigation_contracts::msg::NavigationCommand::
+      EXECUTION_AUTHORIZATION_GRANTED;
+  issued.mission_id = "external_mode_open_route";
+  issued.localization_epoch = 1U;
+  issued.goal_epoch = 2U;
+  issued.waypoint_index = 1U;
+  issued.request_id = 2U;
+  issued.bundle_generation = 4U;
+  issued.sample_id = 11U;
+  issued.role = navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+  issued.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
+  issued.certified_main_continuation = true;
+  issued.continuation_boundary_stamp_ns =
+      static_cast<std::uint64_t>(node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionCommandIssued(*node, issued);
+  std::this_thread::sleep_for(2ms);
+  NavigationRuntimeEpochResetTestPeer::missionState(*node, 3.0,
+                                                    node->now().nanoseconds());
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  EXPECT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 1U);
+  navigation_contracts::msg::NavigationCommandAdmission admitted;
+  admitted.header.frame_id = "lio_odom";
+  admitted.header.stamp = node->now();
+  admitted.mode_activation_id = 1U;
+  admitted.mission_id = issued.mission_id;
+  admitted.localization_epoch = issued.localization_epoch;
+  admitted.goal_epoch = issued.goal_epoch;
+  admitted.waypoint_index = issued.waypoint_index;
+  admitted.request_id = issued.request_id;
+  admitted.bundle_generation = issued.bundle_generation;
+  admitted.sample_id = issued.sample_id;
+  NavigationRuntimeEpochResetTestPeer::missionCommandAdmitted(*node, admitted);
+  EXPECT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).waypoint_index, 2U);
+  const auto request_before_takeover =
+      NavigationRuntimeEpochResetTestPeer::missionGate(*node).request_id;
+  NavigationRuntimeEpochResetTestPeer::missionPaused(*node);
+  NavigationRuntimeEpochResetTestPeer::missionActive(*node);  // Delayed old heartbeat.
+  NavigationRuntimeEpochResetTestPeer::missionTick(*node);
+  EXPECT_EQ(NavigationRuntimeEpochResetTestPeer::missionGate(*node).request_id,
+            request_before_takeover);
+  node.reset();
+  context->shutdown("mission cut component test complete");
+}
+
 TEST(NavigationRuntimeEpochReset, TerminalDuringDrainCannotBeResurrectedByNewWorld) {
   ASSERT_EXIT(exerciseEpochDrainWithConcurrentGoal(true), testing::ExitedWithCode(0), "");
 }
@@ -572,8 +711,6 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
       navigation_contracts::msg::RegisteredScan>(prefix + "/observation", sensor_qos);
   auto odometry_publisher = driver->create_publisher<
       navigation_contracts::msg::PropagatedOdometry>(prefix + "/propagated", sensor_qos);
-  auto goal_publisher = driver->create_publisher<navigation_contracts::msg::NavigationGoal>(
-      prefix + "/goal", goal_qos);
   std::mutex samples_mutex;
   std::condition_variable samples_condition;
   std::vector<navigation_contracts::msg::NavigationCommand> commands;
@@ -635,18 +772,16 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
   const auto subscriptions_deadline = std::chrono::steady_clock::now() + 5s;
   while ((observation_publisher->get_subscription_count() == 0U ||
           odometry_publisher->get_subscription_count() == 0U ||
-          goal_publisher->get_subscription_count() == 0U ||
           driver->count_publishers(prefix + "/command") == 0U) &&
          std::chrono::steady_clock::now() < subscriptions_deadline) {
     std::this_thread::sleep_for(10ms);
   }
   ASSERT_GT(observation_publisher->get_subscription_count(), 0U);
   ASSERT_GT(odometry_publisher->get_subscription_count(), 0U);
-  ASSERT_GT(goal_publisher->get_subscription_count(), 0U);
   ASSERT_GT(driver->count_publishers(prefix + "/command"), 0U);
 
   const auto initial_stamp = driver->now();
-  goal_publisher->publish(makeHandoverGoal(
+  NavigationRuntimeEpochResetTestPeer::internalGoal(*navigation, makeHandoverGoal(
       initial_stamp, 10U, 1U, 1U,
       navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP));
   std::atomic_bool stop_publishing{false};
@@ -746,7 +881,7 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
   // desired identity. The successor still starts from the same measured state.
   std::this_thread::sleep_for(500ms);
   ASSERT_FALSE(successor_published.exchange(true, std::memory_order_acq_rel));
-  goal_publisher->publish(makeHandoverGoal(
+  NavigationRuntimeEpochResetTestPeer::internalGoal(*navigation, makeHandoverGoal(
       driver->now(), 11U, 1U, 2U,
       navigation_contracts::msg::NavigationGoal::BEHAVIOR_STOP));
   bool successor_command_seen = false;

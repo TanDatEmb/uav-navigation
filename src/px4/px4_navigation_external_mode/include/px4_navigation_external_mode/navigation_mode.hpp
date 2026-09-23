@@ -12,12 +12,13 @@
 #include <string_view>
 #include <thread>
 
-#include <navigation_contracts/msg/navigation_goal.hpp>
+#include <navigation_contracts/msg/navigation_mission_progress.hpp>
 #include <tracking_experiment.hpp>
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
 #include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
+#include <navigation_contracts/msg/navigation_command_admission.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <px4_ros2/components/mode.hpp>
@@ -28,12 +29,9 @@
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/bool.hpp>
 
 #include <Eigen/Core>
 
-#include "px4_navigation_external_mode/mission.hpp"
-#include "px4_navigation_external_mode/mission_controller.hpp"
 #include "px4_navigation_external_mode/px4_input_trace.hpp"
 #include "px4_navigation_external_mode/px4_tracking_adapter.hpp"
 #include <navigation_common/bounded_spsc_queue.hpp>
@@ -84,8 +82,9 @@ class NavigationMode final : public px4_ros2::ModeBase {
   void tryAlignPx4LocalFrameLocked();
   void onEstimatorHealth(
       const navigation_contracts::msg::EstimatorHealth::ConstSharedPtr& message);
-  void updateMission();
-  void handleMissionEvent(const MissionControllerEvent& event, double now_s);
+  void updateBoundary();
+  void onMissionProgress(
+      const navigation_contracts::msg::NavigationMissionProgress::ConstSharedPtr& message);
   void clearPlannerRecoveryEpisodeLocked() noexcept;
   void rememberPlannerRecoveryEpisodeLocked(
       const navigation_contracts::msg::NavigationCommand& command);
@@ -113,8 +112,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
       const VelocityOnlySnapshot& snapshot, const rclcpp::Time& now);
   void setVelocityOnlyLastReason(std::string_view reason);
   void requestVelocityOnlyHold(const char* reason);
-  void publishStatus(std::uint8_t state, std::uint8_t reason,
-                     const MissionControllerEvent* event = nullptr);
+  void publishStatus(std::uint8_t state, std::uint8_t reason);
 
   std::shared_ptr<px4_ros2::TrajectorySetpointType> trajectory_setpoint_;
   rclcpp::Subscription<navigation_contracts::msg::PropagatedOdometry>::SharedPtr
@@ -125,18 +123,19 @@ class NavigationMode final : public px4_ros2::ModeBase {
       estimator_health_subscription_;
   rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
       px4_local_position_subscription_;
-  rclcpp::Publisher<navigation_contracts::msg::NavigationGoal>::SharedPtr goal_publisher_;
+  rclcpp::Subscription<navigation_contracts::msg::NavigationMissionProgress>::SharedPtr
+      mission_progress_subscription_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationModeStatus>::SharedPtr
       status_publisher_;
+  rclcpp::Publisher<navigation_contracts::msg::NavigationCommandAdmission>::SharedPtr
+      command_admission_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
       px4_input_trace_publisher_;
-  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr mission_complete_publisher_;
-  rclcpp::TimerBase::SharedPtr mission_timer_;
+  rclcpp::TimerBase::SharedPtr boundary_timer_;
   std::mutex trajectory_mutex_;
   rclcpp::Time activation_time_;
   rclcpp::Time last_setpoint_time_;
   std::string navigation_command_topic_;
-  std::string goal_topic_;
   std::string state_topic_;
   std::string planning_frame_;
   navigation_contracts::TrackingExperimentPolicy tracking_experiment_;
@@ -194,12 +193,13 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::int64_t last_health_correction_stamp_ns_{0};
   std::int64_t last_health_propagated_stamp_ns_{0};
   std::int64_t last_health_receive_steady_ns_{0};
-  std::optional<Mission> mission_;
-  std::unique_ptr<MissionController> mission_controller_;
   std::function<void()> px4_hold_handover_;
   bool failure_reported_{false};
   bool mode_active_{false};
-  bool mission_terminal_{false};
+  // Immutable Core-owned completion receipt used only for PX4 mode handover.
+  std::optional<navigation_contracts::msg::NavigationMissionProgress>
+      mission_completion_receipt_;
+  std::uint64_t mode_activation_id_{0U};
   bool handover_requested_{false};
   bool planner_recovery_pending_{false};
   std::int64_t planner_recovery_deadline_ns_{0};
@@ -207,18 +207,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint32_t planner_recovery_waypoint_index_{0U};
   std::uint64_t planner_recovery_request_id_{0U};
   std::uint64_t planner_recovery_bundle_generation_{0U};
-  // Exact previous BACKUP identity allowed to refresh the command lease while
-  // MissionController has advanced a pass-through checkpoint but runtime still
-  // owns the certified moving suffix. Cleared on the first current-goal
-  // command, lifecycle reset, or safety handover.
-  bool safety_suffix_handoff_pending_{false};
-  std::uint32_t safety_suffix_waypoint_index_{0U};
-  std::uint64_t safety_suffix_request_id_{0U};
-  std::uint32_t last_completed_waypoint_index_{0U};
-  std::uint64_t last_completed_request_id_{0U};
   std::optional<Eigen::Vector3d> completion_position_;
   std::optional<Eigen::Vector3d> safety_hold_position_;
-  bool mission_complete_published_{false};
   std::uint8_t last_status_state_{navigation_contracts::msg::NavigationModeStatus::PAUSED};
   std::uint64_t odometry_callback_count_{0U};
   std::uint64_t trajectory_received_count_{0U};
@@ -230,8 +220,9 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::int64_t last_odometry_receive_ns_{0};
   std::int64_t last_odometry_receive_steady_ns_{0};
   Px4InputStateTrace odometry_input_trace_;
-  std::int64_t last_goal_publish_ns_{0};
   std::int64_t last_command_receive_ns_{0};
+  // PX4-local start of the airborne first-command acquisition lease.
+  std::int64_t airborne_start_ns_{0};
   std::int64_t maximum_odometry_callback_gap_us_{0};
   std::int64_t last_setpoint_update_ns_{0};
   std::int64_t maximum_setpoint_callback_gap_us_{0};

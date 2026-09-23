@@ -37,9 +37,12 @@ find_package(navigation_world_model REQUIRED)
 find_package(navigation_planning_backend REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 add_library(navigation_runtime_core
   src/mission_dynamics.cpp
+  src/mission_goal.cpp
+  src/mission_progress.cpp
   src/mapping_fail_stop.cpp
   src/navigation_runtime_node.cpp
 )
@@ -67,6 +70,7 @@ ament_target_dependencies(navigation_runtime_core PUBLIC
   navigation_mission
   rclcpp
   sensor_msgs
+  std_msgs
 )
 
 add_executable(navigation_runtime_node src/navigation_runtime_main.cpp)
@@ -105,6 +109,7 @@ ament_export_dependencies(
   navigation_world_model
   rclcpp
   sensor_msgs
+  std_msgs
   navigation_planning_backend
 )
 ament_export_targets(navigation_runtimeTargets HAS_LIBRARY_TARGET)
@@ -112,6 +117,10 @@ ament_export_include_directories(include)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_mission_progress test/test_mission_progress.cpp)
+  target_include_directories(test_mission_progress PRIVATE include)
+  target_link_libraries(test_mission_progress navigation_runtime_core)
+  ament_target_dependencies(test_mission_progress navigation_mission)
   ament_add_gtest(test_world_snapshot_store test/test_world_snapshot_store.cpp)
   target_include_directories(test_world_snapshot_store PRIVATE include)
   target_link_libraries(test_world_snapshot_store

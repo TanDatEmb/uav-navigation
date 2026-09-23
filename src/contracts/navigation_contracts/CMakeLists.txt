@@ -19,10 +19,12 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/NavigationGoal.msg"
   "msg/RouteSnapshot.msg"
   "msg/NavigationModeStatus.msg"
+  "msg/NavigationMissionProgress.msg"
   "msg/RegisteredScan.msg"
   "msg/PropagatedOdometry.msg"
   "msg/EstimatorHealth.msg"
   "msg/NavigationCommand.msg"
+  "msg/NavigationCommandAdmission.msg"
   DEPENDENCIES builtin_interfaces nav_msgs std_msgs geometry_msgs sensor_msgs)
 
 install(DIRECTORY include/ DESTINATION include)

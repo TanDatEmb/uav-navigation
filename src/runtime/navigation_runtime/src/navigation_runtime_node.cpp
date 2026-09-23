@@ -1,5 +1,6 @@
 #include "navigation_runtime/navigation_runtime_node.hpp"
 #include "navigation_runtime/mission_dynamics.hpp"
+#include "navigation_runtime/mission_goal.hpp"
 #include "navigation_runtime/mapping_fail_stop.hpp"
 #include "navigation_runtime/commit_trace.hpp"
 #include "navigation_runtime/localization_epoch_reset.hpp"
@@ -176,7 +177,7 @@ const geometry_msgs::msg::Point& plannerTarget(
 
 double goalCompletionTolerance(
     const navigation_contracts::msg::NavigationGoal& goal) {
-  // MissionController owns the waypoint acceptance contract.  The planner's
+  // Core MissionProgress owns waypoint acceptance. The planner's
   // smaller geometric connection tolerance is intentionally not reused for
   // the runtime terminal decision: a certified local endpoint inside the
   // requested acceptance ball is a valid waypoint hold, including a safety
@@ -766,7 +767,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "/navigation/diagnostics", rclcpp::QoS(rclcpp::KeepLast(5)).reliable());
   std::optional<navigation_planning::DynamicLimits> mission_limits;
   if (!mission_file.empty()) {
-    mission_limits = loadMissionDynamicLimits(mission_file, planning_frame_);
+    auto definition = navigation_mission::loadMission(mission_file, planning_frame_);
+    mission_limits.emplace();
+    mission_limits->intent.requested_cruise_speed_mps =
+        definition.planning.requested_cruise_speed_mps;
+    mission_limits->unknown_space_policy = definition.planning.unknown_policy;
+    mission_progress_.emplace(std::move(definition));
     mission_dynamic_limits_ = *mission_limits;
     RCLCPP_INFO(
         get_logger(),
@@ -1612,6 +1618,17 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           std::bind(&NavigationRuntimeNode::onModeStatus, this, std::placeholders::_1));
   command_publisher_ = create_publisher<navigation_contracts::msg::NavigationCommand>(
       command_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  if (mission_progress_) {
+    command_admission_subscription_ = create_subscription<
+        navigation_contracts::msg::NavigationCommandAdmission>(
+        "/navigation/command_admission", rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
+        std::bind(&NavigationRuntimeNode::onCommandAdmission, this, std::placeholders::_1));
+    mission_progress_publisher_ = create_publisher<
+        navigation_contracts::msg::NavigationMissionProgress>(
+        "/navigation/mission_progress", rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
+    mission_complete_publisher_ = create_publisher<std_msgs::msg::Bool>(
+        "/navigation/mission_complete", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  }
   end_to_end_samples_ms_.reserve(256);
 
   // The timer is a non-blocking scheduler. Mutable solve execution is owned by
@@ -1627,6 +1644,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   command_timer_ = create_wall_timer(
       *command_period, std::bind(&NavigationRuntimeNode::publishCommand, this),
       command_callback_group_);
+  if (mission_progress_) {
+    mission_timer_ = create_wall_timer(
+        std::chrono::milliseconds{50},
+        std::bind(&NavigationRuntimeNode::tickMissionProgress, this),
+        planning_callback_group_);
+  }
   RCLCPP_INFO(get_logger(),
               "planner backend runtime ready: registered_scan=%s propagated_odom=%s goal=%s "
               "output=%s planner=%.1fHz command=%.1fHz snapshot=%.2fs "
@@ -1647,6 +1670,7 @@ NavigationRuntimeNode::~NavigationRuntimeNode() {
   accepting_observations_.store(false);
   if (planning_timer_) planning_timer_->cancel();
   if (command_timer_) command_timer_->cancel();
+  if (mission_timer_) mission_timer_->cancel();
   if (planning_worker_) planning_worker_->shutdown();
   if (heading_rebind_worker_) heading_rebind_worker_->shutdown();
   planner_ = nullptr;
@@ -2037,6 +2061,11 @@ void NavigationRuntimeNode::onPropagatedOdometry(
 
 void NavigationRuntimeNode::onGoal(
     const navigation_contracts::msg::NavigationGoal::ConstSharedPtr& message) {
+  if (mission_progress_) {
+    RCLCPP_ERROR(get_logger(),
+                 "external NavigationGoal rejected: Core owns mission goal progression");
+    return;
+  }
   if (!message) {
     RCLCPP_ERROR(get_logger(), "rejected null navigation goal");
     return;
@@ -2286,6 +2315,36 @@ void NavigationRuntimeNode::onModeStatus(
     RCLCPP_ERROR(get_logger(), "rejected null navigation mode status");
     return;
   }
+  if (mission_progress_) {
+    const auto source_ns = navigation_common::rosTimeToNanoseconds(
+        message->header.stamp).value_or(0);
+    std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+    std::lock_guard<std::mutex> input_lock(input_mutex_);
+    const auto current_activation = mission_activation_applied_.value_or(
+        mode_mission_boundary_ ? mode_mission_boundary_->activation_id : 0U);
+    if ((message->activation_id > 0U &&
+         message->activation_id < current_activation) ||
+        (mode_mission_boundary_ &&
+         message->activation_id == mode_mission_boundary_->activation_id &&
+         source_ns > 0 && source_ns < mode_mission_boundary_->source_stamp_ns)) {
+      return;
+    }
+    if (message->state == navigation_contracts::msg::NavigationModeStatus::ACTIVE &&
+        message->activation_id > last_terminal_mode_activation_id_ && source_ns > 0) {
+      mode_mission_boundary_ = ModeMissionBoundary{
+          message->activation_id, source_ns,
+          navigation_common::steadyClockNowNanoseconds(), message->airborne};
+    } else if (message->state != navigation_contracts::msg::NavigationModeStatus::BRAKING) {
+      if (message->state != navigation_contracts::msg::NavigationModeStatus::ACTIVE) {
+        last_terminal_mode_activation_id_ = std::max(
+            last_terminal_mode_activation_id_, message->activation_id);
+      }
+      mode_mission_boundary_.reset();
+      mission_activation_applied_.reset();
+      issued_mission_commands_.clear();
+      mission_progress_->deactivate();
+    }
+  }
   if (message->state == navigation_contracts::msg::NavigationModeStatus::ACTIVE ||
       message->state == navigation_contracts::msg::NavigationModeStatus::BRAKING) {
     return;
@@ -2297,9 +2356,10 @@ void NavigationRuntimeNode::onModeStatus(
   const bool matches_pending = pending_goal_owner_.goalMatchesStatus(
       message->mission_id, message->waypoint_index, message->request_id);
   const bool matches_active = active_goal_.has_value() &&
-      active_goal_->mission_id == message->mission_id &&
-      active_goal_->waypoint_index == message->waypoint_index &&
-      active_goal_->request_id == message->request_id;
+      ((mission_progress_ && message->mission_id.empty()) ||
+       (active_goal_->mission_id == message->mission_id &&
+        active_goal_->waypoint_index == message->waypoint_index &&
+        active_goal_->request_id == message->request_id));
   const bool safety_suffix_active =
       execution_episode_.snapshot().safety_suffix_active;
   if (pendingGoalTerminalStatusMayClear(matches_pending, safety_suffix_active)) {
@@ -2414,6 +2474,203 @@ void NavigationRuntimeNode::onModeStatus(
   trajectory_completion_witness_.reset();
   trajectory_reaches_goal_.store(false);
   terminal_bundle_generation_.store(0U);
+}
+
+void NavigationRuntimeNode::applyMissionDecisionLocked(
+    const MissionProgressDecision& decision) {
+  if (!mission_progress_ || decision.kind == MissionProgressDecision::Kind::None) return;
+  const auto stamp = navigation_common::nanosecondsToRosTime(
+      now().nanoseconds()).value_or(builtin_interfaces::msg::Time{});
+  navigation_contracts::msg::NavigationMissionProgress receipt;
+  receipt.header.stamp = stamp;
+  receipt.header.frame_id = planning_frame_;
+  receipt.mission_id = mission_progress_->routeIdentity().mission_id;
+  receipt.route_revision = mission_progress_->routeIdentity().revision;
+  receipt.localization_epoch = mission_progress_->routeIdentity().localization_epoch;
+  receipt.mode_activation_id = mission_activation_applied_.value_or(0U);
+  receipt.waypoint_index = decision.gate.waypoint_index;
+  receipt.request_id = decision.gate.request_id;
+  receipt.waypoint_accepted = decision.accepted.has_value();
+  receipt.accepted_waypoint_index = decision.accepted
+      ? decision.accepted->waypoint_index : 0U;
+  receipt.acceptance_position_error_m = decision.acceptance_error_m;
+  receipt.acceptance_speed_mps = decision.acceptance_speed_mps;
+  if (decision.kind == MissionProgressDecision::Kind::Goal) {
+    const auto goal = makeMissionGoal(*mission_progress_, stamp);
+    if (!goal) {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      command_bundle_store_.invalidate();
+      failClosedLocked();
+      RCLCPP_ERROR(get_logger(), "Core mission goal has invalid route snapshot");
+      return;
+    }
+    applyValidatedGoalLocked(
+        std::make_shared<const navigation_contracts::msg::NavigationGoal>(*goal));
+    const bool active_matches = active_goal_ &&
+        active_goal_->mission_id == goal->mission_id &&
+        active_goal_->waypoint_index == goal->waypoint_index &&
+        active_goal_->request_id == goal->request_id;
+    const bool pending_matches = pending_goal_owner_.goalMatchesStatus(
+        goal->mission_id, goal->waypoint_index, goal->request_id);
+    if (!active_matches && !pending_matches) {
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      command_bundle_store_.invalidate();
+      failClosedLocked();
+      RCLCPP_ERROR(get_logger(), "Core mission successor intent was not admitted");
+      return;
+    }
+    receipt.event = navigation_contracts::msg::NavigationMissionProgress::GOAL;
+  } else {
+    receipt.event = navigation_contracts::msg::NavigationMissionProgress::COMPLETE;
+    std_msgs::msg::Bool complete;
+    complete.data = true;
+    mission_complete_publisher_->publish(complete);
+  }
+  mission_progress_publisher_->publish(receipt);
+}
+
+void NavigationRuntimeNode::tickMissionProgress() {
+  if (!mission_progress_) return;
+  const auto execution = execution_state_store_.load();
+  const auto now_ros_ns = now().nanoseconds();
+  const auto now_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> input_lock(input_mutex_);
+  const auto epoch = active_localization_epoch_.load(std::memory_order_acquire);
+  if (epoch == 0U) return;
+  if (mission_progress_->routeIdentity().localization_epoch != epoch) {
+    mission_progress_->resetIdentity(1U, epoch);
+    mission_activation_applied_.reset();
+    mode_mission_boundary_.reset();
+    issued_mission_commands_.clear();
+    return;
+  }
+  if (!mode_mission_boundary_ || !mode_mission_boundary_->airborne ||
+      mode_mission_boundary_->activation_id == 0U ||
+      mode_mission_boundary_->source_stamp_ns > now_ros_ns ||
+      now_ros_ns - mode_mission_boundary_->source_stamp_ns > 200'000'000 ||
+      now_steady_ns < mode_mission_boundary_->receive_steady_ns ||
+      now_steady_ns - mode_mission_boundary_->receive_steady_ns > 200'000'000 ||
+      !execution || !execution->state.finite() ||
+      execution->state.localization_epoch != epoch ||
+      execution->state.world_frame_id != planning_frame_) {
+    return;
+  }
+  const auto freshness = navigation_contracts::evaluateExecutionStateFreshness(
+      now_ros_ns, execution->state.source_stamp_ns, now_steady_ns,
+      execution->state.receive_stamp_ns, data_freshness_window_s_);
+  if (!freshness.valid()) return;
+  const MissionMeasuredSample measured{
+      execution->state.position_world, execution->state.velocity_world,
+      execution->state.source_stamp_ns, execution->ingress_sequence, epoch};
+  if (mission_activation_applied_ != mode_mission_boundary_->activation_id) {
+    mission_progress_->deactivate();
+    issued_mission_commands_.clear();
+    (void)mission_progress_->observeMeasured(measured, now_ros_ns);
+    mission_activation_applied_ = mode_mission_boundary_->activation_id;
+    std_msgs::msg::Bool complete;
+    complete.data = false;
+    mission_complete_publisher_->publish(complete);
+    applyMissionDecisionLocked(mission_progress_->activate());
+    return;
+  }
+  applyMissionDecisionLocked(mission_progress_->observeMeasured(measured, now_ros_ns));
+}
+
+void NavigationRuntimeNode::rememberMissionCommandIssued(
+    const navigation_contracts::msg::NavigationCommand& command) {
+  if (!mission_progress_ ||
+      command.execution_authorization != navigation_contracts::msg::NavigationCommand::
+          EXECUTION_AUTHORIZATION_GRANTED ||
+      !navigation_contracts::commandValidAt(command, now().nanoseconds())) {
+    return;
+  }
+  if (!mission_activation_applied_ ||
+      command.localization_epoch != mission_progress_->routeIdentity().localization_epoch ||
+      command.mission_id != mission_progress_->routeIdentity().mission_id ||
+      command.waypoint_index != mission_progress_->currentGate().waypoint_index ||
+      command.request_id != mission_progress_->currentGate().request_id) {
+    return;
+  }
+  const auto valid_until = navigation_common::rosTimeToNanoseconds(command.valid_until);
+  if (!valid_until) return;
+  while (!issued_mission_commands_.empty()) {
+    const auto old_expiry = navigation_common::rosTimeToNanoseconds(
+        issued_mission_commands_.front().valid_until).value_or(0);
+    if (old_expiry >= now().nanoseconds() && issued_mission_commands_.size() < 16U) break;
+    issued_mission_commands_.pop_front();
+  }
+  issued_mission_commands_.push_back(command);
+}
+
+void NavigationRuntimeNode::onCommandAdmission(
+    const navigation_contracts::msg::NavigationCommandAdmission::ConstSharedPtr& message) {
+  if (!mission_progress_ || !message) return;
+  std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+  std::lock_guard<std::mutex> input_lock(input_mutex_);
+  if (!mission_activation_applied_ ||
+      message->mode_activation_id != *mission_activation_applied_ ||
+      message->header.frame_id != planning_frame_ ||
+      message->localization_epoch != mission_progress_->routeIdentity().localization_epoch ||
+      message->mission_id != mission_progress_->routeIdentity().mission_id ||
+      message->waypoint_index != mission_progress_->currentGate().waypoint_index ||
+      message->request_id != mission_progress_->currentGate().request_id) return;
+  const auto admission_ns = navigation_common::rosTimeToNanoseconds(
+      message->header.stamp).value_or(0);
+  const auto now_ns = now().nanoseconds();
+  if (admission_ns <= 0 || admission_ns > now_ns) return;
+  const auto it = std::find_if(issued_mission_commands_.begin(),
+                               issued_mission_commands_.end(),
+                               [&](const auto& command) {
+    return command.mission_id == message->mission_id &&
+        command.localization_epoch == message->localization_epoch &&
+        command.goal_epoch == message->goal_epoch &&
+        command.waypoint_index == message->waypoint_index &&
+        command.request_id == message->request_id &&
+        command.bundle_generation == message->bundle_generation &&
+        command.sample_id == message->sample_id;
+  });
+  if (it == issued_mission_commands_.end()) return;
+  const auto command = *it;
+  issued_mission_commands_.erase(it);
+  const auto command_stamp = navigation_common::rosTimeToNanoseconds(
+      command.header.stamp).value_or(0);
+  if (admission_ns < command_stamp ||
+      !navigation_contracts::commandValidAt(command, now_ns)) return;
+  std::optional<MissionContinuationWitness::Kind> kind;
+  if (command.certified_main_continuation &&
+      navigation_contracts::certifiedMainContinuationFieldsValid(command)) {
+    kind = MissionContinuationWitness::Kind::Main;
+  } else if (command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
+             command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
+    kind = MissionContinuationWitness::Kind::SafetySuffixStop;
+  } else if (command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
+             command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN) {
+    kind = MissionContinuationWitness::Kind::TerminalHold;
+  }
+  if (!kind) return;
+  if (*kind != MissionContinuationWitness::Kind::Main) {
+    const auto gate = mission_progress_->currentGate();
+    if (gate.waypoint_index >= mission_progress_->mission().waypoints.size()) return;
+    const auto& waypoint = mission_progress_->mission().waypoints[gate.waypoint_index];
+    const Eigen::Vector3d endpoint{
+        command.position.x, command.position.y, command.position.z};
+    if (!endpoint.allFinite() ||
+        (endpoint - waypoint.position_enu).norm() > waypoint.acceptance_radius_m) return;
+  }
+  const auto valid_until = navigation_common::rosTimeToNanoseconds(command.valid_until);
+  if (!valid_until) return;
+  const MissionContinuationWitness witness{
+      mission_progress_->routeIdentity(), mission_progress_->currentGate(), *kind,
+      command.bundle_generation,
+      command.certified_main_continuation
+          ? static_cast<std::int64_t>(command.continuation_boundary_stamp_ns)
+          : navigation_common::rosTimeToNanoseconds(command.header.stamp).value_or(0),
+      *valid_until};
+  applyMissionDecisionLocked(
+      mission_progress_->observeContinuation(witness, now_ns));
 }
 
 navigation_execution::CommitDecision NavigationRuntimeNode::admitImmediateCandidate(
@@ -8680,6 +8937,7 @@ void NavigationRuntimeNode::publishCommand() {
                   final_episode.safety_suffix_active;
               command.execution_recovery_state = static_cast<std::uint8_t>(
                   final_episode.recovery_state);
+              rememberMissionCommandIssued(command);
               publish_ros_command();
               return true;
             });
@@ -8859,6 +9117,7 @@ void NavigationRuntimeNode::publishCommand() {
       }
       return;
     }
+    // A local admission receipt may now consume the exact issued command.
   } else {
     command.execution_authorization = navigation_contracts::msg::NavigationCommand::
         EXECUTION_AUTHORIZATION_REJECTED;
