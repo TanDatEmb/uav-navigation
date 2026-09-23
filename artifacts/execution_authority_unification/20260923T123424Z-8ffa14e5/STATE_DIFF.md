@@ -4,7 +4,8 @@ Counts below name persisted semantic fields, not stack snapshots, telemetry, or 
 
 | | Before | After |
 |---|---:|---:|
-| Execution persistent fields | 24 | 16 |
+| Authoritative execution persistent fields | 24 | 16 |
+| Execution-owner diagnostic fields | 0 | 1 |
 | Execution-internal mutexes | 2 | 1 |
 | Mutable active-identity representations | 4 | 1 |
 | RuntimeNode active-identity mirrors | 2 | 0 |
@@ -19,6 +20,8 @@ Persistent state removed: Episode's independent state/mutex, RuntimeNode active 
 Persistent state merged: active and staged full goal payloads, bundle pointers, lifecycle, world identity and version fences reside under one owner mutex. WorldModel, MissionProgress, adapter receive lease, and PX4 mode protocol remain separate.
 
 Persistent state derived: active goal epoch/request/generation from the active bundle; suspension generation from `{exposure=Suspended, active bundle}`; safety ownership from typed lifecycle; legacy `execution_episode_*` diagnostics from the owner snapshot.
+
+The one added diagnostic atomic records the most recent `publishIfCurrent` mutex wait in microseconds. Its sole writer is the publication attempt; it survives until the next diagnostic tick, has no authority or safety-policy reader, and deleting it would only lose lock-wait measurement. It is excluded from `D_f` and `W_t` authority counts. No product threshold depends on it.
 
 Semantic Duplication Factor `D_f` counts independently mutable *authority representations*, excluding read-only observations. Active execution identity: `4 -> 1`; active generation: `2 -> 1`; execution exposure: `1 -> 1` (typed in the owner); execution recovery: `1 -> 1` (moved, not deleted). Desired MissionProgress and PX4 adapter each remain independent authorities for their own domains.
 
