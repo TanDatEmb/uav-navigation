@@ -1,5 +1,6 @@
-# Experiment-only typed witness. No field has product authority. Numeric zero
-# means absent unless its corresponding bit in valid_fields is set.
+# Experiment-only typed witness. No field has product authority. Each event
+# phase defines field presence; numeric zero can be meaningful. valid_fields
+# is reserved for a future schema revision and is not interpreted here.
 uint8 MISSION_GATE=1
 uint8 COMMAND_PUBLISH=2
 uint8 COMMAND_RECEIVE=3
