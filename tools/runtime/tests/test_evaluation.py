@@ -942,6 +942,13 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(reduced["status"], "INCOMPLETE")
         self.assertTrue(reduced["unresolved"])
 
+    def test_request_only_missing_bundle_is_not_a_conflicting_bundle(self):
+        reduced = reduce_lifecycle(self._lifecycle()[:1])
+        self.assertIn("BUNDLE_IDENTITY_MISSING", reduced["reasons"])
+        self.assertNotIn("BUNDLE_IDENTITY_CONFLICT", reduced["reasons"])
+        self.assertEqual(reduced["transactions"][0]["evidence_outcome"],
+                         "MISSING_EVIDENCE")
+
     def test_multiple_adapter_updates_keep_each_trace_sequence(self):
         events = self._lifecycle(sample=11)
         second = dict(next(item for item in events if item["phase"] == "publish"), sample_id=12, adapter_trace_sequence=22)

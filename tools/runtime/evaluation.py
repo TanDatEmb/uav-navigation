@@ -520,7 +520,9 @@ def reduce_lifecycle(
             for item in transaction["events_all"].get(phase, [])
             if _present_identity(item.get("bundle_generation"))
         }
-        if len(bundle_generations) != 1:
+        if not bundle_generations:
+            transaction["reasons"].append("BUNDLE_IDENTITY_MISSING")
+        elif len(bundle_generations) > 1:
             transaction["reasons"].append("BUNDLE_IDENTITY_CONFLICT")
         if publish is not None:
             if not _present_identity(publish.get("sample_id")):
