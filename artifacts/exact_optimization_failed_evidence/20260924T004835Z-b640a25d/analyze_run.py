@@ -70,7 +70,9 @@ def analyze(session: Path, injected: bool):
                 retained.append({"observer_ns":t,"fields":fields(st)})
     armed=[e for e in events if e["event"]=="FAULT_INJECTION_ARMED"]
     applied=[e for e in events if e["event"]=="FAULT_INJECTION_APPLIED"]
-    injection_state = ("INJECTION_NOT_ARMED" if not armed else
+    rejected=[e for e in events if e["event"]=="FAULT_INJECTION_REJECTED"]
+    injection_state = ("INJECTION_REJECTED" if rejected and not armed else
+                       "INJECTION_NOT_ARMED" if not armed else
                        "INJECTION_ARMED" if not applied else
                        "INJECTION_APPLIED" if len(applied)==1 else
                        "INJECTION_APPLIED_MULTIPLE_TIMES")
@@ -148,7 +150,8 @@ def analyze(session: Path, injected: bool):
         "checks":checks,"events":events,"trace":trace[-1] if trace else None,
         "retained_decision":decision[-1] if decision else None,
         "injection_state":injection_state,
-        "runs_armed":len(armed),"runs_injected":len(applied),"exact_events":sum(
+        "runs_rejected":len(rejected),"runs_armed":len(armed),
+        "runs_injected":len(applied),"exact_events":sum(
             e["fields"].get("injected_planner_status")=="6" for e in applied),
         "predecessor_admissions_after_fault":len(predecessor_admitted),
         "fault_to_successor_admission_ms":(next_successor-at)/1e6 if next_successor and at else None,

@@ -5629,24 +5629,39 @@ void NavigationRuntimeNode::runCycle(
             injection_now_ns, current_lease->state.source_stamp_ns,
             data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID &&
         current_lease->state.finite();
+    bool desired_current = false;
+    bool snapshot_current = false;
+    bool authority_identity_current = false;
+    bool exposure_allowed = false;
+    GoalTransitionKind injection_transition = GoalTransitionKind::kSteady;
+    std::uint64_t current_authority_version = 0U;
     bool eligible = false;
     {
       std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
       std::lock_guard<std::mutex> input_lock(input_mutex_);
       std::lock_guard<std::mutex> command_lock(
           command_execution_lease_failure_latch_.transitionMutex());
+      desired_current = desired_intent_.matches(*goal, goal_epoch) &&
+          active_localization_epoch_.load(std::memory_order_acquire) ==
+              localization_epoch_at_solve;
+      snapshot_current = execution_authority_.isCurrentSnapshot(execution_at_solve);
+      authority_identity_current =
+          execution_authority_.matchesAuthorityIdentity(execution_at_solve);
+      current_authority_version = execution_authority_.snapshot().version;
+      exposure_allowed = command_execution_lease_failure_latch_.allowsCommandExposure();
+      injection_transition = classifyGoalTransition(
+          desired_intent_.goal(), executingGoalSnapshot());
       eligible = exactOptimizationFailureHotHandoffEligible(
           exact_optimization_failure_injection_.target(), planning_request.key,
-          *goal, execution_at_solve,
-          classifyGoalTransition(desired_intent_.goal(), executingGoalSnapshot()),
-          desired_intent_.matches(*goal, goal_epoch) &&
-              active_localization_epoch_.load(std::memory_order_acquire) ==
-                  localization_epoch_at_solve,
-          execution_authority_.isCurrentSnapshot(execution_at_solve) &&
-              command_execution_lease_failure_latch_.allowsCommandExposure(),
+          *goal, execution_at_solve, injection_transition, desired_current,
+          snapshot_current && exposure_allowed,
           current_state_fresh, current_world_fresh, injection_now_ns);
     }
-    if (exact_optimization_failure_injection_.consumeIfEligible(eligible)) {
+    const bool semantic_target =
+        goal->request_id == exact_optimization_failure_injection_.target().successor_request &&
+        execution_at_solve.activeRequestId() ==
+            exact_optimization_failure_injection_.target().predecessor_request;
+    if (semantic_target) {
       const auto publish_injection_event = [&](const std::string& event_name) {
         diagnostic_msgs::msg::DiagnosticArray event;
         event.header.stamp = now();
@@ -5668,6 +5683,21 @@ void NavigationRuntimeNode::runCycle(
         field("active_generation", execution_at_solve.activeGeneration());
         field("active_lineage", execution_at_solve.active_lineage);
         field("authority_version", execution_at_solve.version);
+        field("current_authority_version", current_authority_version);
+        field("desired_current", desired_current ? 1 : 0);
+        field("snapshot_current", snapshot_current ? 1 : 0);
+        field("authority_identity_current", authority_identity_current ? 1 : 0);
+        field("exposure_allowed", exposure_allowed ? 1 : 0);
+        field("state_fresh", current_state_fresh ? 1 : 0);
+        field("world_fresh", current_world_fresh ? 1 : 0);
+        field("key_valid", planning_request.key.valid() ? 1 : 0);
+        field("transition_kind", static_cast<int>(injection_transition));
+        field("active_bundle_valid", execution_at_solve.active &&
+            execution_at_solve.active->valid() ? 1 : 0);
+        field("active_interval_valid", execution_at_solve.active &&
+            execution_at_solve.active->valid_from_ns <= injection_now_ns &&
+            injection_now_ns <= execution_at_solve.active->valid_until_ns ? 1 : 0);
+        field("eligible", eligible ? 1 : 0);
         field("localization_epoch", planning_request.key.localization_epoch);
         field("world_generation", planning_request.key.pinned_world_generation);
         field("world_revision", planning_request.key.pinned_world_revision);
@@ -5679,10 +5709,14 @@ void NavigationRuntimeNode::runCycle(
         event.status.push_back(std::move(status));
         diagnostics_publisher_->publish(event);
       };
-      publish_injection_event("FAULT_INJECTION_ARMED");
-      result = navigation_planning::PlannerStatus::kOptimizationFailed;
-      exact_optimization_failure_applied = true;
-      publish_injection_event("FAULT_INJECTION_APPLIED");
+      if (exact_optimization_failure_injection_.consumeIfEligible(eligible)) {
+        publish_injection_event("FAULT_INJECTION_ARMED");
+        result = navigation_planning::PlannerStatus::kOptimizationFailed;
+        exact_optimization_failure_applied = true;
+        publish_injection_event("FAULT_INJECTION_APPLIED");
+      } else {
+        publish_injection_event("FAULT_INJECTION_REJECTED");
+      }
     }
   }
   // The backend stages a candidate; the execution store commits it only after
