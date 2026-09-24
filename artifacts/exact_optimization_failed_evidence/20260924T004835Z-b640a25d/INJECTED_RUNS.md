@@ -14,3 +14,16 @@ All four final attempts used source `47a5c05e9b36feb558e5e2ecd3646cc36157613d`, 
 I2 first pair 2→3 was rejected because owner version changed 306→307 and a staged successor appeared (`pending_at_solve=0`, `pending_current=1`). The alternate 3→4 was rejected on owner version 411→412/currentness false; the trace does not establish which internal event advanced the version. I3 rejected 2→3, then applied once at current 3→4. These rejections demonstrate that the hook refuses stale snapshots rather than forcing the fault.
 
 Each positive had backend original `kSuccess` (0), injected exact `kOptimizationFailed` (6), actual classifier `RetainCommittedCommand` (4), HG-023 final `CertifiedCommandPreserved` (8), and no post-decision loss of command availability. All positive runs had successor adapter admission and no late predecessor admission after cutover.
+
+## Earlier harness-development attempts — separate source baselines
+
+These four attempts occurred before the behavior-bearing source was pinned at `47a5c05e...`. They are **included in the all-attempt denominator** but not in the final same-source 3/3 evidence gate.
+
+| Session suffix | Source SHA prefix | Armed | Applied exact status | Focused result | Reason excluded from final gate |
+| --- | --- | ---: | ---: | --- | --- |
+| `011329-666867` | `3dee6476` | 1 | 1 | PASS | Earlier source; HG-023 disposition 8, mission COMPLETE |
+| `011551-670384` | `3dee6476` | 0 | 0 | FAIL | Hook never armed; mission COMPLETE |
+| `012156-676836` | `42a9086e` | 1 | 1 | FAIL | HG-023 returned `Superseded` (disposition 3), so no certified retention claim; mission COMPLETE |
+| `012545-680439` | `42a9086e` | 0 | 0 | FAIL | Owner snapshot changed and trigger rejected; mission COMPLETE |
+
+**All branch attempts:** 8 injected-profile sessions attempted; 5 armed/applied exact code 6; 4 positive retained-command chains across different source commits; 8/8 mission COMPLETE. The verdict uses only the **4 final pinned-source attempts**, with **3 exact positive runs**. `012156` demonstrates that injecting code 6 does not bypass HG-023: the superseded owner was not certified for retention.

@@ -55,3 +55,38 @@ Behavior source `47a5c05e9b36feb558e5e2ecd3646cc36157613d`; base `b640a25d7caf41
 | N3 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T014922-711772/exact_optimization_failure_analysis.json` | 2991 | `34abe36181490eff842a34ea7d5c65b39cba96da7250761adb4d8dcd6c637052` |
 
 Evidence hierarchy: source path and tests prove code behavior under modeled inputs; SITL bag/logs demonstrate this exact injected runtime sequence; neither proves PX4 firmware consumed each setpoint or flight qualification. The versioned evaluation `report.json` retains overall `FAIL`/`qualification_eligible=false`. `EXACT_OPTIMIZATION_FAILED_TIMELINE.md` names observer and ROS clocks separately. `INJECTED_RUNS.md` reports every final attempted injected session, including nonarming I2. `NOMINAL_RUNS.md` reports three disabled controls. CSVs provide per-run timing and retention metrics.
+
+## Earlier exploratory sessions (different source commits)
+
+These are counted in the all-attempt denominator in `INJECTED_RUNS.md` but excluded from the final same-source 3/3 gate. The files remain outside Git.
+
+| Run | Path | Bytes | SHA256 |
+| --- | --- | ---: | --- |
+| E1 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011329-666867/rosbag/rosbag_0.db3` | 572264448 | `8e2376403fff83be4f3754f81cf5407f5ed8cf9d090a0d2e8626333f737545bb` |
+| E1 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011329-666867/scenario.jsonl` | 27906064 | `97b317ecd84cdda2cf9c3071ac9d15a2d079b7cf7a574d7ca70b1784d0bbf1e3` |
+| E1 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011329-666867/metadata.json` | 247345 | `3d5e9eabce7efb36008d31df0bb3c5170841d37ccba2747f33bd32dfe937830d` |
+| E1 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011329-666867/report.json` | 28488570 | `3cf120e7793ce726178730f5ff662ebd6c83079441d3cc95759ecb620a0d4dbb` |
+| E1 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011329-666867/logs/navigation_runtime_node_669382_1790212425374.log` | 28511 | `aebed2206c1782d8ecf8021364c8281c7c94f343446c89141cc62dfe2426b9c5` |
+| E1 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011329-666867/logs/px4_navigation_external_mode_node_669690_1790212429439.log` | 33495 | `c80a5cd00e0d3a68547438a327c4ff3151b9b0f067f31906c260931516125ffe` |
+| E1 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011329-666867/exact_optimization_failure_analysis.json` | 26850 | `066567eecf959bd773767e129e0db48f1572a559fcb225a6e49b5ccc81d5e6bd` |
+| E2 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011551-670384/rosbag/rosbag_0.db3` | 550572032 | `d5e1d41ec9983753300ab120b61ea367e3fd3fb110c48350651fec9c96b86f11` |
+| E2 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011551-670384/scenario.jsonl` | 25724594 | `ca3730494d8e4ec70823583e40a0b7ab2b27224726bd7e833ffd0d9a1243d2f4` |
+| E2 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011551-670384/metadata.json` | 247345 | `c522a6193a3e4e1a8daa7688abfdc1d392ef432fc6c33cf3cb9dd1d08cfc1d9f` |
+| E2 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011551-670384/report.json` | 24464536 | `b6a95d794218fe0861e0129d9fc49386d34ac5ccd48357e1c4b2b91432c67a9d` |
+| E2 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011551-670384/logs/navigation_runtime_node_672889_1790212568076.log` | 31190 | `e845f69a80a1c4fbbd36293e2fd6e639a2dbec106e586fd2d5c028b9e23d2290` |
+| E2 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011551-670384/logs/px4_navigation_external_mode_node_673219_1790212571854.log` | 29974 | `56e6b5a82766d6247da64c27856c45e6b41ca7ec3d0c67fcc40c335f98b95b15` |
+| E2 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T011551-670384/exact_optimization_failure_analysis.json` | 3274 | `a227abb9912b0faf981476df2cc99256eb10b463dbc6beebda140c2ee175e402` |
+| E3 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012156-676836/rosbag/rosbag_0.db3` | 550408192 | `0111aaced541aaf59b7f42a4f78defb4e5d9c01384ccc76426425bbdded5c0d3` |
+| E3 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012156-676836/scenario.jsonl` | 26814848 | `0ec80232f3e963b21363554737d34cd51e4f2709b8e16c5f02c5b2f8f8066143` |
+| E3 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012156-676836/metadata.json` | 247345 | `f497c2acc5c4db5eb758920bc61cc4848cb6f52c5c929fb31cb41afe14b14211` |
+| E3 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012156-676836/report.json` | 27592857 | `331444dbcb7a109f0bcf86d90b6f1432b67881a3424a12b40db762ccbdea26b6` |
+| E3 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012156-676836/logs/navigation_runtime_node_679356_1790212931964.log` | 36773 | `e4c2ffa0eb7889b5a354432870cded1de5d6a5521070bf8c7a2d4217ed07cd33` |
+| E3 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012156-676836/logs/px4_navigation_external_mode_node_679678_1790212935550.log` | 31183 | `16dfc7160794360f2334e621c5c4231d25d24154fedaa6ff701280a919dcc3d9` |
+| E3 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012156-676836/exact_optimization_failure_analysis.json` | 28146 | `8129056603e4600564bcd47cffede99d3ca6d6d985c49e6cc3f43e19f2af3262` |
+| E4 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012545-680439/rosbag/rosbag_0.db3` | 580222976 | `82dcc93df8e21d56550a81989a39eb34c475421b293d05d4881fa5f9630c0a51` |
+| E4 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012545-680439/scenario.jsonl` | 28273878 | `91aabc53b7ebbac589cb070205f5e3a049fbc4214fa91e501a914ffe7b55a9a9` |
+| E4 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012545-680439/metadata.json` | 247361 | `af376429eec429b45cbf5aabdb78a90e5f0959698f3f04532ba6fe7bc3a0b384` |
+| E4 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012545-680439/report.json` | 30793363 | `b04cd8fd98f6590d068056628dedfee1201d6f8ec1a7da4b3d4cfe669e008876` |
+| E4 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012545-680439/logs/navigation_runtime_node_682969_1790213161053.log` | 35419 | `6fd79f58980569b2dcc4dd124a9a50d90d14e53fa667d6e3456c72889209f0eb` |
+| E4 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012545-680439/logs/px4_navigation_external_mode_node_683288_1790213165185.log` | 32733 | `da9f167301bb0f7acb50ed52bcc6567ccbc5e1809c3a5c1b995affa9261a2c33` |
+| E4 | `/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T012545-680439/exact_optimization_failure_analysis.json` | 4392 | `876e0c09ec2a3844f0c39ffa659d576832be20c8ee2ef3f4c63ac68f1a4ae8a9` |
