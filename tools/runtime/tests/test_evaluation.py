@@ -422,6 +422,22 @@ class EvaluationTest(unittest.TestCase):
                       result["dimensions"]["tracking"]["reasons"])
         self.assertEqual(result["tracking_reference_accounting"]["exact_heartbeat_collapse_count"], 0)
 
+    def test_same_source_tick_new_world_certificate_is_not_a_heartbeat(self):
+        first = dict(pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+                     world_generation=2, world_revision=194)
+        changed = dict(first, sample_id=first["sample_id"] + 1,
+                       world_revision=195)
+        last = dict(pva(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+                    world_generation=2, world_revision=195)
+        result = evaluate_session(inputs([first, changed, last], [
+            truth(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            truth(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ]))
+        self.assertIn("SOURCE_TIMESTAMP_DUPLICATE_CONFLICT",
+                      result["dimensions"]["tracking"]["reasons"])
+        self.assertEqual(result["tracking_reference_accounting"][
+            "exact_heartbeat_collapse_count"], 0)
+
     def test_tracking_without_acceptance_policy_is_not_evaluable(self):
         commands = [
             pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
