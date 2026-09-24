@@ -17,5 +17,6 @@ At **first analytic completion** across the ten predecessor runs, measured endpo
 | `144810-63939` | on | none | `COMPLETE` | `[0,1,2,3,4]` | 27.969 ms | native repeat |
 | `145335-67672` | on | none | `COMPLETE` | `[0,1,2,3,4]` | 29.733 ms | native repeat; controlled-pause launcher was **not** used in this run |
 | `145951-71499` | on | `SIGSTOP` Gazebo PID, 350.272 ms | `FAILED_COMPONENT` | `[0]` | 373.874 ms | injected fault; adapter reported `ODOMETRY_STALE` and observed PX4 Hold |
+| `151057-79276` | on | `SIGSTOP` Core PID, 350.150 ms | `PAUSED_SAFETY_STOP` | `[0]` | 27.669 ms | injected fault; adapter reported stale PVA while odometry continued and observed PX4 Hold |
 
-All five runs retain the evaluator's `NOT_EVALUABLE` status and are diagnostic/fault evidence, **not** a new ten-run nominal acceptance cohort. The native observer is a separate optional process; no reliable observer-induced performance effect can be inferred from 1 control versus 3 natural native runs. The current branch has no terminal flight-behavior fix, so the requested post-fix ≥10-run gate has not started.
+All six runs retain the evaluator's `NOT_EVALUABLE` status and are diagnostic/fault evidence, **not** a new ten-run nominal acceptance cohort. The native observer is a separate optional process; no reliable observer-induced performance effect can be inferred from 1 control versus 3 natural native runs. The current branch has no terminal flight-behavior fix, so the requested post-fix ≥10-run gate has not started.

@@ -20,7 +20,7 @@ Product behavior in the ten-run predecessor cohort: `96ed8d089e576c505abdc155007
 
 ## New branch evidence
 
-`RAW_EVIDENCE_MANIFEST.csv` indexes **43** raw files (2,995,154,576 bytes total) for the five new sessions: metadata, report, scenario and samples JSONL, native observer records/summary where enabled, state/temporal reductions, and retained rosbag data files. Each row gives an absolute path, byte size and SHA256. These large files remain outside Git.
+`RAW_EVIDENCE_MANIFEST.csv` indexes **52** raw files (3,277,426,681 bytes total) for the six new sessions: metadata, report, scenario and samples JSONL, native observer records/summary where enabled, state/temporal reductions, and retained rosbag data files. Each row gives an absolute path, byte size and SHA256. These large files remain outside Git.
 
 | Session suffix | Kind | Native observer | Outcome | Reduction |
 |---|---|---|---|---|
@@ -29,5 +29,6 @@ Product behavior in the ten-run predecessor cohort: `96ed8d089e576c505abdc155007
 | `144810-63939` | native repeat | on | `COMPLETE` | raw session `temporal_layer_analysis.json` |
 | `145335-67672` | native repeat, no fault applied | on | `COMPLETE` | raw session `temporal_layer_analysis.json` |
 | `145951-71499` | exact PID Gazebo pause | on | `FAILED_COMPONENT` | `controlled_temporal_layers.json`, `controlled_pause_provenance.json` |
+| `151057-79276` | exact PID Core pause | on | `PAUSED_SAFETY_STOP` | `controlled_core_pause_provenance.json`, raw session report |
 
-`controlled_gazebo_pause.py` is the exact fault script used. `CONTROLLED_FAULT_RESULTS.md` explains its scope and safety response. All outcome labels come from the original runner/report and have not been rewritten by this audit.
+`controlled_gazebo_pause.py` and `controlled_core_pause.py` are the exact fault scripts used. `CONTROLLED_FAULT_RESULTS.md` and `FAULT_REGRESSION.md` explain scope and safety response. All outcome labels come from the original runner/report and have not been rewritten by this audit.

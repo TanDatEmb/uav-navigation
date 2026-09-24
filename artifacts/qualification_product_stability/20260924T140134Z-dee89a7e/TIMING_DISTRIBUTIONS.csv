@@ -134,3 +134,12 @@ controlled_gazebo_pause,external-mode-check-20260924T145951-71499,FAILED_COMPONE
 controlled_gazebo_pause,external-mode-check-20260924T145951-71499,FAILED_COMPONENT,publisher_publish_to_exit_ms,1604,0.053591,0.089368,0.11596,0.141932
 controlled_gazebo_pause,external-mode-check-20260924T145951-71499,FAILED_COMPONENT,source_period_ms,1433,20.0,20.0,20.0,212.0
 controlled_gazebo_pause,external-mode-check-20260924T145951-71499,FAILED_COMPONENT,worker_ready_to_publish_ms,1604,0.062078,0.089257,0.109547,0.184465
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,accepted_receive_gap_ms,1460,24.99894,25.524023,25.92265,27.669384
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,callback_to_accept_ms,1461,0.001135,0.002751,0.003646,0.00582
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,mutex_wait_ms,1461,0.000204,0.000688,0.001078,0.004774
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,producer_publish_interval_ms,1592,24.999847,25.463597,25.788256,26.295331
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,publish_to_callback_ms,1461,0.109203,0.206804,0.308024,1.875187
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,publisher_enter_to_publish_ms,1593,0.061367,0.089384,0.110334,0.178084
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,publisher_publish_to_exit_ms,1593,0.049996,0.085457,0.114116,0.203265
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,source_period_ms,1460,20.0,20.0,20.0,20.0
+controlled_core_pause,external-mode-check-20260924T151057-79276,PAUSED_SAFETY_STOP,worker_ready_to_publish_ms,1593,0.061815,0.090019,0.111437,0.179136
