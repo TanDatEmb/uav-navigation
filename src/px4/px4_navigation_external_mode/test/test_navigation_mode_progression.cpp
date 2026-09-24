@@ -135,6 +135,22 @@ TEST_F(NavigationModeProgressionTest, CoreSuccessorCommandAdvancesWithoutAdapter
   EXPECT_FALSE(completed());
 }
 
+TEST_F(NavigationModeProgressionTest, RejectedSourceStampDoesNotRefreshAcceptedReceiveLease) {
+  const auto accepted_receive = mode_->last_odometry_receive_ns_;
+  const auto accepted_sequence = mode_->last_propagated_state_sequence_;
+  const auto accepted_count = mode_->odometry_callback_count_;
+  odometry();  // Higher sequence, same source stamp: rejected.
+  EXPECT_EQ(mode_->last_odometry_receive_ns_, accepted_receive);
+  EXPECT_EQ(mode_->last_propagated_state_sequence_, accepted_sequence);
+  EXPECT_EQ(mode_->odometry_callback_count_, accepted_count);
+
+  setNow(now_ns_ + 20'000'000);
+  odometry();
+  EXPECT_EQ(mode_->last_odometry_receive_ns_, now_ns_);
+  EXPECT_EQ(mode_->last_propagated_state_sequence_, sequence_);
+  EXPECT_EQ(mode_->odometry_callback_count_, accepted_count + 1U);
+}
+
 TEST_F(NavigationModeProgressionTest, LatePredecessorCannotRegressAcceptedExecutionIdentity) {
   const auto first = command(2U, 0U, 1U);
   admit(first);

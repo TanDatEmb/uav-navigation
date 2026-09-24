@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <limits>
+#include <stdexcept>
 
 #include "fast_lio_ros/qos_profiles.hpp"
 #include "fast_lio_ros/ros_odometry_serializer.hpp"
@@ -17,7 +18,18 @@ RosPropagatedOdometryPublisher::RosPropagatedOdometryPublisher(
       publisher_(node.create_publisher<navigation_contracts::msg::PropagatedOdometry>(
           "/lio/odometry_propagated", QosProfiles::estimatorOutput())),
       covariance_runtime_(std::move(covariance_runtime)),
-      public_frame_generation_(std::move(public_frame_generation)) {}
+      public_frame_generation_(std::move(public_frame_generation)) {
+  const bool trace_enabled = node.declare_parameter<bool>(
+      "diagnostics.state_transport_trace_enabled", false);
+  if (trace_enabled) {
+    if (!node.get_parameter("use_sim_time").as_bool()) {
+      throw std::invalid_argument("state transport trace is SITL/test only");
+    }
+    timing_publisher_ = node.create_publisher<
+        navigation_contracts::msg::OdometryTransportTrace>(
+        "/lio/odometry_transport_trace", rclcpp::QoS(256).best_effort());
+  }
+}
 
 void RosPropagatedOdometryPublisher::setBaseLinkConverter(
     std::shared_ptr<const BaseLinkStateConverter> converter) {
@@ -28,7 +40,10 @@ void RosPropagatedOdometryPublisher::setBaseLinkConverter(
 }
 
 void RosPropagatedOdometryPublisher::publish(
-    const KinematicStateEstimate& estimate) {
+    const KinematicStateEstimate& estimate,
+    const WorkerPublicationWitness& witness) {
+  const auto publisher_enter_steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
   if (!base_link_converter_) {
     return;
   }
@@ -61,8 +76,35 @@ void RosPropagatedOdometryPublisher::publish(
   navigation_contracts::msg::PropagatedOdometry message;
   message.odometry = odometry.value();
   message.localization_epoch = public_frame.generation;
-  message.sequence = ++publication_sequence_;
+  const auto publication_sequence = ++publication_sequence_;
+  message.sequence = publication_sequence;
+  const auto source_stamp_ros_ns = static_cast<std::int64_t>(
+      message.odometry.header.stamp.sec) * 1'000'000'000LL +
+      static_cast<std::int64_t>(message.odometry.header.stamp.nanosec);
+  const auto publish_call_steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
   publisher_->publish(std::move(message));
+  const auto publisher_exit_steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (timing_publisher_) {
+    navigation_contracts::msg::OdometryTransportTrace trace;
+    trace.phase = trace.PRODUCER_PUBLISHED;
+    trace.disposition = trace.NOT_APPLICABLE;
+    trace.localization_epoch = public_frame.generation;
+    trace.sequence = publication_sequence;
+    trace.source_stamp_ros_ns = source_stamp_ros_ns;
+    trace.expected_publish_source_ns = witness.expected_publish_source_ns;
+    trace.last_published_source_ns = witness.last_published_source_ns;
+    trace.worker_estimate_ready_steady_ns = witness.estimate_ready_steady_ns;
+    trace.publisher_enter_steady_ns = publisher_enter_steady_ns;
+    trace.publisher_publish_call_steady_ns = publish_call_steady_ns;
+    trace.publisher_exit_steady_ns = publisher_exit_steady_ns;
+    try {
+      timing_publisher_->publish(std::move(trace));
+    } catch (...) {
+      // Diagnostic transport cannot suspend the estimator publication path.
+    }
+  }
 }
 
 }  // namespace uav::nav::lio

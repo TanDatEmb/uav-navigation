@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/NavigationMissionProgress.msg"
   "msg/RegisteredScan.msg"
   "msg/PropagatedOdometry.msg"
+  "msg/OdometryTransportTrace.msg"
   "msg/EstimatorHealth.msg"
   "msg/NavigationCommand.msg"
   "msg/NavigationCommandRejection.msg"

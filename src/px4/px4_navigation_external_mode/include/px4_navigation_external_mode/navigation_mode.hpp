@@ -16,6 +16,7 @@
 #include <tracking_experiment.hpp>
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
 #include <navigation_contracts/msg/propagated_odometry.hpp>
+#include <navigation_contracts/msg/odometry_transport_trace.hpp>
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
 #include <navigation_contracts/msg/navigation_command_admission.hpp>
@@ -138,6 +139,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::shared_ptr<px4_ros2::TrajectorySetpointType> trajectory_setpoint_;
   rclcpp::Subscription<navigation_contracts::msg::PropagatedOdometry>::SharedPtr
       odometry_subscription_;
+  rclcpp::Publisher<navigation_contracts::msg::OdometryTransportTrace>::SharedPtr
+      odometry_timing_publisher_;
   rclcpp::Subscription<navigation_contracts::msg::NavigationCommand>::SharedPtr
       navigation_command_subscription_;
   rclcpp::Subscription<navigation_contracts::msg::EstimatorHealth>::SharedPtr

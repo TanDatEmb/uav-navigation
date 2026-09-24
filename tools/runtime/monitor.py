@@ -300,6 +300,23 @@ def _propagated_odom_payload(message: Any) -> dict[str, Any]:
     return payload
 
 
+def _odometry_transport_trace_payload(message: Any) -> dict[str, Any]:
+    fields = (
+        "phase", "disposition", "localization_epoch", "sequence",
+        "source_stamp_ros_ns", "expected_publish_source_ns",
+        "last_published_source_ns", "worker_estimate_ready_steady_ns",
+        "publisher_enter_steady_ns", "publisher_publish_call_steady_ns",
+        "publisher_exit_steady_ns", "callback_enter_ros_ns",
+        "callback_enter_steady_ns", "lock_requested_steady_ns",
+        "lock_acquired_steady_ns", "accepted_receive_ros_ns",
+        "accepted_receive_steady_ns",
+    )
+    payload = {field: int(getattr(message, field)) for field in fields}
+    payload["stamp_ns"] = payload["source_stamp_ros_ns"]
+    payload["source_clock"] = "ros_time"
+    return payload
+
+
 def _px4_odom_payload(message: Any) -> dict[str, Any]:
     return {
         "timestamp_us": int(getattr(message, "timestamp", 0)),
@@ -623,6 +640,15 @@ class RuntimeMonitor:
             TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
             TopicSpec("mapping_diagnostics", "/navigation/diagnostics", DiagnosticArray, _diagnostic_payload),
         ]
+        if self.config.get("fast_lio", {}).get("ros__parameters", {}).get(
+                "diagnostics", {}).get("state_transport_trace_enabled") is True:
+            from navigation_contracts.msg import OdometryTransportTrace
+            specs.extend([
+                TopicSpec("odometry_producer_trace", "/lio/odometry_transport_trace",
+                          OdometryTransportTrace, _odometry_transport_trace_payload),
+                TopicSpec("odometry_adapter_ingress_trace", "/navigation/odometry_ingress_trace",
+                          OdometryTransportTrace, _odometry_transport_trace_payload),
+            ])
         if self.workflow != "dataset":
             # Observe the product simulation clock as a first-class stream.
             # Wall-arrival gaps here distinguish a GZ->ROS transport stall

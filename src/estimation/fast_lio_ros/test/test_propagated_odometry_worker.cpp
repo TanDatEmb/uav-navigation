@@ -99,7 +99,7 @@ TEST(PropagatedOdometryWorkerTest, CallbackExceptionSuspendsPublication) {
   std::atomic<std::size_t> callback_count{0U};
   PropagatedOdometryWorker worker(
       PropagatedOdometryWorkerConfig{},
-      [&](const auto&) {
+      [&](const auto&, const auto&) {
         callback_count.fetch_add(1U, std::memory_order_relaxed);
         throw std::runtime_error("publication failure");
       });
@@ -149,7 +149,7 @@ TEST(PropagatedOdometryWorkerTest,
   OutputCollector collector;
   PropagatedOdometryWorker worker(
       PropagatedOdometryWorkerConfig{},
-      [&](const auto& output) { collector.push(output); });
+      [&](const auto& output, const auto&) { collector.push(output); });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
   ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
@@ -177,7 +177,7 @@ TEST(PropagatedOdometryWorkerTest, StaleCorrectionStopsOnImuEvent) {
   PropagatedOdometryWorkerConfig config;
   config.maximum_correction_age_ns = 25'000'000;
   PropagatedOdometryWorker worker(
-      config, [&](const auto& output) { collector.push(output); });
+      config, [&](const auto& output, const auto&) { collector.push(output); });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
   ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
@@ -201,7 +201,7 @@ TEST(PropagatedOdometryWorkerTest, CorrectionDoesNotCrossMainInvalidationGenerat
   OutputCollector collector;
   PropagatedOdometryWorker worker(
       PropagatedOdometryWorkerConfig{},
-      [&](const auto& output) { collector.push(output); });
+      [&](const auto& output, const auto&) { collector.push(output); });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
   ASSERT_TRUE(worker.enqueueImu(sample(10'000'000)));
@@ -280,7 +280,7 @@ TEST(PropagatedOdometryWorkerTest, CorrectionAheadOfHistoryWaitsForBracket) {
   OutputCollector collector;
   PropagatedOdometryWorker worker(
       PropagatedOdometryWorkerConfig{},
-      [&](const auto& output) { collector.push(output); });
+      [&](const auto& output, const auto&) { collector.push(output); });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
   ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
@@ -342,7 +342,7 @@ TEST(PropagatedOdometryWorkerTest, RecoveryRequiresCurrentGenerationCorrection) 
   OutputCollector collector;
   PropagatedOdometryWorker worker(
       PropagatedOdometryWorkerConfig{},
-      [&](const auto& output) { collector.push(output); });
+      [&](const auto& output, const auto&) { collector.push(output); });
   worker.start();
   worker.requestLoadShedding();
   ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
@@ -369,7 +369,7 @@ TEST(PropagatedOdometryWorkerTest,
   OutputCollector collector;
   PropagatedOdometryWorker worker(
       PropagatedOdometryWorkerConfig{},
-      [&](const auto& output) { collector.push(output); });
+      [&](const auto& output, const auto&) { collector.push(output); });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
   ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
@@ -517,7 +517,7 @@ TEST(PropagatedOdometryWorkerTest, WorkerProcessesOnePublicationPerDrainedBatch)
   OutputCollector collector;
   PropagatedOdometryWorker worker(
       PropagatedOdometryWorkerConfig{},
-      [&](const auto& output) { collector.push(output); });
+      [&](const auto& output, const auto&) { collector.push(output); });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
   ASSERT_TRUE(waitForDiagnostics(worker, [](const auto& diagnostics) {
@@ -591,7 +591,7 @@ TEST(PropagatedOdometryWorkerTest, StopPreventsFurtherPublication) {
   OutputCollector collector;
   PropagatedOdometryWorker worker(
       PropagatedOdometryWorkerConfig{},
-      [&](const auto& output) { collector.push(output); });
+      [&](const auto& output, const auto&) { collector.push(output); });
   worker.start();
   ASSERT_TRUE(worker.enqueueImu(sample(1)));
   ASSERT_TRUE(worker.enqueueEstimatorState(trackingCorrection(1, 1U)));

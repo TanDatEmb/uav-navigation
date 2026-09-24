@@ -189,6 +189,16 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       planner_recovery_wait_timeout_s_(node.declare_parameter<double>(
           "navigation.planner_recovery_wait_timeout_s", 5.0)) {
   tracking_experiment_ = navigation_contracts::loadTrackingExperimentPolicy(node);
+  const bool state_transport_trace_enabled = node.declare_parameter<bool>(
+      "diagnostics.state_transport_trace_enabled", false);
+  if (state_transport_trace_enabled) {
+    if (!node.get_parameter("use_sim_time").as_bool()) {
+      throw std::invalid_argument("state transport trace is SITL/test only");
+    }
+    odometry_timing_publisher_ = node.create_publisher<
+        navigation_contracts::msg::OdometryTransportTrace>(
+        "/navigation/odometry_ingress_trace", rclcpp::QoS(256).best_effort());
+  }
   RCLCPP_INFO(node.get_logger(),
       "RUNTIME_CONFIG_EFFECTIVE tracking_mode=%s enabled=%d suppress_braking=%d "
       "suppress_health=%d velocity_only=%d",
@@ -1414,10 +1424,30 @@ void NavigationMode::onMissionProgress(
 
 void NavigationMode::onOdometry(
     const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message) {
-  if (!message || message->localization_epoch == 0U || message->sequence == 0U) return;
   const auto callback_enter_ros_ns = node().get_clock()->now().nanoseconds();
   const auto callback_enter_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  navigation_contracts::msg::OdometryTransportTrace timing;
+  timing.phase = timing.ADAPTER_CALLBACK;
+  timing.callback_enter_ros_ns = callback_enter_ros_ns;
+  timing.callback_enter_steady_ns = callback_enter_steady_ns;
+  const auto emit_timing = [this, &timing] {
+    if (!odometry_timing_publisher_) return;
+    try {
+      odometry_timing_publisher_->publish(timing);
+    } catch (...) {
+      // Diagnostic transport cannot change adapter admission or Hold policy.
+    }
+  };
+  if (!message || message->localization_epoch == 0U || message->sequence == 0U) {
+    timing.disposition = timing.INVALID_MESSAGE;
+    emit_timing();
+    return;
+  }
+  timing.localization_epoch = message->localization_epoch;
+  timing.sequence = message->sequence;
   const auto& odometry = message->odometry;
+  timing.source_stamp_ros_ns = navigation_common::rosTimeToNanoseconds(
+      odometry.header.stamp).value_or(0);
   const auto& position = odometry.pose.pose.position;
   const auto& velocity = odometry.twist.twist.linear;
   if (odometry.header.frame_id != planning_frame_ ||
@@ -1429,46 +1459,58 @@ void NavigationMode::onOdometry(
           odometry.pose.pose.orientation.y, odometry.pose.pose.orientation.z))) {
     RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
                          "Rejecting navigation odometry with invalid frame or values");
+    timing.disposition = timing.INVALID_MESSAGE;
+    emit_timing();
     return;
   }
-  const auto lock_requested_steady_ns = navigation_common::steadyClockNowNanoseconds();
-  std::lock_guard<std::mutex> lock(trajectory_mutex_);
-  const auto lock_acquired_steady_ns = navigation_common::steadyClockNowNanoseconds();
-  if (!typed_health_seen_ ||
-      (!lio_health_valid_ &&
-       !tracking_experiment_.suppress_estimator_health_response) ||
-      message->localization_epoch != lio_localization_epoch_ ||
-      (last_propagated_state_sequence_ > 0U &&
-       message->sequence <= last_propagated_state_sequence_)) {
-    return;
+  timing.lock_requested_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    timing.lock_acquired_steady_ns = navigation_common::steadyClockNowNanoseconds();
+    if (!typed_health_seen_) {
+      timing.disposition = timing.HEALTH_NOT_READY;
+    } else if (!lio_health_valid_ &&
+               !tracking_experiment_.suppress_estimator_health_response) {
+      timing.disposition = timing.HEALTH_INVALID;
+    } else if (message->localization_epoch != lio_localization_epoch_) {
+      timing.disposition = timing.LOCALIZATION_EPOCH_MISMATCH;
+    } else if (last_propagated_state_sequence_ > 0U &&
+               message->sequence <= last_propagated_state_sequence_) {
+      timing.disposition = timing.SEQUENCE_NON_INCREASING;
+    } else if (timing.source_stamp_ros_ns <= 0) {
+      timing.disposition = timing.SOURCE_TIMESTAMP_INVALID;
+      RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
+                           "Rejecting non-increasing propagated odometry source timestamp");
+    } else if (last_propagated_state_stamp_ns_ > 0 &&
+               timing.source_stamp_ros_ns <= last_propagated_state_stamp_ns_) {
+      timing.disposition = timing.SOURCE_TIMESTAMP_NON_INCREASING;
+      RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
+                           "Rejecting non-increasing propagated odometry source timestamp");
+    } else {
+      const auto receive_ns = node().get_clock()->now().nanoseconds();
+      if (last_odometry_receive_ns_ > 0 && receive_ns >= last_odometry_receive_ns_) {
+        maximum_odometry_callback_gap_us_ = std::max(
+            maximum_odometry_callback_gap_us_,
+            (receive_ns - last_odometry_receive_ns_) / 1000);
+      }
+      last_odometry_receive_ns_ = receive_ns;
+      last_odometry_receive_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
+      odometry_input_trace_ = Px4InputStateTrace{
+          message->localization_epoch, message->sequence, timing.source_stamp_ros_ns,
+          callback_enter_ros_ns, callback_enter_steady_ns,
+          timing.lock_requested_steady_ns, timing.lock_acquired_steady_ns,
+          last_odometry_receive_steady_ns_, 0, 0};
+      last_propagated_state_stamp_ns_ = timing.source_stamp_ros_ns;
+      last_propagated_state_sequence_ = message->sequence;
+      ++odometry_callback_count_;
+      odometry_ = odometry;
+      timing.disposition = timing.ACCEPTED;
+      timing.accepted_receive_ros_ns = receive_ns;
+      timing.accepted_receive_steady_ns = last_odometry_receive_steady_ns_;
+      tryAlignPx4LocalFrameLocked();
+    }
   }
-  const auto receive_ns = node().get_clock()->now().nanoseconds();
-  const auto source_stamp_ns = navigation_common::rosTimeToNanoseconds(
-      odometry.header.stamp).value_or(0);
-  if (source_stamp_ns <= 0 ||
-      (last_propagated_state_stamp_ns_ > 0 &&
-       source_stamp_ns <= last_propagated_state_stamp_ns_)) {
-    RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 5000,
-                         "Rejecting non-increasing propagated odometry source timestamp");
-    return;
-  }
-  if (last_odometry_receive_ns_ > 0 && receive_ns >= last_odometry_receive_ns_) {
-    maximum_odometry_callback_gap_us_ = std::max(
-        maximum_odometry_callback_gap_us_,
-        (receive_ns - last_odometry_receive_ns_) / 1000);
-  }
-  last_odometry_receive_ns_ = receive_ns;
-  last_odometry_receive_steady_ns_ = navigation_common::steadyClockNowNanoseconds();
-  odometry_input_trace_ = Px4InputStateTrace{
-      message->localization_epoch, message->sequence, source_stamp_ns,
-      callback_enter_ros_ns, callback_enter_steady_ns,
-      lock_requested_steady_ns, lock_acquired_steady_ns,
-      last_odometry_receive_steady_ns_, 0, 0};
-  last_propagated_state_stamp_ns_ = source_stamp_ns;
-  last_propagated_state_sequence_ = message->sequence;
-  ++odometry_callback_count_;
-  odometry_ = odometry;
-  tryAlignPx4LocalFrameLocked();
+  emit_timing();
 }
 
 void NavigationMode::tryAlignPx4LocalFrameLocked() {

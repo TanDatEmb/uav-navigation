@@ -1268,7 +1268,8 @@ def _resolve_isolation_value(value: int | None, env_name: str, default: int, *, 
     return resolved
 
 
-def _ros_params(session: Session, source: Path, *, visibility_range_max_m: float = 40.0) -> Path:
+def _ros_params(session: Session, source: Path, *, visibility_range_max_m: float = 40.0,
+                state_transport_trace: bool = False) -> Path:
     """Write only explicit ROS node parameter blocks, excluding runner metadata."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "fast_lio" not in value:
@@ -1282,6 +1283,9 @@ def _ros_params(session: Session, source: Path, *, visibility_range_max_m: float
     if not isinstance(preprocessing, dict):
         raise ValueError(f"runtime ROS config is missing fast_lio preprocessing: {source}")
     preprocessing["maximum_range_m"] = float(visibility_range_max_m)
+    if state_transport_trace:
+        fast_lio_parameters.setdefault("diagnostics", {})[
+            "state_transport_trace_enabled"] = True
     node_parameters = {
         name: value[name]
         for name in ROS_PARAMETER_NODES
@@ -1921,6 +1925,7 @@ def _external_mode_params(
     source: Path,
     *,
     tracking_experiment: dict[str, Any] | None = None,
+    state_transport_trace: bool = False,
 ) -> Path:
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or "px4_navigation_external_mode" not in value:
@@ -1932,6 +1937,9 @@ def _external_mode_params(
         value["px4_navigation_external_mode"].setdefault("ros__parameters", {}),
         experiment,
     )
+    if state_transport_trace:
+        value["px4_navigation_external_mode"].setdefault("ros__parameters", {}).setdefault(
+            "diagnostics", {})["state_transport_trace_enabled"] = True
     target = session.directory / "external_mode_params.yaml"
     target.write_text(yaml.safe_dump({"px4_navigation_external_mode": value["px4_navigation_external_mode"]}, sort_keys=False), encoding="utf-8")
     return target
@@ -2882,6 +2890,7 @@ def _run_sim_unlocked(
     characterization_profile: str | None = None,
     characterization_mode: str = "MODE_PX4_LOCAL",
     tracking_experiment_mode: str = DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
+    state_transport_trace: bool = False,
     tracking_experiment_base_m: float = 0.0,
     tracking_experiment_lateral_alpha_s: float = 0.0,
     tracking_experiment_longitudinal_beta_s: float = 0.0,
@@ -2897,6 +2906,8 @@ def _run_sim_unlocked(
 ) -> int:
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
+    if state_transport_trace and control_interface != "external_mode":
+        raise ValueError("state transport trace requires external_mode SITL")
     if visibility_max_endpoints not in {4096, 8192, 16384, 20160}:
         raise ValueError(
             "visibility_max_endpoints must be one of 4096, 8192, 16384 or 20160"
@@ -2975,6 +2986,7 @@ def _run_sim_unlocked(
         "manual_takeoff": bool(manual_takeoff),
         "interactive_handover": bool(not headless and auto_scenario),
         "tracking_experiment": tracking_experiment,
+        "state_transport_trace": bool(state_transport_trace),
         "sitl_profile": sitl_profile_contract,
         "sitl_dynamics_profile": sitl_dynamics_profile_contract,
         "takeoff_reference": sitl_profile_contract["takeoff_reference"],
@@ -3357,6 +3369,7 @@ def _run_sim_unlocked(
             session,
             RUNTIME_CONFIG / "sim.yaml",
             visibility_range_max_m=visibility_range_max_m,
+            state_transport_trace=state_transport_trace,
         )
         mapping_config = None if characterization_profile else _mapping_params(
             session,
@@ -3398,6 +3411,7 @@ def _run_sim_unlocked(
                 session,
                 RUNTIME_CONFIG / "external_mode.yaml",
                 tracking_experiment=tracking_experiment,
+                state_transport_trace=state_transport_trace,
             )
         generated_snapshot = session.directory / "config_snapshot"
         generated_config_snapshot: dict[str, str] = {}
@@ -4152,6 +4166,10 @@ def main() -> int:
         help="diagnostic-only native Gazebo stats/process observer; not an acceptance gate",
     )
     external_mode.add_argument(
+        "--state-transport-trace", action="store_true",
+        help="default-off SITL-only propagated-state producer/adapter timing trace",
+    )
+    external_mode.add_argument(
         "--experiment-id", default=None,
         help="evidence experiment label stored in metadata.json",
     )
@@ -4353,6 +4371,7 @@ def main() -> int:
             xrce_port=args.xrce_port,
             speed_cap_mps=args.speed_cap_mps,
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
+            state_transport_trace=args.state_transport_trace,
             experiment_id=args.experiment_id,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
             inject_failed_replan_once=args.inject_failed_replan_once,

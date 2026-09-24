@@ -595,7 +595,11 @@ void PropagatedOdometryWorker::maybePublishOnImu(const ImuSample& sample) {
   }
   if (imu_processed_callback_) {
     try {
-      imu_processed_callback_(estimate);
+      const auto ready_steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+      imu_processed_callback_(estimate, WorkerPublicationWitness{
+          ready_steady_ns, next_publish_deadline->nanoseconds(),
+          last_published_time.has_value() ? last_published_time->nanoseconds() : 0});
     } catch (...) {
       suspended_.store(true, std::memory_order_release);
       recordSkip();

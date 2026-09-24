@@ -803,3 +803,7 @@ or predecessor exposure can outlive its certificate/lease. Verify with Release
 build, focused package/Python tests, static mission-authority guard, SITL
 parity and world/command lease fence, `python3 tools/validate_runtime_safety_ledger.py`
 and `git diff --check`. SITL is diagnostic, not flight qualification.
+
+## 2026-09-24 Diagnostic state transport timing trace
+
+The [current contract](runtime_safety_current.md#2026-09-24-diagnostic-state-transport-timing-trace) records a default-off SITL/test-only sideband trace. Owner: FastLIO publisher and PX4 adapter ingress. Scope: propagated odometry source and receive timing, exact epoch/sequence, ingress disposition, and trajectory-mutex wait; no authority state or safety-policy input. Safety impact: unchanged 200 ms adapter state boundary, command lease, estimator health, and Hold response. Evidence: pinned A2 raw capture and `artifacts/qualification_gate_recovery/20260924T082427Z-4d184896/`; the observed `/clock` gap narrows the class but does not independently identify a Gazebo, bridge, DDS or host scheduling defect. Removal condition: causal issue resolved or trace load proven disruptive. Verify default-off and sim-time guard, Release/component tests, focused SITL timing, ledger validator and `git diff --check`. No runtime qualification is inferred from this trace alone.

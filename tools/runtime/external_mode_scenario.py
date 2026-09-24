@@ -681,6 +681,7 @@ class ExternalModeScenario:
             )
         if parse_bool(values.get("runtime_admission_attempted")):
             succeeded = parse_bool(values.get("runtime_admission_succeeded"))
+            admission_disposition = values.get("runtime_admission_disposition")
             self._record_lifecycle(
                 "export", "EXPORTED" if succeeded else "REJECTED",
                 source_stamp_ns=stamp_ns or None,
@@ -692,8 +693,27 @@ class ExternalModeScenario:
                 bundle_owner_request_id=request_id,
                 bundle_owner_cycle_id=cycle_id,
                 disposition_source="navigation_runtime/planner",
-                result=values.get("runtime_admission_disposition"),
+                result=admission_disposition,
             )
+            if (succeeded and admission_disposition == "IMMEDIATELY_COMMITTED"
+                    and request_id and goal_epoch and localization_epoch
+                    and cycle_id and bundle_generation):
+                # The producer's successful commit atomically installs the
+                # active bundle. Staged candidates have a distinct later
+                # command-timer activation witness and are excluded here.
+                self._record_lifecycle(
+                    "activate", "ACTIVATED",
+                    source_stamp_ns=stamp_ns or None,
+                    request_id=request_id,
+                    goal_epoch=goal_epoch,
+                    localization_epoch=localization_epoch,
+                    causal_planning_cycle_id=cycle_id,
+                    bundle_generation=bundle_generation,
+                    bundle_owner_request_id=request_id,
+                    bundle_owner_cycle_id=cycle_id,
+                    activation_result="IMMEDIATELY_COMMITTED",
+                    disposition_source="navigation_runtime/commit_planner_candidate",
+                )
         activation_generation = parse_int(values.get("latest_execution_activation_generation"))
         activation_result = parse_int(values.get("latest_execution_activation_result"))
         if activation_generation and activation_result in {1, 2}:
