@@ -1,0 +1,3 @@
+# Natural nominal cohort
+
+Requested profile: `long_featured`, seed 0, tracking experiment `off`, dynamics experiment `off`, external mode, with default-off diagnostic state-transport trace explicitly enabled for causal characterization. Each attempt must be retained regardless of outcome. Ten same-source attempts and a three-consecutive COMPLETE gate are pending build and runtime execution. The cohort runner writes one record per attempt, including a failed/ineligible run, to its output JSON. Eligibility remains separately blocked by missing approved tracking/motion policies and unresolved lifecycle lineage.

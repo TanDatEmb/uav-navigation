@@ -1,0 +1,5 @@
+# Adapter trajectory mutex audit
+
+`trajectory_mutex_` guards local odometry/health/frame snapshots, navigation command admission, setpoint/update decisions, Hold state and diagnostic snapshot reads. Source search finds 41 references in `navigation_mode_node.cpp`; these are not 41 unique call paths. `onOdometry` checks typed health, sequence and source-time order under the lock, writes the accepted snapshot and may call `tryAlignPx4LocalFrameLocked()`. Command admission, update/setpoint and boundary timers also take the same lock. Some existing paths log or build diagnostics under the lock; this branch does not refactor them without measured contention.
+
+The new trace exposes `lock_acquired_steady_ns - lock_requested_steady_ns` per callback. `callback_enter_steady_ns` is sampled before validation. The sideband publish is outside the lock. A large accepted-state gap with small producer gap and large mutex wait would implicate lock contention; absent that measurement, mutex is only a hypothesis. No lock ownership or scope was changed intentionally.

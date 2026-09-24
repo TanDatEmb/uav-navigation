@@ -1,0 +1,5 @@
+# Reference lineage audit
+
+The evaluator requires each raw executable `pva_command` identity `(request_id, bundle_generation, sample_id)` to be present in `reduce_lifecycle().valid_reference_ids` (`tools/runtime/evaluation.py:1431-1460`). Valid IDs are granted only after exact request/export/activate/authorization/PX4 trace lineage. Because A1/A2/A3 have unresolved lifecycle transactions, their `REFERENCE_LINEAGE_MISMATCH` is a real evidence-chain failure. It is not repaired by source-time heartbeat canonicalization: raw rows still require authorization and adapter trace attribution.
+
+A2 command sample 1499 was rejected by the adapter for stale accepted-state receive. Its reference can exist as a Core publication but cannot be represented as a valid PX4-admitted publish. Any qualification policy must decide how rejected control references are represented in the time-indexed reference; the evaluator may not silently mark the rejected row as executed. This remains an explicit specification gap.
