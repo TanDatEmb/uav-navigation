@@ -301,6 +301,72 @@ navigation_planning::CandidateBundle baselineRefinementSchedulingCandidate() {
   return a;  // Scheduling-only fixture; not numerical/world certificate evidence.
 }
 
+TEST(PlannerFsm, ExactOptimizationFailureInjectionSelectsOnlyOneHotHandoff) {
+  auto incumbent = baselineRefinementSchedulingCandidate();
+  incumbent.goal_epoch = 3U;
+  incumbent.request_id = 2U;
+  ASSERT_TRUE(incumbent.valid());
+  const auto active = std::make_shared<const navigation_planning::CandidateBundle>(incumbent);
+  auto predecessor = goal("mission", 1U, 2U, 4U);
+  auto successor = goal("mission", 2U, 3U, 4U);
+  successor.behavior = successor.BEHAVIOR_PASS_THROUGH;
+  navigation_execution::ExecutionAuthoritySnapshot execution;
+  execution.active = active;
+  execution.active_goal = std::make_shared<const navigation_contracts::msg::NavigationGoal>(
+      predecessor);
+  execution.admission_goal_epoch = 4U;
+  execution.admission_localization_epoch = 1U;
+  execution.lifecycle.exposure = navigation_execution::ExecutionExposure::kAvailable;
+  const PlanningKey key{1U, 4U, 3U, 4U, 7U, 2U, 3U,
+      PlanningStartMode::kCommittedFutureState, 11'000'000'000LL, 5U};
+  const ExactOptimizationFailureTarget target{2U, 3U};
+  const auto eligible = [&](bool desired_current, bool execution_current) {
+    return exactOptimizationFailureHotHandoffEligible(target, key, successor,
+        execution, classifyGoalTransition(successor, predecessor),
+        desired_current, execution_current, true, true, 11'000'000'000LL);
+  };
+  ASSERT_TRUE(eligible(true, true));
+  EXPECT_FALSE(eligible(false, true));
+  EXPECT_FALSE(eligible(true, false));
+  auto stale_successor = successor;
+  stale_successor.request_id = 4U;
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, key, stale_successor,
+      execution, classifyGoalTransition(stale_successor, predecessor),
+      true, true, true, true, 11'000'000'000LL));
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, key, successor,
+      execution, GoalTransitionKind::kSteady, true, true, true, true,
+      11'000'000'000LL));
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, key, successor,
+      execution, GoalTransitionKind::kSameRouteWaypointAdvance,
+      true, true, true, false, 11'000'000'000LL));
+  auto stopped_key = key;
+  stopped_key.start_mode = PlanningStartMode::kStoppedMeasuredState;
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, stopped_key,
+      successor, execution, GoalTransitionKind::kSameRouteWaypointAdvance,
+      true, true, true, true, 11'000'000'000LL));
+  ExactOptimizationFailureInjection injection;
+  EXPECT_FALSE(injection.consumeIfEligible(true));
+  injection.setTarget(target);
+  EXPECT_TRUE(injection.armed());
+  EXPECT_FALSE(injection.consumeIfEligible(false));
+  EXPECT_TRUE(injection.consumeIfEligible(eligible(true, true)));
+  EXPECT_TRUE(injection.consumed());
+  EXPECT_FALSE(injection.consumeIfEligible(true));
+}
+
+TEST(PlannerFsm, ExactOptimizationFailureStillRequiresRetainedValidation) {
+  EXPECT_EQ(classifyPlannerResult(
+      navigation_planning::PlannerStatus::kOptimizationFailed,
+      false, true, false), PlannerResultDisposition::RetainCommittedCommand);
+  // Classification requests validation; it does not certify the incumbent.
+  // An invalid HG-023 witness retains the existing fail-closed fallback.
+  EXPECT_EQ(retainedValidationTransition(false),
+            RetainedValidationTransition::FailClosed);
+  EXPECT_EQ(classifyPlannerResult(
+      navigation_planning::PlannerStatus::kOptimizationFailed,
+      false, false, false), PlannerResultDisposition::FailClosed);
+}
+
 PlanningKey baselineRefinementInitialKey() {
   return {1U, 1U, 1U, 4U, 0U, 2U, 3U,
           PlanningStartMode::kStoppedMeasuredState, 10'000'000'000LL, 5U};

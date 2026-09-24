@@ -100,6 +100,76 @@ enum class GoalTransitionKind : std::uint8_t {
   return GoalTransitionKind::kSteady;
 }
 
+// Diagnostic-only, one-shot fault selection. This is a predicate over the
+// immutable solve context; it grants no command or retained-command authority.
+// HG-023 remains the sole validator after the real result classifier runs.
+struct ExactOptimizationFailureTarget final {
+  std::uint64_t predecessor_request{0};
+  std::uint64_t successor_request{0};
+
+  [[nodiscard]] bool valid() const noexcept {
+    return predecessor_request != 0 && successor_request != 0 &&
+           predecessor_request != successor_request;
+  }
+};
+
+[[nodiscard]] inline bool exactOptimizationFailureHotHandoffEligible(
+    const ExactOptimizationFailureTarget target,
+    const PlanningKey& key,
+    const navigation_contracts::msg::NavigationGoal& desired,
+    const navigation_execution::ExecutionAuthoritySnapshot& execution,
+    const GoalTransitionKind transition,
+    const bool desired_current,
+    const bool execution_current,
+    const bool state_fresh,
+    const bool world_fresh,
+    const std::int64_t now_ns) noexcept {
+  return target.valid() && desired_current && execution_current && state_fresh &&
+         world_fresh && now_ns > 0 && key.valid() &&
+         key.start_mode == PlanningStartMode::kCommittedFutureState &&
+         transition == GoalTransitionKind::kSameRouteWaypointAdvance &&
+         desired.request_id == target.successor_request &&
+         desired.behavior == desired.BEHAVIOR_PASS_THROUGH &&
+         key.request_id == desired.request_id &&
+         key.route_revision == desired.route.route_revision &&
+         key.goal_epoch == execution.admission_goal_epoch &&
+         key.localization_epoch == execution.admission_localization_epoch &&
+         execution.active && execution.active_goal &&
+         execution.activeGoalEpoch() != key.goal_epoch &&
+         execution.activeRequestId() == target.predecessor_request &&
+         execution.active_goal->mission_id == desired.mission_id &&
+         execution.active_goal->route.route_revision == key.route_revision &&
+         execution.active_goal->waypoint_index < desired.waypoint_index &&
+         execution.active->localization_epoch == key.localization_epoch &&
+         execution.activeGeneration() == key.committed_bundle_generation &&
+         execution.active->role == navigation_planning::CandidateRole::kMain &&
+         execution.active->backup_available && !execution.active->terminal_stop &&
+         execution.active->valid() && execution.active->valid_from_ns <= now_ns &&
+         now_ns <= execution.active->valid_until_ns &&
+         execution.commandAvailable() && !execution.failed() &&
+         !execution.safetySuffixActive() && !execution.restartFromRest();
+}
+
+class ExactOptimizationFailureInjection final {
+ public:
+  void setTarget(const ExactOptimizationFailureTarget target) noexcept {
+    target_ = target.valid() ? target : ExactOptimizationFailureTarget{};
+    consumed_ = false;
+  }
+  [[nodiscard]] bool armed() const noexcept { return target_.valid() && !consumed_; }
+  [[nodiscard]] bool consumed() const noexcept { return consumed_; }
+  [[nodiscard]] ExactOptimizationFailureTarget target() const noexcept { return target_; }
+  [[nodiscard]] bool consumeIfEligible(const bool eligible) noexcept {
+    if (!armed() || !eligible) return false;
+    consumed_ = true;
+    return true;
+  }
+
+ private:
+  ExactOptimizationFailureTarget target_{};
+  bool consumed_{false};
+};
+
 inline std::optional<std::uint64_t> advanceMonotonicId(
     std::atomic_uint64_t& value) noexcept {
   auto current = value.load(std::memory_order_acquire);

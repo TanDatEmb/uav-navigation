@@ -415,6 +415,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   bool inject_failed_replan_after_handoff_{false};
   bool inject_failed_replan_repeated_{false};
   bool inject_failed_plan_from_rest_repeated_{false};
+  // Diagnostic-only one-shot status substitution; never an execution owner.
+  ExactOptimizationFailureInjection exact_optimization_failure_injection_;
   SameIdentityRenewalInjectionController same_identity_renewal_injection_;
   std::uint64_t dynamics_hash_{1U};
   navigation_planning::DynamicLimits mission_dynamic_limits_{};

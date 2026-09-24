@@ -691,6 +691,25 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.inject_failed_replan_repeated", false);
   inject_failed_plan_from_rest_repeated_ = declare_parameter(
       "navigation_runtime.inject_failed_plan_from_rest_repeated", false);
+  const bool inject_exact_optimization_failed_once = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_failed_once", false);
+  const auto exact_predecessor_request = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_predecessor_request", std::int64_t{0});
+  const auto exact_successor_request = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_successor_request", std::int64_t{0});
+  if (inject_exact_optimization_failed_once) {
+    if (exact_predecessor_request <= 0 || exact_successor_request <= 0 ||
+        exact_predecessor_request == exact_successor_request ||
+        inject_failed_replan_once_ || inject_failed_replan_repeated_ ||
+        inject_failed_plan_from_rest_repeated_) {
+      throw std::invalid_argument(
+          "exact OptimizationFailed injection requires distinct positive request IDs "
+          "and cannot be combined with other failed-replan injection");
+    }
+    exact_optimization_failure_injection_.setTarget({
+        static_cast<std::uint64_t>(exact_predecessor_request),
+        static_cast<std::uint64_t>(exact_successor_request)});
+  }
   const auto inject_failed_same_identity_renewal_ordinal = declare_parameter(
       "navigation_runtime.inject_failed_same_identity_renewal_ordinal", std::int64_t{0});
   if (inject_failed_same_identity_renewal_ordinal < 0) {
@@ -5590,6 +5609,81 @@ void NavigationRuntimeNode::runCycle(
     planner_->discardCommandCandidate();
     return;
   }
+  // Diagnostic-only status substitution at the backend-result boundary.
+  // The real solve, immutable PlanningKey, desired revision and exact active
+  // execution snapshot are retained. No validator or classifier is bypassed.
+  bool exact_optimization_failure_applied = false;
+  if (exact_optimization_failure_injection_.armed() && goal &&
+      !plan_from_rest_with_transition && !injected_failure &&
+      !timed_out && result != navigation_planning::PlannerStatus::kEmergency) {
+    const auto injection_now_ns = now().nanoseconds();
+    const auto current_world = world_snapshot_store_.load();
+    const auto current_lease = execution_state_store_.load();
+    const bool current_world_fresh = current_world &&
+        navigation_execution::classifyTimestampFreshness(
+            injection_now_ns, current_world.identity.observation_stamp_ns,
+            data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID;
+    const bool current_state_fresh = current_lease &&
+        navigation_execution::classifyTimestampFreshness(
+            injection_now_ns, current_lease->state.source_stamp_ns,
+            data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID &&
+        current_lease->state.finite();
+    bool eligible = false;
+    {
+      std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
+      std::lock_guard<std::mutex> input_lock(input_mutex_);
+      std::lock_guard<std::mutex> command_lock(
+          command_execution_lease_failure_latch_.transitionMutex());
+      eligible = exactOptimizationFailureHotHandoffEligible(
+          exact_optimization_failure_injection_.target(), planning_request.key,
+          *goal, execution_at_solve,
+          classifyGoalTransition(desired_intent_.goal(), executingGoalSnapshot()),
+          desired_intent_.matches(*goal, goal_epoch) &&
+              active_localization_epoch_.load(std::memory_order_acquire) ==
+                  localization_epoch_at_solve,
+          execution_authority_.isCurrentSnapshot(execution_at_solve) &&
+              command_execution_lease_failure_latch_.allowsCommandExposure(),
+          current_state_fresh, current_world_fresh, injection_now_ns);
+    }
+    if (exact_optimization_failure_injection_.consumeIfEligible(eligible)) {
+      const auto publish_injection_event = [&](const std::string& event_name) {
+        diagnostic_msgs::msg::DiagnosticArray event;
+        event.header.stamp = now();
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = "navigation_runtime/exact_optimization_failure_injection";
+        status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+        status.message = event_name;
+        const auto field = [&status](const std::string& key, const auto value) {
+          diagnostic_msgs::msg::KeyValue item;
+          item.key = key;
+          item.value = std::to_string(value);
+          status.values.push_back(std::move(item));
+        };
+        field("planning_cycle_id", cycle_count_);
+        field("solve_generation", solve_generation);
+        field("desired_revision", goal_epoch);
+        field("desired_request", goal->request_id);
+        field("active_request", execution_at_solve.activeRequestId());
+        field("active_generation", execution_at_solve.activeGeneration());
+        field("active_lineage", execution_at_solve.active_lineage);
+        field("authority_version", execution_at_solve.version);
+        field("localization_epoch", planning_request.key.localization_epoch);
+        field("world_generation", planning_request.key.pinned_world_generation);
+        field("world_revision", planning_request.key.pinned_world_revision);
+        field("original_planner_status", static_cast<int>(planner_result_before_injection));
+        field("injected_planner_status", static_cast<int>(
+            navigation_planning::PlannerStatus::kOptimizationFailed));
+        field("ros_stamp_ns", injection_now_ns);
+        field("steady_stamp_ns", navigation_common::steadyClockNowNanoseconds());
+        event.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(event);
+      };
+      publish_injection_event("FAULT_INJECTION_ARMED");
+      result = navigation_planning::PlannerStatus::kOptimizationFailed;
+      exact_optimization_failure_applied = true;
+      publish_injection_event("FAULT_INJECTION_APPLIED");
+    }
+  }
   // The backend stages a candidate; the execution store commits it only after
   // the authorization checks below. Its planning-history generation changes
   // only after the execution commit ACK, so staging is not evidence of a ready
@@ -5599,6 +5693,12 @@ void NavigationRuntimeNode::runCycle(
       result, plan_from_rest_with_transition,
       execution_authority_.snapshot().commandAvailable() && !stopped_recovery_retry,
       solve_committed_new_generation);
+  if (exact_optimization_failure_applied) {
+    RCLCPP_WARN(get_logger(),
+                "exact diagnostic OptimizationFailed cycle=%lu disposition=%d active_generation=%lu",
+                static_cast<unsigned long>(cycle_count_), static_cast<int>(disposition),
+                static_cast<unsigned long>(execution_at_solve.activeGeneration()));
+  }
   if (disposition != PlannerResultDisposition::CommandReady) {
     // A staged candidate is private planner state until the execution store
     // commits it. Every other disposition is discard-only, including an
@@ -6305,6 +6405,10 @@ void NavigationRuntimeNode::runCycle(
                     planning_request.current_body_support ? 1 : 0);
     add_trace_value("planner_result_before_injection",
                     static_cast<int>(planner_result_before_injection));
+    add_trace_value("planner_result_after_injection", static_cast<int>(result));
+    add_trace_value("planner_disposition", static_cast<int>(disposition));
+    add_trace_value("exact_optimization_failure_applied",
+                    exact_optimization_failure_applied ? 1 : 0);
     add_trace_value("injected_replan_failure", injected_failure ? 1 : 0);
     add_trace_value("commit_observed_this_cycle", commit_observed_this_cycle ? 1 : 0);
     add_trace_value("execution_stamp_ns", execution_stamp_ns);
