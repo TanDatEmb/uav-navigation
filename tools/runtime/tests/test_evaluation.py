@@ -108,6 +108,8 @@ def inputs(commands, truth_rows, **scenario_overrides):
             "min_coverage_ratio": 0.75,
             "max_uncovered_interval_s": 0.30,
             "max_pairing_gap_s": 1.0,
+            "version": "synthetic-v1",
+            "provenance": "synthetic_test_policy",
         },
         "tracking_acceptance_policy": {
             "position_error_p95_max_m": 0.10,
@@ -115,6 +117,7 @@ def inputs(commands, truth_rows, **scenario_overrides):
             "velocity_error_p95_max_mps": 0.20,
             "velocity_error_max_mps": 0.35,
             "provenance": "synthetic_test_policy",
+            "version": "synthetic-v1",
         },
         "evaluation_window": {
             "start_ns": min((item["source_stamp_ns"] for item in commands), default=1_000_000_000),
@@ -466,6 +469,23 @@ class EvaluationTest(unittest.TestCase):
         self.assertIn(
             "TRACKING_ACCEPTANCE_POLICY_UNAVAILABLE", result["blocking_reasons"]
         )
+
+    def test_unversioned_tracking_policies_are_not_qualification_authority(self):
+        data = inputs(
+            [pva(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+             pva(2_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))],
+            [truth(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+             truth(2_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))],
+        )
+        data["tracking_coverage_policy"].pop("version")
+        coverage = evaluate_session(data)
+        self.assertIn("TRACKING_COVERAGE_POLICY_VERSION_MISSING",
+                      coverage["blocking_reasons"])
+        data["tracking_coverage_policy"]["version"] = "synthetic-v1"
+        data["tracking_acceptance_policy"].pop("version")
+        acceptance = evaluate_session(data)
+        self.assertIn("TRACKING_ACCEPTANCE_POLICY_VERSION_MISSING",
+                      acceptance["blocking_reasons"])
 
     def test_requested_speed_outside_c0_is_ineligible(self):
         result = evaluate_session(inputs([], [], requested_cruise_speed_mps=8.0))

@@ -1415,6 +1415,20 @@ def _tracking_coverage(
             "uncovered_intervals": [], "status": "NOT_EVALUABLE",
             "reason": "TRACKING_COVERAGE_POLICY_UNAVAILABLE",
         }, ["TRACKING_COVERAGE_POLICY_UNAVAILABLE"]
+    if not isinstance(policy.get("provenance"), str) or not policy["provenance"].strip():
+        return {
+            "required_duration_s": None, "valid_duration_s": None,
+            "coverage_ratio": None, "longest_uncovered_interval_s": None,
+            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
+            "reason": "TRACKING_COVERAGE_POLICY_PROVENANCE_MISSING",
+        }, ["TRACKING_COVERAGE_POLICY_PROVENANCE_MISSING"]
+    if not isinstance(policy.get("version"), str) or not policy["version"].strip():
+        return {
+            "required_duration_s": None, "valid_duration_s": None,
+            "coverage_ratio": None, "longest_uncovered_interval_s": None,
+            "uncovered_intervals": [], "status": "NOT_EVALUABLE",
+            "reason": "TRACKING_COVERAGE_POLICY_VERSION_MISSING",
+        }, ["TRACKING_COVERAGE_POLICY_VERSION_MISSING"]
     minimum_ratio = float(policy["min_coverage_ratio"])
     maximum_uncovered = float(policy["max_uncovered_interval_s"])
     maximum_pairing_gap = float(policy["max_pairing_gap_s"])
@@ -2095,6 +2109,8 @@ def _tracking_acceptance_status(
         return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_UNAVAILABLE"]
     if not isinstance(policy.get("provenance"), str) or not policy["provenance"].strip():
         return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_PROVENANCE_MISSING"]
+    if not isinstance(policy.get("version"), str) or not policy["version"].strip():
+        return "NOT_EVALUABLE", ["TRACKING_ACCEPTANCE_POLICY_VERSION_MISSING"]
     limits: dict[str, float] = {}
     for key in required:
         value = _number(policy.get(key))
