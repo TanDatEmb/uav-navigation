@@ -268,8 +268,11 @@ def analyze_session(session: Path) -> dict[str, Any]:
         "metrics_ms": {name: _summary(values) for name, values in metrics.items()},
         "maximum_accepted_receive_gap_ms": max(accepted_gaps) if accepted_gaps else None,
         "remaining_margin_to_200_ms": (200.0 - max(accepted_gaps)) if accepted_gaps else None,
-        "maximum_observed_clock_arrival_gap_ms": clock_stream.get(
-            "maximum_observed_arrival_gap_ms"),
+        "maximum_observed_clock_arrival_gap_ms": (
+            clock_stream.get("maximum_observed_arrival_gap_ms")
+            if clock_stream.get("maximum_observed_arrival_gap_ms") is not None
+            else max((float(event["gap_ms"]) for event in clock_events), default=None)
+        ),
         "tails_over_100_ms": tails,
         "unknown_tail_count": sum(tail["class"] == "UNKNOWN" for tail in tails),
     }
