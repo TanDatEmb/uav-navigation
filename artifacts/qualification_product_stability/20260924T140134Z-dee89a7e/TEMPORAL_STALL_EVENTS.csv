@@ -1,0 +1,2 @@
+cohort,session,before_sequence,after_sequence,accepted_gap_ms,ros_clock_gap_ms,ros_clock_source_progress_ms,imu_gap_ms,producer_gap_ms,adapter_callback_gap_ms,first_stalled_layer,classification
+historical,/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T093208-186236,2721,2722,481.676781,481.869423,4.0,481.517219,483.292265,482.705561,UNRESOLVED,insufficient independent first-layer witness

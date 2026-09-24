@@ -1,0 +1,296 @@
+{
+  "episodes": [
+    {
+      "analytic_complete_ros_ns": 70120000000,
+      "analytic_complete_status": 3,
+      "anchor_limit_m": 0.75,
+      "classification": "ACTUAL_TRACKING_ERROR",
+      "endpoint": [
+        52.361759928679554,
+        0.5731116210304501,
+        2.6838030942638835
+      ],
+      "failure_state_arrival_wall_ns": 1790242980974196318,
+      "failure_state_position": [
+        51.80956398909774,
+        1.083263158203801,
+        2.5620831599481733
+      ],
+      "failure_state_source_ns": 71092000000,
+      "failure_state_speed_mps": 0.5795931463264326,
+      "failure_wall_ns": 1790242980983633920,
+      "generation": 54,
+      "generation_switch": {
+        "command_position_step_m": 0.610579013091738,
+        "new_generation": 54,
+        "old_generation": 53,
+        "sample_interval_ms": 4.0
+      },
+      "last_command_ros_ns": 71084000000,
+      "last_command_source_ns": 71072000000,
+      "post_completion_command_max_gap_ms": 72.707335,
+      "post_completion_px4_input_max_gap_ms": 71.061738,
+      "px4_setpoint_boundaries": [
+        "position_hold",
+        "tracking"
+      ],
+      "px4_trace_drops_max": 0,
+      "reconstructed_anchor_error_m": 0.7615711975782674,
+      "reported_anchor_error_m": 0.762,
+      "request_id": 5,
+      "timeline": [
+        {
+          "command_generation": 52,
+          "command_position": [
+            51.68213531845932,
+            1.0535528661045304,
+            2.5970275858815373
+          ],
+          "command_ros_ns": 68120000000,
+          "command_status": 1,
+          "command_velocity": [
+            -0.06014114566135721,
+            0.01338145836694192,
+            -0.09742552199894337
+          ],
+          "endpoint_error_m": 0.8349456527850351,
+          "measured_position": [
+            51.68378370200485,
+            1.0527819920141637,
+            2.597786733210251
+          ],
+          "measured_speed_mps": 0.10312912019015147,
+          "offset_ms": -2000,
+          "state_source_ns": 68112000000
+        },
+        {
+          "command_generation": 52,
+          "command_position": [
+            52.03219402899364,
+            0.7549568190444668,
+            2.6033125902349856
+          ],
+          "command_ros_ns": 69116000000,
+          "command_status": 1,
+          "command_velocity": [
+            0.9829687392797997,
+            -0.7771012901484242,
+            0.17355608905517061
+          ],
+          "endpoint_error_m": 0.8454074214435687,
+          "measured_position": [
+            51.70592256121248,
+            1.097400155022149,
+            2.585250627067167
+          ],
+          "measured_speed_mps": 0.42712529592308557,
+          "offset_ms": -1000,
+          "state_source_ns": 69112000000
+        },
+        {
+          "command_generation": 54,
+          "command_position": [
+            52.127663832280206,
+            0.7621633541055366,
+            2.6308533272803003
+          ],
+          "command_ros_ns": 69616000000,
+          "command_status": 2,
+          "command_velocity": [
+            1.1226001951369857,
+            -0.9065914199570252,
+            0.08162749330395722
+          ],
+          "endpoint_error_m": 0.3096750327513015,
+          "measured_position": [
+            52.123859053422066,
+            0.7642524265635773,
+            2.631200889734147
+          ],
+          "measured_speed_mps": 1.8287158634675313,
+          "offset_ms": -500,
+          "state_source_ns": 69612000000
+        },
+        {
+          "command_generation": 54,
+          "command_position": [
+            52.34791895965819,
+            0.5842893348888822,
+            2.6759167363554806
+          ],
+          "command_ros_ns": 69916000000,
+          "command_status": 2,
+          "command_velocity": [
+            0.2391036455120149,
+            -0.19309573830528948,
+            0.11654773021696796
+          ],
+          "endpoint_error_m": 0.24773749317605392,
+          "measured_position": [
+            52.54284427287044,
+            0.4194682445136075,
+            2.754344136690374
+          ],
+          "measured_speed_mps": 1.463382992172483,
+          "offset_ms": -200,
+          "state_source_ns": 69912000000
+        },
+        {
+          "command_generation": 54,
+          "command_position": [
+            52.35949805976193,
+            0.5749382650686973,
+            2.6822479941505204
+          ],
+          "command_ros_ns": 70012000000,
+          "command_status": 2,
+          "command_velocity": [
+            0.06805691760637611,
+            -0.05496152400288379,
+            0.043360018304003045
+          ],
+          "endpoint_error_m": 0.36340128703877295,
+          "measured_position": [
+            52.62028625572547,
+            0.35365117449054173,
+            2.8144237130424283
+          ],
+          "measured_speed_mps": 0.8443421870066159,
+          "offset_ms": -100,
+          "state_source_ns": 70012000000
+        },
+        {
+          "command_generation": 54,
+          "command_position": [
+            52.361759928679554,
+            0.5731116210304501,
+            2.6838030942638835
+          ],
+          "command_ros_ns": 70120000000,
+          "command_status": 3,
+          "command_velocity": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "endpoint_error_m": 0.406080698751722,
+          "measured_position": [
+            52.6517019263145,
+            0.3310978106622392,
+            2.8330159874641776
+          ],
+          "measured_speed_mps": 0.12843699455170174,
+          "offset_ms": 0,
+          "state_source_ns": 70112000000
+        },
+        {
+          "command_generation": 54,
+          "command_position": [
+            52.361759928679554,
+            0.5731116210304501,
+            2.6838030942638835
+          ],
+          "command_ros_ns": 70220000000,
+          "command_status": 3,
+          "command_velocity": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "endpoint_error_m": 0.37527541018967014,
+          "measured_position": [
+            52.63411253925611,
+            0.35036602727747357,
+            2.814340787934313
+          ],
+          "measured_speed_mps": 0.5913919555112153,
+          "offset_ms": 100,
+          "state_source_ns": 70212000000
+        },
+        {
+          "command_generation": 54,
+          "command_position": [
+            52.361759928679554,
+            0.5731116210304501,
+            2.6838030942638835
+          ],
+          "command_ros_ns": 70316000000,
+          "command_status": 3,
+          "command_velocity": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "endpoint_error_m": 0.2880267894048206,
+          "measured_position": [
+            52.57808367312983,
+            0.40597710176077006,
+            2.7745198042480563
+          ],
+          "measured_speed_mps": 1.0620836724072245,
+          "offset_ms": 200,
+          "state_source_ns": 70312000000
+        },
+        {
+          "command_generation": 54,
+          "command_position": [
+            52.361759928679554,
+            0.5731116210304501,
+            2.6838030942638835
+          ],
+          "command_ros_ns": 70620000000,
+          "command_status": 3,
+          "command_velocity": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "endpoint_error_m": 0.15847132867860908,
+          "measured_position": [
+            52.26191065101971,
+            0.6947416976829386,
+            2.6651106300742375
+          ],
+          "measured_speed_mps": 1.6608977992769467,
+          "offset_ms": 500,
+          "state_source_ns": 70612000000
+        },
+        {
+          "command_generation": 54,
+          "command_position": [
+            52.361759928679554,
+            0.5731116210304501,
+            2.6838030942638835
+          ],
+          "command_ros_ns": 71100000000,
+          "command_status": 4,
+          "command_velocity": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "endpoint_error_m": 0.7726267239605512,
+          "measured_position": [
+            51.800933941974634,
+            1.0899516541905565,
+            2.560099224730522
+          ],
+          "measured_speed_mps": 0.5138271360585891,
+          "offset_ms": 1000,
+          "state_source_ns": 71112000000
+        }
+      ],
+      "truth_crosscheck": {
+        "lio_vs_truth_displacement_residual_m": 0.05825527453231622,
+        "method": "evaluation-only truth displacement rotated into LIO, aligned at first analytic completion",
+        "truth_after_source_ns": 71100000000,
+        "truth_before_source_ns": 70120000000,
+        "truth_local_endpoint_error_m": 0.7465174464038407,
+        "truth_speed_at_analytic_completion_mps": 0.16131364177790317,
+        "truth_speed_at_rejection_mps": 0.5997051301428354
+      }
+    }
+  ],
+  "failure_count": 1,
+  "session": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T094122-193534"
+}
