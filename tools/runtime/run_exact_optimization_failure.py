@@ -54,6 +54,7 @@ def main() -> int:
     output.write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
     print(json.dumps({"label":args.label,"session":str(session),
                       "focused_verdict":result["verdict"],
+                      "injection_state":result["injection_state"],
                       "runner_status":runner_status,
                       "checks":result["checks"],
                       "analysis":str(output)},sort_keys=True))

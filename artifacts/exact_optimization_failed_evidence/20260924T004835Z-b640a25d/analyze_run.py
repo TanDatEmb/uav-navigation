@@ -70,6 +70,10 @@ def analyze(session: Path, injected: bool):
                 retained.append({"observer_ns":t,"fields":fields(st)})
     armed=[e for e in events if e["event"]=="FAULT_INJECTION_ARMED"]
     applied=[e for e in events if e["event"]=="FAULT_INJECTION_APPLIED"]
+    injection_state = ("INJECTION_NOT_ARMED" if not armed else
+                       "INJECTION_ARMED" if not applied else
+                       "INJECTION_APPLIED" if len(applied)==1 else
+                       "INJECTION_APPLIED_MULTIPLE_TIMES")
     fault=applied[0] if len(applied)==1 else None
     cycle=fault["fields"]["planning_cycle_id"] if fault else None
     trace=[e for e in traces if e["fields"].get("planning_cycle_id")==cycle] if cycle else []
@@ -135,6 +139,7 @@ def analyze(session: Path, injected: bool):
     return {"session":str(session),"injected_expected":injected,"verdict":"FOCUSED_PASS" if all(checks.values()) else "FOCUSED_FAIL",
         "checks":checks,"events":events,"trace":trace[-1] if trace else None,
         "retained_decision":decision[-1] if decision else None,
+        "injection_state":injection_state,
         "runs_armed":len(armed),"runs_injected":len(applied),"exact_events":sum(
             e["fields"].get("injected_planner_status")=="6" for e in applied),
         "predecessor_admissions_after_fault":len(predecessor_admitted),
@@ -160,6 +165,7 @@ if __name__=="__main__":
     if args.output:
         args.output.write_text(payload+"\n")
     print(json.dumps({"session":result["session"],"verdict":result["verdict"],
+        "injection_state":result["injection_state"],
         "checks":result["checks"],"fault_to_successor_admission_ms":result["fault_to_successor_admission_ms"],
         "adapter_gap_max_ms":result["adapter_admission_interarrival_ms"]["max"]},sort_keys=True))
     raise SystemExit(0 if result["verdict"]=="FOCUSED_PASS" else 1)
