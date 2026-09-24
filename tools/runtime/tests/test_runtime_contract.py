@@ -4231,6 +4231,21 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(event["previous_source_stamp_ns"], 1_020_000_000)
         self.assertEqual(event["source_stamp_ns"], 1_040_000_000)
 
+    def test_clock_diagnostic_gap_below_stale_boundary_does_not_change_freshness(self) -> None:
+        stats = StreamStats(
+            "simulation_clock", "/clock", stale_after_s=0.5,
+            diagnostic_gap_threshold_s=0.1,
+        )
+        stats.update(1_000_000_000, 10_000_000_000)
+        stats.update(1_004_000_000, 10_480_000_000)
+        snapshot = stats.as_dict()
+        self.assertEqual(snapshot["arrival_gap_event_count"], 0)
+        self.assertEqual(snapshot["stale_event_count"], 0)
+        self.assertEqual(snapshot["diagnostic_gap_event_count"], 1)
+        self.assertAlmostEqual(snapshot["maximum_observed_arrival_gap_ms"], 480.0)
+        self.assertEqual(snapshot["diagnostic_gap_events"][0]["source_stamp_ns"],
+                         1_004_000_000)
+
     def test_clock_gap_snapshot_is_authoritative_without_raw_samples(self) -> None:
         row = {
             "arrival_gap_event_count": 1,

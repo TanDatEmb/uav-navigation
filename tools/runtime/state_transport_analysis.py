@@ -94,8 +94,10 @@ def analyze_session(session: Path) -> dict[str, Any]:
                 callback_counts[DISPOSITIONS.get(int(value.get("disposition") or 0),
                                                  "UNKNOWN_DISPOSITION")] += 1
     monitor = json.loads((session / "monitor.json").read_text(encoding="utf-8"))
-    clock_events = (monitor.get("streams", {}).get("simulation_clock", {})
-                    .get("arrival_gap_events", []))
+    clock_stream = monitor.get("streams", {}).get("simulation_clock", {})
+    clock_events = clock_stream.get("diagnostic_gap_events")
+    if clock_events is None:
+        clock_events = clock_stream.get("arrival_gap_events", [])
     accepted = sorted(
         (row for row in ingress if int(row.get("disposition") or 0) == 1),
         key=lambda row: int(row.get("accepted_receive_steady_ns") or 0),
@@ -196,6 +198,8 @@ def analyze_session(session: Path) -> dict[str, Any]:
         "metrics_ms": {name: _summary(values) for name, values in metrics.items()},
         "maximum_accepted_receive_gap_ms": max(accepted_gaps) if accepted_gaps else None,
         "remaining_margin_to_200_ms": (200.0 - max(accepted_gaps)) if accepted_gaps else None,
+        "maximum_observed_clock_arrival_gap_ms": clock_stream.get(
+            "maximum_observed_arrival_gap_ms"),
         "tails_over_100_ms": tails,
         "unknown_tail_count": sum(tail["class"] == "UNKNOWN" for tail in tails),
     }

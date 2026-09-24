@@ -104,6 +104,7 @@ class StreamStats:
     timestamp_upper_bound_ns: int | None = None
     interval_history_enabled: bool = True
     interval_history_limit: int = 4096
+    diagnostic_gap_threshold_s: float | None = None
     received: int = 0
     first_stamp_ns: int = 0
     last_stamp_ns: int = 0
@@ -122,6 +123,9 @@ class StreamStats:
     arrival_gap_event_times_ns: list[int] = field(default_factory=list)
     arrival_gap_events: list[dict[str, int | float]] = field(default_factory=list)
     maximum_arrival_gap_ms: float = 0.0
+    maximum_observed_arrival_gap_ms: float = 0.0
+    diagnostic_gap_events: list[dict[str, int | float]] = field(default_factory=list)
+    diagnostic_gap_event_total: int = 0
     arrival_gap_event_total: int = 0
     arrival_gap_event_overflow: int = 0
     nonfinite_messages: int = 0
@@ -155,6 +159,23 @@ class StreamStats:
         previous_stamp_ns = self.last_stamp_ns
         if previous_arrival_ns > 0:
             gap_ns = arrival_ns - previous_arrival_ns
+            self.maximum_observed_arrival_gap_ms = max(
+                self.maximum_observed_arrival_gap_ms, gap_ns / 1e6
+            )
+            diagnostic_threshold_ns = (
+                int(self.diagnostic_gap_threshold_s * 1e9)
+                if self.diagnostic_gap_threshold_s is not None else 0
+            )
+            if diagnostic_threshold_ns > 0 and gap_ns > diagnostic_threshold_ns:
+                self.diagnostic_gap_event_total += 1
+                if len(self.diagnostic_gap_events) < 1024:
+                    self.diagnostic_gap_events.append({
+                        "previous_arrival_wall_ns": previous_arrival_ns,
+                        "arrival_wall_ns": arrival_ns,
+                        "gap_ms": gap_ns / 1e6,
+                        "previous_source_stamp_ns": previous_stamp_ns,
+                        "source_stamp_ns": stamp_ns,
+                    })
             threshold_ns = int(self.stale_after_s * 1e9)
             # Exact equality remains valid, matching the freshness contract.
             if threshold_ns > 0 and gap_ns > threshold_ns:
@@ -253,6 +274,10 @@ class StreamStats:
             "arrival_gap_event_times_ns": self.arrival_gap_event_times_ns,
             "arrival_gap_events": self.arrival_gap_events,
             "maximum_arrival_gap_ms": self.maximum_arrival_gap_ms,
+            "maximum_observed_arrival_gap_ms": self.maximum_observed_arrival_gap_ms,
+            "diagnostic_gap_event_count": self.diagnostic_gap_event_total,
+            "diagnostic_gap_event_record_count": len(self.diagnostic_gap_events),
+            "diagnostic_gap_events": self.diagnostic_gap_events,
             "timestamp_duplicate_count": self.timestamp_duplicates,
             "timestamp_regression_count": self.timestamp_regressions,
             "timestamp_epoch_discard_count": self.timestamp_epoch_discard_count,
@@ -590,6 +615,7 @@ class RuntimeMonitor:
                     else None
                 ),
                 interval_history_enabled=spec.name != "simulation_clock",
+                diagnostic_gap_threshold_s=(0.1 if spec.name == "simulation_clock" else None),
             )
             try:
                 reliability, depth = _observer_qos_contract(
