@@ -11,6 +11,7 @@ zero.
 from __future__ import annotations
 
 import bisect
+from enum import Enum
 import json
 import math
 from pathlib import Path
@@ -34,6 +35,25 @@ _SUCCESS_DISPOSITIONS = {
 }
 _TERMINAL_REJECT_DISPOSITIONS = {"REJECTED", "FAILED", "CANCELED", "CANCELLED", "SUPERSEDED"}
 _LIFECYCLE_PHASES = {"request", "authorize", "export", "activate", "publish"}
+
+
+class SourceTimestampPolicy(Enum):
+    """Source-time contract for an evidence stream, not a flight-time gate."""
+
+    STRICTLY_INCREASING = "STRICTLY_INCREASING"
+    NON_DECREASING = "NON_DECREASING"
+    DUPLICATES_ALLOWED = "DUPLICATES_ALLOWED"
+    DUPLICATES_ALLOWED_FOR_HEARTBEAT = "DUPLICATES_ALLOWED_FOR_HEARTBEAT"
+    EVENT_SEQUENCE_AUTHORITATIVE = "EVENT_SEQUENCE_AUTHORITATIVE"
+    NO_SOURCE_TIME = "NO_SOURCE_TIME"
+
+
+STREAM_SOURCE_TIMESTAMP_POLICY = {
+    "navigation_command": SourceTimestampPolicy.DUPLICATES_ALLOWED_FOR_HEARTBEAT,
+    "ground_truth_odometry": SourceTimestampPolicy.STRICTLY_INCREASING,
+    "corrected_odometry": SourceTimestampPolicy.STRICTLY_INCREASING,
+    "propagated_odometry": SourceTimestampPolicy.STRICTLY_INCREASING,
+}
 
 
 def _load(path: Path, default: Any) -> Any:
@@ -101,8 +121,16 @@ def _source_stamp_ns(event: dict[str, Any], payload: dict[str, Any]) -> tuple[in
     return None, "missing"
 
 
-def _source_time_status(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
+def _source_time_status(
+    rows: list[dict[str, Any]],
+    *,
+    policy: SourceTimestampPolicy = SourceTimestampPolicy.STRICTLY_INCREASING,
+) -> tuple[bool, list[str]]:
     """Validate provenance, not merely presence of a numeric timestamp."""
+    if policy in {SourceTimestampPolicy.DUPLICATES_ALLOWED_FOR_HEARTBEAT,
+                  SourceTimestampPolicy.EVENT_SEQUENCE_AUTHORITATIVE,
+                  SourceTimestampPolicy.NO_SOURCE_TIME}:
+        raise ValueError("this policy requires stream-specific identity validation")
     reasons: list[str] = []
     if not rows:
         return False, ["SOURCE_TIME_UNAVAILABLE"]
@@ -122,7 +150,7 @@ def _source_time_status(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
             reasons.append("SOURCE_TIME_EPOCH_CHANGE")
             previous_stamp = None
         if stamp is not None and stamp > 0 and previous_stamp is not None:
-            if stamp == previous_stamp:
+            if stamp == previous_stamp and policy == SourceTimestampPolicy.STRICTLY_INCREASING:
                 reasons.append("SOURCE_TIMESTAMP_DUPLICATE")
             elif stamp < previous_stamp:
                 reasons.append("SOURCE_TIMESTAMP_REGRESSION")
@@ -341,6 +369,7 @@ def reduce_lifecycle(
     transactions: dict[tuple[Any, ...], dict[str, Any]] = {}
     conflicts: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
+    unbound_events: list[dict[str, Any]] = []
     seen: dict[tuple[Any, ...], tuple[Any, ...]] = {}
 
     for event in normalized:
@@ -350,15 +379,27 @@ def reduce_lifecycle(
         if phase == "request" and not _present_identity(
             event.get("causal_planning_cycle_id")
         ):
-            # Request and command-timer activation evidence may not carry the
-            # planner cycle. Keep the request unresolved rather than attaching
-            # it to a later planning transaction.
+            # Legacy goal-topic observations are not planner-cycle requests.
+            # Preserve them separately instead of silently dropping the row
+            # or attaching it to the nearest subsequent planner cycle.
+            unbound_events.append({
+                "phase": phase,
+                "reason": "REQUEST_CYCLE_UNAVAILABLE",
+                "request_boundary": event.get("request_boundary"),
+                "request_id": event.get("request_id"),
+            })
             continue
         if phase == "activate" and not _present_identity(
             event.get("bundle_owner_cycle_id")
         ):
             # Without a unique export witness, command-timer activation has no
             # producer cycle and must not be guessed from observer order.
+            unbound_events.append({
+                "phase": phase,
+                "reason": "ACTIVATION_OWNER_UNRESOLVED",
+                "request_id": event.get("request_id"),
+                "bundle_generation": event.get("bundle_generation"),
+            })
             continue
         disposition = str(event.get("disposition", "")).upper()
         tx_key = _lifecycle_transaction_key(event)
@@ -374,6 +415,7 @@ def reduce_lifecycle(
             "events": {},
             "events_all": {},
             "status": "INCOMPLETE",
+            "evidence_outcome": "MISSING_EVIDENCE",
             "reasons": [],
             "terminal_outcome": None,
         })
@@ -440,10 +482,20 @@ def reduce_lifecycle(
         if request_disposition in _TERMINAL_REJECT_DISPOSITIONS:
             transaction["terminal_outcome"] = request_disposition
             transaction["status"] = "VALID_REJECT" if not transaction["reasons"] else "CONFLICTING"
+            transaction["evidence_outcome"] = (
+                "CONFLICTING_EVIDENCE" if transaction["reasons"] else
+                "SUPERSEDED" if request_disposition == "SUPERSEDED" else
+                "INTENTIONALLY_ABSENT"
+            )
             continue
         if authorize and str(authorize.get("disposition", "")).upper() in _TERMINAL_REJECT_DISPOSITIONS:
             transaction["terminal_outcome"] = str(authorize.get("disposition")).upper()
             transaction["status"] = "VALID_REJECT" if not transaction["reasons"] else "CONFLICTING"
+            transaction["evidence_outcome"] = (
+                "CONFLICTING_EVIDENCE" if transaction["reasons"] else
+                "SUPERSEDED" if transaction["terminal_outcome"] == "SUPERSEDED" else
+                "INTENTIONALLY_ABSENT"
+            )
             continue
         required = {
             "request": request,
@@ -514,6 +566,7 @@ def reduce_lifecycle(
             valid_publishes.append(publish_event)
         if not transaction["reasons"]:
             transaction["status"] = "VALID"
+            transaction["evidence_outcome"] = "RESOLVED"
             valid_transactions.append(transaction)
             for publish_event in valid_publishes:
                 valid_reference_ids.add((
@@ -522,12 +575,17 @@ def reduce_lifecycle(
                     publish_event.get("sample_id"),
                 ))
         else:
+            transaction["evidence_outcome"] = (
+                "CONFLICTING_EVIDENCE" if "CONFLICTING_EVIDENCE" in transaction["reasons"]
+                else "MISSING_EVIDENCE"
+            )
             unresolved.append(transaction)
 
+    critical_unbound = [item for item in unbound_events if item["phase"] == "activate"]
     return {
         "status": (
             "CONFLICTING" if conflicts else
-            "INCOMPLETE" if unresolved else
+            "INCOMPLETE" if unresolved or critical_unbound else
             "VALID" if valid_transactions else
             "INCOMPLETE"
         ),
@@ -541,9 +599,11 @@ def reduce_lifecycle(
         "valid_reference_ids": [list(item) for item in sorted(valid_reference_ids, key=str)],
         "conflicts": conflicts,
         "unresolved": unresolved,
+        "unbound_events": unbound_events,
         "reasons": sorted(set(
             reason for item in transactions.values() for reason in item["reasons"]
-        ) | ({"CONFLICTING_EVIDENCE"} if conflicts else set())),
+        ) | ({"CONFLICTING_EVIDENCE"} if conflicts else set())
+          | {item["reason"] for item in critical_unbound}),
         "order_independent": True,
     }
 
@@ -935,7 +995,7 @@ def load_evaluation_inputs(
         completeness_reasons.append(f"EVIDENCE_GAP:{reason}")
     if lifecycle_reduction["status"] == "CONFLICTING":
         completeness_reasons.append("CONFLICTING_EVIDENCE")
-    if lifecycle_reduction.get("unresolved"):
+    if lifecycle_reduction["status"] == "INCOMPLETE":
         completeness_reasons.append("LIFECYCLE_ATTRIBUTION_INCOMPLETE")
     if any(
         int(_number(item.get("trace_drop_count")) or 0) > 0
@@ -1461,7 +1521,11 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
     propagated = inputs.get("streams", {}).get("propagated_odometry", [])
     metrics: dict[str, Any] = {}
     reasons: list[str] = []
-    reference_time_valid, reference_time_reasons = _source_time_status(reference)
+    # Duplicate PVA source ticks are admitted only after the exact immutable
+    # heartbeat and strictly advancing sample-ID check above. The canonical
+    # reference then has to advance in source time like any other reference.
+    reference_time_valid, reference_time_reasons = _source_time_status(
+        reference, policy=SourceTimestampPolicy.STRICTLY_INCREASING)
     reference_time_reasons = sorted(set(reference_time_reasons + heartbeat_reasons))
     reference_time_valid = reference_time_valid and not heartbeat_reasons
     lineage_valid, lineage_reasons = _reference_lineage_status(inputs, raw_reference)
@@ -1471,11 +1535,16 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         if isinstance(policy, dict) else None
     )
     diagnostic_gap = pairing_gap if pairing_gap is not None else max_gap_s
-    for name, measured in (("tracking.navigation_reference_vs_truth", truth), ("tracking.navigation_reference_vs_lio", corrected or propagated)):
+    for name, measured, measured_stream in (
+        ("tracking.navigation_reference_vs_truth", truth, "ground_truth_odometry"),
+        ("tracking.navigation_reference_vs_lio", corrected or propagated,
+         "corrected_odometry" if corrected else "propagated_odometry"),
+    ):
         frame, frame_reason, frame_transform = _frame_witness(
             reference, measured, inputs.get("scenario", {})
         )
-        measured_time_valid, measured_time_reasons = _source_time_status(measured)
+        measured_time_valid, measured_time_reasons = _source_time_status(
+            measured, policy=STREAM_SOURCE_TIMESTAMP_POLICY[measured_stream])
         clock_relation_valid, clock_relation_reasons = _source_clock_relation_status(
             reference, measured
         )
@@ -1586,6 +1655,10 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
     return {
         "metrics": metrics, "reasons": sorted(set(reasons)),
         "max_gap_s": diagnostic_gap,
+        "source_timestamp_policies": {
+            stream: policy.value
+            for stream, policy in STREAM_SOURCE_TIMESTAMP_POLICY.items()
+        },
         "reference_heartbeat_collapsed_count": collapsed_heartbeats,
         "raw_reference_count": len(raw_reference),
         "canonical_reference_count": len(reference),

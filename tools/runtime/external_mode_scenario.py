@@ -592,19 +592,10 @@ class ExternalModeScenario:
     ) -> None:
         """Record the observed authority handoff without affecting control."""
         self._lifecycle_sequence = getattr(self, "_lifecycle_sequence", 0) + 1
-        inherited: dict[str, Any] = {}
-        for key in (
-            "localization_epoch", "goal_epoch", "request_id",
-            "causal_planning_cycle_id", "bundle_generation", "sample_id",
-        ):
-            latest_pva = getattr(self, "latest_pva_command", {})
-            if key not in details and isinstance(latest_pva, dict):
-                value = latest_pva.get(key)
-                if value not in (None, 0):
-                    inherited[key] = value
-        latest_goal = getattr(self, "latest_goal", {})
-        if "request_id" not in details and latest_goal.get("request_id") not in (None, 0):
-            inherited["request_id"] = latest_goal["request_id"]
+        # A recent PVA/goal is an observer cache, not the causal owner of this
+        # event. Inheriting its identity fabricates cross-cycle lineage when
+        # planner, command and recorder callbacks interleave. Producers must
+        # pass only identities observed at the boundary that emitted details.
         payload = {
             "phase": phase,
             "disposition": disposition,
@@ -613,7 +604,6 @@ class ExternalModeScenario:
             "runtime_instance_id": getattr(self, "runtime_instance_id", "unknown"),
             "session_id": getattr(self, "session_id", "unknown"),
             "causal_event_sequence": self._lifecycle_sequence,
-            **inherited,
             **details,
         }
         self._record("lifecycle", payload)
@@ -1828,7 +1818,7 @@ class ExternalModeScenario:
         }
         self._record("goal", self.latest_goal)
         self._record_lifecycle(
-            "request", "PUBLISHED",
+            "goal_observed", "OBSERVED",
             source_stamp_ns=_time_ns(message.header.stamp),
             mission_id=str(message.mission_id),
             waypoint_index=waypoint_index,
@@ -2270,11 +2260,12 @@ class ExternalModeScenario:
         route.measured_lateral_error_m = 0.0
         self.goal_pub.publish(message)
         self.goal_publish_count += 1
-        # This is the producer boundary for the planning request.  The
-        # subscription callback below may observe the same topic message, but
-        # lifecycle attribution must not depend on that transport observation.
+        # This is the producer boundary for mission goal transport. The
+        # runtime's planning-cycle trace is the separate witness that binds a
+        # desired request to a solve. Do not label this cycleless goal event as
+        # a completed planning request or infer its cycle from the subscriber.
         self._record_lifecycle(
-            "request", "PUBLISHED",
+            "goal_issued", "PUBLISHED",
             source_stamp_ns=_time_ns(message.header.stamp),
             mission_id=route_id,
             waypoint_index=message.waypoint_index,

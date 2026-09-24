@@ -31,6 +31,27 @@ class DirectCommitLifecycleTest(unittest.TestCase):
         self.assertEqual(activation["disposition_source"],
                          "navigation_runtime/commit_planner_candidate")
 
+    def test_lifecycle_event_does_not_inherit_previous_command_identity(self):
+        recorder = ExternalModeScenario.__new__(ExternalModeScenario)
+        recorded = []
+        recorder._record = lambda kind, payload: recorded.append((kind, payload))
+        recorder.runtime_instance_id = "runtime-a"
+        recorder.session_id = "session-a"
+        recorder.latest_pva_command = {
+            "request_id": 4, "goal_epoch": 8, "bundle_generation": 19,
+            "sample_id": 40, "causal_planning_cycle_id": 12,
+        }
+        recorder.latest_goal = {"request_id": 5}
+        recorder._record_lifecycle(
+            "request", "PUBLISHED", request_id=6,
+            request_boundary="goal_publisher",
+        )
+        event = recorded[0][1]
+        self.assertEqual(event["request_id"], 6)
+        for stale_field in ("goal_epoch", "bundle_generation", "sample_id",
+                            "causal_planning_cycle_id"):
+            self.assertNotIn(stale_field, event)
+
     def test_staged_candidate_does_not_fabricate_activation(self):
         self.values["runtime_admission_disposition"] = "STAGED_PENDING_ACTIVATION"
         self.scenario._record_planner_trace_lifecycle(self.values, 123)

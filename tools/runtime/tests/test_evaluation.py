@@ -8,6 +8,8 @@ RUNTIME = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(RUNTIME))
 
 from evaluation import (
+    SourceTimestampPolicy,
+    _source_time_status,
     build_execution_segments,
     build_evidence_contract,
     evaluate_motion_quality,
@@ -148,6 +150,20 @@ def complete_writer_stats(categories):
 
 
 class EvaluationTest(unittest.TestCase):
+    def test_source_timestamp_policy_distinguishes_duplicate_and_regression(self):
+        rows = [truth(stamp, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+                for stamp in (1_000_000_000, 1_000_000_000)]
+        self.assertIn("SOURCE_TIMESTAMP_DUPLICATE", _source_time_status(
+            rows, policy=SourceTimestampPolicy.STRICTLY_INCREASING)[1])
+        self.assertEqual(_source_time_status(
+            rows, policy=SourceTimestampPolicy.NON_DECREASING), (True, []))
+        with self.assertRaises(ValueError):
+            _source_time_status(
+                rows, policy=SourceTimestampPolicy.DUPLICATES_ALLOWED_FOR_HEARTBEAT)
+        rows[-1]["source_stamp_ns"] -= 1
+        self.assertIn("SOURCE_TIMESTAMP_REGRESSION", _source_time_status(
+            rows, policy=SourceTimestampPolicy.NON_DECREASING)[1])
+
     @staticmethod
     def _lifecycle(*, request=1, bundle=4, cycle=9, sample=11, disposition=None):
         common = {
@@ -907,6 +923,16 @@ class EvaluationTest(unittest.TestCase):
         reduced = reduce_lifecycle(events)
         self.assertEqual(reduced["status"], "INCOMPLETE")
         self.assertIn("LIFECYCLE_PHASE_INCOMPLETE:request", reduced["reasons"])
+        self.assertEqual(reduced["unbound_events"][0]["reason"],
+                         "REQUEST_CYCLE_UNAVAILABLE")
+
+    def test_orphan_activation_remains_a_qualification_gap(self):
+        event = dict(self._lifecycle()[3], bundle_owner_cycle_id=None,
+                     bundle_generation=99)
+        reduced = reduce_lifecycle([event])
+        self.assertEqual(reduced["status"], "INCOMPLETE")
+        self.assertIn("ACTIVATION_OWNER_UNRESOLVED", reduced["reasons"])
+        self.assertEqual(reduced["unbound_events"][0]["bundle_generation"], 99)
 
     def test_incomplete_transaction_is_not_hidden_by_a_valid_transaction(self):
         valid = self._lifecycle(request=1, bundle=4, cycle=9, sample=11)
@@ -983,7 +1009,19 @@ class EvaluationTest(unittest.TestCase):
         events[0]["disposition"] = "PUBLISHED"
         reduced = reduce_lifecycle(events)
         self.assertEqual(reduced["transactions"][0]["status"], "VALID_REJECT")
+        self.assertEqual(reduced["transactions"][0]["evidence_outcome"],
+                         "INTENTIONALLY_ABSENT")
         self.assertEqual(reduced["valid_transaction_count"], 0)
+
+    def test_superseded_requires_explicit_producer_disposition(self):
+        events = self._lifecycle()
+        events[0]["disposition"] = "SUPERSEDED"
+        reduced = reduce_lifecycle(events[:1])
+        self.assertEqual(reduced["transactions"][0]["evidence_outcome"],
+                         "SUPERSEDED")
+        incomplete = reduce_lifecycle(self._lifecycle()[:-1])
+        self.assertEqual(incomplete["transactions"][0]["evidence_outcome"],
+                         "MISSING_EVIDENCE")
 
     def test_conflicting_dispositions_are_not_resolved_by_last_value(self):
         events = self._lifecycle()
@@ -991,6 +1029,8 @@ class EvaluationTest(unittest.TestCase):
         reduced = reduce_lifecycle(events + [duplicate])
         self.assertEqual(reduced["status"], "CONFLICTING")
         self.assertIn("CONFLICTING_EVIDENCE", reduced["reasons"])
+        self.assertEqual(reduced["transactions"][0]["evidence_outcome"],
+                         "CONFLICTING_EVIDENCE")
 
     def test_duplicate_authorization_world_conflict_is_order_independent(self):
         events = self._lifecycle()
