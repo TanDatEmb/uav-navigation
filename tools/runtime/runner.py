@@ -2835,6 +2835,8 @@ def _start_gazebo_native_observer(
             world,
             "--gz-command",
             gz_command,
+            "--gap-budget-s",
+            "0.15",
         ],
         cwd=ROOT,
     )
@@ -2847,6 +2849,7 @@ def _start_gazebo_native_observer(
             "samples": str(session.directory / "gazebo_native_samples.jsonl"),
             "summary": str(session.directory / "gazebo_native_summary.json"),
             "process_period_s": 1.0,
+            "gap_budget_s": 0.15,
             "verdict_owner": "diagnostic_only",
         },
     )

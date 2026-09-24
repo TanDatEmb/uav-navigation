@@ -2976,6 +2976,7 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertEqual(summary["gazebo_native"]["world_stats"]["first_sim_time_ns"], 1_000_000_500)
         self.assertEqual(summary["gazebo_native"]["world_clock"]["last_sim_time_ns"], 2_000_000_000)
         self.assertIn("native_lidar", summary["gazebo_native"])
+        self.assertIn("native_imu", summary["gazebo_native"])
         self.assertEqual(summary["process_roles"]["px4_gazebo"], 1)
         self.assertEqual(summary["psi_samples"], 1)
 
@@ -2983,6 +2984,29 @@ class RuntimeContractTest(unittest.TestCase):
         self.assertTrue(gazebo_native_observer._native_streams_observed(1, 1))
         self.assertFalse(gazebo_native_observer._native_streams_observed(1, 0))
         self.assertFalse(gazebo_native_observer._native_streams_observed(0, 1))
+
+    def test_gazebo_observer_loop_records_sub_200_ms_scheduler_gap(self) -> None:
+        witness = gazebo_native_observer._StreamState("observer_loop")
+        witness.record(arrival_ns=1_000_000_000, source_ns=0,
+                       gap_budget_ns=150_000_000)
+        witness.record(arrival_ns=1_180_000_000, source_ns=0,
+                       gap_budget_ns=150_000_000)
+        events = witness.snapshot()["arrival_gap_events"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["gap_ns"], 180_000_000)
+
+    def test_gazebo_observer_gap_uses_steady_clock(self) -> None:
+        witness = gazebo_native_observer._StreamState("world_clock")
+        witness.record(arrival_ns=1_000_000_000, steady_ns=1_000_000_000,
+                       source_ns=1, gap_budget_ns=150_000_000)
+        witness.record(arrival_ns=1_500_000_000, steady_ns=1_040_000_000,
+                       source_ns=2, gap_budget_ns=150_000_000)
+        self.assertEqual(witness.snapshot()["arrival_gap_events"], [])
+        witness.record(arrival_ns=1_510_000_000, steady_ns=1_240_000_000,
+                       source_ns=3, gap_budget_ns=150_000_000)
+        event = witness.snapshot()["arrival_gap_events"][0]
+        self.assertEqual(event["gap_ns"], 200_000_000)
+        self.assertEqual(event["before_steady_ns"], 1_040_000_000)
 
     def test_gazebo_native_summary_reports_process_and_psi_counts(self) -> None:
         samples = [
@@ -3004,10 +3028,12 @@ class RuntimeContractTest(unittest.TestCase):
             command = start.call_args.args[1]
             self.assertIn("gazebo_native_observer.py", command[1])
             self.assertIn("--world", command)
+            self.assertEqual(command[command.index("--gap-budget-s") + 1], "0.15")
             runtime = json.loads((session.directory / "runtime.json").read_text(encoding="utf-8"))
             observer = runtime["gazebo_native_observer"]
             self.assertEqual(observer["world_stats_topic"], "/world/test_world/stats")
             self.assertEqual(observer["world_clock_topic"], "/world/test_world/clock")
+            self.assertEqual(observer["gap_budget_s"], 0.15)
             self.assertEqual(observer["verdict_owner"], "diagnostic_only")
 
     def test_report_includes_gazebo_native_diagnostics_without_reasons(self) -> None:

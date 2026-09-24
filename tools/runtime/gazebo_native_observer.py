@@ -146,6 +146,8 @@ class _StreamState:
     kind: str
     last_arrival_ns: int = 0
     first_arrival_ns: int = 0
+    last_steady_ns: int = 0
+    first_steady_ns: int = 0
     last_source_ns: int = 0
     first_source_ns: int = 0
     last_iterations: int | None = None
@@ -159,17 +161,22 @@ class _StreamState:
     real_time_factors: list[float] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def record(self, *, arrival_ns: int, source_ns: int, iterations: int | None = None,
+    def record(self, *, arrival_ns: int, source_ns: int, steady_ns: int | None = None,
+               iterations: int | None = None,
                real_time_factor: float | None = None, gap_budget_ns: int) -> None:
         with self.lock:
+            if steady_ns is None:
+                steady_ns = arrival_ns  # Stable deterministic unit-test input.
             if self.last_arrival_ns:
-                gap_ns = arrival_ns - self.last_arrival_ns
+                gap_ns = steady_ns - self.last_steady_ns
                 self.max_gap_ns = max(self.max_gap_ns, gap_ns)
                 if gap_ns > gap_budget_ns:
                     event = {
                         "kind": "arrival_gap", "stream": self.kind,
                         "before_arrival_ns": self.last_arrival_ns,
                         "after_arrival_ns": arrival_ns,
+                        "before_steady_ns": self.last_steady_ns,
+                        "after_steady_ns": steady_ns,
                         "threshold_crossing_ns": self.last_arrival_ns + gap_budget_ns,
                         "gap_ns": gap_ns, "before_source_ns": self.last_source_ns,
                         "after_source_ns": source_ns,
@@ -197,17 +204,24 @@ class _StreamState:
                     self.real_time_factors.append(real_time_factor)
             if not self.first_arrival_ns:
                 self.first_arrival_ns = arrival_ns
+                self.first_steady_ns = steady_ns
             self.last_arrival_ns = arrival_ns
+            self.last_steady_ns = steady_ns
             self.count += 1
 
-    def finalize(self, now_ns: int, gap_budget_ns: int) -> None:
+    def finalize(self, now_ns: int, gap_budget_ns: int,
+                 now_steady_ns: int | None = None) -> None:
         with self.lock:
-            if self.last_arrival_ns and now_ns - self.last_arrival_ns > gap_budget_ns:
+            if now_steady_ns is None:
+                now_steady_ns = now_ns
+            if self.last_arrival_ns and now_steady_ns - self.last_steady_ns > gap_budget_ns:
                 event = {
                     "kind": "arrival_gap", "stream": self.kind,
                     "before_arrival_ns": self.last_arrival_ns, "after_arrival_ns": now_ns,
+                    "before_steady_ns": self.last_steady_ns,
+                    "after_steady_ns": now_steady_ns,
                     "threshold_crossing_ns": self.last_arrival_ns + gap_budget_ns,
-                    "gap_ns": now_ns - self.last_arrival_ns,
+                    "gap_ns": now_steady_ns - self.last_steady_ns,
                     "before_source_ns": self.last_source_ns, "after_source_ns": 0,
                     "terminal": True,
                 }
@@ -223,6 +237,8 @@ class _StreamState:
                 "count": self.count,
                 "first_arrival_ns": self.first_arrival_ns,
                 "last_arrival_ns": self.last_arrival_ns,
+                "first_steady_ns": self.first_steady_ns,
+                "last_steady_ns": self.last_steady_ns,
                 "first_source_ns": self.first_source_ns,
                 "last_source_ns": self.last_source_ns,
                 "first_iterations": self.first_iterations,
@@ -248,11 +264,12 @@ def _summarize(samples: list[dict[str, Any]]) -> dict[str, Any]:
                 summary["process_roles"][role] = summary["process_roles"].get(role, 0) + 1
         elif kind == "psi_sample":
             summary["psi_samples"] += 1
-    for stream in ("world_stats", "world_clock", "native_lidar"):
+    for stream in ("world_stats", "world_clock", "native_imu", "native_lidar"):
         rows = [row for row in samples if row.get("stream") == stream or row.get("kind") == stream]
         source_field = {
             "world_stats": "sim_time",
             "world_clock": "sim",
+            "native_imu": "stamp",
             "native_lidar": "stamp",
         }[stream]
         source_values = [
@@ -276,6 +293,7 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     try:
         import gz.transport13 as transport
         import gz.msgs10.clock_pb2 as clock_pb2
+        import gz.msgs10.imu_pb2 as imu_pb2
         import gz.msgs10.pointcloud_packed_pb2 as pointcloud_packed_pb2
         import gz.msgs10.world_stats_pb2 as world_stats_pb2
     except ImportError as error:
@@ -285,18 +303,26 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     stats_state = _StreamState("world_stats")
     clock_state = _StreamState("world_clock")
     lidar_state = _StreamState("native_lidar")
+    imu_state = _StreamState("native_imu")
+    # Independent heartbeat for this observer process.  A simultaneous gap
+    # in native subscriptions is not a Gazebo-specific fact when the host did
+    # not schedule this observer either.  The existing 50 ms loop provides a
+    # bounded scheduler witness without another publisher or control input.
+    observer_loop_state = _StreamState("observer_loop")
     gap_budget_ns = int(args.gap_budget_s * 1e9)
     node = transport.Node()
 
     def on_stats(message: Any) -> None:
         factor = float(getattr(message, "real_time_factor", 0.0) or 0.0)
-        stats_state.record(arrival_ns=time.time_ns(), source_ns=_message_time_ns(message, "sim_time"),
+        stats_state.record(arrival_ns=time.time_ns(), steady_ns=time.monotonic_ns(),
+                           source_ns=_message_time_ns(message, "sim_time"),
                            iterations=int(getattr(message, "iterations", 0) or 0),
                            real_time_factor=factor if math.isfinite(factor) else None,
                            gap_budget_ns=gap_budget_ns)
 
     def on_clock(message: Any) -> None:
-        clock_state.record(arrival_ns=time.time_ns(), source_ns=_message_time_ns(message, "sim"), gap_budget_ns=gap_budget_ns)
+        clock_state.record(arrival_ns=time.time_ns(), steady_ns=time.monotonic_ns(),
+                           source_ns=_message_time_ns(message, "sim"), gap_budget_ns=gap_budget_ns)
 
     def on_lidar(message: Any) -> None:
         # Keep this observer diagnostic-only: do not decode or copy the point
@@ -304,6 +330,15 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
         # to distinguish a GPU sensor/transport gap from a ROS bridge gap.
         lidar_state.record(
             arrival_ns=time.time_ns(),
+            steady_ns=time.monotonic_ns(),
+            source_ns=_message_time_ns(getattr(message, "header", None), "stamp"),
+            gap_budget_ns=gap_budget_ns,
+        )
+
+    def on_imu(message: Any) -> None:
+        imu_state.record(
+            arrival_ns=time.time_ns(),
+            steady_ns=time.monotonic_ns(),
             source_ns=_message_time_ns(getattr(message, "header", None), "stamp"),
             gap_budget_ns=gap_budget_ns,
         )
@@ -311,11 +346,13 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     stats_topic = f"/world/{args.world}/stats"
     clock_topic = f"/world/{args.world}/clock"
     lidar_topic = "/sim/mid360/scan/points"
+    imu_topic = "/sim/mid360/imu"
     # The Python binding intentionally returns None on successful subscribe;
     # readiness is therefore proven by delivery of both native streams below.
     node.subscribe(world_stats_pb2.WorldStatistics, stats_topic, on_stats)
     node.subscribe(clock_pb2.Clock, clock_topic, on_clock)
     node.subscribe(pointcloud_packed_pb2.PointCloudPacked, lidar_topic, on_lidar)
+    node.subscribe(imu_pb2.IMU, imu_topic, on_imu)
     samples_path = args.session / "gazebo_native_samples.jsonl"
     process_role_counts: dict[str, int] = {}
     psi_sample_count = 0
@@ -325,24 +362,36 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
     with samples_path.open("a", encoding="utf-8") as output:
         while not stop.is_set() and time.monotonic() < deadline:
             now = time.monotonic()
+            observer_loop_state.record(
+                arrival_ns=time.time_ns(), steady_ns=time.monotonic_ns(), source_ns=0,
+                gap_budget_ns=gap_budget_ns)
             if now >= next_process_sample:
                 process_rows = _process_samples(args.session)
                 process_sample_count += 1
                 for process in process_rows:
                     role = str(process.get("role", "unknown"))
                     process_role_counts[role] = process_role_counts.get(role, 0) + 1
-                output.write(json.dumps({"kind": "process_sample", "arrival_wall_ns": time.time_ns(), "processes": process_rows}, sort_keys=True) + "\n")
+                output.write(json.dumps({"kind": "process_sample", "arrival_wall_ns": time.time_ns(),
+                                         "arrival_steady_ns": time.monotonic_ns(),
+                                         "processes": process_rows}, sort_keys=True) + "\n")
                 psi_sample_count += 1
-                output.write(json.dumps({"kind": "psi_sample", "arrival_wall_ns": time.time_ns(), "psi": _psi_snapshot()}, sort_keys=True) + "\n")
+                output.write(json.dumps({"kind": "psi_sample", "arrival_wall_ns": time.time_ns(),
+                                         "arrival_steady_ns": time.monotonic_ns(),
+                                         "psi": _psi_snapshot()}, sort_keys=True) + "\n")
                 output.flush()
                 next_process_sample = now + args.process_period_s
             time.sleep(0.05)
     now_ns = time.time_ns()
-    stats_state.finalize(now_ns, gap_budget_ns)
-    clock_state.finalize(now_ns, gap_budget_ns)
+    now_steady_ns = time.monotonic_ns()
+    stats_state.finalize(now_ns, gap_budget_ns, now_steady_ns)
+    clock_state.finalize(now_ns, gap_budget_ns, now_steady_ns)
+    imu_state.finalize(now_ns, gap_budget_ns, now_steady_ns)
+    lidar_state.finalize(now_ns, gap_budget_ns, now_steady_ns)
+    observer_loop_state.finalize(now_ns, gap_budget_ns, now_steady_ns)
     node.unsubscribe(stats_topic)
     node.unsubscribe(clock_topic)
     node.unsubscribe(lidar_topic)
+    node.unsubscribe(imu_topic)
     streams_observed = _native_streams_observed(stats_state.count, clock_state.count)
     _atomic_json(args.session / "gazebo_native_summary.json", {
         "schema_version": 2, "status": "OK" if streams_observed else "UNAVAILABLE",
@@ -353,6 +402,8 @@ def _run(args: argparse.Namespace, stop: threading.Event) -> int:
             "world_stats": stats_state.snapshot(),
             "world_clock": clock_state.snapshot(),
             "native_lidar": lidar_state.snapshot(),
+            "native_imu": imu_state.snapshot(),
+            "observer_loop": observer_loop_state.snapshot(),
         },
         "process_sample_count": process_sample_count,
         "process_roles": process_role_counts,

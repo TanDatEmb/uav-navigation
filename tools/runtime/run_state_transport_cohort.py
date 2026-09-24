@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import runner
+from analyze_temporal_layers import analyze as analyze_temporal_layers
 from state_transport_analysis import analyze_session
 
 
@@ -15,6 +16,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=10)
     parser.add_argument("--label", default="qualification-state-transport")
+    parser.add_argument("--gazebo-native-diagnostic", action="store_true",
+                        help="record bounded native Gazebo and host witnesses")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.count <= 0:
@@ -26,7 +29,9 @@ def main() -> int:
         run_status = runner.run_sim(
             True, control_interface="external_mode", map_profile="long_featured",
             map_seed=0, tracking_experiment_mode="off", sitl_dynamics_profile="off",
-            state_transport_trace=True, experiment_id=f"{args.label}-{index:02d}",
+            state_transport_trace=True,
+            gazebo_native_diagnostic=args.gazebo_native_diagnostic,
+            experiment_id=f"{args.label}-{index:02d}",
         )
         created = set(runner._runtime_session_paths(runner.ARTIFACT_ROOT)) - before
         record: dict = {"index": index, "runner_status": run_status,
@@ -57,6 +62,15 @@ def main() -> int:
                         "rejected_count", "matched_accepted_count",
                         "trace_complete_for_accepted", "unknown_tail_count",
                         "maximum_accepted_receive_gap_ms")}
+                layers = analyze_temporal_layers(session)
+                (session / "temporal_layer_analysis.json").write_text(
+                    json.dumps(layers, indent=2, sort_keys=True) + "\n")
+                record["temporal_layer_summary"] = {
+                    "native_observer_status": layers["native_observer_status"],
+                    "event_count": layers["event_count"],
+                    "first_stalled_layers": [event["first_stalled_layer"]
+                                             for event in layers["events"]],
+                }
             except (OSError, ValueError, KeyError) as error:
                 record["timing_analysis_error"] = str(error)
         attempts.append(record)
