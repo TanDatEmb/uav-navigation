@@ -615,7 +615,7 @@ class RuntimeMonitor:
                     else None
                 ),
                 interval_history_enabled=spec.name != "simulation_clock",
-                diagnostic_gap_threshold_s=(0.1 if spec.name == "simulation_clock" else None),
+                diagnostic_gap_threshold_s=(0.05 if spec.name == "simulation_clock" else None),
             )
             try:
                 reliability, depth = _observer_qos_contract(

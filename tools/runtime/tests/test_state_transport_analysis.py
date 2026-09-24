@@ -1,11 +1,16 @@
 import json
 from pathlib import Path
+import sqlite3
+import struct
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from state_transport_analysis import analyze_session, classify_gap
+from state_transport_analysis import (
+    _clock_event_for_interval, _clock_events_from_rosbag,
+    analyze_session, classify_gap,
+)
 
 
 class StateTransportAnalysisTest(unittest.TestCase):
@@ -16,6 +21,32 @@ class StateTransportAnalysisTest(unittest.TestCase):
             mutex_wait_ms=0.01, rejected_between=0,
             clock_gap_ms=1150.256, clock_source_delta_ms=4.0)
         self.assertEqual(result, "SIM_TIME_STALL_OR_SLOWDOWN")
+        self.assertEqual(classify_gap(
+            source_period_ms=20.0, accepted_gap_ms=119.7,
+            producer_gap_ms=119.8, publish_to_callback_ms=0.2,
+            mutex_wait_ms=0.001, rejected_between=0,
+            clock_gap_ms=95.7, clock_source_delta_ms=4.0),
+            "SIM_TIME_STALL_OR_SLOWDOWN")
+
+    def test_rosbag_clock_gap_fallback_correlates_by_observer_interval(self):
+        with tempfile.TemporaryDirectory() as temp:
+            session = Path(temp)
+            (session / "rosbag").mkdir()
+            with sqlite3.connect(session / "rosbag" / "rosbag_0.db3") as database:
+                database.execute("CREATE TABLE topics (id INTEGER, name TEXT, type TEXT)")
+                database.execute("CREATE TABLE messages (topic_id INTEGER, timestamp INTEGER, data BLOB)")
+                database.execute("INSERT INTO topics VALUES (7, '/clock', 'rosgraph_msgs/msg/Clock')")
+                for arrival, source in ((1_000_000_000, 76_000_000),
+                                        (1_095_000_000, 80_000_000)):
+                    database.execute("INSERT INTO messages VALUES (7, ?, ?)",
+                                     (arrival, b"\x00\x01\x00\x00" +
+                                      struct.pack("<iI", 47, source)))
+            events = _clock_events_from_rosbag(session)
+            self.assertEqual(len(events), 1)
+            self.assertAlmostEqual(events[0]["gap_ms"], 95.0)
+            self.assertIsNotNone(_clock_event_for_interval(
+                events, 47_056_000_000, 47_076_000_000,
+                990_000_000, 1_100_000_000))
 
     def test_independent_causes_remain_separate(self):
         base = dict(source_period_ms=20.0, accepted_gap_ms=180.0,
