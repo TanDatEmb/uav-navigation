@@ -272,7 +272,11 @@ def _lifecycle_transaction_key(event: dict[str, Any]) -> tuple[Any, ...]:
     # source + generation is the producer identity; inventing a nearby
     # planning cycle would misattribute the command.
     declared_cycle = event.get("bundle_owner_cycle_id")
-    cycle_id = (("candidate_source", source, generation)
+    cycle_id = (("terminal_monitor", event.get("captured_bundle_generation"),
+                 event.get("producer_event_sequence"))
+                if event.get("phase") == "retained" and
+                event.get("purpose") == 2 else
+                ("candidate_source", source, generation)
                 if source in {2, 3} and generation and
                 not _present_identity(declared_cycle) else declared_cycle)
     return (
@@ -500,10 +504,12 @@ def reduce_lifecycle(
                     tx_key[5] if not isinstance(tx_key[5], tuple) else None),
                 "producer_kind": (
                     "PLANNING_CYCLE" if not isinstance(tx_key[5], tuple)
+                    else "TERMINAL_MONITOR" if tx_key[5][0] == "terminal_monitor"
                     else "HEADING_REBIND" if tx_key[5][1] == 2
                     else "EMERGENCY_BRAKE"),
                 "producer_id": (
                     tx_key[5] if not isinstance(tx_key[5], tuple)
+                    else tx_key[5][1:] if tx_key[5][0] == "terminal_monitor"
                     else tx_key[5][2]),
             },
             "events": {},
@@ -581,6 +587,53 @@ def reduce_lifecycle(
         publish = phase_events.get("publish")
         heading_admitted = phase_events.get("heading_admitted")
         producer_kind = identity["producer_kind"]
+        if producer_kind == "TERMINAL_MONITOR":
+            monitor_generation = retained.get("captured_bundle_generation") if retained else None
+            monitor_sequence = retained.get("producer_event_sequence") if retained else None
+            disposition = retained.get("disposition_code") if retained else None
+            identity_complete = (
+                _present_identity(monitor_generation) and
+                _present_identity(monitor_sequence) and
+                _present_identity(retained.get("state_ingress_sequence")) and
+                _present_identity(retained.get("final_state_source_ros_ns")) and
+                _present_identity(retained.get("final_state_receive_steady_ns"))) if retained else False
+            if not identity_complete:
+                transaction["reasons"].append("TERMINAL_MONITOR_CAUSAL_WITNESS_MISSING")
+            elif (disposition == 8 and
+                  retained.get("owner_snapshot_current") == 1 and
+                  retained.get("callback_request_current") == 1 and
+                  retained.get("monitor_window_current") == 1 and
+                  retained.get("after_command_available") == 1 and
+                  retained.get("after_failure_latched") == 0 and
+                  retained.get("after_bundle_generation") == monitor_generation and
+                  retained.get("final_witness_age_bounded") == 1 and
+                  retained.get("final_body_known_free") == 1 and
+                  retained.get("final_anchor_valid") == 1 and
+                  retained.get("final_bridge_usable") == 1 and
+                  not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "CERTIFIED_COMMAND_PRESERVED"
+                transaction["evidence_outcome"] = "RESOLVED"
+                continue
+            elif (disposition in {2, 3} and
+                  (retained.get("owner_snapshot_current") == 0 or
+                   retained.get("callback_request_current") == 0 or
+                   retained.get("monitor_window_current") == 0) and
+                  not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "STALE_MONITOR_DISCARDED"
+                transaction["evidence_outcome"] = "SUPERSEDED"
+                continue
+            elif (disposition == 4 and
+                  retained.get("after_command_available") == 0 and
+                  retained.get("after_failure_latched") == 1 and
+                  not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "MONITOR_FAIL_CLOSED"
+                transaction["evidence_outcome"] = "RESOLVED"
+                continue
+            transaction["reasons"].append("TERMINAL_MONITOR_OUTCOME_UNVERIFIED")
+            continue
         if supersede is not None:
             old_generation = supersede.get("bundle_generation")
             replacement_generation = supersede.get("replacement_bundle_generation")

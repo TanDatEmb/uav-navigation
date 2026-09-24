@@ -822,6 +822,24 @@ class ExternalModeScenario:
                         values.get("after_command_available")),
                     "after_failure_latched": _integer_value(
                         values.get("after_failure_latched")),
+                    "monitor_window_current": _integer_value(
+                        values.get("monitor_window_current")),
+                    "final_freshness_reason": _integer_value(
+                        values.get("final_freshness_reason")),
+                    "final_witness_age_bounded": _integer_value(
+                        values.get("final_witness_age_bounded")),
+                    "final_body_known_free": _integer_value(
+                        values.get("final_body_known_free")),
+                    "final_anchor_valid": _integer_value(
+                        values.get("final_anchor_valid")),
+                    "final_bridge_usable": _integer_value(
+                        values.get("final_bridge_usable")),
+                    "final_state_source_ros_ns": _integer_value(
+                        values.get("final_state_source_ros_ns")),
+                    "final_state_receive_steady_ns": _integer_value(
+                        values.get("final_state_receive_steady_ns")),
+                    "state_ingress_sequence": _integer_value(
+                        values.get("state_ingress_sequence")),
                     "published_before_event": _integer_value(
                         values.get("published_before_event")),
                     "suppressed_before_event": _integer_value(

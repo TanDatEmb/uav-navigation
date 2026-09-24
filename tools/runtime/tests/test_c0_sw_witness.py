@@ -308,6 +308,30 @@ class C0SoftwareWitnessTest(unittest.TestCase):
                      if item["identity"]["producer_kind"] == "PLANNING_CYCLE")
         self.assertEqual(cycle["evidence_outcome"], "MISSING_EVIDENCE")
 
+    def test_terminal_monitor_is_its_own_producer_transaction(self):
+        base = {key: value for key, value in command_events()[0].items()
+                if key in ("runtime_instance_id", "session_id", "localization_epoch",
+                           "goal_epoch", "request_id")}
+        monitor = dict(
+            base, phase="retained", disposition="OBSERVED", purpose=2,
+            planning_cycle_id=90, bundle_owner_cycle_id=90,
+            producer_event_sequence=6, captured_bundle_generation=11,
+            after_bundle_generation=11, disposition_code=8,
+            state_ingress_sequence=10, final_state_source_ros_ns=101,
+            final_state_receive_steady_ns=102,
+            owner_snapshot_current=1, callback_request_current=1,
+            monitor_window_current=1, after_command_available=1,
+            after_failure_latched=0, final_witness_age_bounded=1,
+            final_body_known_free=1, final_anchor_valid=1,
+            final_bridge_usable=1,
+        )
+        transaction = reduce_lifecycle([monitor])["transactions"][0]
+        self.assertEqual(transaction["identity"]["producer_kind"], "TERMINAL_MONITOR")
+        self.assertEqual(transaction["terminal_outcome"], "CERTIFIED_COMMAND_PRESERVED")
+        monitor["monitor_window_current"] = 0
+        self.assertEqual(reduce_lifecycle([monitor])["transactions"][0][
+            "evidence_outcome"], "MISSING_EVIDENCE")
+
     def test_exact_typed_adapter_rejection_explains_undelivered_sample(self):
         data = software_inputs()
         # The transaction has an earlier delivered sample. A later exact Core
