@@ -15,6 +15,7 @@ import json
 import math
 from pathlib import Path
 from typing import Any
+from command_diagnostics import join_execution_diagnostics
 
 try:
     import yaml
@@ -851,6 +852,7 @@ ROOT_FIELDS = ["timestamp_ns", "relative_time_from_T_cross_s", "bundle_generatio
 def analyze(root: Path, control: Path | None = None) -> dict[str, Any]:
     samples = read_jsonl(root / "samples.jsonl")
     scenario = read_jsonl(root / "scenario.jsonl")
+    join_execution_diagnostics(scenario)
     scope, scope_errors = artifact_scope(root)
     scope_errors.extend(jsonl_integrity(root / "samples.jsonl"))
     scope_errors.extend(jsonl_integrity(root / "scenario.jsonl"))
@@ -1042,7 +1044,7 @@ def analyze(root: Path, control: Path | None = None) -> dict[str, Any]:
         if cmax_gap_ns is None:
             control_scope_errors.append("control alignment: own synchronization tolerance is missing or invalid")
         cframe_contract = control_scope.get("frame_conventions", {}).get("propagated_odometry") if isinstance(control_scope.get("frame_conventions"), dict) else None
-        cscenario = read_jsonl(control / "scenario.jsonl"); csamples = read_jsonl(control / "samples.jsonl"); cpvas = pva_rows(cscenario); clio=stream_series(csamples,"propagated_odometry"); cpx4=stream_series(csamples,"local_position")
+        cscenario = read_jsonl(control / "scenario.jsonl"); join_execution_diagnostics(cscenario); csamples = read_jsonl(control / "samples.jsonl"); cpvas = pva_rows(cscenario); clio=stream_series(csamples,"propagated_odometry"); cpx4=stream_series(csamples,"local_position")
         control_scope_errors.extend(jsonl_integrity(control / "samples.jsonl"))
         control_scope_errors.extend(jsonl_integrity(control / "scenario.jsonl"))
         cpx4, cpx4_mapping_status = apply_clock_mapping(cpx4, control_scope.get("px4_to_ros_mapping"), ccommon_clock)

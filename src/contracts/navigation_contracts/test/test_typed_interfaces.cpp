@@ -1,12 +1,137 @@
 #include <gtest/gtest.h>
 
+#include <functional>
+#include <limits>
+#include <vector>
+
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
+#include <navigation_contracts/msg/navigation_execution_diagnostics.hpp>
 #include <navigation_contracts/msg/navigation_goal.hpp>
 #include <navigation_contracts/msg/propagated_odometry.hpp>
 #include <navigation_contracts/msg/registered_scan.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
 #include <navigation_contracts/navigation_command_contract.hpp>
+
+namespace {
+
+using Command = navigation_contracts::msg::NavigationCommand;
+
+Command validAdmissionCommand() {
+  Command c;
+  c.header.frame_id = "lio_odom";
+  c.header.stamp.sec = 10;
+  c.valid_until.sec = 11;
+  c.world_observation_stamp.sec = 9;
+  c.state_source_stamp.sec = 9;
+  c.mission_id = "mission-a";
+  c.localization_epoch = 3;
+  c.goal_epoch = 5;
+  c.world_generation = 13;
+  c.world_revision = 21;
+  c.bundle_generation = 34;
+  c.sample_id = 55;
+  c.role = Command::ROLE_MAIN;
+  c.status = Command::STATUS_READY;
+  return c;
+}
+
+// Frozen BASE predicate for an old/new truth-table comparison. It must not be
+// called by product admission code.
+bool baselineCommandContractValid(const Command& c, std::string_view frame) {
+  const auto h = navigation_contracts::commandStampNanoseconds(c.header.stamp);
+  const auto u = navigation_contracts::commandStampNanoseconds(c.valid_until);
+  const auto w = navigation_contracts::commandStampNanoseconds(c.world_observation_stamp);
+  const auto s = navigation_contracts::commandStampNanoseconds(c.state_source_stamp);
+  const bool rejected = c.status == Command::STATUS_REJECTED;
+  const bool normal = c.status == Command::STATUS_READY || c.status == Command::STATUS_COMPLETED;
+  const bool braking = c.status == Command::STATUS_BRAKING;
+  const bool role_valid =
+      (normal && (c.role == Command::ROLE_MAIN || c.role == Command::ROLE_BACKUP) &&
+       c.bundle_generation != 0U) ||
+      (braking && c.role == Command::ROLE_EMERGENCY && c.bundle_generation != 0U) ||
+      (rejected && c.role == Command::ROLE_EMERGENCY);
+  const auto finite = [](double x) { return std::isfinite(x); };
+  const bool pvaj_finite = finite(c.position.x) && finite(c.position.y) &&
+      finite(c.position.z) && finite(c.velocity.x) && finite(c.velocity.y) &&
+      finite(c.velocity.z) && finite(c.acceleration.x) && finite(c.acceleration.y) &&
+      finite(c.acceleration.z) && finite(c.jerk.x) && finite(c.jerk.y) &&
+      finite(c.jerk.z) && finite(c.yaw) && finite(c.yaw_rate) &&
+      finite(c.trajectory_time_s);
+  return !frame.empty() && !c.mission_id.empty() && c.header.frame_id == frame &&
+      h > 0 && u > h && w > 0 && s > 0 && c.localization_epoch != 0U &&
+      c.goal_epoch != 0U && c.world_generation != 0U && c.world_revision != 0U &&
+      c.sample_id != 0U && c.status != Command::STATUS_EMPTY &&
+      (normal || braking || rejected) && role_valid && pvaj_finite &&
+      navigation_contracts::certifiedMainContinuationFieldsValid(c) &&
+      c.trajectory_time_s >= 0.0;
+}
+
+bool baselineCommandValidAt(const Command& c, std::int64_t now) {
+  if (now <= 0) return false;
+  const auto h = navigation_contracts::commandStampNanoseconds(c.header.stamp);
+  const auto u = navigation_contracts::commandStampNanoseconds(c.valid_until);
+  return h > 0 && h <= now && u > h && now <= u;
+}
+
+}  // namespace
+
+TEST(NavigationContracts, TypedCommandReasonsPreserveBaselineTruthTable) {
+  using Reason = navigation_contracts::CommandContractReason;
+  const std::vector<std::pair<Reason, std::function<void(Command&)>>> cases{
+      {Reason::kMissionIdEmpty, [](auto& c) { c.mission_id.clear(); }},
+      {Reason::kFrameMismatch, [](auto& c) { c.header.frame_id = "map"; }},
+      {Reason::kHeaderStampInvalid, [](auto& c) { c.header.stamp.sec = 0; }},
+      {Reason::kValidityWindowInvalid, [](auto& c) { c.valid_until.sec = 10; }},
+      {Reason::kWorldStampInvalid, [](auto& c) { c.world_observation_stamp.sec = 0; }},
+      {Reason::kStateStampInvalid, [](auto& c) { c.state_source_stamp.sec = 0; }},
+      {Reason::kLocalizationIdentityInvalid, [](auto& c) { c.localization_epoch = 0; }},
+      {Reason::kGoalIdentityInvalid, [](auto& c) { c.goal_epoch = 0; }},
+      {Reason::kWorldIdentityInvalid, [](auto& c) { c.world_revision = 0; }},
+      {Reason::kSampleIdentityInvalid, [](auto& c) { c.sample_id = 0; }},
+      {Reason::kStatusInvalid, [](auto& c) { c.status = Command::STATUS_EMPTY; }},
+      {Reason::kRoleStatusMismatch, [](auto& c) { c.role = Command::ROLE_EMERGENCY; }},
+      {Reason::kPvajOrYawNonFinite, [](auto& c) {
+          c.velocity.x = std::numeric_limits<double>::quiet_NaN(); }},
+      {Reason::kContinuationContractInvalid, [](auto& c) {
+          c.continuation_boundary_stamp_ns = 10'500'000'000ULL; }},
+      {Reason::kTrajectoryTimeInvalid, [](auto& c) { c.trajectory_time_s = -1.0; }},
+  };
+  auto valid = validAdmissionCommand();
+  EXPECT_EQ(navigation_contracts::assessCommandContract(valid, "lio_odom"), Reason::kValid);
+  EXPECT_TRUE(baselineCommandContractValid(valid, "lio_odom"));
+  EXPECT_EQ(navigation_contracts::assessCommandContract(valid, ""),
+            Reason::kExpectedFrameMissing);
+  EXPECT_FALSE(baselineCommandContractValid(valid, ""));
+  for (const auto& [expected, mutate] : cases) {
+    auto c = valid;
+    mutate(c);
+    EXPECT_EQ(navigation_contracts::assessCommandContract(c, "lio_odom"), expected);
+    EXPECT_EQ(navigation_contracts::commandContractValid(c, "lio_odom"),
+              baselineCommandContractValid(c, "lio_odom"));
+  }
+}
+
+TEST(NavigationContracts, TypedCommandLeasePreservesInclusiveEdges) {
+  using Reason = navigation_contracts::CommandTemporalReason;
+  auto c = validAdmissionCommand();
+  const std::vector<std::pair<std::int64_t, Reason>> cases{
+      {-1, Reason::kNowInvalid}, {0, Reason::kNowInvalid},
+      {9'999'999'999LL, Reason::kNotYetValid},
+      {10'000'000'000LL, Reason::kValid},
+      {10'500'000'000LL, Reason::kValid},
+      {11'000'000'000LL, Reason::kValid},
+      {11'000'000'001LL, Reason::kExpired},
+  };
+  for (const auto& [now, expected] : cases) {
+    EXPECT_EQ(navigation_contracts::assessCommandTemporalLease(c, now), expected);
+    EXPECT_EQ(navigation_contracts::commandValidAt(c, now), baselineCommandValidAt(c, now));
+  }
+  c.valid_until = c.header.stamp;
+  EXPECT_EQ(navigation_contracts::assessCommandTemporalLease(c, 10'000'000'000LL),
+            Reason::kInvalidWindow);
+  EXPECT_FALSE(baselineCommandValidAt(c, 10'000'000'000LL));
+}
 
 TEST(NavigationContracts, RegisteredScanCarriesAtomicIdentityAndPayload) {
   navigation_contracts::msg::RegisteredScan message;
@@ -107,6 +232,7 @@ TEST(NavigationContracts, EstimatorHealthUsesTypedStateAndIndependentFlags) {
 
 TEST(NavigationContracts, NavigationCommandExposesAllProvenanceDimensions) {
   navigation_contracts::msg::NavigationCommand message;
+  navigation_contracts::msg::NavigationExecutionDiagnostics diagnostic;
   message.localization_epoch = 3U;
   message.goal_epoch = 5U;
   message.request_id = 8U;
@@ -114,9 +240,10 @@ TEST(NavigationContracts, NavigationCommandExposesAllProvenanceDimensions) {
   message.world_revision = 21U;
   message.bundle_generation = 34U;
   message.sample_id = 55U;
-  message.execution_authorization = navigation_contracts::msg::NavigationCommand::
+  diagnostic.execution_authorization = navigation_contracts::msg::NavigationExecutionDiagnostics::
       EXECUTION_AUTHORIZATION_GRANTED;
-  message.execution_authorization_steady_ns = 89U;
+  diagnostic.execution_authorization_steady_ns = 89U;
+  diagnostic.sample_id = message.sample_id;
   message.role = navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
   message.status = navigation_contracts::msg::NavigationCommand::STATUS_READY;
 
@@ -130,10 +257,11 @@ TEST(NavigationContracts, NavigationCommandExposesAllProvenanceDimensions) {
   EXPECT_EQ(message.world_revision, 21U);
   EXPECT_EQ(message.bundle_generation, 34U);
   EXPECT_EQ(message.sample_id, 55U);
-  EXPECT_EQ(message.execution_authorization,
-            navigation_contracts::msg::NavigationCommand::
+  EXPECT_EQ(diagnostic.execution_authorization,
+            navigation_contracts::msg::NavigationExecutionDiagnostics::
                 EXECUTION_AUTHORIZATION_GRANTED);
-  EXPECT_EQ(message.execution_authorization_steady_ns, 89U);
+  EXPECT_EQ(diagnostic.execution_authorization_steady_ns, 89U);
+  EXPECT_EQ(diagnostic.sample_id, message.sample_id);
 }
 
 TEST(NavigationContracts, CommandsRequireHealthyTypedEpochHandshake) {

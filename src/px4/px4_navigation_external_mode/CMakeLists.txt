@@ -35,7 +35,7 @@ add_library(${PROJECT_NAME}_adapter STATIC
 target_include_directories(${PROJECT_NAME}_adapter PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_include_directories(${PROJECT_NAME}_adapter PRIVATE
+target_include_directories(${PROJECT_NAME}_adapter PUBLIC
   ${navigation_contracts_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}_adapter
   Eigen3::Eigen

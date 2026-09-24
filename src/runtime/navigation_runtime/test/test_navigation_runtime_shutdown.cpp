@@ -142,7 +142,7 @@ class NavigationRuntimeEpochResetTestPeer {
                                    const navigation_contracts::msg::NavigationCommand& command) {
     std::lock_guard localization_lock(node.localization_transition_mutex_);
     std::lock_guard input_lock(node.input_mutex_);
-    node.rememberMissionCommandIssued(command);
+    node.rememberMissionCommandIssued(command, true);
   }
   static void missionCommandAdmitted(
       NavigationRuntimeNode& node,
@@ -541,8 +541,6 @@ TEST(NavigationRuntimeMissionCut, InitialMeasuredPassCreatesSuccessorInsideCore)
   issued.header.frame_id = "lio_odom";
   issued.header.stamp = node->now();
   issued.valid_until = rclcpp::Time(node->now().nanoseconds() + 100'000'000, RCL_SYSTEM_TIME);
-  issued.execution_authorization = navigation_contracts::msg::NavigationCommand::
-      EXECUTION_AUTHORIZATION_GRANTED;
   issued.mission_id = "external_mode_open_route";
   issued.localization_epoch = 1U;
   issued.goal_epoch = 2U;
@@ -635,8 +633,6 @@ TEST(NavigationRuntimeMissionCut,
   issued.header.stamp = node->now();
   issued.valid_until = rclcpp::Time(node->now().nanoseconds() + 100'000'000,
                                     RCL_SYSTEM_TIME);
-  issued.execution_authorization = navigation_contracts::msg::NavigationCommand::
-      EXECUTION_AUTHORIZATION_GRANTED;
   issued.mission_id = "external_mode_open_route";
   issued.localization_epoch = 1U;
   issued.goal_epoch = 2U;
@@ -827,8 +823,7 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
               message->position.x > 2.5 && speed <= 0.15;
           const bool completed_terminal_role =
               message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN ||
-              (message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
-               message->backup_available);
+              message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
           if (!completed_witness.load(std::memory_order_acquire)) {
             measured_x.store(message->position.x, std::memory_order_release);
             measured_velocity.store(message->velocity.x, std::memory_order_release);
@@ -932,8 +927,7 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
         return command.request_id == 10U && terminal_adjacent.load(std::memory_order_acquire) &&
                command.status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED &&
                (command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN ||
-                (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP &&
-                 command.backup_available)) &&
+                command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) &&
                command.position.x > 2.5 &&
                std::hypot(command.velocity.x, std::hypot(command.velocity.y, command.velocity.z)) <=
                    0.15;
@@ -956,9 +950,6 @@ TEST(NavigationRuntimeHandover, DispatchesNewStopAfterCompletedTerminalCommand) 
                         << " x=" << command.position.x
                         << " vx=" << command.velocity.x
                         << " bundle=" << command.bundle_generation
-                        << " reason=" << command.reason_code
-                        << " authorization=" << static_cast<int>(
-                               command.execution_authorization)
                         << ']';
       }
     }

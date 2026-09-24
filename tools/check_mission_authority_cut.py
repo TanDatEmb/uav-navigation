@@ -21,6 +21,7 @@ def main() -> int:
         (ADAPTER / path).read_text()
         for path in (
             "include/px4_navigation_external_mode/navigation_mode.hpp",
+            "include/px4_navigation_external_mode/command_admission_assessment.hpp",
             "src/navigation_mode_node.cpp",
         )
     )
@@ -47,12 +48,14 @@ def main() -> int:
     require("applyValidatedGoalLocked(" in runtime_text,
             "Core does not reuse the goal transition")
     require("onCommandAdmission(" in runtime_text and
-            "rememberMissionCommandIssued(command);" in runtime_text,
+            "rememberMissionCommandIssued(command, true);" in runtime_text and
+            "execution_authority_.publishIfCurrent(" in runtime_text,
             "Core progression lacks exact adapter admission evidence")
     require("onNavigationCommand(" in adapter_text and
             "command_admission_publisher_->publish(receipt)" in adapter_text,
             "adapter does not report admitted command identity")
-    require("message->mode_activation_id == mode_activation_id_" in adapter_text and
+    require("assessCommandSessionIdentity(" in adapter_text and
+            "incoming.mode_activation_id != mode_activation_id" in adapter_text and
             "command.mode_activation_id = mission_progress_" in runtime_text,
             "command transport does not fence a prior mode activation")
     require("external NavigationGoal rejected: Core owns mission" in runtime_text,

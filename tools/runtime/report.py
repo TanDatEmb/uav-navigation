@@ -3037,7 +3037,10 @@ def _navigation_mapping_summary(
         stream_names=("planning_diagnostics", "mapping_diagnostics", "diagnostics"),
     )
     result["timing_distributions"] = {**mapping_timing, **planner_timing}
-    result["output_topics"] = ["/navigation/navigation_command", "/navigation/diagnostics"]
+    result["output_topics"] = [
+        "/navigation/navigation_command", "/navigation/execution_diagnostics",
+        "/navigation/diagnostics",
+    ]
     return result
 
 

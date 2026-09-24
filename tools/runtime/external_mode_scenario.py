@@ -306,6 +306,14 @@ _MODE_STATUS_REASON_NAMES = {
 }
 
 
+def _command_diagnostic_key(message: Any) -> tuple[Any, ...]:
+    """Exact producer sample identity; diagnostic arrival order is irrelevant."""
+    return tuple(getattr(message, name) for name in (
+        "mode_activation_id", "localization_epoch", "goal_epoch", "mission_id",
+        "waypoint_index", "request_id", "bundle_generation", "sample_id",
+    ))
+
+
 class ExternalModeScenario:
     def __init__(self, output: Path, config: dict[str, Any]) -> None:
         import rclpy
@@ -316,6 +324,8 @@ class ExternalModeScenario:
             NavigationGoal,
             NavigationMissionProgress,
             NavigationModeStatus,
+            NavigationExecutionDiagnostics,
+            NavigationCommandRejection,
             PropagatedOdometry,
         )
         from px4_msgs.msg import (
@@ -448,6 +458,7 @@ class ExternalModeScenario:
         self.executable_trajectory_count = 0
         self.latest_trajectory: dict[str, Any] = {}
         self.trajectory_records: list[dict[str, Any]] = []
+        self._execution_diagnostics_by_sample: dict[tuple[Any, ...], dict[str, Any]] = {}
         # Keep one bounded, timestamped observation summary per LiDAR scan.
         # This is diagnostic evidence only; planner safety remains owned by
         # the immutable map certificate.
@@ -533,8 +544,17 @@ class ExternalModeScenario:
         self.node.create_subscription(TrajectorySetpoint, "/fmu/in/trajectory_setpoint", self._setpoint, px4_qos)
         from navigation_contracts.msg import NavigationCommand
         self.NavigationCommand = NavigationCommand
+        self.NavigationExecutionDiagnostics = NavigationExecutionDiagnostics
         self.node.create_subscription(
             NavigationCommand, "/navigation/navigation_command", self._navigation_command, reliable_qos
+        )
+        self.node.create_subscription(
+            NavigationExecutionDiagnostics, "/navigation/execution_diagnostics",
+            self._navigation_execution_diagnostics, px4_qos,
+        )
+        self.node.create_subscription(
+            NavigationCommandRejection, "/navigation/command_rejection",
+            self._navigation_command_rejection, px4_qos,
         )
         self.node.create_subscription(NavigationGoal, "/navigation/goal", self._goal, reliable_qos)
         self.node.create_subscription(
@@ -1334,48 +1354,10 @@ class ExternalModeScenario:
             ))
         )
         self.pva_command_received += 1
-        authorization = int(getattr(
-            message, "execution_authorization",
-            self.NavigationCommand.EXECUTION_AUTHORIZATION_UNSPECIFIED,
-        ))
-        if authorization in {
-            self.NavigationCommand.EXECUTION_AUTHORIZATION_GRANTED,
-            self.NavigationCommand.EXECUTION_AUTHORIZATION_REJECTED,
-        }:
-            self._record_lifecycle(
-                "authorize",
-                "AUTHORIZED"
-                if authorization == self.NavigationCommand.EXECUTION_AUTHORIZATION_GRANTED
-                else "REJECTED",
-                source_stamp_ns=header_ns if header_ns > 0 else None,
-                sample_id=int(message.sample_id),
-                request_id=int(message.request_id),
-                bundle_generation=int(getattr(message, "bundle_generation", 0)),
-                localization_epoch=int(message.localization_epoch),
-                goal_epoch=int(message.goal_epoch),
-                causal_planning_cycle_id=int(getattr(message, "causal_planning_cycle_id", 0)),
-                bundle_owner_request_id=int(message.request_id),
-                # causal_planning_cycle_id identifies the retained-command
-                # validation which authorized this sample. It is not
-                # necessarily the cycle which exported the still-active
-                # bundle. Leave ownership unresolved here; the evaluator may
-                # bind it only through the unique export witness for this
-                # complete bundle identity.
-                bundle_owner_cycle_id=None,
-                bundle_owner_attribution="resolve_from_export",
-                authorization_boundary="execution_timeline_publish_if_current",
-                authorization_steady_ns=int(getattr(
-                    message, "execution_authorization_steady_ns", 0)),
-                world_generation=int(message.world_generation),
-                world_revision=int(message.world_revision),
-                world_observation_stamp_ns=world_stamp_ns,
-            )
-        else:
-            self._record("evidence_gap", {
-                "reason": "execution_authorization_witness_missing",
-                "sample_id": int(message.sample_id),
-                "request_id": int(message.request_id),
-            })
+        # The producer's execution-authorization witness is observer-only and
+        # arrives on NavigationExecutionDiagnostics. Command reception never
+        # waits for that stream and never infers authorization from its loss.
+        authorization = self.NavigationExecutionDiagnostics.EXECUTION_AUTHORIZATION_UNSPECIFIED
         if not valid:
             self.pva_command_failure_count += 1
             self._record("pva_command_failure", {"sample_id": int(message.sample_id)})
@@ -1407,6 +1389,7 @@ class ExternalModeScenario:
             "trajectory_status": int(message.status),
             "trajectory_flag": int(message.role),
             "mission_id": str(message.mission_id),
+            "mode_activation_id": int(message.mode_activation_id),
             "waypoint_index": int(message.waypoint_index),
             "request_id": int(message.request_id),
             "runtime_instance_id": self.runtime_instance_id,
@@ -1421,7 +1404,7 @@ class ExternalModeScenario:
             "sample_id": int(message.sample_id),
             "analytic_sample_role": int(getattr(
                 message, "analytic_sample_role",
-                self.NavigationCommand.ANALYTIC_ROLE_UNKNOWN)),
+                self.NavigationExecutionDiagnostics.ANALYTIC_ROLE_UNKNOWN)),
             "backup_available": bool(getattr(message, "backup_available", False)),
             "backup_start_time_s": float(getattr(message, "backup_start_time_s", 0.0)),
             "time_to_backup_start_s": float(getattr(message, "time_to_backup_start_s", 0.0)),
@@ -1501,7 +1484,7 @@ class ExternalModeScenario:
                 "trajectory_flag": int(message.role),
                 "analytic_sample_role": int(getattr(
                     message, "analytic_sample_role",
-                    self.NavigationCommand.ANALYTIC_ROLE_UNKNOWN)),
+                    self.NavigationExecutionDiagnostics.ANALYTIC_ROLE_UNKNOWN)),
                 "anchor_error_m": _json_number(getattr(message, "anchor_error_m", float("nan"))),
                 "projected_anchor_error_m": _json_number(getattr(message, "projected_anchor_error_m", float("nan"))),
                 "retained_tracking_limit_m": _json_number(getattr(message, "retained_tracking_limit_m", float("nan"))),
@@ -1549,10 +1532,116 @@ class ExternalModeScenario:
             previous = trajectory.get("pillar_min_distance_m")
             trajectory["pillar_min_distance_m"] = distance if previous is None else min(previous, distance)
         self.latest_trajectory = dict(trajectory)
+        diagnostic = self._execution_diagnostics_by_sample.get(
+            _command_diagnostic_key(message))
+        if diagnostic is not None:
+            self.latest_pva_command.update(diagnostic)
         self._record(
             "pva_command", self.latest_pva_command,
             arrival_steady_ns=arrival_steady_ns,
         )
+
+    def _navigation_execution_diagnostics(self, message: Any) -> None:
+        """Observe producer evidence without gating command reception or flight."""
+        key = _command_diagnostic_key(message)
+        payload: dict[str, Any] = {
+            "header_stamp_ns": _time_ns(message.header.stamp),
+            "mode_activation_id": int(message.mode_activation_id),
+            "localization_epoch": int(message.localization_epoch),
+            "goal_epoch": int(message.goal_epoch),
+            "mission_id": str(message.mission_id),
+            "waypoint_index": int(message.waypoint_index),
+            "request_id": int(message.request_id),
+            "bundle_generation": int(message.bundle_generation),
+            "sample_id": int(message.sample_id),
+            "world_generation": int(message.world_generation),
+            "world_revision": int(message.world_revision),
+            "world_observation_stamp_ns": _time_ns(message.world_observation_stamp),
+        }
+        identity_fields = {
+            "header", "mode_activation_id", "localization_epoch", "goal_epoch",
+            "mission_id", "waypoint_index", "request_id", "bundle_generation",
+            "sample_id", "world_generation", "world_revision",
+            "world_observation_stamp",
+        }
+        for name in message.get_fields_and_field_types():
+            if name in identity_fields:
+                continue
+            value = getattr(message, name)
+            if hasattr(value, "x") and hasattr(value, "y") and hasattr(value, "z"):
+                payload[name] = _json_xyz(value)
+            elif isinstance(value, bool):
+                payload[name] = value
+            elif isinstance(value, float):
+                payload[name] = _json_number(value)
+            elif isinstance(value, int):
+                payload[name] = value
+        self._execution_diagnostics_by_sample[key] = payload
+        if len(self._execution_diagnostics_by_sample) > 512:
+            self._execution_diagnostics_by_sample.pop(next(iter(self._execution_diagnostics_by_sample)))
+        latest = getattr(self, "latest_pva_command", {})
+        if isinstance(latest, dict) and tuple(latest.get(name) for name in (
+            "mode_activation_id", "localization_epoch", "goal_epoch", "mission_id",
+            "waypoint_index", "request_id", "bundle_generation", "sample_id",
+        )) == key:
+            latest.update(payload)
+        self._record("execution_diagnostics", payload)
+        authorization = int(message.execution_authorization)
+        if authorization in {
+            self.NavigationExecutionDiagnostics.EXECUTION_AUTHORIZATION_GRANTED,
+            self.NavigationExecutionDiagnostics.EXECUTION_AUTHORIZATION_REJECTED,
+        }:
+            self._record_lifecycle(
+                "authorize",
+                "AUTHORIZED" if authorization ==
+                self.NavigationExecutionDiagnostics.EXECUTION_AUTHORIZATION_GRANTED
+                else "REJECTED",
+                source_stamp_ns=payload["header_stamp_ns"] or None,
+                sample_id=payload["sample_id"],
+                request_id=payload["request_id"],
+                bundle_generation=payload["bundle_generation"],
+                localization_epoch=payload["localization_epoch"],
+                goal_epoch=payload["goal_epoch"],
+                causal_planning_cycle_id=payload["causal_planning_cycle_id"],
+                bundle_owner_request_id=payload["request_id"],
+                bundle_owner_cycle_id=None,
+                bundle_owner_attribution="resolve_from_export",
+                authorization_boundary="execution_timeline_publish_if_current",
+                authorization_steady_ns=payload["execution_authorization_steady_ns"],
+                world_generation=payload["world_generation"],
+                world_revision=payload["world_revision"],
+                world_observation_stamp_ns=payload["world_observation_stamp_ns"],
+            )
+        else:
+            self._record("evidence_gap", {
+                "reason": "execution_authorization_witness_missing",
+                "sample_id": payload["sample_id"],
+                "request_id": payload["request_id"],
+            })
+
+    def _navigation_command_rejection(self, message: Any) -> None:
+        self._record("command_rejection", {
+            "callback_ros_ns": _time_ns(message.header.stamp),
+            "callback_steady_ns": int(message.callback_steady_ns),
+            "command_present": bool(message.command_present),
+            "stage": int(message.stage),
+            "reason_code": int(message.reason_code),
+            "disposition": int(message.disposition),
+            "mode_activation_id": int(message.mode_activation_id),
+            "localization_epoch": int(message.localization_epoch),
+            "goal_epoch": int(message.goal_epoch),
+            "mission_id": str(message.mission_id),
+            "waypoint_index": int(message.waypoint_index),
+            "request_id": int(message.request_id),
+            "bundle_generation": int(message.bundle_generation),
+            "sample_id": int(message.sample_id),
+            "command_stamp_ns": _time_ns(message.command_stamp),
+            "valid_until_ns": _time_ns(message.valid_until),
+            "source_age_ms": _json_number(message.source_age_ms),
+            "receive_age_ms": _json_number(message.receive_age_ms),
+            "tracking_longitudinal_error_m": _json_number(message.tracking_longitudinal_error_m),
+            "tracking_lateral_error_m": _json_number(message.tracking_lateral_error_m),
+        })
 
     def _mission_complete(self, message: Any) -> None:
         if bool(message.data):

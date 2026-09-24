@@ -14,6 +14,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from command_diagnostics import join_execution_diagnostics
 
 
 FIELDS = [
@@ -122,6 +123,7 @@ def commands(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def extract(root: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     sample_rows = read_jsonl(root / "samples.jsonl")
     scenario_rows = read_jsonl(root / "scenario.jsonl")
+    join_execution_diagnostics(scenario_rows)
     traces = planner_trace(sample_rows)
     cmds = commands(scenario_rows)
     injected = next(

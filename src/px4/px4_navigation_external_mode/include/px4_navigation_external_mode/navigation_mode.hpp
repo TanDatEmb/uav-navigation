@@ -19,6 +19,7 @@
 #include <navigation_contracts/msg/estimator_health.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
 #include <navigation_contracts/msg/navigation_command_admission.hpp>
+#include <navigation_contracts/msg/navigation_command_rejection.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <px4_ros2/components/mode.hpp>
@@ -37,6 +38,9 @@
 #include <navigation_common/bounded_spsc_queue.hpp>
 
 #include "px4_navigation_external_mode/velocity_only_continuity.hpp"
+#include "px4_navigation_external_mode/command_admission_assessment.hpp"
+#include "px4_navigation_external_mode/tracking_envelope.hpp"
+#include "px4_navigation_external_mode/reject_provenance.hpp"
 
 namespace px4_navigation_external_mode {
 
@@ -75,6 +79,23 @@ class NavigationMode final : public px4_ros2::ModeBase {
   rclcpp::Node& node_;
   void onNavigationCommand(
       const navigation_contracts::msg::NavigationCommand::ConstSharedPtr& message);
+  void publishAdmissionRejection(
+      const CommandAdmissionAssessment& assessment,
+      const navigation_contracts::msg::NavigationCommand* command,
+      std::int64_t callback_ros_ns, std::int64_t callback_steady_ns,
+      double source_age_ms = 0.0, double receive_age_ms = 0.0,
+      double longitudinal_error_m = 0.0, double lateral_error_m = 0.0);
+  // Called under trajectory_mutex_; pure geometric/adaptive checks remain in
+  // their existing bounded helpers, while this method records local metrics.
+  TrackingEnvelopeResult assessTrackingLocked(
+      const navigation_contracts::msg::NavigationCommand& command,
+      const nav_msgs::msg::Odometry& odometry, bool& anchor_invalid,
+      std::optional<RejectProvenance>& reject_provenance);
+  void finishAcceptedCommand(
+      const navigation_contracts::msg::NavigationCommand& command,
+      bool completed_command, bool terminal_recovery_needed,
+      bool terminal_backup_hold_inside_acceptance,
+      bool terminal_main_hold_inside_acceptance);
   void onOdometry(
       const navigation_contracts::msg::PropagatedOdometry::ConstSharedPtr& message);
   void onPx4LocalPosition(
@@ -129,6 +150,8 @@ class NavigationMode final : public px4_ros2::ModeBase {
       status_publisher_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationCommandAdmission>::SharedPtr
       command_admission_publisher_;
+  rclcpp::Publisher<navigation_contracts::msg::NavigationCommandRejection>::SharedPtr
+      command_rejection_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
       px4_input_trace_publisher_;
   rclcpp::TimerBase::SharedPtr boundary_timer_;
@@ -214,6 +237,7 @@ class NavigationMode final : public px4_ros2::ModeBase {
   std::uint64_t trajectory_received_count_{0U};
   std::uint64_t trajectory_accepted_count_{0U};
   std::uint64_t trajectory_rejected_count_{0U};
+  std::array<std::uint64_t, 8> admission_rejections_by_stage_{};
   std::uint64_t waypoint_handoff_retained_command_count_{0U};
   std::uint64_t setpoint_update_count_{0U};
   std::uint64_t stale_state_failure_count_{0U};

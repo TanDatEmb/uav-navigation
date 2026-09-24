@@ -6,6 +6,7 @@
 #include "px4_navigation_external_mode/reject_provenance.hpp"
 #include "px4_navigation_external_mode/certified_command_handoff.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
+#include "px4_navigation_external_mode/command_admission_assessment.hpp"
 #include "px4_navigation_external_mode/mission_command_identity.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
 #include "px4_navigation_external_mode/runtime_metrics_policy.hpp"
@@ -64,6 +65,66 @@ TEST(NavigationCommandContract, StaleOdometryPrecedesDuplicateMessageRejection) 
             px4_navigation_external_mode::CommandAcceptanceGate::kNonIncreasingMessageId);
   EXPECT_EQ(px4_navigation_external_mode::classifyCommandAcceptance(fresh, 11U, 10U),
             px4_navigation_external_mode::CommandAcceptanceGate::kAccept);
+}
+
+TEST(NavigationCommandContract, TypedSessionIdentityPreservesHandoffOrdering) {
+  using px4_navigation_external_mode::SessionIdentityReason;
+  using px4_navigation_external_mode::assessCommandSessionIdentity;
+  navigation_contracts::msg::NavigationCommand predecessor;
+  predecessor.mission_id = "m";
+  predecessor.localization_epoch = 4U;
+  predecessor.mode_activation_id = 2U;
+  predecessor.goal_epoch = 9U;
+  predecessor.waypoint_index = 1U;
+  predecessor.request_id = 10U;
+  predecessor.world_generation = 7U;
+  predecessor.world_revision = 8U;
+  predecessor.world_observation_stamp.sec = 10;
+  predecessor.state_source_stamp.sec = 10;
+  auto successor = predecessor;
+  successor.goal_epoch = 10U;
+  successor.waypoint_index = 2U;
+  successor.request_id = 11U;
+  successor.sample_id = 2U;
+  EXPECT_EQ(assessCommandSessionIdentity(successor, predecessor, true, true, 4U, 2U),
+            SessionIdentityReason::kValid);
+  EXPECT_EQ(assessCommandSessionIdentity(successor, predecessor, false, true, 4U, 2U),
+            SessionIdentityReason::kHealthEpochMismatch);
+  auto wrong = successor;
+  wrong.mode_activation_id = 1U;
+  EXPECT_EQ(assessCommandSessionIdentity(wrong, predecessor, true, true, 4U, 2U),
+            SessionIdentityReason::kModeActivationMismatch);
+  wrong = successor;
+  wrong.mission_id = "other";
+  EXPECT_EQ(assessCommandSessionIdentity(wrong, predecessor, true, true, 4U, 2U),
+            SessionIdentityReason::kMissionSessionMismatch);
+  wrong = successor;
+  wrong.request_id = 9U;
+  EXPECT_EQ(assessCommandSessionIdentity(wrong, predecessor, true, true, 4U, 2U),
+            SessionIdentityReason::kRequestRegression);
+  wrong = successor;
+  wrong.world_revision = 7U;
+  EXPECT_EQ(assessCommandSessionIdentity(wrong, predecessor, true, true, 4U, 2U),
+            SessionIdentityReason::kWorldIdentityRegression);
+  // A desired successor may advance while the predecessor still publishes
+  // with its original request and goal epoch; that exact identity stays legal.
+  EXPECT_EQ(assessCommandSessionIdentity(predecessor, predecessor, true, true, 4U, 2U),
+            SessionIdentityReason::kValid);
+}
+
+TEST(NavigationCommandContract, AdmissionAssessmentCarriesTypedStageAndDisposition) {
+  using namespace px4_navigation_external_mode;
+  const CommandAdmissionAssessment malformed{
+      AdmissionStage::kContract, AdmissionDisposition::kRejectRetainPrevious,
+      navigation_contracts::CommandContractReason::kFrameMismatch};
+  EXPECT_FALSE(malformed.accepted());
+  EXPECT_STREQ(admissionReasonName(malformed.reason), "FRAME_MISMATCH");
+  const CommandAdmissionAssessment stale_state{
+      AdmissionStage::kOdometryFreshness, AdmissionDisposition::kRejectFailNavigation,
+      navigation_contracts::ExecutionStateFreshnessReason::kReceiveStale};
+  EXPECT_FALSE(stale_state.accepted());
+  EXPECT_EQ(stale_state.stage, AdmissionStage::kOdometryFreshness);
+  EXPECT_NE(admissionReasonCode(stale_state.reason), 0U);
 }
 
 TEST(NavigationCommandContract, ExactLateTerminalIdentityIsAccepted) {

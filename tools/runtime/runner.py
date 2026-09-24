@@ -139,6 +139,8 @@ RUNTIME_EVIDENCE_TOPICS = (
     "/lio/diagnostics",
     "/navigation/diagnostics",
     "/navigation/navigation_command",
+    "/navigation/execution_diagnostics",
+    "/navigation/command_rejection",
     "/navigation/command_admission",
     "/navigation/mission_progress",
     "/navigation/mode_status",

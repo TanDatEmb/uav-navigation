@@ -1633,6 +1633,10 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           std::bind(&NavigationRuntimeNode::onModeStatus, this, std::placeholders::_1));
   command_publisher_ = create_publisher<navigation_contracts::msg::NavigationCommand>(
       command_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+  execution_diagnostics_publisher_ = create_publisher<
+      navigation_contracts::msg::NavigationExecutionDiagnostics>(
+      "/navigation/execution_diagnostics",
+      rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
   if (mission_progress_) {
     command_admission_subscription_ = create_subscription<
         navigation_contracts::msg::NavigationCommandAdmission>(
@@ -2600,10 +2604,10 @@ void NavigationRuntimeNode::tickMissionProgress() {
 }
 
 void NavigationRuntimeNode::rememberMissionCommandIssued(
-    const navigation_contracts::msg::NavigationCommand& command) {
+    const navigation_contracts::msg::NavigationCommand& command,
+    bool execution_authorized) {
   if (!mission_progress_ ||
-      command.execution_authorization != navigation_contracts::msg::NavigationCommand::
-          EXECUTION_AUTHORIZATION_GRANTED ||
+      !execution_authorized ||
       !navigation_contracts::commandValidAt(command, now().nanoseconds())) {
     return;
   }
@@ -8906,6 +8910,7 @@ void NavigationRuntimeNode::publishCommand() {
     command_world_identity = world_snapshot_store_.load().identity;
   }
   navigation_contracts::msg::NavigationCommand command;
+  navigation_contracts::msg::NavigationExecutionDiagnostics diagnostic;
   const auto execution_trace_snapshot = execution_trace_store_.load();
   const bool trace_matches_command = execution_trace_snapshot && executing_goal &&
       executionTraceMatchesCommand(
@@ -8958,96 +8963,96 @@ void NavigationRuntimeNode::publishCommand() {
   }
   command.sample_id = *command_id;
   command.trajectory_time_s = trajectory_time_s;
-  command.analytic_sample_role = sampled_command_valid
+  diagnostic.analytic_sample_role = sampled_command_valid
       ? static_cast<std::uint8_t>(sampled_role)
-      : navigation_contracts::msg::NavigationCommand::ANALYTIC_ROLE_UNKNOWN;
-  command.backup_available = sampled_bundle && sampled_bundle->backup_available;
-  command.backup_start_time_s = command.backup_available
+      : navigation_contracts::msg::NavigationExecutionDiagnostics::ANALYTIC_ROLE_UNKNOWN;
+  diagnostic.backup_available = sampled_bundle && sampled_bundle->backup_available;
+  diagnostic.backup_start_time_s = diagnostic.backup_available
       ? sampled_bundle->backup_start_time_s : 0.0;
-  command.time_to_backup_start_s = command.backup_available
+  diagnostic.time_to_backup_start_s = diagnostic.backup_available
       ? sampled_bundle->backup_start_time_s - trajectory_time_s : 0.0;
-  command.safety_suffix_active = safety_suffix_active;
-  command.execution_recovery_state = static_cast<std::uint8_t>(
+  diagnostic.safety_suffix_active = safety_suffix_active;
+  diagnostic.execution_recovery_state = static_cast<std::uint8_t>(
       episode.lifecycle.recovery);
-  command.anchor_error_m = causal_trace.anchor_error_m;
-  command.projected_anchor_error_m = causal_trace.projected_anchor_error_m;
-  command.retained_tracking_limit_m = causal_trace.retained_tracking_limit_m;
-  command.relative_anchor_speed_mps = causal_trace.relative_anchor_speed_mps;
-  command.committed_suffix_usable = causal_trace.committed_suffix_usable;
-  command.sampled_path_clear = causal_trace.sampled_path_clear;
-  command.tracking_certificate_exceeded = causal_trace.tracking_certificate_exceeded;
-  command.projected_tracking_certificate_exceeded =
+  diagnostic.anchor_error_m = causal_trace.anchor_error_m;
+  diagnostic.projected_anchor_error_m = causal_trace.projected_anchor_error_m;
+  diagnostic.retained_tracking_limit_m = causal_trace.retained_tracking_limit_m;
+  diagnostic.relative_anchor_speed_mps = causal_trace.relative_anchor_speed_mps;
+  diagnostic.committed_suffix_usable = causal_trace.committed_suffix_usable;
+  diagnostic.sampled_path_clear = causal_trace.sampled_path_clear;
+  diagnostic.tracking_certificate_exceeded = causal_trace.tracking_certificate_exceeded;
+  diagnostic.projected_tracking_certificate_exceeded =
       causal_trace.projected_tracking_certificate_exceeded;
   command.emergency_authorization_reason = causal_trace.emergency_authorization_reason;
-  command.causal_planning_cycle_id = causal_trace.planning_cycle_id;
-  command.causal_timestamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+  diagnostic.causal_planning_cycle_id = causal_trace.planning_cycle_id;
+  diagnostic.causal_timestamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
       0, causal_trace.timestamp_ns));
   command.emergency_candidate_commit_result = static_cast<std::uint8_t>(std::clamp(
       causal_trace.emergency_candidate_commit_result, 0, 255));
-  command.evaluation_now_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+  diagnostic.evaluation_now_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
       0, causal_trace.evaluation_now_ns));
-  command.execution_state_source_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+  diagnostic.execution_state_source_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
       0, causal_trace.execution_state_source_stamp_ns));
-  command.execution_state_receive_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+  diagnostic.execution_state_receive_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
       0, causal_trace.execution_state_receive_stamp_ns));
-  command.execution_state_source_age_ms = causal_trace.execution_state_source_age_ms;
-  command.execution_state_receive_age_ms = causal_trace.execution_state_receive_age_ms;
-  command.committed_bundle_start_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
+  diagnostic.execution_state_source_age_ms = causal_trace.execution_state_source_age_ms;
+  diagnostic.execution_state_receive_age_ms = causal_trace.execution_state_receive_age_ms;
+  diagnostic.committed_bundle_start_stamp_ns = static_cast<std::uint64_t>(std::max<std::int64_t>(
       0, causal_trace.committed_bundle_start_stamp_ns));
-  command.measured_position_at_state_source.x =
+  diagnostic.measured_position_at_state_source.x =
       causal_trace.measured_position_at_state_source.x();
-  command.measured_position_at_state_source.y =
+  diagnostic.measured_position_at_state_source.y =
       causal_trace.measured_position_at_state_source.y();
-  command.measured_position_at_state_source.z =
+  diagnostic.measured_position_at_state_source.z =
       causal_trace.measured_position_at_state_source.z();
-  command.measured_velocity_at_state_source.x =
+  diagnostic.measured_velocity_at_state_source.x =
       causal_trace.measured_velocity_at_state_source.x();
-  command.measured_velocity_at_state_source.y =
+  diagnostic.measured_velocity_at_state_source.y =
       causal_trace.measured_velocity_at_state_source.y();
-  command.measured_velocity_at_state_source.z =
+  diagnostic.measured_velocity_at_state_source.z =
       causal_trace.measured_velocity_at_state_source.z();
-  command.committed_command_position_at_now.x =
+  diagnostic.committed_command_position_at_now.x =
       causal_trace.committed_command_position_at_now.x();
-  command.committed_command_position_at_now.y =
+  diagnostic.committed_command_position_at_now.y =
       causal_trace.committed_command_position_at_now.y();
-  command.committed_command_position_at_now.z =
+  diagnostic.committed_command_position_at_now.z =
       causal_trace.committed_command_position_at_now.z();
-  command.committed_command_velocity_at_now.x =
+  diagnostic.committed_command_velocity_at_now.x =
       causal_trace.committed_command_velocity_at_now.x();
-  command.committed_command_velocity_at_now.y =
+  diagnostic.committed_command_velocity_at_now.y =
       causal_trace.committed_command_velocity_at_now.y();
-  command.committed_command_velocity_at_now.z =
+  diagnostic.committed_command_velocity_at_now.z =
       causal_trace.committed_command_velocity_at_now.z();
-  command.committed_command_position_at_state_source.x =
+  diagnostic.committed_command_position_at_state_source.x =
       causal_trace.committed_command_position_at_state_source.x();
-  command.committed_command_position_at_state_source.y =
+  diagnostic.committed_command_position_at_state_source.y =
       causal_trace.committed_command_position_at_state_source.y();
-  command.committed_command_position_at_state_source.z =
+  diagnostic.committed_command_position_at_state_source.z =
       causal_trace.committed_command_position_at_state_source.z();
-  command.committed_command_velocity_at_state_source.x =
+  diagnostic.committed_command_velocity_at_state_source.x =
       causal_trace.committed_command_velocity_at_state_source.x();
-  command.committed_command_velocity_at_state_source.y =
+  diagnostic.committed_command_velocity_at_state_source.y =
       causal_trace.committed_command_velocity_at_state_source.y();
-  command.committed_command_velocity_at_state_source.z =
+  diagnostic.committed_command_velocity_at_state_source.z =
       causal_trace.committed_command_velocity_at_state_source.z();
-  command.anchor_error_raw_m = causal_trace.anchor_error_raw_m;
-  command.anchor_error_time_aligned_m = causal_trace.anchor_error_time_aligned_m;
-  command.command_motion_over_state_age_m = causal_trace.command_motion_over_state_age_m;
-  command.velocity_residual_time_aligned_mps = causal_trace.velocity_residual_time_aligned_mps;
-  command.retained_elapsed_s = causal_trace.retained_elapsed_s;
-  command.committed_bundle_duration_s = causal_trace.committed_bundle_duration_s;
-  command.committed_safety_transition_time_s = causal_trace.committed_safety_transition_time_s;
-  command.retained_validate_without_new_commit = causal_trace.validate_without_new_commit;
-  command.retained_fresh_vehicle_state = causal_trace.retained_fresh_vehicle_state;
-  command.retained_committed_command_available = causal_trace.retained_committed_command_available;
-  command.retained_command_anchor_valid = causal_trace.retained_command_anchor_valid;
-  command.current_vehicle_state_known_free = causal_trace.current_vehicle_state_known_free;
-  command.retained_safety_trajectory_available =
+  diagnostic.anchor_error_raw_m = causal_trace.anchor_error_raw_m;
+  diagnostic.anchor_error_time_aligned_m = causal_trace.anchor_error_time_aligned_m;
+  diagnostic.command_motion_over_state_age_m = causal_trace.command_motion_over_state_age_m;
+  diagnostic.velocity_residual_time_aligned_mps = causal_trace.velocity_residual_time_aligned_mps;
+  diagnostic.retained_elapsed_s = causal_trace.retained_elapsed_s;
+  diagnostic.committed_bundle_duration_s = causal_trace.committed_bundle_duration_s;
+  diagnostic.committed_safety_transition_time_s = causal_trace.committed_safety_transition_time_s;
+  diagnostic.retained_validate_without_new_commit = causal_trace.validate_without_new_commit;
+  diagnostic.retained_fresh_vehicle_state = causal_trace.retained_fresh_vehicle_state;
+  diagnostic.retained_committed_command_available = causal_trace.retained_committed_command_available;
+  diagnostic.retained_command_anchor_valid = causal_trace.retained_command_anchor_valid;
+  diagnostic.current_vehicle_state_known_free = causal_trace.current_vehicle_state_known_free;
+  diagnostic.retained_safety_trajectory_available =
       causal_trace.retained_safety_trajectory_available;
-  command.retained_terminal_stop = causal_trace.retained_terminal_stop;
-  command.retained_committed_role = static_cast<std::int8_t>(std::clamp(
+  diagnostic.retained_terminal_stop = causal_trace.retained_terminal_stop;
+  diagnostic.retained_committed_role = static_cast<std::int8_t>(std::clamp(
       causal_trace.retained_committed_role, -128, 127));
-  command.retained_recovery_state_before = causal_trace.retained_recovery_state_before;
+  diagnostic.retained_recovery_state_before = causal_trace.retained_recovery_state_before;
   command.state_source_stamp = execution_state
       ? navigation_common::nanosecondsToRosTime(execution_state->state.source_stamp_ns).value_or(
           builtin_interfaces::msg::Time{})
@@ -9095,7 +9100,7 @@ void NavigationRuntimeNode::publishCommand() {
                      : on_backup_traj
                      ? navigation_contracts::msg::NavigationCommand::ROLE_BACKUP
                      : navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
-  command.reason_code = emergency_braking ? 2U : main_trajectory_rejected ? 1U : 0U;
+  diagnostic.reason_code = emergency_braking ? 2U : main_trajectory_rejected ? 1U : 0U;
   command.position.x = pvaj(0, 0);
   command.position.y = pvaj(1, 0);
   command.position.z = pvaj(2, 0);
@@ -9112,9 +9117,11 @@ void NavigationRuntimeNode::publishCommand() {
   // execution must not introduce an uncoupled post-certificate heading step.
   command.yaw = yaw;
   command.yaw_rate = yaw_dot;
-  const auto publish_ros_command = [this, &command] {
+  bool command_published = false;
+  const auto publish_ros_command = [this, &command, &command_published] {
     const auto publish_started = std::chrono::steady_clock::now();
     command_publisher_->publish(command);
+    command_published = true;
     last_publish_us_.store(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - publish_started).count(),
@@ -9219,25 +9226,25 @@ void NavigationRuntimeNode::publishCommand() {
               command.state_source_stamp = navigation_common::nanosecondsToRosTime(
                   final_execution_state->state.source_stamp_ns).value_or(
                       builtin_interfaces::msg::Time{});
-              command.execution_authorization =
-                  navigation_contracts::msg::NavigationCommand::
+              diagnostic.execution_authorization =
+                  navigation_contracts::msg::NavigationExecutionDiagnostics::
                       EXECUTION_AUTHORIZATION_GRANTED;
-              command.execution_authorization_steady_ns =
+              diagnostic.execution_authorization_steady_ns =
                   static_cast<std::uint64_t>(
                       std::max<std::int64_t>(0, authorization_steady_ns));
               // Bind policy telemetry to the same execution snapshot that
               // authorized this exact exposure. In particular, the first
               // sampled BACKUP command must not carry a stale pre-sample
               // safety/recovery value.
-              command.safety_suffix_active =
+              diagnostic.safety_suffix_active =
                   authorized_lifecycle.safety ==
                   navigation_execution::ExecutionSafetyOwnership::kSafetySuffix;
-              command.execution_recovery_state = static_cast<std::uint8_t>(
+              diagnostic.execution_recovery_state = static_cast<std::uint8_t>(
                   authorized_lifecycle.recovery);
               command.mode_activation_id = mission_progress_
                   ? mission_activation_applied_.value_or(0U)
                   : mode_activation_id_seen_.load(std::memory_order_acquire);
-              rememberMissionCommandIssued(command);
+              rememberMissionCommandIssued(command, true);
               publish_ros_command();
               return true;
             });
@@ -9434,11 +9441,34 @@ void NavigationRuntimeNode::publishCommand() {
     }
     // A local admission receipt may now consume the exact issued command.
   } else {
-    command.execution_authorization = navigation_contracts::msg::NavigationCommand::
+    diagnostic.execution_authorization = navigation_contracts::msg::NavigationExecutionDiagnostics::
         EXECUTION_AUTHORIZATION_REJECTED;
-    command.execution_authorization_steady_ns = static_cast<std::uint64_t>(
+    diagnostic.execution_authorization_steady_ns = static_cast<std::uint64_t>(
         std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds()));
     publish_ros_command();
+  }
+  if (command_published && execution_diagnostics_publisher_) {
+    // Observer output runs after the authoritative command publication and
+    // outside the execution transaction. Missing diagnostics never vetoes a
+    // command or synthesizes a Core/PX4 authorization witness.
+    diagnostic.header = command.header;
+    diagnostic.mode_activation_id = command.mode_activation_id;
+    diagnostic.localization_epoch = command.localization_epoch;
+    diagnostic.goal_epoch = command.goal_epoch;
+    diagnostic.mission_id = command.mission_id;
+    diagnostic.waypoint_index = command.waypoint_index;
+    diagnostic.request_id = command.request_id;
+    diagnostic.bundle_generation = command.bundle_generation;
+    diagnostic.sample_id = command.sample_id;
+    diagnostic.world_generation = command.world_generation;
+    diagnostic.world_revision = command.world_revision;
+    diagnostic.world_observation_stamp = command.world_observation_stamp;
+    try {
+      execution_diagnostics_publisher_->publish(diagnostic);
+    } catch (const std::exception& error) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "execution diagnostics publish failed: %s", error.what());
+    }
   }
   ++command_publish_count_;
   ++cycle_success_count_;

@@ -18,6 +18,7 @@ import statistics
 from typing import Any, Iterable
 
 from evidence_contract import build_evidence_contract
+from command_diagnostics import join_execution_diagnostics
 from planner_trace import collect_planner_trace_records, planner_trace_summary
 
 
@@ -744,6 +745,7 @@ def load_evaluation_inputs(
     scenario_events = _read_jsonl(
         session / "scenario.jsonl", issues=read_issues, label="scenario"
     )
+    read_issues.extend(join_execution_diagnostics(scenario_events))
     sample_rows = _read_jsonl(
         session / "samples.jsonl", issues=read_issues, label="monitor"
     )

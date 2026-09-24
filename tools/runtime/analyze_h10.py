@@ -14,6 +14,7 @@ import math
 from pathlib import Path
 from statistics import mean
 from typing import Any
+from command_diagnostics import join_execution_diagnostics
 
 MISSING = "NOT_RECORDED"
 LIMIT = 0.25
@@ -106,7 +107,9 @@ def interp(series: list[tuple[int,dict[str,Any]]], t: int, fields: tuple[str,...
 
 def pva_series(run: Path) -> list[tuple[int,dict[str,Any]]]:
     out=[]
-    for x in load_jsonl(run/"scenario.jsonl"):
+    scenario = load_jsonl(run/"scenario.jsonl")
+    join_execution_diagnostics(scenario)
+    for x in scenario:
         if x.get("kind") != "pva_command": continue
         t=num(x.get("sim_time_ns")); p=x.get("payload",{})
         if t is not None: out.append((int(t),p))

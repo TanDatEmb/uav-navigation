@@ -31,6 +31,7 @@
 #include "px4_navigation_external_mode/certified_command_handoff.hpp"
 #include "px4_navigation_external_mode/reject_provenance.hpp"
 #include "px4_navigation_external_mode/command_acceptance_gate.hpp"
+#include "px4_navigation_external_mode/command_admission_assessment.hpp"
 #include "px4_navigation_external_mode/planner_recovery.hpp"
 #include "px4_navigation_external_mode/runtime_metrics_policy.hpp"
 #include "px4_navigation_external_mode/local_frame_alignment.hpp"
@@ -65,6 +66,78 @@ std::optional<std::int64_t> checkedTimestampAdd(const std::int64_t base_ns,
     return std::nullopt;
   }
   return base_ns + delta_ns;
+}
+
+void logTrackingRejection(
+    const rclcpp::Logger& logger,
+    const navigation_contracts::msg::NavigationCommand& command,
+    const TrackingEnvelopeResult& tracking_envelope,
+    const RejectProvenance& provenance) {
+  const char* role = "UNKNOWN";
+  if (command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
+    role = "BACKUP";
+  } else if (command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN) {
+    role = "MAIN";
+  } else if (command.role ==
+             navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY) {
+    role = "EMERGENCY";
+  }
+  RCLCPP_ERROR(logger,
+               "planner backend tracking envelope exceeded: longitudinal=%.3f/%.3f m "
+               "reverse=%.3f/%.3f m lateral=%.3f/%.3f m "
+               "measured_enu=[%.3f,%.3f,%.3f] command_enu=[%.3f,%.3f,%.3f] "
+               "measured_velocity_body_frame=[%.3f,%.3f,%.3f] "
+               "command_velocity_enu=[%.3f,%.3f,%.3f] "
+               "command_acceleration_enu=[%.3f,%.3f,%.3f] "
+               "command_jerk_enu=[%.3f,%.3f,%.3f] "
+               "odom_header_age_ms=%.3f odom_receive_age_ms=%.3f message_id=%lu "
+               "generation=%lu role=%s trajectory_time=%.6f s status=%u "
+               "stamp=%d.%09u previous_message_id=%lu previous_generation=%lu "
+               "previous_trajectory_time=%.6f generation_changed=%d "
+               "generation_delta=%ld previous_valid=%d "
+               "previous_p=[%.3f,%.3f,%.3f] "
+               "previous_v=[%.3f,%.3f,%.3f] command_delta_p=%.6f "
+               "previous_a=[%.3f,%.3f,%.3f] previous_j=[%.3f,%.3f,%.3f] "
+               "command_delta_v=%.6f command_delta_a=%.6f command_delta_j=%.6f",
+               tracking_envelope.longitudinal_error_m,
+               tracking_envelope.longitudinal_limit_m,
+               tracking_envelope.reverse_error_m,
+               tracking_envelope.reverse_limit_m,
+               tracking_envelope.lateral_error_m,
+               tracking_envelope.lateral_limit_m,
+               provenance.measured_position.x(), provenance.measured_position.y(),
+               provenance.measured_position.z(),
+               command.position.x, command.position.y, command.position.z,
+               provenance.measured_velocity_body_frame.x(),
+               provenance.measured_velocity_body_frame.y(),
+               provenance.measured_velocity_body_frame.z(),
+               command.velocity.x, command.velocity.y, command.velocity.z,
+               command.acceleration.x, command.acceleration.y,
+               command.acceleration.z,
+               command.jerk.x, command.jerk.y, command.jerk.z,
+               provenance.odometry_header_age_ms, provenance.odometry_receive_age_ms,
+               static_cast<unsigned long>(command.sample_id),
+               static_cast<unsigned long>(command.bundle_generation), role,
+               command.trajectory_time_s,
+               static_cast<unsigned int>(command.status),
+               command.header.stamp.sec, command.header.stamp.nanosec,
+               provenance.previous_valid ? provenance.previous.sample_id : 0U,
+               static_cast<unsigned long>(provenance.previous_valid
+                   ? provenance.previous.bundle_generation : 0U),
+               provenance.previous_valid ? provenance.previous.trajectory_time_s : 0.0,
+               provenance.generation_changed ? 1 : 0,
+               static_cast<long>(provenance.generation_delta),
+               provenance.previous_valid ? 1 : 0,
+               provenance.previous_position.x(), provenance.previous_position.y(),
+               provenance.previous_position.z(), provenance.previous_velocity.x(),
+               provenance.previous_velocity.y(), provenance.previous_velocity.z(),
+               provenance.command_delta_position_m,
+               provenance.previous_acceleration.x(), provenance.previous_acceleration.y(),
+               provenance.previous_acceleration.z(), provenance.previous_jerk.x(),
+               provenance.previous_jerk.y(), provenance.previous_jerk.z(),
+               provenance.command_delta_velocity_mps,
+               provenance.command_delta_acceleration_mps2,
+               provenance.command_delta_jerk_mps3);
 }
 
 }  // namespace
@@ -180,6 +253,9 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
   command_admission_publisher_ = node.create_publisher<
       navigation_contracts::msg::NavigationCommandAdmission>(
       "/navigation/command_admission", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable());
+  command_rejection_publisher_ = node.create_publisher<
+      navigation_contracts::msg::NavigationCommandRejection>(
+      "/navigation/command_rejection", rclcpp::QoS{rclcpp::KeepLast{20}}.best_effort());
   mission_progress_subscription_ = node.create_subscription<
       navigation_contracts::msg::NavigationMissionProgress>(
       "/navigation/mission_progress", rclcpp::QoS{rclcpp::KeepLast{10}}.reliable(),
@@ -393,7 +469,9 @@ Px4InputTraceRecord NavigationMode::makePx4InputTraceRecord(
     record.goal_epoch = command->goal_epoch;
     record.localization_epoch = command->localization_epoch;
     record.bundle_generation = command->bundle_generation;
-    record.causal_planning_cycle_id = command->causal_planning_cycle_id;
+    // Planner cycle provenance is on the observer-only diagnostics topic.
+    // The adapter must not subscribe to it to determine command admission.
+    record.causal_planning_cycle_id = 0U;
     record.world_generation = command->world_generation;
     record.world_revision = command->world_revision;
     record.world_observation_stamp_ns = navigation_common::rosTimeToNanoseconds(
@@ -726,6 +804,7 @@ void NavigationMode::onActivate() {
     trajectory_received_count_ = 0U;
     trajectory_accepted_count_ = 0U;
     trajectory_rejected_count_ = 0U;
+    admission_rejections_by_stage_.fill(0U);
     waypoint_handoff_retained_command_count_ = 0U;
     setpoint_update_count_ = 0U;
     stale_state_failure_count_ = 0U;
@@ -818,331 +897,170 @@ void NavigationMode::checkArmingAndRunConditions(
       tracking_experiment_.suppress_estimator_health_response &&
       typed_health_seen_ && health_freshness.valid();
   if (diagnostics_stale || (!lio_health_valid_ && !fresh_typed_health_bypass)) {
-    reporter.armingCheckFailureExt(
-        px4_ros2::events::ID("uav_navigation_lio_unhealthy"),
-        px4_ros2::events::Log::Error, "FAST-LIO health is stale or invalid");
+    reporter.armingCheckFailureExt(px4_ros2::events::ID("uav_navigation_lio_unhealthy"),
+                                   px4_ros2::events::Log::Error,
+                                   "FAST-LIO health is stale or invalid");
   }
-  const bool waiting_for_airborne = !isArmed() || !odometry_ ||
-      odometry_->pose.pose.position.z <= 0.5;
+  const bool waiting_for_airborne =
+      !isArmed() || !odometry_ || odometry_->pose.pose.position.z <= 0.5;
   // During the disarmed warm-up activation the mission deliberately has no
   // goal yet, so the planner has no command to publish. Requiring command
   // freshness here makes PX4 fail the warm-up before arm/takeoff completes.
   // Once airborne, the normal command freshness gate is active.
-  if (!waiting_for_airborne &&
-      stale(last_command_receive_ns_, trajectory_wait_timeout_s_)) {
+  if (!waiting_for_airborne && stale(last_command_receive_ns_, trajectory_wait_timeout_s_)) {
     const double active_s = airborne_start_ns_ > 0 && now_ns >= airborne_start_ns_
                                 ? static_cast<double>(now_ns - airborne_start_ns_) / 1e9
                                 : 0.0;
     if (active_s > trajectory_wait_timeout_s_) {
-      reporter.armingCheckFailureExt(
-          px4_ros2::events::ID("uav_navigation_planner_command_stale"),
-          px4_ros2::events::Log::Error, "Navigation planner command is stale");
+      reporter.armingCheckFailureExt(px4_ros2::events::ID("uav_navigation_planner_command_stale"),
+                                     px4_ros2::events::Log::Error,
+                                     "Navigation planner command is stale");
     }
   }
 }
 
-void NavigationMode::onNavigationCommand(
-    const navigation_contracts::msg::NavigationCommand::ConstSharedPtr& message) {
-  const bool valid = message != nullptr &&
-                     navigation_contracts::commandContractValid(*message, planning_frame_) &&
-                     navigation_contracts::commandValidAt(
-                         *message, node().get_clock()->now().nanoseconds());
-  if (!valid) {
-    std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    ++trajectory_rejected_count_;
-    // A malformed replacement does not revoke the independently accepted
-    // command already being executed. Its own validity/freshness and health
-    // leases remain authoritative in updateSetpoint().
-    navigation_command_ = transitionCertifiedCommand(
-        navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
-    RCLCPP_WARN_THROTTLE(
-        node().get_logger(), *node().get_clock(), 1000,
-        "planner backend command rejected before acceptance validation: valid=%d command_present=%d",
-        valid ? 1 : 0, message ? 1 : 0);
-    return;
-  }
-
+void NavigationMode::publishAdmissionRejection(
+    const CommandAdmissionAssessment& assessment,
+    const navigation_contracts::msg::NavigationCommand* command, std::int64_t callback_ros_ns,
+    std::int64_t callback_steady_ns, double source_age_ms, double receive_age_ms,
+    double longitudinal_error_m, double lateral_error_m) {
+  if (assessment.accepted()) return;
   {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    // Once control has entered a terminal/handover stream, later planner
-    // samples cannot restore command ownership. Ignore them before running
-    // identity/tracking gates so one terminal transition has one causal log.
-    if (failure_reported_ || mission_completion_receipt_ || handover_requested_) return;
+    const auto index = static_cast<std::size_t>(assessment.stage);
+    if (index < admission_rejections_by_stage_.size()) {
+      ++admission_rejections_by_stage_[index];
+    }
   }
+  if (!command_rejection_publisher_) return;
+  navigation_contracts::msg::NavigationCommandRejection event;
+  event.header.stamp = navigation_common::nanosecondsToRosTime(callback_ros_ns)
+                           .value_or(builtin_interfaces::msg::Time{});
+  event.header.frame_id = planning_frame_;
+  event.callback_steady_ns =
+      static_cast<std::uint64_t>(std::max<std::int64_t>(0, callback_steady_ns));
+  event.command_present = command != nullptr;
+  event.stage = static_cast<std::uint8_t>(assessment.stage);
+  event.reason_code = admissionReasonCode(assessment.reason);
+  event.disposition = static_cast<std::uint8_t>(assessment.disposition);
+  event.source_age_ms = source_age_ms;
+  event.receive_age_ms = receive_age_ms;
+  event.tracking_longitudinal_error_m = longitudinal_error_m;
+  event.tracking_lateral_error_m = lateral_error_m;
+  if (command) {
+    event.mode_activation_id = command->mode_activation_id;
+    event.localization_epoch = command->localization_epoch;
+    event.goal_epoch = command->goal_epoch;
+    event.mission_id = command->mission_id;
+    event.waypoint_index = command->waypoint_index;
+    event.request_id = command->request_id;
+    event.bundle_generation = command->bundle_generation;
+    event.sample_id = command->sample_id;
+    event.command_stamp = command->header.stamp;
+    event.valid_until = command->valid_until;
+  }
+  try {
+    command_rejection_publisher_->publish(event);
+  } catch (const std::exception& error) {
+    RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 1000,
+                         "command rejection diagnostic publish failed: %s", error.what());
+  }
+}
 
-  bool accepted = false;
-  bool anchor_invalid = false;
-  bool odometry_stale = false;
-  bool completed_command = false;
-  bool terminal_backup_hold_inside_acceptance = false;
-  bool terminal_main_hold_inside_acceptance = false;
-  bool terminal_recovery_needed = false;
-  bool recovery_deadline_invalid = false;
-  std::optional<nav_msgs::msg::Odometry> completed_command_odometry;
-  navigation_contracts::ExecutionStateFreshness odometry_freshness;
+TrackingEnvelopeResult NavigationMode::assessTrackingLocked(
+    const navigation_contracts::msg::NavigationCommand& command,
+    const nav_msgs::msg::Odometry& odometry, bool& anchor_invalid,
+    std::optional<RejectProvenance>& reject_provenance) {
   TrackingEnvelopeResult tracking_envelope;
-  std::optional<RejectProvenance> reject_provenance;
-  {
-    std::lock_guard<std::mutex> lock(trajectory_mutex_);
-    // A command is executable only after a fresh, healthy typed-health sample
-    // has established the current public estimator epoch.  Caching a command
-    // before that handshake would let an untagged odometry stream become the
-    // implicit epoch authority.
-    const bool health_epoch_matches = navigation_contracts::estimatorHealthAllowsCommand(
-        typed_health_seen_,
-        lio_health_valid_ || tracking_experiment_.suppress_estimator_health_response,
-        message->localization_epoch,
-        lio_localization_epoch_);
-    // The accepted command itself is the authenticated Core execution identity.
-    // The adapter checks a monotonic session and never reconstructs waypoint
-    // policy from its own mission definition.
-    const bool activation_matches = mode_activation_id_ == 0U ||
-        message->mode_activation_id == mode_activation_id_;
-    const bool same_core_session = activation_matches && (!navigation_command_ ||
-        message->mission_id == navigation_command_->mission_id);
-    const bool request_nonregressing = !navigation_command_ ||
-        (message->goal_epoch == navigation_command_->goal_epoch
-            ? (message->waypoint_index == navigation_command_->waypoint_index &&
-               message->request_id == navigation_command_->request_id)
-            : message->request_id >= navigation_command_->request_id);
-    const bool command_identity_monotonic = !navigation_command_.has_value() ||
-        navigation_contracts::commandWorldIdentityNonRegressing(
-            *message, *navigation_command_);
-    if (!health_epoch_matches || !same_core_session ||
-        !request_nonregressing || !command_identity_monotonic) {
-      ++trajectory_rejected_count_;
-      navigation_command_ = transitionCertifiedCommand(
-          navigation_command_, std::nullopt, CertifiedCommandTransition::kRetain);
-      RCLCPP_WARN_THROTTLE(
-          node().get_logger(), *node().get_clock(), 1000,
-          "Core command rejected by session/epoch order: health=%d session=%d "
-          "request_order=%d world_order=%d mission=%s wp=%u request=%lu goal_epoch=%lu",
-          health_epoch_matches ? 1 : 0, same_core_session ? 1 : 0,
-          request_nonregressing ? 1 : 0, command_identity_monotonic ? 1 : 0,
-          message->mission_id.c_str(), message->waypoint_index,
-          static_cast<unsigned long>(message->request_id),
-          static_cast<unsigned long>(message->goal_epoch));
-      return;
-    }
-    const auto odometry_source_ns = odometry_
-        ? navigation_common::rosTimeToNanoseconds(odometry_->header.stamp).value_or(0) : 0;
-    odometry_freshness = navigation_contracts::evaluateExecutionStateFreshness(
-        node().get_clock()->now().nanoseconds(), odometry_source_ns,
-        navigation_common::steadyClockNowNanoseconds(), last_odometry_receive_steady_ns_,
-        state_stale_after_s_);
-    const auto acceptance_gate = classifyCommandAcceptance(
-        odometry_freshness, message->sample_id,
-        navigation_command_ ? navigation_command_->sample_id : 0U);
-    odometry_stale = acceptance_gate == CommandAcceptanceGate::kOdometryStale;
-    if (odometry_stale) {
-      ++trajectory_rejected_count_;
-      if (!failure_reported_) ++stale_state_failure_count_;
-    } else if (acceptance_gate == CommandAcceptanceGate::kNonIncreasingMessageId) {
-      ++trajectory_rejected_count_;
-      return;
-    }
-      const bool terminal_failure =
-        message->status ==
-            navigation_contracts::msg::NavigationCommand::STATUS_REJECTED;
-    completed_command = message->status ==
-        navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
-    bool terminal_hold_inside_acceptance = false;
-    if (completed_command && odometry_) {
-      const auto& p = odometry_->pose.pose.position;
-      const Eigen::Vector3d measured{p.x, p.y, p.z};
-      const Eigen::Vector3d endpoint{message->position.x, message->position.y,
-                                     message->position.z};
-      terminal_hold_inside_acceptance = measured.allFinite() && endpoint.allFinite() &&
-          (measured - endpoint).norm() <= navigation_contracts::kCommandAnchorErrorLimitM;
-      terminal_backup_hold_inside_acceptance = terminal_hold_inside_acceptance &&
-          message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
-      terminal_main_hold_inside_acceptance = terminal_hold_inside_acceptance &&
-          message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
-      terminal_recovery_needed = !terminal_hold_inside_acceptance;
-    }
-    if (!odometry_stale && !terminal_failure && !terminal_hold_inside_acceptance &&
-        odometry_.has_value()) {
-      const auto& point = odometry_->pose.pose.position;
-      const Eigen::Vector3d measured{point.x, point.y, point.z};
-      const Eigen::Vector3d command_position{message->position.x, message->position.y,
-                                              message->position.z};
-      const Eigen::Vector3d command_velocity{message->velocity.x, message->velocity.y,
-                                             message->velocity.z};
-      // Use authoritative command/lifecycle fields, never diagnostic trace
-      // flags. Runtime retains its stricter analytic and terminal checks.
-      const bool main_phase_tracking =
-          message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
-          message->status == navigation_contracts::msg::NavigationCommand::STATUS_READY &&
-          !planner_recovery_pending_ && !mission_completion_receipt_;
-      tracking_envelope = evaluateTrackingEnvelope(
-          measured, command_position, command_velocity,
-          navigation_contracts::kCommandAnchorErrorLimitM,
-          main_phase_tracking ? navigation_contracts::kMainTrackingPhaseWindowS : 0.0);
-      const bool geometric_tracking_support_valid = tracking_envelope.support_valid;
-      anchor_invalid = !tracking_envelope.valid;
-      if (tracking_experiment_.enabled && main_phase_tracking) {
-        const auto& twist = odometry_->twist.twist.linear;
-        const auto& q = odometry_->pose.pose.orientation;
-        const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
-        const Eigen::Vector3d measured_velocity = isNormalizableOdometryQuaternion(orientation)
+  const auto& point = odometry.pose.pose.position;
+  const Eigen::Vector3d measured{point.x, point.y, point.z};
+  const Eigen::Vector3d command_position{command.position.x, command.position.y,
+                                         command.position.z};
+  const Eigen::Vector3d command_velocity{command.velocity.x, command.velocity.y,
+                                         command.velocity.z};
+  // Use authoritative command/lifecycle fields, never diagnostic trace
+  // flags. Runtime retains its stricter analytic and terminal checks.
+  const bool main_phase_tracking =
+      command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN &&
+      command.status == navigation_contracts::msg::NavigationCommand::STATUS_READY &&
+      !planner_recovery_pending_ && !mission_completion_receipt_;
+  tracking_envelope = evaluateTrackingEnvelope(
+      measured, command_position, command_velocity, navigation_contracts::kCommandAnchorErrorLimitM,
+      main_phase_tracking ? navigation_contracts::kMainTrackingPhaseWindowS : 0.0);
+  const bool geometric_tracking_support_valid = tracking_envelope.support_valid;
+  anchor_invalid = !tracking_envelope.valid;
+  if (tracking_experiment_.enabled && main_phase_tracking) {
+    const auto& twist = odometry.twist.twist.linear;
+    const auto& q = odometry.pose.pose.orientation;
+    const Eigen::Quaterniond orientation(q.w, q.x, q.y, q.z);
+    const Eigen::Vector3d measured_velocity =
+        isNormalizableOdometryQuaternion(orientation)
             ? (orientation.normalized() * Eigen::Vector3d(twist.x, twist.y, twist.z)).eval()
             : Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
-        const auto adaptive = navigation_contracts::assessAdaptiveTracking(
-            tracking_experiment_, measured, measured_velocity, command_position, command_velocity);
-        const bool permitted = navigation_contracts::experimentPermitsTracking(
-            tracking_experiment_, adaptive);
-        if (permitted && tracking_experiment_.suppress_braking &&
-            (anchor_invalid || !adaptive.within_limits)) {
-          ++experimental_tracking_suppressed_count_;
-          RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 1000,
-              "TRACKING_EXPERIMENT_BYPASS total=%lu lateral=%.3f/%.3fm longitudinal=%.3f/%.3fm",
-              static_cast<unsigned long>(experimental_tracking_suppressed_count_),
-              adaptive.lateral_error_m, adaptive.lateral_limit_m,
-              adaptive.longitudinal_error_m, adaptive.longitudinal_limit_m);
-        }
-        anchor_invalid = !permitted;
-        // Keep rejection logs in the same units as the actual experiment gate.
-        tracking_envelope.valid = permitted;
-        tracking_envelope.longitudinal_error_m = adaptive.longitudinal_error_m;
-        tracking_envelope.longitudinal_limit_m = adaptive.longitudinal_limit_m;
-        tracking_envelope.reverse_error_m = 0.0;
-        tracking_envelope.reverse_limit_m = adaptive.longitudinal_limit_m;
-        tracking_envelope.lateral_error_m = adaptive.lateral_error_m;
-        tracking_envelope.lateral_limit_m = adaptive.lateral_limit_m;
-      }
-      // Explicit relaxed SITL comparator: suppress only the finite geometric
-      // tracking response for every executable role so planner stability can
-      // be observed without a later BACKUP/EMERGENCY consumer rejection
-      // ending the run. Identity, freshness, lease, finite-input, map and
-      // collision checks remain active. This mode is never qualification
-      // eligible and is recorded in the runtime artifact.
-      if (anchor_invalid && tracking_experiment_.enabled &&
-          tracking_experiment_.suppress_braking &&
-          geometric_tracking_support_valid) {
-        ++experimental_tracking_suppressed_count_;
-        const char* bypass_role =
-            message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN
-                ? "MAIN"
-                : message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP
-                ? "BACKUP"
-                : message->role == navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY
-                ? "EMERGENCY" : "UNKNOWN";
-        RCLCPP_WARN_THROTTLE(
-            node().get_logger(), *node().get_clock(), 1000,
-            "TRACKING_EXPERIMENT_BYPASS total=%lu role=%s "
-            "longitudinal=%.3f/%.3fm reverse=%.3f/%.3fm lateral=%.3f/%.3fm",
-            static_cast<unsigned long>(experimental_tracking_suppressed_count_), bypass_role,
-            tracking_envelope.longitudinal_error_m,
-            tracking_envelope.longitudinal_limit_m,
-            tracking_envelope.reverse_error_m,
-            tracking_envelope.reverse_limit_m,
-            tracking_envelope.lateral_error_m,
-            tracking_envelope.lateral_limit_m);
-        anchor_invalid = false;
-        tracking_envelope.valid = true;
-      }
-      if (anchor_invalid) {
-        reject_provenance = buildRejectProvenance(
-            node().get_clock()->now().nanoseconds(), last_odometry_receive_ns_,
-            *odometry_, *message, navigation_command_);
-        ++trajectory_rejected_count_;
-      }
+    const auto adaptive = navigation_contracts::assessAdaptiveTracking(
+        tracking_experiment_, measured, measured_velocity, command_position, command_velocity);
+    const bool permitted =
+        navigation_contracts::experimentPermitsTracking(tracking_experiment_, adaptive);
+    if (permitted && tracking_experiment_.suppress_braking &&
+        (anchor_invalid || !adaptive.within_limits)) {
+      ++experimental_tracking_suppressed_count_;
+      RCLCPP_WARN_THROTTLE(
+          node().get_logger(), *node().get_clock(), 1000,
+          "TRACKING_EXPERIMENT_BYPASS total=%lu lateral=%.3f/%.3fm longitudinal=%.3f/%.3fm",
+          static_cast<unsigned long>(experimental_tracking_suppressed_count_),
+          adaptive.lateral_error_m, adaptive.lateral_limit_m, adaptive.longitudinal_error_m,
+          adaptive.longitudinal_limit_m);
     }
-    if (!anchor_invalid && !odometry_stale) {
-      navigation_command_ = transitionCertifiedCommand(
-          navigation_command_, *message, CertifiedCommandTransition::kCommit);
-      ++trajectory_received_count_;
-      ++trajectory_accepted_count_;
-      last_command_receive_ns_ = node().get_clock()->now().nanoseconds();
-      failure_reported_ = false;
-      accepted = true;
-      if (completed_command) completed_command_odometry = odometry_;
-    }
+    anchor_invalid = !permitted;
+    // Keep rejection logs in the same units as the actual experiment gate.
+    tracking_envelope.valid = permitted;
+    tracking_envelope.longitudinal_error_m = adaptive.longitudinal_error_m;
+    tracking_envelope.longitudinal_limit_m = adaptive.longitudinal_limit_m;
+    tracking_envelope.reverse_error_m = 0.0;
+    tracking_envelope.reverse_limit_m = adaptive.longitudinal_limit_m;
+    tracking_envelope.lateral_error_m = adaptive.lateral_error_m;
+    tracking_envelope.lateral_limit_m = adaptive.lateral_limit_m;
   }
-  if (odometry_stale) {
-    RCLCPP_ERROR(node().get_logger(),
-                 "Rejecting planner backend command because navigation odometry lease is stale: "
-                 "reason=%s source_age_ms=%.3f receive_age_ms=%.3f generation=%lu "
-                 "trajectory_time=%.6f",
-                 navigation_contracts::executionStateFreshnessReasonName(
-                     odometry_freshness.reason),
-                 odometry_freshness.source_age_ms, odometry_freshness.receive_age_ms,
-                 static_cast<unsigned long>(message->bundle_generation),
-                 message->trajectory_time_s);
-    failNavigation("navigation odometry stale at command acceptance");
-    return;
+  // Explicit relaxed SITL comparator: suppress only the finite geometric
+  // tracking response for every executable role so planner stability can
+  // be observed without a later BACKUP/EMERGENCY consumer rejection
+  // ending the run. Identity, freshness, lease, finite-input, map and
+  // collision checks remain active. This mode is never qualification
+  // eligible and is recorded in the runtime artifact.
+  if (anchor_invalid && tracking_experiment_.enabled && tracking_experiment_.suppress_braking &&
+      geometric_tracking_support_valid) {
+    ++experimental_tracking_suppressed_count_;
+    const char* bypass_role =
+        command.role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN        ? "MAIN"
+        : command.role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP    ? "BACKUP"
+        : command.role == navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY ? "EMERGENCY"
+                                                                                       : "UNKNOWN";
+    RCLCPP_WARN_THROTTLE(node().get_logger(), *node().get_clock(), 1000,
+                         "TRACKING_EXPERIMENT_BYPASS total=%lu role=%s "
+                         "longitudinal=%.3f/%.3fm reverse=%.3f/%.3fm lateral=%.3f/%.3fm",
+                         static_cast<unsigned long>(experimental_tracking_suppressed_count_),
+                         bypass_role, tracking_envelope.longitudinal_error_m,
+                         tracking_envelope.longitudinal_limit_m, tracking_envelope.reverse_error_m,
+                         tracking_envelope.reverse_limit_m, tracking_envelope.lateral_error_m,
+                         tracking_envelope.lateral_limit_m);
+    anchor_invalid = false;
+    tracking_envelope.valid = true;
   }
   if (anchor_invalid) {
-    const char* role = "UNKNOWN";
-    if (message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP) {
-      role = "BACKUP";
-    } else if (message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN) {
-      role = "MAIN";
-    } else if (message->role ==
-               navigation_contracts::msg::NavigationCommand::ROLE_EMERGENCY) {
-      role = "EMERGENCY";
-    }
-    const auto& provenance = *reject_provenance;
-    RCLCPP_ERROR(node().get_logger(),
-                 "planner backend tracking envelope exceeded: longitudinal=%.3f/%.3f m "
-                 "reverse=%.3f/%.3f m lateral=%.3f/%.3f m "
-                 "measured_enu=[%.3f,%.3f,%.3f] command_enu=[%.3f,%.3f,%.3f] "
-                 "measured_velocity_body_frame=[%.3f,%.3f,%.3f] "
-                 "command_velocity_enu=[%.3f,%.3f,%.3f] "
-                 "command_acceleration_enu=[%.3f,%.3f,%.3f] "
-                 "command_jerk_enu=[%.3f,%.3f,%.3f] "
-                 "odom_header_age_ms=%.3f odom_receive_age_ms=%.3f message_id=%lu "
-                 "generation=%lu role=%s trajectory_time=%.6f s status=%u "
-                 "stamp=%d.%09u previous_message_id=%lu previous_generation=%lu "
-                 "previous_trajectory_time=%.6f generation_changed=%d "
-                 "generation_delta=%ld previous_valid=%d "
-                 "previous_p=[%.3f,%.3f,%.3f] "
-                 "previous_v=[%.3f,%.3f,%.3f] command_delta_p=%.6f "
-                 "previous_a=[%.3f,%.3f,%.3f] previous_j=[%.3f,%.3f,%.3f] "
-                 "command_delta_v=%.6f command_delta_a=%.6f command_delta_j=%.6f",
-                 tracking_envelope.longitudinal_error_m,
-                 tracking_envelope.longitudinal_limit_m,
-                 tracking_envelope.reverse_error_m,
-                 tracking_envelope.reverse_limit_m,
-                 tracking_envelope.lateral_error_m,
-                 tracking_envelope.lateral_limit_m,
-                 provenance.measured_position.x(), provenance.measured_position.y(),
-                 provenance.measured_position.z(),
-                 message->position.x, message->position.y, message->position.z,
-                 provenance.measured_velocity_body_frame.x(),
-                 provenance.measured_velocity_body_frame.y(),
-                 provenance.measured_velocity_body_frame.z(),
-                 message->velocity.x, message->velocity.y, message->velocity.z,
-                 message->acceleration.x, message->acceleration.y,
-                 message->acceleration.z,
-                 message->jerk.x, message->jerk.y, message->jerk.z,
-                 provenance.odometry_header_age_ms, provenance.odometry_receive_age_ms,
-                 static_cast<unsigned long>(message->sample_id),
-                 static_cast<unsigned long>(message->bundle_generation), role,
-                 message->trajectory_time_s,
-                 static_cast<unsigned int>(message->status),
-                 message->header.stamp.sec, message->header.stamp.nanosec,
-                 provenance.previous_valid ? provenance.previous.sample_id : 0U,
-                 static_cast<unsigned long>(provenance.previous_valid
-                     ? provenance.previous.bundle_generation : 0U),
-                 provenance.previous_valid ? provenance.previous.trajectory_time_s : 0.0,
-                 provenance.generation_changed ? 1 : 0,
-                 static_cast<long>(provenance.generation_delta),
-                 provenance.previous_valid ? 1 : 0,
-                 provenance.previous_position.x(), provenance.previous_position.y(),
-                 provenance.previous_position.z(), provenance.previous_velocity.x(),
-                 provenance.previous_velocity.y(), provenance.previous_velocity.z(),
-                 provenance.command_delta_position_m,
-                 provenance.previous_acceleration.x(), provenance.previous_acceleration.y(),
-                 provenance.previous_acceleration.z(), provenance.previous_jerk.x(),
-                 provenance.previous_jerk.y(), provenance.previous_jerk.z(),
-                 provenance.command_delta_velocity_mps,
-                 provenance.command_delta_acceleration_mps2,
-                 provenance.command_delta_jerk_mps3);
-    safetyStopNavigation("planner backend PVA command anchor is not near vehicle");
-    return;
+    reject_provenance =
+        buildRejectProvenance(node().get_clock()->now().nanoseconds(), last_odometry_receive_ns_,
+                              odometry, command, navigation_command_);
+    ++trajectory_rejected_count_;
   }
-  if (accepted && command_admission_publisher_) {
+  return tracking_envelope;
+}
+
+void NavigationMode::finishAcceptedCommand(
+    const navigation_contracts::msg::NavigationCommand& command, bool completed_command,
+    bool terminal_recovery_needed, bool terminal_backup_hold_inside_acceptance,
+    bool terminal_main_hold_inside_acceptance) {
+  bool recovery_deadline_invalid = false;
+  if (command_admission_publisher_) {
     navigation_contracts::msg::NavigationCommandAdmission receipt;
     receipt.header.stamp = node().get_clock()->now();
     receipt.header.frame_id = planning_frame_;
@@ -1150,16 +1068,16 @@ void NavigationMode::onNavigationCommand(
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       receipt.mode_activation_id = mode_activation_id_;
     }
-    receipt.mission_id = message->mission_id;
-    receipt.localization_epoch = message->localization_epoch;
-    receipt.goal_epoch = message->goal_epoch;
-    receipt.waypoint_index = message->waypoint_index;
-    receipt.request_id = message->request_id;
-    receipt.bundle_generation = message->bundle_generation;
-    receipt.sample_id = message->sample_id;
+    receipt.mission_id = command.mission_id;
+    receipt.localization_epoch = command.localization_epoch;
+    receipt.goal_epoch = command.goal_epoch;
+    receipt.waypoint_index = command.waypoint_index;
+    receipt.request_id = command.request_id;
+    receipt.bundle_generation = command.bundle_generation;
+    receipt.sample_id = command.sample_id;
     command_admission_publisher_->publish(receipt);
   }
-  if (accepted && completed_command && terminal_recovery_needed) {
+  if (completed_command && terminal_recovery_needed) {
     {
       std::lock_guard<std::mutex> lock(trajectory_mutex_);
       if (!planner_recovery_pending_) {
@@ -1170,7 +1088,7 @@ void NavigationMode::onNavigationCommand(
         } else {
           planner_recovery_pending_ = true;
           planner_recovery_deadline_ns_ = *deadline;
-          rememberPlannerRecoveryEpisodeLocked(*message);
+          rememberPlannerRecoveryEpisodeLocked(command);
           RCLCPP_WARN(node().get_logger(),
                       "planner backend terminal endpoint requires mission acknowledgement; "
                       "holding for bounded planner recovery window %.3f s",
@@ -1178,18 +1096,227 @@ void NavigationMode::onNavigationCommand(
         }
       }
     }
-  } else if (accepted && !completed_command) {
+  } else if (!completed_command) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     clearPlannerRecoveryEpisodeLocked();
-  } else if (accepted && (terminal_backup_hold_inside_acceptance ||
-                          terminal_main_hold_inside_acceptance)) {
+  } else if ((terminal_backup_hold_inside_acceptance || terminal_main_hold_inside_acceptance)) {
     std::lock_guard<std::mutex> lock(trajectory_mutex_);
     clearPlannerRecoveryEpisodeLocked();
   }
   if (recovery_deadline_invalid) {
     safetyStopNavigation("planner recovery deadline is not representable");
   }
+}
 
+void NavigationMode::onNavigationCommand(
+    const navigation_contracts::msg::NavigationCommand::ConstSharedPtr& message) {
+  const auto callback_now = node().get_clock()->now();
+  const auto callback_steady_ns = navigation_common::steadyClockNowNanoseconds();
+  CommandAdmissionAssessment assessment;
+  if (!message) {
+    assessment = {AdmissionStage::kPresence, AdmissionDisposition::kRejectRetainPrevious,
+                  PresenceReason::kMessageMissing};
+  } else if (const auto reason =
+                 navigation_contracts::assessCommandContract(*message, planning_frame_);
+             reason != navigation_contracts::CommandContractReason::kValid) {
+    assessment = {AdmissionStage::kContract, AdmissionDisposition::kRejectRetainPrevious, reason};
+  } else if (const auto reason = navigation_contracts::assessCommandTemporalLease(
+                 *message, callback_now.nanoseconds());
+             reason != navigation_contracts::CommandTemporalReason::kValid) {
+    assessment = {AdmissionStage::kTemporalLease, AdmissionDisposition::kRejectRetainPrevious,
+                  reason};
+  }
+  if (!assessment.accepted()) {
+    {
+      std::lock_guard<std::mutex> lock(trajectory_mutex_);
+      ++trajectory_rejected_count_;
+      // A malformed replacement does not revoke the independently accepted
+      // command already being executed. Its own validity/freshness and health
+      // leases remain authoritative in updateSetpoint().
+      navigation_command_ = transitionCertifiedCommand(navigation_command_, std::nullopt,
+                                                       CertifiedCommandTransition::kRetain);
+    }
+    publishAdmissionRejection(assessment, message.get(), callback_now.nanoseconds(),
+                              callback_steady_ns);
+    RCLCPP_WARN_THROTTLE(
+        node().get_logger(), *node().get_clock(), 1000,
+        "planner command rejected stage=%s reason=%s reason_code=%u disposition=%s "
+        "command_present=%d callback_ros_ns=%ld callback_steady_ns=%ld "
+        "mission=%s localization_epoch=%lu goal_epoch=%lu request=%lu bundle=%lu sample=%lu "
+        "header_ns=%ld valid_until_ns=%ld",
+        admissionStageName(assessment.stage), admissionReasonName(assessment.reason),
+        static_cast<unsigned int>(admissionReasonCode(assessment.reason)),
+        admissionDispositionName(assessment.disposition), message ? 1 : 0,
+        static_cast<long>(callback_now.nanoseconds()), static_cast<long>(callback_steady_ns),
+        message ? message->mission_id.c_str() : "",
+        static_cast<unsigned long>(message ? message->localization_epoch : 0U),
+        static_cast<unsigned long>(message ? message->goal_epoch : 0U),
+        static_cast<unsigned long>(message ? message->request_id : 0U),
+        static_cast<unsigned long>(message ? message->bundle_generation : 0U),
+        static_cast<unsigned long>(message ? message->sample_id : 0U),
+        static_cast<long>(
+            message ? navigation_contracts::commandStampNanoseconds(message->header.stamp) : 0),
+        static_cast<long>(
+            message ? navigation_contracts::commandStampNanoseconds(message->valid_until) : 0));
+    return;
+  }
+
+  bool terminal_authority_closed = false;
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    // Once control has entered a terminal/handover stream, later planner
+    // samples cannot restore command ownership. Ignore them before running
+    // identity/tracking gates so one terminal transition has one causal log.
+    terminal_authority_closed =
+        failure_reported_ || mission_completion_receipt_ || handover_requested_;
+  }
+  if (terminal_authority_closed) {
+    publishAdmissionRejection(
+        {AdmissionStage::kTerminalOwnership, AdmissionDisposition::kIgnoreAfterTerminal,
+         TerminalReason::kAuthorityClosed},
+        message.get(), callback_now.nanoseconds(), callback_steady_ns);
+    return;
+  }
+
+  bool accepted = false;
+  bool anchor_invalid = false;
+  bool completed_command = false;
+  bool terminal_backup_hold_inside_acceptance = false;
+  bool terminal_main_hold_inside_acceptance = false;
+  bool terminal_recovery_needed = false;
+  navigation_contracts::ExecutionStateFreshness odometry_freshness;
+  TrackingEnvelopeResult tracking_envelope;
+  std::optional<RejectProvenance> reject_provenance;
+  {
+    std::lock_guard<std::mutex> lock(trajectory_mutex_);
+    // A command is executable only after a fresh, healthy typed-health sample
+    // has established the current public estimator epoch.  Caching a command
+    // before that handshake would let an untagged odometry stream become the
+    // implicit epoch authority.
+    const auto session_reason = assessCommandSessionIdentity(
+        *message, navigation_command_, typed_health_seen_,
+        lio_health_valid_ || tracking_experiment_.suppress_estimator_health_response,
+        lio_localization_epoch_, mode_activation_id_);
+    // The accepted command itself is the authenticated Core execution identity.
+    // The adapter checks a monotonic session and never reconstructs waypoint
+    // policy from its own mission definition.
+    if (session_reason != SessionIdentityReason::kValid) {
+      ++trajectory_rejected_count_;
+      navigation_command_ = transitionCertifiedCommand(navigation_command_, std::nullopt,
+                                                       CertifiedCommandTransition::kRetain);
+      assessment =
+          CommandAdmissionAssessment{AdmissionStage::kSessionIdentity,
+                                     AdmissionDisposition::kRejectRetainPrevious, session_reason};
+    } else {
+      const auto odometry_source_ns =
+          odometry_ ? navigation_common::rosTimeToNanoseconds(odometry_->header.stamp).value_or(0)
+                    : 0;
+      odometry_freshness = navigation_contracts::evaluateExecutionStateFreshness(
+          node().get_clock()->now().nanoseconds(), odometry_source_ns,
+          navigation_common::steadyClockNowNanoseconds(), last_odometry_receive_steady_ns_,
+          state_stale_after_s_);
+      const auto acceptance_gate =
+          classifyCommandAcceptance(odometry_freshness, message->sample_id,
+                                    navigation_command_ ? navigation_command_->sample_id : 0U);
+      if (acceptance_gate == CommandAcceptanceGate::kOdometryStale) {
+        ++trajectory_rejected_count_;
+        if (!failure_reported_) ++stale_state_failure_count_;
+        assessment = CommandAdmissionAssessment{AdmissionStage::kOdometryFreshness,
+                                                AdmissionDisposition::kRejectFailNavigation,
+                                                odometry_freshness.reason};
+      } else if (acceptance_gate == CommandAcceptanceGate::kNonIncreasingMessageId) {
+        ++trajectory_rejected_count_;
+        assessment = CommandAdmissionAssessment{AdmissionStage::kSampleOrdering,
+                                                AdmissionDisposition::kRejectRetainPrevious,
+                                                acceptance_gate};
+      }
+      if (assessment.accepted()) {
+        const bool terminal_failure =
+            message->status == navigation_contracts::msg::NavigationCommand::STATUS_REJECTED;
+        completed_command =
+            message->status == navigation_contracts::msg::NavigationCommand::STATUS_COMPLETED;
+        bool terminal_hold_inside_acceptance = false;
+        if (completed_command && odometry_) {
+          const auto& p = odometry_->pose.pose.position;
+          const Eigen::Vector3d measured{p.x, p.y, p.z};
+          const Eigen::Vector3d endpoint{message->position.x, message->position.y,
+                                         message->position.z};
+          terminal_hold_inside_acceptance =
+              measured.allFinite() && endpoint.allFinite() &&
+              (measured - endpoint).norm() <= navigation_contracts::kCommandAnchorErrorLimitM;
+          terminal_backup_hold_inside_acceptance =
+              terminal_hold_inside_acceptance &&
+              message->role == navigation_contracts::msg::NavigationCommand::ROLE_BACKUP;
+          terminal_main_hold_inside_acceptance =
+              terminal_hold_inside_acceptance &&
+              message->role == navigation_contracts::msg::NavigationCommand::ROLE_MAIN;
+          terminal_recovery_needed = !terminal_hold_inside_acceptance;
+        }
+        if (!terminal_failure && !terminal_hold_inside_acceptance && odometry_.has_value()) {
+          tracking_envelope =
+              assessTrackingLocked(*message, *odometry_, anchor_invalid, reject_provenance);
+        }
+        if (anchor_invalid) {
+          assessment = CommandAdmissionAssessment{AdmissionStage::kTrackingEnvelope,
+                                                  AdmissionDisposition::kRejectSafetyStop,
+                                                  TrackingReason::kEnvelopeExceeded};
+        }
+        if (assessment.accepted()) {
+          navigation_command_ = transitionCertifiedCommand(navigation_command_, *message,
+                                                           CertifiedCommandTransition::kCommit);
+          ++trajectory_received_count_;
+          ++trajectory_accepted_count_;
+          last_command_receive_ns_ = node().get_clock()->now().nanoseconds();
+          failure_reported_ = false;
+          accepted = true;
+        }
+      }
+    }
+  }
+  if (assessment.disposition == AdmissionDisposition::kRejectRetainPrevious) {
+    publishAdmissionRejection(assessment, message.get(), callback_now.nanoseconds(),
+                              callback_steady_ns);
+    RCLCPP_WARN_THROTTLE(
+        node().get_logger(), *node().get_clock(), 1000,
+        "Core command rejected stage=%s reason=%s code=%u disposition=%s "
+        "mission=%s wp=%u request=%lu goal_epoch=%lu sample=%lu",
+        admissionStageName(assessment.stage), admissionReasonName(assessment.reason),
+        static_cast<unsigned>(admissionReasonCode(assessment.reason)),
+        admissionDispositionName(assessment.disposition), message->mission_id.c_str(),
+        message->waypoint_index, static_cast<unsigned long>(message->request_id),
+        static_cast<unsigned long>(message->goal_epoch),
+        static_cast<unsigned long>(message->sample_id));
+    return;
+  }
+  if (assessment.disposition == AdmissionDisposition::kRejectFailNavigation) {
+    publishAdmissionRejection(assessment, message.get(), callback_now.nanoseconds(),
+                              callback_steady_ns, odometry_freshness.source_age_ms,
+                              odometry_freshness.receive_age_ms);
+    RCLCPP_ERROR(node().get_logger(),
+                 "Rejecting planner backend command because navigation odometry lease is stale: "
+                 "reason=%s source_age_ms=%.3f receive_age_ms=%.3f generation=%lu "
+                 "trajectory_time=%.6f",
+                 navigation_contracts::executionStateFreshnessReasonName(odometry_freshness.reason),
+                 odometry_freshness.source_age_ms, odometry_freshness.receive_age_ms,
+                 static_cast<unsigned long>(message->bundle_generation),
+                 message->trajectory_time_s);
+    failNavigation("navigation odometry stale at command acceptance");
+    return;
+  }
+  if (assessment.disposition == AdmissionDisposition::kRejectSafetyStop) {
+    publishAdmissionRejection(
+        assessment, message.get(), callback_now.nanoseconds(), callback_steady_ns,
+        odometry_freshness.source_age_ms, odometry_freshness.receive_age_ms,
+        tracking_envelope.longitudinal_error_m, tracking_envelope.lateral_error_m);
+    logTrackingRejection(node().get_logger(), *message, tracking_envelope, *reject_provenance);
+    safetyStopNavigation("planner backend PVA command anchor is not near vehicle");
+    return;
+  }
+  if (accepted) {
+    finishAcceptedCommand(*message, completed_command, terminal_recovery_needed,
+                          terminal_backup_hold_inside_acceptance,
+                          terminal_main_hold_inside_acceptance);
+  }
 }
 
 void NavigationMode::updateBoundary() {
@@ -1758,6 +1885,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
   std::uint64_t trajectories_received;
   std::uint64_t trajectories_accepted;
   std::uint64_t trajectories_rejected;
+  std::array<std::uint64_t, 8> admission_rejections_by_stage;
   std::uint64_t experimental_tracking_suppressed;
   std::uint64_t waypoint_handoffs_retaining_command;
   std::uint64_t setpoint_updates;
@@ -1777,6 +1905,7 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
     trajectories_received = trajectory_received_count_;
     trajectories_accepted = trajectory_accepted_count_;
     trajectories_rejected = trajectory_rejected_count_;
+    admission_rejections_by_stage = admission_rejections_by_stage_;
     experimental_tracking_suppressed = experimental_tracking_suppressed_count_;
     waypoint_handoffs_retaining_command = waypoint_handoff_retained_command_count_;
     setpoint_updates = setpoint_update_count_;
@@ -1793,7 +1922,8 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               "waypoint_handoffs_retaining_command=%lu "
               "setpoint_updates=%lu setpoint_max_gap_us=%ld last_state_age_s=%.6f "
               "stale_state_failures=%lu velocity_command_enu=(%.3f,%.3f,%.3f) "
-              "forward_guard_count=%lu experimental_tracking_suppressed=%lu",
+              "forward_guard_count=%lu experimental_tracking_suppressed=%lu "
+              "admission_reject_by_stage=[%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu]",
               static_cast<unsigned long>(odometry_callbacks),
               static_cast<long>(odometry_gap_us),
               static_cast<unsigned long>(trajectories_received),
@@ -1805,7 +1935,15 @@ void NavigationMode::logRuntimeMetrics(const rclcpp::Time& now) {
               static_cast<unsigned long>(stale_state_failures), velocity_command_enu.x(),
               velocity_command_enu.y(), velocity_command_enu.z(),
               static_cast<unsigned long>(forward_guard_count),
-              static_cast<unsigned long>(experimental_tracking_suppressed));
+              static_cast<unsigned long>(experimental_tracking_suppressed),
+              static_cast<unsigned long>(admission_rejections_by_stage[0]),
+              static_cast<unsigned long>(admission_rejections_by_stage[1]),
+              static_cast<unsigned long>(admission_rejections_by_stage[2]),
+              static_cast<unsigned long>(admission_rejections_by_stage[3]),
+              static_cast<unsigned long>(admission_rejections_by_stage[4]),
+              static_cast<unsigned long>(admission_rejections_by_stage[5]),
+              static_cast<unsigned long>(admission_rejections_by_stage[6]),
+              static_cast<unsigned long>(admission_rejections_by_stage[7]));
 }
 
 void NavigationMode::safetyStopNavigation(const char* reason) {

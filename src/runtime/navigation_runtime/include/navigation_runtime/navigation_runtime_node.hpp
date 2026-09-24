@@ -19,6 +19,7 @@
 #include <tracking_experiment.hpp>
 #include <navigation_contracts/msg/navigation_command.hpp>
 #include <navigation_contracts/msg/navigation_command_admission.hpp>
+#include <navigation_contracts/msg/navigation_execution_diagnostics.hpp>
 #include <navigation_contracts/msg/navigation_goal.hpp>
 #include <navigation_contracts/msg/navigation_mode_status.hpp>
 #include <navigation_contracts/msg/navigation_mission_progress.hpp>
@@ -292,7 +293,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   // Caller holds localization_transition_mutex_ and input_mutex_. Record the
   // exact authorized command before it can be delivered to the adapter.
   void rememberMissionCommandIssued(
-      const navigation_contracts::msg::NavigationCommand& command);
+      const navigation_contracts::msg::NavigationCommand& command,
+      bool execution_authorized);
   void onCommandAdmission(
       const navigation_contracts::msg::NavigationCommandAdmission::ConstSharedPtr& message);
   // Caller holds localization_transition_mutex_ and input_mutex_. The
@@ -431,6 +433,8 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   rclcpp::Subscription<navigation_contracts::msg::NavigationModeStatus>::SharedPtr
       status_subscription_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationCommand>::SharedPtr command_publisher_;
+  rclcpp::Publisher<navigation_contracts::msg::NavigationExecutionDiagnostics>::SharedPtr
+      execution_diagnostics_publisher_;
   rclcpp::Subscription<navigation_contracts::msg::NavigationCommandAdmission>::SharedPtr
       command_admission_subscription_;
   rclcpp::Publisher<navigation_contracts::msg::NavigationMissionProgress>::SharedPtr

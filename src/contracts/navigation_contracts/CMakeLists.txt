@@ -24,6 +24,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PropagatedOdometry.msg"
   "msg/EstimatorHealth.msg"
   "msg/NavigationCommand.msg"
+  "msg/NavigationCommandRejection.msg"
+  "msg/NavigationExecutionDiagnostics.msg"
   "msg/NavigationCommandAdmission.msg"
   DEPENDENCIES builtin_interfaces nav_msgs std_msgs geometry_msgs sensor_msgs)
 
