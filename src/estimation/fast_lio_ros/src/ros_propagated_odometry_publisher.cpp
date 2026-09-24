@@ -19,8 +19,8 @@ RosPropagatedOdometryPublisher::RosPropagatedOdometryPublisher(
           "/lio/odometry_propagated", QosProfiles::estimatorOutput())),
       covariance_runtime_(std::move(covariance_runtime)),
       public_frame_generation_(std::move(public_frame_generation)) {
-  const bool trace_enabled = node.declare_parameter<bool>(
-      "diagnostics.state_transport_trace_enabled", false);
+  const bool trace_enabled = node.get_parameter(
+      "diagnostics.state_transport_trace_enabled").as_bool();
   if (trace_enabled) {
     if (!node.get_parameter("use_sim_time").as_bool()) {
       throw std::invalid_argument("state transport trace is SITL/test only");
