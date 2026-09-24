@@ -341,6 +341,15 @@ def reduce_lifecycle(
         _present_identity(item.get("planning_cycle_id")) and
         _present_identity(item.get("after_bundle_generation"))
     )
+    normalized.extend(
+        dict(item, purpose=0,
+             producer_projection="emergency_created_by_terminal_monitor")
+        for item in tuple(normalized)
+        if item.get("phase") == "retained" and
+        item.get("disposition_code") == 5 and
+        item.get("purpose") == 2 and
+        _present_identity(item.get("after_bundle_generation"))
+    )
     for event in normalized:
         if (event.get("phase") == "retained" and
                 event.get("disposition_code") == 5 and
@@ -630,6 +639,19 @@ def reduce_lifecycle(
                   not transaction["reasons"]):
                 transaction["status"] = "VALID_TERMINAL"
                 transaction["terminal_outcome"] = "MONITOR_FAIL_CLOSED"
+                transaction["evidence_outcome"] = "RESOLVED"
+                continue
+            elif (disposition == 5 and
+                  _present_identity(retained.get("after_bundle_generation")) and
+                  retained.get("after_bundle_generation") != monitor_generation and
+                  retained.get("callback_request_current") == 1 and
+                  retained.get("after_command_available") == 1 and
+                  retained.get("after_failure_latched") == 0 and
+                  retained.get("final_freshness_reason") == 0 and
+                  retained.get("final_witness_age_bounded") == 1 and
+                  not transaction["reasons"]):
+                transaction["status"] = "VALID_TERMINAL"
+                transaction["terminal_outcome"] = "EMERGENCY_COMMITTED"
                 transaction["evidence_outcome"] = "RESOLVED"
                 continue
             transaction["reasons"].append("TERMINAL_MONITOR_OUTCOME_UNVERIFIED")
@@ -2508,6 +2530,19 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
         ))
         for item in rejections if item.get("command_present") is True
     }
+    admissions = [
+        event.get("payload", {}) for event in inputs.get("scenario_events", [])
+        if event.get("kind") == "command_admission"
+        and isinstance(event.get("payload"), dict)
+    ]
+    adapter_identity_fields = (
+        "mode_activation_id", "localization_epoch", "goal_epoch",
+        "request_id", "bundle_generation", "sample_id",
+    )
+    admission_exact_keys = {
+        tuple(item.get(field) for field in adapter_identity_fields)
+        for item in admissions
+    }
     if any(any(item.get(field) is None for field in (
             "stage", "reason_code", "disposition")) for item in rejections):
         reasons.append("C0_SW_ADAPTER_REJECTION_UNTYPED")
@@ -2520,11 +2555,19 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
             item.get("world_revision"), item.get("world_observation_stamp_ns"),
         )) not in valid_references and not (
             reference_id in authorized_references and
-            tuple(item.get(field) for field in (
-                "mode_activation_id", "localization_epoch", "goal_epoch",
-                "request_id", "bundle_generation", "sample_id",
-            )) in rejection_keys
+            tuple(item.get(field) for field in adapter_identity_fields) in
+                (rejection_keys | admission_exact_keys)
         )
+        for item in references
+    )
+    admitted_without_setpoint_trace = sum(
+        tuple(item.get(field) for field in (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "goal_epoch", "request_id", "bundle_generation", "sample_id",
+            "world_generation", "world_revision", "world_observation_stamp_ns",
+        )) not in valid_references and
+        tuple(item.get(field) for field in adapter_identity_fields) in
+            admission_exact_keys
         for item in references
     )
     if not references or missing_references:
@@ -2551,11 +2594,6 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
         tuple(item.get(field) for field in command_key_fields)
         for item in references
     }
-    admissions = [
-        event.get("payload", {}) for event in inputs.get("scenario_events", [])
-        if event.get("kind") == "command_admission"
-        and isinstance(event.get("payload"), dict)
-    ]
     admission_keys = {
         tuple(item.get(field) for field in command_key_fields)
         for item in admissions
@@ -2648,6 +2686,7 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
         "required_lifecycle_conflicting": conflicts,
         "required_reference_count": len(references),
         "required_reference_missing": missing_references,
+        "references_admitted_without_setpoint_trace": admitted_without_setpoint_trace,
         "required_reference_conflicting": conflicting_references,
         "adapter_admission_receipts": len(admission_keys),
         "adapter_receipts_missing": missing_adapter_receipts,

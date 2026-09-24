@@ -333,6 +333,49 @@ class C0SoftwareWitnessTest(unittest.TestCase):
             "evidence_outcome"], "MISSING_EVIDENCE")
         self.assertEqual(len(reduce_lifecycle([monitor])["unresolved"]), 1)
 
+    def test_terminal_monitor_emergency_commit_owns_new_generation(self):
+        base = {key: value for key, value in command_events()[0].items()
+                if key in ("runtime_instance_id", "session_id", "localization_epoch",
+                           "goal_epoch", "request_id")}
+        monitor = dict(
+            base, phase="retained", disposition="OBSERVED", purpose=2,
+            disposition_code=5, planning_cycle_id=90,
+            producer_event_sequence=6, captured_bundle_generation=11,
+            after_bundle_generation=12, state_ingress_sequence=10,
+            final_state_source_ros_ns=101, final_state_receive_steady_ns=102,
+            callback_request_current=1, after_command_available=1,
+            after_failure_latched=0, final_freshness_reason=0,
+            final_witness_age_bounded=1,
+        )
+        transactions = reduce_lifecycle([monitor])["transactions"]
+        terminal = next(item for item in transactions
+                        if item["identity"]["producer_kind"] == "TERMINAL_MONITOR")
+        emergency = next(item for item in transactions
+                         if item["identity"]["producer_kind"] == "EMERGENCY_BRAKE")
+        self.assertEqual(terminal["terminal_outcome"], "EMERGENCY_COMMITTED")
+        self.assertEqual(emergency["identity"]["producer_id"], 12)
+        self.assertIn("retained", emergency["events"])
+
+    def test_exact_adapter_receipt_explains_unsampled_reference_lineage(self):
+        data = software_inputs()
+        data["lifecycle"].append(dict(
+            data["lifecycle"][-2], sample_id=23, authorization_steady_ns=100))
+        data["lifecycle_reduction"] = reduce_lifecycle(data["lifecycle"])
+        data["pva"].append(dict(data["pva"][0], sample_id=23,
+                                mode_activation_id=9))
+        receipt = {
+            "mode_activation_id": 9, "localization_epoch": 7,
+            "goal_epoch": 4, "request_id": 3,
+            "bundle_generation": 11, "sample_id": 23,
+        }
+        data["scenario_events"].append({"kind": "command_admission", "payload": receipt})
+        result = evaluate_software_qualification(data)
+        self.assertEqual(result["required_reference_missing"], 0)
+        self.assertEqual(result["references_admitted_without_setpoint_trace"], 1)
+        receipt["sample_id"] = 24
+        self.assertEqual(evaluate_software_qualification(data)[
+            "required_reference_missing"], 1)
+
     def test_exact_typed_adapter_rejection_explains_undelivered_sample(self):
         data = software_inputs()
         # The transaction has an earlier delivered sample. A later exact Core
