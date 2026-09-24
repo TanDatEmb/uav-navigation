@@ -155,11 +155,11 @@ must not be resurrected implicitly.
 
 ## Current experimental and diagnostic modes
 
-- `tracking_experiment` is zeroed by default in the runtime and External Mode
-  configs; zero disables selected tracking/health-response gates and makes the
-  run diagnostic-only (`qualification_eligible=false`). Positive or relaxed,
-  velocity-only, GPS-off, or similar profiles require explicit opt-in and keep
-  the suppressed-gate metadata.
+- `tracking_experiment.mode=off` disables the SITL experiment regardless of
+  simulated time. `relaxed` explicitly retains diagnostic tracking/health
+  suppression (`qualification_eligible=false`). Core and adapter effective
+  startup witnesses must match the runner request before mission start; see
+  [Phase A decision, lineage and verification](runtime_config_truth_20260924.md).
 - `backup_allow_unknown`, nominal snapshot capture, terminal-state probes, and
   offline replay are diagnostic/evidence paths. They cannot grant candidate,
   command, world, or PX4 authority; offline world results are non-authoritative
