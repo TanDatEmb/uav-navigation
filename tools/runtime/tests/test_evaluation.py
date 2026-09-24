@@ -377,6 +377,35 @@ class EvaluationTest(unittest.TestCase):
             result["dimensions"]["tracking"]["reasons"],
         )
 
+    def test_identical_command_heartbeat_same_source_tick_is_counted_once(self):
+        first = pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        repeated = dict(first, sample_id=first["sample_id"] + 1)
+        last = pva(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        result = evaluate_session(inputs([first, repeated, last], [
+            truth(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            truth(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ]))
+        self.assertEqual(result["tracking_reference_accounting"], {
+            "raw_command_count": 3,
+            "canonical_source_tick_count": 2,
+            "exact_heartbeat_collapse_count": 1,
+        })
+        self.assertNotIn("SOURCE_TIMESTAMP_DUPLICATE",
+                         result["dimensions"]["tracking"]["reasons"])
+
+    def test_conflicting_command_same_source_tick_remains_not_evaluable(self):
+        first = pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        conflicting = dict(first, sample_id=first["sample_id"] + 1,
+                           position=[0.5, 0.0, 0.0])
+        last = pva(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        result = evaluate_session(inputs([first, conflicting, last], [
+            truth(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            truth(2_000_000_000, (1.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        ]))
+        self.assertIn("SOURCE_TIMESTAMP_DUPLICATE_CONFLICT",
+                      result["dimensions"]["tracking"]["reasons"])
+        self.assertEqual(result["tracking_reference_accounting"]["exact_heartbeat_collapse_count"], 0)
+
     def test_tracking_without_acceptance_policy_is_not_evaluable(self):
         commands = [
             pva(1_000_000_000, (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),

@@ -132,6 +132,64 @@ def _source_time_status(rows: list[dict[str, Any]]) -> tuple[bool, list[str]]:
     return not reasons, sorted(set(reasons))
 
 
+_REFERENCE_HEARTBEAT_IGNORED_FIELDS = frozenset({
+    # A repeated immutable command may receive a new transport sample ID.
+    "sample_id", "trajectory_id",
+    # Each heartbeat is freshly authorized; its diagnostic steady timestamp
+    # is an event timestamp rather than a change to the reference/certificate.
+    "execution_authorization_steady_ns",
+    # These identify the observer row, never the executable reference.
+    "arrival_wall_ns", "arrival_steady_ns", "record_sequence",
+    "record_sim_time_ns", "observer_record_steady_ns",
+})
+
+
+def _same_reference_heartbeat(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return {
+        key: value for key, value in left.items()
+        if key not in _REFERENCE_HEARTBEAT_IGNORED_FIELDS
+    } == {
+        key: value for key, value in right.items()
+        if key not in _REFERENCE_HEARTBEAT_IGNORED_FIELDS
+    }
+
+
+def _canonical_reference_heartbeats(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    """Collapse only exact same-state command heartbeats at one ROS source tick.
+
+    A fresh sample ID may keep the steady-time adapter lease alive while ROS
+    time has not advanced. Raw rows remain in the session and lifecycle
+    evidence; this copy is only the time-indexed tracking reference.
+    """
+    canonical: list[dict[str, Any]] = []
+    collapsed = 0
+    reasons: list[str] = []
+    for row in rows:
+        if not canonical:
+            canonical.append(row)
+            continue
+        previous = canonical[-1]
+        if (row.get("source_stamp_ns") != previous.get("source_stamp_ns") or
+                row.get("localization_epoch") != previous.get("localization_epoch")):
+            canonical.append(row)
+            continue
+        previous_id = _integer(previous.get("sample_id"))
+        current_id = _integer(row.get("sample_id"))
+        if (previous_id is None or current_id is None or
+                current_id <= previous_id or
+                not _same_reference_heartbeat(row, previous)):
+            reasons.append("SOURCE_TIMESTAMP_DUPLICATE_CONFLICT")
+            canonical.append(row)
+            continue
+        collapsed += 1
+        # Keep the latest sample ID so another identical heartbeat can be
+        # checked for strict sample ordering.
+        canonical[-1] = row
+    return canonical, collapsed, sorted(set(reasons))
+
+
 def _source_clock_relation_status(
     reference: list[dict[str, Any]], measured: list[dict[str, Any]]
 ) -> tuple[bool, list[str]]:
@@ -1396,14 +1454,17 @@ def _reference_lineage_status(
 
 
 def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MATCH_GAP_S) -> dict[str, Any]:
-    reference = [item for item in inputs.get("pva", []) if item.get("executable", True) is not False]
+    raw_reference = [item for item in inputs.get("pva", []) if item.get("executable", True) is not False]
+    reference, collapsed_heartbeats, heartbeat_reasons = _canonical_reference_heartbeats(raw_reference)
     truth = inputs.get("streams", {}).get("ground_truth_odometry", [])
     corrected = inputs.get("streams", {}).get("corrected_odometry", [])
     propagated = inputs.get("streams", {}).get("propagated_odometry", [])
     metrics: dict[str, Any] = {}
     reasons: list[str] = []
     reference_time_valid, reference_time_reasons = _source_time_status(reference)
-    lineage_valid, lineage_reasons = _reference_lineage_status(inputs, reference)
+    reference_time_reasons = sorted(set(reference_time_reasons + heartbeat_reasons))
+    reference_time_valid = reference_time_valid and not heartbeat_reasons
+    lineage_valid, lineage_reasons = _reference_lineage_status(inputs, raw_reference)
     policy = inputs.get("tracking_coverage_policy")
     pairing_gap = (
         _number(policy.get("max_pairing_gap_s"))
@@ -1522,7 +1583,13 @@ def evaluate_tracking(inputs: dict[str, Any], max_gap_s: float = DEFAULT_MAX_MAT
         "coverage_ratio": 0.0 if reference else None,
         "maximum_gap_s": None,
     }
-    return {"metrics": metrics, "reasons": sorted(set(reasons)), "max_gap_s": diagnostic_gap}
+    return {
+        "metrics": metrics, "reasons": sorted(set(reasons)),
+        "max_gap_s": diagnostic_gap,
+        "reference_heartbeat_collapsed_count": collapsed_heartbeats,
+        "raw_reference_count": len(raw_reference),
+        "canonical_reference_count": len(reference),
+    }
 
 
 def _raw_velocity(item: dict[str, Any]) -> tuple[float, float, float] | None:
@@ -2129,6 +2196,11 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
         "tracking_coverage_policy": inputs.get("tracking_coverage_policy"),
         "tracking_acceptance_policy": inputs.get("tracking_acceptance_policy"),
         "evaluation_window": inputs.get("evaluation_window"),
+        "tracking_reference_accounting": {
+            "raw_command_count": tracking["raw_reference_count"],
+            "canonical_source_tick_count": tracking["canonical_reference_count"],
+            "exact_heartbeat_collapse_count": tracking["reference_heartbeat_collapsed_count"],
+        },
         "dimensions": {
             "mission": _dimension(mission_status, mission_reasons),
             "safety": _dimension(safety_status, safety_reasons),
