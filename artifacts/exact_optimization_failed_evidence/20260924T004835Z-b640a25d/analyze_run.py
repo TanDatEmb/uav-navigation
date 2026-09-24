@@ -82,13 +82,15 @@ def analyze(session: Path, injected: bool):
     active=int(fault["fields"]["active_request"]) if fault else None
     at=fault["observer_ns"] if fault else None
     before=[(t,m) for t,m in admission if at is not None and t<at and m.request_id==active]
+    command_before=[(t,m) for t,m in command if at is not None and t<at and
+                    m.request_id==active]
     after=[(t,m) for t,m in admission if at is not None and t>at and m.request_id==active]
     successor=[(t,m) for t,m in admission if at is not None and t>at and m.request_id==desired]
     next_successor=successor[0][0] if successor else None
     stop=next_successor or at
     predecessor_admitted=[t for t,m in after if stop is None or t<stop]
-    command_window=[t for t,m in command if at is not None and before and
-        before[-1][0]<=t<=stop and m.request_id in (active,desired)] if stop else []
+    command_window=[t for t,m in command if at is not None and command_before and
+        command_before[-1][0]<=t<=stop and m.request_id in (active,desired)] if stop else []
     admission_window=[t for t,m in admission if at is not None and before and
         before[-1][0]<=t<=stop and m.request_id in (active,desired)] if stop else []
     publish_gap=gaps_ms(command_window)
@@ -115,6 +117,11 @@ def analyze(session: Path, injected: bool):
             "applied_exactly_once":len(applied)==1,
             "exact_status":bool(fault and fault["fields"].get("injected_planner_status")=="6" and
                                  trace_fields.get("planner_result_after_injection")=="6"),
+            "original_status_preserved":bool(fault and
+                fault["fields"].get("original_planner_status") is not None and
+                trace_fields.get("planner_result_before_injection")==
+                    fault["fields"].get("original_planner_status") and
+                trace_fields.get("planner_backend_outcome") is not None),
             "hot_handoff":bool(fault and desired==active+1 and active==2 and desired==3 and
                                 trace_fields.get("transition_kind")=="same_route_waypoint_advance" and
                                 trace_fields.get("desired_request_id")==str(desired) and
@@ -125,7 +132,8 @@ def analyze(session: Path, injected: bool):
                                              decision_fields.get("callback_request_current")=="1" and
                                              decision_fields.get("after_command_available")=="1" and
                                              decision_fields.get("disposition") in {"6","7","8"}),
-            "predecessor_before_and_after":bool(before and predecessor_admitted),
+            "predecessor_before_and_after":bool(before and command_before and
+                                                predecessor_admitted),
             "successor_admitted":bool(successor),
             "publication_gap_under_100ms":bool(publish_gap["max"] is not None and publish_gap["max"]<100),
             "adapter_gap_under_100ms":bool(admission_gap["max"] is not None and admission_gap["max"]<100),
