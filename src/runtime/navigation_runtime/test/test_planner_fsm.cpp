@@ -367,6 +367,49 @@ TEST(PlannerFsm, ExactOptimizationFailureStillRequiresRetainedValidation) {
       false, false, false), PlannerResultDisposition::FailClosed);
 }
 
+TEST(PlannerFsm, OldOptimizationFailureCannotRevokeActivatedSuccessor) {
+  ExecutionLifecycleFixture execution;
+  execution.beginGoal(1U, 1U, 1U, false);
+  auto predecessor = baselineRefinementSchedulingCandidate();
+  ASSERT_EQ(execution.commandCommitted(predecessor),
+            navigation_execution::CommitDecision::kCommitted);
+  execution.beginGoal(1U, 2U, 2U, true);
+  const auto captured = execution.snapshot();
+  ASSERT_EQ(captured.activeRequestId(), 1U);
+  ASSERT_EQ(classifyPlannerResult(
+      navigation_planning::PlannerStatus::kOptimizationFailed, false,
+      captured.commandAvailable(), false),
+      PlannerResultDisposition::RetainCommittedCommand);
+
+  auto successor = predecessor;
+  successor.goal_epoch = 2U;
+  successor.request_id = 2U;
+  successor.bundle_generation = predecessor.bundle_generation + 1U;
+  ASSERT_EQ(execution.commandCommitted(successor),
+            navigation_execution::CommitDecision::kCommitted);
+  EXPECT_EQ(execution.failClosedIfCurrentSnapshot(captured),
+            navigation_execution::ConditionalExecutionMutation::kStale);
+  EXPECT_EQ(execution.snapshot().activeRequestId(), 2U);
+  EXPECT_TRUE(execution.snapshot().commandAvailable());
+}
+
+TEST(PlannerFsm, OldDesiredRevisionOptimizationFailureIsDiscardOnly) {
+  DesiredPlanningIntent desired;
+  ASSERT_EQ(desired.advanceRevision(), 1U);
+  const auto old_goal = goal("mission", 1U, 2U, 4U);
+  desired.install(old_goal, PlanningIntentTransition::kHotRetarget);
+  const auto captured_revision = desired.revision();
+  ASSERT_EQ(desired.advanceRevision(), 2U);
+  desired.install(goal("mission", 2U, 3U, 4U),
+                  PlanningIntentTransition::kHotRetarget);
+  ASSERT_EQ(classifyPlannerResult(
+      navigation_planning::PlannerStatus::kOptimizationFailed, false,
+      true, false), PlannerResultDisposition::RetainCommittedCommand);
+  EXPECT_FALSE(desired.matches(old_goal, captured_revision));
+  EXPECT_TRUE(desired.goal().has_value());
+  EXPECT_EQ(desired.goal()->request_id, 3U);
+}
+
 PlanningKey baselineRefinementInitialKey() {
   return {1U, 1U, 1U, 4U, 0U, 2U, 3U,
           PlanningStartMode::kStoppedMeasuredState, 10'000'000'000LL, 5U};
