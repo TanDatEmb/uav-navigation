@@ -1,0 +1,11 @@
+# Tests and evidence levels
+
+**Source proof:** diagnostic status substitution is after a real backend solve and stale-result checks, before the real `classifyPlannerResult()`; only `PlannerStatus` changes. Existing HG-023 validator and execution owner remain unchanged. Normal disabled path skips eligibility work. Safety thresholds, planner algorithm, World and PX4 Hold policies are unchanged.
+
+**Component proof:** `PlannerFsm.ExactOptimizationFailureInjectionSelectsOnlyOneHotHandoff`; `ExactOptimizationFailureStillRequiresRetainedValidation`; `OldOptimizationFailureCannotRevokeActivatedSuccessor`; `OldDesiredRevisionOptimizationFailureIsDiscardOnly`, plus existing `HotRetargetOptimizationFailureDoesNotRevokePredecessor` and classifier status table. This covers valid incumbent retention, no-command fail-closed classification, stale execution/desired discard, invalid HG-023 fallback, and semantic one-shot selection. Previous deterministic execution/mission tests remain enabled.
+
+**Build and suites at behavior source `47a5c05e9b36feb558e5e2ecd3646cc36157613d`:** clean authoritative Release build 23 packages; `tools/runtime/build.py test` 14 test packages, 89 CTest targets, 0 failures/errors/skips; runtime Python suite 390 tests, 1 skip. Final documentation HEAD will be rebuilt/retested separately. Static mission, execution, desired-intent, failclosed-fencing, exact-injection guards and runtime safety ledger pass; `git diff --check` passes. No test relaxation.
+
+**SITL observation:** 4 final injection attempts, 3 exact positive chains, 1 explicit nonarming failure; 3 fresh nominal controls. Representative HG-023 fields: `owner_snapshot_current=1`, `callback_request_current=1`, `world_validation_valid=1`, `state_fresh=1`, `anchor_valid=1`, `committed_suffix_usable=1`, `after_command_available=1`. Positive decision was not unconditional. The rosbag shows Core command and adapter admission continuity; it cannot establish PX4 firmware consumption. Versioned evaluator overall status remains `FAIL` and qualification ineligible, even for focused-positive missions.
+
+**Not flight qualification:** three repetitions establish this focused diagnostic path, not reliability bounds, WCET, or flight safety acceptance.

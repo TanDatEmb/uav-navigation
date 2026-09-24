@@ -1,0 +1,4 @@
+run,planning_cycle,desired_revision,desired_request,active_request,active_generation,original_status,injected_status,classifier_disposition,hg023_disposition,predecessor_admissions_after_fault,fault_to_successor_admission_ms,max_predecessor_command_gap_ms,max_predecessor_adapter_gap_ms,max_combined_adapter_gap_ms,adapter_lease_expired,hold_requested,mission_complete
+I1,149,4,3,2,4,0,6,4,8,29,585.044748,20.199586,20.174363,20.174363,False,False,True
+I3,238,5,4,3,9,0,6,4,8,28,575.780288,20.230458,20.414357,20.414357,False,False,True
+I4,148,4,3,2,5,0,6,4,8,28,576.865611,20.575944,20.726355,20.726355,False,False,True

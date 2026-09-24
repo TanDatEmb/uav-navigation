@@ -76,6 +76,11 @@ def analyze(session: Path, injected: bool):
                        "INJECTION_ARMED" if not applied else
                        "INJECTION_APPLIED" if len(applied)==1 else
                        "INJECTION_APPLIED_MULTIPLE_TIMES")
+    # This is the analyzer's terminal one-shot state, derived from the single
+    # applied event. It is not a fabricated second runtime diagnostic event.
+    one_shot_terminal_state = ("INJECTION_ALREADY_CONSUMED" if len(applied)==1 else
+                               "INJECTION_NOT_ARMED" if not armed else
+                               "INJECTION_ARMED")
     fault=applied[0] if len(applied)==1 else None
     cycle=fault["fields"]["planning_cycle_id"] if fault else None
     trace=[e for e in traces if e["fields"].get("planning_cycle_id")==cycle] if cycle else []
@@ -152,6 +157,7 @@ def analyze(session: Path, injected: bool):
         "checks":checks,"events":events,"trace":trace[-1] if trace else None,
         "retained_decision":decision[-1] if decision else None,
         "injection_state":injection_state,
+        "one_shot_terminal_state":one_shot_terminal_state,
         "runs_rejected":len(rejected),"runs_armed":len(armed),
         "runs_injected":len(applied),"exact_events":sum(
             e["fields"].get("injected_planner_status")=="6" for e in applied),
