@@ -376,6 +376,30 @@ class C0SoftwareWitnessTest(unittest.TestCase):
         self.assertEqual(evaluate_software_qualification(data)[
             "required_reference_missing"], 1)
 
+    def test_no_execution_signal_requires_exact_adapter_rejection(self):
+        data = software_inputs()
+        no_execution = {
+            "runtime_instance_id": "core-a", "session_id": "run-a",
+            "localization_epoch": 7, "goal_epoch": 0, "request_id": 3,
+            "bundle_generation": 0, "sample_id": 24,
+            "phase": "authorize", "disposition": "REJECTED",
+            "authorization_boundary": "execution_timeline_publish_if_current",
+            "authorization_steady_ns": 105,
+        }
+        data["lifecycle"].append(no_execution)
+        data["lifecycle_reduction"] = reduce_lifecycle(data["lifecycle"])
+        self.assertEqual(data["lifecycle_reduction"]["unresolved"], [])
+        self.assertFalse(evaluate_software_qualification(data)[
+            "software_qualification_eligible"])
+        data["scenario_events"].append({"kind": "command_rejection", "payload": {
+            "command_present": True, "stage": 1, "reason_code": 9,
+            "disposition": 1, "mode_activation_id": 9,
+            "localization_epoch": 7, "goal_epoch": 0, "request_id": 3,
+            "bundle_generation": 0, "sample_id": 24,
+        }})
+        self.assertTrue(evaluate_software_qualification(data)[
+            "software_qualification_eligible"])
+
     def test_exact_typed_adapter_rejection_explains_undelivered_sample(self):
         data = software_inputs()
         # The transaction has an earlier delivered sample. A later exact Core

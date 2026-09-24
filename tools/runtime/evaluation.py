@@ -272,7 +272,12 @@ def _lifecycle_transaction_key(event: dict[str, Any]) -> tuple[Any, ...]:
     # source + generation is the producer identity; inventing a nearby
     # planning cycle would misattribute the command.
     declared_cycle = event.get("bundle_owner_cycle_id")
-    cycle_id = (("terminal_monitor", event.get("captured_bundle_generation"),
+    cycle_id = (("no_execution", event.get("sample_id"))
+                if event.get("phase") == "authorize" and
+                event.get("disposition") == "REJECTED" and
+                event.get("goal_epoch") == 0 and
+                event.get("bundle_generation") == 0 else
+                ("terminal_monitor", event.get("captured_bundle_generation"),
                  event.get("producer_event_sequence"))
                 if event.get("phase") == "retained" and
                 event.get("purpose") == 2 else
@@ -513,11 +518,13 @@ def reduce_lifecycle(
                     tx_key[5] if not isinstance(tx_key[5], tuple) else None),
                 "producer_kind": (
                     "PLANNING_CYCLE" if not isinstance(tx_key[5], tuple)
+                    else "NO_EXECUTION_SIGNAL" if tx_key[5][0] == "no_execution"
                     else "TERMINAL_MONITOR" if tx_key[5][0] == "terminal_monitor"
                     else "HEADING_REBIND" if tx_key[5][1] == 2
                     else "EMERGENCY_BRAKE"),
                 "producer_id": (
                     tx_key[5] if not isinstance(tx_key[5], tuple)
+                    else tx_key[5][1] if tx_key[5][0] == "no_execution"
                     else tx_key[5][1:] if tx_key[5][0] == "terminal_monitor"
                     else tx_key[5][2]),
             },
@@ -579,10 +586,14 @@ def reduce_lifecycle(
                 ):
                     phase_events["activate"] = dict(candidate)
                     break
-        if any(not _present_identity(identity.get(field)) for field in (
+        identity_fields = (
+            "runtime_instance_id", "session_id", "localization_epoch",
+            "request_id", "producer_id",
+        ) if identity["producer_kind"] == "NO_EXECUTION_SIGNAL" else (
             "runtime_instance_id", "session_id", "localization_epoch",
             "goal_epoch", "request_id", "producer_id",
-        )):
+        )
+        if any(not _present_identity(identity.get(field)) for field in identity_fields):
             transaction["reasons"].append("LIFECYCLE_IDENTITY_MISSING")
         request = phase_events.get("request")
         result = phase_events.get("result")
@@ -596,6 +607,21 @@ def reduce_lifecycle(
         publish = phase_events.get("publish")
         heading_admitted = phase_events.get("heading_admitted")
         producer_kind = identity["producer_kind"]
+        if producer_kind == "NO_EXECUTION_SIGNAL":
+            if (authorize and authorize.get("disposition") == "REJECTED" and
+                    authorize.get("authorization_boundary") ==
+                        "execution_timeline_publish_if_current" and
+                    _present_identity(authorize.get("authorization_steady_ns")) and
+                    authorize.get("goal_epoch") == 0 and
+                    authorize.get("bundle_generation") == 0 and
+                    authorize.get("sample_id") == identity["producer_id"] and
+                    not transaction["reasons"]):
+                transaction["status"] = "VALID_REJECT"
+                transaction["terminal_outcome"] = "NO_EXECUTION_AUTHORITY"
+                transaction["evidence_outcome"] = "INTENTIONALLY_ABSENT"
+            else:
+                transaction["reasons"].append("NO_EXECUTION_REJECTION_WITNESS_INVALID")
+            continue
         if producer_kind == "TERMINAL_MONITOR":
             monitor_generation = retained.get("captured_bundle_generation") if retained else None
             monitor_sequence = retained.get("producer_event_sequence") if retained else None
@@ -2530,6 +2556,22 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
         ))
         for item in rejections if item.get("command_present") is True
     }
+    rejected_command_keys = {key[1:] for key in rejection_keys}
+    no_execution_signals = [
+        transaction.get("events", {}).get("authorize", {})
+        for transaction in reduction.get("transactions", [])
+        if transaction.get("identity", {}).get("producer_kind") ==
+            "NO_EXECUTION_SIGNAL"
+    ]
+    unpaired_no_execution_signals = sum(
+        tuple(item.get(field) for field in (
+            "localization_epoch", "goal_epoch", "request_id",
+            "bundle_generation", "sample_id",
+        )) not in rejected_command_keys
+        for item in no_execution_signals
+    )
+    if unpaired_no_execution_signals:
+        reasons.append("C0_SW_NO_EXECUTION_ADAPTER_REJECTION_MISSING")
     admissions = [
         event.get("payload", {}) for event in inputs.get("scenario_events", [])
         if event.get("kind") == "command_admission"
@@ -2658,12 +2700,13 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
     authority = "PASS" if not (
         unresolved or conflicts or unbound_activations or missing_results or
         missing_references or conflicting_references or
-        missing_adapter_receipts or unbound_adapter_receipts
+        missing_adapter_receipts or unbound_adapter_receipts or
+        unpaired_no_execution_signals
     ) else "NOT_EVALUABLE"
     evidence = "PASS" if not writer_reasons and not (
         unresolved or conflicts or missing_results or missing_references or
         conflicting_references or missing_adapter_receipts or
-        unbound_adapter_receipts
+        unbound_adapter_receipts or unpaired_no_execution_signals
     ) else "NOT_EVALUABLE"
     temporal = "PASS" if (
         product_logic == "PASS" and authority == "PASS" and evidence == "PASS" and
@@ -2689,6 +2732,8 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
         "references_admitted_without_setpoint_trace": admitted_without_setpoint_trace,
         "required_reference_conflicting": conflicting_references,
         "adapter_admission_receipts": len(admission_keys),
+        "no_execution_signals": len(no_execution_signals),
+        "no_execution_adapter_rejections_missing": unpaired_no_execution_signals,
         "adapter_receipts_missing": missing_adapter_receipts,
         "adapter_receipts_unbound": unbound_adapter_receipts,
         "axes": {
