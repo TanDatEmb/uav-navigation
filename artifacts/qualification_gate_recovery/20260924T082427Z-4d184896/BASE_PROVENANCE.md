@@ -15,3 +15,10 @@
 - The three prior raw sessions are under the original checkout's
   `.artifacts/runtime` directory; their hashes are indexed by the base
   campaign's `EVIDENCE_INDEX.md`.
+- Natural pilot 3 source SHA: `96d45808a3b4cefcd3df45f06943bb6379af73a0`;
+  its raw metadata captured a `VALID` authoritative Release manifest. Ten
+  nominal attempts used source SHA `96ed8d089e576c505abdc15500746e9b5be10e50`,
+  a single manifest SHA256
+  `bd2fa3429742396381c6618291d2f5de6e0057c6c310559c3c40fb8f01cbf037`,
+  and the PX4 binary hash above. Later offline analyzer and documentation
+  commits do not retroactively alter those captured source identities.
