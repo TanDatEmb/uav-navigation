@@ -542,7 +542,8 @@ def _observer_qos_contract(
 class RuntimeMonitor:
     """ROS node used by all runtime workflows."""
 
-    def __init__(self, output: Path, workflow: str, config: dict[str, Any]) -> None:
+    def __init__(self, output: Path, workflow: str, config: dict[str, Any],
+                 *, state_transport_trace: bool = False) -> None:
         import rclpy
         from rclpy.node import Node
         from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -550,6 +551,7 @@ class RuntimeMonitor:
         self.output = output
         self.workflow = workflow
         self.config = config
+        self.state_transport_trace = state_transport_trace
         self.output.mkdir(parents=True, exist_ok=True)
         self.samples_path = output / "samples.jsonl"
         self.latest_path = output / "monitor.json"
@@ -640,8 +642,7 @@ class RuntimeMonitor:
             TopicSpec("diagnostics", "/lio/diagnostics", DiagnosticArray, _diagnostic_payload),
             TopicSpec("mapping_diagnostics", "/navigation/diagnostics", DiagnosticArray, _diagnostic_payload),
         ]
-        if self.config.get("fast_lio", {}).get("ros__parameters", {}).get(
-                "diagnostics", {}).get("state_transport_trace_enabled") is True:
+        if self.state_transport_trace:
             from navigation_contracts.msg import OdometryTransportTrace
             specs.extend([
                 TopicSpec("odometry_producer_trace", "/lio/odometry_transport_trace",
@@ -917,7 +918,8 @@ class RuntimeMonitor:
         self._rclpy.try_shutdown()
 
 
-def run_monitor(output: Path, workflow: str, config_path: Path) -> int:
+def run_monitor(output: Path, workflow: str, config_path: Path,
+                *, state_transport_trace: bool = False) -> int:
     import yaml
     import rclpy
 
@@ -931,7 +933,10 @@ def run_monitor(output: Path, workflow: str, config_path: Path) -> int:
             config["runtime"] = dict(common.get("runtime", {}))
             config["runtime"].update(config.get("runtime_overrides", {}))
     rclpy.init(args=[])
-    monitor = RuntimeMonitor(output, workflow, config)
+    if state_transport_trace and workflow != "sim":
+        raise ValueError("state transport trace is SITL only")
+    monitor = RuntimeMonitor(output, workflow, config,
+                             state_transport_trace=state_transport_trace)
     stopping = False
 
     def stop(_signum: int, _frame: Any) -> None:
@@ -954,8 +959,11 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workflow", choices=("dataset", "sim"), required=True)
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--state-transport-trace", action="store_true",
+                        help="default-off SITL-only producer/adapter sideband")
     args = parser.parse_args()
-    return run_monitor(args.output, args.workflow, args.config)
+    return run_monitor(args.output, args.workflow, args.config,
+                       state_transport_trace=args.state_transport_trace)
 
 
 if __name__ == "__main__":

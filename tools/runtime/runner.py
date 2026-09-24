@@ -3464,7 +3464,7 @@ def _run_sim_unlocked(
             _ros_shell([
                 str(CANONICAL_PYTHON), str(ROOT / "tools/runtime/monitor.py"), "--output", str(session.directory),
                 "--workflow", "sim", "--config", str(RUNTIME_CONFIG / "sim.yaml"),
-            ]),
+            ] + (["--state-transport-trace"] if state_transport_trace else [])),
             cwd=ROOT,
         )
         session.start(
