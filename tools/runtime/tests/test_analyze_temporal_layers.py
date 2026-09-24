@@ -19,6 +19,19 @@ class TemporalLayerClassificationTest(unittest.TestCase):
         result = classify({"gazebo_stats": gap(481), "gazebo_clock": gap(481)}, True)
         self.assertEqual(result[0], "GAZEBO_SIMULATION_STALL")
 
+    def test_native_simulation_slowdown_with_measurable_source_progress(self) -> None:
+        # Exact controlled-pause shape: stats progressed 44 ms across a
+        # 404 ms receive interval.  The 360 ms deficit is the causal witness;
+        # requiring near-zero progress would leave the real pause unresolved.
+        result = classify({"gazebo_stats": gap(404, 44),
+                           "gazebo_clock": gap(354, 4)}, True)
+        self.assertEqual(result[0], "GAZEBO_SIMULATION_STALL")
+
+    def test_short_source_deficit_is_not_called_simulation_stall(self) -> None:
+        result = classify({"gazebo_stats": gap(210, 150),
+                           "gazebo_clock": gap(210, 150)}, True)
+        self.assertEqual(result[0], "UNRESOLVED")
+
     def test_observer_sched_stall_prevents_gazebo_attribution(self) -> None:
         result = classify({"gazebo_stats": gap(481), "gazebo_clock": gap(481),
                            "observer_loop": gap(481)}, True)

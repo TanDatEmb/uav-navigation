@@ -97,15 +97,17 @@ def classify(witness: dict[str, dict[str, Any] | None], native_ready: bool,
         item = witness.get(name)
         return bool(item and float(item["gap_ms"]) > TRIGGER_MS)
 
-    def slow_source(name: str) -> bool:
+    def source_progress_deficit(name: str) -> bool:
         item = witness.get(name)
         return bool(item and item.get("source_progress_ms") is not None and
-                    float(item["source_progress_ms"]) < float(item["gap_ms"]) * 0.1)
+                    float(item["gap_ms"]) - float(item["source_progress_ms"]) > TRIGGER_MS)
 
     if native_ready and not stalled("observer_loop") and \
             stalled("gazebo_stats") and stalled("gazebo_clock") and \
-            slow_source("gazebo_stats") and slow_source("gazebo_clock"):
-        return "GAZEBO_SIMULATION_STALL", "Gazebo native stats and clock both stopped sim progression"
+            source_progress_deficit("gazebo_stats") and \
+            source_progress_deficit("gazebo_clock"):
+        return "GAZEBO_SIMULATION_STALL", \
+            "Gazebo native stats and clock show >150 ms sim-progress deficit with observer scheduled"
     if stalled("observer_loop") and stalled("gazebo_clock"):
         return "UNRESOLVED", "native observer scheduling also stalled; host-wide cause not excluded"
     if native_ready and stalled("gazebo_clock") and not stalled("gazebo_stats"):
