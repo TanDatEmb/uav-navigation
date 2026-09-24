@@ -606,10 +606,10 @@ def reduce_lifecycle(
                   retained.get("after_command_available") == 1 and
                   retained.get("after_failure_latched") == 0 and
                   retained.get("after_bundle_generation") == monitor_generation and
+                  retained.get("final_freshness_reason") == 0 and
                   retained.get("final_witness_age_bounded") == 1 and
                   retained.get("final_body_known_free") == 1 and
                   retained.get("final_anchor_valid") == 1 and
-                  retained.get("final_bridge_usable") == 1 and
                   not transaction["reasons"]):
                 transaction["status"] = "VALID_TERMINAL"
                 transaction["terminal_outcome"] = "CERTIFIED_COMMAND_PRESERVED"
@@ -899,6 +899,12 @@ def reduce_lifecycle(
             )
             unresolved.append(transaction)
 
+    # Early terminal branches must not bypass unresolved accounting. Derive
+    # this from final transaction status instead of loop fallthrough.
+    unresolved = [
+        transaction for transaction in transactions.values()
+        if transaction["status"] not in {"VALID", "VALID_TERMINAL", "VALID_REJECT"}
+    ]
     critical_unbound = [item for item in unbound_events if item["phase"] == "activate"]
     return {
         "status": (

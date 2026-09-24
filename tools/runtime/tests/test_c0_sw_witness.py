@@ -323,7 +323,7 @@ class C0SoftwareWitnessTest(unittest.TestCase):
             monitor_window_current=1, after_command_available=1,
             after_failure_latched=0, final_witness_age_bounded=1,
             final_body_known_free=1, final_anchor_valid=1,
-            final_bridge_usable=1,
+            final_bridge_usable=0, final_freshness_reason=0,
         )
         transaction = reduce_lifecycle([monitor])["transactions"][0]
         self.assertEqual(transaction["identity"]["producer_kind"], "TERMINAL_MONITOR")
@@ -331,6 +331,7 @@ class C0SoftwareWitnessTest(unittest.TestCase):
         monitor["monitor_window_current"] = 0
         self.assertEqual(reduce_lifecycle([monitor])["transactions"][0][
             "evidence_outcome"], "MISSING_EVIDENCE")
+        self.assertEqual(len(reduce_lifecycle([monitor])["unresolved"]), 1)
 
     def test_exact_typed_adapter_rejection_explains_undelivered_sample(self):
         data = software_inputs()
