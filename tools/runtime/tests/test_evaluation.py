@@ -164,6 +164,17 @@ class EvaluationTest(unittest.TestCase):
         self.assertIn("SOURCE_TIMESTAMP_REGRESSION", _source_time_status(
             rows, policy=SourceTimestampPolicy.NON_DECREASING)[1])
 
+    def test_evaluation_schema_records_stream_timestamp_policy(self):
+        result = evaluate_session(inputs(
+            [pva(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))],
+            [truth(1_000_000_000, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))],
+        ))
+        self.assertEqual(result["schema_version"], 2)
+        self.assertEqual(result["source_timestamp_policies"]["navigation_command"],
+                         "DUPLICATES_ALLOWED_FOR_HEARTBEAT")
+        self.assertEqual(result["source_timestamp_policies"]["ground_truth_odometry"],
+                         "STRICTLY_INCREASING")
+
     @staticmethod
     def _lifecycle(*, request=1, bundle=4, cycle=9, sample=11, disposition=None):
         common = {

@@ -23,7 +23,7 @@ from command_diagnostics import join_execution_diagnostics
 from planner_trace import collect_planner_trace_records, planner_trace_summary
 
 
-EVALUATION_SCHEMA_VERSION = 1
+EVALUATION_SCHEMA_VERSION = 2
 DEFAULT_MAX_MATCH_GAP_S = 0.15
 DEFAULT_STOP_ENTER_MPS = 0.10
 DEFAULT_STOP_EXIT_MPS = 0.20
@@ -2270,6 +2270,7 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
         },
         "tracking_coverage_policy": inputs.get("tracking_coverage_policy"),
         "tracking_acceptance_policy": inputs.get("tracking_acceptance_policy"),
+        "source_timestamp_policies": tracking["source_timestamp_policies"],
         "evaluation_window": inputs.get("evaluation_window"),
         "tracking_reference_accounting": {
             "raw_command_count": tracking["raw_reference_count"],
