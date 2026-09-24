@@ -316,7 +316,7 @@ class NavigationRuntimeTerminalMonitorTestPeer {
     const auto snapshot = node.execution_authority_.snapshot();
     const NavigationRuntimeNode::RetainedValidationContext context{
         NavigationRuntimeNode::RetainedValidationPurpose::kTerminalMainMonitor,
-        false, true, 0U, std::nullopt,
+        false, true, 0U, 0U, std::nullopt,
         retainedCommandTrackingLimit(node.planner_->trackingErrorBudgetMeters(),
                                     navigation_contracts::kCommandAnchorErrorLimitM),
         NavigationRuntimeNode::TerminalMonitorBoundary{snapshot}};

@@ -8,6 +8,8 @@ string mission_id
 uint32 waypoint_index
 uint64 request_id
 uint64 bundle_generation
+uint64 bundle_owner_cycle_id
+uint8 bundle_source
 uint64 sample_id
 uint64 world_generation
 uint64 world_revision

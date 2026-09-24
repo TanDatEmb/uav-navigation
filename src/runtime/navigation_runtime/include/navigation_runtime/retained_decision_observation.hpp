@@ -31,6 +31,10 @@ enum class RetainedDecisionDisposition : std::uint8_t {
 };
 
 struct RetainedDecisionObservation final {
+  // The planning attempt can target desired N+1 while the validated active
+  // execution still belongs to predecessor N. Keep both identities explicit.
+  std::uint64_t desired_request_id{0U};
+  std::uint64_t desired_goal_epoch{0U};
   std::uint8_t purpose{0U};
   RetainedDecisionDisposition disposition{RetainedDecisionDisposition::kNotDelivered};
   std::uint64_t captured_timeline_version{0U};
@@ -135,6 +139,8 @@ inline diagnostic_msgs::msg::DiagnosticStatus retainedDecisionDiagnostic(
   add("purpose", decision.purpose);
   add("disposition", static_cast<std::uint8_t>(decision.disposition));
   add("planning_cycle_id", trace.planning_cycle_id);
+  add("desired_request_id", decision.desired_request_id);
+  add("desired_goal_epoch", decision.desired_goal_epoch);
   add("solve_generation", trace.solve_generation);
   add("evaluation_ros_ns", trace.timestamp_ns);
   add("localization_epoch", trace.execution_localization_epoch);

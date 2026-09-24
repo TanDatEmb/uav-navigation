@@ -2295,10 +2295,51 @@ void NavigationRuntimeNode::applyValidatedGoalLocked(
       return;
     }
     const bool retain_bundle = can_hot_retarget;
-    if (!execution_authority_.beginGoal(
+    const auto execution_before_goal = execution_authority_.snapshot();
+    const bool began_goal = execution_authority_.beginGoal(
             active_localization_epoch_.load(std::memory_order_acquire),
-            *next_goal_epoch, retain_bundle)) {
+            *next_goal_epoch, retain_bundle);
+    if (!began_goal) {
       effective_hot_retarget = false;
+    } else if (execution_before_goal.pending) {
+      const auto execution_after_goal = execution_authority_.snapshot();
+      if (execution_after_goal.pending.get() != execution_before_goal.pending.get() &&
+          execution_after_goal.active.get() != execution_before_goal.pending.get()) {
+        // beginGoal() clears the exact pending candidate as part of the
+        // admission-revision transaction. Emit its terminal outcome from the
+        // producer boundary; the recorder cannot infer this from goal order.
+        try {
+          const auto& displaced = execution_before_goal.pending;
+          diagnostic_msgs::msg::DiagnosticArray event;
+          event.header.stamp = navigation_common::nanosecondsToRosTime(
+              now().nanoseconds()).value_or(builtin_interfaces::msg::Time{});
+          diagnostic_msgs::msg::DiagnosticStatus status;
+          status.name = "navigation_runtime/execution_pending_superseded_witness";
+          status.hardware_id = "execution_authority";
+          status.message = "diagnostic_only; admission revision cleared pending candidate";
+          const auto add = [&status](const char* name, const auto value) {
+            diagnostic_msgs::msg::KeyValue field;
+            field.key = name;
+            field.value = std::to_string(value);
+            status.values.push_back(std::move(field));
+          };
+          add("bundle_generation", displaced->bundle_generation);
+          add("bundle_source", static_cast<unsigned>(displaced->source));
+          add("bundle_owner_cycle_id", displaced->producer_planning_cycle_id);
+          add("request_id", displaced->request_id);
+          add("goal_epoch", displaced->goal_epoch);
+          add("localization_epoch", displaced->localization_epoch);
+          add("replacement_bundle_generation", 0U);
+          add("admission_goal_epoch", *next_goal_epoch);
+          add("previous_snapshot_version", execution_before_goal.version);
+          add("current_snapshot_version", execution_after_goal.version);
+          event.status.push_back(std::move(status));
+          diagnostics_publisher_->publish(event);
+        } catch (const std::exception& error) {
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                               "pending goal supersession witness publish failed: %s", error.what());
+        }
+      }
     }
   }
   desired_intent_.install(*message, same_logical_goal ? std::nullopt :
@@ -3242,6 +3283,43 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
   // exported backend owner must survive those paths until its activation ACK.
   if (candidate_admitted) *candidate_admitted = true;
   const auto committed_timeline = execution_authority_.snapshot();
+  if (timeline_before_commit.pending &&
+      timeline_before_commit.pending.get() != committed_timeline.pending.get() &&
+      timeline_before_commit.pending.get() != committed_timeline.active.get()) {
+    // Exact pending generation displaced by this successful owner transaction.
+    // This diagnostic is emitted after the atomic store mutation; it never
+    // authorizes execution or changes the replacement decision.
+    try {
+      const auto& displaced = timeline_before_commit.pending;
+      diagnostic_msgs::msg::DiagnosticArray event;
+      event.header.stamp = navigation_common::nanosecondsToRosTime(now_ns).value_or(
+          builtin_interfaces::msg::Time{});
+      diagnostic_msgs::msg::DiagnosticStatus status;
+      status.name = "navigation_runtime/execution_pending_superseded_witness";
+      status.hardware_id = "execution_authority";
+      status.message = "diagnostic_only; exact pending candidate displaced";
+      const auto add = [&status](const char* name, const auto value) {
+        diagnostic_msgs::msg::KeyValue field;
+        field.key = name;
+        field.value = std::to_string(value);
+        status.values.push_back(std::move(field));
+      };
+      add("bundle_generation", displaced->bundle_generation);
+      add("bundle_source", static_cast<unsigned>(displaced->source));
+      add("bundle_owner_cycle_id", displaced->producer_planning_cycle_id);
+      add("request_id", displaced->request_id);
+      add("goal_epoch", displaced->goal_epoch);
+      add("localization_epoch", displaced->localization_epoch);
+      add("replacement_bundle_generation", candidate_ptr->bundle_generation);
+      add("previous_snapshot_version", timeline_before_commit.version);
+      add("current_snapshot_version", committed_timeline.version);
+      event.status.push_back(std::move(status));
+      diagnostics_publisher_->publish(event);
+    } catch (const std::exception& error) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "pending supersession witness publish failed: %s", error.what());
+    }
+  }
   if (!anchor) {
     // The execution store is the sole command-authority cutover. Emergency
     // replacement is already committed synchronously at this worker-owned
@@ -3633,6 +3711,35 @@ void NavigationRuntimeNode::consumeHeadingRebind(const std::int64_t now_ns) {
     if (commitPlannerCandidate(
             *goal, pending->key.goal_epoch, pending->key.localization_epoch,
             now_ns, pending->key, pending->candidate, &admitted)) {
+      try {
+        diagnostic_msgs::msg::DiagnosticArray event;
+        event.header.stamp = navigation_common::nanosecondsToRosTime(now_ns).value_or(
+            builtin_interfaces::msg::Time{});
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = "navigation_runtime/heading_rebind_admission_witness";
+        status.hardware_id = "execution_authority";
+        status.message = "diagnostic_only; exact heading candidate admitted";
+        const auto add = [&status](const char* name, const auto value) {
+          diagnostic_msgs::msg::KeyValue field;
+          field.key = name;
+          field.value = std::to_string(value);
+          status.values.push_back(std::move(field));
+        };
+        add("bundle_generation", generation);
+        add("bundle_source", static_cast<unsigned>(pending->candidate.source));
+        add("parent_bundle_generation", pending->key.committed_bundle_generation);
+        add("request_id", pending->candidate.request_id);
+        add("goal_epoch", pending->candidate.goal_epoch);
+        add("localization_epoch", pending->candidate.localization_epoch);
+        add("world_generation", pending->candidate.world_identity.generation);
+        add("world_revision", pending->candidate.world_identity.revision);
+        add("activation_stamp_ns", pending->candidate.activation_stamp_ns);
+        event.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(event);
+      } catch (const std::exception& error) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                             "heading rebind witness publish failed: %s", error.what());
+      }
       RCLCPP_INFO(
           get_logger(),
           "accepted out-of-band waypoint heading rebind generation=%lu activation_ns=%lld",
@@ -4860,7 +4967,7 @@ void NavigationRuntimeNode::runCycle(
             *monitor_bundle, episode_at_cycle, now().nanoseconds())) return;
     const RetainedValidationContext monitor_context{
         RetainedValidationPurpose::kTerminalMainMonitor, false, true,
-        0U, std::nullopt,
+        0U, cycle_count_, std::nullopt,
         retainedCommandTrackingLimit(
             planner_->trackingErrorBudgetMeters(),
             navigation_contracts::kCommandAnchorErrorLimitM),
@@ -5896,6 +6003,8 @@ void NavigationRuntimeNode::runCycle(
     bool stopped_recovery_timeout = false;
     bool failure_identity_current = false;
     bool terminal_hold_pending = false;
+    std::uint64_t retry_active_generation = 0U;
+    bool retry_after_failed = false;
     double failure_window_s = std::numeric_limits<double>::quiet_NaN();
     {
       std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
@@ -5909,6 +6018,7 @@ void NavigationRuntimeNode::runCycle(
           execution_authority_.snapshot().lifecycle.recovery ==
               ExecutionRecoveryState::kStoppedRecovery) {
         failure_identity_current = true;
+        retry_active_generation = execution_authority_.snapshot().activeGeneration();
         terminal_hold_pending = terminalHoldIsPending(
             execution_authority_.snapshot().commandAvailable(),
             trajectory_reaches_goal_.load(std::memory_order_acquire),
@@ -5939,7 +6049,37 @@ void NavigationRuntimeNode::runCycle(
           trajectory_reaches_goal_.store(false, std::memory_order_release);
           terminal_bundle_generation_.store(0U, std::memory_order_release);
         }
+        retry_after_failed = execution_authority_.snapshot().failed();
       }
+    }
+    try {
+      diagnostic_msgs::msg::DiagnosticArray event;
+      event.header.stamp = navigation_common::nanosecondsToRosTime(
+          now().nanoseconds()).value_or(builtin_interfaces::msg::Time{});
+      diagnostic_msgs::msg::DiagnosticStatus status;
+      status.name = "navigation_runtime/recovery_retry_witness";
+      status.hardware_id = "planning_worker";
+      status.message = "diagnostic_only; actual retry disposition";
+      const auto add = [&status](const char* name, const auto value) {
+        diagnostic_msgs::msg::KeyValue field;
+        field.key = name;
+        field.value = std::to_string(value);
+        status.values.push_back(std::move(field));
+      };
+      add("planning_cycle_id", cycle_count_);
+      add("request_id", goal ? goal->request_id : 0U);
+      add("goal_epoch", goal_epoch);
+      add("localization_epoch", localization_epoch_at_solve);
+      add("active_generation", retry_active_generation);
+      add("identity_current", failure_identity_current ? 1 : 0);
+      add("timeout", stopped_recovery_timeout ? 1 : 0);
+      add("after_failed", retry_after_failed ? 1 : 0);
+      add("terminal_hold_pending", terminal_hold_pending ? 1 : 0);
+      event.status.push_back(std::move(status));
+      diagnostics_publisher_->publish(event);
+    } catch (const std::exception& error) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                           "recovery retry witness publish failed: %s", error.what());
     }
     if (!failure_identity_current) {
       RCLCPP_DEBUG(get_logger(),
@@ -5970,7 +6110,7 @@ void NavigationRuntimeNode::runCycle(
             : RetainedValidationPurpose::kAfterFailedReplacement,
         plan_from_rest_with_transition,
         transition_bundle && transition_bundle->terminal_stop,
-        solve_generation, result, retained_tracking_limit_m,
+        solve_generation, cycle_count_, result, retained_tracking_limit_m,
         std::nullopt, execution_at_solve};
     validateRetainedCommand(goal, goal_epoch, localization_epoch_at_solve,
                             effective_scheduled_key, retained_context);
@@ -7234,6 +7374,8 @@ void NavigationRuntimeNode::validateRetainedCommand(
   const double planning_interval_s = static_cast<double>(planning_period_us_) * 1.0e-6;
   ExecutionTraceSnapshot causal_snapshot;
   RetainedDecisionObservation observation;
+  observation.desired_request_id = goal ? goal->request_id : 0U;
+  observation.desired_goal_epoch = goal_epoch;
   observation.purpose = static_cast<std::uint8_t>(context.purpose);
   const bool validate_without_new_commit =
       context.purpose == RetainedValidationPurpose::kPlannerValidationOnly;
@@ -7271,6 +7413,26 @@ void NavigationRuntimeNode::validateRetainedCommand(
       !execution_authority_.isCurrentSnapshot(*context.expected_execution)) {
     // A late result cannot reinterpret a newer active command as the
     // incumbent of its old solve, even when desired intent still matches.
+    // Emit the exact discard outcome before returning; otherwise the
+    // planner request appears to have no terminal producer witness.
+    causal_snapshot.timestamp_ns = now().nanoseconds();
+    causal_snapshot.planning_cycle_id = context.diagnostic_planning_cycle_id;
+    causal_snapshot.execution_localization_epoch = localization_epoch_at_solve;
+    causal_snapshot.execution_goal_epoch = goal_epoch;
+    causal_snapshot.execution_request_id = goal ? goal->request_id : 0U;
+    observation.disposition = RetainedDecisionDisposition::kSuperseded;
+    observation.owner_snapshot_current = false;
+    observation.callback_request_current =
+        retained_desired_goal && goal && retained_desired_revision == goal_epoch &&
+        sameGoalIdentity(retained_desired_goal, goal);
+    observation.captured_timeline_version = retained_timeline.version;
+    observation.captured_bundle_generation = retained_timeline.active
+        ? retained_timeline.active->bundle_generation : 0U;
+    observation.after_timeline_version = retained_timeline.version;
+    observation.after_bundle_generation = observation.captured_bundle_generation;
+    observation.after_command_available = retained_episode.commandAvailable();
+    observation.after_failure_latched = retained_episode.failed();
+    observeRetainedDecision(causal_snapshot, observation);
     return;
   }
   const auto committed_bundle = retained_timeline.active;
@@ -7315,7 +7477,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
            retained_episode, context.terminal_monitor->snapshot) ||
        !terminalMainMonitorPhaseIsOpen(
            *committed_bundle, retained_episode, now().nanoseconds()))) {
-    causal_snapshot.planning_cycle_id = cycle_count_;
+    causal_snapshot.planning_cycle_id = context.diagnostic_planning_cycle_id;
     causal_snapshot.solve_generation = solve_generation;
     causal_snapshot.timestamp_ns = now().nanoseconds();
     // Preserve the callback's expected G even when the current owner is H.
@@ -7435,7 +7597,7 @@ void NavigationRuntimeNode::validateRetainedCommand(
       ? (command_sample_at_state_source.velocity_world -
          retained_execution_state->state.velocity_world).norm()
       : std::numeric_limits<double>::quiet_NaN();
-  causal_snapshot.planning_cycle_id = cycle_count_;
+  causal_snapshot.planning_cycle_id = context.diagnostic_planning_cycle_id;
   causal_snapshot.solve_generation = solve_generation;
   causal_snapshot.timestamp_ns = retained_validation_now_ns;
   causal_snapshot.execution_localization_epoch = committed
@@ -8336,6 +8498,40 @@ void NavigationRuntimeNode::publishCommand() {
     last_execution_activation_result_.store(activated ? 1 : 2,
                                             std::memory_order_release);
     if (activated) {
+      // One diagnostic record is emitted from the activation producer using
+      // the immutable staged snapshot captured before the owner transaction.
+      // It is intentionally outside the execution locks and has no authority
+      // over command publication.
+      try {
+        diagnostic_msgs::msg::DiagnosticArray event;
+        event.header.stamp = navigation_common::nanosecondsToRosTime(
+            command_ros_time.nanoseconds()).value_or(builtin_interfaces::msg::Time{});
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = "navigation_runtime/execution_activation_witness";
+        status.hardware_id = "execution_authority";
+        status.message = "diagnostic_only; staged execution activated";
+        const auto add = [&status](const char* key, const auto value) {
+          diagnostic_msgs::msg::KeyValue entry;
+          entry.key = key;
+          entry.value = std::to_string(value);
+          status.values.push_back(std::move(entry));
+        };
+        add("bundle_generation", pending_bundle->bundle_generation);
+        add("bundle_owner_cycle_id", pending_bundle->producer_planning_cycle_id);
+        add("bundle_source", static_cast<unsigned>(pending_bundle->source));
+        add("request_id", pending_bundle->request_id);
+        add("goal_epoch", pending_bundle->goal_epoch);
+        add("localization_epoch", pending_bundle->localization_epoch);
+        add("world_generation", pending_bundle->world_identity.generation);
+        add("world_revision", pending_bundle->world_identity.revision);
+        add("activation_stamp_ns", command_ros_time.nanoseconds());
+        add("pending_snapshot_version", pending_timeline.version);
+        event.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(event);
+      } catch (const std::exception& error) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                             "execution activation witness publish failed: %s", error.what());
+      }
       RCLCPP_INFO(get_logger(),
                   "execution timeline activated successor generation=%lu at ns=%lld",
                   static_cast<unsigned long>(pending_bundle->bundle_generation),
@@ -9496,6 +9692,10 @@ void NavigationRuntimeNode::publishCommand() {
     diagnostic.waypoint_index = command.waypoint_index;
     diagnostic.request_id = command.request_id;
     diagnostic.bundle_generation = command.bundle_generation;
+    diagnostic.bundle_owner_cycle_id = sampled_bundle
+        ? sampled_bundle->producer_planning_cycle_id : 0U;
+    diagnostic.bundle_source = sampled_bundle
+        ? static_cast<std::uint8_t>(sampled_bundle->source) : 0U;
     diagnostic.sample_id = command.sample_id;
     diagnostic.world_generation = command.world_generation;
     diagnostic.world_revision = command.world_revision;

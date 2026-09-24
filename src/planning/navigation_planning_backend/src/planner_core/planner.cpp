@@ -2572,6 +2572,10 @@ double mainGuideSupport(
             return finish();
         }
         outcome.candidate = *export_result.candidate;
+        // The request owns this relationship. A later retained validation
+        // cycle must not relabel the bundle that produced the active command.
+        outcome.candidate->producer_planning_cycle_id =
+            request.diagnostic_planner_cycle;
         outcome.outcome = last_nominal_deadline_observed_
             ? navigation_planning::CompletePlanningOutcome::kDeadlineWithCompleteBundle
             : last_nominal_solve_status_ == traj_opt::NominalSolveStatus::kCertifiedSeed

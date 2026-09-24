@@ -126,6 +126,9 @@ struct CandidateBundle {
   std::uint64_t goal_epoch{0};
   std::uint64_t request_id{0};
   std::uint64_t bundle_generation{0};
+  // Diagnostic provenance captured from the immutable planning request when
+  // this bundle is produced. It is not used by admission or flight control.
+  std::uint64_t producer_planning_cycle_id{0};
   std::int64_t valid_from_ns{0};
   std::int64_t valid_until_ns{0};
   // Future activation is distinct from the trajectory's analytic origin. A

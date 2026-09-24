@@ -329,6 +329,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
     bool plan_from_rest_with_transition;
     bool transition_terminal_stop;
     std::uint64_t solve_generation;
+    std::uint64_t diagnostic_planning_cycle_id;
     std::optional<navigation_planning::PlannerStatus> planner_result;
     double tracking_limit_m;
     std::optional<TerminalMonitorBoundary> terminal_monitor = std::nullopt;
