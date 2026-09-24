@@ -44,8 +44,32 @@ control envelope. The runner compares these with the requested profile and
 records the three source-backed configuration domains before launching the
 scenario process.
 
-## Remaining proof
+## Runtime result and phase verdict
 
-Build, deterministic tests, startup witness validation, true tracking-off SITL,
-and evaluator output are required before Phase A can be COMPLETE. A real
-tracking/health rejection under `off` must not be hidden by changing thresholds.
+Three sequential `long_featured`, seed 0, requested `tracking=off` runs used
+the same clean source HEAD `1c75f3b4`. Both live node witnesses reported
+`mode=off`, `enabled=false`, `suppress_braking=false`, and
+`suppress_estimator_health_response=false` in all three. The report marked
+configuration status `OK`, without a mismatch or experimental bypass.
+
+| Run | Mission outcome | Accepted | First relevant failure | Evaluator |
+| --- | --- | --- | --- | --- |
+| A1 | COMPLETE | `[0,1,2,3,4]` | none observed | FAIL / NOT_EVALUABLE |
+| A2 | FAILED_COMPONENT | `[0,1,2]` | adapter odometry receive age 208.583 ms; Hold | FAIL / NOT_EVALUABLE |
+| A3 | COMPLETE | `[0,1,2,3,4]` | none observed | FAIL / NOT_EVALUABLE |
+
+A2's source age was 8.000 ms, so the logged failure was the independent
+steady-clock receive-age gate, not source-time age. The adapter rejected that
+command, then requested PX4 Hold. This is the intended fail-closed response
+to stale received odometry. The trace does not establish why the receive
+sample was late. No lease or tracking threshold was changed.
+
+The evaluator's unrelated lifecycle attribution, motion policy, reference
+lineage, and tracking coverage requirements remain NOT_EVALUABLE in all three
+runs. A2/A3 additionally report `SOURCE_TIMESTAMP_DUPLICATE`. We retain the
+runner's `FAIL` and do not count mission completion as qualification.
+
+**Phase A verdict: PARTIAL.** Requested/effective configuration truth is
+closed; the required three consecutive clean tracking-off missions are not.
+The campaign stops before Phase B under the nominal-regression gate. See
+`SITL_RESULTS.md` and `OPEN_FINDINGS.md`.

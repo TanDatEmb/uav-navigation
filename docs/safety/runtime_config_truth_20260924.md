@@ -29,7 +29,12 @@ Hold policy changes here.
 
 Evidence: source comparison in
 `artifacts/major_runtime_boundary_hardening/20260924T065002Z-68e718d4/PHASE_A_CONFIG_TRUTH.md`,
-focused C++/Python contract tests, and pending true tracking-off SITL evidence.
+focused C++/Python contract tests, and three true tracking-off SITLs. All
+three had matching live Core/adapter witnesses. Mission outcome was 2/3
+COMPLETE; one run fail-closed on adapter navigation-odometry receive age
+208.583 ms at the unchanged 200 ms boundary. Every evaluator report remained
+FAIL/NOT_EVALUABLE for separate attribution/policy gaps. This is partial
+Phase A evidence, not a nominal parity or qualification pass.
 Removal condition: remove the diagnostic suppression mode only after an
 independent product policy decision and representative evidence; never promote
 it from a completed diagnostic mission alone.
