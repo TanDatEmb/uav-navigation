@@ -134,7 +134,7 @@ struct ExactOptimizationFailureTarget final {
          key.route_revision == desired.route.route_revision &&
          key.goal_epoch == execution.admission_goal_epoch &&
          key.localization_epoch == execution.admission_localization_epoch &&
-         execution.active && execution.active_goal &&
+         execution.active && execution.active_goal && !execution.pending &&
          execution.activeGoalEpoch() != key.goal_epoch &&
          execution.activeRequestId() == target.predecessor_request &&
          execution.active_goal->mission_id == desired.mission_id &&
@@ -154,11 +154,24 @@ class ExactOptimizationFailureInjection final {
  public:
   void setTarget(const ExactOptimizationFailureTarget target) noexcept {
     target_ = target.valid() ? target : ExactOptimizationFailureTarget{};
+    alternate_.reset();
     consumed_ = false;
+  }
+  void setAlternateTarget(const ExactOptimizationFailureTarget target) noexcept {
+    alternate_ = target.valid() ? std::optional{target} : std::nullopt;
   }
   [[nodiscard]] bool armed() const noexcept { return target_.valid() && !consumed_; }
   [[nodiscard]] bool consumed() const noexcept { return consumed_; }
   [[nodiscard]] ExactOptimizationFailureTarget target() const noexcept { return target_; }
+  [[nodiscard]] std::optional<ExactOptimizationFailureTarget> matchingTarget(
+      const std::uint64_t predecessor, const std::uint64_t successor) const noexcept {
+    if (!armed()) return std::nullopt;
+    if (target_.predecessor_request == predecessor &&
+        target_.successor_request == successor) return target_;
+    if (alternate_ && alternate_->predecessor_request == predecessor &&
+        alternate_->successor_request == successor) return alternate_;
+    return std::nullopt;
+  }
   [[nodiscard]] bool consumeIfEligible(const bool eligible) noexcept {
     if (!armed() || !eligible) return false;
     consumed_ = true;
@@ -167,6 +180,7 @@ class ExactOptimizationFailureInjection final {
 
  private:
   ExactOptimizationFailureTarget target_{};
+  std::optional<ExactOptimizationFailureTarget> alternate_;
   bool consumed_{false};
 };
 

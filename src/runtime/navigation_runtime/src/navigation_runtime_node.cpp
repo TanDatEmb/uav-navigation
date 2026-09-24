@@ -697,10 +697,24 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       "navigation_runtime.inject_exact_optimization_predecessor_request", std::int64_t{0});
   const auto exact_successor_request = declare_parameter(
       "navigation_runtime.inject_exact_optimization_successor_request", std::int64_t{0});
+  const auto exact_alternate_predecessor_request = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_alternate_predecessor_request",
+      std::int64_t{0});
+  const auto exact_alternate_successor_request = declare_parameter(
+      "navigation_runtime.inject_exact_optimization_alternate_successor_request",
+      std::int64_t{0});
   if (inject_exact_optimization_failed_once) {
     if (deployment_profile_ != "sitl" ||
         exact_predecessor_request <= 0 || exact_successor_request <= 0 ||
         exact_predecessor_request == exact_successor_request ||
+        ((exact_alternate_predecessor_request == 0) !=
+         (exact_alternate_successor_request == 0)) ||
+        exact_alternate_predecessor_request < 0 ||
+        exact_alternate_successor_request < 0 ||
+        (exact_alternate_predecessor_request > 0 &&
+         (exact_alternate_predecessor_request == exact_alternate_successor_request ||
+          (exact_alternate_predecessor_request == exact_predecessor_request &&
+           exact_alternate_successor_request == exact_successor_request))) ||
         inject_failed_replan_once_ || inject_failed_replan_repeated_ ||
         inject_failed_plan_from_rest_repeated_) {
       throw std::invalid_argument(
@@ -710,6 +724,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
     exact_optimization_failure_injection_.setTarget({
         static_cast<std::uint64_t>(exact_predecessor_request),
         static_cast<std::uint64_t>(exact_successor_request)});
+    if (exact_alternate_predecessor_request > 0) {
+      exact_optimization_failure_injection_.setAlternateTarget({
+          static_cast<std::uint64_t>(exact_alternate_predecessor_request),
+          static_cast<std::uint64_t>(exact_alternate_successor_request)});
+    }
   }
   const auto inject_failed_same_identity_renewal_ordinal = declare_parameter(
       "navigation_runtime.inject_failed_same_identity_renewal_ordinal", std::int64_t{0});
@@ -5614,7 +5633,11 @@ void NavigationRuntimeNode::runCycle(
   // The real solve, immutable PlanningKey, desired revision and exact active
   // execution snapshot are retained. No validator or classifier is bypassed.
   bool exact_optimization_failure_applied = false;
-  if (exact_optimization_failure_injection_.armed() && goal &&
+  const auto exact_injection_target = goal
+      ? exact_optimization_failure_injection_.matchingTarget(
+            execution_at_solve.activeRequestId(), goal->request_id)
+      : std::nullopt;
+  if (exact_injection_target &&
       !plan_from_rest_with_transition && !injected_failure &&
       !timed_out && result != navigation_planning::PlannerStatus::kEmergency) {
     const auto injection_now_ns = now().nanoseconds();
@@ -5635,6 +5658,7 @@ void NavigationRuntimeNode::runCycle(
     bool exposure_allowed = false;
     GoalTransitionKind injection_transition = GoalTransitionKind::kSteady;
     std::uint64_t current_authority_version = 0U;
+    bool current_pending = false;
     bool eligible = false;
     {
       std::lock_guard<std::mutex> localization_lock(localization_transition_mutex_);
@@ -5647,20 +5671,19 @@ void NavigationRuntimeNode::runCycle(
       snapshot_current = execution_authority_.isCurrentSnapshot(execution_at_solve);
       authority_identity_current =
           execution_authority_.matchesAuthorityIdentity(execution_at_solve);
-      current_authority_version = execution_authority_.snapshot().version;
+      const auto current_authority = execution_authority_.snapshot();
+      current_authority_version = current_authority.version;
+      current_pending = static_cast<bool>(current_authority.pending);
       exposure_allowed = command_execution_lease_failure_latch_.allowsCommandExposure();
       injection_transition = classifyGoalTransition(
           desired_intent_.goal(), executingGoalSnapshot());
       eligible = exactOptimizationFailureHotHandoffEligible(
-          exact_optimization_failure_injection_.target(), planning_request.key,
+          *exact_injection_target, planning_request.key,
           *goal, execution_at_solve, injection_transition, desired_current,
-          snapshot_current && exposure_allowed,
+          snapshot_current && exposure_allowed && !current_pending,
           current_state_fresh, current_world_fresh, injection_now_ns);
     }
-    const bool semantic_target =
-        goal->request_id == exact_optimization_failure_injection_.target().successor_request &&
-        execution_at_solve.activeRequestId() ==
-            exact_optimization_failure_injection_.target().predecessor_request;
+    const bool semantic_target = exact_injection_target.has_value();
     if (semantic_target) {
       const auto publish_injection_event = [&](const std::string& event_name) {
         diagnostic_msgs::msg::DiagnosticArray event;
@@ -5684,6 +5707,8 @@ void NavigationRuntimeNode::runCycle(
         field("active_lineage", execution_at_solve.active_lineage);
         field("authority_version", execution_at_solve.version);
         field("current_authority_version", current_authority_version);
+        field("pending_at_solve", execution_at_solve.pending ? 1 : 0);
+        field("pending_current", current_pending ? 1 : 0);
         field("desired_current", desired_current ? 1 : 0);
         field("snapshot_current", snapshot_current ? 1 : 0);
         field("authority_identity_current", authority_identity_current ? 1 : 0);

@@ -89,6 +89,8 @@ def analyze(session: Path, injected: bool):
     after=[(t,m) for t,m in admission if at is not None and t>at and m.request_id==active]
     successor=[(t,m) for t,m in admission if at is not None and t>at and m.request_id==desired]
     next_successor=successor[0][0] if successor else None
+    last_predecessor_before_successor=next((t for t,m in reversed(admission)
+        if next_successor is not None and t<next_successor and m.request_id==active),None)
     stop=next_successor or at
     predecessor_admitted=[t for t,m in after if stop is None or t<stop]
     command_window=[t for t,m in command if at is not None and command_before and
@@ -124,7 +126,7 @@ def analyze(session: Path, injected: bool):
                 trace_fields.get("planner_result_before_injection")==
                     fault["fields"].get("original_planner_status") and
                 trace_fields.get("planner_backend_outcome") is not None),
-            "hot_handoff":bool(fault and desired==active+1 and active==2 and desired==3 and
+            "hot_handoff":bool(fault and desired==active+1 and active in (2,3) and
                                 trace_fields.get("transition_kind")=="same_route_waypoint_advance" and
                                 trace_fields.get("desired_request_id")==str(desired) and
                                 trace_fields.get("executing_request_id")==str(active)),
@@ -157,7 +159,8 @@ def analyze(session: Path, injected: bool):
         "fault_to_successor_admission_ms":(next_successor-at)/1e6 if next_successor and at else None,
         "command_publication_interarrival_ms":publish_gap,
         "adapter_admission_interarrival_ms":admission_gap,
-        "successor_handoff_gap_ms":(successor[0][0]-before[-1][0])/1e6 if successor and before else None,
+        "successor_handoff_gap_ms":(next_successor-last_predecessor_before_successor)/1e6
+            if next_successor and last_predecessor_before_successor else None,
         "mission_complete":complete,"accepted":accepted,"hold_request_sim_ns":hold,
         "failure_log_lines":failure_lines,"bag_message_counts":{
             "command":len(command),"admission":len(admission),"diagnostics":len(diag),"px4_setpoint":len(px4)},

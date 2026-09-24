@@ -31,7 +31,9 @@ def main() -> int:
         if not args.nominal:
             kwargs.update(inject_exact_optimization_failed_once=True,
                           inject_exact_optimization_predecessor_request=2,
-                          inject_exact_optimization_successor_request=3)
+                          inject_exact_optimization_successor_request=3,
+                          inject_exact_optimization_alternate_predecessor_request=3,
+                          inject_exact_optimization_alternate_successor_request=4)
         # The runner's versioned flight-qualification verdict can be FAIL even
         # for a completed focused mission. Analyze the raw bag independently.
         runner_status = runner.run_sim(True, **kwargs)

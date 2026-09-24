@@ -1970,6 +1970,8 @@ def _mapping_params(
     inject_exact_optimization_failed_once: bool = False,
     inject_exact_optimization_predecessor_request: int = 0,
     inject_exact_optimization_successor_request: int = 0,
+    inject_exact_optimization_alternate_predecessor_request: int = 0,
+    inject_exact_optimization_alternate_successor_request: int = 0,
     inject_failed_replan_repeated: bool = False,
     inject_failed_plan_from_rest_repeated: bool = False,
     inject_failed_same_identity_renewal_ordinal: int | None = None,
@@ -2032,6 +2034,18 @@ def _mapping_params(
             inject_exact_optimization_predecessor_request)
         planner_parameters["inject_exact_optimization_successor_request"] = int(
             inject_exact_optimization_successor_request)
+        if inject_exact_optimization_alternate_predecessor_request:
+            if (inject_exact_optimization_alternate_predecessor_request <= 0 or
+                    inject_exact_optimization_alternate_successor_request <= 0 or
+                    inject_exact_optimization_alternate_successor_request ==
+                    inject_exact_optimization_alternate_predecessor_request):
+                raise ValueError("exact alternate pair requires distinct positive request IDs")
+            planner_parameters["inject_exact_optimization_alternate_predecessor_request"] = int(
+                inject_exact_optimization_alternate_predecessor_request)
+            planner_parameters["inject_exact_optimization_alternate_successor_request"] = int(
+                inject_exact_optimization_alternate_successor_request)
+        elif inject_exact_optimization_alternate_successor_request:
+            raise ValueError("exact alternate predecessor request is required")
     planner_parameters["inject_failed_replan_repeated"] = bool(inject_failed_replan_repeated)
     planner_parameters["inject_failed_plan_from_rest_repeated"] = bool(
         inject_failed_plan_from_rest_repeated
@@ -2694,6 +2708,8 @@ def _run_sim_unlocked(
     inject_exact_optimization_failed_once: bool = False,
     inject_exact_optimization_predecessor_request: int = 0,
     inject_exact_optimization_successor_request: int = 0,
+    inject_exact_optimization_alternate_predecessor_request: int = 0,
+    inject_exact_optimization_alternate_successor_request: int = 0,
     inject_failed_replan_repeated: bool = False,
     inject_failed_plan_from_rest_repeated: bool = False,
     inject_failed_same_identity_renewal_ordinal: int | None = None,
@@ -3201,6 +3217,8 @@ def _run_sim_unlocked(
             inject_exact_optimization_failed_once=inject_exact_optimization_failed_once,
             inject_exact_optimization_predecessor_request=inject_exact_optimization_predecessor_request,
             inject_exact_optimization_successor_request=inject_exact_optimization_successor_request,
+            inject_exact_optimization_alternate_predecessor_request=inject_exact_optimization_alternate_predecessor_request,
+            inject_exact_optimization_alternate_successor_request=inject_exact_optimization_alternate_successor_request,
             inject_failed_replan_repeated=inject_failed_replan_repeated,
             inject_failed_plan_from_rest_repeated=inject_failed_plan_from_rest_repeated,
             inject_failed_same_identity_renewal_ordinal=inject_failed_same_identity_renewal_ordinal,
@@ -3953,6 +3971,14 @@ def main() -> int:
         help="desired successor request for exact OptimizationFailed injection",
     )
     external_mode.add_argument(
+        "--inject-exact-optimization-alternate-predecessor-request", type=int, default=0,
+        help="optional second semantic predecessor request",
+    )
+    external_mode.add_argument(
+        "--inject-exact-optimization-alternate-successor-request", type=int, default=0,
+        help="optional second semantic successor request",
+    )
+    external_mode.add_argument(
         "--inject-failed-replan-repeated", action="store_true",
         help="repeat diagnostic replacement failures while retained MAIN remains valid",
     )
@@ -4118,6 +4144,8 @@ def main() -> int:
             inject_exact_optimization_failed_once=args.inject_exact_optimization_failed_once,
             inject_exact_optimization_predecessor_request=args.inject_exact_optimization_predecessor_request,
             inject_exact_optimization_successor_request=args.inject_exact_optimization_successor_request,
+            inject_exact_optimization_alternate_predecessor_request=args.inject_exact_optimization_alternate_predecessor_request,
+            inject_exact_optimization_alternate_successor_request=args.inject_exact_optimization_alternate_successor_request,
             inject_failed_replan_repeated=args.inject_failed_replan_repeated,
             inject_failed_same_identity_renewal_ordinal=
                 args.inject_failed_same_identity_renewal_ordinal,
@@ -4152,6 +4180,8 @@ def main() -> int:
             inject_exact_optimization_failed_once=args.inject_exact_optimization_failed_once,
             inject_exact_optimization_predecessor_request=args.inject_exact_optimization_predecessor_request,
             inject_exact_optimization_successor_request=args.inject_exact_optimization_successor_request,
+            inject_exact_optimization_alternate_predecessor_request=args.inject_exact_optimization_alternate_predecessor_request,
+            inject_exact_optimization_alternate_successor_request=args.inject_exact_optimization_alternate_successor_request,
             inject_failed_replan_repeated=args.inject_failed_replan_repeated,
             inject_failed_same_identity_renewal_ordinal=
                 args.inject_failed_same_identity_renewal_ordinal,

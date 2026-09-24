@@ -326,6 +326,11 @@ TEST(PlannerFsm, ExactOptimizationFailureInjectionSelectsOnlyOneHotHandoff) {
         desired_current, execution_current, true, true, 11'000'000'000LL);
   };
   ASSERT_TRUE(eligible(true, true));
+  auto staged_execution = execution;
+  staged_execution.pending = active;
+  EXPECT_FALSE(exactOptimizationFailureHotHandoffEligible(target, key, successor,
+      staged_execution, GoalTransitionKind::kSameRouteWaypointAdvance,
+      true, true, true, true, 11'000'000'000LL));
   EXPECT_FALSE(eligible(false, true));
   EXPECT_FALSE(eligible(true, false));
   auto stale_successor = successor;
@@ -347,10 +352,15 @@ TEST(PlannerFsm, ExactOptimizationFailureInjectionSelectsOnlyOneHotHandoff) {
   ExactOptimizationFailureInjection injection;
   EXPECT_FALSE(injection.consumeIfEligible(true));
   injection.setTarget(target);
+  injection.setAlternateTarget({3U, 4U});
   EXPECT_TRUE(injection.armed());
+  ASSERT_TRUE(injection.matchingTarget(2U, 3U));
+  ASSERT_TRUE(injection.matchingTarget(3U, 4U));
+  EXPECT_FALSE(injection.matchingTarget(1U, 2U));
   EXPECT_FALSE(injection.consumeIfEligible(false));
   EXPECT_TRUE(injection.consumeIfEligible(eligible(true, true)));
   EXPECT_TRUE(injection.consumed());
+  EXPECT_FALSE(injection.matchingTarget(3U, 4U));
   EXPECT_FALSE(injection.consumeIfEligible(true));
 }
 
