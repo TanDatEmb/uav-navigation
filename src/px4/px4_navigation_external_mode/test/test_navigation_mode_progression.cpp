@@ -71,6 +71,15 @@ class NavigationModeProgressionTest : public ::testing::Test {
     odom.pose.pose.orientation.w = 1.0;
     mode_->onOdometry(message);
   }
+  std::int64_t lastAcceptedOdometryReceive() const {
+    return mode_->last_odometry_receive_ns_;
+  }
+  std::uint64_t lastAcceptedOdometrySequence() const {
+    return mode_->last_propagated_state_sequence_;
+  }
+  std::uint64_t acceptedOdometryCount() const {
+    return mode_->odometry_callback_count_;
+  }
   std::shared_ptr<Command> command(std::uint64_t goal_epoch,
                                    std::uint32_t waypoint,
                                    std::uint64_t request,
@@ -136,19 +145,19 @@ TEST_F(NavigationModeProgressionTest, CoreSuccessorCommandAdvancesWithoutAdapter
 }
 
 TEST_F(NavigationModeProgressionTest, RejectedSourceStampDoesNotRefreshAcceptedReceiveLease) {
-  const auto accepted_receive = mode_->last_odometry_receive_ns_;
-  const auto accepted_sequence = mode_->last_propagated_state_sequence_;
-  const auto accepted_count = mode_->odometry_callback_count_;
+  const auto accepted_receive = lastAcceptedOdometryReceive();
+  const auto accepted_sequence = lastAcceptedOdometrySequence();
+  const auto accepted_count = acceptedOdometryCount();
   odometry();  // Higher sequence, same source stamp: rejected.
-  EXPECT_EQ(mode_->last_odometry_receive_ns_, accepted_receive);
-  EXPECT_EQ(mode_->last_propagated_state_sequence_, accepted_sequence);
-  EXPECT_EQ(mode_->odometry_callback_count_, accepted_count);
+  EXPECT_EQ(lastAcceptedOdometryReceive(), accepted_receive);
+  EXPECT_EQ(lastAcceptedOdometrySequence(), accepted_sequence);
+  EXPECT_EQ(acceptedOdometryCount(), accepted_count);
 
   setNow(now_ns_ + 20'000'000);
   odometry();
-  EXPECT_EQ(mode_->last_odometry_receive_ns_, now_ns_);
-  EXPECT_EQ(mode_->last_propagated_state_sequence_, sequence_);
-  EXPECT_EQ(mode_->odometry_callback_count_, accepted_count + 1U);
+  EXPECT_EQ(lastAcceptedOdometryReceive(), now_ns_);
+  EXPECT_EQ(lastAcceptedOdometrySequence(), sequence_);
+  EXPECT_EQ(acceptedOdometryCount(), accepted_count + 1U);
 }
 
 TEST_F(NavigationModeProgressionTest, LatePredecessorCannotRegressAcceptedExecutionIdentity) {
