@@ -2,7 +2,7 @@
 
 Three policies are independent: product tracking safety (Core/adapter current gates), the explicitly requested/effective tracking experiment (`off` in the ten-run cohort), and evaluator acceptance against independent truth. Disabling the experiment does not disable either safety or qualification measurement. Prior cohort metadata reports requested/Core/adapter experiment `off` and suppression flags false; this is configuration evidence, not an evaluator threshold.
 
-The evaluator currently requires a versioned coverage policy (`min_coverage_ratio`, `max_uncovered_interval_s`, `max_pairing_gap_s`) and acceptance policy (`position_error_p95_max_m`, `position_error_max_m`, `velocity_error_p95_max_mps`, `velocity_error_max_mps`). No approved C0 values exist in product config or the current safety contract. Synthetic fixture values are test data, not policy.
+The evaluator requires a coverage policy (`min_coverage_ratio`, `max_uncovered_interval_s`, `max_pairing_gap_s`) and acceptance policy (`position_error_p95_max_m`, `position_error_max_m`, `velocity_error_p95_max_mps`, `velocity_error_max_mps`). This branch additionally requires explicit nonempty `version` and `provenance` on both policy records before they can authorize qualification. No approved C0 values exist in product config or the current safety contract. Synthetic fixture values are test data, not policy.
 
 Raw ten-run descriptive ranges (independent truth reference comparison) are:
 

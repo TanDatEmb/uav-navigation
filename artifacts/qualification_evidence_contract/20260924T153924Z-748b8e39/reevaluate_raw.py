@@ -22,7 +22,8 @@ FIELDS = (
     "run", "original_outcome", "original_assessment", "reevaluated_assessment",
     "eligible", "valid_lifecycle", "unresolved_lifecycle", "conflicting_lifecycle",
     "unbound_goal_requests", "unbound_activations",
-    "reference_lineage", "position_p95_m", "position_max_m",
+    "reference_lineage", "raw_references", "valid_references", "invalid_references",
+    "position_p95_m", "position_max_m",
     "velocity_p95_mps", "velocity_max_mps", "blocking_reasons", "session",
 )
 
@@ -38,8 +39,24 @@ def main() -> None:
             raise FileNotFoundError(session)
         original = json.loads((session / "report.json").read_text(encoding="utf-8"))
         old_evaluation = original["evaluation"]
-        current = evaluate_session(load_evaluation_inputs(session))
+        inputs = load_evaluation_inputs(session)
+        current = evaluate_session(inputs)
         lifecycle = current["lifecycle_reduction"]
+        valid_reference_ids = {
+            tuple(identity) for identity in lifecycle["valid_reference_ids"]
+        }
+        raw_references = [
+            record for record in inputs["pva"]
+            if record.get("executable", True) is not False
+        ]
+        valid_references = sum(
+            (
+                record.get("request_id"),
+                record.get("bundle_generation", record.get("trajectory_generation")),
+                record.get("sample_id", record.get("trajectory_id")),
+            ) in valid_reference_ids
+            for record in raw_references
+        )
         for transaction in lifecycle["unresolved"]:
             reasons = sorted(set(transaction["reasons"]))
             if "BUNDLE_OWNER_MISSING_EXPORT" in reasons:
@@ -81,6 +98,9 @@ def main() -> None:
                 event["phase"] == "activate" for event in lifecycle["unbound_events"]),
             "reference_lineage": position.get("qualification_checks", {}).get(
                 "reference_lineage_valid"),
+            "raw_references": len(raw_references),
+            "valid_references": valid_references,
+            "invalid_references": len(raw_references) - valid_references,
             "position_p95_m": position.get("p95"),
             "position_max_m": position.get("maximum"),
             "velocity_p95_mps": velocity.get("p95"),
