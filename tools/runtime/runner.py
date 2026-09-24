@@ -2878,6 +2878,7 @@ def _run_sim_unlocked(
     sitl_dynamics_profile: str = "off",
     gazebo_native_diagnostic: bool = False,
     experiment_id: str | None = None,
+    qualification_scope: str | None = None,
     inject_failed_replan_cycle_id: int | None = None,
     inject_failed_replan_once: bool = False,
     inject_failed_replan_when_safe: bool = False,
@@ -2907,6 +2908,10 @@ def _run_sim_unlocked(
     velocity_only_output_transport_bound_s: float = 0.0,
     velocity_only_px4_consume_bound_s: float = 0.0,
 ) -> int:
+    if qualification_scope not in {None, "C0_SW"}:
+        raise ValueError("unsupported qualification scope")
+    if qualification_scope == "C0_SW" and tracking_experiment_mode != "off":
+        raise ValueError("C0-SW requires explicitly requested tracking experiment mode off")
     if control_interface not in {"offboard", "external_mode"}:
         raise ValueError(f"unsupported control interface: {control_interface}")
     if state_transport_trace and control_interface != "external_mode":
@@ -2979,6 +2984,12 @@ def _run_sim_unlocked(
     scenario_config = load_config(scenario_config_name)
     scenario_config.setdefault("scenario", {})["map_profile"] = map_profile
     scenario_config["scenario"].update({
+        "qualification_scope": qualification_scope,
+        "qualification_policy_version": "C0_SW_V1" if qualification_scope == "C0_SW" else None,
+        "qualification_policy_provenance": (
+            "user-approved task 2026-09-25: C0-SW software-first decision"
+            if qualification_scope == "C0_SW" else None
+        ),
         "map_scene": scene_descriptor["scene"],
         "test_case": scene_descriptor["test_case"],
         "motion_preset": scene_descriptor["motion_preset"],
@@ -3311,6 +3322,14 @@ def _run_sim_unlocked(
         scenario_identity=scenario_identity,
         tracking_experiment=tracking_experiment,
     )
+    if qualification_scope == "C0_SW":
+        metadata_path = session.directory / "metadata.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        for name in ("qualification_scope", "qualification_policy_version",
+                     "qualification_policy_provenance"):
+            metadata[name] = scenario_config["scenario"][name]
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if characterization_profile:
         metadata_path = session.directory / "metadata.json"
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -4177,6 +4196,15 @@ def main() -> int:
         help="evidence experiment label stored in metadata.json",
     )
     external_mode.add_argument(
+        "--qualification-scope", choices=("C0_SW",), default=None,
+        help="versioned software qualification scope; omitted for other runs",
+    )
+    external_mode.add_argument(
+        "--tracking-experiment-mode", choices=TRACKING_EXPERIMENT_MODES,
+        default=DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
+        help="requested tracking experiment; C0-SW requires off",
+    )
+    external_mode.add_argument(
         "--inject-failed-replan-cycle-id", type=int, default=None,
         help="diagnostic-only one-shot hot-replan failure cycle; off by default",
     )
@@ -4376,6 +4404,8 @@ def main() -> int:
             gazebo_native_diagnostic=args.gazebo_native_diagnostic,
             state_transport_trace=args.state_transport_trace,
             experiment_id=args.experiment_id,
+            qualification_scope=args.qualification_scope,
+            tracking_experiment_mode=args.tracking_experiment_mode,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
             inject_failed_replan_once=args.inject_failed_replan_once,
             inject_failed_replan_when_safe=args.inject_failed_replan_when_safe,

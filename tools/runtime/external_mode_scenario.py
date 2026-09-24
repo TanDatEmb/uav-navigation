@@ -325,6 +325,7 @@ class ExternalModeScenario:
             NavigationMissionProgress,
             NavigationModeStatus,
             NavigationExecutionDiagnostics,
+            NavigationCommandAdmission,
             NavigationCommandRejection,
             PropagatedOdometry,
         )
@@ -553,6 +554,10 @@ class ExternalModeScenario:
             self._navigation_execution_diagnostics, px4_qos,
         )
         self.node.create_subscription(
+            NavigationCommandAdmission, "/navigation/command_admission",
+            self._navigation_command_admission, reliable_qos,
+        )
+        self.node.create_subscription(
             NavigationCommandRejection, "/navigation/command_rejection",
             self._navigation_command_rejection, px4_qos,
         )
@@ -669,6 +674,22 @@ class ExternalModeScenario:
                 request_boundary="navigation_runtime/planning_cycle",
                 disposition_source="navigation_runtime/planner",
             )
+            if values.get("planner_result_after_injection") is not None:
+                self._record_lifecycle(
+                    "result", "OBSERVED",
+                    source_stamp_ns=stamp_ns or None,
+                    request_id=request_id,
+                    goal_epoch=goal_epoch,
+                    localization_epoch=localization_epoch,
+                    causal_planning_cycle_id=cycle_id,
+                    bundle_owner_request_id=request_id,
+                    bundle_owner_cycle_id=cycle_id,
+                    planner_status=parse_int(values.get("planner_result_after_injection")),
+                    planner_disposition=parse_int(values.get("planner_disposition")),
+                    runtime_admission_attempted=parse_bool(
+                        values.get("runtime_admission_attempted")),
+                    disposition_source="navigation_runtime/planner",
+                )
         if parse_bool(values.get("runtime_admission_attempted")):
             succeeded = parse_bool(values.get("runtime_admission_succeeded"))
             admission_disposition = values.get("runtime_admission_disposition")
@@ -701,34 +722,13 @@ class ExternalModeScenario:
                     bundle_generation=bundle_generation,
                     bundle_owner_request_id=request_id,
                     bundle_owner_cycle_id=cycle_id,
+                    bundle_owner_attribution="producer_declared",
                     activation_result="IMMEDIATELY_COMMITTED",
                     disposition_source="navigation_runtime/commit_planner_candidate",
                 )
-        activation_generation = parse_int(values.get("latest_execution_activation_generation"))
-        activation_result = parse_int(values.get("latest_execution_activation_result"))
-        if activation_generation and activation_result in {1, 2}:
-            activation_request_id = parse_int(values.get("active_execution_request_id")) or request_id
-            activation_goal_epoch = parse_int(values.get("active_execution_goal_epoch")) or goal_epoch
-            activation_localization_epoch = (
-                parse_int(values.get("active_execution_localization_epoch"))
-                or localization_epoch
-            )
-            # The runtime trace does not expose a planner cycle for this
-            # command-timer store transaction. Preserve the bundle identity
-            # and let the reducer attach it without inventing a cycle.
-            self._record_lifecycle(
-                "activate", "ACTIVATED" if activation_result == 1 else "FAILED",
-                source_stamp_ns=stamp_ns or None,
-                request_id=activation_request_id,
-                goal_epoch=activation_goal_epoch,
-                localization_epoch=activation_localization_epoch,
-                causal_planning_cycle_id=None,
-                bundle_generation=activation_generation,
-                bundle_owner_request_id=activation_request_id,
-                bundle_owner_cycle_id=None,
-                activation_result=activation_result,
-                disposition_source="navigation_runtime/execution_timeline",
-            )
+        # The rolling latest_execution_activation_* counters are not an
+        # activation event: another planner cycle may read them much later.
+        # The command timer emits an immutable producer witness instead.
 
     def _diagnostics(self, message: Any) -> None:
         receive_ns = self._receive_time_ns()
@@ -792,6 +792,142 @@ class ExternalModeScenario:
                     or _time_ns(message.header.stamp),
                     "trace_values": values,
                 })
+            elif status.name == "navigation_runtime/retained_command_decision":
+                # The producer separately names the desired solve and the
+                # incumbent execution; a hot retarget must never relabel N as
+                # N+1 merely because the callback used desired N+1.
+                desired_request = _integer_value(values.get("desired_request_id"))
+                desired_epoch = _integer_value(values.get("desired_goal_epoch"))
+                cycle = _integer_value(values.get("planning_cycle_id"))
+                disposition = _integer_value(values.get("disposition"))
+                payload = {
+                    "producer_event_sequence": _integer_value(values.get("event_sequence")),
+                    "purpose": _integer_value(values.get("purpose")),
+                    "planning_cycle_id": cycle,
+                    "desired_request_id": desired_request,
+                    "desired_goal_epoch": desired_epoch,
+                    "execution_request_id": _integer_value(values.get("request_id")),
+                    "execution_goal_epoch": _integer_value(values.get("goal_epoch")),
+                    "localization_epoch": _integer_value(values.get("localization_epoch")),
+                    "captured_bundle_generation": _integer_value(
+                        values.get("captured_bundle_generation")),
+                    "after_bundle_generation": _integer_value(
+                        values.get("after_bundle_generation")),
+                    "disposition": disposition,
+                    "owner_snapshot_current": _integer_value(
+                        values.get("owner_snapshot_current")),
+                    "callback_request_current": _integer_value(
+                        values.get("callback_request_current")),
+                    "after_command_available": _integer_value(
+                        values.get("after_command_available")),
+                    "after_failure_latched": _integer_value(
+                        values.get("after_failure_latched")),
+                    "published_before_event": _integer_value(
+                        values.get("published_before_event")),
+                    "suppressed_before_event": _integer_value(
+                        values.get("suppressed_before_event")),
+                    "failed_before_event": _integer_value(values.get("failed_before_event")),
+                }
+                self._record("retained_decision", payload)
+                self._record_lifecycle(
+                    "retained", "OBSERVED",
+                    source_stamp_ns=_integer_value(values.get("evaluation_ros_ns"))
+                    or _time_ns(message.header.stamp),
+                    request_id=desired_request,
+                    goal_epoch=desired_epoch,
+                    localization_epoch=payload["localization_epoch"],
+                    causal_planning_cycle_id=cycle,
+                    bundle_owner_request_id=desired_request,
+                    bundle_owner_cycle_id=cycle,
+                    disposition_code=disposition,
+                    **{key: value for key, value in payload.items()
+                       if key not in {"localization_epoch", "disposition"}},
+                )
+            elif status.name == "navigation_runtime/heading_rebind_admission_witness":
+                self._record_lifecycle(
+                    "heading_admitted", "ADMITTED",
+                    source_stamp_ns=_time_ns(message.header.stamp),
+                    request_id=_integer_value(values.get("request_id")),
+                    goal_epoch=_integer_value(values.get("goal_epoch")),
+                    localization_epoch=_integer_value(values.get("localization_epoch")),
+                    bundle_generation=_integer_value(values.get("bundle_generation")),
+                    bundle_source=_integer_value(values.get("bundle_source")),
+                    parent_bundle_generation=_integer_value(
+                        values.get("parent_bundle_generation")),
+                    world_generation=_integer_value(values.get("world_generation")),
+                    world_revision=_integer_value(values.get("world_revision")),
+                    activation_stamp_ns=_integer_value(
+                        values.get("activation_stamp_ns")),
+                    bundle_owner_attribution="producer_declared",
+                    disposition_source="navigation_runtime/heading_rebind_admission_witness",
+                )
+            elif status.name == "navigation_runtime/execution_pending_superseded_witness":
+                self._record_lifecycle(
+                    "supersede", "SUPERSEDED",
+                    source_stamp_ns=_time_ns(message.header.stamp),
+                    request_id=_integer_value(values.get("request_id")),
+                    goal_epoch=_integer_value(values.get("goal_epoch")),
+                    localization_epoch=_integer_value(values.get("localization_epoch")),
+                    bundle_generation=_integer_value(values.get("bundle_generation")),
+                    bundle_source=_integer_value(values.get("bundle_source")),
+                    bundle_owner_cycle_id=_integer_value(
+                        values.get("bundle_owner_cycle_id")) or None,
+                    bundle_owner_attribution="producer_declared",
+                    replacement_bundle_generation=_integer_value(
+                        values.get("replacement_bundle_generation")),
+                    admission_goal_epoch=_integer_value(
+                        values.get("admission_goal_epoch")),
+                    previous_snapshot_version=_integer_value(
+                        values.get("previous_snapshot_version")),
+                    current_snapshot_version=_integer_value(
+                        values.get("current_snapshot_version")),
+                    disposition_source="navigation_runtime/execution_pending_superseded_witness",
+                )
+            elif status.name == "navigation_runtime/recovery_retry_witness":
+                current = _integer_value(values.get("identity_current")) == 1
+                timed_out = _integer_value(values.get("timeout")) == 1
+                self._record_lifecycle(
+                    "recovery_retry",
+                    "SUPERSEDED" if not current else
+                    "FAIL_CLOSED" if timed_out else "RETRY_SCHEDULED",
+                    source_stamp_ns=_time_ns(message.header.stamp),
+                    request_id=_integer_value(values.get("request_id")),
+                    goal_epoch=_integer_value(values.get("goal_epoch")),
+                    localization_epoch=_integer_value(values.get("localization_epoch")),
+                    causal_planning_cycle_id=_integer_value(
+                        values.get("planning_cycle_id")),
+                    bundle_owner_cycle_id=_integer_value(
+                        values.get("planning_cycle_id")),
+                    bundle_owner_attribution="producer_declared",
+                    active_generation=_integer_value(values.get("active_generation")),
+                    identity_current=current,
+                    timeout=timed_out,
+                    after_failed=_integer_value(values.get("after_failed")) == 1,
+                    terminal_hold_pending=_integer_value(
+                        values.get("terminal_hold_pending")) == 1,
+                    disposition_source="navigation_runtime/recovery_retry_witness",
+                )
+            elif status.name == "navigation_runtime/execution_activation_witness":
+                request_id = _integer_value(values.get("request_id"))
+                owner_cycle = _integer_value(values.get("bundle_owner_cycle_id"))
+                self._record_lifecycle(
+                    "activate", "ACTIVATED",
+                    source_stamp_ns=_integer_value(values.get("activation_stamp_ns"))
+                    or _time_ns(message.header.stamp),
+                    request_id=request_id,
+                    goal_epoch=_integer_value(values.get("goal_epoch")),
+                    localization_epoch=_integer_value(values.get("localization_epoch")),
+                    bundle_generation=_integer_value(values.get("bundle_generation")),
+                    bundle_source=_integer_value(values.get("bundle_source")),
+                    bundle_owner_request_id=request_id,
+                    bundle_owner_cycle_id=owner_cycle,
+                    bundle_owner_attribution="producer_declared",
+                    world_generation=_integer_value(values.get("world_generation")),
+                    world_revision=_integer_value(values.get("world_revision")),
+                    pending_snapshot_version=_integer_value(
+                        values.get("pending_snapshot_version")),
+                    disposition_source="navigation_runtime/execution_activation_witness",
+                )
             elif status.name == "navigation_runtime/planner":
                 planner_stamp = _integer_value(values.get("execution_stamp_ns")) or _time_ns(
                     message.header.stamp)
@@ -1563,6 +1699,8 @@ class ExternalModeScenario:
             "waypoint_index": int(message.waypoint_index),
             "request_id": int(message.request_id),
             "bundle_generation": int(message.bundle_generation),
+            "bundle_owner_cycle_id": int(message.bundle_owner_cycle_id),
+            "bundle_source": int(message.bundle_source),
             "sample_id": int(message.sample_id),
             "world_generation": int(message.world_generation),
             "world_revision": int(message.world_revision),
@@ -1571,7 +1709,8 @@ class ExternalModeScenario:
         identity_fields = {
             "header", "mode_activation_id", "localization_epoch", "goal_epoch",
             "mission_id", "waypoint_index", "request_id", "bundle_generation",
-            "sample_id", "world_generation", "world_revision",
+            "bundle_owner_cycle_id", "bundle_source", "sample_id",
+            "world_generation", "world_revision",
             "world_observation_stamp",
         }
         for name in message.get_fields_and_field_types():
@@ -1614,8 +1753,9 @@ class ExternalModeScenario:
                 goal_epoch=payload["goal_epoch"],
                 causal_planning_cycle_id=payload["causal_planning_cycle_id"],
                 bundle_owner_request_id=payload["request_id"],
-                bundle_owner_cycle_id=None,
-                bundle_owner_attribution="resolve_from_export",
+                bundle_owner_cycle_id=payload["bundle_owner_cycle_id"] or None,
+                bundle_source=payload["bundle_source"],
+                bundle_owner_attribution="producer_declared",
                 authorization_boundary="execution_timeline_publish_if_current",
                 authorization_steady_ns=payload["execution_authorization_steady_ns"],
                 world_generation=payload["world_generation"],
@@ -1628,6 +1768,19 @@ class ExternalModeScenario:
                 "sample_id": payload["sample_id"],
                 "request_id": payload["request_id"],
             })
+
+    def _navigation_command_admission(self, message: Any) -> None:
+        self._record("command_admission", {
+            "admission_ros_ns": _time_ns(message.header.stamp),
+            "mode_activation_id": int(message.mode_activation_id),
+            "mission_id": str(message.mission_id),
+            "localization_epoch": int(message.localization_epoch),
+            "goal_epoch": int(message.goal_epoch),
+            "waypoint_index": int(message.waypoint_index),
+            "request_id": int(message.request_id),
+            "bundle_generation": int(message.bundle_generation),
+            "sample_id": int(message.sample_id),
+        })
 
     def _navigation_command_rejection(self, message: Any) -> None:
         self._record("command_rejection", {

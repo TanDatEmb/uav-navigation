@@ -3718,6 +3718,16 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     report["session"] = str(session.resolve())
     report["schema_version"] = 1
     report["qualification_timelines"] = _write_qualification_timelines(session)
+    software_assessment = evaluator.get("software_qualification", {})
+    report["qualification_scope"] = (
+        software_assessment.get("qualification_scope")
+        if isinstance(software_assessment, dict) else None
+    )
+    report["software_qualification_eligible"] = bool(
+        isinstance(software_assessment, dict) and
+        software_assessment.get("software_qualification_eligible") is True)
+    report["integrated_flight_qualification_eligible"] = (
+        evaluator.get("integrated_flight_qualification_eligible") is True)
     # Timeline serialization is deliberately weaker than qualification. The
     # repeated PASS/infrastructure-valid speed/seed matrix is not aggregated
     # by this single-session report, so never infer eligibility from buckets.

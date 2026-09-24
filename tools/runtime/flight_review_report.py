@@ -2538,6 +2538,17 @@ def render(session: Path, output: Path) -> Path:
                     reason_text or "versioned offline evaluator dimension",
                     str(dimension.get("status", "NOT_EVALUABLE")).upper(),
                 ))
+        software = versioned_evaluation.get("software_qualification", {})
+        if isinstance(software, dict) and software.get("qualification_scope") == "C0_SW":
+            software_status = str(software.get("assessment_status", "NOT_EVALUABLE"))
+            software_eligible = software.get("software_qualification_eligible") is True
+            status_rows.append((
+                "C0-SW software qualification",
+                software_status,
+                "C0_SW_V1; eligible=" + str(software_eligible).lower() +
+                "; integrated flight performance assessed separately",
+                software_status,
+            ))
     table_rows = "".join(
         f'<tr><td>{esc(label)}</td><td class="observed">{esc(observed)}</td><td>{esc(criterion)}</td><td>{status_chip(status)}</td></tr>'
         for label, observed, criterion, status in status_rows
