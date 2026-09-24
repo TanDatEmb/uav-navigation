@@ -20,4 +20,14 @@ Product behavior in the ten-run predecessor cohort: `96ed8d089e576c505abdc155007
 
 ## New branch evidence
 
-Pending focused diagnostic SITL validation and final build/test logs. Their exact paths and hashes will be added after runs finish.
+`RAW_EVIDENCE_MANIFEST.csv` indexes **43** raw files (2,995,154,576 bytes total) for the five new sessions: metadata, report, scenario and samples JSONL, native observer records/summary where enabled, state/temporal reductions, and retained rosbag data files. Each row gives an absolute path, byte size and SHA256. These large files remain outside Git.
+
+| Session suffix | Kind | Native observer | Outcome | Reduction |
+|---|---|---|---|---|
+| `143628-56252` | natural pilot | on | `PAUSED_SAFETY_STOP` | `native_natural_temporal_layers.json` |
+| `144205-60149` | no-native control | off | `COMPLETE` | raw session `temporal_layer_analysis.json` |
+| `144810-63939` | native repeat | on | `COMPLETE` | raw session `temporal_layer_analysis.json` |
+| `145335-67672` | native repeat, no fault applied | on | `COMPLETE` | raw session `temporal_layer_analysis.json` |
+| `145951-71499` | exact PID Gazebo pause | on | `FAILED_COMPONENT` | `controlled_temporal_layers.json`, `controlled_pause_provenance.json` |
+
+`controlled_gazebo_pause.py` is the exact fault script used. `CONTROLLED_FAULT_RESULTS.md` explains its scope and safety response. All outcome labels come from the original runner/report and have not been rewritten by this audit.

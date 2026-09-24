@@ -1,0 +1,186 @@
+{
+  "accepted_count": 3312,
+  "event_count": 2,
+  "events": [
+    {
+      "accepted_gap_ms": 784.659307,
+      "after_sequence": 707,
+      "before_sequence": 706,
+      "classification_reason": "Gazebo native stats and clock show >150 ms sim-progress deficit with observer scheduled",
+      "first_stalled_layer": "GAZEBO_SIMULATION_STALL",
+      "interval_wall_ns": [
+        1790260623681681590,
+        1790260624468256120
+      ],
+      "native_imu_interval_covered": true,
+      "native_interval_covered": true,
+      "witness": {
+        "accepted_state": {
+          "gap_ms": 786.57453,
+          "last_progress_wall_ns": 1790260623681681590,
+          "next_progress_wall_ns": 1790260624468256120,
+          "source_progress_ms": 20.0
+        },
+        "adapter_callback": {
+          "gap_ms": 786.57453,
+          "last_progress_wall_ns": 1790260623681681590,
+          "next_progress_wall_ns": 1790260624468256120,
+          "source_progress_ms": 20.0
+        },
+        "fast_lio_ingress": {
+          "gap_ms": 813.169228,
+          "last_progress_wall_ns": 1790260623662911094,
+          "next_progress_wall_ns": 1790260624476080322,
+          "source_progress_ms": 100.0
+        },
+        "gazebo_clock": {
+          "gap_ms": 824.24827,
+          "last_progress_wall_ns": 1790260623629989848,
+          "next_progress_wall_ns": 1790260624454238870,
+          "source_progress_ms": 4.0
+        },
+        "gazebo_lidar": {
+          "gap_ms": 924.989481,
+          "last_progress_wall_ns": 1790260623529505352,
+          "next_progress_wall_ns": 1790260624454495279,
+          "source_progress_ms": 100.0
+        },
+        "gazebo_stats": {
+          "gap_ms": 854.866866,
+          "last_progress_wall_ns": 1790260623600036111,
+          "next_progress_wall_ns": 1790260624454903283,
+          "source_progress_ms": 84.0
+        },
+        "imu": {
+          "gap_ms": 784.184944,
+          "last_progress_wall_ns": 1790260623680930326,
+          "next_progress_wall_ns": 1790260624465115270,
+          "source_progress_ms": 4.0
+        },
+        "lidar": {
+          "gap_ms": 117.485933,
+          "last_progress_wall_ns": 1790260624038935847,
+          "next_progress_wall_ns": 1790260624156421780,
+          "source_progress_ms": 100.0
+        },
+        "native_imu": {
+          "gap_ms": 828.593764,
+          "last_progress_wall_ns": 1790260623625408088,
+          "next_progress_wall_ns": 1790260624454001256,
+          "source_progress_ms": 4.0
+        },
+        "observer_loop": null,
+        "publisher": {
+          "gap_ms": 784.745637,
+          "last_progress_wall_ns": 1790260623681462209,
+          "next_progress_wall_ns": 1790260624466207846,
+          "source_progress_ms": 20.0
+        },
+        "ros_clock": {
+          "gap_ms": 779.939413,
+          "last_progress_wall_ns": 1790260623685114820,
+          "next_progress_wall_ns": 1790260624465054233,
+          "source_progress_ms": 4.0
+        },
+        "worker": {
+          "gap_ms": 784.747928,
+          "last_progress_wall_ns": 1790260623681582342,
+          "next_progress_wall_ns": 1790260624466330270,
+          "source_progress_ms": 20.0
+        }
+      }
+    },
+    {
+      "accepted_gap_ms": 269.228505,
+      "after_sequence": 737,
+      "before_sequence": 736,
+      "classification_reason": "Gazebo native stats and clock show >150 ms sim-progress deficit with observer scheduled",
+      "first_stalled_layer": "GAZEBO_SIMULATION_STALL",
+      "interval_wall_ns": [
+        1790260624706511236,
+        1790260624975908109
+      ],
+      "native_imu_interval_covered": true,
+      "native_interval_covered": true,
+      "witness": {
+        "accepted_state": {
+          "gap_ms": 269.396873,
+          "last_progress_wall_ns": 1790260624706511236,
+          "next_progress_wall_ns": 1790260624975908109,
+          "source_progress_ms": 20.0
+        },
+        "adapter_callback": {
+          "gap_ms": 269.396873,
+          "last_progress_wall_ns": 1790260624706511236,
+          "next_progress_wall_ns": 1790260624975908109,
+          "source_progress_ms": 20.0
+        },
+        "fast_lio_ingress": {
+          "gap_ms": 316.64663,
+          "last_progress_wall_ns": 1790260624666882700,
+          "next_progress_wall_ns": 1790260624983529330,
+          "source_progress_ms": 100.0
+        },
+        "gazebo_clock": {
+          "gap_ms": 303.069967,
+          "last_progress_wall_ns": 1790260624655048353,
+          "next_progress_wall_ns": 1790260624958119390,
+          "source_progress_ms": 4.0
+        },
+        "gazebo_lidar": {
+          "gap_ms": 427.200635,
+          "last_progress_wall_ns": 1790260624530845805,
+          "next_progress_wall_ns": 1790260624958047059,
+          "source_progress_ms": 100.0
+        },
+        "gazebo_stats": {
+          "gap_ms": 323.793665,
+          "last_progress_wall_ns": 1790260624635089856,
+          "next_progress_wall_ns": 1790260624958883837,
+          "source_progress_ms": 84.0
+        },
+        "imu": {
+          "gap_ms": 219.814528,
+          "last_progress_wall_ns": 1790260624755690862,
+          "next_progress_wall_ns": 1790260624975505390,
+          "source_progress_ms": 8.0
+        },
+        "lidar": {
+          "gap_ms": 128.137634,
+          "last_progress_wall_ns": 1790260624779753331,
+          "next_progress_wall_ns": 1790260624907890965,
+          "source_progress_ms": 100.0
+        },
+        "native_imu": {
+          "gap_ms": 307.344233,
+          "last_progress_wall_ns": 1790260624650415457,
+          "next_progress_wall_ns": 1790260624957759398,
+          "source_progress_ms": 4.0
+        },
+        "observer_loop": null,
+        "publisher": {
+          "gap_ms": 269.402731,
+          "last_progress_wall_ns": 1790260624706318533,
+          "next_progress_wall_ns": 1790260624975721264,
+          "source_progress_ms": 20.0
+        },
+        "ros_clock": {
+          "gap_ms": 264.368206,
+          "last_progress_wall_ns": 1790260624710045542,
+          "next_progress_wall_ns": 1790260624974413748,
+          "source_progress_ms": 4.0
+        },
+        "worker": {
+          "gap_ms": 269.402943,
+          "last_progress_wall_ns": 1790260624706433606,
+          "next_progress_wall_ns": 1790260624975836549,
+          "source_progress_ms": 20.0
+        }
+      }
+    }
+  ],
+  "native_observer_status": "OK",
+  "session": "/home/letandat/Dev/uav-navigation/.artifacts/runtime/external-mode-check-20260924T143628-56252",
+  "trigger_is_diagnostic_only": true,
+  "trigger_ms": 150.0
+}

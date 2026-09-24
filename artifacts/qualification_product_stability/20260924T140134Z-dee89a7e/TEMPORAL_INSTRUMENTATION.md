@@ -8,4 +8,6 @@ Native gap durations use the host monotonic clock. Each bounded event also carri
 
 The runner explicitly sets the native observer's gap recording budget to 150 ms for this experiment; the observer's former 500 ms default would have missed the investigation range. This 150 ms value is diagnostic recording only. The adapter's 200 ms state boundary and 100 ms command lease remain unchanged.
 
+The offline classifier requires both native stats and clock to show a receive gap and a source-progress deficit exceeding the diagnostic 150 ms trigger, while the observer loop stays scheduled. This rule classifies the natural 269 ms accepted-state tail and the controlled 350 ms Gazebo pause. The earlier percentage-of-gap heuristic had left both `UNRESOLVED` despite 239–360 ms native progress deficits; this is a diagnostic correction, with no product admission effect.
+
 Historical seq 2721→2722: accepted gap 481.677 ms, producer gap 481.825 ms, ROS `/clock` recorder gap 481.869 ms with +4 ms source progress, IMU arrival gap 481.517 ms with +4 ms source progress. Publish→callback and adapter lock were short. The historical session has no native Gazebo stats/clock or host-loop witness, so exact first component remains `UNRESOLVED`, consistent with the predecessor verdict. The new analyzer does not backfill a Gazebo/bridge/host cause into that event.
