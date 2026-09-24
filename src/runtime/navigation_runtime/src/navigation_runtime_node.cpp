@@ -698,13 +698,14 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   const auto exact_successor_request = declare_parameter(
       "navigation_runtime.inject_exact_optimization_successor_request", std::int64_t{0});
   if (inject_exact_optimization_failed_once) {
-    if (exact_predecessor_request <= 0 || exact_successor_request <= 0 ||
+    if (deployment_profile_ != "sitl" ||
+        exact_predecessor_request <= 0 || exact_successor_request <= 0 ||
         exact_predecessor_request == exact_successor_request ||
         inject_failed_replan_once_ || inject_failed_replan_repeated_ ||
         inject_failed_plan_from_rest_repeated_) {
       throw std::invalid_argument(
-          "exact OptimizationFailed injection requires distinct positive request IDs "
-          "and cannot be combined with other failed-replan injection");
+          "exact OptimizationFailed injection requires SITL, distinct positive request IDs "
+          "and no other failed-replan injection");
     }
     exact_optimization_failure_injection_.setTarget({
         static_cast<std::uint64_t>(exact_predecessor_request),

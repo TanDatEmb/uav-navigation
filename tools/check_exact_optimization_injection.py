@@ -9,6 +9,7 @@ header = (ROOT / "src/runtime/navigation_runtime/include/navigation_runtime/runt
 checks = {
     "default-off runtime parameter":
         '"navigation_runtime.inject_exact_optimization_failed_once", false' in node,
+    "SITL-only runtime gate": 'deployment_profile_ != "sitl"' in node,
     "explicit runner enable":
         'if inject_exact_optimization_failed_once:' in runner and
         'planner_parameters["inject_exact_optimization_failed_once"] = True' in runner,
