@@ -460,7 +460,12 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
                 mode = "adaptive" if bool(value.get("enabled", False)) else "off"
         enabled = bool(value.get("enabled", mode != "off"))
         if "suppress_braking" not in value:
-            suppress_braking = mode == "relaxed"
+            suppress_braking = enabled and (
+                mode == "relaxed" or bool(value.get("tracking_gate_relaxed", False))
+                or zero_disabled_gate
+            )
+        if "suppress_estimator_health_response" not in value:
+            suppress_estimator_health_response = suppress_braking
         return {
             "mode": mode,
             "enabled": enabled,
@@ -572,6 +577,40 @@ def _tracking_experiment(session: Path) -> dict[str, Any]:
         return result
     result = dict(all_candidates[0][1])
     result["source"] = "+".join(name for name, _ in all_candidates)
+    runtime_configuration = metadata.get("runtime_configuration", {}) if isinstance(metadata, dict) else {}
+    if isinstance(runtime_configuration, dict):
+        witnesses: dict[str, dict[str, Any]] = {}
+        for role in ("mapping", "external_mode"):
+            record = runtime_configuration.get(role)
+            if not isinstance(record, dict) or not isinstance(record.get("effective"), dict):
+                continue
+            effective = record["effective"]
+            for key in (
+                "mode", "enabled", "suppress_braking",
+                "suppress_estimator_health_response", "velocity_only_enabled",
+                "base_m", "lateral_alpha_s", "longitudinal_beta_s",
+                "velocity_only_gain_s_inv", "velocity_only_cap_mps",
+                "velocity_only_max_acceleration_mps2", "velocity_only_max_jerk_mps3",
+                "velocity_only_max_timing_bound_s", "velocity_only_max_reference_age_s",
+                "velocity_only_output_transport_bound_s", "velocity_only_px4_consume_bound_s",
+            ):
+                if effective.get(key) != result.get(key):
+                    mismatch = dict(defaults)
+                    mismatch["source"] = f"runtime_configuration:{role}:{key}"
+                    mismatch["risk_warning"] = "Live tracking policy differs from recorded configuration."
+                    return mismatch
+            witnesses[role] = {
+                "effective": effective,
+                "source": record.get("source"),
+            }
+        if witnesses:
+            result["requested"] = {
+                key: result[key] for key in (
+                    "mode", "enabled", "suppress_braking",
+                    "suppress_estimator_health_response", "velocity_only_enabled",
+                )
+            }
+            result["effective_by_node"] = witnesses
     return result
 def _mission_waypoints_for_acceptance(
     session: Path,

@@ -116,6 +116,7 @@ class PlannerFacade final {
   [[nodiscard]] int solveStage() const noexcept;
   [[nodiscard]] std::size_t solvePointCount() const noexcept;
   [[nodiscard]] double solveDeadlineSeconds() const noexcept;
+  [[nodiscard]] navigation_planning::VehicleControlEnvelope controlEnvelope() const noexcept;
   [[nodiscard]] double replanForwardSeconds() const noexcept;
   [[nodiscard]] double trackingErrorBudgetMeters() const noexcept;
   [[nodiscard]] double yawRateLimitRadS() const noexcept;

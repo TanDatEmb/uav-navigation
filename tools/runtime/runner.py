@@ -795,6 +795,13 @@ def _apply_tracking_experiment_parameters(
 ) -> None:
     """Write the shared parameter namespace consumed by both runtime nodes."""
     ros_parameters["tracking_experiment"] = {
+        "mode": str(experiment["mode"]),
+        "tracking_gate_relaxed": bool(
+            experiment.get("mode") not in {"off", "relaxed"} and
+            experiment.get("suppress_braking", False) and
+            any(float(experiment[key]) > 0.0 for key in (
+                "base_m", "lateral_alpha_s", "longitudinal_beta_s"))
+        ),
         "base_m": float(experiment["base_m"]),
         "lateral_alpha_s": float(experiment["lateral_alpha_s"]),
         "longitudinal_beta_s": float(experiment["longitudinal_beta_s"]),
@@ -2281,6 +2288,163 @@ def _wait_for_log_fragment(
     raise TimeoutError(f"timed out waiting for {description}")
 
 
+_TRACKING_EFFECTIVE_PATTERN = re.compile(
+    r"RUNTIME_CONFIG_EFFECTIVE tracking_mode=(off|adaptive|relaxed|velocity-only) "
+    r"enabled=([01]) suppress_braking=([01]) suppress_health=([01]) "
+    r"velocity_only=([01])"
+)
+_TRACKING_BOUNDS_PATTERN = re.compile(
+    r"RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=([0-9.eE+-]+) "
+    r"alpha=([0-9.eE+-]+) beta=([0-9.eE+-]+) "
+    r"velocity_gain=([0-9.eE+-]+) velocity_cap=([0-9.eE+-]+) "
+    r"velocity_accel=([0-9.eE+-]+) velocity_jerk=([0-9.eE+-]+) "
+    r"velocity_timing=([0-9.eE+-]+) velocity_reference_age=([0-9.eE+-]+) "
+    r"velocity_transport=([0-9.eE+-]+) velocity_px4_consume=([0-9.eE+-]+)"
+)
+
+
+def _check_effective_tracking_configuration(
+    session: Session, role: str, requested: dict[str, Any], timeout_s: float = 15.0
+) -> dict[str, Any]:
+    """Require a live node's policy witness before the mission can start."""
+    try:
+        _wait_for_log_fragment(
+            session, role, "RUNTIME_CONFIG_EFFECTIVE tracking_mode=", timeout_s,
+            f"{role} effective tracking configuration",
+        )
+        _wait_for_log_fragment(
+            session, role, "RUNTIME_CONFIG_EFFECTIVE tracking_bounds ", timeout_s,
+            f"{role} effective tracking bounds",
+        )
+        log = (session.directory / "logs" / f"{role}.log").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except (OSError, RuntimeError, TimeoutError) as error:
+        raise RuntimeError(
+            f"CONFIGURATION_MISMATCH {role}: effective tracking witness unavailable: {error}"
+        ) from error
+    matches = list(_TRACKING_EFFECTIVE_PATTERN.finditer(log))
+    bounds = list(_TRACKING_BOUNDS_PATTERN.finditer(log))
+    if len(matches) != 1 or len(bounds) != 1:
+        raise RuntimeError(
+            f"CONFIGURATION_MISMATCH {role}: expected one policy and bounds witness, "
+            f"observed policy={len(matches)} bounds={len(bounds)}"
+        )
+    values = matches[0].groups()
+    effective = {
+        "mode": values[0],
+        "enabled": bool(int(values[1])),
+        "suppress_braking": bool(int(values[2])),
+        "suppress_estimator_health_response": bool(int(values[3])),
+        "velocity_only_enabled": bool(int(values[4])),
+    }
+    bound_names = (
+        "base_m", "lateral_alpha_s", "longitudinal_beta_s",
+        "velocity_only_gain_s_inv", "velocity_only_cap_mps",
+        "velocity_only_max_acceleration_mps2", "velocity_only_max_jerk_mps3",
+        "velocity_only_max_timing_bound_s", "velocity_only_max_reference_age_s",
+        "velocity_only_output_transport_bound_s", "velocity_only_px4_consume_bound_s",
+    )
+    effective.update({
+        name: float(value)
+        for name, value in zip(bound_names, bounds[0].groups())
+    })
+    expected = {
+        key: requested.get(key, False if key == "velocity_only_enabled" else 0.0)
+        for key in effective
+    }
+    if effective != expected:
+        raise RuntimeError(
+            f"CONFIGURATION_MISMATCH {role}: requested={expected} effective={effective}"
+        )
+    metadata_path = session.directory / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    configuration = metadata.setdefault("runtime_configuration", {})
+    configuration[role] = {
+        "requested": expected,
+        "effective": effective,
+        "source": f"logs/{role}.log:RUNTIME_CONFIG_EFFECTIVE",
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return effective
+
+
+_PLANNER_FAULT_PATTERN = re.compile(
+    r"RUNTIME_CONFIG_EFFECTIVE planner_fault cycle=(\d+) once=([01]) "
+    r"when_safe=([01]) after_handoff=([01]) repeated=([01]) "
+    r"rest_repeated=([01]) exact_optimization=([01]) renewal_ordinal=(\d+)"
+)
+_DYNAMICS_PATTERN = re.compile(
+    r"RUNTIME_CONFIG_EFFECTIVE dynamics velocity=([0-9.eE+-]+) "
+    r"acceleration=([0-9.eE+-]+) jerk=([0-9.eE+-]+)"
+)
+
+
+def _check_effective_planner_configuration(
+    session: Session,
+    requested_faults: dict[str, int | bool],
+    requested_dynamics: dict[str, float],
+    timeout_s: float = 15.0,
+) -> None:
+    """Check actual RuntimeNode fault and planner-envelope startup witnesses."""
+    try:
+        for marker in ("planner_fault", "dynamics"):
+            _wait_for_log_fragment(
+                session, "mapping", f"RUNTIME_CONFIG_EFFECTIVE {marker} ",
+                timeout_s, f"RuntimeNode effective {marker} configuration",
+            )
+        log = (session.directory / "logs/mapping.log").read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except (OSError, RuntimeError, TimeoutError) as error:
+        raise RuntimeError(
+            f"CONFIGURATION_MISMATCH mapping: planner configuration witness unavailable: {error}"
+        ) from error
+    faults = list(_PLANNER_FAULT_PATTERN.finditer(log))
+    dynamics = list(_DYNAMICS_PATTERN.finditer(log))
+    if len(faults) != 1 or len(dynamics) != 1:
+        raise RuntimeError(
+            "CONFIGURATION_MISMATCH mapping: expected exactly one planner fault "
+            "and one dynamics witness"
+        )
+    fault_values = faults[0].groups()
+    fault_keys = (
+        "cycle", "once", "when_safe", "after_handoff", "repeated",
+        "rest_repeated", "exact_optimization", "renewal_ordinal",
+    )
+    effective_faults = {
+        key: int(value) if key in {"cycle", "renewal_ordinal"} else bool(int(value))
+        for key, value in zip(fault_keys, fault_values)
+    }
+    effective_dynamics = {
+        key: float(value)
+        for key, value in zip(("velocity", "acceleration", "jerk"), dynamics[0].groups())
+    }
+    if effective_faults != requested_faults or effective_dynamics != requested_dynamics:
+        raise RuntimeError(
+            "CONFIGURATION_MISMATCH mapping: requested planner configuration "
+            f"faults={requested_faults} dynamics={requested_dynamics}; "
+            f"effective faults={effective_faults} dynamics={effective_dynamics}"
+        )
+    metadata_path = session.directory / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    configuration = metadata.setdefault("runtime_configuration", {})
+    for name, requested, effective in (
+        ("planner_fault_injection", requested_faults, effective_faults),
+        ("dynamics", requested_dynamics, effective_dynamics),
+    ):
+        configuration[name] = {
+            "requested": requested,
+            "effective": effective,
+            "source": f"logs/mapping.log:RUNTIME_CONFIG_EFFECTIVE:{name}",
+        }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def _stop_and_report(session: Session, workflow: str, config_path: Path, *, px4_dir: Path | None = None, observation_complete: bool = False) -> dict[str, Any]:
     # Bound the measured interval before processes are stopped.  A monitor
     # timer can otherwise report a final stale event after its publishers have
@@ -3385,6 +3549,47 @@ def _run_sim_unlocked(
                 ),
                 cwd=ROOT,
             )
+            _check_effective_tracking_configuration(
+                session, "mapping", tracking_experiment
+            )
+            product_planner = yaml.safe_load(
+                (ROOT / "src/runtime/navigation_runtime/config/planner.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            base_control = product_planner["planner"]["control_envelope"]
+            requested_dynamics = {
+                "velocity": float(
+                    sitl_dynamics_profile_contract["control_envelope_max_velocity_mps"]
+                    if sitl_dynamics_profile_contract["control_envelope_max_velocity_mps"] is not None
+                    else sitl_profile_contract["control_envelope_max_velocity_mps"]
+                    if sitl_profile_contract["control_envelope_max_velocity_mps"] is not None
+                    else base_control["maximum_velocity_mps"]
+                ),
+                "acceleration": float(
+                    sitl_dynamics_profile_contract["control_envelope_max_acceleration_mps2"]
+                    if sitl_dynamics_profile_contract["control_envelope_max_acceleration_mps2"] is not None
+                    else base_control["maximum_acceleration_mps2"]
+                ),
+                "jerk": float(
+                    sitl_dynamics_profile_contract["control_envelope_max_jerk_mps3"]
+                    if sitl_dynamics_profile_contract["control_envelope_max_jerk_mps3"] is not None
+                    else base_control["maximum_jerk_mps3"]
+                ),
+            }
+            requested_faults = {
+                "cycle": int(inject_failed_replan_cycle_id or 0),
+                "once": bool(inject_failed_replan_once),
+                "when_safe": bool(inject_failed_replan_when_safe),
+                "after_handoff": bool(inject_failed_replan_after_handoff),
+                "repeated": bool(inject_failed_replan_repeated),
+                "rest_repeated": bool(inject_failed_plan_from_rest_repeated),
+                "exact_optimization": bool(inject_exact_optimization_failed_once),
+                "renewal_ordinal": int(inject_failed_same_identity_renewal_ordinal or 0),
+            }
+            _check_effective_planner_configuration(
+                session, requested_faults, requested_dynamics
+            )
         session.start("lio", _ros_shell([
             "ros2", "launch", "navigation_bringup", "fast_lio.launch.py",
             f"config_file:={ros_config}", "use_sim_time:=true",
@@ -3464,6 +3669,9 @@ def _run_sim_unlocked(
                     float(config["runtime"]["timeouts"].get("external_mode_registration_s", 15.0)),
                     "successful External Mode registration and startup",
                 )
+                _check_effective_tracking_configuration(
+                    session, "external_mode", tracking_experiment
+                )
 
             # The sensor stack and External Mode registration can run through
             # several PX4 handover attempts before the scenario owns the
@@ -3520,7 +3728,14 @@ def _run_sim_unlocked(
         _write_runtime(session, failures=[])
         session.mark_stopped("user interrupt")
     except Exception as error:
-        _write_runtime(session, failures=[str(error)])
+        _write_runtime(
+            session,
+            failures=[str(error)],
+            setup_status=(
+                "CONFIGURATION_MISMATCH"
+                if str(error).startswith("CONFIGURATION_MISMATCH") else None
+            ),
+        )
     finally:
         result = _stop_and_report(
             session,

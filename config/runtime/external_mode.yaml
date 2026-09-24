@@ -1,8 +1,10 @@
 px4_navigation_external_mode:
   ros__parameters:
-    # Keep this identical to navigation_runtime_node. Zero means disabled;
-    # positive values enable the adaptive tracking gate.
+    # Keep this identical to navigation_runtime_node. The mode selects the
+    # experiment; zero coefficients alone do not suppress safety responses.
     tracking_experiment:
+      mode: "off"
+      tracking_gate_relaxed: false
       base_m: 0.0
       lateral_alpha_s: 0.0
       longitudinal_beta_s: 0.0

@@ -189,6 +189,28 @@ NavigationMode::NavigationMode(rclcpp::Node& node)
       planner_recovery_wait_timeout_s_(node.declare_parameter<double>(
           "navigation.planner_recovery_wait_timeout_s", 5.0)) {
   tracking_experiment_ = navigation_contracts::loadTrackingExperimentPolicy(node);
+  RCLCPP_INFO(node.get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE tracking_mode=%s enabled=%d suppress_braking=%d "
+      "suppress_health=%d velocity_only=%d",
+      node.get_parameter("tracking_experiment.mode").as_string().c_str(),
+      tracking_experiment_.enabled, tracking_experiment_.suppress_braking,
+      tracking_experiment_.suppress_estimator_health_response,
+      tracking_experiment_.velocity_only_enabled);
+  RCLCPP_INFO(node.get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=%.17g alpha=%.17g beta=%.17g "
+      "velocity_gain=%.17g velocity_cap=%.17g velocity_accel=%.17g "
+      "velocity_jerk=%.17g velocity_timing=%.17g velocity_reference_age=%.17g "
+      "velocity_transport=%.17g velocity_px4_consume=%.17g",
+      tracking_experiment_.base_m, tracking_experiment_.lateral_alpha_s,
+      tracking_experiment_.longitudinal_beta_s,
+      tracking_experiment_.velocity_only_gain_s_inv,
+      tracking_experiment_.velocity_only_cap_mps,
+      tracking_experiment_.velocity_only_max_acceleration_mps2,
+      tracking_experiment_.velocity_only_max_jerk_mps3,
+      tracking_experiment_.velocity_only_max_timing_bound_s,
+      tracking_experiment_.velocity_only_max_reference_age_s,
+      tracking_experiment_.velocity_only_output_transport_bound_s,
+      tracking_experiment_.velocity_only_px4_consume_bound_s);
   if (tracking_experiment_.enabled) {
     RCLCPP_WARN(node.get_logger(),
         "SITL TRACKING EXPERIMENT: increased collision risk; base=%.3fm alpha=%.3fs beta=%.3fs "

@@ -683,6 +683,11 @@ class NavigationRuntimeTerminalMonitor : public testing::Test {
         rclcpp::Parameter("use_sim_time", true),
         rclcpp::Parameter("navigation_runtime.retained_decision_diagnostics_enabled",
                           retainedDiagnosticsEnabled()),
+        // These legacy terminal-monitor cases exercise the diagnostic relaxed
+        // bridge unless they request a positive adaptive envelope. The mode
+        // must be explicit now; simulated time no longer activates a bypass.
+        rclcpp::Parameter("tracking_experiment.mode",
+                          trackingBaseMeters() > 0.0 ? "adaptive" : "relaxed"),
         rclcpp::Parameter("tracking_experiment.base_m", trackingBaseMeters()),
         rclcpp::Parameter("navigation_runtime.planning_frame", "lio_odom"),
         rclcpp::Parameter("navigation_runtime.body_frame_id", "base_link"),

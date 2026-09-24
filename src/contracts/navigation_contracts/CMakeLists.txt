@@ -43,6 +43,10 @@ if(BUILD_TESTING)
     ${PROJECT_NAME} "rosidl_typesupport_cpp")
   target_link_libraries(test_typed_interfaces
     "${navigation_contracts_typesupport_target}")
+  ament_add_gtest(test_tracking_experiment_policy
+    test/test_tracking_experiment_policy.cpp)
+  target_include_directories(test_tracking_experiment_policy PRIVATE include)
+  ament_target_dependencies(test_tracking_experiment_policy navigation_common)
 endif()
 
 ament_package()

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <string>
 #include <Eigen/Core>
 
 namespace navigation_contracts {
@@ -57,6 +58,10 @@ struct TrackingExperimentPolicy {
 template<class Node>
 TrackingExperimentPolicy loadTrackingExperimentPolicy(Node& node) {
   TrackingExperimentPolicy p;
+  const auto mode = node.template declare_parameter<std::string>(
+      "tracking_experiment.mode", "off");
+  const bool relaxed = node.template declare_parameter<bool>(
+      "tracking_experiment.tracking_gate_relaxed", false);
   p.base_m = node.template declare_parameter<double>("tracking_experiment.base_m", 0.0);
   p.lateral_alpha_s = node.template declare_parameter<double>(
       "tracking_experiment.lateral_alpha_s", 0.0);
@@ -81,11 +86,18 @@ TrackingExperimentPolicy loadTrackingExperimentPolicy(Node& node) {
   p.velocity_only_px4_consume_bound_s = node.template declare_parameter<double>(
       "tracking_experiment.velocity_only_px4_consume_bound_s", 0.0);
   const bool simulated = node.get_parameter("use_sim_time").as_bool();
-  p.enabled = simulated;
-  p.suppress_braking = simulated && !p.trackingGateEnabled();
+  if (mode != "off" && mode != "adaptive" && mode != "relaxed" &&
+      mode != "velocity-only") {
+    throw std::invalid_argument("unknown tracking_experiment.mode");
+  }
+  p.enabled = mode != "off";
+  p.suppress_braking = p.enabled &&
+      (mode == "relaxed" || relaxed || !p.trackingGateEnabled());
   p.suppress_estimator_health_response = p.suppress_braking;
-  if (!p.valid() || (p.velocity_only_enabled && !simulated)) {
-    throw std::invalid_argument("tracking experiment requires valid coefficients and use_sim_time=true");
+  if (!p.valid() || (p.enabled && !simulated) ||
+      ((mode == "velocity-only") != p.velocity_only_enabled) ||
+      (relaxed && !p.enabled)) {
+    throw std::invalid_argument("tracking experiment mode/parameters require valid coefficients and use_sim_time=true");
   }
   return p;
 }

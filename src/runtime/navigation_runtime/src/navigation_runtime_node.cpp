@@ -665,6 +665,28 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   deployment_profile_ = declare_parameter(
       "navigation_runtime.deployment_profile", std::string("sitl"));
   tracking_experiment_ = navigation_contracts::loadTrackingExperimentPolicy(*this);
+  RCLCPP_INFO(get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE tracking_mode=%s enabled=%d suppress_braking=%d "
+      "suppress_health=%d velocity_only=%d",
+      get_parameter("tracking_experiment.mode").as_string().c_str(),
+      tracking_experiment_.enabled, tracking_experiment_.suppress_braking,
+      tracking_experiment_.suppress_estimator_health_response,
+      tracking_experiment_.velocity_only_enabled);
+  RCLCPP_INFO(get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=%.17g alpha=%.17g beta=%.17g "
+      "velocity_gain=%.17g velocity_cap=%.17g velocity_accel=%.17g "
+      "velocity_jerk=%.17g velocity_timing=%.17g velocity_reference_age=%.17g "
+      "velocity_transport=%.17g velocity_px4_consume=%.17g",
+      tracking_experiment_.base_m, tracking_experiment_.lateral_alpha_s,
+      tracking_experiment_.longitudinal_beta_s,
+      tracking_experiment_.velocity_only_gain_s_inv,
+      tracking_experiment_.velocity_only_cap_mps,
+      tracking_experiment_.velocity_only_max_acceleration_mps2,
+      tracking_experiment_.velocity_only_max_jerk_mps3,
+      tracking_experiment_.velocity_only_max_timing_bound_s,
+      tracking_experiment_.velocity_only_max_reference_age_s,
+      tracking_experiment_.velocity_only_output_transport_bound_s,
+      tracking_experiment_.velocity_only_px4_consume_bound_s);
   if (tracking_experiment_.enabled) {
     RCLCPP_WARN(get_logger(),
         "SITL TRACKING EXPERIMENT: increased collision risk accepted for characterization; "
@@ -738,6 +760,15 @@ NavigationRuntimeNode::NavigationRuntimeNode(
   }
   same_identity_renewal_injection_.setTargetOrdinal(
       static_cast<std::uint64_t>(inject_failed_same_identity_renewal_ordinal));
+  RCLCPP_INFO(get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE planner_fault cycle=%lld once=%d when_safe=%d "
+      "after_handoff=%d repeated=%d rest_repeated=%d exact_optimization=%d "
+      "renewal_ordinal=%lld",
+      static_cast<long long>(inject_failed_replan_cycle_id),
+      inject_failed_replan_once_, inject_failed_replan_when_safe_,
+      inject_failed_replan_after_handoff_, inject_failed_replan_repeated_,
+      inject_failed_plan_from_rest_repeated_, inject_exact_optimization_failed_once,
+      static_cast<long long>(inject_failed_same_identity_renewal_ordinal));
   planner_config_path_ = declare_parameter("navigation_runtime.config_path", std::string{});
   const auto mission_file =
       declare_parameter("navigation_runtime.mission_file", std::string{});
@@ -1575,6 +1606,12 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       planner_config_path_, world_snapshot_store_.load().view, mission_limits,
       world_snapshot_store_, [this]() { return now().seconds(); });
   planner_ = planner.get();
+  const auto control_envelope = planner_->controlEnvelope();
+  RCLCPP_INFO(get_logger(),
+      "RUNTIME_CONFIG_EFFECTIVE dynamics velocity=%.17g acceleration=%.17g jerk=%.17g",
+      control_envelope.maximum_velocity_mps,
+      control_envelope.maximum_acceleration_mps2,
+      control_envelope.maximum_jerk_mps3);
   const double solve_deadline_s = planner_->solveDeadlineSeconds();
   if (!plannerSolveDeadlineMatchesContract(solve_deadline_s) ||
       !plannerPeriodCoversSolveBudget(

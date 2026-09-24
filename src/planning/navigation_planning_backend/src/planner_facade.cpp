@@ -480,6 +480,10 @@ double PlannerFacade::solveDeadlineSeconds() const noexcept {
   return impl_->planner->solveDeadlineSeconds();
 }
 
+navigation_planning::VehicleControlEnvelope PlannerFacade::controlEnvelope() const noexcept {
+  return impl_->planner->controlEnvelope();
+}
+
 double PlannerFacade::replanForwardSeconds() const noexcept {
   return impl_->planner->replanForwardSeconds();
 }

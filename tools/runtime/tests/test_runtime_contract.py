@@ -308,6 +308,8 @@ class RuntimeContractTest(unittest.TestCase):
             mapping = yaml.safe_load(mapping_path.read_text(encoding="utf-8"))
             external = yaml.safe_load(external_path.read_text(encoding="utf-8"))
             expected = {
+                "mode": "relaxed",
+                "tracking_gate_relaxed": False,
                 "base_m": 0.25,
                 "lateral_alpha_s": 0.06,
                 "longitudinal_beta_s": 0.17,
@@ -320,6 +322,137 @@ class RuntimeContractTest(unittest.TestCase):
                 external["px4_navigation_external_mode"]["ros__parameters"]["tracking_experiment"],
                 expected,
             )
+
+    def test_tracking_off_is_explicit_in_both_generated_configs(self) -> None:
+        experiment = runner._tracking_experiment_payload("off")
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = SimpleNamespace(directory=Path(temporary))
+            for builder, source, node in (
+                (runner._mapping_params, "mapping.yaml", "navigation_runtime_node"),
+                (runner._external_mode_params, "external_mode.yaml", "px4_navigation_external_mode"),
+            ):
+                target = builder(
+                    session, ROOT / "config/runtime" / source,
+                    tracking_experiment=experiment,
+                )
+                params = yaml.safe_load(target.read_text(encoding="utf-8"))[
+                    node]["ros__parameters"]["tracking_experiment"]
+                self.assertEqual(params["mode"], "off")
+                self.assertFalse(params["tracking_gate_relaxed"])
+
+            (session.directory / "metadata.json").write_text(
+                json.dumps({"tracking_experiment": experiment}), encoding="utf-8"
+            )
+            snapshot = session.directory / "config_snapshot"
+            snapshot.mkdir()
+            (snapshot / "navigation_runtime_params.yaml").write_text(
+                (session.directory / "navigation_runtime_params.yaml").read_text(),
+                encoding="utf-8",
+            )
+            (snapshot / "external_mode_params.yaml").write_text(
+                (session.directory / "external_mode_params.yaml").read_text(),
+                encoding="utf-8",
+            )
+            marker = report._tracking_experiment(session.directory)
+            self.assertEqual(marker["status"], "OK")
+            self.assertEqual(marker["mode"], "off")
+            self.assertFalse(marker["enabled"])
+            self.assertFalse(marker["suppress_braking"])
+            self.assertFalse(marker["suppress_estimator_health_response"])
+
+    def test_runtime_tracking_witness_must_match_before_mission(self) -> None:
+        requested = runner._tracking_experiment_payload("off")
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = SimpleNamespace(directory=Path(temporary))
+            (session.directory / "metadata.json").write_text(
+                json.dumps({"tracking_experiment": requested}), encoding="utf-8"
+            )
+            logs = session.directory / "logs"
+            logs.mkdir()
+            log = logs / "mapping.log"
+            log.write_text(
+                "RUNTIME_CONFIG_EFFECTIVE tracking_mode=off enabled=0 "
+                "suppress_braking=0 suppress_health=0 velocity_only=0\n"
+                "RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=0 alpha=0 beta=0 "
+                "velocity_gain=0 velocity_cap=0 velocity_accel=0 velocity_jerk=0 "
+                "velocity_timing=0 velocity_reference_age=0 velocity_transport=0 "
+                "velocity_px4_consume=0\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(runner, "_wait_for_log_fragment"):
+                effective = runner._check_effective_tracking_configuration(
+                    session, "mapping", requested
+                )
+                self.assertFalse(effective["suppress_braking"])
+                metadata = json.loads((session.directory / "metadata.json").read_text())
+                self.assertEqual(
+                    metadata["runtime_configuration"]["mapping"]["source"],
+                    "logs/mapping.log:RUNTIME_CONFIG_EFFECTIVE",
+                )
+                marker = report._tracking_experiment(session.directory)
+                self.assertEqual(marker["effective_by_node"]["mapping"]["effective"], effective)
+                metadata["runtime_configuration"]["mapping"]["effective"]["enabled"] = True
+                (session.directory / "metadata.json").write_text(
+                    json.dumps(metadata), encoding="utf-8"
+                )
+                self.assertTrue(report._tracking_experiment(session.directory)["config_mismatch"])
+                log.write_text(
+                    "RUNTIME_CONFIG_EFFECTIVE tracking_mode=relaxed enabled=1 "
+                    "suppress_braking=1 suppress_health=1 velocity_only=0\n"
+                    "RUNTIME_CONFIG_EFFECTIVE tracking_bounds base=0 alpha=0 beta=0 "
+                    "velocity_gain=0 velocity_cap=0 velocity_accel=0 velocity_jerk=0 "
+                    "velocity_timing=0 velocity_reference_age=0 velocity_transport=0 "
+                    "velocity_px4_consume=0\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(RuntimeError, "CONFIGURATION_MISMATCH"):
+                    runner._check_effective_tracking_configuration(
+                        session, "mapping", requested
+                    )
+                log.write_text("node started without policy witness\n", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "CONFIGURATION_MISMATCH"):
+                    runner._check_effective_tracking_configuration(
+                        session, "mapping", requested
+                    )
+
+    def test_runtime_planner_witness_must_match_before_mission(self) -> None:
+        faults = {
+            "cycle": 0, "once": False, "when_safe": False,
+            "after_handoff": False, "repeated": False,
+            "rest_repeated": False, "exact_optimization": False,
+            "renewal_ordinal": 0,
+        }
+        dynamics = {"velocity": 5.0, "acceleration": 5.0, "jerk": 8.0}
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = SimpleNamespace(directory=Path(temporary))
+            (session.directory / "metadata.json").write_text("{}", encoding="utf-8")
+            logs = session.directory / "logs"
+            logs.mkdir()
+            log = logs / "mapping.log"
+            log.write_text(
+                "RUNTIME_CONFIG_EFFECTIVE planner_fault cycle=0 once=0 when_safe=0 "
+                "after_handoff=0 repeated=0 rest_repeated=0 exact_optimization=0 "
+                "renewal_ordinal=0\n"
+                "RUNTIME_CONFIG_EFFECTIVE dynamics velocity=5 acceleration=5 jerk=8\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(runner, "_wait_for_log_fragment"):
+                runner._check_effective_planner_configuration(
+                    session, faults, dynamics
+                )
+                metadata = json.loads((session.directory / "metadata.json").read_text())
+                self.assertEqual(
+                    metadata["runtime_configuration"]["dynamics"]["effective"],
+                    dynamics,
+                )
+                with self.assertRaisesRegex(RuntimeError, "CONFIGURATION_MISMATCH"):
+                    runner._check_effective_planner_configuration(
+                        session, {**faults, "exact_optimization": True}, dynamics
+                    )
+                with self.assertRaisesRegex(RuntimeError, "CONFIGURATION_MISMATCH"):
+                    runner._check_effective_planner_configuration(
+                        session, faults, {**dynamics, "jerk": 4.0}
+                    )
 
     def test_tracking_experiment_report_marker_is_read_posthoc(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
@@ -1200,6 +1333,8 @@ class RuntimeContractTest(unittest.TestCase):
             )
             policy = document[node_name]["ros__parameters"]["tracking_experiment"]
             self.assertEqual(policy, {
+                "mode": "off",
+                "tracking_gate_relaxed": False,
                 "base_m": 0.0,
                 "lateral_alpha_s": 0.0,
                 "longitudinal_beta_s": 0.0,
