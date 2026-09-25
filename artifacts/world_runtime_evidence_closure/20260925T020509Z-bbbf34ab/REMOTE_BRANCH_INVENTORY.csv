@@ -1,0 +1,28 @@
+branch,head_sha,merge_base_with_candidate,candidate_ahead,branch_ahead,branch_head_is_ancestor,classification,notes
+origin/codex/as-is-architecture-audit-20260920,f2bd3f46f9936d622377ea4761f733f988273b66,9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2,79,2,no,AUDIT_ARCHIVAL_ONLY,Unique delta contains artifacts/docs paths only.
+origin/codex/audit-claim-validation,f2ed429bef80b2c7a2964b3b32d3c00e8089e55f,8eaab3d33db36e9e636ad4005ed91b8f055f4d68,78,1,no,AUDIT_ARCHIVAL_ONLY,Unique delta contains artifacts/docs paths only.
+origin/codex/audit-runtime-evidence-closure-20260923,8334e1f1c3c3064d63d5f136d43fcfe218514540,7da3e97cb399c2e39d62cfe60213a45e8a92300e,77,4,no,AUDIT_ARCHIVAL_ONLY,Unique delta contains artifacts/docs paths only.
+origin/codex/audit-runtime-observability-20260923,84abeeb2ae379b7483e32520c68043337de71312,7da3e97cb399c2e39d62cfe60213a45e8a92300e,77,5,no,AUDIT_ARCHIVAL_ONLY,Unique delta contains artifacts/docs paths only.
+origin/codex/audit-semantic-closure-20260923,c9ab99e20e78d92dc4cd04be25a9f623915e0296,7da3e97cb399c2e39d62cfe60213a45e8a92300e,77,3,no,AUDIT_ARCHIVAL_ONLY,Unique delta contains artifacts/docs paths only.
+origin/codex/audit-state-authority-conservation-20260923,02ed671a47cb701e02f554a7d2949f9892ec704c,7da3e97cb399c2e39d62cfe60213a45e8a92300e,77,2,no,AUDIT_ARCHIVAL_ONLY,Unique delta contains artifacts/docs paths only.
+origin/codex/audit-state-contracts-20260921T013409Z-8eaab3d3,6ff508217778aa42e60e208d4dd0a49785a4fae6,8eaab3d33db36e9e636ad4005ed91b8f055f4d68,78,2,no,AUDIT_ARCHIVAL_ONLY,Unique delta contains artifacts/docs paths only.
+origin/codex/close-findings-followup,9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2,9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2,79,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/close-findings-implementation,bcff7c96bea3c54f6a632139e4af4bd8c96e6dab,9534d8dc15920c8b3e80c8fa12f28ec972b8c6a2,79,7,no,MISSING_FIX,Two unique semantic behaviors are absent; see commit audit.
+origin/codex/close-proven-findings,7da3e97cb399c2e39d62cfe60213a45e8a92300e,7da3e97cb399c2e39d62cfe60213a45e8a92300e,77,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/evidence-exact-planner-failure-status-20260924,2b9279b42f3dce0d2565e4ef008852b018baf99f,2b9279b42f3dce0d2565e4ef008852b018baf99f,44,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/experiment-runtime-observability-instrumentation-20260923,d926013eff4d46af9756427dd53a8028710f2765,7da3e97cb399c2e39d62cfe60213a45e8a92300e,77,8,no,EXPERIMENT_ONLY,Diagnostic experiment; do not merge as product branch.
+origin/codex/major-runtime-boundary-hardening-20260924,4d184896e6c2680311ef246bd2cde61bc4ee2e88,4d184896e6c2680311ef246bd2cde61bc4ee2e88,38,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/migrate-core-mission-progress-20260923,db5880a05ffbb82f3f528bc18934af0cb0390bab,db5880a05ffbb82f3f528bc18934af0cb0390bab,71,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/post-evidence-policy-decisions-20260924,c422b8485a372e5b3a792682ef0773784b6cf1c4,c422b8485a372e5b3a792682ef0773784b6cf1c4,9,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/qualification-evidence-contract-closure-20260924,b39661ae16036ae6199077a03736ece81e79d4d1,b39661ae16036ae6199077a03736ece81e79d4d1,11,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/qualification-gate-recovery-state-transport-20260924,dee89a7ee7fff0199e2ca02b3b1166b9c8285fdb,dee89a7ee7fff0199e2ca02b3b1166b9c8285fdb,25,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/qualification-product-stability-terminal-temporal-20260924,748b8e3924a0042b975382468d675df4c987a3c2,748b8e3924a0042b975382468d675df4c987a3c2,19,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/refactor-adapter-admission-control-contract-20260924,68e718d424829201dd53729cab2878348b8722fc,68e718d424829201dd53729cab2878348b8722fc,41,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/refactor-desired-intent-and-legacy-state-20260923,49e9c0e8c56f39b80e5ad959999ccbd358c1ca64,49e9c0e8c56f39b80e5ad959999ccbd358c1ca64,59,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/repair-core-mission-execution-liveness-20260923,8ffa14e528f9d28f1a37850eb3a7dbf752f9e90c,8ffa14e528f9d28f1a37850eb3a7dbf752f9e90c,70,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/repair-failclosed-ownership-fencing-20260924,b640a25d7caf41059d3bcecd4823ceb3b5790bab,b640a25d7caf41059d3bcecd4823ceb3b5790bab,56,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/shadow-reducer-diagnostic-20260923,9b16aa9a7d05d1ec92295d32552d46a1fc6d671a,7da3e97cb399c2e39d62cfe60213a45e8a92300e,77,9,no,EXPERIMENT_ONLY,Diagnostic experiment; do not merge as product branch.
+origin/codex/software-qualification-witness-closure-20260925,647a51b060a6b2d0f66b6eb3c69dd990fd20986a,647a51b060a6b2d0f66b6eb3c69dd990fd20986a,1,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/unify-execution-authority-owner-20260923,ba9c15a1214ca8ba54ec8f301f1e4056a3322848,ba9c15a1214ca8ba54ec8f301f1e4056a3322848,62,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/codex/world-temporal-contract-hardening-20260925,bbbf34ab550e556e1e722186b2ee87f714b1d60d,bbbf34ab550e556e1e722186b2ee87f714b1d60d,0,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
+origin/main,287b7b84cf4311e31d52ca04796223cc4efc1bc5,287b7b84cf4311e31d52ca04796223cc4efc1bc5,83,0,yes,CANONICAL_ANCESTOR,Head is an ancestor of pinned candidate.
