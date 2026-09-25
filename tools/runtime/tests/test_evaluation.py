@@ -17,6 +17,7 @@ from evaluation import (
     evaluate_timing,
     load_evaluation_inputs,
     reduce_lifecycle,
+    reduce_world_transactions,
 )
 
 
@@ -153,6 +154,176 @@ def complete_writer_stats(categories):
 
 
 class EvaluationTest(unittest.TestCase):
+    def test_world_transaction_reducer_uses_exact_identity_and_writer_accounting(self):
+        event = {
+            "producer_runtime_instance_id": "runtime-a",
+            "producer_event_sequence": "2",
+            "event_kind": "WORLD_COMMAND_SUSPENDED",
+            "disposition": "SUSPENDED_SOURCE_STALE",
+            "transaction_key": "8:3:4:12:900",
+            "prior_world_localization_epoch": "3",
+            "prior_world_generation": "4",
+            "prior_world_revision": "11",
+            "prior_world_source_stamp_ns": "800",
+            "next_world_localization_epoch": "3",
+            "next_world_generation": "4",
+            "next_world_revision": "12",
+            "next_world_source_stamp_ns": "900",
+            "before_timeline_version": "8",
+            "after_timeline_version": "9",
+            "before_active_generation": "7",
+            "before_active_goal_epoch": "9",
+            "before_active_request_id": "11",
+            "after_active_generation": "7",
+            "after_active_goal_epoch": "9",
+            "after_active_request_id": "11",
+            "before_pending_generation": "0",
+            "after_pending_generation": "0",
+        }
+        writer = {
+            "records_by_category": {
+                "world_transaction": {
+                    "submitted_records": 1, "accepted_records": 1,
+                    "written_records": 1, "dropped_records": 0,
+                },
+                "world_transaction_producer_count": {
+                    "submitted_records": 1, "accepted_records": 1,
+                    "written_records": 1, "dropped_records": 0,
+                },
+            },
+            "serialization_error_count": 0,
+            "write_error_count": 0,
+        }
+        reduced = reduce_world_transactions(
+            [event], [{"producer_runtime_instance_id": "runtime-a",
+                       "events_produced": 2}], writer, required=True,
+            expected_event_kinds=["WORLD_COMMAND_SUSPENDED"],
+            expected_transaction_count=1,
+        )
+        self.assertEqual(reduced["status"], "RESOLVED")
+        self.assertEqual(reduced["required_world_transactions"], 1)
+        self.assertEqual(reduced["required_world_events_written"], 1)
+
+    def test_world_transaction_reducer_rejects_conflicting_sequence_and_loss(self):
+        base = {
+            "producer_runtime_instance_id": "runtime-a",
+            "producer_event_sequence": "1",
+            "event_kind": "WORLD_PUBLICATION_COMMITTED",
+            "disposition": "COMMITTED",
+            "transaction_key": "8:3:4:12:900",
+            "next_world_localization_epoch": "3",
+            "next_world_generation": "4",
+            "next_world_revision": "12",
+            "next_world_source_stamp_ns": "900",
+            "before_timeline_version": "8",
+            "after_timeline_version": "9",
+            "before_active_generation": "0",
+            "after_active_generation": "0",
+            "before_pending_generation": "0",
+            "after_pending_generation": "0",
+        }
+        conflicting = {**base, "disposition": "ACTIVE_INVALIDATED"}
+        writer = {
+            "records_by_category": {"world_transaction": {
+                "submitted_records": 2, "accepted_records": 1,
+                "written_records": 1, "dropped_records": 1,
+            }},
+            "serialization_error_count": 0,
+            "write_error_count": 0,
+        }
+        reduced = reduce_world_transactions(
+            [base, conflicting], [{"producer_runtime_instance_id": "runtime-a",
+                                  "events_produced": 1}], writer,
+            required=True,
+            expected_event_kinds=["WORLD_PUBLICATION_COMMITTED"],
+            expected_transaction_count=1,
+        )
+        self.assertEqual(reduced["status"], "CONFLICTING")
+        self.assertEqual(reduced["required_world_conflicts"], 1)
+        self.assertGreater(reduced["required_world_unresolved"], 0)
+
+    def test_session_world_requirements_override_nonempty_report_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session = Path(directory)
+            (session / "scenario_config.yaml").write_text(
+                "scenario:\n"
+                "  world_evidence_required: true\n"
+                "  required_world_event_kinds: [WORLD_COMMAND_SUSPENDED]\n"
+                "  required_world_transactions: 1\n",
+                encoding="utf-8",
+            )
+            (session / "scenario.json").write_text("{}\n", encoding="utf-8")
+            (session / "metadata.json").write_text("{}\n", encoding="utf-8")
+            (session / "monitor.json").write_text("{}\n", encoding="utf-8")
+            (session / "scenario.jsonl").write_text("", encoding="utf-8")
+            (session / "samples.jsonl").write_text("", encoding="utf-8")
+
+            loaded = load_evaluation_inputs(session, {
+                "scenario": {"map_profile": "long_featured"},
+                "evaluation": {"tracking_coverage_policy": {"version": "fixture"}},
+            })
+
+        self.assertTrue(loaded["world_evidence_required"])
+        self.assertEqual(
+            loaded["world_transaction_reduction"]["required_world_transactions"], 1
+        )
+        self.assertGreater(
+            loaded["world_transaction_reduction"]["required_world_unresolved"], 0
+        )
+        self.assertEqual(loaded["config"]["scenario"]["map_profile"], "long_featured")
+        self.assertEqual(
+            loaded["config"]["evaluation"]["tracking_coverage_policy"]["version"],
+            "fixture",
+        )
+
+    def test_world_transaction_reducer_rejects_sequence_holes_and_missing_count_writer(self):
+        base = {
+            "producer_runtime_instance_id": "runtime-a",
+            "event_kind": "WORLD_PUBLICATION_COMMITTED",
+            "disposition": "COMMITTED",
+            "transaction_key": "8:3:4:12:900",
+            "next_world_localization_epoch": "3",
+            "next_world_generation": "4",
+            "next_world_revision": "12",
+            "next_world_source_stamp_ns": "900",
+            "before_timeline_version": "8",
+            "after_timeline_version": "9",
+            "before_active_generation": "0",
+            "after_active_generation": "0",
+            "before_pending_generation": "0",
+            "after_pending_generation": "0",
+        }
+        events = [
+            {**base, "producer_event_sequence": "4"},
+            {**base, "producer_event_sequence": "6",
+             "transaction_key": "9:3:4:13:901",
+             "before_timeline_version": "9",
+             "next_world_revision": "13",
+             "next_world_source_stamp_ns": "901"},
+        ]
+        categories = {
+            "world_transaction": {
+                "submitted_records": 2, "accepted_records": 2,
+                "written_records": 2, "dropped_records": 0,
+            },
+        }
+        writer = {
+            "records_by_category": categories,
+            "serialization_error_count": 0,
+            "write_error_count": 0,
+        }
+        reduced = reduce_world_transactions(
+            events, [{"producer_runtime_instance_id": "runtime-a",
+                      "events_produced": 7}], writer, required=True,
+            expected_event_kinds=["WORLD_PUBLICATION_COMMITTED"],
+            expected_transaction_count=2,
+        )
+        self.assertEqual(reduced["status"], "INCOMPLETE")
+        reasons = {item["reason"] for item in reduced["unresolved"]}
+        self.assertIn("WORLD_PRODUCER_SEQUENCE_GAP", reasons)
+        self.assertIn("WORLD_EVENT_TAIL_MISSING", reasons)
+        self.assertIn("WORLD_WRITER_CATEGORY_ACCOUNTING_MISSING", reasons)
+
     def test_source_timestamp_policy_distinguishes_duplicate_and_regression(self):
         rows = [truth(stamp, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
                 for stamp in (1_000_000_000, 1_000_000_000)]

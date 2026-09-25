@@ -376,6 +376,18 @@ class NavigationRuntimeNode final : public rclcpp::Node {
       const std::optional<TerminalMonitorBoundary>& terminal_monitor = std::nullopt);
   void suspendCommandForWorldFreshness(
       const navigation_execution::ExecutionAuthoritySnapshot& expected);
+  // Diagnostic-only immutable transaction witness. It is emitted after the
+  // owner transaction has linearized and never feeds back into admission.
+  void publishWorldTransactionWitness(
+      const std::string& event_kind,
+      const navigation_world_model::WorldSnapshotIdentity& prior_world,
+      const navigation_world_model::WorldSnapshotIdentity& next_world,
+      const navigation_execution::ExecutionAuthoritySnapshot& before,
+      const navigation_execution::ExecutionAuthoritySnapshot& after,
+      const std::string& disposition,
+      int active_validation_path,
+      int pending_validation_path,
+      const std::string& temporal_assessment_reason = "NOT_APPLICABLE");
   // Ingress serialization remains held while this temporarily releases the
   // lifecycle owner lock to drain old mapping work.
   void resetForLocalizationEpochLocked(
@@ -524,6 +536,7 @@ class NavigationRuntimeNode final : public rclcpp::Node {
   std::atomic_uint64_t world_snapshot_freshness_rejection_count_{0};
   std::atomic_uint64_t world_freshness_command_suspend_count_{0};
   std::atomic_uint64_t world_freshness_command_recovery_count_{0};
+  std::atomic_uint64_t world_transaction_event_sequence_{0};
   std::atomic_uint64_t command_execution_lease_rejection_count_{0};
   std::atomic_uint64_t command_execution_lease_terminal_latch_count_{0};
   std::atomic_uint64_t command_publication_deadline_miss_count_{0};

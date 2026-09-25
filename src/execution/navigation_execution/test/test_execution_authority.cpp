@@ -1717,6 +1717,59 @@ TEST(TestExecutionAuthority, PreparationFailureRevokesExactActiveAndRetriesWorld
       *store.snapshot().world_identity, next_world));
 }
 
+TEST(TestExecutionAuthority, UnsafeFreshWorldRecertificationCannotResumeSuspendedExecution) {
+  navigation_execution::TestExecutionAuthority store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  const auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  store.suspendCommand();
+  const auto suspended = store.snapshot();
+  ASSERT_EQ(suspended.lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kSuspended);
+
+  const navigation_world_model::WorldSnapshotIdentity unsafe_world{3, 4, 2, 2};
+  unsigned int finalized = 0;
+  const auto reject_unsafe_world = [](
+      const navigation_planning::CandidateBundle&,
+      const navigation_world_model::WorldSnapshotIdentity&, std::int64_t)
+      -> std::shared_ptr<const navigation_planning::CandidateBundle> {
+    // Models the production continuous world validator rejecting the exact
+    // trajectory against the new immutable snapshot.
+    return {};
+  };
+  EXPECT_EQ(navigation_execution::ExecutionAuthorityTestAccess::publish(
+                store, unsafe_world, suspended, true, 300, false,
+                [&]() noexcept { ++finalized; }, reject_unsafe_world),
+            navigation_world_model::WorldCommitDecision::kCandidateRejected);
+  EXPECT_EQ(finalized, 1U);
+  const auto rejected = store.snapshot();
+  EXPECT_FALSE(rejected.active);
+  EXPECT_EQ(rejected.lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kFailed);
+  ASSERT_TRUE(rejected.world_identity);
+  EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+      *rejected.world_identity, world));
+
+  // Merely receiving a later fresh world cannot recreate or resume the
+  // rejected execution; a new certified candidate must be admitted instead.
+  const navigation_world_model::WorldSnapshotIdentity later_world{3, 4, 3, 3};
+  EXPECT_EQ(store.publishWorldIdentityIfCurrent(
+                later_world, rejected.version, rejected.active, false, 0,
+                rejected.pending, false),
+            navigation_world_model::WorldCommitDecision::kCommitted);
+  const auto after_fresh_world = store.snapshot();
+  EXPECT_FALSE(after_fresh_world.active);
+  EXPECT_EQ(after_fresh_world.lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kFailed);
+  ASSERT_TRUE(after_fresh_world.world_identity);
+  EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+      *after_fresh_world.world_identity, later_world));
+}
+
 TEST(TestExecutionAuthority, PendingPreparationFailureDoesNotRevokeActive) {
   navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};

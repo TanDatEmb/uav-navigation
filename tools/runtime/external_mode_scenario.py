@@ -734,7 +734,39 @@ class ExternalModeScenario:
         receive_ns = self._receive_time_ns()
         for status in message.status:
             values = self._diagnostic_values(status)
-            if status.name == "navigation_external_mode/ALIGNMENT_LATCH_WITNESS":
+            if status.name == "navigation_runtime/world_transaction_witness":
+                # This is a producer-owned immutable event from the Core
+                # publication/suspension boundary. Keep its declared identity
+                # verbatim; do not join it to a nearby map diagnostic.
+                payload = dict(values)
+                payload.update({
+                    "status_name": str(status.name),
+                    "event_message": str(status.message),
+                    "event_header_ros_ns": _time_ns(message.header.stamp),
+                    "observer_receive_ros_ns": receive_ns,
+                    "observer_receive_steady_ns": time.monotonic_ns(),
+                    "observer_runtime_instance_id": self.runtime_instance_id,
+                    "producer_runtime_instance_id": str(
+                        values.get("runtime_instance_id", "")),
+                    "session_id": self.session_id,
+                    "source": "navigation_runtime/world_transaction_witness",
+                })
+                self._record("world_transaction", payload)
+            elif status.name == "navigation_mapping/world_model":
+                produced = _integer_value(values.get("world_transaction_events_produced"))
+                if produced is not None:
+                    self._record("world_transaction_producer_count", {
+                        "events_produced": produced,
+                        "producer_runtime_instance_id": str(values.get(
+                            "world_transaction_runtime_instance_id", "")),
+                        "world_generation": _integer_value(values.get("world_generation")),
+                        "world_revision": _integer_value(values.get("world_revision")),
+                        "diagnostic_source_ros_ns": _time_ns(message.header.stamp),
+                        "observer_receive_ros_ns": receive_ns,
+                        "observer_receive_steady_ns": time.monotonic_ns(),
+                        "source": "navigation_mapping/world_model",
+                    })
+            elif status.name == "navigation_external_mode/ALIGNMENT_LATCH_WITNESS":
                 witness = {
                     "status_name": str(status.name),
                     "level": self._diagnostic_level(status),
@@ -949,6 +981,21 @@ class ExternalModeScenario:
             elif status.name == "navigation_runtime/planner":
                 planner_stamp = _integer_value(values.get("execution_stamp_ns")) or _time_ns(
                     message.header.stamp)
+                produced = _integer_value(values.get("world_transaction_events_produced"))
+                if produced is not None:
+                    self._record("world_transaction_producer_count", {
+                        "events_produced": produced,
+                        "producer_runtime_instance_id": str(values.get(
+                            "world_transaction_runtime_instance_id", "")),
+                        "localization_epoch": _integer_value(
+                            values.get("localization_epoch")),
+                        "world_generation": _integer_value(values.get("world_generation")),
+                        "world_revision": _integer_value(values.get("world_revision")),
+                        "diagnostic_source_ros_ns": _time_ns(message.header.stamp),
+                        "observer_receive_ros_ns": receive_ns,
+                        "observer_receive_steady_ns": time.monotonic_ns(),
+                        "source": "navigation_runtime/planner",
+                    })
                 self._record("planner_trace", {
                     "trace_source": "navigation_runtime/planner",
                     "source_stamp_ns": planner_stamp,

@@ -1222,6 +1222,274 @@ def _artifact_count_reasons(
     return reasons
 
 
+def reduce_world_transactions(
+    events: Iterable[dict[str, Any]],
+    producer_counts: Iterable[dict[str, Any]],
+    writer: dict[str, Any],
+    *,
+    required: bool = False,
+    expected_event_kinds: Iterable[str] = (),
+    expected_transaction_count: int | None = None,
+) -> dict[str, Any]:
+    """Reduce producer-declared World evidence by exact identity.
+
+    This is an evidence consistency reducer only. It does not assess or feed
+    WorldModel/ExecutionAuthority decisions. No event is associated by nearest
+    timestamp; the producer sequence and declared transaction key own joins.
+    """
+    normalized = [dict(item) for item in events if isinstance(item, dict)]
+    counts = [dict(item) for item in producer_counts if isinstance(item, dict)]
+    expected_kinds = tuple(str(item) for item in expected_event_kinds)
+    by_sequence: dict[tuple[str, int], tuple[Any, ...]] = {}
+    conflicts: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    transactions: dict[str, dict[str, Any]] = {}
+    for event in normalized:
+        sequence = _integer(event.get("producer_event_sequence"))
+        runtime_instance = str(event.get("producer_runtime_instance_id") or "")
+        kind = str(event.get("event_kind", ""))
+        tx_key = str(event.get("transaction_key", ""))
+        signature = tuple(event.get(key) for key in (
+            "event_kind", "disposition", "transaction_key",
+            "prior_world_generation", "prior_world_revision",
+            "prior_world_source_stamp_ns", "next_world_generation",
+            "next_world_revision", "next_world_source_stamp_ns",
+            "before_timeline_version", "after_timeline_version",
+            "before_active_generation", "after_active_generation",
+            "before_pending_generation", "after_pending_generation",
+        ))
+        if sequence is None or sequence <= 0 or not runtime_instance or not kind or not tx_key:
+            unresolved.append({"producer_event_sequence": sequence,
+                              "reason": "WORLD_EVENT_IDENTITY_MISSING"})
+            continue
+        identity_fields = (
+            "before_timeline_version", "after_timeline_version",
+            "next_world_localization_epoch", "next_world_generation",
+            "next_world_revision", "next_world_source_stamp_ns",
+        )
+        identity = {field: _integer(event.get(field)) for field in identity_fields}
+        if (any(value is None or value <= 0 for field, value in identity.items()
+                if field != "next_world_source_stamp_ns") or
+                identity["next_world_source_stamp_ns"] is None or
+                identity["next_world_source_stamp_ns"] < 0):
+            unresolved.append({"producer_event_sequence": sequence,
+                               "reason": "WORLD_EVENT_REFERENCE_MISSING"})
+        expected_key = ":".join(str(identity[field]) for field in (
+            "before_timeline_version", "next_world_localization_epoch",
+            "next_world_generation", "next_world_revision",
+            "next_world_source_stamp_ns"))
+        if tx_key != expected_key:
+            conflicts.append({"producer_event_sequence": sequence,
+                              "reason": "WORLD_TRANSACTION_KEY_MISMATCH",
+                              "transaction_key": tx_key,
+                              "expected_transaction_key": expected_key})
+        for prefix in ("before", "after"):
+            active_generation = _integer(event.get(f"{prefix}_active_generation"))
+            pending_generation = _integer(event.get(f"{prefix}_pending_generation"))
+            if active_generation is None or active_generation < 0 or \
+                    pending_generation is None or pending_generation < 0:
+                unresolved.append({"producer_event_sequence": sequence,
+                                   "reason": f"WORLD_{prefix.upper()}_EXECUTION_IDENTITY_MISSING"})
+                continue
+            if active_generation > 0 and any(
+                (_integer(event.get(f"{prefix}_active_{field}")) or 0) <= 0
+                for field in ("goal_epoch", "request_id")
+            ):
+                unresolved.append({"producer_event_sequence": sequence,
+                                   "reason": f"WORLD_{prefix.upper()}_ACTIVE_IDENTITY_INCOMPLETE"})
+            if pending_generation > 0 and any(
+                (_integer(event.get(f"{prefix}_pending_{field}")) or 0) <= 0
+                for field in ("goal_epoch", "request_id")
+            ):
+                unresolved.append({"producer_event_sequence": sequence,
+                                   "reason": f"WORLD_{prefix.upper()}_PENDING_IDENTITY_INCOMPLETE"})
+        sequence_key = (runtime_instance, sequence)
+        previous = by_sequence.get(sequence_key)
+        if previous is not None:
+            if previous != signature:
+                conflicts.append({"producer_event_sequence": sequence,
+                                  "reason": "WORLD_EVENT_SEQUENCE_CONFLICT"})
+            continue
+        by_sequence[sequence_key] = signature
+        item = transactions.setdefault(tx_key, {
+            "transaction_key": tx_key,
+            "events": [],
+            "status": "RESOLVED",
+        })
+        item["events"].append(kind)
+        if kind == "WORLD_PUBLICATION_SUPERSEDED":
+            item["status"] = "SUPERSEDED"
+        elif kind == "WORLD_COMMAND_SUSPENDED":
+            item["status"] = "SUSPENDED"
+        elif kind == "WORLD_COMMAND_RECERTIFIED":
+            item["status"] = "RECERTIFIED"
+        elif kind == "WORLD_COMMAND_RESUMED":
+            item["status"] = "RESUMED"
+        elif kind == "WORLD_PUBLICATION_FAILED" or kind == "WORLD_RECERTIFICATION_REJECTED":
+            item["status"] = "INVALIDATED"
+        elif kind == "WORLD_PUBLICATION_COMMITTED":
+            item["status"] = (
+                "INVALIDATED" if "INVALIDATED" in str(event.get("disposition", ""))
+                else "RESOLVED"
+            )
+
+    sequences_by_runtime: dict[str, list[int]] = {}
+    for runtime_instance, sequence in by_sequence:
+        sequences_by_runtime.setdefault(runtime_instance, []).append(sequence)
+    sequence_gaps: list[dict[str, Any]] = []
+    for runtime_instance, sequences in sequences_by_runtime.items():
+        ordered = sorted(sequences)
+        sequence_gaps.extend({
+            "runtime_instance_id": runtime_instance,
+            "missing_sequences": [left + 1, right - 1],
+        } for left, right in zip(ordered, ordered[1:]) if right > left + 1)
+    counter_values_by_runtime: dict[str, list[int]] = {}
+    for item in counts:
+        runtime_instance = str(item.get("producer_runtime_instance_id") or "")
+        value = _integer(item.get("events_produced"))
+        if not runtime_instance or value is None or value < 0:
+            unresolved.append({"reason": "WORLD_PRODUCER_COUNTER_IDENTITY_MISSING"})
+            continue
+        counter_values_by_runtime.setdefault(runtime_instance, []).append(value)
+    for runtime_instance, values in counter_values_by_runtime.items():
+        if any(right < left for left, right in zip(values, values[1:])):
+            unresolved.append({"reason": "WORLD_PRODUCER_COUNTER_REGRESSION",
+                               "runtime_instance_id": runtime_instance})
+    producer_runtime_ids = set(sequences_by_runtime) | set(counter_values_by_runtime)
+    produced_by_runtime = {
+        runtime: max(values) for runtime, values in counter_values_by_runtime.items()
+    }
+    produced_total = max(produced_by_runtime.values(), default=None)
+    all_observed_sequences = [sequence for values in sequences_by_runtime.values()
+                              for sequence in values]
+    first_observed_sequence = min(all_observed_sequences, default=None)
+    last_observed_sequence = max(all_observed_sequences, default=None)
+    category = writer.get("records_by_category", {}).get("world_transaction", {})
+    count_category = writer.get("records_by_category", {}).get(
+        "world_transaction_producer_count", {})
+    written = _integer(category.get("written_records"))
+    submitted = _integer(category.get("submitted_records"))
+    dropped = _integer(category.get("dropped_records"))
+    writer_errors = (_integer(writer.get("serialization_error_count")) or 0) + (
+        _integer(writer.get("write_error_count")) or 0)
+    expected_missing = sorted(set(expected_kinds) - {
+        str(event.get("event_kind", "")) for event in normalized
+    })
+    reference_missing = sum(
+        not all((_integer(event.get(field)) or 0) > 0 for field in (
+            "next_world_localization_epoch", "next_world_generation",
+            "next_world_revision", "next_world_source_stamp_ns",
+        ))
+        for event in normalized
+    )
+    reference_conflicts = sum(
+        item.get("reason") in {
+            "WORLD_TRANSACTION_KEY_MISMATCH", "WORLD_EVENT_SEQUENCE_CONFLICT",
+            "WORLD_EVENT_AHEAD_OF_PRODUCER_COUNT",
+        }
+        for item in conflicts
+    )
+    if sequence_gaps:
+        unresolved.extend({"reason": "WORLD_PRODUCER_SEQUENCE_GAP", **gap}
+                          for gap in sequence_gaps)
+    if written is not None and written != len(normalized):
+        unresolved.append({"reason": "WORLD_WRITER_ARTIFACT_COUNT_MISMATCH"})
+    if dropped:
+        unresolved.append({"reason": "WORLD_EVIDENCE_DROPPED", "count": dropped})
+    if writer_errors:
+        unresolved.append({"reason": "WORLD_EVIDENCE_WRITER_ERROR", "count": writer_errors})
+    count_written = _integer(count_category.get("written_records"))
+    count_dropped = _integer(count_category.get("dropped_records"))
+    if count_written is not None and count_written != len(counts):
+        unresolved.append({"reason": "WORLD_PRODUCER_COUNT_ARTIFACT_MISMATCH"})
+    if count_dropped:
+        unresolved.append({"reason": "WORLD_PRODUCER_COUNT_DROPPED",
+                           "count": count_dropped})
+    if required:
+        if not expected_kinds:
+            unresolved.append({"reason": "WORLD_EXPECTED_EVENT_KINDS_MISSING"})
+        unresolved.extend({"reason": "REQUIRED_WORLD_EVENT_MISSING", "event_kind": kind}
+                          for kind in expected_missing)
+        if produced_total is None or not counts:
+            unresolved.append({"reason": "WORLD_PRODUCER_COUNT_WITNESS_MISSING"})
+        if len(producer_runtime_ids) != 1:
+            unresolved.append({"reason": "WORLD_RUNTIME_INSTANCE_CHANGED_OR_MISSING",
+                               "runtime_instance_ids": sorted(producer_runtime_ids)})
+        for runtime_instance, produced in produced_by_runtime.items():
+            observed = sorted(sequences_by_runtime.get(runtime_instance, []))
+            if observed and observed[-1] < produced:
+                unresolved.append({"reason": "WORLD_EVENT_TAIL_MISSING",
+                                   "runtime_instance_id": runtime_instance,
+                                   "last_event_sequence": observed[-1],
+                                   "producer_count": produced})
+            elif observed and produced < observed[-1]:
+                conflicts.append({"reason": "WORLD_EVENT_AHEAD_OF_PRODUCER_COUNT",
+                                  "runtime_instance_id": runtime_instance,
+                                  "last_event_sequence": observed[-1],
+                                  "producer_count": produced})
+        if expected_transaction_count is None or expected_transaction_count < 0:
+            unresolved.append({"reason": "WORLD_EXPECTED_TRANSACTION_COUNT_MISSING"})
+        elif len(transactions) < expected_transaction_count:
+            unresolved.append({"reason": "WORLD_REQUIRED_TRANSACTION_MISSING",
+                               "expected": expected_transaction_count,
+                               "observed": len(transactions)})
+    event_written = _integer(category.get("written_records"))
+    event_submitted = _integer(category.get("submitted_records"))
+    event_accepted = _integer(category.get("accepted_records"))
+    event_dropped = _integer(category.get("dropped_records"))
+    count_written = _integer(count_category.get("written_records"))
+    count_submitted = _integer(count_category.get("submitted_records"))
+    count_accepted = _integer(count_category.get("accepted_records"))
+    count_dropped = _integer(count_category.get("dropped_records"))
+    if required:
+        if any(value is None for value in (
+            event_written, event_submitted, event_accepted, event_dropped,
+            count_written, count_submitted, count_accepted, count_dropped,
+        )):
+            unresolved.append({"reason": "WORLD_WRITER_CATEGORY_ACCOUNTING_MISSING"})
+        if event_written is not None and event_written != len(normalized):
+            unresolved.append({"reason": "WORLD_WRITER_ARTIFACT_COUNT_MISMATCH"})
+        if count_written is not None and count_written != len(counts):
+            unresolved.append({"reason": "WORLD_PRODUCER_COUNT_ARTIFACT_MISMATCH"})
+        for label, submitted_value, accepted_value, written_value, dropped_value in (
+            ("EVENT", event_submitted, event_accepted, event_written, event_dropped),
+            ("COUNT", count_submitted, count_accepted, count_written, count_dropped),
+        ):
+            if None not in (submitted_value, accepted_value, written_value, dropped_value) and (
+                submitted_value != accepted_value + dropped_value or
+                accepted_value != written_value
+            ):
+                unresolved.append({"reason": f"WORLD_{label}_WRITER_ACCOUNTING_MISMATCH"})
+    return {
+        "required": bool(required),
+        "status": "CONFLICTING" if conflicts else
+                  "INCOMPLETE" if required and unresolved else "RESOLVED",
+        "required_world_transactions": (
+            expected_transaction_count if required and
+            expected_transaction_count is not None else 0),
+        "resolved_world_transactions": len(transactions),
+        "required_world_unresolved": len(unresolved) if required else 0,
+        "required_world_conflicts": len(conflicts) if required else 0,
+        "required_world_reference_missing": reference_missing if required else 0,
+        "required_world_reference_conflicts": reference_conflicts if required else 0,
+        "required_world_events_produced": produced_total,
+        "required_world_events_observed": len(normalized),
+        "first_observed_producer_sequence": first_observed_sequence,
+        "last_observed_producer_sequence": last_observed_sequence,
+        "required_world_events_submitted": submitted,
+        "required_world_events_written": written,
+        "required_world_events_dropped": dropped,
+        "required_world_events_serialization_failures":
+            _integer(writer.get("serialization_error_count")) or 0,
+        "required_world_events_writer_failures":
+            _integer(writer.get("write_error_count")) or 0,
+        "sequence_gaps": sequence_gaps,
+        "transactions": list(transactions.values()),
+        "unresolved": unresolved,
+        "conflicts": conflicts,
+    }
+
+
 def load_evaluation_inputs(
     session: Path,
     config: dict[str, Any] | None = None,
@@ -1297,14 +1565,36 @@ def load_evaluation_inputs(
         if event.get("kind") == "px4_input_trace"
         and isinstance(event.get("payload"), dict)
     ]
-    actual_config = config if isinstance(config, dict) else {}
-    if not actual_config:
-        try:
-            import yaml
-            raw = yaml.safe_load((session / "scenario_config.yaml").read_text(encoding="utf-8"))
-            actual_config = raw if isinstance(raw, dict) else {}
-        except (ImportError, OSError, ValueError):
-            actual_config = {}
+    world_transactions = [
+        event.get("payload", {}) for event in scenario_events
+        if event.get("kind") == "world_transaction"
+        and isinstance(event.get("payload"), dict)
+    ]
+    world_producer_counts = [
+        event.get("payload", {}) for event in scenario_events
+        if event.get("kind") == "world_transaction_producer_count"
+        and isinstance(event.get("payload"), dict)
+    ]
+    actual_config = dict(config) if isinstance(config, dict) else {}
+    # The report builder supplies its runtime/evaluation config, which can be
+    # non-empty while omitting the per-run scenario overlay.  Always merge the
+    # immutable session manifest so run-specific evidence requirements (for
+    # example required World transactions) are not silently lost.
+    try:
+        import yaml
+        raw = yaml.safe_load((session / "scenario_config.yaml").read_text(encoding="utf-8"))
+        session_config = raw if isinstance(raw, dict) else {}
+    except (ImportError, OSError, ValueError):
+        session_config = {}
+    if session_config:
+        merged_config = dict(actual_config)
+        configured_scenario = actual_config.get("scenario", {})
+        session_scenario = session_config.get("scenario", {})
+        merged_scenario = dict(configured_scenario) if isinstance(configured_scenario, dict) else {}
+        if isinstance(session_scenario, dict):
+            merged_scenario.update(session_scenario)
+        merged_config["scenario"] = merged_scenario
+        actual_config = merged_config
     configured_scenario = actual_config.get("scenario", {}) if isinstance(actual_config, dict) else {}
     if not isinstance(configured_scenario, dict):
         configured_scenario = {}
@@ -1335,6 +1625,23 @@ def load_evaluation_inputs(
     if not isinstance(monitor_writer, dict):
         monitor_writer = {}
     lifecycle_reduction = reduce_lifecycle(lifecycle, px4_input_trace)
+    world_required = bool(
+        scenario.get("world_evidence_required", False) or
+        configured_scenario.get("world_evidence_required", False)
+    )
+    expected_world_kinds = scenario.get(
+        "required_world_event_kinds",
+        configured_scenario.get("required_world_event_kinds", ()),
+    )
+    if not isinstance(expected_world_kinds, (list, tuple)):
+        expected_world_kinds = ()
+    world_transaction_reduction = reduce_world_transactions(
+        world_transactions, world_producer_counts, writer,
+        required=world_required, expected_event_kinds=expected_world_kinds,
+        expected_transaction_count=_integer(scenario.get(
+            "required_world_transactions",
+            configured_scenario.get("required_world_transactions"))),
+    )
     completeness_reasons: list[str] = list(read_issues)
     if not (session / "scenario.jsonl").is_file():
         completeness_reasons.append("scenario event stream is missing")
@@ -1449,6 +1756,9 @@ def load_evaluation_inputs(
         "scenario_events": scenario_events,
         "lifecycle": lifecycle,
         "lifecycle_reduction": lifecycle_reduction,
+        "world_transactions": world_transactions,
+        "world_transaction_reduction": world_transaction_reduction,
+        "world_evidence_required": world_required,
         "px4_input_trace": px4_input_trace,
         "streams": streams,
         "monitor_sample_counts": monitor_sample_counts,
@@ -2480,6 +2790,7 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
     metadata = inputs.get("metadata", {})
     scenario = inputs.get("scenario", {})
     reduction = inputs.get("lifecycle_reduction", {})
+    world_reduction = inputs.get("world_transaction_reduction", {})
     references = [item for item in inputs.get("pva", [])
                   if item.get("executable", True) is not False]
     reasons: list[str] = []
@@ -2536,6 +2847,17 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
         reasons.append("C0_SW_ACTIVATION_OWNER_MISSING")
     if missing_results:
         reasons.append("C0_SW_PLANNER_RESULT_WITNESS_MISSING")
+    if inputs.get("world_evidence_required"):
+        if world_reduction.get("required_world_unresolved", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_TRANSACTION_UNRESOLVED")
+        if world_reduction.get("required_world_conflicts", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_TRANSACTION_CONFLICT")
+        if world_reduction.get("required_world_reference_missing", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_REFERENCE_MISSING")
+        if world_reduction.get("required_world_reference_conflicts", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_REFERENCE_CONFLICT")
+        if world_reduction.get("required_world_events_dropped", 0):
+            reasons.append("C0_SW_REQUIRED_WORLD_EVIDENCE_DROPPED")
     valid_references = {
         tuple(item) for item in reduction.get("producer_owned_reference_ids", [])
         if isinstance(item, list) and len(item) == 10
@@ -2727,6 +3049,28 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
         "blocking_reasons": sorted(set(reasons)),
         "required_lifecycle_unresolved": unresolved,
         "required_lifecycle_conflicting": conflicts,
+        "required_world_transactions": world_reduction.get(
+            "required_world_transactions", 0),
+        "resolved_world_transactions": world_reduction.get(
+            "resolved_world_transactions", 0),
+        "required_world_unresolved": world_reduction.get(
+            "required_world_unresolved", 0),
+        "required_world_conflicts": world_reduction.get(
+            "required_world_conflicts", 0),
+        "required_world_reference_missing": world_reduction.get(
+            "required_world_reference_missing", 0),
+        "required_world_reference_conflicts": world_reduction.get(
+            "required_world_reference_conflicts", 0),
+        "required_world_events_produced": world_reduction.get(
+            "required_world_events_produced"),
+        "required_world_events_written": world_reduction.get(
+            "required_world_events_written"),
+        "required_world_events_dropped": world_reduction.get(
+            "required_world_events_dropped"),
+        "required_world_events_serialization_failures": world_reduction.get(
+            "required_world_events_serialization_failures", 0),
+        "required_world_events_writer_failures": world_reduction.get(
+            "required_world_events_writer_failures", 0),
         "required_reference_count": len(references),
         "required_reference_missing": missing_references,
         "references_admitted_without_setpoint_trace": admitted_without_setpoint_trace,
@@ -2962,6 +3306,12 @@ def evaluate_session(inputs: dict[str, Any]) -> dict[str, Any]:
             if isinstance(item, dict)
         ],
         "lifecycle_reduction": inputs.get("lifecycle_reduction", {}),
+        "world_transactions": [
+            dict(item) for item in inputs.get("world_transactions", [])
+            if isinstance(item, dict)
+        ],
+        "world_transaction_reduction": inputs.get(
+            "world_transaction_reduction", {}),
         "metrics": {
             **tracking["metrics"],
             "mission_guidance_deviation_xy_m": _guidance_deviation(truth, inputs.get("waypoints", [])),

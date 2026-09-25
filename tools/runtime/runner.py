@@ -1995,6 +1995,7 @@ def _mapping_params(
     tracking_experiment: dict[str, Any] | None = None,
     raycasting_enabled: bool = True,
     backup_allow_unknown: bool = False,
+    world_observation_fault_duration_ms: int = 0,
 ) -> Path:
     """Create the only ROS parameter file used by native planner backend navigation."""
     value = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -2004,6 +2005,10 @@ def _mapping_params(
     experiment = tracking_experiment or _tracking_experiment_payload()
     _apply_tracking_experiment_parameters(node_parameters, experiment)
     planner_parameters = node_parameters.setdefault("navigation_runtime", {})
+    if world_observation_fault_duration_ms:
+        if world_observation_fault_duration_ms not in {420, 430, 520, 700}:
+            raise ValueError("World observation fault duration must be 420, 430, 520 or 700 ms")
+        planner_parameters["registered_scan_topic"] = "/test/world_gate/mapping_observation"
     planner = yaml.safe_load(
         (ROOT / "src/runtime/navigation_runtime/config/planner.yaml").read_text(
             encoding="utf-8"
@@ -2453,12 +2458,116 @@ def _check_effective_planner_configuration(
     )
 
 
+def _validate_world_observation_gate(session: Session) -> dict[str, Any] | None:
+    """Check the explicit test-only gate actually isolated mapping traffic."""
+    try:
+        config = yaml.safe_load((session.directory / "scenario_config.yaml").read_text(
+            encoding="utf-8"))
+        scenario = config.get("scenario", {}) if isinstance(config, dict) else {}
+        fault = scenario.get("world_source_fault", {}) if isinstance(scenario, dict) else {}
+        duration_ms = int(fault.get("duration_ms_sim", 0)) if isinstance(fault, dict) else 0
+    except (OSError, TypeError, ValueError):
+        return None
+    if not duration_ms:
+        return None
+    path = session.directory / "world_observation_gate.jsonl"
+    records: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                record = json.loads(line)
+                if isinstance(record, dict):
+                    records.append(record)
+    except (OSError, ValueError) as error:
+        return {"status": "INCOMPLETE", "issues": [f"WORLD_GATE_EVIDENCE_UNAVAILABLE:{error}"]}
+    by_event: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_event.setdefault(str(record.get("event", "")), []).append(record)
+    issues: list[str] = []
+    if len(by_event.get("GATE_READY", [])) != 1:
+        issues.append("WORLD_GATE_NOT_READY_EXACTLY_ONCE")
+    scheduled_rows = by_event.get("FAULT_SCHEDULED", [])
+    if len(scheduled_rows) != 1:
+        issues.append("WORLD_GATE_FAULT_NOT_SCHEDULED_EXACTLY_ONCE")
+    if len(by_event.get("GATE_FINAL", [])) != 1:
+        issues.append("WORLD_GATE_FINAL_WITNESS_MISSING")
+    scheduled = scheduled_rows[0] if scheduled_rows else {}
+    def integer(row: dict[str, Any], key: str) -> int | None:
+        value = row.get(key)
+        try:
+            return None if isinstance(value, bool) else int(value)
+        except (TypeError, ValueError):
+            return None
+    start_ns = integer(scheduled, "fault_start_ros_ns")
+    end_ns = integer(scheduled, "fault_end_ros_ns")
+    if start_ns is None or end_ns is None or end_ns - start_ns != duration_ms * 1_000_000:
+        issues.append("WORLD_GATE_SIMULATION_DURATION_MISMATCH")
+    dropped = by_event.get("MAPPING_SCAN_DROPPED", [])
+    if not dropped:
+        issues.append("WORLD_GATE_DID_NOT_DROP_MAPPING")
+    restored = by_event.get("FAULT_ENDED_FORWARDING_RESTORED", [])
+    if duration_ms <= 520 and len(restored) != 1:
+        issues.append("WORLD_GATE_FORWARDING_NOT_RESTORED")
+    if len(dropped) >= 2:
+        first, last = dropped[0], dropped[-1]
+        for field, label in (
+            ("clock_count", "CLOCK"), ("odometry_count", "ODOMETRY"),
+            ("health_count", "HEALTH"), ("health_valid_count", "VALID_HEALTH"),
+            ("core_diagnostic_count", "CORE"),
+            ("command_admission_count", "ADAPTER_ADMISSION"),
+        ):
+            first_value = integer(first, field)
+            last_value = integer(last, field)
+            if first_value is None or last_value is None or last_value <= first_value:
+                issues.append(f"WORLD_GATE_{label}_DID_NOT_PROGRESS_DURING_DROPOUT")
+        first_clock = integer(first, "last_clock_ns")
+        last_clock = integer(last, "last_clock_ns")
+        if first_clock is None or last_clock is None or last_clock <= first_clock:
+            issues.append("WORLD_GATE_SIMULATION_CLOCK_DID_NOT_ADVANCE_DURING_DROPOUT")
+    else:
+        issues.append("WORLD_GATE_DROPOUT_TOO_FEW_INPUT_WITNESSES")
+    if dropped:
+        if integer(dropped[0], "command_admission_count") is None or integer(
+                dropped[0], "command_admission_count") <= 0:
+            issues.append("WORLD_GATE_ADAPTER_ADMISSION_NOT_OBSERVED")
+        if integer(dropped[0], "last_mode_state") != 0:  # NavigationModeStatus.ACTIVE
+            issues.append("WORLD_GATE_ADAPTER_NOT_ACTIVE_AT_FAULT_START")
+    try:
+        parameters = yaml.safe_load((session.directory / "navigation_runtime_params.yaml").read_text(
+            encoding="utf-8"))
+        topic = parameters["navigation_runtime_node"]["ros__parameters"][
+            "navigation_runtime"]["registered_scan_topic"]
+        if topic != "/test/world_gate/mapping_observation":
+            issues.append("WORLD_GATE_RUNTIME_REMAP_MISMATCH")
+    except (OSError, KeyError, TypeError, ValueError):
+        issues.append("WORLD_GATE_RUNTIME_REMAP_UNPROVEN")
+    return {
+        "status": "PASS" if not issues else "INCOMPLETE",
+        "duration_ms_sim": duration_ms,
+        "input_scans_dropped": len(dropped),
+        "forwarding_restored": len(restored) == 1,
+        "runtime_mapping_topic": "/test/world_gate/mapping_observation",
+        "issues": issues,
+        "evidence_path": str(path),
+    }
+
+
 def _stop_and_report(session: Session, workflow: str, config_path: Path, *, px4_dir: Path | None = None, observation_complete: bool = False) -> dict[str, Any]:
     # Bound the measured interval before processes are stopped.  A monitor
     # timer can otherwise report a final stale event after its publishers have
     # intentionally begun shutting down.
     _write_runtime(session, observation_finished_wall_ns=time.time_ns())
     cleanup_failures = session.stop()
+    world_gate_validation = _validate_world_observation_gate(session)
+    if world_gate_validation is not None:
+        failures = _load_runtime_failures(session)
+        if world_gate_validation["status"] != "PASS":
+            failures.append("world observation fault gate did not prove mapping-only isolation")
+        _write_runtime(
+            session,
+            world_observation_gate_validation=world_gate_validation,
+            failures=failures,
+        )
     nominal_snapshot_capture = _finalize_nominal_snapshot_capture(
         session.directory.name
     )
@@ -2895,6 +3004,7 @@ def _run_sim_unlocked(
     characterization_mode: str = "MODE_PX4_LOCAL",
     tracking_experiment_mode: str = DEFAULT_SITL_TRACKING_EXPERIMENT_MODE,
     state_transport_trace: bool = False,
+    world_observation_fault_duration_ms: int = 0,
     tracking_experiment_base_m: float = 0.0,
     tracking_experiment_lateral_alpha_s: float = 0.0,
     tracking_experiment_longitudinal_beta_s: float = 0.0,
@@ -2916,6 +3026,10 @@ def _run_sim_unlocked(
         raise ValueError(f"unsupported control interface: {control_interface}")
     if state_transport_trace and control_interface != "external_mode":
         raise ValueError("state transport trace requires external_mode SITL")
+    if world_observation_fault_duration_ms not in {0, 420, 430, 520, 700}:
+        raise ValueError("World observation fault duration must be 0, 420, 430, 520, or 700 ms")
+    if world_observation_fault_duration_ms and control_interface != "external_mode":
+        raise ValueError("World observation fault gate requires External Mode SITL")
     if visibility_max_endpoints not in {4096, 8192, 16384, 20160}:
         raise ValueError(
             "visibility_max_endpoints must be one of 4096, 8192, 16384 or 20160"
@@ -3007,6 +3121,24 @@ def _run_sim_unlocked(
         "visibility_comparator": visibility_comparator,
         "backup_evidence_experiment": backup_evidence,
     })
+    if world_observation_fault_duration_ms:
+        scenario_config["scenario"].update({
+            "world_source_fault": {
+                "scope": "mapping_observation_only",
+                "duration_ms_sim": world_observation_fault_duration_ms,
+                "gate_trigger": "100 NavigationCommand STATUS_READY samples",
+                "delay_after_trigger_ms_sim": 1000,
+            },
+            "world_evidence_required": world_observation_fault_duration_ms in {420, 430, 520},
+            "required_world_event_kinds": (
+                ["WORLD_COMMAND_SUSPENDED", "WORLD_PUBLICATION_COMMITTED",
+                 "WORLD_COMMAND_RECERTIFIED", "WORLD_COMMAND_RESUMED"]
+                if world_observation_fault_duration_ms in {420, 430, 520} else []
+            ),
+            "required_world_transactions": (
+                3 if world_observation_fault_duration_ms in {420, 430, 520} else 0
+            ),
+        })
     if manual_takeoff:
         if headless or control_interface != "external_mode" or not auto_scenario:
             raise ValueError("manual takeoff is supported only by the automatic GUI External Mode workflow")
@@ -3426,6 +3558,7 @@ def _run_sim_unlocked(
             tracking_experiment=tracking_experiment,
             raycasting_enabled=bool(backup_evidence["raycasting_enabled"]),
             backup_allow_unknown=bool(backup_evidence["backup_allow_unknown"]),
+            world_observation_fault_duration_ms=world_observation_fault_duration_ms,
         )
         external_mode_config: Path | None = None
         if control_interface == "external_mode":
@@ -3577,6 +3710,20 @@ def _run_sim_unlocked(
                 "--params-file", str(ros_config), "-p", "use_sim_time:=true",
             ], enable_rviz=not headless), cwd=ROOT)
         if not characterization_profile:
+            if world_observation_fault_duration_ms:
+                gate_log = session.directory / "world_observation_gate.jsonl"
+                session.start("world_observation_gate", _ros_shell([
+                    str(CANONICAL_PYTHON),
+                    str(ROOT / "tools/runtime/world_observation_gate.py"),
+                    str(gate_log), "--ros-args",
+                    "-p", "use_sim_time:=true",
+                    "-p", "input_topic:=/lio/mapping_observation",
+                    "-p", "output_topic:=/test/world_gate/mapping_observation",
+                    "-p", "command_topic:=/navigation/navigation_command",
+                    "-p", "ready_commands_before_fault:=100",
+                    "-p", "delay_after_trigger_ns:=1000000000",
+                    "-p", f"drop_duration_ns:={world_observation_fault_duration_ms * 1000000}",
+                ]), cwd=ROOT)
             session.start(
                 "mapping",
                 _ros_shell(
@@ -4192,6 +4339,10 @@ def main() -> int:
         help="default-off SITL-only propagated-state producer/adapter timing trace",
     )
     external_mode.add_argument(
+        "--world-observation-fault-ms", type=int, choices=(420, 430, 520, 700), default=0,
+        help="test-only mapping RegisteredScan dropout in simulation time; 0 disables",
+    )
+    external_mode.add_argument(
         "--experiment-id", default=None,
         help="evidence experiment label stored in metadata.json",
     )
@@ -4406,6 +4557,7 @@ def main() -> int:
             experiment_id=args.experiment_id,
             qualification_scope=args.qualification_scope,
             tracking_experiment_mode=args.tracking_experiment_mode,
+            world_observation_fault_duration_ms=args.world_observation_fault_ms,
             inject_failed_replan_cycle_id=args.inject_failed_replan_cycle_id,
             inject_failed_replan_once=args.inject_failed_replan_once,
             inject_failed_replan_when_safe=args.inject_failed_replan_when_safe,

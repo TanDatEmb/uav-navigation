@@ -64,6 +64,24 @@ bool executionAuthoritySnapshotsEqual(
          lhs.pending_activation_ns == rhs.pending_activation_ns;
 }
 
+const char* worldTemporalReasonName(const WorldTemporalReason reason) noexcept {
+  switch (reason) {
+    case WorldTemporalReason::kCurrent: return "CURRENT";
+    case WorldTemporalReason::kNoSnapshot: return "NO_SNAPSHOT";
+    case WorldTemporalReason::kInvalidTimeContract: return "INVALID_TIME_CONTRACT";
+    case WorldTemporalReason::kSourceStampMissing: return "SOURCE_STAMP_MISSING";
+    case WorldTemporalReason::kSourceStale: return "SOURCE_STALE";
+    case WorldTemporalReason::kSourceFuture: return "SOURCE_FUTURE";
+  }
+  return "UNCLASSIFIED";
+}
+
+const std::string& worldRuntimeInstanceId() {
+  static const auto instance_id = std::to_string(
+      navigation_common::steadyClockNowNanoseconds());
+  return instance_id;
+}
+
 // Terminal intent describes END, not HEAD or measured stopping. This phase
 // predicate schedules validation only; it grants neither exposure nor brake
 // authority. Ordinary MAIN-with-BACKUP renewal is deliberately not included.
@@ -901,6 +919,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         throw navigation_mapping::MappingObservationRejected(
             navigation_mapping::MappingObservationRejectionReason::kMissingSensorOrigin);
       }
+      const auto prior_world_identity = store->load().identity;
       const auto decode_started = std::chrono::steady_clock::now();
       auto decoded = std::make_unique<navigation_mapping::PointCloud>();
       if (!decodeCloud(pending.message->points, *decoded)) {
@@ -981,6 +1000,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         }
         bool retain_validated_bundle = false;
         bool retain_validated_pending = false;
+        // Diagnostic path codes: 0 none, 1 disjoint-region proof, 2 full
+        // immutable validation, 3 terminal endpoint exception, 4 expired
+        // recovery endpoint exception, 5 rejected/invalidated.
+        int pending_validation_path = 0;
+        int active_validation_path = 0;
         const auto pending_revalidation_started = std::chrono::steady_clock::now();
         if (expected_pending && expected_pending->valid() &&
             expected_pending->protected_region.valid() &&
@@ -994,6 +1018,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                 expected_pending->world_identity,
                 expected_pending->protected_region)) {
           retain_validated_pending = true;
+          pending_validation_path = 1;
         }
         if (expected_pending && expected_pending->valid() &&
             !retain_validated_pending) {
@@ -1007,6 +1032,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               result.snapshot, authorization_wall_time_s);
           if (validation.valid) {
             retain_validated_pending = true;
+            pending_validation_path = 2;
             ++next.command_revalidation_full_count;
             RCLCPP_DEBUG(
                 this->get_logger(),
@@ -1015,6 +1041,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                 static_cast<unsigned long>(expected_pending->bundle_generation),
                 static_cast<unsigned long>(validation.sample_count));
           } else {
+            pending_validation_path = 5;
             warnWorldRevalidationFailure(
                 this->get_logger(), "pending", expected_pending->bundle_generation,
                 validation, result.snapshot->identity());
@@ -1110,6 +1137,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               navigation_world_model::isCellTraversable(
                   terminal_state,
                   navigation_world_model::UnknownPolicy::kRequireKnownFree);
+          active_validation_path = retain_validated_bundle ? 3 : 5;
           if (!retain_validated_bundle) {
             RCLCPP_WARN(
                 this->get_logger(),
@@ -1125,6 +1153,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           // stop and restart from the current state. This never extends the
           // polynomial lease or treats the endpoint as mission completion.
           retain_validated_bundle = true;
+          active_validation_path = 4;
           ++next.command_revalidation_fast_path_count;
           RCLCPP_INFO(
               this->get_logger(),
@@ -1150,6 +1179,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           // avoid.  The changed-region proof is therefore the only retention
           // fast path; an intersecting/ambiguous update fails closed.
           retain_validated_bundle = true;
+          active_validation_path = 1;
           ++next.command_revalidation_fast_path_count;
           RCLCPP_DEBUG(
               this->get_logger(),
@@ -1170,6 +1200,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
               result.snapshot, authorization_wall_time_s);
           if (validation.valid) {
             retain_validated_bundle = true;
+            active_validation_path = 2;
             ++next.command_revalidation_full_count;
             RCLCPP_DEBUG(
                 this->get_logger(),
@@ -1178,6 +1209,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                 static_cast<unsigned long>(expected_bundle->bundle_generation),
                 static_cast<unsigned long>(validation.sample_count));
           } else {
+            active_validation_path = 5;
             warnWorldRevalidationFailure(
                 this->get_logger(), "active", expected_bundle->bundle_generation,
                 validation, result.snapshot->identity());
@@ -1261,6 +1293,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - publication_finalize_started).count();
         if (publication_decision == navigation_world_model::WorldCommitDecision::kSuperseded) {
+          publishWorldTransactionWitness(
+              "WORLD_PUBLICATION_SUPERSEDED", prior_world_identity,
+              result.snapshot->identity(), execution_timeline,
+              command_store->snapshot(), "SUPERSEDED", active_validation_path,
+              pending_validation_path);
           next.map_update_us = result.map_update_us;
           next.mapping_callback_total_us =
               std::chrono::duration_cast<std::chrono::microseconds>(
@@ -1273,6 +1310,11 @@ NavigationRuntimeNode::NavigationRuntimeNode(
         }
         if (publication_decision != navigation_world_model::WorldCommitDecision::kCommitted) {
           command_store->invalidate();
+          publishWorldTransactionWitness(
+              "WORLD_PUBLICATION_FAILED", prior_world_identity,
+              result.snapshot->identity(), execution_timeline,
+              command_store->snapshot(), "FAIL_CLOSED", active_validation_path,
+              pending_validation_path);
           next.map_update_us = result.map_update_us;
           next.mapping_callback_total_us =
               std::chrono::duration_cast<std::chrono::microseconds>(
@@ -1286,9 +1328,22 @@ NavigationRuntimeNode::NavigationRuntimeNode(
           throw std::runtime_error(
               "world snapshot publication could not finalize its execution certificate");
         }
+        publishWorldTransactionWitness(
+            "WORLD_PUBLICATION_COMMITTED", prior_world_identity,
+            result.snapshot->identity(), execution_timeline,
+            command_store->snapshot(),
+            invalidated_current ? "ACTIVE_INVALIDATED" : "COMMITTED",
+            active_validation_path, pending_validation_path);
+        std::optional<navigation_execution::ExecutionAuthoritySnapshot>
+            resumed_from_execution;
         if (expected_bundle && retain_validated_bundle) {
           const auto recertified_state = command_store->snapshot();
           const auto recertified_bundle = recertified_state.active;
+          publishWorldTransactionWitness(
+              "WORLD_COMMAND_RECERTIFIED", expected_bundle->world_identity,
+              result.snapshot->identity(), execution_timeline, recertified_state,
+              "ACTIVE_CERTIFICATE_RETAINED", active_validation_path,
+              pending_validation_path);
           const auto now_ns = ros_clock->now().nanoseconds();
           const auto suspended_generation =
               recertified_state.lifecycle.exposure ==
@@ -1338,6 +1393,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                   *recertified_bundle,
                   current_execution.lifecycle.safety ==
                       navigation_execution::ExecutionSafetyOwnership::kSafetySuffix);
+              resumed_from_execution = current_execution;
               ++world_freshness_command_recovery_count_;
               RCLCPP_INFO(
                   this->get_logger(),
@@ -1346,6 +1402,22 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                   static_cast<unsigned long>(recertified_bundle->bundle_generation));
             }
           }
+        }
+        if (expected_bundle && !retain_validated_bundle) {
+          publishWorldTransactionWitness(
+              "WORLD_RECERTIFICATION_REJECTED", expected_bundle->world_identity,
+              result.snapshot->identity(), execution_timeline,
+              command_store->snapshot(),
+              invalidated_current ? "ACTIVE_CERTIFICATE_REJECTED"
+                                  : "SUPERSEDED_BEFORE_OWNER_MUTATION",
+              active_validation_path, pending_validation_path);
+        }
+        if (resumed_from_execution && expected_bundle && expected_bundle->valid()) {
+          publishWorldTransactionWitness(
+              "WORLD_COMMAND_RESUMED", expected_bundle->world_identity,
+              result.snapshot->identity(), *resumed_from_execution,
+              command_store->snapshot(), "RECERTIFIED_AND_RESUMED",
+              active_validation_path, pending_validation_path);
         }
         if (expected_bundle && !retain_validated_bundle) {
           if (invalidated_current) {
@@ -1440,6 +1512,7 @@ NavigationRuntimeNode::NavigationRuntimeNode(
       mappingFailStop, std::move(validate_mapping),
       [publisher = diagnostics_publisher_, ros_clock,
        telemetry = mapping_telemetry_, accounting = &observation_accounting_,
+       world_event_sequence = &world_transaction_event_sequence_,
        freshness_rejection_count = &world_snapshot_freshness_rejection_count_]() {
         const auto mapping = telemetry->snapshot();
         const auto lifecycle = accounting->snapshot();
@@ -1558,6 +1631,8 @@ NavigationRuntimeNode::NavigationRuntimeNode(
                                  map.base_pose_world.z() * 1000.0)) : 0);
         add_value("world_snapshot_freshness_rejection_count",
                   freshness_rejection_count->load());
+        add_value("world_transaction_events_produced", world_event_sequence->load());
+        add_text("world_transaction_runtime_instance_id", worldRuntimeInstanceId());
         add_value("world_snapshot_bytes", mapping.snapshot_bytes);
         add_value("world_snapshot_owned_bytes", mapping.snapshot_owned_bytes);
         add_value("world_snapshot_shared_metadata_bytes",
@@ -3379,7 +3454,7 @@ bool NavigationRuntimeNode::clearCommandForCurrentIdentity(
 
 void NavigationRuntimeNode::suspendCommandForWorldFreshness(
     const navigation_execution::ExecutionAuthoritySnapshot& expected) {
-  std::lock_guard<std::mutex> command_lock(
+  std::unique_lock<std::mutex> command_lock(
       command_execution_lease_failure_latch_.transitionMutex());
   if (!expected.active || !execution_authority_.isCurrentSnapshot(expected)) return;
   const auto current_world = world_snapshot_store_.load();
@@ -3395,7 +3470,108 @@ void NavigationRuntimeNode::suspendCommandForWorldFreshness(
   // desired pass-through transition whose successor is still pending.
   if (execution_authority_.suspendIfCurrentSnapshot(expected)) {
     ++world_freshness_command_suspend_count_;
+    const auto current_timeline = execution_authority_.snapshot();
+    command_lock.unlock();
+    const auto failed_assessment = source_freshness.sourceCurrent()
+        ? active_freshness : source_freshness;
+    publishWorldTransactionWitness(
+        "WORLD_COMMAND_SUSPENDED", expected.active->world_identity,
+        current_world.identity, expected, current_timeline,
+        "SUSPENDED_WORLD_NOT_CURRENT", 0, 0,
+        worldTemporalReasonName(failed_assessment.reason));
   }
+}
+
+void NavigationRuntimeNode::publishWorldTransactionWitness(
+    const std::string& event_kind,
+    const navigation_world_model::WorldSnapshotIdentity& prior_world,
+    const navigation_world_model::WorldSnapshotIdentity& next_world,
+    const navigation_execution::ExecutionAuthoritySnapshot& before,
+    const navigation_execution::ExecutionAuthoritySnapshot& after,
+    const std::string& disposition,
+    const int active_validation_path,
+    const int pending_validation_path,
+    const std::string& temporal_assessment_reason) {
+  const auto publisher = diagnostics_publisher_;
+  if (!publisher) return;
+  diagnostic_msgs::msg::DiagnosticArray message;
+  const auto ros_now = now();
+  message.header.stamp = ros_now;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "navigation_runtime/world_transaction_witness";
+  status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+  status.message = event_kind + ":" + disposition;
+  const auto add = [&status](const std::string& key, const std::uint64_t value) {
+    diagnostic_msgs::msg::KeyValue field;
+    field.key = key;
+    field.value = std::to_string(value);
+    status.values.push_back(std::move(field));
+  };
+  const auto add_signed = [&status](const std::string& key, const std::int64_t value) {
+    diagnostic_msgs::msg::KeyValue field;
+    field.key = key;
+    field.value = std::to_string(value);
+    status.values.push_back(std::move(field));
+  };
+  const auto add_text = [&status](const std::string& key, const std::string& value) {
+    diagnostic_msgs::msg::KeyValue field;
+    field.key = key;
+    field.value = value;
+    status.values.push_back(std::move(field));
+  };
+  const auto put_world = [&add, &add_signed](const std::string& prefix,
+                                const navigation_world_model::WorldSnapshotIdentity& world) {
+    add(prefix + "_localization_epoch", world.localization_epoch);
+    add(prefix + "_generation", world.generation);
+    add(prefix + "_revision", world.revision);
+    add_signed(prefix + "_source_stamp_ns", world.observation_stamp_ns);
+  };
+  const auto put_execution = [&add](const std::string& prefix,
+                                    const navigation_execution::ExecutionAuthoritySnapshot& snapshot) {
+    add(prefix + "_timeline_version", snapshot.version);
+    add(prefix + "_active_generation",
+        snapshot.active ? snapshot.active->bundle_generation : 0U);
+    add(prefix + "_active_goal_epoch",
+        snapshot.active ? snapshot.active->goal_epoch : 0U);
+    add(prefix + "_active_request_id",
+        snapshot.active ? snapshot.active->request_id : 0U);
+    add(prefix + "_pending_generation",
+        snapshot.pending ? snapshot.pending->bundle_generation : 0U);
+    add(prefix + "_pending_goal_epoch",
+        snapshot.pending ? snapshot.pending->goal_epoch : 0U);
+    add(prefix + "_pending_request_id",
+        snapshot.pending ? snapshot.pending->request_id : 0U);
+  };
+  const auto event_sequence = world_transaction_event_sequence_.fetch_add(
+      1U, std::memory_order_relaxed) + 1U;
+  add("producer_event_sequence", event_sequence);
+  add_text("runtime_instance_id", worldRuntimeInstanceId());
+  add("event_ros_stamp_ns", static_cast<std::uint64_t>(
+      std::max<std::int64_t>(0, ros_now.nanoseconds())));
+  add("event_steady_stamp_ns", static_cast<std::uint64_t>(
+      std::max<std::int64_t>(0, navigation_common::steadyClockNowNanoseconds())));
+  add("execution_localization_epoch",
+      before.active ? before.active->localization_epoch :
+      before.pending ? before.pending->localization_epoch : 0U);
+  put_world("prior_world", prior_world);
+  put_world("next_world", next_world);
+  put_execution("before", before);
+  put_execution("after", after);
+  add("active_validation_path", static_cast<std::uint64_t>(
+      std::max(active_validation_path, 0)));
+  add("pending_validation_path", static_cast<std::uint64_t>(
+      std::max(pending_validation_path, 0)));
+  add_text("event_kind", event_kind);
+  add_text("disposition", disposition);
+  add_text("temporal_assessment_reason", temporal_assessment_reason);
+  add_text("transaction_key",
+      std::to_string(before.version) + ":" +
+      std::to_string(next_world.localization_epoch) + ":" +
+      std::to_string(next_world.generation) + ":" +
+      std::to_string(next_world.revision) + ":" +
+      std::to_string(next_world.observation_stamp_ns));
+  message.status.push_back(std::move(status));
+  publisher->publish(message);
 }
 
 std::optional<PlanningKey> NavigationRuntimeNode::currentPlanningKey() {
@@ -3929,6 +4105,12 @@ void NavigationRuntimeNode::runCycle(
     item.value = std::to_string(value);
     status.values.push_back(std::move(item));
   };
+  const auto add_text = [&status](const std::string& key, const std::string& value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = value;
+    status.values.push_back(std::move(item));
+  };
   const auto add_signed_value = [&status](const std::string& key, std::int64_t value) {
     diagnostic_msgs::msg::KeyValue item;
     item.key = key;
@@ -4018,6 +4200,9 @@ void NavigationRuntimeNode::runCycle(
   }
   add_value("world_snapshot_freshness_rejection_count",
             world_snapshot_freshness_rejection_count_.load());
+  add_value("world_transaction_events_produced",
+            world_transaction_event_sequence_.load(std::memory_order_relaxed));
+  add_text("world_transaction_runtime_instance_id", worldRuntimeInstanceId());
   add_value("world_freshness_command_suspend_count",
             world_freshness_command_suspend_count_.load());
   add_value("world_freshness_command_recovery_count",
