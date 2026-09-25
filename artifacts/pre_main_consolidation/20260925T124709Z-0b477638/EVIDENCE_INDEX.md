@@ -15,3 +15,14 @@
 
 
 Raw manifest format: one row per retained file with absolute path, exact size in bytes, and SHA256. Rosbags are retained outside Git.
+# PR #2 final integration closure addendum
+
+- `PR_REVIEW_FIX.md`: P1 description and repair status.
+- `SCOPE_GUARD_MIGRATION.md`: explicit historical baseline use and branch-scope guard tests.
+- `CI_CONTRACT.md`: hosted static/Python jobs and controlled ROS build limitation.
+- `GOVERNANCE.md`: single-maintainer review process and unprotected-main status.
+- `LATEST_CODE_REVIEW.md`: current review target and unresolved-thread state.
+- `MAIN_MERGE_RECEIPT.md`: merge not performed.
+- `FRESH_MAIN_VALIDATION.md`: post-merge validation pending.
+- `tools/runtime/tests/test_branch_scope_guards.py`: executable Git-fixture regression tests.
+- `.github/workflows/ci.yml`: canonical static-contract and Python checks.
