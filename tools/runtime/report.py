@@ -3692,19 +3692,13 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     report["evaluation"] = evaluate_session(evaluation_inputs)
     evaluation_guard_reasons = _versioned_evaluation_guard(report["evaluation"])
     evaluator = report["evaluation"] if isinstance(report["evaluation"], dict) else {}
-    evaluator_eligible = evaluator.get("qualification_eligible")
-    if report.get("verdict") == "PASS" and (
-        evaluation_guard_reasons
-        or evaluator.get("assessment_status") != "PASS"
-        or evaluator_eligible is not True
-    ):
-        report["verdict"] = "FAIL"
-        report.setdefault("reasons", []).extend(evaluation_guard_reasons)
-        if evaluator.get("assessment_status") != "PASS":
-            report["reasons"].append("versioned evaluation assessment is not PASS")
-        if evaluator_eligible is not True:
-            report["reasons"].append("versioned evaluation is not qualification eligible")
-        report["reasons"] = _dedupe_reasons(report["reasons"])
+    # Runtime outcome, C0-SW eligibility, and C0-IFP eligibility are separate
+    # result domains.  In particular, an unavailable integrated-flight policy
+    # must not rewrite a completed runtime mission as FAIL.  Keep malformed
+    # evaluator output visible as a contract error without changing the
+    # runtime verdict.
+    report["runtime_verdict"] = report.get("verdict")
+    report["evaluation_contract_errors"] = evaluation_guard_reasons
     if observation_complete:
         # Observation completion is a lifecycle fact, not an acceptance
         # verdict. Preserve the evaluated stream/mission reasons so an
@@ -3719,10 +3713,40 @@ def _build_complete_report(session: Path, workflow: str, config_path: Path, work
     report["schema_version"] = 1
     report["qualification_timelines"] = _write_qualification_timelines(session)
     software_assessment = evaluator.get("software_qualification", {})
-    report["qualification_scope"] = (
-        software_assessment.get("qualification_scope")
-        if isinstance(software_assessment, dict) else None
-    )
+    integrated_assessment = evaluator
+    selected_scope = evaluation_inputs.get("metadata", {}).get("qualification_scope")
+    report["qualification_scope"] = selected_scope
+    report["software_qualification"] = {
+        "qualification_scope": "C0_SW",
+        "assessment_status": software_assessment.get("assessment_status"),
+        "software_qualification_eligible": (
+            software_assessment.get("software_qualification_eligible") is True),
+        "blocking_reasons": list(software_assessment.get("blocking_reasons", [])),
+    } if isinstance(software_assessment, dict) else {
+        "qualification_scope": "C0_SW",
+        "assessment_status": "NOT_EVALUABLE",
+        "software_qualification_eligible": False,
+        "blocking_reasons": ["SOFTWARE_ASSESSMENT_MISSING"],
+    }
+    report["integrated_flight_qualification"] = {
+        "qualification_scope": "C0_IFP",
+        "assessment_status": integrated_assessment.get("assessment_status"),
+        "integrated_flight_qualification_eligible": (
+            integrated_assessment.get("integrated_flight_qualification_eligible") is True),
+        "blocking_reasons": list(integrated_assessment.get("blocking_reasons", [])),
+    }
+    evidence_status = integrated_assessment.get("evidence_status")
+    report["single_session_evidence_completeness"] = {
+        "assessment_status": evidence_status or "INCOMPLETE",
+        "complete": evidence_status == "COMPLETE",
+        "blocking_reasons": list(
+            integrated_assessment.get("completeness", {}).get("reasons", [])),
+    }
+    report["multi_run_qualification"] = {
+        "assessment_status": "NOT_EVALUABLE",
+        "eligible": False,
+        "blocking_reasons": ["MULTI_RUN_AGGREGATION_NOT_PERFORMED"],
+    }
     report["software_qualification_eligible"] = bool(
         isinstance(software_assessment, dict) and
         software_assessment.get("software_qualification_eligible") is True)

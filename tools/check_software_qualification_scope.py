@@ -10,17 +10,9 @@ import subprocess
 import sys
 
 
-BASE = "c422b8485a372e5b3a792682ef0773784b6cf1c4"
+BASE = "0b477638d21ce60cdb42ed85fb7c2d568bf500ed"
 ROOT = Path(__file__).resolve().parents[1]
-ALLOWED_PRODUCT = {
-    "src/contracts/navigation_contracts/msg/NavigationExecutionDiagnostics.msg",
-    "src/planning/navigation_planning/include/navigation_planning/candidate_bundle.hpp",
-    "src/planning/navigation_planning_backend/src/planner_core/planner.cpp",
-    "src/runtime/navigation_runtime/include/navigation_runtime/navigation_runtime_node.hpp",
-    "src/runtime/navigation_runtime/include/navigation_runtime/retained_decision_observation.hpp",
-    "src/runtime/navigation_runtime/src/navigation_runtime_node.cpp",
-    "src/runtime/navigation_runtime/test/test_navigation_runtime_terminal_monitor.cpp",
-}
+ALLOWED_PRODUCT: set[str] = set()
 
 
 def git(*args: str) -> str:

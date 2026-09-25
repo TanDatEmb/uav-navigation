@@ -1,0 +1,3 @@
+# Main behavior change inventory
+
+Product flight behavior change: NO (`src/` diff empty). Scenario runner/evaluator output behavior: YES, limited to keeping mission/runtime verdict separate from C0-IFP NOT_EVALUABLE and exposing independent C0-SW, C0-IFP, evidence completeness, and multi-run fields. C0-SW safety-stop assessment only accepts exact fail-closed witness; status-only remains NOT_EVALUABLE. Test package selection adds omitted first-party packages. No evaluator threshold, motion/tracking policy, safety gate, planner algorithm, PX4 policy, or qualification eligibility criterion was loosened.

@@ -112,6 +112,7 @@ class C0SoftwareWitnessTest(unittest.TestCase):
         result = evaluate_software_qualification(software_inputs(events))
         self.assertFalse(result["software_qualification_eligible"])
         self.assertEqual(result["required_reference_missing"], 1)
+        self.assertIn("C0_SW_REQUIRED_REFERENCE_LINEAGE_MISSING", result["blocking_reasons"])
 
     def test_wrong_request_generation_localization_and_world_reject(self):
         for field, value in (
@@ -154,6 +155,49 @@ class C0SoftwareWitnessTest(unittest.TestCase):
         writer["records_by_category"]["lifecycle"]["submitted_records"] += 1
         writer["records_by_category"]["lifecycle"]["dropped_records"] = 1
         self.assertFalse(evaluate_software_qualification(data)["software_qualification_eligible"])
+
+    def test_exact_current_fail_closed_gate_makes_safety_stop_assessable(self):
+        data = software_inputs()
+        data["scenario"].update(
+            outcome="PAUSED_SAFETY_STOP", mission_complete_observed=False,
+            safety_stop_observed=True, mode_status_reason_name="SAFETY_STOP",
+            px4_hold_observed=True,
+        )
+        identity = {
+            "runtime_instance_id": "core-a", "session_id": "run-a",
+            "localization_epoch": 7, "goal_epoch": 5, "request_id": 4,
+            "bundle_owner_cycle_id": 51, "bundle_owner_request_id": 4,
+        }
+        data["lifecycle"].extend([
+            dict(identity, phase="request", disposition="PUBLISHED",
+                 causal_planning_cycle_id=51),
+            dict(identity, phase="result", disposition="OBSERVED",
+                 causal_planning_cycle_id=51, planner_status=4,
+                 planner_disposition=4, runtime_admission_attempted=False),
+            dict(identity, phase="retained", disposition="OBSERVED",
+                 disposition_code=4, purpose=0, planning_cycle_id=51,
+                 owner_snapshot_current=1, callback_request_current=1,
+                 monitor_window_current=1, captured_bundle_generation=18,
+                 after_bundle_generation=18, after_command_available=0,
+                 after_failure_latched=1, final_freshness_reason=0,
+                 final_witness_age_bounded=1, final_body_known_free=1,
+                 final_anchor_valid=1, final_bridge_usable=0,
+                 execution_goal_epoch=5, execution_request_id=4,
+                 desired_goal_epoch=5, desired_request_id=4,
+                 state_ingress_sequence=99, final_state_source_ros_ns=1000,
+                 final_state_receive_steady_ns=2000),
+        ])
+        data["lifecycle_reduction"] = reduce_lifecycle(data["lifecycle"])
+        result = evaluate_software_qualification(data)
+        self.assertTrue(result["safety_stop_gate_decision_assessed"])
+        self.assertTrue(result["software_qualification_eligible"])
+        self.assertEqual(result["axes"]["PRODUCT_LOGIC"], "PASS")
+
+        data["lifecycle"][-1]["callback_request_current"] = 0
+        data["lifecycle_reduction"] = reduce_lifecycle(data["lifecycle"])
+        result = evaluate_software_qualification(data)
+        self.assertFalse(result["safety_stop_gate_decision_assessed"])
+        self.assertFalse(result["software_qualification_eligible"])
 
     def test_exact_retained_outcome_resolves_no_new_bundle(self):
         common = {
@@ -376,6 +420,17 @@ class C0SoftwareWitnessTest(unittest.TestCase):
         self.assertEqual(evaluate_software_qualification(data)[
             "required_reference_missing"], 1)
 
+    def test_ifp_tracking_lineage_reason_is_not_a_c0_sw_reference_failure(self):
+        data = software_inputs()
+        # Tracking/ground-truth pairing belongs to C0-IFP. Keep that reason in
+        # its own namespace; the software evaluator consumes its own
+        # producer-owned command/lifecycle references below.
+        data["integrated_flight_blocking_reasons"] = ["REFERENCE_LINEAGE_MISMATCH"]
+        result = evaluate_software_qualification(data)
+        self.assertTrue(result["software_qualification_eligible"])
+        self.assertEqual(result["blocking_reasons"], [])
+        self.assertEqual(result["required_reference_missing"], 0)
+
     def test_no_execution_signal_requires_exact_adapter_rejection(self):
         data = software_inputs()
         no_execution = {
@@ -399,6 +454,32 @@ class C0SoftwareWitnessTest(unittest.TestCase):
         }})
         self.assertTrue(evaluate_software_qualification(data)[
             "software_qualification_eligible"])
+
+    def test_no_execution_rejection_with_desired_epoch_is_not_planning_cycle(self):
+        data = software_inputs()
+        data["lifecycle"].append({
+            "runtime_instance_id": "core-a", "session_id": "run-a",
+            "localization_epoch": 7, "goal_epoch": 5, "request_id": 4,
+            "bundle_generation": 0, "bundle_owner_cycle_id": 0,
+            "bundle_owner_request_id": 4, "causal_planning_cycle_id": 0,
+            "sample_id": 24, "phase": "authorize", "disposition": "REJECTED",
+            "authorization_boundary": "execution_timeline_publish_if_current",
+            "authorization_steady_ns": 105,
+        })
+        data["lifecycle_reduction"] = reduce_lifecycle(data["lifecycle"])
+        transaction = next(
+            item for item in data["lifecycle_reduction"]["transactions"]
+            if item["identity"]["producer_id"] == 24)
+        self.assertEqual(transaction["identity"]["producer_kind"], "NO_EXECUTION_SIGNAL")
+        data["scenario_events"].append({"kind": "command_rejection", "payload": {
+            "command_present": True, "stage": 1, "reason_code": 2,
+            "disposition": 4, "mode_activation_id": 9,
+            "localization_epoch": 7, "goal_epoch": 5, "request_id": 4,
+            "bundle_generation": 0, "sample_id": 24,
+        }})
+        result = evaluate_software_qualification(data)
+        self.assertTrue(result["software_qualification_eligible"])
+        self.assertEqual(result["no_execution_adapter_rejections_missing"], 0)
 
     def test_exact_typed_adapter_rejection_explains_undelivered_sample(self):
         data = software_inputs()

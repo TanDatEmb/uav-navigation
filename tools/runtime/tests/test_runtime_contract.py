@@ -3112,7 +3112,7 @@ class RuntimeContractTest(unittest.TestCase):
             self.assertTrue(result["observation_complete"])
             self.assertEqual(result["observation_status"], "OBSERVATION_COMPLETE")
 
-    def test_versioned_not_evaluable_evaluation_cannot_leave_top_level_pass(self) -> None:
+    def test_c0_ifp_not_evaluable_does_not_rewrite_runtime_pass(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             session = Path(temporary) / "session"
             session.mkdir()
@@ -3139,11 +3139,14 @@ class RuntimeContractTest(unittest.TestCase):
                     ROOT,
                 )
 
-        self.assertEqual(result["verdict"], "FAIL")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["runtime_verdict"], "PASS")
         self.assertFalse(result["qualification_eligible"])
-        self.assertIn("versioned evaluation assessment is not PASS", result["reasons"])
+        self.assertEqual(result["integrated_flight_qualification"]["qualification_scope"], "C0_IFP")
+        self.assertEqual(result["integrated_flight_qualification"]["assessment_status"], "NOT_EVALUABLE")
+        self.assertEqual(result["evaluation_contract_errors"], [])
 
-    def test_versioned_non_boolean_eligibility_cannot_leave_top_level_pass(self) -> None:
+    def test_malformed_eligibility_does_not_rewrite_runtime_verdict(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             session = Path(temporary) / "session"
             session.mkdir()
@@ -3170,9 +3173,10 @@ class RuntimeContractTest(unittest.TestCase):
                     ROOT,
                 )
 
-        self.assertEqual(result["verdict"], "FAIL")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["runtime_verdict"], "PASS")
         self.assertFalse(result["qualification_eligible"])
-        self.assertIn("versioned evaluation qualification_eligible is not a boolean", result["reasons"])
+        self.assertIn("versioned evaluation qualification_eligible is not a boolean", result["evaluation_contract_errors"])
 
     def test_versioned_eligibility_with_blocking_reasons_cannot_leave_pass(self) -> None:
         evaluation = {
@@ -3190,7 +3194,7 @@ class RuntimeContractTest(unittest.TestCase):
             report._versioned_evaluation_guard(evaluation),
         )
 
-    def test_versioned_inconsistent_evaluation_clears_top_level_eligibility(self) -> None:
+    def test_versioned_inconsistent_evaluation_clears_qualification_not_runtime(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
             session = Path(temporary) / "session"
             session.mkdir()
@@ -3220,8 +3224,105 @@ class RuntimeContractTest(unittest.TestCase):
                     ROOT,
                 )
 
-        self.assertEqual(result["verdict"], "FAIL")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["runtime_verdict"], "PASS")
         self.assertFalse(result["qualification_eligible"])
+        self.assertTrue(result["evaluation_contract_errors"])
+
+    def test_report_exposes_software_and_integrated_flight_scopes_independently(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            (session / "runtime.json").write_text("{}\n", encoding="utf-8")
+            fake_report = {"workflow": "external-mode", "verdict": "PASS", "reasons": []}
+            dimensions = {
+                name: {"status": "NOT_EVALUABLE" if name in {"tracking", "motion_quality"} else "PASS"}
+                for name in ("mission", "safety", "tracking", "motion_quality", "evidence")
+            }
+            fake_evaluation = {
+                "qualification_scope": "C0_IFP",
+                "assessment_status": "NOT_EVALUABLE",
+                "evidence_status": "COMPLETE",
+                "qualification_eligible": False,
+                "integrated_flight_qualification_eligible": False,
+                "blocking_reasons": [
+                    "MOTION_ACCEPTANCE_POLICY_UNAVAILABLE",
+                    "TRACKING_COVERAGE_POLICY_UNAVAILABLE",
+                    "REFERENCE_LINEAGE_MISMATCH",
+                ],
+                "dimensions": dimensions,
+                "completeness": {"reasons": []},
+                "software_qualification": {
+                    "qualification_scope": "C0_SW",
+                    "assessment_status": "PASS",
+                    "software_qualification_eligible": True,
+                    "blocking_reasons": [],
+                },
+            }
+            import flight_review_report
+            with mock.patch.object(report, "_sim_report", return_value=fake_report), \
+                    mock.patch.object(report, "load_evaluation_inputs", return_value={"metadata": {"qualification_scope": "C0_SW"}}), \
+                    mock.patch.object(report, "evaluate_session", return_value=fake_evaluation), \
+                    mock.patch.object(flight_review_report, "render", return_value=session / "REPORT.html"):
+                result = report._build_complete_report(
+                    session, "external-mode", ROOT / "config/runtime/sim.yaml", ROOT)
+
+        self.assertEqual(result["runtime_verdict"], "PASS")
+        self.assertEqual(result["software_qualification"]["assessment_status"], "PASS")
+        self.assertTrue(result["software_qualification"]["software_qualification_eligible"])
+        self.assertEqual(result["integrated_flight_qualification"]["assessment_status"], "NOT_EVALUABLE")
+        self.assertIn(
+            "REFERENCE_LINEAGE_MISMATCH",
+            result["integrated_flight_qualification"]["blocking_reasons"],
+        )
+        self.assertEqual(result["software_qualification"]["blocking_reasons"], [])
+        self.assertFalse(result["integrated_flight_qualification"]["integrated_flight_qualification_eligible"])
+        self.assertEqual(result["single_session_evidence_completeness"]["assessment_status"], "COMPLETE")
+        self.assertEqual(result["multi_run_qualification"]["assessment_status"], "NOT_EVALUABLE")
+
+    def test_software_safety_stop_outcome_remains_separate_from_ifp_assessment(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary:
+            session = Path(temporary) / "session"
+            session.mkdir()
+            (session / "runtime.json").write_text("{}\n", encoding="utf-8")
+            fake_report = {
+                "workflow": "external-mode", "verdict": "BLOCKED",
+                "reasons": ["expected safety stop"],
+            }
+            fake_evaluation = {
+                "qualification_scope": "C0_IFP",
+                "assessment_status": "NOT_EVALUABLE",
+                "evidence_status": "COMPLETE",
+                "qualification_eligible": False,
+                "integrated_flight_qualification_eligible": False,
+                "blocking_reasons": ["MOTION_ACCEPTANCE_POLICY_UNAVAILABLE"],
+                "dimensions": {
+                    "mission": {"status": "PASS"},
+                    "safety": {"status": "PASS"},
+                    "tracking": {"status": "NOT_EVALUABLE"},
+                    "motion_quality": {"status": "NOT_EVALUABLE"},
+                    "evidence": {"status": "PASS"},
+                },
+                "completeness": {"reasons": []},
+                "software_qualification": {
+                    "qualification_scope": "C0_SW",
+                    "assessment_status": "PASS",
+                    "software_qualification_eligible": True,
+                    "blocking_reasons": [],
+                },
+            }
+            import flight_review_report
+            with mock.patch.object(report, "_sim_report", return_value=fake_report), \
+                    mock.patch.object(report, "load_evaluation_inputs", return_value={"metadata": {"qualification_scope": "C0_SW"}}), \
+                    mock.patch.object(report, "evaluate_session", return_value=fake_evaluation), \
+                    mock.patch.object(flight_review_report, "render", return_value=session / "REPORT.html"):
+                result = report._build_complete_report(
+                    session, "external-mode", ROOT / "config/runtime/sim.yaml", ROOT)
+
+        self.assertEqual(result["runtime_verdict"], "BLOCKED")
+        self.assertEqual(result["software_qualification"]["assessment_status"], "PASS")
+        self.assertTrue(result["software_qualification"]["software_qualification_eligible"])
+        self.assertEqual(result["integrated_flight_qualification"]["assessment_status"], "NOT_EVALUABLE")
 
     def test_simulation_config_is_lio_only_at_startup(self) -> None:
         config = runner.load_config("sim.yaml")["fast_lio"]["ros__parameters"]

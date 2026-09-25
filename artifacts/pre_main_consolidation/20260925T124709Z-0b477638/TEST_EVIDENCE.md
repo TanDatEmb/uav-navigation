@@ -1,0 +1,3 @@
+# Test evidence
+
+Final authoritative gate on this source passed: Release build 23 packages; PRODUCT_REQUIRED CTest 93/93 targets across 15 packages; pinned dependency smoke passed (3 package test runs); `px4_ros2_cpp` unit CTest 1/1 passed with the isolated flaky upstream case filtered by exact test name; Python runtime/tool suite 453 tests, 1 skip, 0 failed; all 11 configured static guards passed; runtime safety ledger passed (`current=500`, decisions=706, gates=36, active gates=34, bypasses=5, active bypass=1); `git diff --check` passed. Full live-FMU integration remains environment-gated. The earlier checkpoint with 66/67 is superseded by this fresh passing unit run. Four packages emitted known PCL/FLANN CMake developer warnings; no build failure.

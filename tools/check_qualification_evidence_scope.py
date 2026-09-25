@@ -10,7 +10,10 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "748b8e3924a0042b975382468d675df4c987a3c2"
+# The pre-main integration campaign freezes the already-approved architecture
+# at the incoming World milestone.  Historical evidence-cut commits predate
+# that architecture and are not a valid scope baseline here.
+BASE = "0b477638d21ce60cdb42ed85fb7c2d568bf500ed"
 PRODUCT_PATHS = ("src",)
 
 

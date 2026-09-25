@@ -65,12 +65,14 @@ PRODUCT_TEST_PACKAGES: tuple[str, ...] = (
     "navigation_contracts",
     "rog_map_vendor",
     "navigation_mapping",
+    "navigation_mission",
     "navigation_execution",
     "navigation_runtime",
     "navigation_planning",
     "navigation_planning_backend",
     "px4_navigation_external_mode",
     "px4_odometry_bridge",
+    "uav_description",
     "uav_simulation",
 )
 # `make build` is a product build, not a workspace-wide discovery build. The

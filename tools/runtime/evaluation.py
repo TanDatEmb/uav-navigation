@@ -272,11 +272,18 @@ def _lifecycle_transaction_key(event: dict[str, Any]) -> tuple[Any, ...]:
     # source + generation is the producer identity; inventing a nearby
     # planning cycle would misattribute the command.
     declared_cycle = event.get("bundle_owner_cycle_id")
+    no_execution_rejection = (
+        event.get("phase") == "authorize" and
+        str(event.get("disposition", "")).upper() == "REJECTED" and
+        generation == 0 and (
+            event.get("goal_epoch") == 0 or (
+                _integer(event.get("causal_planning_cycle_id")) == 0 and
+                _integer(declared_cycle) == 0
+            )
+        )
+    )
     cycle_id = (("no_execution", event.get("sample_id"))
-                if event.get("phase") == "authorize" and
-                event.get("disposition") == "REJECTED" and
-                event.get("goal_epoch") == 0 and
-                event.get("bundle_generation") == 0 else
+                if no_execution_rejection else
                 ("terminal_monitor", event.get("captured_bundle_generation"),
                  event.get("producer_event_sequence"))
                 if event.get("phase") == "retained" and
@@ -612,7 +619,9 @@ def reduce_lifecycle(
                     authorize.get("authorization_boundary") ==
                         "execution_timeline_publish_if_current" and
                     _present_identity(authorize.get("authorization_steady_ns")) and
-                    authorize.get("goal_epoch") == 0 and
+                    authorize.get("goal_epoch") == identity.get("goal_epoch") and
+                    authorize.get("request_id") == identity.get("request_id") and
+                    authorize.get("localization_epoch") == identity.get("localization_epoch") and
                     authorize.get("bundle_generation") == 0 and
                     authorize.get("sample_id") == identity["producer_id"] and
                     not transaction["reasons"]):
@@ -2780,6 +2789,66 @@ def _dimension(status: str, reasons: list[str], **extra: Any) -> dict[str, Any]:
     return {"status": status, "reasons": sorted(set(str(item) for item in reasons)), **extra}
 
 
+def _has_current_fail_closed_safety_stop_witness(inputs: dict[str, Any]) -> bool:
+    """Require exact current execution and planner evidence for a software stop."""
+    scenario = inputs.get("scenario", {})
+    if (scenario.get("outcome") != "PAUSED_SAFETY_STOP" or
+            scenario.get("safety_stop_observed") is not True or
+            scenario.get("mode_status_reason_name") != "SAFETY_STOP" or
+            scenario.get("px4_hold_observed") is not True):
+        return False
+
+    lifecycle = [item for item in inputs.get("lifecycle", [])
+                 if isinstance(item, dict)]
+    for retained in lifecycle:
+        if not (
+            retained.get("phase") == "retained" and
+            retained.get("purpose") == 0 and
+            retained.get("disposition_code") == 4 and
+            retained.get("owner_snapshot_current") == 1 and
+            retained.get("callback_request_current") == 1 and
+            retained.get("monitor_window_current") == 1 and
+            retained.get("after_command_available") == 0 and
+            retained.get("after_failure_latched") == 1 and
+            _present_identity(retained.get("captured_bundle_generation")) and
+            retained.get("after_bundle_generation") ==
+                retained.get("captured_bundle_generation") and
+            retained.get("final_freshness_reason") == 0 and
+            retained.get("final_witness_age_bounded") == 1 and
+            retained.get("final_body_known_free") == 1 and
+            retained.get("final_anchor_valid") == 1 and
+            retained.get("final_bridge_usable") == 0 and
+            _present_identity(retained.get("localization_epoch")) and
+            _present_identity(retained.get("execution_goal_epoch")) and
+            retained.get("execution_goal_epoch") ==
+                retained.get("desired_goal_epoch") and
+            _present_identity(retained.get("execution_request_id")) and
+            retained.get("execution_request_id") ==
+                retained.get("desired_request_id") and
+            _present_identity(retained.get("state_ingress_sequence")) and
+            _present_identity(retained.get("final_state_source_ros_ns")) and
+            _present_identity(retained.get("final_state_receive_steady_ns"))
+        ):
+            continue
+        for result in lifecycle:
+            if (
+                result.get("phase") == "result" and
+                result.get("runtime_instance_id") ==
+                    retained.get("runtime_instance_id") and
+                result.get("session_id") == retained.get("session_id") and
+                result.get("localization_epoch") ==
+                    retained.get("localization_epoch") and
+                result.get("goal_epoch") == retained.get("desired_goal_epoch") and
+                result.get("request_id") == retained.get("desired_request_id") and
+                result.get("causal_planning_cycle_id") ==
+                    retained.get("planning_cycle_id") and
+                result.get("planner_disposition") == 4 and
+                result.get("runtime_admission_attempted") is False
+            ):
+                return True
+    return False
+
+
 def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
     """Evaluate the separately approved C0-SW evidence scope.
 
@@ -3004,12 +3073,13 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
             accepted_indices == expected_indices):
         product_logic = "PASS"
     elif outcome == "PAUSED_SAFETY_STOP":
-        # A mode label and observed Hold alone do not prove that the adapter
-        # used the right measured state, identity and safety gate. Preserve a
-        # software safety stop as assessable only after its causal gate witness
-        # is joined, rather than turning a physical failure into a false PASS.
-        product_logic = "NOT_EVALUABLE"
-        reasons.append("SAFETY_STOP_GATE_DECISION_WITNESS_NOT_ASSESSED")
+        safety_stop_gate_decision_assessed = (
+            _has_current_fail_closed_safety_stop_witness(inputs))
+        if safety_stop_gate_decision_assessed:
+            product_logic = "PASS"
+        else:
+            product_logic = "NOT_EVALUABLE"
+            reasons.append("SAFETY_STOP_GATE_DECISION_WITNESS_NOT_ASSESSED")
     elif outcome == "COMPLETE" and scenario.get("mission_complete_observed") is True:
         product_logic = "NOT_EVALUABLE"
         reasons.append("MISSION_ACCEPTANCE_LINEAGE_INCOMPLETE")
@@ -3075,6 +3145,9 @@ def evaluate_software_qualification(inputs: dict[str, Any]) -> dict[str, Any]:
         "required_reference_missing": missing_references,
         "references_admitted_without_setpoint_trace": admitted_without_setpoint_trace,
         "required_reference_conflicting": conflicting_references,
+        "safety_stop_gate_decision_assessed": (
+            outcome == "PAUSED_SAFETY_STOP" and
+            _has_current_fail_closed_safety_stop_witness(inputs)),
         "adapter_admission_receipts": len(admission_keys),
         "no_execution_signals": len(no_execution_signals),
         "no_execution_adapter_rejections_missing": unpaired_no_execution_signals,
