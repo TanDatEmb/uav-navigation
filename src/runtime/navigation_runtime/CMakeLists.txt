@@ -129,6 +129,11 @@ if(BUILD_TESTING)
     navigation_world_model::navigation_world_model
     navigation_planning_backend::navigation_planning_backend)
   ament_target_dependencies(test_world_snapshot_store navigation_mapping)
+  ament_add_gtest(test_world_temporal_assessment
+    test/test_world_temporal_assessment.cpp)
+  target_include_directories(test_world_temporal_assessment PRIVATE include)
+  ament_target_dependencies(test_world_temporal_assessment
+    navigation_execution navigation_world_model)
   ament_add_gtest(test_planner_fsm test/test_planner_fsm.cpp)
   target_include_directories(test_planner_fsm PRIVATE include)
   ament_target_dependencies(test_planner_fsm navigation_planning navigation_contracts navigation_execution builtin_interfaces)

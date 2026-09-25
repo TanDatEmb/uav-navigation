@@ -155,6 +155,44 @@ TEST(WorldSnapshotStore, RejectsNullInvalidAndNonMonotonicPublication) {
   EXPECT_NO_THROW(store.publish(world(2, 0, 0)));
 }
 
+TEST(WorldSnapshotStore, SameSourceTickRevisionAdvanceIsStoreLegal) {
+  navigation_mapping::WorldSnapshotStore store;
+  store.publish(world(1, 4, 400));
+
+  // The store contract permits a newer immutable revision at the same source
+  // tick. The ordinary MappingActor producer is stricter and rejects equal
+  // observation stamps within one localization epoch; this test documents
+  // the lower-level publication boundary independently.
+  EXPECT_NO_THROW(store.publish(world(1, 5, 400)));
+  EXPECT_EQ(store.load().identity.revision, 5U);
+  EXPECT_EQ(store.load().identity.observation_stamp_ns, 400);
+}
+
+TEST(WorldSnapshotStore, GenerationAdvanceDefinesNewTimestampDomain) {
+  navigation_mapping::WorldSnapshotStore store;
+  store.publish(world(1, 9, 900));
+
+  // A generation transition is a new map incarnation and may restart source
+  // time. The live MappingActor currently advances generation only at an
+  // epoch reset; the store still enforces the explicit generation semantics.
+  EXPECT_NO_THROW(store.publish(world(2, 0, 0)));
+  EXPECT_EQ(store.load().identity.generation, 2U);
+  EXPECT_EQ(store.load().identity.revision, 0U);
+  EXPECT_EQ(store.load().identity.observation_stamp_ns, 0);
+}
+
+TEST(WorldSnapshotStore, FailedDependentFinalizerKeepsPreviousWorldVisible) {
+  navigation_mapping::WorldSnapshotStore store;
+  store.publish(world(1, 1, 100));
+  const auto decision = store.publishAndFinalizeDecision(world(1, 2, 200), [] {
+    return navigation_world_model::WorldCommitDecision::kCandidateRejected;
+  });
+  EXPECT_EQ(decision,
+            navigation_world_model::WorldCommitDecision::kCandidateRejected);
+  EXPECT_EQ(store.load().identity.revision, 1U);
+  EXPECT_EQ(store.load().identity.observation_stamp_ns, 100);
+}
+
 TEST(WorldSnapshotStore, LocalizationEpochIsPartOfPublicationIdentity) {
   navigation_mapping::WorldSnapshotStore store;
   store.publish(world(7, 1, 100, 1));

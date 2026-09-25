@@ -16,6 +16,7 @@
 #include "navigation_runtime/experimental_tracking.hpp"
 #include "navigation_runtime/runtime_boundaries.hpp"
 #include "navigation_runtime/mapping_observation_contract.hpp"
+#include "navigation_runtime/world_temporal_assessment.hpp"
 #include <navigation_execution/timestamp_freshness.hpp>
 #include <navigation_contracts/navigation_command_contract.hpp>
 #include <navigation_contracts/command_safety_contract.hpp>
@@ -2847,9 +2848,8 @@ navigation_execution::CommitDecision NavigationRuntimeNode::admitImmediateCandid
                   admission_now_ns, measured_state->state.source_stamp_ns,
                   navigation_common::steadyClockNowNanoseconds(), measured_state->state.receive_stamp_ns,
                   data_freshness_window_s_).valid() &&
-              navigation_execution::classifyTimestampFreshness(
-                  admission_now_ns, candidate->world_identity.observation_stamp_ns,
-                  maximum_world_age_ns) == navigation_execution::TimestampFreshness::VALID;
+              assessWorldTemporal(true, candidate->world_identity, admission_now_ns,
+                                  maximum_world_age_ns).sourceCurrent();
         })
       : navigation_execution::CommitDecision::kPredecessorAdvanced;
   return decision;
@@ -2960,11 +2960,9 @@ bool NavigationRuntimeNode::commitPlannerCandidate(
     return reject(kCandidateExportFailed);
   }
   const auto latest_world = world_snapshot_store_.load();
-  const auto world_freshness = latest_world
-      ? navigation_execution::classifyTimestampFreshness(
-            now_ns, latest_world.identity.observation_stamp_ns, maximum_age_ns)
-      : navigation_execution::TimestampFreshness::INVALID;
-  if (world_freshness != navigation_execution::TimestampFreshness::VALID) {
+  const auto world_freshness = assessWorldTemporal(
+      static_cast<bool>(latest_world), latest_world.identity, now_ns, maximum_age_ns);
+  if (!world_freshness.sourceCurrent()) {
     ++world_snapshot_freshness_rejection_count_;
     planner_->discardCommandCandidate();
     RCLCPP_WARN_THROTTLE(
@@ -3386,16 +3384,12 @@ void NavigationRuntimeNode::suspendCommandForWorldFreshness(
   if (!expected.active || !execution_authority_.isCurrentSnapshot(expected)) return;
   const auto current_world = world_snapshot_store_.load();
   const auto current_ros_ns = now().nanoseconds();
-  const auto active_freshness = navigation_execution::classifyTimestampFreshness(
-      current_ros_ns, expected.active->world_identity.observation_stamp_ns,
+  const auto active_freshness = assessWorldTemporal(
+      true, expected.active->world_identity, current_ros_ns, data_freshness_window_ns_);
+  const auto source_freshness = assessWorldTemporal(
+      static_cast<bool>(current_world), current_world.identity, current_ros_ns,
       data_freshness_window_ns_);
-  const auto source_freshness = current_world
-      ? navigation_execution::classifyTimestampFreshness(
-            current_ros_ns, current_world.identity.observation_stamp_ns,
-            data_freshness_window_ns_)
-      : navigation_execution::TimestampFreshness::INVALID;
-  if (source_freshness == navigation_execution::TimestampFreshness::VALID &&
-      active_freshness == navigation_execution::TimestampFreshness::VALID) return;
+  if (source_freshness.sourceCurrent() && active_freshness.sourceCurrent()) return;
   // Keep the execution identity while publication is suspended.  A fresh
   // world may recertify and resume this exact bundle, including across a
   // desired pass-through transition whose successor is still pending.
@@ -4136,11 +4130,9 @@ void NavigationRuntimeNode::runCycle(
   // command publication repeat this check because either boundary can race
   // the mapping worker.
   const auto latest_world = world_snapshot_store_.load();
-  const auto world_freshness = latest_world
-      ? navigation_execution::classifyTimestampFreshness(
-            now_ns, latest_world.identity.observation_stamp_ns, maximum_age_ns)
-      : navigation_execution::TimestampFreshness::INVALID;
-  if (world_freshness != navigation_execution::TimestampFreshness::VALID) {
+  const auto world_freshness = assessWorldTemporal(
+      static_cast<bool>(latest_world), latest_world.identity, now_ns, maximum_age_ns);
+  if (!world_freshness.sourceCurrent()) {
     ++world_snapshot_freshness_rejection_count_;
     if (planning_worker_) planning_worker_->cancelActive();
     // A stale world is a recoverable evidence gap, not a terminal planner
@@ -5290,9 +5282,9 @@ void NavigationRuntimeNode::runCycle(
     return;
   }
   const auto captured_inputs_check_ns = now().nanoseconds();
-  if (navigation_execution::classifyTimestampFreshness(
-          captured_inputs_check_ns, pinned_world.identity.observation_stamp_ns,
-          maximum_age_ns) != navigation_execution::TimestampFreshness::VALID ||
+  const auto pinned_world_temporal = assessWorldTemporal(
+      true, pinned_world.identity, captured_inputs_check_ns, maximum_age_ns);
+  if (!pinned_world_temporal.sourceCurrent() ||
       navigation_execution::classifyTimestampFreshness(
           captured_inputs_check_ns, execution_stamp_ns, maximum_age_ns) !=
           navigation_execution::TimestampFreshness::VALID) {
@@ -5397,7 +5389,7 @@ void NavigationRuntimeNode::runCycle(
   same_identity_renewal_facts.execution_state_fresh =
       execution_freshness == navigation_execution::TimestampFreshness::VALID;
   same_identity_renewal_facts.world_fresh =
-      world_freshness == navigation_execution::TimestampFreshness::VALID;
+      pinned_world_temporal.sourceCurrent();
   same_identity_renewal_facts.valid_future_anchor = false;
   same_identity_renewal_facts.fresh_renewal_due_window =
       ordinaryRenewalFailureInjectionMayArm(renewal_decision, planning_interval_s);
@@ -5602,9 +5594,8 @@ void NavigationRuntimeNode::runCycle(
     const auto current_execution = execution_state_store_.load();
     const auto current_now_ns = now().nanoseconds();
     return current_world && current_execution &&
-           navigation_execution::classifyTimestampFreshness(
-               current_now_ns, current_world.identity.observation_stamp_ns,
-               data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID &&
+           assessWorldTemporal(true, current_world.identity, current_now_ns,
+                               data_freshness_window_ns_).sourceCurrent() &&
            navigation_execution::classifyTimestampFreshness(
                current_now_ns, current_execution->state.source_stamp_ns,
                data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID &&
@@ -5634,7 +5625,7 @@ void NavigationRuntimeNode::runCycle(
       retained_tracking_limit_m > 0.0 &&
       std::isfinite(transition_anchor_error_m) &&
       transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&
-      latest_world && world_freshness == navigation_execution::TimestampFreshness::VALID &&
+      latest_world && pinned_world_temporal.sourceCurrent() &&
       execution_freshness == navigation_execution::TimestampFreshness::VALID &&
       transition_bundle->validateWorld(latest_world.view, now().seconds()).valid;
   const bool handoff_safe_margin_injection = inject_failed_replan_after_handoff_ &&
@@ -5650,7 +5641,7 @@ void NavigationRuntimeNode::runCycle(
       std::isfinite(retained_tracking_limit_m) && retained_tracking_limit_m > 0.0 &&
       std::isfinite(transition_anchor_error_m) &&
       transition_anchor_error_m <= 0.40 * retained_tracking_limit_m &&
-      latest_world && world_freshness == navigation_execution::TimestampFreshness::VALID &&
+      latest_world && pinned_world_temporal.sourceCurrent() &&
       execution_freshness == navigation_execution::TimestampFreshness::VALID &&
       transition_bundle->validateWorld(latest_world.view, now().seconds()).valid;
   const bool repeated_replan_failure = inject_failed_replan_repeated_ &&
@@ -5663,7 +5654,7 @@ void NavigationRuntimeNode::runCycle(
       transition_elapsed_s < transition_bundle->backup_start_time_s &&
       std::isfinite(transition_anchor_error_m) &&
       transition_anchor_error_m <= retained_tracking_limit_m && latest_world &&
-      world_freshness == navigation_execution::TimestampFreshness::VALID &&
+      pinned_world_temporal.sourceCurrent() &&
       execution_freshness == navigation_execution::TimestampFreshness::VALID &&
       transition_bundle->validateWorld(latest_world.view, now().seconds()).valid;
   const bool repeated_plan_from_rest_failure = inject_failed_plan_from_rest_repeated_ &&
@@ -5792,9 +5783,8 @@ void NavigationRuntimeNode::runCycle(
     const auto current_world = world_snapshot_store_.load();
     const auto current_lease = execution_state_store_.load();
     const bool current_world_fresh = current_world &&
-        navigation_execution::classifyTimestampFreshness(
-            injection_now_ns, current_world.identity.observation_stamp_ns,
-            data_freshness_window_ns_) == navigation_execution::TimestampFreshness::VALID;
+        assessWorldTemporal(true, current_world.identity, injection_now_ns,
+                            data_freshness_window_ns_).sourceCurrent();
     const bool current_state_fresh = current_lease &&
         navigation_execution::classifyTimestampFreshness(
             injection_now_ns, current_lease->state.source_stamp_ns,
@@ -8398,12 +8388,10 @@ void NavigationRuntimeNode::publishCommand() {
   // condition: the next fresh mapping snapshot may resume planning.
   const auto world_failure_execution = execution_authority_.snapshot();
   const auto latest_world = world_snapshot_store_.load();
-  const auto world_freshness = latest_world
-      ? navigation_execution::classifyTimestampFreshness(
-            command_ros_time.nanoseconds(), latest_world.identity.observation_stamp_ns,
-            data_freshness_window_ns_)
-      : navigation_execution::TimestampFreshness::INVALID;
-  if (world_freshness != navigation_execution::TimestampFreshness::VALID) {
+  const auto world_freshness = assessWorldTemporal(
+      static_cast<bool>(latest_world), latest_world.identity,
+      command_ros_time.nanoseconds(), data_freshness_window_ns_);
+  if (!world_freshness.sourceCurrent()) {
     ++world_snapshot_freshness_rejection_count_;
     if (planning_worker_) planning_worker_->cancelActive();
     // No command is published from this callback. A later fresh snapshot may
@@ -8604,11 +8592,8 @@ void NavigationRuntimeNode::publishCommand() {
                 current_world &&
                 navigation_world_model::sameWorldSnapshotIdentity(
                     current_world.identity, episode.active->world_identity) &&
-                navigation_execution::classifyTimestampFreshness(
-                    current_ros_ns,
-                    current_world.identity.observation_stamp_ns,
-                    data_freshness_window_ns_) ==
-                    navigation_execution::TimestampFreshness::VALID;
+                assessWorldTemporal(true, current_world.identity, current_ros_ns,
+                                    data_freshness_window_ns_).sourceCurrent();
           }
           if (stale_solve) {
             // The cancellation still belongs to the timed-out solve, but its
@@ -9421,10 +9406,9 @@ void NavigationRuntimeNode::publishCommand() {
                       final_execution_state->state.receive_stamp_ns,
                       data_freshness_window_s_);
               final_world_freshness =
-                  navigation_execution::classifyTimestampFreshness(
-                      authorization_ros_ns,
-                      sampled_bundle->world_identity.observation_stamp_ns,
-                      data_freshness_window_ns_);
+                  assessWorldTemporal(true, sampled_bundle->world_identity,
+                                      authorization_ros_ns,
+                                      data_freshness_window_ns_).sourceTimeResult();
               final_command_lease_valid =
                   navigation_contracts::commandValidAt(command, authorization_ros_ns);
               final_bundle_lease_valid = sampled_planned_stop_hold ||
