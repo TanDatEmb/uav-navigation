@@ -1794,6 +1794,153 @@ TEST(TestExecutionAuthority, SnapshotSupersededDuringPreparationIsNoOp) {
       *store.snapshot().world_identity, world));
 }
 
+TEST(TestExecutionAuthority, WorldRefreshForE1CannotMutateE2AfterBarrierSupersession) {
+  navigation_execution::TestExecutionAuthority store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  const auto e1 = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, e1),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto expected_e1 = store.snapshot();
+  const navigation_world_model::WorldSnapshotIdentity w11{3, 4, 2, 2};
+  std::latch preparation_entered{1};
+  std::latch release_preparation{1};
+  auto refresh = std::async(std::launch::async, [&] {
+    const auto prepare = [&](const navigation_planning::CandidateBundle& source,
+                             const navigation_world_model::WorldSnapshotIdentity& next,
+                             std::int64_t) {
+      preparation_entered.count_down();
+      release_preparation.wait();
+      auto copy = std::make_shared<navigation_planning::CandidateBundle>(source);
+      copy->world_identity = next;
+      copy->pinned_world_identity = next;
+      return std::shared_ptr<const navigation_planning::CandidateBundle>(copy);
+    };
+    return navigation_execution::ExecutionAuthorityTestAccess::publish(
+        store, w11, expected_e1, true, 300, false, []() noexcept {}, prepare);
+  });
+  preparation_entered.wait();
+
+  auto e2_value = candidateFor(7, 1);
+  e2_value.request_id = 88U;
+  e2_value.bundle_generation = 89U;
+  const auto e2 = std::make_shared<const navigation_planning::CandidateBundle>(e2_value);
+  EXPECT_EQ(store.tryCommit({world, 7, 2}, e2),
+            navigation_execution::CommitDecision::kCommitted);
+  release_preparation.count_down();
+
+  EXPECT_EQ(refresh.get(), navigation_world_model::WorldCommitDecision::kSuperseded);
+  const auto after = store.snapshot();
+  EXPECT_EQ(after.active, e2);
+  EXPECT_EQ(after.activeGeneration(), e2->bundle_generation);
+  ASSERT_TRUE(after.world_identity);
+  EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+      *after.world_identity, world));
+}
+
+TEST(TestExecutionAuthority, WorldRefreshForP1CannotReplaceBarrierInstalledP2) {
+  navigation_execution::TestExecutionAuthority store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  const auto active = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, active),
+            navigation_execution::CommitDecision::kCommitted);
+  const auto anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(anchor);
+  const auto p1 = successorFor(*anchor, 7);
+  ASSERT_EQ(store.stagePending({world, 7, 2}, *anchor, p1),
+            navigation_execution::StageDecision::kStaged);
+  const auto expected_p1 = store.snapshot();
+  const navigation_world_model::WorldSnapshotIdentity w11{3, 4, 2, 2};
+  std::latch preparation_entered{1};
+  std::latch release_preparation{1};
+  auto refresh = std::async(std::launch::async, [&] {
+    const auto prepare = [&](const navigation_planning::CandidateBundle& source,
+                             const navigation_world_model::WorldSnapshotIdentity& next,
+                             std::int64_t) {
+      preparation_entered.count_down();
+      release_preparation.wait();
+      auto copy = std::make_shared<navigation_planning::CandidateBundle>(source);
+      copy->world_identity = next;
+      copy->pinned_world_identity = next;
+      return std::shared_ptr<const navigation_planning::CandidateBundle>(copy);
+    };
+    return navigation_execution::ExecutionAuthorityTestAccess::publish(
+        store, w11, expected_p1, true, 300, true, []() noexcept {}, prepare);
+  });
+  preparation_entered.wait();
+
+  const auto replacement_anchor = store.reserveAnchor(50, 50);
+  ASSERT_TRUE(replacement_anchor);
+  auto p2_value = *successorFor(*replacement_anchor, 7);
+  p2_value.request_id = 99U;
+  p2_value.bundle_generation = 100U;
+  const auto p2 = std::make_shared<const navigation_planning::CandidateBundle>(p2_value);
+  EXPECT_EQ(store.stagePending({world, 7, 3}, *replacement_anchor, p2),
+            navigation_execution::StageDecision::kStaged);
+  release_preparation.count_down();
+
+  EXPECT_EQ(refresh.get(), navigation_world_model::WorldCommitDecision::kSuperseded);
+  const auto after = store.snapshot();
+  EXPECT_EQ(after.active, active);
+  EXPECT_EQ(after.pending, p2);
+  EXPECT_EQ(after.activeGeneration(), active->bundle_generation);
+}
+
+TEST(TestExecutionAuthority, SuspendedE1WorldRefreshCannotResumeAfterE2Cutover) {
+  navigation_execution::TestExecutionAuthority store;
+  const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
+  ASSERT_TRUE(publishWorldIdentityForTest(store, world));
+  ASSERT_TRUE(store.setAdmissionGoalEpoch(7));
+  const auto e1 = std::make_shared<const navigation_planning::CandidateBundle>(
+      candidateFor(7, 1));
+  ASSERT_EQ(store.tryCommit({world, 7, 1}, e1),
+            navigation_execution::CommitDecision::kCommitted);
+  store.suspendCommand();
+  const auto suspended_e1 = store.snapshot();
+  ASSERT_EQ(suspended_e1.lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kSuspended);
+  const navigation_world_model::WorldSnapshotIdentity w11{3, 4, 2, 2};
+  std::latch preparation_entered{1};
+  std::latch release_preparation{1};
+  auto refresh = std::async(std::launch::async, [&] {
+    const auto prepare = [&](const navigation_planning::CandidateBundle& source,
+                             const navigation_world_model::WorldSnapshotIdentity& next,
+                             std::int64_t) {
+      preparation_entered.count_down();
+      release_preparation.wait();
+      auto copy = std::make_shared<navigation_planning::CandidateBundle>(source);
+      copy->world_identity = next;
+      copy->pinned_world_identity = next;
+      return std::shared_ptr<const navigation_planning::CandidateBundle>(copy);
+    };
+    return navigation_execution::ExecutionAuthorityTestAccess::publish(
+        store, w11, suspended_e1, true, 300, false, []() noexcept {}, prepare);
+  });
+  preparation_entered.wait();
+
+  auto e2_value = candidateFor(7, 1);
+  e2_value.request_id = 88U;
+  e2_value.bundle_generation = 89U;
+  const auto e2 = std::make_shared<const navigation_planning::CandidateBundle>(e2_value);
+  EXPECT_EQ(store.tryCommit({world, 7, 2}, e2),
+            navigation_execution::CommitDecision::kCommitted);
+  release_preparation.count_down();
+
+  EXPECT_EQ(refresh.get(), navigation_world_model::WorldCommitDecision::kSuperseded);
+  const auto after = store.snapshot();
+  EXPECT_EQ(after.active, e2);
+  EXPECT_EQ(after.lifecycle.exposure,
+            navigation_execution::ExecutionExposure::kAvailable);
+  ASSERT_TRUE(after.world_identity);
+  EXPECT_TRUE(navigation_world_model::sameWorldSnapshotIdentity(
+      *after.world_identity, world));
+}
+
 TEST(TestExecutionAuthority, StaleRevokePreservesReplacementActiveBundle) {
   navigation_execution::TestExecutionAuthority store;
   const navigation_world_model::WorldSnapshotIdentity world{3, 4, 1, 1};
