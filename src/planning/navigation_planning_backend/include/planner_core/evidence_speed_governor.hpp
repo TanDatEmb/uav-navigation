@@ -145,7 +145,11 @@ template <typename ShouldAbort>
   // closed-form cap is checked by the same production stop polynomial and
   // continuous extrema used by BACKUP. Correct only bounded floating-point
   // boundary discrepancies; this is not a speed search grid.
-  constexpr std::size_t kMaximumRoundoffCorrections = 2U;
+  // The analytic cap can land on a Bezier-hull support boundary. A few
+  // representable downward steps may be needed for the concrete stop support
+  // bound to fit; this is bounded numerical correction, not a speed-policy
+  // margin.
+  constexpr std::size_t kMaximumRoundoffCorrections = 8U;
   for (std::size_t correction = 0U;
        correction <= kMaximumRoundoffCorrections; ++correction) {
     if (abort_requested()) {

@@ -1650,6 +1650,32 @@ TEST(PlannerSpeedGovernor, DoesNotReplaceMeasuredPvajWithDesiredCruiseSpeed) {
             navigation_planning_backend::EvidenceSpeedFailure::kOutsideRecoveryEnvelope);
 }
 
+TEST(PlannerSpeedGovernor, CorrectsRepresentableSpeedAtCertifiedSupportBoundary) {
+  navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
+  navigation_planning::DynamicLimits dynamics;
+  dynamics.vehicle.maximum_velocity_mps = 5.0;
+  dynamics.vehicle.maximum_acceleration_mps2 = 5.0;
+  dynamics.vehicle.maximum_jerk_mps3 = 8.0;
+  dynamics.intent.requested_cruise_speed_mps = 5.0;
+  constexpr double support_m = 0.72322330470336316;
+  const double analytic_cap =
+      navigation_planning_backend::detail::minimumSnapSteadyCruiseSpeedCap(
+          dynamics.intent.requested_cruise_speed_mps,
+          dynamics.vehicle.maximum_velocity_mps,
+          dynamics.vehicle.maximum_acceleration_mps2,
+          dynamics.vehicle.maximum_jerk_mps3, support_m, 0.05);
+
+  const auto result = navigation_planning_backend::evidenceAwareSpeedLimit(
+      state, dynamics, {support_m, support_m, support_m, support_m});
+  ASSERT_TRUE(result.sufficient) << static_cast<int>(result.failure);
+  EXPECT_LT(result.speed_mps, analytic_cap);
+  auto candidate = state;
+  candidate.col(1) = Eigen::Vector3d{result.speed_mps, 0.0, 0.0};
+  const auto stop = navigation_planning_backend::evaluateStopReachability(
+      candidate, dynamics, support_m);
+  EXPECT_TRUE(stop.feasible);
+}
+
 TEST(PlannerSpeedGovernor, ReportsBudgetExhaustionSeparately) {
   navigation_math::StatePVAJ state = navigation_math::StatePVAJ::Zero();
   navigation_planning::DynamicLimits dynamics;

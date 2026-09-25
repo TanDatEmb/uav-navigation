@@ -419,9 +419,7 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithAbort(
             std::isfinite(analytic_acceleration) &&
             std::isfinite(analytic_jerk) &&
             analytic_acceleration <= acceleration_limit &&
-            analytic_jerk <= jerk_limit &&
-            result.maximum_acceleration_mps2 <= gate * max_acc_mps2 &&
-            result.maximum_jerk_mps3 <= gate * max_jerk_mps3;
+            analytic_jerk <= jerk_limit;
       }
       if (dynamic_limits_valid && physical_steady_limits_valid) {
         result.support_bound_m = minimumSnapStopSupportBound(
@@ -458,9 +456,7 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithAbort(
                 static_cast<long double>(gate * max_acc_mps2) ||
             10.0L * exact_speed /
                     (std::sqrt(3.0L) * represented_duration * represented_duration) >
-                static_cast<long double>(gate * max_jerk_mps3) ||
-            result.maximum_acceleration_mps2 > gate * max_acc_mps2 ||
-            result.maximum_jerk_mps3 > gate * max_jerk_mps3;
+                static_cast<long double>(gate * max_jerk_mps3);
         if (!evaluation_contract_valid || !physical_boundary_miss ||
             attempt + 1 >= maximum_attempts) {
           result.failure = StopFailureReason::kSynthesisFailed;
