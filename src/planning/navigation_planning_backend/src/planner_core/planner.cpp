@@ -629,7 +629,8 @@ double mainGuideSupport(
 
     bool Planner::authorizeAndStage(
             CandidateCommandBundle&& candidate,
-            const std::optional<CommandIdentity>& explicit_identity) {
+            const std::optional<CommandIdentity>& explicit_identity,
+            const navigation_planning::PlanningRequest* const request_context) {
         if (commit_authorizer_ == nullptr || !map_ptr_) {
             latest_commit_decision_.store(static_cast<int>(
                 navigation_world_model::WorldCommitDecision::kCandidateRejected));
@@ -733,23 +734,20 @@ double mainGuideSupport(
                 // fold gate is bypassed only for this bounded STOP correction;
                 // world, dynamic, yaw, anchor, and handoff certificates still
                 // authorize the candidate independently.
-                const auto previous = planner_warm_start_.snapshot();
-                const bool previous_was_emergency =
-                    !previous.empty && previous.emergency_brake &&
-                    previous.identity.localization_epoch ==
+                const bool request_identity_matches = request_context &&
+                    request_context->key.localization_epoch ==
                         command_identity.localization_epoch &&
-                    previous.identity.goal_epoch == command_identity.goal_epoch &&
-                    previous.identity.request_id == command_identity.request_id;
-                Eigen::Vector3d previous_endpoint =
-                    Eigen::Vector3d::Constant(
-                        std::numeric_limits<double>::quiet_NaN());
-                if (previous_was_emergency) {
-                    previous_endpoint = previous.position.getState(
-                        previous.position.getTotalDuration()).col(0);
-                }
+                    request_context->key.goal_epoch == command_identity.goal_epoch &&
+                    request_context->key.request_id == command_identity.request_id;
+                const auto previous_endpoint = request_identity_matches
+                    ? request_context->history.emergencyEndpointFor(
+                          request_context->key.committed_bundle_generation,
+                          request_context->key.localization_epoch)
+                    : std::nullopt;
+                const bool previous_was_emergency = previous_endpoint.has_value();
                 const double emergency_endpoint_distance =
-                    previous_endpoint.allFinite()
-                        ? (previous_endpoint - active_waypoint.position_enu).norm()
+                    previous_endpoint && previous_endpoint->allFinite()
+                        ? (*previous_endpoint - active_waypoint.position_enu).norm()
                         : std::numeric_limits<double>::quiet_NaN();
                 const bool emergency_bounded_correction =
                     previous_was_emergency && candidate_start.allFinite() &&
@@ -1719,7 +1717,8 @@ double mainGuideSupport(
     }
 
     std::optional<bool> Planner::tryStageMeasuredTerminalStopHold(
-            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline) {
+            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline,
+            const navigation_planning::PlanningRequest* const request) {
         if (!terminal_stop_required_ || !route_snapshot_.has_value() ||
             route_snapshot_->active_waypoint_index >= route_snapshot_->waypoints.size() ||
             !map_ptr_ || !solve_state_.rcv || !solve_state_.p.allFinite() ||
@@ -1840,7 +1839,7 @@ double mainGuideSupport(
 
         auto candidate = CmdTraj::buildCandidate(
             hold_exp, nullptr, BackupDisposition::FINISH, true);
-        if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+        if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
             latest_replan.setRetCode(PLANNER_CANDIDATE_REJECTED);
             planner_context_->warn(
                 " -- [planner] measured terminal STOP hold rejected by final "
@@ -1868,6 +1867,12 @@ double mainGuideSupport(
     Planner::planInitialFromStoppedState(const Vec3f &goal_p,
                                          const double &goal_yaw,
                                          const bool &new_goal) {
+        return planInitialFromStoppedStateImpl(goal_p, goal_yaw, new_goal, nullptr);
+    }
+
+    RET_CODE Planner::planInitialFromStoppedStateImpl(
+            const Vec3f& goal_p, const double& goal_yaw, const bool& new_goal,
+            const navigation_planning::PlanningRequest* const request) {
         std::lock_guard<std::mutex> guard(replan_lock_);
         baseline_candidate_ready_for_refinement_ = false;
         {
@@ -1956,7 +1961,7 @@ double mainGuideSupport(
         latest_replan.setLocalStartP(local_star_pt);
 
         const auto measured_terminal_hold =
-            tryStageMeasuredTerminalStopHold(goal_p, solve_deadline);
+            tryStageMeasuredTerminalStopHold(goal_p, solve_deadline, request);
         if (measured_terminal_hold.has_value()) {
             return *measured_terminal_hold ? SUCCESS : FAILED;
         }
@@ -2020,7 +2025,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, &back_traj_info, BackupDisposition::SUCCESS,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2051,7 +2056,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, disposition,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2269,7 +2274,7 @@ double mainGuideSupport(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
             }
-            if (!authorizeAndStage(std::move(*candidate))) {
+            if (!authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2298,7 +2303,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::NO_NEED,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2328,7 +2333,7 @@ double mainGuideSupport(
             auto candidate = CmdTraj::buildCandidate(
                 exp_traj_info, nullptr, BackupDisposition::FINISH,
                 candidate_terminal_stop_active_);
-            if (!candidate || !authorizeAndStage(std::move(*candidate))) {
+            if (!candidate || !authorizeAndStage(std::move(*candidate), std::nullopt, request)) {
                 latest_replan.setRetCode(classifySolveFailure(
                     solve_deadline, false, PlannerResultCode::PLANNER_CANDIDATE_REJECTED));
                 return FAILED;
@@ -2512,8 +2517,8 @@ double mainGuideSupport(
         diagnostic_planner_cycle_ = request.diagnostic_planner_cycle;
         const auto result = request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kStoppedMeasuredState
-            ? planInitialFromStoppedState(
-                target_world, 0.0, true)
+            ? planInitialFromStoppedStateImpl(
+                target_world, 0.0, true, &request)
             : request.key.start_mode ==
                 navigation_planning::PlanningStartMode::kMeasuredEmergencyBrake
             ? ([&]() {

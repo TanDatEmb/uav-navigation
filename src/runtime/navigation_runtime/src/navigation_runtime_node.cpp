@@ -5405,6 +5405,23 @@ void NavigationRuntimeNode::runCycle(
   planning_request.history.previous_velocity_world = transition_bundle
       ? execution_state.velocity_world
       : Eigen::Vector3d::Zero();
+  if (transition_bundle) {
+    navigation_planning::PlanningPredecessorEvidence predecessor;
+    predecessor.bundle_generation = transition_bundle->bundle_generation;
+    predecessor.localization_epoch = transition_bundle->localization_epoch;
+    predecessor.goal_epoch = transition_bundle->goal_epoch;
+    predecessor.request_id = transition_bundle->request_id;
+    predecessor.kind = transition_bundle->kind;
+    predecessor.role = transition_bundle->role;
+    if (transition_bundle->kind ==
+        navigation_planning::CandidateBundleKind::kEmergencyBrake) {
+      const auto endpoint = transition_bundle->sampleAtDeclaredEnd();
+      if (endpoint && endpoint->finished && endpoint->finite()) {
+        predecessor.declared_endpoint_position_world = endpoint->position_world;
+      }
+    }
+    planning_request.history.predecessor = std::move(predecessor);
+  }
   planning_request.route_snapshot = *route_snapshot;
   planning_request.world = pinned_world.view;
   planning_request.dynamics = mission_dynamic_limits_;

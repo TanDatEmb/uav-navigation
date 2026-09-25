@@ -252,7 +252,12 @@ namespace navigation_planning_backend {
 
         bool authorizeAndStage(
             CandidateCommandBundle&& candidate,
-            const std::optional<CommandIdentity>& explicit_identity = std::nullopt);
+            const std::optional<CommandIdentity>& explicit_identity = std::nullopt,
+            const navigation_planning::PlanningRequest* request_context = nullptr);
+
+        RET_CODE planInitialFromStoppedStateImpl(
+            const Vec3f& goal_p, const double& goal_yaw, const bool& new_goal,
+            const navigation_planning::PlanningRequest* request);
 
         [[nodiscard]] std::optional<std::uint64_t>
         reserveCandidateGenerationLocked();
@@ -295,7 +300,8 @@ namespace navigation_planning_backend {
         // it may use the request-local body witness, but it must still pass
         // the normal dynamic and immutable-world certificates.
         [[nodiscard]] std::optional<bool> tryStageMeasuredTerminalStopHold(
-            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline);
+            const Vec3f& goal_p, const AbsoluteDeadline& solve_deadline,
+            const navigation_planning::PlanningRequest* request);
 
     public:
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW

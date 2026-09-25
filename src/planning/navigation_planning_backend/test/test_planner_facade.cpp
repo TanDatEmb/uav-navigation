@@ -2681,6 +2681,7 @@ navigation_planning::PlanningRequest unacceptedBoundaryGeometryRequest(
   request.key.route_revision = request.route_snapshot.route_revision;
   request.key.start_mode = navigation_planning::PlanningStartMode::kCommittedFutureState;
   request.key.committed_bundle_generation = 1U;
+  request.history.previous_bundle_generation = request.key.committed_bundle_generation;
   request.key.anchor_stamp_ns = 10'000'000'000LL;
   request.start_state.source_stamp_ns = request.key.anchor_stamp_ns;
   request.start_state.receive_stamp_ns = request.key.anchor_stamp_ns;
@@ -2752,6 +2753,7 @@ TEST(PlannerBoundaryGeometry, DoesNotApplyToHandoffRecoveryOrSafetyRoles) {
   auto stopped = base;
   stopped.key.start_mode = navigation_planning::PlanningStartMode::kStoppedMeasuredState;
   stopped.key.committed_bundle_generation = 0U;
+  stopped.history.previous_bundle_generation = 0U;
   stopped.anchor.reset();
   stopped.activation_stamp_ns = 0;
   ASSERT_TRUE(stopped.valid());

@@ -9,6 +9,7 @@
 #include <Eigen/Core>
 
 #include <navigation_planning/kinematic_state.hpp>
+#include <navigation_planning/candidate_bundle.hpp>
 #include <navigation_planning/execution_anchor.hpp>
 #include <navigation_planning/planning_budget.hpp>
 #include <navigation_planning/planning_limits.hpp>
@@ -64,17 +65,80 @@ struct GoalIdentity {
   }
 };
 
+// Minimal immutable execution provenance captured when a planning request is
+// constructed. This is deliberately a value witness, not a CandidateBundle:
+// backend evaluators and world-validation callables are not planning history.
+struct PlanningPredecessorEvidence {
+  std::uint64_t bundle_generation{0};
+  std::uint64_t localization_epoch{0};
+  std::uint64_t goal_epoch{0};
+  std::uint64_t request_id{0};
+  CandidateBundleKind kind{CandidateBundleKind::kTerminalStop};
+  CandidateRole role{CandidateRole::kMain};
+  std::optional<Eigen::Vector3d> declared_endpoint_position_world{};
+
+  [[nodiscard]] bool valid() const noexcept {
+    const bool kind_role_valid =
+        (kind == CandidateBundleKind::kMainWithBackup &&
+         role == CandidateRole::kMain) ||
+        (kind == CandidateBundleKind::kTerminalStop &&
+         role == CandidateRole::kMain) ||
+        (kind == CandidateBundleKind::kBackupOnly &&
+         role == CandidateRole::kBackup) ||
+        (kind == CandidateBundleKind::kEmergencyBrake &&
+         role == CandidateRole::kEmergency);
+    const bool endpoint_valid = declared_endpoint_position_world.has_value()
+        ? declared_endpoint_position_world->allFinite()
+        : kind != CandidateBundleKind::kEmergencyBrake;
+    return bundle_generation != 0 && localization_epoch != 0 &&
+           goal_epoch != 0 && request_id != 0 && candidateRoleValid(role) &&
+           kind_role_valid && endpoint_valid;
+  }
+
+  [[nodiscard]] std::optional<Eigen::Vector3d> emergencyEndpointFor(
+      const std::uint64_t expected_generation,
+      const std::uint64_t expected_localization_epoch) const noexcept {
+    if (!valid() || kind != CandidateBundleKind::kEmergencyBrake ||
+        role != CandidateRole::kEmergency ||
+        bundle_generation != expected_generation ||
+        localization_epoch != expected_localization_epoch ||
+        !declared_endpoint_position_world) {
+      return std::nullopt;
+    }
+    return declared_endpoint_position_world;
+  }
+};
+
 struct PlanningHistory {
   std::uint64_t previous_bundle_generation{0};
   Eigen::Vector3d previous_velocity_world{Eigen::Vector3d::Zero()};
+  // Optional policy provenance. Without it, the request may still describe
+  // prior generation/velocity for other solve contracts, but it cannot claim
+  // an emergency-predecessor route-regression exception.
+  std::optional<PlanningPredecessorEvidence> predecessor{};
 
   // A zero generation means that there is no prior executable bundle. In
   // that case the velocity field must not be interpreted as prior-command
   // history; the measured start state is carried separately by the request.
   [[nodiscard]] bool valid() const noexcept {
-    return previous_velocity_world.allFinite() &&
-           (previous_bundle_generation != 0 ||
-            previous_velocity_world.isZero(1.0e-12));
+    const bool generation_contract = previous_bundle_generation != 0 ||
+        (previous_velocity_world.isZero(1.0e-12) && !predecessor.has_value());
+    const bool predecessor_contract = !predecessor ||
+        (predecessor->valid() &&
+         predecessor->bundle_generation == previous_bundle_generation);
+    return previous_velocity_world.allFinite() && generation_contract &&
+           predecessor_contract;
+  }
+
+  [[nodiscard]] std::optional<Eigen::Vector3d> emergencyEndpointFor(
+      const std::uint64_t expected_generation,
+      const std::uint64_t expected_localization_epoch) const noexcept {
+    if (!valid() || !predecessor ||
+        previous_bundle_generation != expected_generation) {
+      return std::nullopt;
+    }
+    return predecessor->emergencyEndpointFor(
+        expected_generation, expected_localization_epoch);
   }
 };
 
@@ -149,7 +213,22 @@ struct PlanningRequest {
            world->identity().generation == key.pinned_world_generation &&
            world->identity().revision == key.pinned_world_revision &&
            world->identity().observation_stamp_ns > 0 &&
-           history.valid() && support_contract_valid &&
+           history.valid() &&
+           history.previous_bundle_generation ==
+               key.committed_bundle_generation &&
+           (!history.predecessor ||
+            (history.predecessor->localization_epoch == key.localization_epoch &&
+             history.predecessor->bundle_generation ==
+                 key.committed_bundle_generation &&
+             (key.start_mode != PlanningStartMode::kCommittedFutureState ||
+              (anchor &&
+               history.predecessor->bundle_generation ==
+                   anchor->active_bundle_generation &&
+               history.predecessor->localization_epoch ==
+                   anchor->localization_epoch &&
+               history.predecessor->goal_epoch == anchor->goal_epoch &&
+               history.predecessor->request_id == anchor->request_id)))) &&
+           support_contract_valid &&
            (!mission_start_position_world.has_value() ||
             mission_start_position_world->allFinite()) &&
            dynamics.valid() &&

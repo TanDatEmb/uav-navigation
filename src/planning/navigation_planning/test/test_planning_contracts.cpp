@@ -307,6 +307,127 @@ TEST(PlanningHistory, ZeroGenerationCannotCarryPriorCommandVelocity) {
   EXPECT_TRUE(history.valid());
 }
 
+TEST(PlanningPredecessorEvidence, RequiresAConsistentTypedIdentityAndEndpoint) {
+  navigation_planning::PlanningPredecessorEvidence evidence;
+  evidence.bundle_generation = 11;
+  evidence.localization_epoch = 3;
+  evidence.goal_epoch = 7;
+  evidence.request_id = 9;
+  evidence.kind = navigation_planning::CandidateBundleKind::kEmergencyBrake;
+  evidence.role = navigation_planning::CandidateRole::kEmergency;
+  evidence.declared_endpoint_position_world = Eigen::Vector3d(1.0, 2.0, 3.0);
+  EXPECT_TRUE(evidence.valid());
+
+  EXPECT_TRUE(evidence.emergencyEndpointFor(11, 3).has_value());
+  EXPECT_FALSE(evidence.emergencyEndpointFor(12, 3).has_value());
+  EXPECT_FALSE(evidence.emergencyEndpointFor(11, 4).has_value());
+
+  auto missing_endpoint = evidence;
+  missing_endpoint.declared_endpoint_position_world.reset();
+  EXPECT_FALSE(missing_endpoint.valid());
+  auto wrong_role = evidence;
+  wrong_role.role = navigation_planning::CandidateRole::kMain;
+  EXPECT_FALSE(wrong_role.valid());
+
+  evidence.bundle_generation = 0;
+  EXPECT_FALSE(evidence.valid());
+  evidence.bundle_generation = 11;
+  evidence.declared_endpoint_position_world->x() =
+      std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(evidence.valid());
+}
+
+TEST(PlanningPredecessorEvidence, EmergencyPermissionUsesRequestValueNotMutableCache) {
+  navigation_planning::PlanningPredecessorEvidence request_predecessor;
+  request_predecessor.bundle_generation = 101;
+  request_predecessor.localization_epoch = 5;
+  request_predecessor.goal_epoch = 8;
+  request_predecessor.request_id = 13;
+  request_predecessor.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  request_predecessor.role = navigation_planning::CandidateRole::kMain;
+
+  navigation_planning::PlanningPredecessorEvidence later_warm_start;
+  later_warm_start.bundle_generation = 202;
+  later_warm_start.localization_epoch = 5;
+  later_warm_start.goal_epoch = 8;
+  later_warm_start.request_id = 13;
+  later_warm_start.kind = navigation_planning::CandidateBundleKind::kEmergencyBrake;
+  later_warm_start.role = navigation_planning::CandidateRole::kEmergency;
+  later_warm_start.declared_endpoint_position_world =
+      Eigen::Vector3d(4.0, 5.0, 6.0);
+
+  // This models the false-accept substitution: request R captured ordinary
+  // E1, while the mutable optimizer cache later describes emergency E2.
+  // Authorization consumes only R's value, so E2 cannot grant the exception.
+  navigation_planning::PlanningHistory history;
+  history.previous_bundle_generation = 101;
+  history.predecessor = request_predecessor;
+  EXPECT_FALSE(history.emergencyEndpointFor(101, 5).has_value());
+  EXPECT_TRUE(later_warm_start.emergencyEndpointFor(202, 5).has_value());
+}
+
+TEST(PlanningPredecessorEvidence, CapturedEmergencySurvivesLaterWarmStartReplacement) {
+  navigation_planning::PlanningPredecessorEvidence request_predecessor;
+  request_predecessor.bundle_generation = 303;
+  request_predecessor.localization_epoch = 6;
+  request_predecessor.goal_epoch = 20;
+  request_predecessor.request_id = 30;
+  request_predecessor.kind = navigation_planning::CandidateBundleKind::kEmergencyBrake;
+  request_predecessor.role = navigation_planning::CandidateRole::kEmergency;
+  request_predecessor.declared_endpoint_position_world =
+      Eigen::Vector3d(0.5, 0.0, 0.0);
+
+  navigation_planning::PlanningPredecessorEvidence later_warm_start;
+  later_warm_start.bundle_generation = 404;
+  later_warm_start.localization_epoch = 6;
+  later_warm_start.goal_epoch = 20;
+  later_warm_start.request_id = 30;
+  later_warm_start.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  later_warm_start.role = navigation_planning::CandidateRole::kMain;
+
+  // The successor has its own goal/request identity. The authorization
+  // witness remains the predecessor captured for this request, even when a
+  // later cache snapshot is non-emergency.
+  EXPECT_EQ(request_predecessor.goal_epoch, 20U);
+  EXPECT_EQ(request_predecessor.request_id, 30U);
+  navigation_planning::PlanningHistory history;
+  history.previous_bundle_generation = 303;
+  history.predecessor = request_predecessor;
+  const auto endpoint = history.emergencyEndpointFor(303, 6);
+  ASSERT_TRUE(endpoint.has_value());
+  EXPECT_TRUE(endpoint->isApprox(Eigen::Vector3d(0.5, 0.0, 0.0)));
+
+  navigation_planning::PlanningKey successor_identity;
+  successor_identity.localization_epoch = 6;
+  successor_identity.goal_epoch = 21;
+  successor_identity.request_id = 31;
+  successor_identity.committed_bundle_generation = 303;
+  EXPECT_NE(request_predecessor.goal_epoch, successor_identity.goal_epoch);
+  EXPECT_NE(request_predecessor.request_id, successor_identity.request_id);
+  EXPECT_TRUE(history.emergencyEndpointFor(
+      successor_identity.committed_bundle_generation,
+      successor_identity.localization_epoch).has_value());
+
+  navigation_planning::PlanningHistory missing_witness;
+  missing_witness.previous_bundle_generation = 303;
+  EXPECT_FALSE(missing_witness.emergencyEndpointFor(303, 6).has_value());
+}
+
+TEST(PlanningHistory, RejectsMismatchedPredecessorGeneration) {
+  navigation_planning::PlanningHistory history;
+  history.previous_bundle_generation = 11;
+  history.previous_velocity_world.setZero();
+  navigation_planning::PlanningPredecessorEvidence evidence;
+  evidence.bundle_generation = 12;
+  evidence.localization_epoch = 3;
+  evidence.goal_epoch = 7;
+  evidence.request_id = 9;
+  evidence.kind = navigation_planning::CandidateBundleKind::kTerminalStop;
+  evidence.role = navigation_planning::CandidateRole::kMain;
+  history.predecessor = evidence;
+  EXPECT_FALSE(history.valid());
+}
+
 TEST(ExecutionAnchor, RequiresAnImmutableFutureCommandBoundary) {
   navigation_planning::ExecutionAnchor anchor;
   anchor.active_bundle_generation = 11;
@@ -346,6 +467,7 @@ TEST(PlanningRequest, CommittedFutureStateCannotOmitOrMoveItsAnchor) {
   request.goal.goal_epoch = 7;
   request.goal.request_id = 9;
   request.goal.mission_id = "mission";
+  request.history.previous_bundle_generation = 11;
 
   EXPECT_FALSE(request.startModeContractValid());
   EXPECT_FALSE(request.valid());
