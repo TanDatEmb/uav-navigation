@@ -23,9 +23,9 @@ jobs:
       - name: Check patch whitespace
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            git diff --check "origin/${GITHUB_BASE_REF}...HEAD"
+            git diff --check "origin/${GITHUB_BASE_REF}...HEAD" -- . ':!artifacts/**'
           else
-            git diff --check "HEAD^..HEAD"
+            git diff --check "HEAD^..HEAD" -- . ':!artifacts/**'
           fi
       - name: Install static-check dependency
         run: python -m pip install PyYAML

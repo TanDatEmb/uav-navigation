@@ -5,7 +5,7 @@
 - `uav-nav / static-contract`: PR patch whitespace, permanent authority/contract guards, and the runtime safety ledger.
 - `uav-nav / python`: the runtime/evaluator unittest suite, including C0-SW witness/scope, report semantics, evidence writer, World transaction reducer, and explicit scope-guard regression tests.
 
-The workflow deliberately excludes branch-delta guards requiring a caller-provided historical baseline.
+The workflow deliberately excludes branch-delta guards requiring a caller-provided historical baseline. Patch whitespace checks cover source, tooling, configuration, and documentation changes outside the archived `artifacts/` tree; the inherited evidence archive includes CRLF CSVs that Git reports as trailing whitespace, so it is not used as a source-format gate.
 
 Hosted CI status: not yet observed before the workflow push. The stable job names become GitHub status checks when the workflow runs on the updated PR. Local validation before push passed all nine permanent guards and the 460-test Python suite (one expected skip).
 
