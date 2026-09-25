@@ -353,7 +353,14 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithAbort(
   if (steady_cruise) {
     duration_s = minimumSnapSteadyCruiseDuration(
         speed_mps, max_acc_mps2, max_jerk_mps3, sample_traj_dt_s);
-    maximum_attempts = 1;
+    // The closed-form lower bound is evaluated in long double and then
+    // represented as a double. If that conversion rounds down at an A/J
+    // boundary, the concrete polynomial can exceed the physical limit by a
+    // representable step even though the ordinary extrema comparison accepts
+    // its evaluation noise. Permit only a finite number of upward ULP steps;
+    // this is a representation correction, not a wider dynamic tolerance.
+    // One initial duration plus at most 32 corrected representable durations.
+    maximum_attempts = 33;
   } else {
     // Keep the old full-state estimate only as a search seed. Non-zero
     // measured acceleration/jerk still use bounded polynomial synthesis.
@@ -393,7 +400,30 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithAbort(
               result.maximum_acceleration_mps2, gate * max_acc_mps2) &&
           navigation_planning::withinNumericalDynamicLimit(
               result.maximum_jerk_mps3, gate * max_jerk_mps3);
-      if (dynamic_limits_valid) {
+      bool physical_steady_limits_valid = true;
+      if (steady_cruise && finite_extrema) {
+        const long double represented_duration =
+            static_cast<long double>(duration_s);
+        const long double exact_speed =
+            static_cast<long double>(speed_mps);
+        const long double acceleration_limit =
+            static_cast<long double>(gate * max_acc_mps2);
+        const long double jerk_limit =
+            static_cast<long double>(gate * max_jerk_mps3);
+        const long double analytic_acceleration =
+            15.0L * exact_speed / (8.0L * represented_duration);
+        const long double analytic_jerk =
+            10.0L * exact_speed /
+            (std::sqrt(3.0L) * represented_duration * represented_duration);
+        physical_steady_limits_valid =
+            std::isfinite(analytic_acceleration) &&
+            std::isfinite(analytic_jerk) &&
+            analytic_acceleration <= acceleration_limit &&
+            analytic_jerk <= jerk_limit &&
+            result.maximum_acceleration_mps2 <= gate * max_acc_mps2 &&
+            result.maximum_jerk_mps3 <= gate * max_jerk_mps3;
+      }
+      if (dynamic_limits_valid && physical_steady_limits_valid) {
         result.support_bound_m = minimumSnapStopSupportBound(
             piece, switch_state.col(0));
         result.feasible = std::isfinite(result.support_bound_m);
@@ -408,8 +438,48 @@ inline BackupBrakingSeed makeBackupBrakingSeedWithAbort(
         return result;
       }
       if (steady_cruise) {
-        result.failure = StopFailureReason::kSynthesisFailed;
-        return result;
+        // Correct only a one-sided duration-rounding miss whose concrete
+        // extrema remain inside the existing numerical evaluation contract.
+        // Material polynomial violations are never repaired by increasing T.
+        const bool evaluation_contract_valid = finite_extrema &&
+            navigation_planning::withinNumericalDynamicLimit(
+                result.maximum_velocity_mps,
+                gate * result.allowed_peak_velocity_mps) &&
+            navigation_planning::withinNumericalDynamicLimit(
+                result.maximum_acceleration_mps2, gate * max_acc_mps2) &&
+            navigation_planning::withinNumericalDynamicLimit(
+                result.maximum_jerk_mps3, gate * max_jerk_mps3);
+        const long double represented_duration =
+            static_cast<long double>(duration_s);
+        const long double exact_speed =
+            static_cast<long double>(speed_mps);
+        const bool physical_boundary_miss =
+            15.0L * exact_speed / (8.0L * represented_duration) >
+                static_cast<long double>(gate * max_acc_mps2) ||
+            10.0L * exact_speed /
+                    (std::sqrt(3.0L) * represented_duration * represented_duration) >
+                static_cast<long double>(gate * max_jerk_mps3) ||
+            result.maximum_acceleration_mps2 > gate * max_acc_mps2 ||
+            result.maximum_jerk_mps3 > gate * max_jerk_mps3;
+        if (!evaluation_contract_valid || !physical_boundary_miss ||
+            attempt + 1 >= maximum_attempts) {
+          result.failure = StopFailureReason::kSynthesisFailed;
+          return result;
+        }
+        if (aborted()) {
+          result.feasible = false;
+          result.failure = StopFailureReason::kBudgetExhausted;
+          return result;
+        }
+        const double corrected_duration = std::nextafter(
+            duration_s, std::numeric_limits<double>::infinity());
+        if (!std::isfinite(corrected_duration) ||
+            corrected_duration <= duration_s) {
+          result.failure = StopFailureReason::kSynthesisFailed;
+          return result;
+        }
+        duration_s = corrected_duration;
+        continue;
       }
     } catch (...) {
       result.feasible = false;
